@@ -2,6 +2,7 @@
 // back as its label string, so these are the values we compare against.
 export const DATE_OPTION = {
   THIRTY_MINS: "30 mins",
+  ONE_HOUR: "1 hr",
   SIX_HOURS: "6 hrs",
   TODAY: "Today",
   YESTERDAY: "Yesterday",
@@ -19,6 +20,7 @@ export const DATE_OPTION = {
 // period_used and never accepts them as input.
 export const USAGE_PERIOD = {
   THIRTY_MINUTES: "30m",
+  ONE_HOUR: "1h",
   SIX_HOURS: "6h",
   ONE_DAY: "1d",
   SEVEN_DAYS: "7d",

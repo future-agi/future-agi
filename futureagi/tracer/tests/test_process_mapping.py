@@ -470,8 +470,12 @@ def test_object_mapping_value_fails_lean_first_session_path(
 
 
 def test_object_mapping_value_is_recorded_not_swallowed(
-    trace, observation_span, custom_eval_config, eval_task
+    trace, observation_span, custom_eval_config, eval_task, mocker
 ):
+    mocker.patch(
+        "tracer.utils.eval._redirect_retired_eval_task_activity",
+        return_value=False,
+    )
     custom_eval_config.mapping = {"input": {"path": "input"}, "output": "output"}
     custom_eval_config.save(update_fields=["mapping"])
 

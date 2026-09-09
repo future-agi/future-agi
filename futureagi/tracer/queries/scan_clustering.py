@@ -208,7 +208,7 @@ def find_nearest_centroid(
         # breaks ties that last_updated cannot, because that column is
         # second-granularity and two updates to one cluster inside the same
         # second are otherwise unordered.
-        rows = db.client.execute(
+        rows = db.execute_read(
             f"""
             SELECT
                 cluster_id,
@@ -225,6 +225,7 @@ def find_nearest_centroid(
             LIMIT 1
             """,
             {"project_id": project_id, "family": category},
+            max_result_rows=1,
         )
 
         if rows and rows[0][1] < COSINE_THRESHOLD:
@@ -598,7 +599,7 @@ def assign_to_cluster(
         # monotonically, so it orders them correctly. GROUP BY is load-bearing: an
         # aggregate without it always returns one row, so a cluster with no stored
         # centroid would come back as empty defaults instead of no rows.
-        rows = db.client.execute(
+        rows = db.execute_read(
             f"""
             SELECT
                 argMax(centroid, (last_updated, member_count)),
@@ -608,6 +609,7 @@ def assign_to_cluster(
             GROUP BY cluster_id
             """,
             {"project_id": project_id, "cluster_id": cluster_id},
+            max_result_rows=1,
         )
 
         if rows:
@@ -815,7 +817,7 @@ def find_success_trace_baseline(
             ids_str = ",".join(f"'{tid}'" for tid in exclude_trace_ids)
             exclude_clause = f"AND trace_id NOT IN ({ids_str})"
 
-        rows = db.client.execute(
+        rows = db.execute_read(
             f"""
             SELECT
                 trace_id,
@@ -828,6 +830,7 @@ def find_success_trace_baseline(
             LIMIT {int(k)}
             """,
             {"project_id": project_id},
+            max_result_rows=max(1, int(k)),
         )
         return [(str(tid), dist) for tid, dist in rows]
     finally:
@@ -878,7 +881,7 @@ def get_cluster_trace_embeddings(
     try:
         ensure_trace_inputs_table(db)
         ids_str = ",".join(f"'{tid}'" for tid in trace_ids)
-        rows = db.client.execute(
+        rows = db.execute_read(
             f"""
             SELECT trace_id, embedding
             FROM {TRACE_INPUTS_TABLE}
@@ -887,6 +890,7 @@ def get_cluster_trace_embeddings(
             LIMIT 1
             """,
             {"project_id": project_id},
+            max_result_rows=1,
         )
 
         if rows:
@@ -999,7 +1003,7 @@ def _absorb_centroid(keep_id: str, absorb_id: str, project_id: str) -> None:
     """
     db = ClickHouseVectorDB()
     try:
-        rows = db.client.execute(
+        rows = db.execute_read(
             f"""
             SELECT cluster_id, argMax(centroid, last_updated), argMax(member_count, last_updated),
                    argMax(family, last_updated)
@@ -1008,6 +1012,7 @@ def _absorb_centroid(keep_id: str, absorb_id: str, project_id: str) -> None:
             GROUP BY cluster_id
             """,
             {"p": str(project_id), "a": keep_id, "b": absorb_id},
+            max_result_rows=2,
         )
         by = {str(r[0]): (r[1], r[2] or 1, r[3]) for r in rows}
         k, a = by.get(keep_id), by.get(absorb_id)
@@ -1071,7 +1076,7 @@ def merge_duplicate_clusters(
     db = ClickHouseVectorDB()
     try:
         ensure_centroid_table(db)
-        rows = db.client.execute(
+        rows = db.execute_read(
             f"""
             SELECT cluster_id, argMax(centroid, last_updated), argMax(member_count, last_updated),
                    argMax(family, last_updated)

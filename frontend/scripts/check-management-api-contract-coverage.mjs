@@ -27,7 +27,8 @@ const MIN_GROUP_PATHS = {
   "model-hub": 360,
   simulate: 100,
   // OTLP trace ingestion routes migrated to fi-collector; Django no longer serves them.
-  tracer: 154,
+  // Retell webhook route removed in favour of polling.
+  tracer: 153,
   usage: 55,
 };
 const MUTATION_METHODS = new Set(["post", "put", "patch"]);

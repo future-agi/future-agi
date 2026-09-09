@@ -5,6 +5,7 @@ import {
   POSTHOG_KEY,
   POSTHOG_HOST,
 } from "src/config-global";
+import { SESSION_REPLAY_URL_BLOCKLIST } from "src/utils/sessionReplayPolicy";
 
 const posthogHost = POSTHOG_HOST || "https://us.i.posthog.com";
 
@@ -35,6 +36,10 @@ export const initPostHog = () => {
         maskInputOptions: {
           password: true,
         },
+        // PostHog is the retained replay provider. Pause replay on grids and
+        // dashboards where a large mutation stream can otherwise dominate the
+        // renderer heap. The SDK automatically resumes after leaving the route.
+        urlBlocklist: SESSION_REPLAY_URL_BLOCKLIST,
       },
       // Capture performance / web vitals
       capture_performance: true,

@@ -2,13 +2,32 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import PropTypes from "prop-types";
 import { render, screen, userEvent, waitFor } from "src/utils/test-utils";
+
+const traceFilterPanelPropsMock = vi.hoisted(() => vi.fn());
+
+vi.mock("src/sections/projects/LLMTracing/TraceFilterPanel", () => ({
+  default: (props) => {
+    traceFilterPanelPropsMock(props);
+    return <div data-testid="annotation-telemetry-filter-panel" />;
+  },
+}));
+
 import {
+  AnnotationTelemetryFilterPanel,
   buildAnnotatorFilterChipLabelMap,
   buildReadOnlyColumnDefs,
   buildSimulationSelectorColumnDefs,
   buildSimulationSelectorFilterFields,
+  assertExactEnumerationComplete,
   DatasetRowSelector,
+  ExactSelectorReadFailureNotice,
+  getSelectorPageTotalState,
+  getSelectorSelectAllTotalState,
+  getSelectorStatusState,
+  getVoiceSelectorTotalState,
+  retryExactSelectorRead,
   SelectionCheckboxNudge,
+  shouldShowSelectorSelectAll,
 } from "../items/add-items-dialog";
 import {
   buildSessionSelectAllMeta,
@@ -16,6 +35,24 @@ import {
   buildSessionSelectorFilterFields,
   getSessionSelectionRowId,
 } from "../items/add-items-session-utils";
+import {
+  parseSessionSelectorPage,
+  parseSpanSelectorPage,
+  parseTraceSelectorPage,
+  spanSelectorRowIdentity,
+} from "../items/telemetry-selector-contract";
+
+const selectorResponse = (row, overrides = {}) => ({
+  data: {
+    status: true,
+    result: {
+      metadata: { total_rows: 1 },
+      table: [row],
+      config: [],
+    },
+    ...overrides,
+  },
+});
 
 const agGridMock = vi.hoisted(() => ({
   api: {
@@ -36,6 +73,71 @@ const queryClientMock = vi.hoisted(() => ({
     data: { result: { table: [], metadata: { total_rows: 0 } } },
   })),
 }));
+
+describe("annotation telemetry filter adapters", () => {
+  beforeEach(() => {
+    traceFilterPanelPropsMock.mockClear();
+  });
+
+  it("uses the main Tracing voice namespace and span attribute inventory", () => {
+    render(
+      <AnnotationTelemetryFilterPanel
+        selectorType="trace"
+        isVoiceProject
+        anchorEl={document.body}
+        open
+        onClose={vi.fn()}
+        projectId="voice-project"
+        currentFilters={[]}
+        onApply={vi.fn()}
+      />,
+    );
+
+    expect(traceFilterPanelPropsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "voice-project",
+        source: "traces",
+        tab: "voiceCalls",
+        propertyNamespace: "voice_calls",
+        attributeSource: "spans",
+        isSimulator: true,
+        isSpansView: false,
+      }),
+    );
+  });
+
+  it("keeps session system fields additive to the dynamic catalog", () => {
+    const sessionFilterFields = [
+      { id: "session_id", name: "Session ID", category: "system" },
+    ];
+
+    render(
+      <AnnotationTelemetryFilterPanel
+        selectorType="session"
+        sessionFilterFields={sessionFilterFields}
+        anchorEl={document.body}
+        open
+        onClose={vi.fn()}
+        projectId="session-project"
+        currentFilters={[]}
+        onApply={vi.fn()}
+      />,
+    );
+
+    const props = traceFilterPanelPropsMock.mock.calls.at(-1)[0];
+    expect(props).toMatchObject({
+      projectId: "session-project",
+      source: "sessions",
+      propertyNamespace: "sessions",
+      attributeSource: "spans",
+      filterFields: sessionFilterFields,
+      isSimulator: false,
+      isSpansView: false,
+    });
+    expect(props).not.toHaveProperty("properties");
+    expect(props).not.toHaveProperty("categories");
+  });
+});
 
 vi.mock("src/hooks/use-debounce", () => ({
   useDebounce: (value) => value,
@@ -183,6 +285,93 @@ describe("Simulation add-items columns", () => {
     const values = valuesByHeader({});
 
     expect(values["Agent Talk (%)"]).toBe("-");
+  });
+});
+
+describe("annotation select-all exactness", () => {
+  it("rejects a safety-bound exit instead of returning a partial selection", () => {
+    expect(() =>
+      assertExactEnumerationComplete({
+        hasMore: true,
+        sourceLabel: "dataset rows",
+      }),
+    ).toThrow(
+      "All matching dataset rows could not be resolved safely. Narrow the filters and retry.",
+    );
+  });
+
+  it("accepts only a proven terminal page", () => {
+    expect(
+      assertExactEnumerationComplete({
+        hasMore: false,
+        sourceLabel: "dataset rows",
+      }),
+    ).toBeUndefined();
+  });
+});
+
+describe("annotation telemetry selector contracts", () => {
+  it("accepts only canonical trace, span, and session row identities", () => {
+    expect(
+      parseTraceSelectorPage(selectorResponse({ trace_id: "trace-1" })).table,
+    ).toEqual([{ trace_id: "trace-1" }]);
+    expect(
+      parseSpanSelectorPage(
+        selectorResponse({
+          project_id: "project-1",
+          trace_id: "trace-1",
+          span_id: "span-1",
+          start_time: "2026-08-09T00:00:00Z",
+        }),
+      ).table,
+    ).toEqual([
+      {
+        project_id: "project-1",
+        trace_id: "trace-1",
+        span_id: "span-1",
+        start_time: "2026-08-09T00:00:00Z",
+      },
+    ]);
+    expect(
+      parseSessionSelectorPage(selectorResponse({ session_id: "session-1" }))
+        .table,
+    ).toEqual([{ session_id: "session-1" }]);
+  });
+
+  it("keeps reused span IDs in different traces as separate selector rows", () => {
+    const first = {
+      project_id: "project-1",
+      trace_id: "trace-a",
+      span_id: "reused-span",
+      start_time: "2026-08-09T00:00:00Z",
+    };
+    const second = {
+      project_id: "project-1",
+      trace_id: "trace-b",
+      span_id: "reused-span",
+      start_time: "2026-08-09T00:01:00Z",
+    };
+
+    expect(spanSelectorRowIdentity(first)).not.toBe(
+      spanSelectorRowIdentity(second),
+    );
+  });
+
+  it("rejects legacy aliases and missing response fields instead of showing an empty page", () => {
+    expect(() =>
+      parseTraceSelectorPage(selectorResponse({ traceId: "trace-1" })),
+    ).toThrow("missing its canonical identity");
+    expect(() =>
+      parseSpanSelectorPage(
+        selectorResponse({ trace_id: "trace-1", span_id: "span-1" }),
+      ),
+    ).toThrow("missing its canonical identity");
+    expect(() => parseSpanSelectorPage({ data: { status: true } })).toThrow();
+    expect(() =>
+      parseSessionSelectorPage(
+        selectorResponse({ session_id: "session-1" }, { status: false }),
+      ),
+    ).toThrow("Session list response was not successful");
   });
 });
 
@@ -430,6 +619,183 @@ describe("Session add-items filters", () => {
         },
       }),
     ).toBe("backend-session");
+  });
+});
+
+describe("Add-items selector total semantics", () => {
+  it("keeps paginated totals explicitly lower-bound while more data exists", () => {
+    const pageTotalState = getSelectorPageTotalState(
+      {
+        total_rows: 20,
+        total_rows_is_lower_bound: true,
+        has_more: true,
+      },
+      20,
+    );
+
+    expect(pageTotalState).toEqual({
+      totalRowCount: null,
+      totalRowCountLowerBound: 20,
+      totalRowCountIsLowerBound: true,
+      selectorHasMore: true,
+    });
+
+    const selectAllTotalState = getSelectorSelectAllTotalState(
+      pageTotalState,
+      20,
+    );
+    expect(selectAllTotalState).toEqual({
+      totalCount: 20,
+      totalCountIsLowerBound: true,
+      hasMore: true,
+    });
+    expect(
+      shouldShowSelectorSelectAll({
+        ...selectAllTotalState,
+        visibleCount: 20,
+      }),
+    ).toBe(true);
+  });
+
+  it("uses an exact terminal total without retaining lower-bound state", () => {
+    const pageTotalState = getSelectorPageTotalState(
+      {
+        total_rows: 37,
+        total_rows_is_lower_bound: false,
+        has_more: false,
+      },
+      20,
+    );
+
+    expect(pageTotalState).toEqual({
+      totalRowCount: 37,
+      totalRowCountLowerBound: null,
+      totalRowCountIsLowerBound: false,
+      selectorHasMore: false,
+    });
+
+    const selectAllTotalState = getSelectorSelectAllTotalState(
+      pageTotalState,
+      20,
+    );
+    expect(selectAllTotalState).toEqual({
+      totalCount: 37,
+      totalCountIsLowerBound: false,
+      hasMore: false,
+    });
+    expect(
+      shouldShowSelectorSelectAll({
+        ...selectAllTotalState,
+        visibleCount: 20,
+      }),
+    ).toBe(true);
+    expect(
+      shouldShowSelectorSelectAll({
+        ...selectAllTotalState,
+        totalCount: 20,
+        visibleCount: 20,
+      }),
+    ).toBe(false);
+  });
+
+  it("uses the backend voice total instead of multiplying full pages", () => {
+    expect(
+      getVoiceSelectorTotalState({
+        currentPageSize: 25,
+        totalPages: 2,
+        pageLimit: 25,
+        totalMatching: 36,
+        totalMatchingIsLowerBound: false,
+      }),
+    ).toEqual({
+      totalCount: 36,
+      totalCountIsLowerBound: false,
+      hasMore: true,
+    });
+  });
+
+  it("preserves voice lower-bound totals and marks missing totals as provisional", () => {
+    expect(
+      getVoiceSelectorTotalState({
+        currentPageSize: 25,
+        totalPages: 2,
+        pageLimit: 25,
+        totalMatching: 25,
+        totalMatchingIsLowerBound: true,
+      }),
+    ).toEqual({
+      totalCount: 25,
+      totalCountIsLowerBound: true,
+      hasMore: true,
+    });
+    expect(
+      getVoiceSelectorTotalState({
+        currentPageSize: 25,
+        totalPages: 2,
+        pageLimit: 25,
+      }),
+    ).toEqual({
+      totalCount: 50,
+      totalCountIsLowerBound: true,
+      hasMore: true,
+    });
+  });
+
+  it("does not label a nonterminal lower bound as an exact total", () => {
+    expect(
+      getSelectorStatusState({
+        context: {
+          totalRowCount: null,
+          totalRowCountLowerBound: 125,
+          totalRowCountIsLowerBound: true,
+        },
+        displayedRowCount: 20,
+        lastDisplayedRowIndex: 19,
+      }),
+    ).toEqual({
+      loadedRows: 20,
+      totalRows: 125,
+      totalRowsIsLowerBound: true,
+    });
+
+    expect(
+      getSelectorStatusState({
+        context: {
+          totalRowCount: 37,
+          totalRowCountIsLowerBound: false,
+        },
+        displayedRowCount: 20,
+        lastDisplayedRowIndex: 19,
+      }),
+    ).toEqual({
+      loadedRows: 20,
+      totalRows: 37,
+      totalRowsIsLowerBound: false,
+    });
+  });
+});
+
+describe("Exact selector cold-read recovery", () => {
+  it("renders a sanitized retry action", async () => {
+    const onRetry = vi.fn();
+    render(<ExactSelectorReadFailureNotice failed onRetry={onRetry} />);
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Rows are temporarily unavailable.",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(onRetry).toHaveBeenCalledOnce();
+  });
+
+  it("retries failed blocks and falls back to an in-place refresh", () => {
+    const retryServerSideLoads = vi.fn();
+    const refreshServerSide = vi.fn();
+    retryExactSelectorRead({ retryServerSideLoads, refreshServerSide });
+    expect(retryServerSideLoads).toHaveBeenCalledOnce();
+    expect(refreshServerSide).not.toHaveBeenCalled();
+
+    retryExactSelectorRead({ refreshServerSide });
+    expect(refreshServerSide).toHaveBeenCalledWith({ purge: false });
   });
 });
 

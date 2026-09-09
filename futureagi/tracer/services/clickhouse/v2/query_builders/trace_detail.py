@@ -87,31 +87,54 @@ def retrieve_trace_detail_ch(
 
     from tracer.constants.provider_logos import PROVIDER_LOGOS
     from tracer.models.custom_eval_config import CustomEvalConfig
-    from tracer.models.observation_span import ObservationSpan
     from tracer.models.project import Project
     from tracer.models.trace import Trace
-    from tracer.services.clickhouse.eval_logger_table import eval_logger_source
+    from tracer.services.clickhouse.v2.trace_detail_reads import (
+        MAX_TRACE_DETAIL_EVAL_CONFIGS,
+        TraceDetailNotFound,
+        read_trace_detail,
+    )
     from tracer.views.trace import _project_workspace_scope_q
 
-    # Cross-store tenant gate, CH-sourced: the trace's project comes from CH
-    # spans; a CH-only trace has no PG Trace row. Tenancy is still enforced
-    # in PG (Project stays in PG).
-    proj_rows = analytics.execute_ch_query(
-        "SELECT toString(project_id) AS project_id FROM spans "
-        "WHERE trace_id = %(tid)s AND is_deleted = 0 LIMIT 1",
-        {"tid": str(trace_id)},
-        timeout_ms=5000,
-    ).data
-    project_id = proj_rows[0]["project_id"] if proj_rows else None
+    # Resolve the caller's authorized project scope *before* touching CH. The
+    # old first query searched trace_id across every tenant and only checked
+    # the selected project afterward; at scale that was both slow and an
+    # avoidable cross-tenant probe. Project remains a small PG dimension.
     project_manager = getattr(Project, "no_workspace_objects", Project.objects)
-    if (
-        not project_id
-        or not project_manager.filter(
-            _project_workspace_scope_q(request, project_prefix=""),
-            id=project_id,
-        ).exists()
-    ):
-        raise Trace.DoesNotExist
+    authorized_project_ids = [
+        str(value)
+        for value in project_manager.filter(
+            _project_workspace_scope_q(request, project_prefix="")
+        ).values_list("id", flat=True)[:4097]
+    ]
+
+    # The eval logger has no project column. Resolve the selected project's
+    # authorized config IDs only after ``read_trace_detail`` proves the trace's
+    # project identity, and retain the same scoped objects for response labels.
+    authorized_eval_configs = {}
+
+    def _resolve_eval_config_ids(selected_project_id: str) -> tuple[str, ...]:
+        configs = list(
+            CustomEvalConfig.objects.filter(
+                project_id=selected_project_id,
+                deleted=False,
+            ).select_related("eval_template")[: MAX_TRACE_DETAIL_EVAL_CONFIGS + 1]
+        )
+        authorized_eval_configs.update({str(config.id): config for config in configs})
+        return tuple(authorized_eval_configs)
+
+    try:
+        detail_read = read_trace_detail(
+            analytics=analytics,
+            project_ids=authorized_project_ids,
+            trace_id=str(trace_id),
+            eval_config_ids_resolver=_resolve_eval_config_ids,
+        )
+    except TraceDetailNotFound:
+        raise Trace.DoesNotExist from None
+    project_id = detail_read.project_id
+    span_rows = list(detail_read.spans)
+    authorized_eval_config_ids = set(detail_read.eval_config_ids)
 
     # Trace metadata: PG row when present (full fidelity), else synthesized
     # from the root span below (CH-only trace, or `tracer_trace` dropped
@@ -122,35 +145,8 @@ def retrieve_trace_detail_ch(
         trace = None  # tracer_trace dropped post-cutover — expected on CH25
     except Exception:
         logger.exception("trace_detail: PG Trace lookup failed")
-        trace = None
+        raise
     trace_data = view.get_serializer(trace).data if trace is not None else None
-
-    # Fetch all spans for this trace from CH — use the denormalized `spans`
-    # table which has renamed columns vs PG. Map them back to expected names.
-    query = """
-        SELECT
-            id, trace_id, parent_span_id, name, observation_type,
-            start_time, end_time, input, output, model,
-            '' AS model_parameters, latency_ms, prompt_tokens,
-            completion_tokens, total_tokens, cost, status,
-            status_message, tags, span_events,
-            provider, attributes_extra AS span_attributes,
-            project_version_id, custom_eval_config_id,
-            toString(trace_session_id) AS trace_session_id,
-            toJSONString(metadata) AS metadata_json,
-            attrs_string, attrs_number, attrs_bool
-        FROM spans
-        WHERE project_id = %(project_id)s
-          AND trace_id = %(trace_id)s
-          AND is_deleted = 0
-        ORDER BY start_time
-        LIMIT 1 BY id
-    """
-    result = analytics.execute_ch_query(
-        query,
-        {"project_id": project_id, "trace_id": str(trace_id)},
-        timeout_ms=10000,
-    )
 
     # Build span tree
     span_map = {}  # id -> span data
@@ -177,7 +173,7 @@ def retrieve_trace_detail_ch(
         except (ValueError, TypeError):
             return val
 
-    for row in result.data:
+    for row in span_rows:
         span_id = str(row.get("id", ""))
         parent_id = row.get("parent_span_id")
         parent_id_str = str(parent_id) if parent_id else None
@@ -190,26 +186,15 @@ def retrieve_trace_detail_ch(
             row.get("attrs_bool"),
             row.get("span_attributes"),
         )
-        # Fallback: if CH has no span_attributes, try PG (skipped on a CH-only
-        # deployment where `tracer_observation_span` is dropped — the query
-        # raises and we fall through to the empty attrs).
-        if not span_attrs:
-            try:
-                pg_span = ObservationSpan.objects.only(
-                    "span_attributes", "eval_attributes"
-                ).get(id=span_id)
-                span_attrs = pg_span.span_attributes or pg_span.eval_attributes or {}
-            except (ObservationSpan.DoesNotExist, ProgrammingError):
-                pass  # no PG row / table dropped — expected
-            except Exception:
-                logger.exception(
-                    "trace_detail: PG span-attrs fallback failed", span_id=span_id
-                )
-
         # Build metadata from CH JSON column
         metadata_raw = row.get("metadata_json") or "{}"
         metadata = _parse_json(metadata_raw, default={})
 
+        raw_custom_eval_config_id = (
+            str(row["custom_eval_config_id"])
+            if row.get("custom_eval_config_id")
+            else None
+        )
         span_data = {
             "id": span_id,
             "project": project_id,
@@ -252,8 +237,8 @@ def retrieve_trace_detail_ch(
             ),
             "span_attributes": span_attrs,
             "custom_eval_config": (
-                str(row["custom_eval_config_id"])
-                if row.get("custom_eval_config_id")
+                raw_custom_eval_config_id
+                if raw_custom_eval_config_id in authorized_eval_config_ids
                 else None
             ),
             "eval_status": None,
@@ -269,70 +254,43 @@ def retrieve_trace_detail_ch(
     # ----- Phase 8: Batch fetch eval scores from CH -----
     eval_map = {}
     try:
-        eval_table, eval_nd = eval_logger_source()
-        eval_query = f"""
-        SELECT
-            toString(observation_span_id) AS span_id,
-            toString(custom_eval_config_id) AS eval_config_id,
-            output_float,
-            output_bool,
-            output_str,
-            output_str_list,
-            eval_explanation,
-            error,
-            status,
-            skipped_reason
-        FROM {eval_table} FINAL
-        WHERE trace_id = %(trace_id)s
-          AND {eval_nd}
-        """
-        eval_result = analytics.execute_ch_query(
-            eval_query, {"trace_id": str(trace_id)}, timeout_ms=30000
-        )
-        # Collect unique config IDs for name lookup
-        config_ids_set = set()
-        for row in eval_result.data:
-            cid = row.get("eval_config_id", "")
-            if cid:
-                config_ids_set.add(cid)
-        # Lookup eval config names from PG
-        config_lookup = {}
-        if config_ids_set:
-            from model_hub.utils.eval_list import derive_output_type
+        from model_hub.utils.eval_list import derive_output_type
 
-            configs = CustomEvalConfig.objects.filter(
-                id__in=list(config_ids_set), deleted=False
-            ).select_related("eval_template")
-            config_lookup = {
-                str(c.id): {
-                    # Prefer the CustomEvalConfig's user-given name (e.g.
-                    # "voice_sentence_count"), fall back to the template
-                    # name only if unset. This keeps the drawer labels in
-                    # sync with the trace list column headers.
-                    "name": c.name
-                    or (c.eval_template.name if c.eval_template else str(c.id)),
-                    # Resolved type — falls back to config["output"] when
-                    # output_type_normalized is unset, matching the list paths.
-                    "output_type": (
-                        derive_output_type(c.eval_template) if c.eval_template else None
-                    ),
-                    "template_type": (
-                        getattr(c.eval_template, "template_type", None)
-                        if c.eval_template
-                        else None
-                    ),
-                }
-                for c in configs
+        eval_rows = list(detail_read.evals)
+        # Reuse only the project-scoped config objects resolved before the CH
+        # eval query. Never label or return a row whose config was not proven
+        # to belong to the selected project.
+        config_lookup = {
+            config_id: {
+                # Prefer the CustomEvalConfig's user-given name (e.g.
+                # "voice_sentence_count"), fall back to the template
+                # name only if unset. This keeps the drawer labels in
+                # sync with the trace list column headers.
+                "name": config.name
+                or (config.eval_template.name if config.eval_template else config_id),
+                "output_type": (
+                    derive_output_type(config.eval_template)
+                    if config.eval_template
+                    else None
+                ),
+                "template_type": (
+                    getattr(config.eval_template, "template_type", None)
+                    if config.eval_template
+                    else None
+                ),
             }
+            for config_id, config in authorized_eval_configs.items()
+            if config_id in authorized_eval_config_ids
+        }
         # Pivot into per-span map
-        for row in eval_result.data:
-            sid = row.get("span_id", "")
-            if not sid:
+        for row in eval_rows:
+            sid = str(row.get("span_id") or "")
+            cid = str(row.get("eval_config_id") or "")
+            if not sid or sid not in span_map or cid not in config_lookup:
                 continue
             if sid not in eval_map:
                 eval_map[sid] = []
-            cid = row.get("eval_config_id", "")
-            info = config_lookup.get(cid, {})
+            info = config_lookup[cid]
             # Score is type-dependent; the CH mirror coerces unused typed
             # columns to 0, so route by type (choices → str_list, Pass/Fail →
             # bool, percentage → float) instead of trusting a populated column.
@@ -417,57 +375,44 @@ def retrieve_trace_detail_ch(
             )
     except Exception:
         logger.exception("Failed to fetch trace eval scores")
+        raise
 
-    # ----- Phase 8: Batch fetch annotations from PG -----
+    # ----- Phase 8: Candidate-scoped latest annotations from ClickHouse -----
     annotation_map = {}
     try:
-        from model_hub.models.score import Score as ScoreModel
+        from model_hub.models.develop_annotations import AnnotationsLabels
 
-        scores = (
-            ScoreModel.objects.filter(trace_id=trace_id, deleted=False)
-            .select_related("label")
-            .values(
-                "observation_span_id",
-                "label_id",
-                "label__name",
-                "label__type",
-                "value",
-            )
+        annotation_rows = list(detail_read.annotations)
+        label_ids = {
+            str(row.get("label_id")) for row in annotation_rows if row.get("label_id")
+        }
+        label_lookup = (
+            {
+                str(label.id): label
+                for label in AnnotationsLabels.objects.filter(id__in=label_ids)
+            }
+            if label_ids
+            else {}
         )
-        for s in scores:
-            sid = (
-                str(s["observation_span_id"]) if s.get("observation_span_id") else None
-            )
+        for row in annotation_rows:
+            sid = str(row.get("span_id") or "")
             if not sid:
                 continue
+            label_id = str(row.get("label_id") or "")
+            label = label_lookup.get(label_id)
             if sid not in annotation_map:
                 annotation_map[sid] = []
             annotation_map[sid].append(
                 {
-                    "label_id": str(s["label_id"]) if s.get("label_id") else None,
-                    "label_name": s.get("label__name"),
-                    "label_type": s.get("label__type"),
-                    "value": s.get("value"),
+                    "label_id": label_id or None,
+                    "label_name": getattr(label, "name", None),
+                    "label_type": getattr(label, "type", None),
+                    "value": _parse_json(row.get("value"), default={}),
                 }
             )
     except Exception:
         logger.exception("Failed to fetch trace annotations")
-
-    # ----- Fetch fresh span tags from PG (CH has sync delay) -----
-    if span_map:
-        try:
-            pg_tags = dict(
-                ObservationSpan.objects.filter(id__in=list(span_map.keys()))
-                .exclude(tags=[])
-                .values_list("id", "tags")
-            )
-            for sid, tags in pg_tags.items():
-                if sid in span_map:
-                    span_map[sid]["observation_span"]["tags"] = tags
-        except ProgrammingError:
-            pass  # tracer_observation_span dropped post-cutover — expected
-        except Exception:
-            logger.exception("Failed to fetch span tags from PG")
+        raise
 
     # ----- Attach evals + annotations to each span -----
     for sid, entry in span_map.items():
@@ -507,8 +452,8 @@ def retrieve_trace_detail_ch(
     if trace_data is None:
         root_obs = (root_spans[0].get("observation_span") if root_spans else {}) or {}
         session_id = None
-        if result.data:
-            _sid = result.data[0].get("trace_session_id")
+        if span_rows:
+            _sid = span_rows[0].get("trace_session_id")
             session_id = str(_sid) if _sid else None
         trace_data = {
             "id": str(trace_id),

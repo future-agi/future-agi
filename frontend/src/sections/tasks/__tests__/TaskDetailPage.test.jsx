@@ -10,6 +10,7 @@ import { enqueueSnackbar } from "src/components/snackbar";
 const axiosPatchMock = vi.hoisted(() => vi.fn());
 const axiosPostMock = vi.hoisted(() => vi.fn());
 const confirmDialogMock = vi.hoisted(() => vi.fn());
+const useAuthContextMock = vi.hoisted(() => vi.fn(() => ({ role: "Admin" })));
 
 vi.mock("src/utils/axios", () => ({
   default: {
@@ -24,8 +25,13 @@ vi.mock("src/utils/axios", () => ({
         `/tracer/eval-task/pause_eval_task/?eval_task_id=${id}`,
       resumeEvalTask: (id) =>
         `/tracer/eval-task/unpause_eval_task/?eval_task_id=${id}`,
+      createEvalTask: () => "/tracer/eval-task/",
     },
   },
+}));
+
+vi.mock("src/auth/hooks", () => ({
+  useAuthContext: useAuthContextMock,
 }));
 
 vi.mock("src/sections/common/EvalsTasks/common", async () => {
@@ -45,7 +51,13 @@ vi.mock("src/components/snackbar", () => ({
 }));
 
 vi.mock("src/components/resizablePanels/ResizablePanels", () => ({
-  default: () => <div>panels</div>,
+  default: ({ leftPanel, rightPanel }) => (
+    <div>
+      <div>panels</div>
+      {leftPanel}
+      {rightPanel}
+    </div>
+  ),
 }));
 
 vi.mock("src/sections/common/EvalsTasks/TaskLogsView", () => ({
@@ -53,9 +65,11 @@ vi.mock("src/sections/common/EvalsTasks/TaskLogsView", () => ({
 }));
 
 vi.mock("../components/TaskHeader", () => ({
-  default: ({ actions, onNameChange }) => (
+  default: ({ name, status, actions, onNameChange }) => (
     <div>
       <div>task header</div>
+      <div>{name}</div>
+      <div>{status}</div>
       <button
         type="button"
         onClick={() => onNameChange?.("Renamed Inline Task")}
@@ -68,7 +82,17 @@ vi.mock("../components/TaskHeader", () => ({
 }));
 
 vi.mock("../components/TaskConfigPanel", () => ({
-  default: () => <div>task config</div>,
+  default: ({ control }) => (
+    <div>
+      <div>task config</div>
+      {control?.register && (
+        <input
+          data-testid="test-start-date"
+          {...control.register("startDate")}
+        />
+      )}
+    </div>
+  ),
 }));
 
 vi.mock("../components/TaskLivePreview", () => {
@@ -86,10 +110,6 @@ vi.mock("src/sections/common/EvalsTasks/EditTaskDrawer/TaskConfirmBox", () => ({
     confirmDialogMock(props);
     return props.open ? <div>{props.title}</div> : null;
   },
-}));
-
-vi.mock("src/auth/hooks", () => ({
-  useAuthContext: () => ({ role: "Admin" }),
 }));
 
 const renderTaskDetail = (taskId = "missing-task") => {
@@ -130,15 +150,20 @@ describe("TaskDetailPage", () => {
     axiosPostMock.mockReset();
     axiosPostMock.mockResolvedValue({ data: { result: {} } });
     useGetTaskData.mockReset();
+    useAuthContextMock.mockReset();
+    useAuthContextMock.mockReturnValue({ role: "Admin" });
     confirmDialogMock.mockReset();
     enqueueSnackbar.mockReset();
   });
 
-  it("shows a not-found state instead of an endless spinner when the task API fails", () => {
+  it("shows a retryable failure instead of an endless spinner when the task API fails", () => {
+    const refetch = vi.fn();
     useGetTaskData.mockReturnValue({
       data: undefined,
       isLoading: false,
       isError: true,
+      isFetching: false,
+      refetch,
       error: {
         statusCode: 404,
         result: "Eval task not found",
@@ -152,6 +177,30 @@ describe("TaskDetailPage", () => {
     expect(
       screen.getByRole("button", { name: /Back to Tasks/i }),
     ).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: /^retry$/i }));
+    expect(refetch).toHaveBeenCalledOnce();
+  });
+
+  it("keeps prior task truth visible when a refresh fails and offers retry", () => {
+    const refetch = vi.fn();
+    useGetTaskData.mockReturnValue({
+      data: loadedTask(),
+      isLoading: false,
+      isFetching: false,
+      isError: true,
+      error: new Error("refresh failed"),
+      refetch,
+    });
+
+    renderTaskDetail("task-1");
+
+    expect(screen.getByText("task header")).toBeInTheDocument();
+    expect(screen.getByText("panels")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Existing task details are still shown/i),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^retry$/i }));
+    expect(refetch).toHaveBeenCalledOnce();
   });
 
   it("uses the detail PATCH route for inline rename without requiring edit_type", async () => {
@@ -171,27 +220,62 @@ describe("TaskDetailPage", () => {
     });
   });
 
-  it("does not offer Pause for pending tasks because the backend only pauses running tasks", () => {
+  it("renders the detail page with task header and tabs", () => {
     useGetTaskData.mockReturnValue({
-      data: loadedTask({ status: "pending" }),
+      data: loadedTask(),
       isLoading: false,
       isError: false,
     });
 
     renderTaskDetail("task-1");
 
-    expect(
-      screen.queryByRole("button", { name: /^pause$/i }),
-    ).not.toBeInTheDocument();
+    expect(screen.getByText("Original Task")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /details/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /logs/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /usage/i })).toBeInTheDocument();
   });
 
-  it("offers a source backlink when task filters include a trace id", () => {
+  it("pauses a running task from the header", async () => {
+    useGetTaskData.mockReturnValue({
+      data: loadedTask({ status: "running" }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderTaskDetail("task-1");
+    fireEvent.click(screen.getByRole("button", { name: /pause/i }));
+
+    await waitFor(() => {
+      expect(axiosPostMock).toHaveBeenCalledWith(
+        "/tracer/eval-task/pause_eval_task/?eval_task_id=task-1",
+        {},
+      );
+    });
+  });
+
+  it("resumes a paused task from the header", async () => {
+    useGetTaskData.mockReturnValue({
+      data: loadedTask({ status: "paused" }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderTaskDetail("task-1");
+    fireEvent.click(screen.getByRole("button", { name: /resume/i }));
+
+    await waitFor(() => {
+      expect(axiosPostMock).toHaveBeenCalledWith(
+        "/tracer/eval-task/unpause_eval_task/?eval_task_id=task-1",
+        {},
+      );
+    });
+  });
+
+  it("renders the open source button when a trace/span source link is present", () => {
     useGetTaskData.mockReturnValue({
       data: loadedTask({
-        project_id: "project-1",
         filters_applied: {
-          project_id: "project-1",
-          trace_id: ["trace-1"],
+          trace_id: "trace-123",
         },
       }),
       isLoading: false,
@@ -358,5 +442,346 @@ describe("TaskDetailPage", () => {
       "Re-run started",
       expect.anything(),
     );
+  });
+
+  it("duplicates a task with converted wire-format filters, date_range, and evals", async () => {
+    useGetTaskData.mockReturnValue({
+      data: loadedTask({
+        name: "Filter Task",
+        run_type: "historical",
+        row_type: "spans",
+        spans_limit: 100,
+        sampling_rate: 100,
+        evals_applied: [{ id: "eval-1", mapping: { input: "prompt" } }],
+        filters_applied: {
+          project_id: "project-1",
+          start_date: "2026-01-01T00:00:00.000Z",
+          end_date: "2026-01-02T00:00:00.000Z",
+          filters: [
+            {
+              column_id: "llm.model_name",
+              filter_config: {
+                filter_type: "text",
+                filter_op: "equals",
+                filter_value: "gpt-4",
+                col_type: "SPAN_ATTRIBUTE",
+              },
+            },
+          ],
+        },
+      }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderTaskDetail("task-1");
+
+    fireEvent.click(screen.getByRole("button", { name: /actions/i }));
+    const duplicateItem = await screen.findByRole("menuitem", {
+      name: /duplicate/i,
+    });
+    fireEvent.click(duplicateItem);
+
+    const createButton = await screen.findByRole("button", { name: /^create$/i });
+    fireEvent.click(createButton);
+
+    await waitFor(() => {
+      expect(axiosPostMock).toHaveBeenCalledWith("/tracer/eval-task/", {
+        name: "Filter Task-duplicate",
+        project: "project-1",
+        run_type: "historical",
+        row_type: "spans",
+        spans_limit: 100,
+        sampling_rate: 100,
+        evals: ["eval-1"],
+        filters: {
+          project_id: "project-1",
+          date_preset: "custom",
+          date_range: [
+            "2026-01-01T00:00:00.000Z",
+            "2026-01-02T00:00:00.000Z",
+          ],
+          filters: [
+            {
+              column_id: "llm.model_name",
+              filter_config: {
+                filter_type: "text",
+                filter_op: "equals",
+                filter_value: "gpt-4",
+                col_type: "SPAN_ATTRIBUTE",
+              },
+            },
+          ],
+        },
+      });
+    });
+  });
+
+  it("omits date_range when source task has no saved date range", async () => {
+    useGetTaskData.mockReturnValue({
+      data: loadedTask({
+        name: "Unbounded Task",
+        run_type: "historical",
+        row_type: "spans",
+        spans_limit: 50,
+        sampling_rate: 100,
+        evals_applied: [{ id: "eval-2" }],
+        filters_applied: {
+          project_id: "project-1",
+        },
+      }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderTaskDetail("task-1");
+
+    fireEvent.click(screen.getByRole("button", { name: /actions/i }));
+    const duplicateItem = await screen.findByRole("menuitem", {
+      name: /duplicate/i,
+    });
+    fireEvent.click(duplicateItem);
+
+    const createButton = await screen.findByRole("button", { name: /^create$/i });
+    fireEvent.click(createButton);
+
+    await waitFor(() => {
+      expect(axiosPostMock).toHaveBeenCalledWith("/tracer/eval-task/", {
+        name: "Unbounded Task-duplicate",
+        project: "project-1",
+        run_type: "historical",
+        row_type: "spans",
+        spans_limit: 50,
+        sampling_rate: 100,
+        evals: ["eval-2"],
+        filters: {
+          project_id: "project-1",
+        },
+      });
+    });
+  });
+
+  it("disables Duplicate action when user lacks ADD_TASKS_ALERTS permission", async () => {
+    useAuthContextMock.mockReturnValue({ role: "Viewer" });
+    useGetTaskData.mockReturnValue({
+      data: loadedTask({ evals_applied: [{ id: "eval-1" }] }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderTaskDetail("task-1");
+
+    fireEvent.click(screen.getByRole("button", { name: /actions/i }));
+    const duplicateItem = await screen.findByRole("menuitem", {
+      name: /duplicate/i,
+    });
+    expect(duplicateItem).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("includes date_range when unbounded source task has live date edits in the form", async () => {
+    useGetTaskData.mockReturnValue({
+      data: loadedTask({
+        name: "Unbounded Task",
+        run_type: "historical",
+        row_type: "spans",
+        spans_limit: 50,
+        sampling_rate: 100,
+        evals_applied: [{ id: "eval-3" }],
+        filters_applied: {
+          project_id: "project-1",
+        },
+      }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderTaskDetail("task-1");
+
+    // Live edit the startDate in the form
+    const dateInput = screen.getByTestId("test-start-date");
+    fireEvent.change(dateInput, { target: { value: "2026-03-01T00:00:00.000Z" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /actions/i }));
+    const duplicateItem = await screen.findByRole("menuitem", {
+      name: /duplicate/i,
+    });
+    fireEvent.click(duplicateItem);
+
+    const createButton = await screen.findByRole("button", { name: /^create$/i });
+    fireEvent.click(createButton);
+
+    await waitFor(() => {
+      expect(axiosPostMock).toHaveBeenCalledWith(
+        "/tracer/eval-task/",
+        expect.objectContaining({
+          name: "Unbounded Task-duplicate",
+          project: "project-1",
+          run_type: "historical",
+          row_type: "spans",
+          spans_limit: 50,
+          sampling_rate: 100,
+          evals: ["eval-3"],
+          filters: expect.objectContaining({
+            project_id: "project-1",
+            date_range: expect.any(Array),
+          }),
+        }),
+      );
+    });
+  });
+
+  it("allows editing task name in dialog before creating duplicate", async () => {
+    useGetTaskData.mockReturnValue({
+      data: loadedTask({
+        name: "Source Task",
+        evals_applied: [{ id: "eval-1" }],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderTaskDetail("task-1");
+
+    fireEvent.click(screen.getByRole("button", { name: /actions/i }));
+    const duplicateItem = await screen.findByRole("menuitem", {
+      name: /duplicate/i,
+    });
+    fireEvent.click(duplicateItem);
+
+    const input = await screen.findByLabelText(/task name/i);
+    expect(input).toHaveValue("Source Task-duplicate");
+
+    fireEvent.change(input, { target: { value: "Custom Duplicated Task" } });
+    expect(input).toHaveValue("Custom Duplicated Task");
+
+    const createButton = screen.getByRole("button", { name: /^create$/i });
+    fireEvent.click(createButton);
+
+    await waitFor(() => {
+      expect(axiosPostMock).toHaveBeenCalledWith(
+        "/tracer/eval-task/",
+        expect.objectContaining({
+          name: "Custom Duplicated Task",
+        }),
+      );
+    });
+  });
+
+  it("validates required task name and shows inline error when empty", async () => {
+    useGetTaskData.mockReturnValue({
+      data: loadedTask({
+        name: "Source Task",
+        evals_applied: [{ id: "eval-1" }],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderTaskDetail("task-1");
+
+    fireEvent.click(screen.getByRole("button", { name: /actions/i }));
+    const duplicateItem = await screen.findByRole("menuitem", {
+      name: /duplicate/i,
+    });
+    fireEvent.click(duplicateItem);
+
+    const input = await screen.findByLabelText(/task name/i);
+    fireEvent.change(input, { target: { value: "   " } });
+
+    await waitFor(() => {
+      expect(screen.getByText("Task name is required")).toBeInTheDocument();
+    });
+
+    const createButton = screen.getByRole("button", { name: /^create$/i });
+    expect(createButton).toBeDisabled();
+  });
+
+  it("validates 255 character limit and shows inline error when name is too long", async () => {
+    useGetTaskData.mockReturnValue({
+      data: loadedTask({
+        name: "Source Task",
+        evals_applied: [{ id: "eval-1" }],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderTaskDetail("task-1");
+
+    fireEvent.click(screen.getByRole("button", { name: /actions/i }));
+    const duplicateItem = await screen.findByRole("menuitem", {
+      name: /duplicate/i,
+    });
+    fireEvent.click(duplicateItem);
+
+    const input = await screen.findByLabelText(/task name/i);
+    const longName = "a".repeat(256);
+    fireEvent.change(input, { target: { value: longName } });
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Task name must not exceed 255 characters"),
+      ).toBeInTheDocument();
+    });
+
+    const createButton = screen.getByRole("button", { name: /^create$/i });
+    expect(createButton).toBeDisabled();
+  });
+
+  it("immediately marks form invalid when initial default name exceeds 255 characters", async () => {
+    const longOriginalName = "a".repeat(250); // with '-duplicate' (10 chars), total is 260 chars > 255
+    useGetTaskData.mockReturnValue({
+      data: loadedTask({
+        name: longOriginalName,
+        evals_applied: [{ id: "eval-1" }],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderTaskDetail("task-1");
+
+    fireEvent.click(screen.getByRole("button", { name: /actions/i }));
+    const duplicateItem = await screen.findByRole("menuitem", {
+      name: /duplicate/i,
+    });
+    fireEvent.click(duplicateItem);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Task name must not exceed 255 characters"),
+      ).toBeInTheDocument();
+    });
+
+    const createButton = screen.getByRole("button", { name: /^create$/i });
+    expect(createButton).toBeDisabled();
+  });
+
+  it("closes duplicate dialog without duplicating when Cancel button is clicked", async () => {
+    useGetTaskData.mockReturnValue({
+      data: loadedTask({
+        name: "Source Task",
+        evals_applied: [{ id: "eval-1" }],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderTaskDetail("task-1");
+
+    fireEvent.click(screen.getByRole("button", { name: /actions/i }));
+    const duplicateItem = await screen.findByRole("menuitem", {
+      name: /duplicate/i,
+    });
+    fireEvent.click(duplicateItem);
+
+    const cancelButton = await screen.findByRole("button", { name: /cancel/i });
+    fireEvent.click(cancelButton);
+
+    await waitFor(() => {
+      expect(screen.queryByText("Duplicate Task")).not.toBeInTheDocument();
+    });
+
+    expect(axiosPostMock).not.toHaveBeenCalled();
   });
 });

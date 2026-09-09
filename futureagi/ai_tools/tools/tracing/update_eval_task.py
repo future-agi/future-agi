@@ -195,7 +195,9 @@ class UpdateEvalTaskTool(BaseTool):
             # drains for both cases once (re)started.
             if params.edit_type == "fresh_run":
                 soft_delete_live(eval_task)
-            start_eval_task_workflow_sync(eval_task)
+            transaction.on_commit(
+                lambda: start_eval_task_workflow_sync(eval_task, replace_existing=True)
+            )
 
         info = key_value_block(
             [

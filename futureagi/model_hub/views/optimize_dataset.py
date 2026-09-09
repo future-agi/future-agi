@@ -126,7 +126,7 @@ def _validate_request(serializer_class, data):
 
 def _execute_clickhouse_read_or_empty(clickhouse_client, query, *, operation):
     try:
-        return clickhouse_client.execute(query)
+        return clickhouse_client.execute_read(query)
     except Exception as exc:
         logger.warning(
             "legacy_optimize_dataset_clickhouse_read_failed",

@@ -22,7 +22,7 @@ import DrawerRight from "./drawer-right";
 import DrawerBottom from "./drawer-bottom";
 import PropTypes from "prop-types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import axios, { endpoints } from "src/utils/axios";
+import axios, { readQuery, endpoints } from "src/utils/axios";
 import { useParams } from "react-router";
 import { ShowComponent } from "../show";
 import { useSelectedNode } from "./useSelectedNode";
@@ -176,7 +176,7 @@ const TraceDetailDrawerChild = ({
   const { data: previousNextTraceDataPrototype } = useQuery({
     queryKey: ["trace-id-by-index", traceData.trace_id, traceData?.filters],
     queryFn: () => {
-      return axios.get(endpoints.project.getTraceIdByIndex(), {
+      return readQuery(endpoints.project.getTraceIdByIndex(), {
         params: {
           project_version_id: runId,
           trace_id: traceData?.trace_id,
@@ -196,7 +196,7 @@ const TraceDetailDrawerChild = ({
       traceData?.filters,
     ],
     queryFn: () => {
-      return axios.get(endpoints.project.getTraceIdByIndexObserve(observeId), {
+      return readQuery(endpoints.project.getTraceIdByIndexObserve(observeId), {
         params: {
           trace_id: traceData.trace_id,
           // only trace filters can be applied to this
@@ -212,7 +212,7 @@ const TraceDetailDrawerChild = ({
   const { data: previousNextSpanDataPrototype } = useQuery({
     queryKey: ["span-id-by-index", traceData?.span_id, traceData?.filters],
     queryFn: () => {
-      return axios.get(endpoints.project.getTraceIdByIndexSpansAsBase(), {
+      return readQuery(endpoints.project.getTraceIdByIndexSpansAsBase(), {
         params: {
           span_id: traceData?.span_id,
           project_version_id: runId,
@@ -232,7 +232,7 @@ const TraceDetailDrawerChild = ({
       traceData?.filters,
     ],
     queryFn: () => {
-      return axios.get(
+      return readQuery(
         endpoints.project.getTraceIdByIndexSpansAsObserve(observeId),
         {
           params: {

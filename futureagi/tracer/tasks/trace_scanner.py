@@ -42,16 +42,14 @@ _SWEEP_COLD_START_SECONDS = 900  # first-sweep window when last_swept_at is NULL
 _SWEEP_BATCH_SIZE = 15  # keep each scan task under its time_limit (cf. _trigger_trace_scanner)
 _SWEEP_MAX_LAG_SECONDS = 86400  # cap how far the watermark lags behind a stuck trace (24h)
 
-# Per-query ClickHouse caps for the scanner's spans reads — same box-safe
-# starting values as the eval engine's guardrails. A heavy scan read fails at
-# the query level (a retryable code-241) instead of exhausting server memory and
-# taking the shared CH box down with it; big sorts spill to disk rather than OOM.
+# Per-query ClickHouse caps for the scanner's spans reads. Every statement uses
+# the shared 36-GiB / 30-second production read policy; big sorts spill to disk
+# before reaching the memory ceiling.
 # Baked into each reader's client at construction (via the ``ch_query_settings``
 # contextvar), so ``scan_ch_guardrails()`` must wrap the reader-building call.
-# Tune against dev-GCP once prod-scale headroom is known.
 SCAN_CH_GUARDRAILS: dict[str, int] = {
-    "max_memory_usage": 4 * 2**30,  # 4 GiB — hard cap per query
-    "max_execution_time": 120,  # seconds — kill a runaway query
+    "max_memory_usage": 36 * 1024 * 1024 * 1024,
+    "max_execution_time": 30,
     "max_bytes_before_external_sort": 2 * 2**30,  # 2 GiB spill threshold
 }
 

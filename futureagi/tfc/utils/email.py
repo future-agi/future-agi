@@ -1,6 +1,7 @@
 import html as _html
 import re
 
+from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 from django.utils.html import strip_tags
@@ -56,7 +57,10 @@ def email_helper(
             reply_to=False/[] to disable.
         from_email: Optional sender override. Defaults to Future AGI noreply.
     """
-    html_body = render_to_string(template_name, template_data)
+    # Templates build their CTAs as base_url|add:"/dashboard/...", and nothing
+    # supplies base_url on this path, so the links render host-less.
+    context = {"base_url": settings.APP_BASE_URL, **(template_data or {})}
+    html_body = render_to_string(template_name, context)
     text_body = _html_to_text(html_body)
 
     if reply_to is None:

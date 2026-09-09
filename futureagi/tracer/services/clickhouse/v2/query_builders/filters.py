@@ -40,6 +40,9 @@ from tracer.services.clickhouse.query_builders.filters import (
     ClickHouseFilterBuilder,
     _coerce_strict_bool,
 )
+from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
+    _legacy_ascii_lower_bloom_predicate,
+)
 from tracer.services.clickhouse.v2.query_builders import columns as cols
 
 # ─── Simple column-name renames ───────────────────────────────────────────────
@@ -70,31 +73,62 @@ _DICT_RENAME_RE = re.compile(
 )
 
 
+_EVAL_LEGACY_COLUMN_MARKERS = {
+    "raw_eval_logger._peerdb_is_deleted": (
+        "raw_eval_logger.__eval_legacy_cdc_deleted__"
+    ),
+    "raw_eval_logger._peerdb_version": "raw_eval_logger.__eval_legacy_version__",
+    "eval_scan._peerdb_is_deleted": "eval_scan.__eval_legacy_cdc_deleted__",
+    "eval_scan._peerdb_version": "eval_scan.__eval_legacy_version__",
+    "latest_eval._peerdb_is_deleted": "latest_eval.__eval_legacy_cdc_deleted__",
+    "latest_eval._peerdb_version": "latest_eval.__eval_legacy_version__",
+}
+
+# ``model_hub_score`` is not part of the spans migration and retains PeerDB's
+# CDC columns on the CH25 connection. Filter fragments can mix migrated spans
+# with one or more nested Score subqueries, so protect only aliases proven to
+# originate from that physical table while the global span-column rewrite runs.
+_SCORE_LEGACY_ALIAS_RE = re.compile(
+    r"\bmodel_hub_score\s+(?:AS\s+)?(?P<alias>[A-Za-z_][A-Za-z0-9_]*)\b",
+    re.IGNORECASE,
+)
+
+
+def _protect_score_legacy_columns(sql: str) -> tuple[str, tuple[str, ...]]:
+    aliases = tuple(dict.fromkeys(_SCORE_LEGACY_ALIAS_RE.findall(sql)))
+    for alias in aliases:
+        sql = sql.replace(
+            f"{alias}._peerdb_is_deleted",
+            f"{alias}.__score_legacy_cdc_deleted__",
+        ).replace(
+            f"{alias}._peerdb_version",
+            f"{alias}.__score_legacy_version__",
+        )
+    return sql, aliases
+
+
+def _restore_score_legacy_columns(sql: str, aliases: tuple[str, ...]) -> str:
+    for alias in aliases:
+        sql = sql.replace(
+            f"{alias}.__score_legacy_cdc_deleted__",
+            f"{alias}._peerdb_is_deleted",
+        ).replace(
+            f"{alias}.__score_legacy_version__",
+            f"{alias}._peerdb_version",
+        )
+    return sql
+
+
 # ─── JSON-overflow access rewrites ────────────────────────────────────────────
-# v1 emits `JSONExtractType(span_attributes_raw, 'path.with.dots')`; v2 uses
-# CH 25.x typed JSON path access `attributes_extra.path.with.dots.:Type`.
-# Same translation applies to `metadata_map` (v1 Map) → `metadata` (v2 typed JSON).
+# Schema 013 stores attributes_extra as String JSON. Preserve JSONExtract*/
+# JSONHas and replace only the legacy first argument, including variadic paths.
+_ATTRIBUTES_EXTRA_JSON_FUNCTION_PATTERN = re.compile(
+    r"\b(?P<function>JSONExtract(?:String|Float|U?Int|Bool|ArrayRaw|Raw)|JSONHas|JSONType)"
+    r"(?P<open>\s*\(\s*)span_attributes_raw(?P<comma>\s*,)"
+)
+
+# Resource attributes and metadata remain typed JSON.
 _JSON_EXTRACT_PATTERNS: list[tuple[re.Pattern, str, str]] = [
-    (
-        re.compile(r"JSONExtractString\(\s*span_attributes_raw\s*,\s*'([^']+)'\s*\)"),
-        cols.ATTRIBUTES_EXTRA,
-        "String",
-    ),
-    (
-        re.compile(r"JSONExtractFloat\(\s*span_attributes_raw\s*,\s*'([^']+)'\s*\)"),
-        cols.ATTRIBUTES_EXTRA,
-        "Float64",
-    ),
-    (
-        re.compile(r"JSONExtractInt\(\s*span_attributes_raw\s*,\s*'([^']+)'\s*\)"),
-        cols.ATTRIBUTES_EXTRA,
-        "Int64",
-    ),
-    (
-        re.compile(r"JSONExtractBool\(\s*span_attributes_raw\s*,\s*'([^']+)'\s*\)"),
-        cols.ATTRIBUTES_EXTRA,
-        "Bool",
-    ),
     (
         re.compile(
             r"JSONExtractString\(\s*resource_attributes_raw\s*,\s*'([^']+)'\s*\)"
@@ -111,26 +145,39 @@ _JSON_EXTRACT_PATTERNS: list[tuple[re.Pattern, str, str]] = [
 
 # `JSONHas(span_attributes_raw, 'path')` → `(attributes_extra.path.:String IS NOT NULL)`
 _JSON_HAS_PATTERN = re.compile(
-    r"JSONHas\(\s*(span_attributes_raw|resource_attributes_raw|metadata_map)\s*,\s*'([^']+)'\s*\)"
+    r"JSONHas\(\s*(resource_attributes_raw|metadata_map)\s*,\s*'([^']+)'\s*\)"
 )
 _JSON_HAS_TARGET = {
-    "span_attributes_raw": (cols.ATTRIBUTES_EXTRA, "String"),
     "resource_attributes_raw": (cols.RESOURCE_ATTRS, "String"),
     "metadata_map": (cols.METADATA_JSON, "String"),
 }
 
-# Map from legacy bare JSON column → v2 typed-JSON column. Used by the bare-
-# column rewriters below. These columns CAN'T just be renamed (their TYPES
-# differ — v1 is String, v2 is typed JSON), so:
-#   • In SELECT lists: wrap with toJSONString(v2_col) AS legacy_col so the
-#     callers' Python code can still do row["legacy_col"] and get a JSON string.
-#   • In WHERE emptiness checks: rewrite to length-based predicates on the
-#     toJSONString form (semantically equivalent for "has any keys").
+# Map from legacy bare JSON columns to v2 columns. attributes_extra is already
+# String JSON; resource_attrs and metadata remain typed JSON and are stringified
+# only when callers require the legacy textual row shape.
 _BARE_JSON_REWRITES = {
     "span_attributes_raw": cols.ATTRIBUTES_EXTRA,
     "metadata_map": cols.METADATA_JSON,
     "resource_attributes_raw": cols.RESOURCE_ATTRS,
 }
+_STRING_JSON_LEGACY_COLUMNS = frozenset({"span_attributes_raw"})
+
+# Latest-state content hydration wraps the legacy JSON string in a one-element
+# tuple so nullable values survive ``argMax``.  Treat that aggregate as one SQL
+# expression before the generic bare-column pass; otherwise the latter would
+# inject ``AS span_attributes_raw`` *inside* ``tuple(...)`` and emit invalid
+# CH25 SQL (``tuple(attributes_extra AS span_attributes_raw)``).
+_ARGMAX_TUPLE_SPAN_ATTRIBUTES_PATTERN = re.compile(
+    r"argMax\(\s*tuple\(\s*span_attributes_raw\s*\)\s*,\s*"
+    r"(?P<version>_peerdb_version)\s*\)\.1"
+)
+
+
+def _json_text_expression(legacy_col: str, v2_col: str) -> str:
+    if legacy_col in _STRING_JSON_LEGACY_COLUMNS:
+        return v2_col
+    return f"toJSONString({v2_col})"
+
 
 # WHERE emptiness checks v1 emits: `<legacy_col> != '{}'`, `!= ''`, `= '{}'`, `= ''`.
 # Pattern allows single or doubled `{}` (the `{{}}` form appears when the SQL
@@ -161,29 +208,34 @@ _SPAN_ATTR_TYPE_META_V2: dict[str, tuple[str, Callable[[Any], Any]]] = {
 
 
 _V2_REQUIRED_SETTINGS = (
-    # CRITICAL for trillion-row scale: FINAL on ReplacingMergeTree bypasses
-    # skip indexes by default. Without this, every dashboard query that uses
-    # FINAL (almost all of them) full-scans the parts. Measured 47× slowdown
-    # locally without this setting. See DECISIONS #026 in
-    # internal-docs/clickhouse-analytics/migration-to-ch25/.
-    "use_skip_indexes_if_final = 1",
+    # Correctness boundary for ReplacingMergeTree reads.  A skip index on a
+    # column outside the sorting key may hide the newest physical version from
+    # FINAL, allowing an older version to survive the merge.  List, graph, and
+    # eval-filter builders accept arbitrary mutable Map/JSON/custom-attribute
+    # predicates (and can include FINAL reads of dimension/score tables), so a
+    # blanket opt-in is not sound.  Pin the safe ClickHouse default explicitly;
+    # this also makes ordinary application reads match the server-enforced
+    # read-only A/B profile, which locks this setting to zero.
+    #
+    # Narrow point reads over stable identity keys opt in separately in
+    # ``v2.span_reader._FINAL_SKIP_INDEX_SETTINGS``.  Those queries deliberately
+    # omit mutable ``is_deleted``/attribute predicates, preserving their bloom-
+    # index speedup without weakening the general query-builder contract.
+    "use_skip_indexes_if_final = 0",
     # Encourage projection auto-routing for dashboard aggregates. Falls
     # through to base-table read if no projection matches — zero risk.
     "optimize_use_projections = 1",
-    # Streaming aggregation order: when ORDER BY matches the table's ORDER
-    # BY prefix, CH can stream-aggregate without sorting. Big win on time-
-    # bucketed dashboard queries.
-    "optimize_aggregation_in_order = 1",
 )
 
 
-def _append_v2_settings(sql: str) -> str:
+def _append_v2_settings(sql: str, *, aggregation_in_order: bool = True) -> str:
     """Append the v2-required settings to a SQL string.
 
     Idempotent: if the SQL already ends with a SETTINGS clause, merge the
     v2 settings into it (don't double-apply). If not, append a fresh one.
 
     Handles trailing FORMAT clause: SETTINGS must come BEFORE FORMAT.
+    Ordered aggregation remains the default; individual helpers may opt out.
     """
     sql_stripped = sql.rstrip().rstrip(";").rstrip()
     # Check for an existing SETTINGS clause (case-insensitive, at end before
@@ -199,12 +251,16 @@ def _append_v2_settings(sql: str) -> str:
     else:
         format_clause = ""
 
-    settings_clause = "SETTINGS " + ", ".join(_V2_REQUIRED_SETTINGS)
+    required_settings = (
+        *_V2_REQUIRED_SETTINGS,
+        f"optimize_aggregation_in_order = {int(aggregation_in_order)}",
+    )
+    settings_clause = "SETTINGS " + ", ".join(required_settings)
     existing = _re.search(r"\s+SETTINGS\s+", sql_stripped, _re.IGNORECASE)
     if existing:
         # Merge — append our settings to the existing clause (later wins on
         # duplicate keys, which is what we want).
-        sql_stripped = sql_stripped + ", " + ", ".join(_V2_REQUIRED_SETTINGS)
+        sql_stripped = sql_stripped + ", " + ", ".join(required_settings)
     else:
         sql_stripped = sql_stripped + "\n" + settings_clause
 
@@ -218,19 +274,46 @@ def rewrite_v1_sql_to_v2(sql: str) -> str:
     the full filter compiler.
 
     Order matters:
-      1. JSON path access — JSONExtract*(legacy_col, ...) → typed JSON path.
-         Consumes legacy_col occurrences that are inside function calls.
-      2. JSON has — JSONHas(legacy_col, key) → (typed JSON path IS NOT NULL).
+      1. String JSON access keeps JSONExtract*/JSONHas and retargets its first
+         argument to attributes_extra.
+      2. Typed resource/metadata JSON access becomes typed path syntax.
       3. WHERE emptiness predicates — `WHERE legacy_col != '{}'` →
-         length-based check on toJSONString(v2_col).
+         length-based check on the JSON string representation.
       4. Bare SELECT-list refs — `SELECT … legacy_col …` →
-         `SELECT … toJSONString(v2_col) AS legacy_col …`. Preserves the
+         `SELECT … <json text> AS legacy_col …`. Preserves the
          downstream Python `row["legacy_col"]` shape (still a JSON string).
       5. Naked simple renames — `_peerdb_is_deleted` → `is_deleted`, etc.
          Word-boundary substitution; runs last.
       6. Append v2-required settings (use_skip_indexes_if_final etc).
     """
-    # 1. JSON path access
+    # A legacy-named eval table can be authoritative while the surrounding
+    # span SQL uses CH25. Preserve eval aliases' version/tombstone columns
+    # through the global span-column rewrite. A v2 eval source never emits
+    # these tokens, so this is a no-op for that table shape.
+    sql, score_legacy_aliases = _protect_score_legacy_columns(sql)
+    for source, marker in _EVAL_LEGACY_COLUMN_MARKERS.items():
+        sql = sql.replace(source, marker)
+
+    # 1. String JSON access. Replace only the first argument so nested paths
+    # and escaped/unicode literals remain unchanged.
+    sql = _ATTRIBUTES_EXTRA_JSON_FUNCTION_PATTERN.sub(
+        lambda match: (
+            f"{match.group('function')}{match.group('open')}"
+            f"{cols.ATTRIBUTES_EXTRA}{match.group('comma')}"
+        ),
+        sql,
+    )
+
+    # 1b. Aggregate-level JSON projection. This must precede the bare-column
+    # alias rewrite; the version token is intentionally left for step 5.
+    sql = _ARGMAX_TUPLE_SPAN_ATTRIBUTES_PATTERN.sub(
+        lambda match: (
+            f"argMax(tuple({cols.ATTRIBUTES_EXTRA}), {match.group('version')}).1"
+        ),
+        sql,
+    )
+
+    # 2. Typed resource/metadata JSON path access.
     for pat, target_col, ch_type in _JSON_EXTRACT_PATTERNS:
         sql = pat.sub(
             lambda m, c=target_col, t=ch_type: cols.json_path(c, m.group(1), t),
@@ -250,7 +333,7 @@ def rewrite_v1_sql_to_v2(sql: str) -> str:
         op = m.group(2)
         literal = m.group(3)
         v2_col = _BARE_JSON_REWRITES[legacy_col]
-        wrapped = f"toJSONString({v2_col})"
+        wrapped = _json_text_expression(legacy_col, v2_col)
         # `'{}'` or `'{{}}'` mean "empty object literal" → 2 chars (or 4 if
         # the double-brace was a Python format-string escape, which CH never
         # sees — by the time SQL reaches us, the braces are concrete).
@@ -268,12 +351,11 @@ def rewrite_v1_sql_to_v2(sql: str) -> str:
 
     sql = _WHERE_EMPTY_PATTERN.sub(_empty_repl, sql)
 
-    # 4. Bare SELECT-list refs — wrap with toJSONString() AS legacy_col so the
-    # caller's row["legacy_col"] still works.
+    # 4. Bare SELECT-list refs preserve the caller's JSON-string row shape.
     def _bare_repl(m):
         legacy_col = m.group(1)
         v2_col = _BARE_JSON_REWRITES[legacy_col]
-        return f"toJSONString({v2_col}) AS {legacy_col}"
+        return f"{_json_text_expression(legacy_col, v2_col)} AS {legacy_col}"
 
     sql = _BARE_REF_PATTERN.sub(_bare_repl, sql)
 
@@ -282,6 +364,9 @@ def rewrite_v1_sql_to_v2(sql: str) -> str:
     sql = _COL_RENAME_RE.sub(lambda m: _COL_RENAMES[m.group(1)], sql)
     # 5b. Legacy CDC dictionary names → v2 CH-native dictionary names.
     sql = _DICT_RENAME_RE.sub(lambda m: _DICT_RENAMES[m.group(1)], sql)
+    for source, marker in _EVAL_LEGACY_COLUMN_MARKERS.items():
+        sql = sql.replace(marker, source)
+    sql = _restore_score_legacy_columns(sql, score_legacy_aliases)
     # NOTE: this function does NOT append the v2 SETTINGS clause. The settings
     # are appended at the BUILDER boundary (v2 `build()`/`build_count_query()` etc)
     # via `_append_v2_settings()` — see ClickHouseFilterBuilderV2.translate.
@@ -315,6 +400,224 @@ class ClickHouseFilterBuilderV2(ClickHouseFilterBuilder):
     _ENDUSER_DIM_ID_COL = "end_user_id"
     _ENDUSER_DIM_NOT_DELETED = "is_deleted = 0"
 
+    _TRACE_TAGS_TABLE = "traces"
+    _TRACE_TAGS_VERSION = "_version"
+    _TRACE_TAGS_DELETED = "is_deleted"
+
+    def _score_resolved_span_columns_sql(self) -> str:
+        return "project_id, id, trace_id, start_time, observation_type, service_name"
+
+    def _score_span_join_conditions_sql(self) -> tuple[str, str]:
+        scored_join, root_join = super()._score_span_join_conditions_sql()
+        if self.resolved_candidate_spans_table is None:
+            return scored_join, root_join
+        # Authorized project membership alone cannot correlate a Score with
+        # its target when multiple projects reuse an external trace/span ID.
+        # Span-backed Scores may omit trace_id (NULL/empty/NIL); a populated
+        # trace_id is authoritative and must not attach to another trace.
+        return (
+            scored_join
+            + " AND scored_sp.project_id = s.tracer_project_id"
+            + " AND (ifNull(toString(s.trace_id), '') IN "
+            "('', '00000000-0000-0000-0000-000000000000')"
+            " OR scored_sp.trace_id = toString(s.trace_id))",
+            root_join + " AND root_sp.project_id = s.tracer_project_id",
+        )
+
+    @staticmethod
+    def _score_physical_span_key_sql(
+        project: str,
+        trace: str,
+        span: str,
+        start: str,
+        observation: str,
+        service: str,
+    ) -> str:
+        """CH25 replacement identity, not the mutable exact start timestamp."""
+        return (
+            f"tuple(toString({project}), toString({trace}), toString({span}), "
+            f"toUnixTimestamp64Micro(toDateTime64(toStartOfHour({start}), 6, 'UTC')), "
+            f"toString({observation}), toString({service}))"
+        )
+
+    def _score_resolved_span_entity_sql(
+        self, score_trace_expr: str, score_span_expr: str
+    ) -> str:
+        # Both arms come from the caller's already-latest, live candidates.
+        # Select every discriminator from the same joined arm. In particular,
+        # a trace-only Score must retain root_sp's service/observation type.
+        def selected(column: str) -> str:
+            return (
+                "if(ifNull(s.observation_span_id, '') != '', "
+                f"scored_sp.{column}, root_sp.{column})"
+            )
+
+        return self._score_physical_span_key_sql(
+            selected("project_id"),
+            score_trace_expr,
+            score_span_expr,
+            selected("start_time"),
+            selected("observation_type"),
+            selected("service_name"),
+        )
+
+    def _score_entity_column(self) -> str:
+        if self.resolved_candidate_spans_table is not None:
+            return self._score_physical_span_key_sql(
+                "project_id",
+                "trace_id",
+                "id",
+                "start_time",
+                "observation_type",
+                "service_name",
+            )
+        # Unresolved candidate probes and trace-mode callers retain their
+        # existing contract; the six-part key requires a resolved v2 relation.
+        return super()._score_entity_column()
+
+    def _score_membership_condition(
+        self, extra_where: str = "", *, predicate: str = "", negate: bool = False
+    ) -> str:
+        if self.resolved_candidate_spans_table is None:
+            return super()._score_membership_condition(
+                extra_where, predicate=predicate, negate=negate
+            )
+
+        # Evaluate on the already-latest physical row, without Score/span joins.
+        # Every Score arm must still be bounded by the finite resolved domain.
+        score_trace = "ifNull(toString(s.trace_id), '')"
+        score_span = "ifNull(toString(s.observation_span_id), '')"
+        missing_trace = f"{score_trace} IN ('', '00000000-0000-0000-0000-000000000000')"
+
+        def score_set(
+            columns: str, arm: str, candidate_columns: str, *, root_only: bool = False
+        ) -> str:
+            # Reuse the candidate table/parameter restriction and project fence;
+            # the resolved relation supplies project/root columns even when the
+            # caller's narrower entity CTE contains only (trace_id, id).
+            candidates = self._scoped_spans_subquery(
+                select_cols=f"tuple(toString(project_id), {candidate_columns})",
+                extra_where="ifNull(parent_span_id, '') = ''" if root_only else "",
+            )
+            score_key = f"tuple(toString(s.tracer_project_id), {columns})"
+            return (
+                f"SELECT {score_key} "
+                "FROM model_hub_score AS s FINAL "
+                f"WHERE {self._score_live_predicate('s')}"
+                f"{self._score_project_filter('s')}{self._score_date_filter('s')} "
+                f"{extra_where}{predicate} AND ({arm}) AND {score_key} IN {candidates}"
+            )
+
+        trace_scores = score_set(
+            score_trace,
+            f"{score_span} = '' AND {score_trace} != ''",
+            "toString(trace_id)",
+            root_only=True,
+        )
+        span_scores = score_set(
+            score_span, f"{score_span} != '' AND {missing_trace}", "toString(id)"
+        )
+        trace_span_scores = score_set(
+            f"{score_trace}, {score_span}",
+            f"{score_span} != '' AND NOT ({missing_trace})",
+            "toString(trace_id), toString(id)",
+        )
+        # Preserve the old positive relation's valid-ID domain *inside* M;
+        # absence is NOT(M), not a new outer-row restriction. Root role belongs
+        # to this physical row, never a sibling service/type with the same ID.
+        membership = (
+            "(ifNull(toString(id), '') != '' AND "
+            "ifNull(toString(trace_id), '') != '' AND ("
+            "(ifNull(parent_span_id, '') = '' AND "
+            f"tuple(toString(project_id), toString(trace_id)) IN ({trace_scores})) "
+            f"OR tuple(toString(project_id), toString(id)) IN ({span_scores}) "
+            "OR tuple(toString(project_id), toString(trace_id), toString(id)) "
+            f"IN ({trace_span_scores})))"
+        )
+        return f"NOT {membership}" if negate else membership
+
+    def _score_label_completeness_condition(
+        self, label_ids: list[str], *, negate: bool = False
+    ) -> str:
+        if self.resolved_candidate_spans_table is None:
+            return super()._score_label_completeness_condition(label_ids, negate=negate)
+        # Preserve uniqExact(label) >= len(configured_labels), including its
+        # fail-closed behavior for an invalid duplicate-label configuration.
+        if len({str(label_id) for label_id in label_ids}) != len(label_ids):
+            return "1 = 1" if negate else "0 = 1"
+        conditions = []
+        for label_id in label_ids:
+            param = self._next_param("lbl")
+            self._params[param] = str(label_id)
+            conditions.append(
+                self._score_membership_condition(
+                    f"AND s.label_id = toUUID(%({param})s)"
+                )
+            )
+        # Different labels may be supplied by different Score arms. Requiring
+        # completeness separately within each arm loses those valid mixtures.
+        complete = "(" + " AND ".join(conditions) + ")"
+        return f"NOT {complete}" if negate else complete
+
+    def _enduser_dimension_id_subquery(self, inner: str) -> str:
+        """Expand a curated user to every old/new ID stored on spans.
+
+        ``end_users`` remains keyed by the deterministic group's survivor old
+        ID while spans can straddle the old-ID/new-ID cutover.  The old shape
+        built a tenant-global window over ``end_user_id_remap`` before applying
+        the user predicate.  On a large remap table that materialized hundreds
+        of MiB even for the one-user CrossProjectUserDetailPage request.
+
+        Resolve the filtered dimension IDs first, discover only the remap
+        groups touched by those IDs, and expand only those groups.  The direct
+        dimension arm preserves net-new users that do not have a remap row.
+        No result is sampled or truncated, and the surrounding membership read
+        keeps its indexed ``end_user_id`` predicate.
+        """
+
+        project_scope = self._project_scope_predicate("eu")
+        return f"""
+            WITH
+            matching_end_user_ids AS (
+                SELECT DISTINCT eu.end_user_id
+                FROM end_users AS eu FINAL
+                WHERE {project_scope}
+                  AND ({inner})
+                  AND eu.is_deleted = 0
+            ),
+            matching_end_user_group_ids AS (
+                SELECT DISTINCT remap_match.new_id
+                FROM end_user_id_remap AS remap_match FINAL
+                WHERE remap_match.old_id IN (
+                    SELECT end_user_id FROM matching_end_user_ids
+                )
+                   OR remap_match.new_id IN (
+                    SELECT end_user_id FROM matching_end_user_ids
+                )
+            ),
+            expanded_matching_end_user_ids AS (
+                SELECT arrayJoin(arrayDistinct(arrayConcat(
+                    groupArray(remap.old_id),
+                    [remap.new_id]
+                ))) AS expanded_end_user_id
+                FROM end_user_id_remap AS remap FINAL
+                WHERE remap.new_id IN (
+                    SELECT new_id FROM matching_end_user_group_ids
+                )
+                GROUP BY remap.new_id
+            )
+            SELECT end_user_id AS expanded_end_user_id
+            FROM matching_end_user_ids
+            UNION DISTINCT
+            SELECT expanded_end_user_id
+            FROM expanded_matching_end_user_ids
+        """
+
+    @staticmethod
+    def _rewrite_filter_fragment(sql: str) -> str:
+        """Rewrite a V2 spans/filter fragment at the schema boundary."""
+        return rewrite_v1_sql_to_v2(sql)
+
     def _span_attr_inner(
         self,
         map_column: str,
@@ -324,7 +627,7 @@ class ClickHouseFilterBuilderV2(ClickHouseFilterBuilder):
         normalized_value: Any,
         case_insensitive: bool = False,
     ) -> str | None:
-        inner = super()._span_attr_inner(
+        predicate = super()._span_attr_inner(
             map_column,
             attribute_key,
             exists_predicate,
@@ -332,38 +635,34 @@ class ClickHouseFilterBuilderV2(ClickHouseFilterBuilder):
             normalized_value,
             case_insensitive,
         )
-        # idx_attrs_str_values is a bloom over arrayMap(x -> lower(x),
-        # mapValues(attrs_string)); the lower()-wrapped equality alone can
-        # never engage it, so equality/IN gain a companion predicate in the
-        # index's exact expression shape. The companion is implied by the
-        # real predicate (a matching row necessarily carries the lowered
-        # value), so result sets are unchanged. Negations must never get
-        # one (it would invert semantics) and substring ops can't use a
-        # plain bloom. lower() is ASCII-only on both sides — the CH lower()
-        # in the index expression and the Python .lower() on the constant
-        # must stay in step or the index silently disengages.
         if (
-            not inner
+            predicate is None
+            or map_column not in {"span_attr_str", cols.ATTRS_STRING}
             or not case_insensitive
-            or filter_op not in ("equals", "in")
-            or map_column not in ("span_attr_str", cols.ATTRS_STRING)
+            or filter_op not in {"equals", "in"}
         ):
-            return inner
-        lowered_values = f"arrayMap(x -> lower(x), mapValues({map_column}))"
-        if filter_op == "equals":
-            param = self._next_param("attrv")
-            self._params[param] = (
-                normalized_value.lower()
-                if isinstance(normalized_value, str)
-                else normalized_value
-            )
-            return f"{inner} AND has({lowered_values}, %({param})s)"
-        bound = []
-        for value in normalized_value:
-            param = self._next_param("attrv")
-            self._params[param] = value.lower() if isinstance(value, str) else value
-            bound.append(f"%({param})s")
-        return f"{inner} AND hasAny({lowered_values}, [{', '.join(bound)}])"
+            return predicate
+
+        raw_values = (
+            tuple(normalized_value)
+            if isinstance(normalized_value, (list, tuple))
+            else (normalized_value,)
+        )
+        normalized_values = tuple(
+            value.lower() if isinstance(value, str) else value for value in raw_values
+        )
+        bloom_predicate = _legacy_ascii_lower_bloom_predicate(
+            normalized_values=normalized_values,
+            params=self._params,
+            index=self._param_counter,
+        )
+        if not bloom_predicate:
+            return predicate
+        # Keep lowerUTF8(keyed-value) as the authoritative public comparison.
+        # The exhaustive lower(mapValues(...)) witness only enables the
+        # expression-identical deployed bloom index; it cannot remove a valid
+        # Unicode match.
+        return f"({predicate}) AND ({bloom_predicate})"
 
     def _span_membership_date_filter(self) -> str:
         # The CH25 spans table is partitioned by toDate(start_time) with
@@ -377,6 +676,16 @@ class ClickHouseFilterBuilderV2(ClickHouseFilterBuilder):
             " AND start_time < %(end_date)s + INTERVAL 1 DAY"
         )
 
+    def _scoped_spans_date_filter(self) -> str:
+        """Use CH25's indexed event time for Score-to-span resolution."""
+
+        if not self.score_date_scope:
+            return ""
+        return (
+            "AND start_time >= %(start_date)s - INTERVAL 1 DAY "
+            "AND start_time < %(end_date)s + INTERVAL 1 DAY"
+        )
+
     def translate(self, filters):  # type: ignore[override]
         # `translate` returns a WHERE fragment that gets stitched into a larger
         # SELECT statement by callers. Do NOT append SETTINGS here — that
@@ -385,7 +694,7 @@ class ClickHouseFilterBuilderV2(ClickHouseFilterBuilder):
         # etc.). Otherwise we'd end up with `WHERE ... SETTINGS ... AND ...`
         # which is a syntax error.
         sql, params = super().translate(filters)
-        return rewrite_v1_sql_to_v2(sql), params
+        return self._rewrite_filter_fragment(sql), params
 
     def translate_sort(self, sort_params, *args, **kwargs):  # type: ignore[override]
         # Forward extra args (e.g. field_map) to the v1 implementation — callers

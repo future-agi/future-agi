@@ -32,7 +32,7 @@ def add_one_day_in_date(date_str):
 
 def sql_query_to_get_count(query):
     clickhouse_client = ClickHouseClientSingleton()
-    raw_data_points = clickhouse_client.execute(query)
+    raw_data_points = clickhouse_client.execute_read(query, max_result_rows=1)
     total_count = int(raw_data_points[0][0])
 
     return total_count

@@ -86,7 +86,7 @@ class CustomEvalTemplateCreateSerializer(serializers.Serializer):
             try:
                 cleaned_name = validate_eval_name(name)
             except ValueError as e:
-                raise serializers.ValidationError(str(e))
+                raise serializers.ValidationError(str(e)) from e
             if name != cleaned_name:
                 data["name"] = cleaned_name
 
@@ -149,7 +149,7 @@ class CustomEvalTemplateCreateSerializer(serializers.Serializer):
         try:
             validate_length_between_config(config)
         except ValueError as e:
-            raise serializers.ValidationError(str(e))
+            raise serializers.ValidationError(str(e)) from e
 
         return data
 
@@ -175,7 +175,7 @@ class UserEvalSerializer(serializers.Serializer):
         try:
             return validate_eval_name(value)
         except ValueError as e:
-            raise serializers.ValidationError(str(e))
+            raise serializers.ValidationError(str(e)) from e
 
     def validate_composite_weight_overrides(self, value):
         if value is None:
@@ -256,6 +256,15 @@ class EvalPlayGroundSerializer(serializers.Serializer):
     trace_id = serializers.UUIDField(required=False, allow_null=True)
     session_id = serializers.UUIDField(required=False, allow_null=True)
     call_id = serializers.UUIDField(required=False, allow_null=True)
+    run_test_id = serializers.UUIDField(required=False, allow_null=True)
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        if attrs.get("call_id") is not None and attrs.get("run_test_id") is None:
+            raise serializers.ValidationError(
+                {"run_test_id": ("run_test_id is required when call_id is provided.")}
+            )
+        return attrs
 
 
 class UpdateEvalTemplateSerializer(serializers.Serializer):
@@ -292,7 +301,9 @@ class UpdateEvalTemplateSerializer(serializers.Serializer):
     eval_type_id = serializers.CharField(
         max_length=100, required=False, allow_blank=True, allow_null=True
     )
-    template_id = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    template_id = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
     error_localizer_enabled = serializers.BooleanField(required=False, allow_null=True)
 
 

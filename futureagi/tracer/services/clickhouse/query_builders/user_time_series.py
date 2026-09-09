@@ -30,6 +30,7 @@ class UserTimeSeriesQueryBuilder(BaseQueryBuilder):
     """
 
     TABLE = "spans"
+    _FILTER_BUILDER_CLS = ClickHouseFilterBuilder
 
     def __init__(
         self,
@@ -49,7 +50,12 @@ class UserTimeSeriesQueryBuilder(BaseQueryBuilder):
         self.params["start_date"] = self.start_date
         self.params["end_date"] = self.end_date
 
-        filter_builder = ClickHouseFilterBuilder(table=self.TABLE)
+        filter_builder = self._FILTER_BUILDER_CLS(
+            table=self.TABLE,
+            project_id=self.project_id,
+            span_date_scope=True,
+            strict_trace_project_correlation=True,
+        )
         extra_where, extra_params = filter_builder.translate(self.filters)
         self.params.update(extra_params)
 

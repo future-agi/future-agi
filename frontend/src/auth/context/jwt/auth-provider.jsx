@@ -296,11 +296,11 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
-  const awsRegister = useCallback(async (payload) => {
+  const marketplaceRegister = useCallback(async (endpoint, payload) => {
     try {
       const data = { ...payload };
 
-      const response = await axios.post(endpoints.auth.awsSignUp, data);
+      const response = await axios.post(endpoint, data);
 
       return response.data; // Return response so calling function can use it
     } catch (error) {
@@ -386,7 +386,7 @@ export function AuthProvider({ children }) {
       logout,
       initialize,
       updateUserData,
-      awsRegister,
+      marketplaceRegister,
     }),
     [
       user,
@@ -396,7 +396,7 @@ export function AuthProvider({ children }) {
       logout,
       initialize,
       updateUserData,
-      awsRegister,
+      marketplaceRegister,
     ],
   );
 

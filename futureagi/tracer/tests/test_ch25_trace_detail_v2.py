@@ -7,24 +7,36 @@ the v1/v2 response-envelope parity that keeps the two paths interchangeable for
 the frontend.
 
 They are pure unit tests — the ClickHouse ``analytics`` client is faked and the
-Postgres managers are patched — so they need no database or CH test stack (the
-PG-enrichment blocks in the handler are fail-open, so any un-patched lookup is
-caught and skipped).
+Postgres managers are patched — so they need no database or CH test stack.
 """
 
 from contextlib import ExitStack
+from datetime import UTC, datetime
+from inspect import unwrap
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 from django.db.models import Q
+from django.test import override_settings
 
+from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
 from tracer.models.trace import Trace
 from tracer.services.clickhouse.query_builders.trace_detail import TraceDetailHandler
 from tracer.services.clickhouse.v2.query_builders.trace_detail import (
+    TraceDetailHandlerV2,
     retrieve_trace_detail_ch,
+)
+from tracer.services.clickhouse.v2.trace_detail_reads import (
+    PhysicalSpanIdentity,
+    TraceDetailNotFound,
+    TraceDetailRead,
+    TraceDetailReadBuilder,
+    TraceDetailReadUnavailable,
+    read_span_detail,
+    read_trace_detail,
 )
 
 try:
@@ -41,6 +53,44 @@ class _FakeResult:
         self.data = data
 
 
+@pytest.mark.unit
+def test_trace_detail_content_does_not_double_encode_attributes_extra():
+    builder = TraceDetailReadBuilder(project_ids=["P1"], trace_id="T1")
+
+    query, _params = builder.build_content_query(
+        [
+            PhysicalSpanIdentity(
+                project_id="P1",
+                trace_id="T1",
+                span_id="S1",
+                start_time=datetime(2026, 1, 1, tzinfo=UTC),
+            )
+        ]
+    )
+
+    assert "latest_attributes_extra AS span_attributes" in query
+    assert "toJSONString(latest_attributes_extra)" not in query
+    assert "toJSONString(latest_metadata) AS metadata_json" in query
+
+
+@pytest.mark.unit
+@override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger")
+def test_trace_detail_eval_query_uses_authoritative_legacy_named_table():
+    builder = TraceDetailReadBuilder(project_ids=["P1"], trace_id="T1")
+
+    query, _params = builder.build_eval_query(
+        project_id="P1",
+        span_ids=["S1"],
+        eval_config_ids=["11111111-1111-4111-8111-111111111111"],
+    )
+
+    assert "FROM tracer_eval_logger" in query
+    assert "FROM tracer_eval_logger_v2" not in query
+    assert "argMax(status, _peerdb_version)" in query
+    assert "argMax(tuple(skipped_reason), _peerdb_version)" in query
+    assert "argMax(_peerdb_is_deleted, _peerdb_version)" in query
+
+
 class _FakeAnalytics:
     """Stands in for AnalyticsQueryService; routes by the SQL it is handed."""
 
@@ -49,16 +99,54 @@ class _FakeAnalytics:
         self.span_rows = span_rows or []
         self.eval_rows = eval_rows or []
         self.queries = []
+        self.query_calls = []
 
     def execute_ch_query(self, query, params=None, timeout_ms=None, **_):
         self.queries.append(query)
-        if "AS project_id FROM spans" in query and "LIMIT 1" in query:
-            return _FakeResult(list(self.project_rows))
-        if "ORDER BY start_time" in query:
+        self.query_calls.append((query, params or {}))
+        if "latest_trace_evals" in query:
+            allowed = {
+                str(value) for value in (params or {}).get("detail_eval_config_ids", ())
+            }
+            return _FakeResult(
+                [
+                    row
+                    for row in self.eval_rows
+                    if str(row.get("eval_config_id") or "") in allowed
+                ]
+            )
+        if "AS latest_is_deleted" in query and "AS span_id" in query:
+            return _FakeResult(
+                [
+                    {
+                        "project_id": self.project_rows[0]["project_id"],
+                        "trace_id": row["trace_id"],
+                        "span_id": row["id"],
+                        "start_time": row["start_time"],
+                        "latest_is_deleted": 0,
+                    }
+                    for row in self.span_rows
+                ]
+                if self.project_rows
+                else []
+            )
+        if "latest_physical_spans" in query:
             return _FakeResult(list(self.span_rows))
-        if "FINAL" in query:
-            return _FakeResult(list(self.eval_rows))
         return _FakeResult([])
+
+
+class _SequenceAnalytics:
+    """Return explicit per-query rows so the span-anchor phases stay visible."""
+
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.query_calls = []
+
+    def execute_ch_query(self, query, params=None, timeout_ms=None, **kwargs):
+        self.query_calls.append((query, params or {}, timeout_ms, kwargs))
+        if not self.responses:
+            raise AssertionError("unexpected ClickHouse query")
+        return _FakeResult(list(self.responses.pop(0)))
 
 
 def _root_span_row(**overrides):
@@ -68,8 +156,8 @@ def _root_span_row(**overrides):
         "parent_span_id": None,
         "name": "root-span",
         "observation_type": "CHAIN",
-        "start_time": "2026-01-01T00:00:00Z",
-        "end_time": "2026-01-01T00:00:01Z",
+        "start_time": datetime(2026, 1, 1, tzinfo=UTC),
+        "end_time": datetime(2026, 1, 1, 0, 0, 1, tzinfo=UTC),
         "input": '{"q": "hi"}',
         "output": '{"a": "yo"}',
         "model": "gpt-4",
@@ -97,7 +185,14 @@ def _root_span_row(**overrides):
     return row
 
 
-def _patch_v2_pg(stack, *, project_accessible, pg_trace=None):
+def _patch_v2_pg(
+    stack,
+    *,
+    project_accessible,
+    pg_trace=None,
+    eval_configs=(),
+    eval_config_error=None,
+):
     """Patch the Postgres surfaces the v2 handler touches and return nothing.
 
     - Project tenant gate -> ``project_accessible``
@@ -106,12 +201,23 @@ def _patch_v2_pg(stack, *, project_accessible, pg_trace=None):
       managers (Score / ObservationSpan) -> empty, so no DB is touched.
     """
     proj_mgr = MagicMock()
-    proj_mgr.filter.return_value.exists.return_value = project_accessible
+    project_qs = proj_mgr.filter.return_value
+    project_qs.values_list.return_value.__getitem__.return_value = (
+        ["P1"] if project_accessible else []
+    )
     stack.enter_context(patch.object(Project, "no_workspace_objects", proj_mgr))
 
     trace_mgr = MagicMock()
     trace_mgr.filter.return_value.first.return_value = pg_trace
     stack.enter_context(patch.object(Trace, "objects", trace_mgr))
+
+    config_mgr = MagicMock()
+    if eval_config_error is not None:
+        config_mgr.filter.side_effect = eval_config_error
+    else:
+        config_qs = config_mgr.filter.return_value.select_related.return_value
+        config_qs.__getitem__.return_value = list(eval_configs)
+    stack.enter_context(patch.object(CustomEvalConfig, "objects", config_mgr))
 
     obs_mgr = MagicMock()
     obs_mgr.filter.return_value.exclude.return_value.values_list.return_value = []
@@ -130,14 +236,62 @@ def _patch_v2_pg(stack, *, project_accessible, pg_trace=None):
     )
     stack.enter_context(
         patch(
-            "tracer.services.clickhouse.eval_logger_table.eval_logger_source",
-            lambda: ("tracer_eval_logger_v2", "is_deleted = 0"),
+            "tracer.services.clickhouse.v2.trace_detail_reads.eval_logger_source",
+            lambda *args, **kwargs: ("tracer_eval_logger_v2", "is_deleted = 0"),
         )
     )
+    return config_mgr
 
 
 # --------------------------------------------------------------------------- #
-# 1) ClickHouse tenant gate
+# 1) Trace-detail dispatch uses the direct-write CH25 client
+# --------------------------------------------------------------------------- #
+@override_settings(
+    CLICKHOUSE={
+        "CH_HOST": "legacy-clickhouse.invalid",
+        "CH_PORT": 9000,
+        "CH_USERNAME": "default",
+        "CH_PASSWORD": "",
+        "CH_DATABASE": "legacy",
+    },
+    CLICKHOUSE_V2={
+        "CH25_HOST": "direct-write-clickhouse.invalid",
+        "CH25_TCP_PORT": 19000,
+        "CH25_USER": "default",
+        "CH25_PASSWORD": "",
+        "CH25_DATABASE": "direct_write",
+        "QUERY_TYPES_V2_ONLY": "TRACE_DETAIL",
+    },
+)
+def test_trace_view_retrieve_routes_v2_detail_to_split_ch25_host():
+    from tracer.services.clickhouse.v2.query_service import (
+        V2AnalyticsQueryService,
+        reset_v2_query_client,
+    )
+    from tracer.views.trace import TraceView
+
+    captured = {}
+
+    def _fetch(handler):
+        captured["analytics"] = handler.analytics
+        return {"trace": {"id": "T1"}}
+
+    reset_v2_query_client()
+    try:
+        with patch.object(TraceDetailHandlerV2, "fetch", _fetch):
+            response = TraceView().retrieve(MagicMock(), pk="T1")
+        analytics = captured["analytics"]
+        assert response.status_code == 200
+        assert isinstance(analytics, V2AnalyticsQueryService)
+        assert analytics.ch_client.host == "direct-write-clickhouse.invalid"
+        assert analytics.ch_client.database == "direct_write"
+        assert analytics.ch_client.host != "legacy-clickhouse.invalid"
+    finally:
+        reset_v2_query_client()
+
+
+# --------------------------------------------------------------------------- #
+# 2) ClickHouse tenant gate
 # --------------------------------------------------------------------------- #
 class TestV2TenantGate:
     """The v2 handler denies cross-tenant / unknown traces by raising
@@ -158,6 +312,329 @@ class TestV2TenantGate:
             _patch_v2_pg(stack, project_accessible=True)
             with pytest.raises(Trace.DoesNotExist):
                 retrieve_trace_detail_ch(MagicMock(), MagicMock(), "T1", analytics)
+
+    def test_span_sentinel_fails_closed_before_content_hydration(self):
+        started = datetime(2026, 1, 1, tzinfo=UTC)
+        span_rows = [
+            _root_span_row(id=f"S{index}", start_time=started) for index in range(1001)
+        ]
+        analytics = _FakeAnalytics(
+            project_rows=[{"project_id": "P1"}], span_rows=span_rows
+        )
+
+        with pytest.raises(TraceDetailReadUnavailable, match="span_limit_exceeded"):
+            read_trace_detail(
+                analytics=analytics,
+                project_ids=["P1"],
+                trace_id="T1",
+                deadline_ms=1000,
+            )
+
+        assert len(analytics.queries) == 1
+        assert "LIMIT 1001" in analytics.queries[0]
+
+    def test_cross_project_trace_collision_fails_before_content_hydration(self):
+        started = datetime(2026, 1, 1, tzinfo=UTC)
+        identity_rows = [
+            {
+                "project_id": project_id,
+                "trace_id": "T1",
+                "span_id": f"root-{project_id}",
+                "start_time": started,
+                "latest_is_deleted": 0,
+            }
+            for project_id in ("P1", "P2")
+        ]
+        analytics = _SequenceAnalytics([identity_rows])
+
+        with pytest.raises(
+            TraceDetailReadUnavailable, match="ambiguous_trace_identity"
+        ):
+            read_trace_detail(
+                analytics=analytics,
+                project_ids=["P1", "P2"],
+                trace_id="T1",
+                deadline_ms=1000,
+            )
+
+        assert len(analytics.query_calls) == 1
+
+    def test_trace_latest_tombstone_is_not_resurrected(self):
+        analytics = _SequenceAnalytics(
+            [
+                [
+                    {
+                        "project_id": "P1",
+                        "trace_id": "T1",
+                        "span_id": "S1",
+                        "start_time": datetime(2026, 1, 1, tzinfo=UTC),
+                        "latest_is_deleted": 1,
+                    }
+                ]
+            ]
+        )
+
+        with pytest.raises(TraceDetailNotFound):
+            read_trace_detail(
+                analytics=analytics,
+                project_ids=["P1"],
+                trace_id="T1",
+                deadline_ms=1000,
+            )
+
+        assert len(analytics.query_calls) == 1
+        assert "argMax(is_deleted, _version)" in analytics.query_calls[0][0]
+
+    def test_all_trace_detail_queries_share_one_wall_deadline(self):
+        started = datetime(2026, 1, 1, tzinfo=UTC)
+        identity = {
+            "project_id": "P1",
+            "trace_id": "T1",
+            "span_id": "S1",
+            "start_time": started,
+            "latest_is_deleted": 0,
+        }
+        analytics = _SequenceAnalytics(
+            [
+                [identity],
+                [_root_span_row(project_id="P1", start_time=started)],
+                [],
+            ]
+        )
+        ticks = iter((0.0, 0.1, 0.5, 0.9, 1.0))
+
+        with patch(
+            "tracer.services.clickhouse.v2.trace_detail_reads.monotonic",
+            side_effect=lambda: next(ticks),
+        ):
+            detail = read_trace_detail(
+                analytics=analytics,
+                project_ids=["P1"],
+                trace_id="T1",
+                eval_config_ids_resolver=lambda _project_id: [],
+                deadline_ms=1000,
+            )
+
+        timeouts = [call[2] for call in analytics.query_calls]
+        assert detail.query_count == 3
+        assert timeouts == sorted(timeouts, reverse=True)
+        assert 890 <= timeouts[0] <= 900
+        assert 490 <= timeouts[1] <= 500
+        assert 90 <= timeouts[2] <= 100
+
+
+class TestDirectSpanDetailAnchor:
+    @staticmethod
+    def _anchor_row(*, project_id="P1", deleted=0):
+        return {
+            "project_id": project_id,
+            "trace_id": f"T-{project_id}",
+            "span_id": "S1",
+            "start_time": datetime(2026, 1, 1, tzinfo=UTC),
+            "latest_is_deleted": deleted,
+        }
+
+    def test_latest_tombstone_is_not_resurrected(self):
+        analytics = _SequenceAnalytics([[self._anchor_row(deleted=1)]])
+
+        with pytest.raises(TraceDetailNotFound):
+            read_span_detail(
+                analytics=analytics,
+                project_ids=["P1"],
+                span_id="S1",
+                deadline_ms=1000,
+            )
+
+        assert len(analytics.query_calls) == 1
+        query, params, *_ = analytics.query_calls[0]
+        assert "argMax(is_deleted, _version)" in query
+        assert params["detail_project_ids"] == ("P1",)
+
+    def test_cross_project_live_collision_fails_before_hydration(self):
+        analytics = _SequenceAnalytics(
+            [[self._anchor_row(project_id="P1"), self._anchor_row(project_id="P2")]]
+        )
+
+        with pytest.raises(TraceDetailReadUnavailable, match="ambiguous_span_identity"):
+            read_span_detail(
+                analytics=analytics,
+                project_ids=["P1", "P2"],
+                span_id="S1",
+                deadline_ms=1000,
+            )
+
+        assert len(analytics.query_calls) == 1
+
+    def test_one_live_anchor_replays_only_its_project_and_trace(self):
+        anchor = self._anchor_row(project_id="P1")
+        identity = dict(anchor)
+        content = _root_span_row(project_id="P1", trace_id="T-P1")
+        analytics = _SequenceAnalytics(
+            [
+                [anchor, self._anchor_row(project_id="P2", deleted=1)],
+                [identity],
+                [content],
+                [],
+            ]
+        )
+
+        detail = read_span_detail(
+            analytics=analytics,
+            project_ids=["P1", "P2"],
+            span_id="S1",
+            deadline_ms=1000,
+        )
+
+        assert detail.project_id == "P1"
+        assert [row["id"] for row in detail.spans] == ["S1"]
+        identity_params = analytics.query_calls[1][1]
+        assert identity_params["detail_project_ids"] == ("P1",)
+        assert identity_params["detail_trace_id"] == "T-P1"
+
+    def test_annotation_read_can_be_omitted_for_span_only_response(self):
+        anchor = self._anchor_row(project_id="P1")
+        identity = dict(anchor)
+        content = _root_span_row(project_id="P1", trace_id="T-P1")
+        analytics = _SequenceAnalytics([[anchor], [identity], [content]])
+
+        detail = read_span_detail(
+            analytics=analytics,
+            project_ids=["P1"],
+            span_id="S1",
+            include_annotations=False,
+            deadline_ms=1000,
+        )
+
+        assert detail.annotations == ()
+        assert detail.query_count == 2
+        assert len(analytics.query_calls) == 3  # anchor + identity + content
+        assert all("model_hub_score" not in call[0] for call in analytics.query_calls)
+
+
+@pytest.mark.unit
+def test_span_retrieve_does_not_require_a_postgres_span_row():
+    from tracer.views.observation_span import ObservationSpanView
+
+    row = _root_span_row(project_id="P1")
+    detail = TraceDetailRead(
+        project_id="P1",
+        spans=(row,),
+        eval_config_ids=(),
+        evals=(),
+        annotations=(),
+        query_count=3,
+        elapsed_ms=0.0,
+    )
+    project_manager = MagicMock()
+    project_manager.filter.return_value.values_list.return_value.__getitem__.return_value = [
+        "P1"
+    ]
+    request = SimpleNamespace(
+        organization=SimpleNamespace(id="ORG1"),
+        workspace=None,
+        user=SimpleNamespace(organization=SimpleNamespace(id="ORG1")),
+    )
+
+    with (
+        patch.object(Project, "no_workspace_objects", project_manager),
+        patch("tracer.views.observation_span.V2AnalyticsQueryService"),
+        patch(
+            "tracer.services.clickhouse.v2.trace_detail_reads.read_span_detail",
+            return_value=detail,
+        ) as selector,
+        patch.object(
+            ObservationSpan.objects,
+            "get",
+            side_effect=AssertionError("Postgres span lookup is forbidden"),
+        ),
+    ):
+        response = unwrap(ObservationSpanView.retrieve)(
+            ObservationSpanView(), request, pk="S1"
+        )
+
+    assert response.status_code == 200
+    assert response.data["result"]["observation_span"]["id"] == "S1"
+    assert selector.call_args.kwargs["project_ids"] == ["P1"]
+
+
+@pytest.mark.unit
+def test_span_retrieve_unions_typed_maps_with_nonempty_structured_extra():
+    from tracer.views.observation_span import ObservationSpanView
+
+    row = _root_span_row(project_id="P1")
+    row.update(
+        span_attributes='{"dupe":"from-extra","structured":{"attempt":2}}',
+        attrs_string={"final_status": "Rechazado", "dupe": "from-map"},
+        attrs_number={"score": 12.0},
+        attrs_bool={"approved": 1},
+    )
+    detail = TraceDetailRead(
+        project_id="P1",
+        spans=(row,),
+        eval_config_ids=(),
+        evals=(),
+        annotations=(),
+        query_count=3,
+        elapsed_ms=0.0,
+    )
+    project_manager = MagicMock()
+    project_manager.filter.return_value.values_list.return_value.__getitem__.return_value = [
+        "P1"
+    ]
+    request = SimpleNamespace(
+        organization=SimpleNamespace(id="ORG1"),
+        workspace=None,
+        user=SimpleNamespace(organization=SimpleNamespace(id="ORG1")),
+    )
+
+    with (
+        patch.object(Project, "no_workspace_objects", project_manager),
+        patch("tracer.views.observation_span.V2AnalyticsQueryService"),
+        patch(
+            "tracer.services.clickhouse.v2.trace_detail_reads.read_span_detail",
+            return_value=detail,
+        ),
+    ):
+        response = unwrap(ObservationSpanView.retrieve)(
+            ObservationSpanView(), request, pk="S1"
+        )
+
+    attrs = response.data["result"]["observation_span"]["span_attributes"]
+    assert attrs["structured"] == {"attempt": 2}
+    assert attrs["final_status"] == "Rechazado"
+    assert attrs["score"] == 12.0
+    assert attrs["approved"] is True
+    assert attrs["dupe"] == "from-extra"
+
+
+@pytest.mark.unit
+def test_eval_detail_keeps_organization_gate_without_workspace_context():
+    from tracer.views.observation_span import ObservationSpanView
+
+    organization = SimpleNamespace(id="ORG1")
+    request = SimpleNamespace(
+        query_params={
+            "observation_span_id": "S1",
+            "custom_eval_config_id": "C1",
+        },
+        organization=organization,
+        workspace=None,
+        user=SimpleNamespace(organization=organization),
+    )
+    config_manager = MagicMock()
+    config_manager.filter.return_value.values.return_value.first.return_value = None
+    view = ObservationSpanView()
+    view.request = request
+
+    with patch(
+        "tracer.views.observation_span.CustomEvalConfig.no_workspace_objects",
+        config_manager,
+    ):
+        response = unwrap(ObservationSpanView.get_evaluation_details)(view, request)
+
+    assert response.status_code == 400
+    _, filter_kwargs = config_manager.filter.call_args
+    assert filter_kwargs["project__organization"] is organization
 
 
 # --------------------------------------------------------------------------- #
@@ -221,9 +698,7 @@ class TestV2InputOutputParsing:
         )
         with ExitStack() as stack:
             _patch_v2_pg(stack, project_accessible=True, pg_trace=None)
-            result = retrieve_trace_detail_ch(
-                MagicMock(), MagicMock(), "T1", analytics
-            )
+            result = retrieve_trace_detail_ch(MagicMock(), MagicMock(), "T1", analytics)
         return result
 
     def test_json_input_output_parsed_to_objects(self):
@@ -463,10 +938,9 @@ class TestV2EvalScoreRendering:
 
     @staticmethod
     def _eval_row(**overrides):
-        # empty eval_config_id -> skips the CustomEvalConfig lookup (no DB hit)
         row = {
             "span_id": "S1",
-            "eval_config_id": "",
+            "eval_config_id": "C1",
             "output_float": None,
             "output_bool": None,
             "output_str": None,
@@ -481,8 +955,18 @@ class TestV2EvalScoreRendering:
             span_rows=[_root_span_row()],
             eval_rows=[eval_row],
         )
+        config = SimpleNamespace(
+            id="C1",
+            name="quality",
+            eval_template=None,
+        )
         with ExitStack() as stack:
-            _patch_v2_pg(stack, project_accessible=True, pg_trace=None)
+            _patch_v2_pg(
+                stack,
+                project_accessible=True,
+                pg_trace=None,
+                eval_configs=[config],
+            )
             result = retrieve_trace_detail_ch(MagicMock(), MagicMock(), "T1", analytics)
         return result["observation_spans"][0]["eval_scores"]
 
@@ -499,6 +983,56 @@ class TestV2EvalScoreRendering:
 
     def test_no_score_when_both_null(self):
         assert self._scores_for(self._eval_row())[0]["score"] is None
+
+    def test_project_scopes_configs_and_omits_foreign_collision(self):
+        own_config = SimpleNamespace(
+            id="C1",
+            name="own-quality",
+            eval_template=None,
+        )
+        analytics = _FakeAnalytics(
+            project_rows=[{"project_id": "P1"}],
+            span_rows=[_root_span_row(custom_eval_config_id="C2")],
+            eval_rows=[
+                self._eval_row(eval_config_id="C1", output_float=0.8),
+                self._eval_row(eval_config_id="C2", output_float=0.1),
+            ],
+        )
+        with ExitStack() as stack:
+            config_mgr = _patch_v2_pg(
+                stack,
+                project_accessible=True,
+                pg_trace=None,
+                eval_configs=[own_config],
+            )
+            result = retrieve_trace_detail_ch(MagicMock(), MagicMock(), "T1", analytics)
+
+        span = result["observation_spans"][0]
+        assert [score["eval_config_id"] for score in span["eval_scores"]] == ["C1"]
+        assert span["observation_span"]["custom_eval_config"] is None
+        config_mgr.filter.assert_called_once_with(project_id="P1", deleted=False)
+        eval_query, eval_call = next(
+            (query, params)
+            for query, params in analytics.query_calls
+            if "latest_trace_evals" in query
+        )
+        assert eval_call["detail_eval_config_ids"] == ("C1",)
+        assert "toString(custom_eval_config_id)" in eval_query.split("GROUP BY id")[0]
+
+    def test_no_project_configs_skips_eval_query_and_returns_empty(self):
+        analytics = _FakeAnalytics(
+            project_rows=[{"project_id": "P1"}],
+            span_rows=[_root_span_row(custom_eval_config_id="C2")],
+            eval_rows=[self._eval_row(eval_config_id="C2", output_float=0.1)],
+        )
+        with ExitStack() as stack:
+            _patch_v2_pg(stack, project_accessible=True, pg_trace=None)
+            result = retrieve_trace_detail_ch(MagicMock(), MagicMock(), "T1", analytics)
+
+        span = result["observation_spans"][0]
+        assert span["eval_scores"] == []
+        assert span["observation_span"]["custom_eval_config"] is None
+        assert not any("latest_trace_evals" in query for query in analytics.queries)
 
     def _scores_for_type(self, output_type, eval_row, config=None):
         """Config resolves to an eval of ``output_type`` (via derive_output_type).
@@ -519,15 +1053,12 @@ class TestV2EvalScoreRendering:
                 config=config or {},
             ),
         )
-        cfg_mgr = MagicMock()
-        cfg_mgr.filter.return_value.select_related.return_value = [cfg]
         with ExitStack() as stack:
-            _patch_v2_pg(stack, project_accessible=True, pg_trace=None)
-            stack.enter_context(
-                patch(
-                    "tracer.models.custom_eval_config.CustomEvalConfig.objects",
-                    cfg_mgr,
-                )
+            _patch_v2_pg(
+                stack,
+                project_accessible=True,
+                pg_trace=None,
+                eval_configs=[cfg],
             )
             result = retrieve_trace_detail_ch(MagicMock(), MagicMock(), "T1", analytics)
         return result["observation_spans"][0]["eval_scores"]
@@ -603,17 +1134,16 @@ class TestV2EvalScoreRendering:
 # 5) Enrichment fault logging (loud on genuine faults, silent on dropped table)
 # --------------------------------------------------------------------------- #
 class TestV2EnrichmentFaultLogging:
-    """A genuine PG fault on the Trace lookup surfaces (logged) while the handler
-    degrades to root-span synthesis; the expected dropped-table case stays silent."""
+    """Only the documented dropped-table transition may synthesize metadata."""
 
-    def _run_with_trace_objects(self, trace_objects):
+    def _run_with_trace_objects(self, trace_objects, logger_mock=None):
         import tracer.services.clickhouse.v2.query_builders.trace_detail as td
 
         analytics = _FakeAnalytics(
             project_rows=[{"project_id": "P1"}],
             span_rows=[_root_span_row()],
         )
-        logger_mock = MagicMock()
+        logger_mock = logger_mock or MagicMock()
         with ExitStack() as stack:
             _patch_v2_pg(stack, project_accessible=True, pg_trace=None)
             stack.enter_context(patch.object(Trace, "objects", trace_objects))
@@ -621,12 +1151,28 @@ class TestV2EnrichmentFaultLogging:
             result = retrieve_trace_detail_ch(MagicMock(), MagicMock(), "T1", analytics)
         return result, logger_mock
 
-    def test_genuine_fault_is_logged_and_degrades(self):
+    def test_genuine_fault_is_logged_and_propagates(self):
         objs = MagicMock()
         objs.filter.side_effect = RuntimeError("boom")
-        result, logger_mock = self._run_with_trace_objects(objs)
-        assert result["trace"]["id"] == "T1"  # synthesized from the root span
+        logger_mock = MagicMock()
+        with pytest.raises(RuntimeError, match="boom"):
+            self._run_with_trace_objects(objs, logger_mock)
         assert logger_mock.exception.called
+
+    def test_eval_config_lookup_fault_propagates(self):
+        analytics = _FakeAnalytics(
+            project_rows=[{"project_id": "P1"}],
+            span_rows=[_root_span_row()],
+        )
+        with ExitStack() as stack:
+            _patch_v2_pg(
+                stack,
+                project_accessible=True,
+                pg_trace=None,
+                eval_config_error=RuntimeError("eval config lookup failed"),
+            )
+            with pytest.raises(RuntimeError, match="eval config lookup failed"):
+                retrieve_trace_detail_ch(MagicMock(), MagicMock(), "T1", analytics)
 
     def test_dropped_table_is_silent(self):
         from django.db.utils import ProgrammingError

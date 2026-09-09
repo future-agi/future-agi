@@ -144,6 +144,23 @@ cd future-agi
 Open [http://localhost:3000](http://localhost:3000).
 <sub>For production, use `./deploy/setup.sh` to generate required secrets and pin the image version.</sub>
 
+When upgrading an installation that already contains traces, initialize any
+inactive unified property catalogs explicitly after the new stack is healthy:
+
+```bash
+# macOS / Linux / WSL
+./bin/property-catalog-backfill --execute
+
+# Windows PowerShell
+.\bin\property-catalog-backfill.ps1 -Execute
+```
+
+Ordinary restarts never start a historical scan. The command uses the exact
+image already selected by Docker Compose (it does not pull a branch, source, or
+image), skips already-active workspaces, and resumes through the catalog's
+durable ledger. It is bounded to active workspaces and projects admitted by the
+self-hosted supervisor and to its rolling 366-day source window.
+
 </td>
 </tr>
 </table>

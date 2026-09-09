@@ -2,7 +2,6 @@ import {
   Badge,
   Box,
   Button,
-  CircularProgress,
   Collapse,
   Divider,
   IconButton,
@@ -534,6 +533,7 @@ const EvalsTasksView = ({ observeId = null }) => {
               filters={filters}
               setFilters={setFilters}
               onClose={() => setShowFilter(false)}
+              projectId={observeId}
             />
           </Collapse>
           <EvalsGrid

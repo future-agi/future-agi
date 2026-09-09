@@ -745,7 +745,7 @@ func TestBundledModels_NoNegativePrices(t *testing.T) {
 func TestBundledModels_KnownModelExists(t *testing.T) {
 	// Spot-check that well-known models are present.
 	db := New(BundledModels, nil)
-	known := []string{"gpt-4o", "claude-3-5-sonnet-20241022"}
+	known := []string{"gpt-4o", "claude-sonnet-4-6"}
 	for _, id := range known {
 		if _, ok := db.Get(id); !ok {
 			t.Errorf("expected well-known model %q to exist in BundledModels", id)

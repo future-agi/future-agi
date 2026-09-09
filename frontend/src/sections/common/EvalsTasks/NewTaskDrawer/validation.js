@@ -1,16 +1,10 @@
 import { getNumberValidation } from "src/utils/validation";
 import { z } from "zod";
 import {
-  ANNOTATION_COLUMN_IDS,
-  FIELD_CATEGORY_TO_COL_TYPE,
-  RANGE_OPS,
-  LIST_OPS,
-  NO_VALUE_OPS,
-} from "src/sections/common/EvalsTasks/common";
-import {
   presetToRange,
   presetToToken,
 } from "src/sections/projects/timeWindowPresets";
+import { serializeTaskFilterRowsForApi } from "src/sections/common/EvalsTasks/task_filter_serialization";
 
 const TASK_FILTER_PROPERTY_TO_API = {
   span_kind: "observation_type",
@@ -31,73 +25,35 @@ const TOP_LEVEL_SIBLING_KEY_BY_PROPERTY = {
   trace_id: "trace_id",
 };
 
+// Source-less positive ID links retain their legacy sibling payload.
+// Explicit identities and exclusions need canonical rows to retain semantics.
+const isCanonicalIdFilter = (filter) =>
+  ["trace_id", "session_id"].includes(filter?.property) &&
+  Boolean(
+    filter.apiColType ||
+      filter.filterConfig?.colType ||
+      filter.fieldCategory ||
+      filter.registryId ||
+      filter.property_id ||
+      !["equals", "in"].includes(filter.filterConfig?.filterOp || "equals"),
+  );
+
 // One form row → one wire entry. Cross-row composition is the BE's job —
 // merging same-column rows would collapse "not_contains A AND not_contains B"
 // into "in [A, B]" and invert intent. OR is expressed within a single multi-
 // value `in`/`not_in` row, not across rows.
 export const extractAttributeFilters = (filters) => {
-  return (
-    (filters || [])
-      .filter((f) => {
-        if (!f) return false;
-        // Sibling keys are emitted separately by getNewTaskFilters.
-        if (f.property in TOP_LEVEL_SIBLING_KEY_BY_PROPERTY) return false;
-        // Legacy rows with neither apiColType nor propertyId are BE no-ops.
-        if (!f.propertyId && f.property !== "attributes") return false;
-        return true;
-      })
-      .map((f) => {
-        const columnId = f.propertyId || f.property;
-        const op = f?.filterConfig?.filterOp || "equals";
-        const filterType = f?.filterConfig?.filterType || "text";
-        const v = f?.filterConfig?.filterValue;
+  const attributeRows = (filters || []).filter((f) => {
+    if (!f) return false;
+    // Sibling keys are emitted separately by getNewTaskFilters.
+    if (isCanonicalIdFilter(f)) return true;
+    if (f.property in TOP_LEVEL_SIBLING_KEY_BY_PROPERTY) return false;
+    // Legacy rows with neither apiColType nor propertyId are BE no-ops.
+    if (!f.propertyId && f.property !== "attributes") return false;
+    return true;
+  });
 
-        // Resolution: pinned ANNOTATION ids → row.apiColType (canonical) →
-        // fieldCategory fallback → SPAN_ATTRIBUTE default.
-        let apiColType;
-        if (ANNOTATION_COLUMN_IDS.has(columnId)) {
-          apiColType = "ANNOTATION";
-        } else if (f?.apiColType) {
-          apiColType = f.apiColType;
-        } else if (FIELD_CATEGORY_TO_COL_TYPE[f?.fieldCategory]) {
-          apiColType = FIELD_CATEGORY_TO_COL_TYPE[f.fieldCategory];
-        } else {
-          apiColType = "SPAN_ATTRIBUTE";
-        }
-
-        let filterValue;
-        if (NO_VALUE_OPS.has(op)) {
-          filterValue = "";
-        } else if (RANGE_OPS.has(op)) {
-          if (Array.isArray(v) && v.length > 0) filterValue = v;
-        } else if (LIST_OPS.has(op)) {
-          const arr = Array.isArray(v)
-            ? v
-            : v !== undefined && v !== null && v !== ""
-              ? [v]
-              : [];
-          if (arr.length > 0) filterValue = arr;
-        } else if (v !== undefined && v !== null && v !== "") {
-          filterValue = v;
-        }
-
-        return {
-          column_id: columnId,
-          filter_config: {
-            filter_type: filterType,
-            filter_op: op,
-            col_type: apiColType,
-            ...(filterValue !== undefined && { filter_value: filterValue }),
-          },
-        };
-      })
-      // Drop value-less in/not_in (legacy/hand-edited)
-      .filter(
-        (entry) =>
-          !LIST_OPS.has(entry.filter_config.filter_op) ||
-          entry.filter_config.filter_value !== undefined,
-      )
-  );
+  return serializeTaskFilterRowsForApi(attributeRows);
 };
 
 // Sibling-key extraction: rows whose property maps to a top-level BE key
@@ -105,8 +61,19 @@ export const extractAttributeFilters = (filters) => {
 const extractSiblingFilters = (filters) => {
   const out = {};
   (filters || []).forEach((f) => {
-    const beKey = TOP_LEVEL_SIBLING_KEY_BY_PROPERTY[f?.property];
-    if (!beKey) return;
+    // Preserve old saved span links without retyping canonical or raw rows.
+    const beKey =
+      TOP_LEVEL_SIBLING_KEY_BY_PROPERTY[f?.property] ||
+      (f?.property === "span_id" &&
+      !f.propertyId &&
+      !f.apiColType &&
+      !f.filterConfig?.colType &&
+      !f.fieldCategory &&
+      !f.registryId &&
+      !f.property_id
+        ? "span_id"
+        : undefined);
+    if (!beKey || isCanonicalIdFilter(f)) return;
     const val = f?.filterConfig?.filterValue;
     const vals = Array.isArray(val)
       ? val
@@ -184,6 +151,8 @@ export const NewTaskValidationSchema = () =>
           z.object({
             id: z.string().optional(),
             propertyId: z.string().optional(),
+            registryId: z.string().optional(),
+            property_id: z.string().optional(),
             property: z.string().optional(),
             fieldCategory: z.string().optional(),
             fieldLabel: z.string().optional(),
@@ -194,6 +163,9 @@ export const NewTaskValidationSchema = () =>
                 filterOp: z.any().optional(),
                 filterValue: z.any().optional(),
                 colType: z.string().optional(),
+                attributeValueTypes: z
+                  .array(z.enum(["string", "number", "boolean"]).nullable())
+                  .optional(),
               })
               .optional(),
           }),

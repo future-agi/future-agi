@@ -87,6 +87,36 @@ export const buildUpdateSavedViewPayload = (data) => {
   return payload;
 };
 
+// Names the backend would reject for this user (uniqueness is per created_by,
+// case-sensitive). Unknown user id → block nothing and let the server arbitrate,
+// rather than over-blocking other users' shared names during auth resolution.
+export const getOwnViewNames = (views, currentUserId) =>
+  (views ?? [])
+    .filter(
+      (v) => currentUserId && String(v.created_by?.id) === String(currentUserId),
+    )
+    .map((v) => v.name);
+
+export const DEFAULT_VIEW_NAME = "Default View";
+
+// UI tab strings ("trace"/"spans") → backend tab_type ("traces"/"spans").
+export const tabTypeForSelectedTab = (selectedTab) =>
+  selectedTab === "spans" ? "spans" : "traces";
+
+// The current user's own default view for a tab_type, or null. Scoped to
+// created_by so "Set default" never adopts (and overwrites) a teammate's shared
+// view, and to tab_type so a spans click can't PATCH the traces default with
+// spans-shaped config. The name stays "Default View" across tab_types (matching
+// existing data) — per-tab defaults would need an is_default flag + migration.
+export const findOwnDefaultView = (views, { tabType, userId }) =>
+  (views ?? []).find(
+    (v) =>
+      v?.name === DEFAULT_VIEW_NAME &&
+      v?.tab_type === tabType &&
+      userId != null &&
+      String(v?.created_by?.id) === String(userId),
+  ) ?? null;
+
 const appendCustomViewToCache = (currentResult, newView) => {
   if (!currentResult) return currentResult;
   const currentList = currentResult.custom_views ?? [];

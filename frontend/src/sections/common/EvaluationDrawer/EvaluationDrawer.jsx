@@ -51,6 +51,8 @@ const EvaluationDrawerChild = ({
   setFormIsDirty,
   existingEvals = [],
   requiredColumnIds = "",
+  onColumnSearchChange,
+  columnInventoryControls,
 }) => {
   const theme = useTheme();
   const { experimentId } = useParams();
@@ -127,7 +129,8 @@ const EvaluationDrawerChild = ({
         // The column-menu path matches via user_eval_id/userEvalId, so
         // evalItem.id may not be the user-eval id — normalize here.
         userEvalId: evalItem.user_eval_id ?? evalItem.userEvalId ?? evalItem.id,
-        pinned_version_id: evalItem.pinned_version_id ?? evalItem.pinnedVersionId ?? null,
+        pinned_version_id:
+          evalItem.pinned_version_id ?? evalItem.pinnedVersionId ?? null,
       });
       setEvalPickerOpen(true);
     },
@@ -515,6 +518,8 @@ const EvaluationDrawerChild = ({
             fullWidth={module === "task"}
             existingEvalsProp={existingEvals}
             requiredColumnIds={requiredColumnIds}
+            onColumnSearchChange={onColumnSearchChange}
+            columnInventoryControls={columnInventoryControls}
           />
         </Collapse>
         <Collapse
@@ -567,6 +572,8 @@ const EvaluationDrawerChild = ({
         source={module || "dataset"}
         sourceId={id || ""}
         sourceColumns={allColumns || []}
+        onSourceColumnSearchChange={onColumnSearchChange}
+        sourceColumnInventoryControls={columnInventoryControls}
         // Experiment evals reference two values that don't exist as real
         // dataset cells — the prompt/agent output and the full prompt chain.
         // Surface them as virtual columns in the variable-mapping dropdown
@@ -795,6 +802,8 @@ EvaluationDrawerChild.propTypes = {
   openDrawer: PropTypes.bool,
   existingEvals: PropTypes.array,
   requiredColumnIds: PropTypes.string,
+  onColumnSearchChange: PropTypes.func,
+  columnInventoryControls: PropTypes.node,
 };
 
 const ContextConsumer = ({
@@ -866,6 +875,8 @@ const EvaluationDrawer = ({
   handleTest = (_data) => {},
   existingEvals = [],
   requiredColumnIds = "",
+  onColumnSearchChange,
+  columnInventoryControls,
 }) => {
   const { experimentId } = useParams();
   const setVisibleSectionRef = useRef(null);
@@ -1049,6 +1060,8 @@ const EvaluationDrawer = ({
           listComponent={listComponent}
           existingEvals={existingEvals}
           requiredColumnIds={requiredColumnIds}
+          onColumnSearchChange={onColumnSearchChange}
+          columnInventoryControls={columnInventoryControls}
         />
         <ConfirmDialog
           open={openConfirmDialog}
@@ -1101,6 +1114,8 @@ EvaluationDrawer.propTypes = {
   handleSaveAndRun: PropTypes.func,
   existingEvals: PropTypes.array,
   requiredColumnIds: PropTypes.string,
+  onColumnSearchChange: PropTypes.func,
+  columnInventoryControls: PropTypes.node,
 };
 
 export default EvaluationDrawer;

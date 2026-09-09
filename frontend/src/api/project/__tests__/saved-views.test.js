@@ -7,7 +7,10 @@ import axios from "src/utils/axios";
 import {
   buildCreateSavedViewPayload,
   buildUpdateSavedViewPayload,
+  findOwnDefaultView,
+  getOwnViewNames,
   SAVED_VIEWS_KEY,
+  tabTypeForSelectedTab,
   serializeSavedViewConfig,
   useCreateSavedView,
   useCreateWorkspaceSavedView,
@@ -151,6 +154,41 @@ describe("saved view payload contract", () => {
     });
   });
 
+  it("getOwnViewNames scopes to the current user's own views", () => {
+    const views = [
+      { name: "Mine", created_by: { id: "u1" } },
+      { name: "Theirs", created_by: { id: "u2" } },
+      { name: "Orphan" },
+    ];
+    expect(getOwnViewNames(views, "u1")).toEqual(["Mine"]);
+    // Unknown user id → block nothing (server arbitrates), so no over-blocking
+    // of other users' shared names during auth resolution.
+    expect(getOwnViewNames(views, undefined)).toEqual([]);
+    expect(getOwnViewNames(undefined, "u1")).toEqual([]);
+  });
+
+  it("tabTypeForSelectedTab maps UI tabs to backend tab_type", () => {
+    expect(tabTypeForSelectedTab("trace")).toBe("traces");
+    expect(tabTypeForSelectedTab("spans")).toBe("spans");
+    expect(tabTypeForSelectedTab(undefined)).toBe("traces");
+  });
+
+  it("findOwnDefaultView adopts only the user's own default for the tab_type", () => {
+    const views = [
+      { id: "a", name: "Default View", tab_type: "traces", created_by: { id: "u1" } },
+      { id: "b", name: "Default View", tab_type: "spans", created_by: { id: "u1" } },
+      { id: "c", name: "Default View", tab_type: "traces", created_by: { id: "u2" } },
+    ];
+    // own traces default → adopted (drives update-by-id, not create)
+    expect(findOwnDefaultView(views, { tabType: "traces", userId: "u1" })?.id).toBe("a");
+    // scoped by tab_type — a spans click never grabs the traces default
+    expect(findOwnDefaultView(views, { tabType: "spans", userId: "u1" })?.id).toBe("b");
+    // a teammate's shared traces default is never adopted
+    expect(findOwnDefaultView(views, { tabType: "traces", userId: "u3" })).toBeNull();
+    // unknown user → create path
+    expect(findOwnDefaultView(views, { tabType: "traces", userId: undefined })).toBeNull();
+  });
+
   it("strips create-only fields from update payloads", () => {
     expect(
       buildUpdateSavedViewPayload({
@@ -216,6 +254,38 @@ describe("saved view API actions", () => {
         queryClient.getQueryData([SAVED_VIEWS_KEY, "project-1"]).custom_views,
       ).toEqual([{ id: "view-1", name: "Errors" }]);
     });
+  });
+
+  it("propagates a duplicate-name 400 and does not append to the cache", async () => {
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData([SAVED_VIEWS_KEY, "project-1"], {
+      default_tabs: [],
+      custom_views: [{ id: "view-1", name: "Errors" }],
+    });
+    axios.post.mockRejectedValueOnce({
+      response: {
+        status: 400,
+        data: { message: "A view named 'Errors' already exists." },
+      },
+    });
+
+    const { result } = renderHook(() => useCreateSavedView("project-1"), {
+      wrapper: createQueryWrapper(queryClient),
+    });
+
+    await expect(
+      result.current.mutateAsync({
+        project_id: "project-1",
+        name: "Errors",
+        tab_type: "traces",
+        config: {},
+      }),
+    ).rejects.toMatchObject({ response: { status: 400 } });
+
+    // Cache is untouched — no duplicate row was optimistically added.
+    expect(
+      queryClient.getQueryData([SAVED_VIEWS_KEY, "project-1"]).custom_views,
+    ).toEqual([{ id: "view-1", name: "Errors" }]);
   });
 
   it("updates a project saved view without sending tab_type", async () => {

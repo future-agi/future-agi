@@ -1917,7 +1917,11 @@ POST_DDL_ALTERS: list[str] = [
     "ALTER TABLE usage_apicalllog ADD COLUMN IF NOT EXISTS "
     f"eval_score Float64 MATERIALIZED {CH_EVAL_SCORE_EXPR}",
     # ADD COLUMN IF NOT EXISTS no-ops once the column exists, so a deployed
-    # table keeps its old expression until MODIFYed.
+    # table keeps its old expression until MODIFYed. ClickHouse refuses to
+    # modify a column referenced by a skip index, so sandwich MODIFY between
+    # an idempotent DROP and ADD. The separately authorized backfill command
+    # materializes index marks for historical parts; startup never does so.
+    "ALTER TABLE usage_apicalllog DROP INDEX IF EXISTS idx_eval_score",
     "ALTER TABLE usage_apicalllog MODIFY COLUMN "
     f"eval_score Float64 MATERIALIZED {CH_EVAL_SCORE_EXPR}",
     # Restores idx_eval_score if a backfill run died between its DROP and ADD.

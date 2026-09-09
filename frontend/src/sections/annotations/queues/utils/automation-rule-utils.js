@@ -42,6 +42,9 @@ export const makeDatasetDefaultFilter = () => ({
 export const datasetFilterToCamel = (filter) => ({
   id: filter.id,
   columnId: filter.column_id || "",
+  ...((filter.property_id || filter.registryId) && {
+    registryId: filter.property_id || filter.registryId,
+  }),
   filterConfig: {
     filterType: filter.filter_config?.filter_type || "",
     filterOp: filter.filter_config?.filter_op || "",
@@ -52,6 +55,9 @@ export const datasetFilterToCamel = (filter) => ({
 export const datasetFilterToSnake = (filter) => ({
   id: filter.id,
   column_id: filter.columnId || "",
+  ...((filter.registryId || filter.propertyId) && {
+    property_id: filter.registryId || filter.propertyId,
+  }),
   filter_config: {
     filter_type: filter.filterConfig?.filterType || "",
     filter_op: filter.filterConfig?.filterOp || "",
@@ -74,7 +80,9 @@ export const isDatasetFilterValid = (filter) => {
   if (!hasValue) return false;
 
   if (type === "datetime") {
-    return isRange ? isValid(value?.[0]) && isValid(value?.[1]) : isValid(value);
+    return isRange
+      ? isValid(value?.[0]) && isValid(value?.[1])
+      : isValid(value);
   }
   return isRange ? Array.isArray(value) && value.length === 2 : true;
 };
@@ -92,6 +100,7 @@ export const transformDatasetFilter = (filter) => {
   const config = filter.filter_config || {};
   return buildApiFilterFromPanelRow({
     field: filter.column_id,
+    registryId: filter.property_id || filter.registryId,
     fieldType: config.filter_type,
     operator: config.filter_op,
     value:
@@ -122,6 +131,38 @@ export function getSubmittableFilters(filters) {
     .map(({ id, ...filter }) => filter);
 }
 
+export function removeSubmittableFilterAtIndex(filters, chipIndex) {
+  let submittableIndex = -1;
+  let removed = false;
+
+  return (filters || []).filter((filter) => {
+    if (!filterWithValue(filter)) return true;
+    submittableIndex += 1;
+    if (!removed && submittableIndex === chipIndex) {
+      removed = true;
+      return false;
+    }
+    return true;
+  });
+}
+
+export function getTraceRulePanelMode(
+  sourceType,
+  { isVoiceProject = false } = {},
+) {
+  if (sourceType === "trace_session") {
+    return { source: "sessions", tab: undefined, isSpansView: false };
+  }
+  if (sourceType === "observation_span") {
+    return { source: "traces", tab: "spans", isSpansView: true };
+  }
+  return {
+    source: "traces",
+    tab: isVoiceProject ? "voiceCalls" : "trace",
+    isSpansView: false,
+  };
+}
+
 function snakeFilterToUi(filter) {
   const config = filter?.filter_config || {};
   const filterType = config.filter_type || "";
@@ -136,12 +177,16 @@ function snakeFilterToUi(filter) {
   return {
     id: getRandomId(),
     column_id: filter?.column_id || "",
+    ...(filter?.property_id && { property_id: filter.property_id }),
     display_name: filter?.display_name,
     filter_config: {
       filter_type: filterType,
       filter_op: config.filter_op || "",
       filter_value: filterValue,
       ...(config.col_type ? { col_type: config.col_type } : {}),
+      ...(Array.isArray(config.attribute_value_types)
+        ? { attribute_value_types: [...config.attribute_value_types] }
+        : {}),
     },
   };
 }
@@ -256,7 +301,12 @@ export function isScopeReady(sourceType, scope, queue) {
   return true;
 }
 
-export function getRuleSubmitDisabledTooltipTitle(sourceType, scope, queue, name) {
+export function getRuleSubmitDisabledTooltipTitle(
+  sourceType,
+  scope,
+  queue,
+  name,
+) {
   if (!name.trim()) return "Enter a rule name";
   if (!isScopeReady(sourceType, scope, queue)) {
     if (sourceType === "dataset_row") return "Choose a dataset";

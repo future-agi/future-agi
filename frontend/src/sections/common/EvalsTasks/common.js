@@ -11,6 +11,9 @@ import axios, { endpoints } from "src/utils/axios";
 import { formatDate } from "src/utils/report-utils";
 import { canonicalEntries } from "src/utils/utils";
 import { NULL_OPERATORS } from "src/components/ComplexFilter/common";
+import { hydrateStoredFilterList } from "src/api/contracts/filter-contract";
+import { ID_ONLY_FIELDS } from "src/sections/projects/LLMTracing/idFields";
+import { readEvalTaskDetail } from "./task_detail_read";
 
 // Operator categories shared by the task filter wire builders (validation.js,
 // TaskLivePreview) and TaskFilterBar.
@@ -200,9 +203,8 @@ export const FIELD_CATEGORY_TO_COL_TYPE = {
   annotation: "ANNOTATION",
 };
 
-// Column ids the BE always routes through its annotation handler regardless
-// of col_type. Pin them to ANNOTATION on the wire so the dispatcher doesn't
-// also feed them to SPAN_ATTRIBUTE / SYSTEM_METRIC handlers.
+// Legacy annotation controls without an explicit source use these column ids.
+// A customer attribute may share either name; explicit source identity wins.
 export const ANNOTATION_COLUMN_IDS = new Set(["annotator", "my_annotations"]);
 
 // Reserved metadata keys on the saved BE filters dict — every other key
@@ -229,19 +231,26 @@ export const formatTaskFilters = (filters_applied) => {
   // (snake_case — see extractAttributeFilters). Prefer the canonical `filters`
   // key; fall back to legacy `span_attributes_filters`. `col_type` round-trips
   // as `apiColType` so the panel picks the right chip.
-  const span_attributes_filters = (
-    filters_applied.filters ||
-    filters_applied.span_attributes_filters ||
-    []
+  const span_attributes_filters = hydrateStoredFilterList(
+    filters_applied.filters || filters_applied.span_attributes_filters || [],
   ).map((i) => ({
     property: "attributes",
     propertyId: i?.column_id,
-    apiColType: i?.filter_config?.col_type,
+    ...(i?.property_id ? { registryId: i.property_id } : {}),
+    // Hydration's generic attributes sentinel must not retype legacy controls.
+    apiColType:
+      i?.filter_config?.col_type ||
+      (ANNOTATION_COLUMN_IDS.has(i?.column_id)
+        ? "ANNOTATION"
+        : ID_ONLY_FIELDS.has(i?.column_id) || i?.column_id === "session_id"
+          ? "SYSTEM_METRIC"
+          : undefined),
     filterConfig: {
       filterType: i?.filter_config?.filter_type,
       filterOp: i?.filter_config?.filter_op,
       filterValue: i?.filter_config?.filter_value,
       colType: i?.filter_config?.col_type,
+      attributeValueTypes: i?.filter_config?.attribute_value_types,
     },
   }));
 
@@ -332,15 +341,29 @@ export const getDefaultTaskValues = (data, observeId) => {
 };
 
 export const useGetTaskData = (taskId, options) => {
+  const configuredRefetchInterval = options?.refetchInterval;
+
   return useQuery({
     ...options,
     queryKey: ["taskDetails", taskId],
-    queryFn: () => axios.get(endpoints.project.getEvalTaskDetails(taskId)),
+    queryFn: ({ signal }) =>
+      readEvalTaskDetail(
+        ({ signal: requestSignal, timeout }) =>
+          axios.get(endpoints.project.getEvalTaskDetails(taskId), {
+            signal: requestSignal,
+            timeout,
+          }),
+        signal,
+      ),
     select: (d) => d?.data?.result,
-    retry: (failureCount, error) => {
-      const status = error?.statusCode || error?.response?.status;
-      if (status === 400 || status === 404) return false;
-      return failureCount < 1;
-    },
+    retry: false,
+    refetchInterval: configuredRefetchInterval
+      ? (query) => {
+          if (query?.state?.status === "error") return false;
+          return typeof configuredRefetchInterval === "function"
+            ? configuredRefetchInterval(query)
+            : configuredRefetchInterval;
+        }
+      : false,
   });
 };

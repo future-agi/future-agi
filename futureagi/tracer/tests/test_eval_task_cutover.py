@@ -26,6 +26,12 @@ def spy(monkeypatch):
         "tracer.views.eval_task.start_eval_task_workflow_sync",
         lambda task, **kw: (calls["start"].append(str(task.id)), "wf")[1],
     )
+    # These orchestration tests run inside pytest-django's rollback-only outer
+    # transaction, so an actual on_commit callback would be discarded. Execute
+    # it here; the real commit-order contract has dedicated transaction tests.
+    monkeypatch.setattr(
+        "tracer.views.eval_task.transaction.on_commit", lambda callback: callback()
+    )
     return calls
 
 

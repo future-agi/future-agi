@@ -1,8 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  summarizeAddResults,
-  addResultToast,
-} from "../add-items-results";
+import { summarizeAddResults, addResultToast } from "../add-items-results";
 
 // Backend body is { status, result: { added, duplicates, errors } }; the axios
 // interceptor hands back the full response, so it lives at resp.data.result.
@@ -24,6 +21,7 @@ describe("summarizeAddResults", () => {
         "Not found: observation_span=a",
         "Not found: observation_span=b",
       ],
+      errorCount: 2,
     });
   });
 
@@ -32,7 +30,25 @@ describe("summarizeAddResults", () => {
       added: 4,
       duplicates: 0,
       errors: [],
+      errorCount: 0,
     });
+  });
+
+  it("retains the total error count when the API returns bounded samples", () => {
+    expect(
+      summarizeAddResults([
+        {
+          data: {
+            result: {
+              added: 0,
+              duplicates: 0,
+              errors: ["sample"],
+              error_count: 25,
+            },
+          },
+        },
+      ]),
+    ).toMatchObject({ errors: ["sample"], errorCount: 25 });
   });
 });
 

@@ -10,8 +10,8 @@
  *                                                      errors)
  *
  * The shape we're given:
- *   buildTraceGraph returns FLAT nodes — `{ id, name, type, errorCount,
- *   avgLatencyMs, ... }` — NOT nested under `data`. AgentGraph itself wraps
+ *   buildTraceGraph returns FLAT canonical nodes — `{ id, name, type,
+ *   error_count, avg_latency_ms, ... }` — NOT nested under `data`. AgentGraph itself wraps
  *   each node into `{ id, data: { ...node, _direction }, position }` for
  *   React Flow. So when we attach `_diffStatus` / `_isFailurePoint` at the
  *   top level of the node, those fields flow into `data._diffStatus` /
@@ -66,13 +66,19 @@ function isSentinel(node) {
   );
 }
 
-// Tolerate both camelCase (buildTraceGraph output) and snake_case (older
-// shapes / AgentNode's tooltip code). Whichever is populated, we read.
+function metricOf(node, key) {
+  const value = node?.[key];
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error(`Graph node ${keyOf(node)} is missing canonical ${key}`);
+  }
+  return value;
+}
+
 function errorCountOf(node) {
-  return Number(node?.errorCount ?? node?.error_count ?? 0) || 0;
+  return metricOf(node, "error_count");
 }
 function avgLatencyOf(node) {
-  return Number(node?.avgLatencyMs ?? node?.avg_latency_ms ?? 0) || 0;
+  return metricOf(node, "avg_latency_ms");
 }
 
 function isRegressed(failNode, passNode) {
@@ -102,10 +108,18 @@ export function buildGraphDiff(failGraph, passGraph) {
     };
   }
 
-  const failNodes = failGraph.nodes ?? [];
-  const passNodes = passGraph.nodes ?? [];
-  const failEdges = failGraph.edges ?? [];
-  const passEdges = passGraph.edges ?? [];
+  if (
+    !Array.isArray(failGraph.nodes) ||
+    !Array.isArray(passGraph.nodes) ||
+    !Array.isArray(failGraph.edges) ||
+    !Array.isArray(passGraph.edges)
+  ) {
+    throw new Error("Graph diff requires canonical nodes and edges");
+  }
+  const failNodes = failGraph.nodes;
+  const passNodes = passGraph.nodes;
+  const failEdges = failGraph.edges;
+  const passEdges = passGraph.edges;
 
   const passByKey = new Map();
   for (const n of passNodes) passByKey.set(keyOf(n), n);
@@ -187,12 +201,12 @@ export function buildGraphDiff(failGraph, passGraph) {
     }
 
     skippedEdges.push({
+      ...edge,
       // Preserve the source edge's id (prefixed to stay unique against the
       // real fail-side edges) when one is present.
       ...(edge.id != null ? { id: `${GHOST_PREFIX}${edge.id}` } : {}),
       source: sourceId,
       target: `${GHOST_PREFIX}${edge.target}`,
-      transitionCount: edge.transitionCount ?? 1,
       _skipped: true,
     });
   }
@@ -221,4 +235,15 @@ export function buildGraphDiff(failGraph, passGraph) {
     passAnnotated,
     summary: { added, missing, regressed, shared, failed },
   };
+}
+
+/**
+ * Agent Path renders the producer-recorded `path_edges` projection. Diff graphs
+ * contain synthetic ghost nodes whose skipped transitions live only in `edges`,
+ * so feeding them to Agent Path would show those ghosts as disconnected path
+ * nodes. Keep path mode on the original canonical graph; graph mode may render
+ * the annotated comparison projection.
+ */
+export function comparisonGraphForMode(mode, canonicalGraph, annotatedGraph) {
+  return mode === "path" ? canonicalGraph : annotatedGraph;
 }

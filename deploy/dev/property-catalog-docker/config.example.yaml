@@ -1,0 +1,57 @@
+# This file is intentionally not renderable. Replace every REPLACE_* value,
+# retain the exact Kartik DEV scope, and run render.py --validate-only. No
+# credential value belongs in this file; only fixed private env-file paths are
+# emitted by the renderer.
+format: futureagi.property-catalog-dev-docker
+version: 1
+deployment_id: kartik-0815a
+
+images:
+  # Producer and consumer use the packaged binaries from this exact, already
+  # present local image ID. Tags and repository digests are rejected.
+  collector_runtime: REPLACE_WITH_EXACT_LOCAL_SHA256_IMAGE_ID
+  operator: fi-property-catalog-current-select:0815a
+
+host:
+  # render.py derives private/ and runtime/ beneath this exact root.
+  root: /home/ubuntu/property-catalog-kartik-0815a
+
+workspace:
+  organization_id: 36ab6a86-28ef-484e-9fa2-0aade2cde52d
+  workspace_id: f7f5533e-44a1-438b-9e6d-6f4747f1eb16
+  project_ids:
+    - 286dfc61-02f8-42a4-b8e7-0737ae832da3
+    - 5272afb0-4b6e-4cc5-8415-d41b297f6a20
+
+catalog:
+  epoch: 1
+  projection_version: 1
+  hot_producer_stream_id: REPLACE_WITH_STABLE_UUIDV4
+  source_database: futureagi
+  target_database: property_catalog_dev_kartik_0815a
+  span_since: "2025-08-15T10:00:00Z"
+  span_until: "2026-08-15T10:00:00Z"
+  dev_identity: dev:property-catalog/kartik-0815a
+
+infrastructure:
+  # Both are existing external Docker networks; Compose never creates or
+  # changes either network or any current service.
+  application_docker_network: futureagi_default
+  kafka_docker_network: property-catalog-dev
+  source_clickhouse_host: clickhouse
+  source_clickhouse_native_port: 9000
+  source_clickhouse_http_port: 8123
+  target_clickhouse_host: clickhouse
+  target_clickhouse_native_port: 9000
+  target_clickhouse_http_port: 8123
+  kafka_brokers:
+    - property-catalog-kafka-dev:9092
+
+provenance:
+  # Freeze these from read-only identity probes on the exact DEV routes.
+  write_clickhouse_hostname: REPLACE_WITH_EXACT_CLICKHOUSE_HOSTNAME_RESULT
+  source_clickhouse_hostname: REPLACE_WITH_EXACT_CLICKHOUSE_HOSTNAME_RESULT
+  postgres_database: tfc
+  postgres_user: user
+  postgres_server_address: 172.19.0.7
+  postgres_server_port: 5432

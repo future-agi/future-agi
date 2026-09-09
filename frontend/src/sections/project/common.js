@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import axios, { endpoints } from "src/utils/axios";
 import { buildApiFilterFromPanelRow } from "src/api/contracts/filter-contract";
+import { readObserveProjectPage } from "src/api/project/observe-project-list";
 
 export const useProjectDetails = ({
   page,
@@ -19,21 +19,22 @@ export const useProjectDetails = ({
       sort_direction,
     ],
 
-    queryFn: () =>
-      axios.get(endpoints.project.projectObserveList, {
+    queryFn: ({ signal }) =>
+      readObserveProjectPage({
+        signal,
         params: {
           name: debouncedSearchQuery?.length ? debouncedSearchQuery : null,
           page_number: page - 1,
           page_size: pageLimit,
-          project_type: "observe",
           ...(sort_by && { sort_by }),
           ...(sort_direction && { sort_direction }),
         },
       }),
+    retry: false,
 
     select: (response) => ({
-      data: response?.data?.result?.table,
-      totalPages: response?.data?.result?.metadata?.total_pages,
+      data: response?.rows,
+      totalPages: response?.totalPages,
     }),
   });
 

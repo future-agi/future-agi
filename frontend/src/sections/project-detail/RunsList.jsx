@@ -10,6 +10,7 @@ import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import NumberQuickFilterPopover from "src/components/ComplexFilter/QuickFilterComponents/NumberQuickFilterPopover/NumberQuickFilterPopover";
 import TotalRowsStatusBar from "../develop-detail/Common/TotalRowsStatusBar";
 import { APP_CONSTANTS } from "src/utils/constants";
+import { getZeroBasedGridPage } from "src/utils/agGridPagination";
 
 import {
   AllowedGroups,
@@ -161,8 +162,7 @@ const RunsList = React.forwardRef(
             const { request } = params;
             setSelectedAll(false);
 
-            // request has startRow and endRow get next page number and each page has 10 rows
-            const pageNumber = Math.floor(request.startRow / 10);
+            const { pageNumber, pageSize } = getZeroBasedGridPage(request, 30);
 
             const fil = serializeRunListFilters(filters);
 
@@ -183,7 +183,7 @@ const RunsList = React.forwardRef(
                 params: {
                   project_id: projectId,
                   page_number: pageNumber,
-                  page_size: 30,
+                  page_size: pageSize,
                   sort_params: JSON.stringify(
                     request?.sortModel?.map(({ colId, sort }) => ({
                       column_id: colId,
