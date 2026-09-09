@@ -115,7 +115,6 @@ import {
   getVisibleIndices,
   resolveWidgetAxisPlan,
   makeSeriesKey,
-  shouldConnectAcrossMissingBuckets,
   resolveSavedSelection,
   toAxisConfigPayload,
 } from "./widgetUtils";
