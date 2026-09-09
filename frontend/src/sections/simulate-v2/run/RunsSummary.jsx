@@ -318,11 +318,11 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
           bgcolor: "background.paper", overflow: "hidden",
         }}
       >
-        {/* A trend needs at least two points. With one run the line was two
-            dots on a stem across an empty axis — it read as a broken chart, so
-            the whole chart region (grader picker, legend, line) waits for a
-            second run and the table below carries the single run on its own. */}
-        {summaries.length > 1 && (<>
+        {/* A two-point line across the full width was flat noise ("we have a
+            chart component"); the table reads a 2-run comparison better than a
+            line does. Hold the trend until a third run gives it a shape — until
+            then the runs table below carries the comparison. */}
+        {summaries.length >= 3 && (<>
         {/*
           Its own row rather than the card's action slot. Seven graders make
           both the selector's summary and the legend long, and in the header
