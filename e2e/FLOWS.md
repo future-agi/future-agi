@@ -27,7 +27,7 @@
 ### DASH-E2E-001 — widget y-axis fits its data unless a bound is typed
 
 **Goal:** A user reading a dashboard widget gets a y-axis sized to the data, and can override it by typing a Threshold Bound  
-**Spec:** `flows/dashboards/widget-y-axis.spec.ts:379`  
+**Spec:** `flows/dashboards/widget-y-axis.spec.ts:450`  
 **Tags:** —
 
 **User steps:**
@@ -46,7 +46,7 @@
 ### DASH-E2E-002 — Out of Bounds decides whether a typed bound clips the data
 
 **Goal:** A user who typed a Threshold Bound tighter than their data chooses whether the chart widens to keep every point visible or clips at the bound  
-**Spec:** `flows/dashboards/widget-y-axis.spec.ts:460`  
+**Spec:** `flows/dashboards/widget-y-axis.spec.ts:531`  
 **Tags:** —
 
 **User steps:**
@@ -65,7 +65,7 @@
 ### DASH-E2E-003 — a dual-axis widget keeps one scale per side and keeps it when a series is hidden
 
 **Goal:** A user plotting a large and a small metric together assigns one of them to the right axis, reads both off their own scale, and keeps that layout after hiding a series  
-**Spec:** `flows/dashboards/widget-y-axis.spec.ts:541`  
+**Spec:** `flows/dashboards/widget-y-axis.spec.ts:612`  
 **Tags:** —
 
 **User steps:**
@@ -80,6 +80,24 @@
 
 - the widget query returns all three metrics in the configured order with the seeded values
 - chart_config.axis_config.series_axis and chart_config.visible_series round-trip through the widget detail endpoint
+
+### DASH-E2E-004 — a column widget keeps its bars proportional while a line widget fits the band
+
+**Goal:** A user switching a widget to columns reads bar heights that are true to their values, while the same data on a line widget still gets the tight fitted axis  
+**Spec:** `flows/dashboards/widget-y-axis.spec.ts:715`  
+**Tags:** —
+
+**User steps:**
+
+1. seed traces whose per-minute latency maxima form a narrow band above zero — 190, 250 and 210 ms
+2. create a dashboard holding one column widget over that latency metric, with no typed bounds
+3. open the dashboard and read the rendered y-axis and every bar height
+4. switch the same widget to a line chart and re-read the axis
+
+**Backend state verified:**
+
+- the widget query returns exactly the seeded per-bucket maxima (190, 250, 210) for latency/max
+- chart_config.chart_type round-trips as column and then as line through the widget detail endpoint
 
 ## evals
 
