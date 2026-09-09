@@ -75,6 +75,7 @@ export const getDefaultPromptConfig = () => {
     configuration: {
       tools: [],
       toolChoice: "auto",
+      template_format: "mustache",
     },
   };
 };
@@ -268,6 +269,7 @@ export const getDefaultPromptConfigByModelType = (experimentType) => {
     modelParams: {},
     configuration: {
       toolChoice: "auto",
+      template_format: "mustache",
       tools: [],
     },
   };

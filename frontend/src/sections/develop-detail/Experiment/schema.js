@@ -191,7 +191,8 @@ export const getPromptConfigValidation = (allColumns) =>
           .optional(),
         modelParams: z.record(z.any()).nullable(),
         configuration: z.object({
-          toolChoice: z.string().nullable(),
+          toolChoice: z.string().nullable().optional(),
+          template_format: z.string().optional(),
           tools: z
             .array(z.any())
             .transform((val) => val.map((t) => t?.tool?.value))
@@ -310,6 +311,7 @@ export const getNewExperimentValidationSchema = (
               configuration: z
                 .object({
                   toolChoice: z.string().default("auto"),
+                  template_format: z.string().optional(),
                   tools: z.array(z.any()),
                 })
                 .optional(),
@@ -339,6 +341,7 @@ export const getNewExperimentValidationSchema = (
               modelParams: z.record(z.any()).nullable(),
               configuration: z.object({
                 toolChoice: z.string(),
+                template_format: z.string().optional(),
                 tools: z.array(z.any()),
               }),
             }),
@@ -356,6 +359,7 @@ export const getNewExperimentValidationSchema = (
               modelParams: z.record(z.any()),
               configuration: z.object({
                 toolChoice: z.string().default("auto"),
+                template_format: z.string().optional(),
                 tools: z.array(z.any()),
               }),
             }),
@@ -368,6 +372,13 @@ export const getNewExperimentValidationSchema = (
                 .transform(createMessageTransform(allColumns)),
               model: modelArraySchema,
               modelParams: z.record(z.any()),
+              configuration: z
+                .object({
+                  toolChoice: z.string().default("auto"),
+                  template_format: z.string().optional(),
+                  tools: z.array(z.any()),
+                })
+                .optional(),
             }),
           ]),
         )
