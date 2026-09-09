@@ -3613,8 +3613,26 @@ def calculate_spearman_correlation(output, expected, **kwargs):
         return ranks
 
     rx, ry = _rank(x), _rank(y)
-    d_sq = sum((rxi - ryi) ** 2 for rxi, ryi in zip(rx, ry))
-    rho = 1 - (6 * d_sq) / (n * (n ** 2 - 1))
+
+    # Compute rho as Pearson's r over the rank vectors rather than the 1-6Σd²/n(n²-1)
+    # shortcut. The shortcut is only algebraically equivalent when both rank vectors
+    # are permutations of 1..n with no ties. When _rank produces midranks for tied
+    # values the shortcut gives wrong results; Pearson's r over the ranks is always
+    # correct regardless of ties.
+    rx_mean = sum(rx) / n
+    ry_mean = sum(ry) / n
+    cov = sum((rxi - rx_mean) * (ryi - ry_mean) for rxi, ryi in zip(rx, ry))
+    var_x = sum((rxi - rx_mean) ** 2 for rxi in rx)
+    var_y = sum((ryi - ry_mean) ** 2 for ryi in ry)
+
+    # Guard against constant inputs (zero variance → correlation is undefined).
+    # Returning 0.5 (the neutral midpoint of the normalised [0,1] range) is the
+    # least surprising value; it signals "no information" rather than a false
+    # perfect or perfect-negative correlation.
+    if var_x == 0 or var_y == 0:
+        return {"result": 0.5, "reason": "Spearman rho=undefined (constant input), normalized=0.5"}
+
+    rho = cov / (var_x * var_y) ** 0.5
     score = (rho + 1) / 2
     return {"result": score, "reason": f"Spearman rho={rho:.4f}, normalized={score:.4f}"}
 
