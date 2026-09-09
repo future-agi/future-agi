@@ -42,9 +42,16 @@ import EvalsStep from "../workspace/EvalsStep";
   environment injects, which is part of the contract the agent is
   graded against.
 */
+/*
+  Nikhil's env-first feedback: the environment is the reusable asset,
+  the agent is one attribute of it. The Agents tab implied one-env =
+  one-agent tight coupling. Agent details still render on the Overview
+  tab (see AgentSummarySection inside OverviewPanel), but the standalone
+  Agents entry is retired here to match the same feedback we applied
+  on the post-adopt workspace.
+*/
 const TABS = [
   { id: "overview",  label: "Overview",         needs: null },
-  { id: "agent",     label: "Agents",           needs: null },
   { id: "contract",  label: "Contract",         needs: "understand" },
   { id: "scenarios", label: "Scenarios",        needs: "scenarios", badge: "scenarios" },
   { id: "evals",     label: "Evaluations",      needs: null,        badge: "evals" },
