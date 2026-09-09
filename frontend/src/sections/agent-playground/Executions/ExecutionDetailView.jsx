@@ -84,18 +84,18 @@ export default function ExecutionDetailView({ graphId, executionId }) {
     nodeStatusesRef.current = newNodeStatuses;
   }, [executionData, executionId, queryClient]);
 
-  // Reset node selection when execution changes, then auto-select last executed node
+  // Reset node selection when switching executions
   useEffect(() => {
-    if (!executionData?.nodes?.length) {
-      setSelectedNodeId(null);
-      return;
-    }
+    setSelectedNodeId(null);
+  }, [executionId]);
+
+  // Auto-select last executed node; never override an explicit user selection
+  // (executionData refreshes every ~2s while the run is active)
+  useEffect(() => {
+    if (!executionData?.nodes?.length || selectedNodeId) return;
     // Find last node that has a node_execution (skip pending nodes)
     const executedNodes = executionData.nodes.filter((n) => n.node_execution);
-    if (executedNodes.length === 0) {
-      setSelectedNodeId(null);
-      return;
-    }
+    if (executedNodes.length === 0) return;
     const lastNode = executedNodes[executedNodes.length - 1];
     const lastNodeSubGraph = lastNode.sub_graph;
     if (lastNodeSubGraph?.nodes?.length) {
@@ -109,7 +109,7 @@ export default function ExecutionDetailView({ graphId, executionId }) {
       }
     }
     setSelectedNodeId(lastNode.id);
-  }, [executionId, executionData]);
+  }, [executionId, executionData, selectedNodeId]);
 
   const { nodeExecutionId: selectedNodeExecutionId, resolvedExecutionId } =
     useResolvedExecution({ selectedNodeId, executionData, executionId });

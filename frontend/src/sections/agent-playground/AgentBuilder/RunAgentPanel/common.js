@@ -58,6 +58,10 @@ export const getNodeDurationMs = (node) => {
 
 /**
  * Transforms executionData.nodes into TreeNodeData hierarchy for NodeOutputListView.
+ *
+ * NOTE: subgraph expansion is one level deep — the backend builds execution
+ * details recursively, so a subgraph nested inside a subgraph will not have
+ * its deeper inner nodes listed here (follow-up limitation).
  */
 export const mapExecutionNodesToTree = (executionData) => {
   const rawNodes = executionData?.nodes;

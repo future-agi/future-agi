@@ -64,6 +64,21 @@ describe("RunAgentPanel - Steps List and Bidirectional Selection", () => {
           status: "success",
           duration_seconds: 6.0,
         },
+        sub_graph: {
+          id: "sg-exec-101",
+          nodes: [
+            {
+              id: "inner-1",
+              name: "Inner Task",
+              type: "atomic",
+              node_execution: {
+                id: "ne-inner-1",
+                status: "success",
+                duration_seconds: 1.2,
+              },
+            },
+          ],
+        },
       },
     ],
   };
@@ -149,6 +164,36 @@ describe("RunAgentPanel - Steps List and Bidirectional Selection", () => {
     // Step list narrowing
     const stepList = container.querySelector(".tree-view");
     expect(within(stepList).getByText("Prompt Analyzer")).toBeInTheDocument();
-    expect(within(stepList).queryByText("Agent Executor")).not.toBeInTheDocument();
+    expect(
+      within(stepList).queryByText("Agent Executor"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("selecting a subgraph inner node resolves the subgraph execution context", () => {
+    render(
+      <RunAgentPanel
+        panelHeight={350}
+        onResize={vi.fn()}
+        executionId="exec-101"
+        executionData={mockExecutionData}
+      />,
+    );
+
+    // Click the inner node of the subgraph in the step list
+    fireEvent.click(screen.getByText("Inner Task"));
+
+    // AgentGraph receives the prefixed composite id
+    expect(screen.getByTestId("selected-node-id").textContent).toBe(
+      "node-agent-2__inner-1",
+    );
+
+    // NodeOutputDetail receives the resolved inner execution context:
+    // executionId = subgraph execution, nodeExecutionId = inner node's execution
+    expect(screen.getByTestId("detail-exec-id").textContent).toBe(
+      "sg-exec-101",
+    );
+    expect(screen.getByTestId("detail-node-exec-id").textContent).toBe(
+      "ne-inner-1",
+    );
   });
 });
