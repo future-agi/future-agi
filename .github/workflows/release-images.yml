@@ -171,8 +171,36 @@ jobs:
           # decommissioned AWS deployment and is intentionally left untouched.
           # shellcheck disable=SC2086
           bump eu/gcp/deployment/values.yaml  $COMMON_PATHS .fiCollector.image.tag
+          # US-only: the property catalog runtime pins its collector image to
+          # fiCollector and its lifecycle writer to backend, and
+          # property-catalog-validation.yaml fails the render when either drifts.
           # shellcheck disable=SC2086
-          bump us/gcp/deployment/values.yaml  $COMMON_PATHS .fiCollector.image.tag
+          bump us/gcp/deployment/values.yaml  $COMMON_PATHS .fiCollector.image.tag \
+            .propertyCatalog.image.tag .propertyCatalog.lifecycle.image.tag
+      - name: Verify no platform image was left behind
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          set -eu
+          # The path list above bumps what it is told to. This asserts the result:
+          # every image in the platform release lane must now carry $VERSION. A tag
+          # added to a values file but not to the path list is caught here instead
+          # of reaching a release PR. future-agi-simulation-runner is deliberately
+          # excluded — it rides its own version lane.
+          expr='[.. | select(tag == "!!map" and has("repository") and has("tag"))
+                    | select(.repository | test("futureagi/(future-agi-ee|fi-collector|agentcc-gateway|code-executor|serving)$"))
+                    | select(.tag != strenv(VERSION))
+                    | .repository + " = " + (.tag|tostring)] | .[]'
+          rc=0
+          for f in eu/gcp/deployment/values.yaml us/gcp/deployment/values.yaml; do
+            stale=$(yq -r "$expr" "$f")
+            if [ -n "$stale" ]; then
+              echo "::error::$f has platform images not bumped to ${VERSION}:"
+              echo "$stale"
+              rc=1
+            fi
+          done
+          exit $rc
       - name: Open bump PR
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
