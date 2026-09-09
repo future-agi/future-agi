@@ -3812,7 +3812,6 @@ export default function WidgetEditorView() {
             // Span the window that was queried, not just the buckets that
             // reported.
             ...(chartTimeWindow || {}),
-            tickAmount: Math.min(chartSeries[0]?.data?.length || 10, 12),
             labels: {
               show: axisConfig.xAxis.visible,
               style: { colors: theme.palette.text.secondary, fontSize: "11px" },
@@ -5324,7 +5323,8 @@ export default function WidgetEditorView() {
                                           fontWeight: 400,
                                           fontSize: "11px",
                                           color: "text.disabled",
-                                                                       }}
+                                          whiteSpace: "nowrap",
+                                        }}
                                       >
                                         {describeTableBuckets(bucketPlan)}
                                       </Box>
@@ -7718,15 +7718,15 @@ export default function WidgetEditorView() {
                     </InputAdornment>
                   ) : !cursorAttributePickerActive &&
                     Number.isSafeInteger(paginatedTotal) ? (
-                      <InputAdornment position="end">
-                        <Typography
-                          variant="caption"
-                          sx={{ color: "text.disabled", fontSize: 11 }}
-                        >
-                          {paginatedTotal} results
-                        </Typography>
-                      </InputAdornment>
-                    ) : null,
+                    <InputAdornment position="end">
+                      <Typography
+                        variant="caption"
+                        sx={{ color: "text.disabled", fontSize: 11 }}
+                      >
+                        {paginatedTotal} results
+                      </Typography>
+                    </InputAdornment>
+                  ) : null,
                 }}
               />
             </Box>

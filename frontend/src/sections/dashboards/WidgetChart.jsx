@@ -1296,7 +1296,6 @@ export default function WidgetChart({
       type: isHorizontal ? undefined : "datetime",
       // Span the window that was queried, not just the buckets that reported.
       ...(!isHorizontal && chartTimeWindow ? chartTimeWindow : {}),
-      tickAmount: Math.min(chartSeries[0]?.data?.length || 10, 12),
       labels: {
         show: axisConfig?.xAxis?.visible !== false,
         style: { colors: theme.palette.text.secondary, fontSize: "11px" },
