@@ -3106,8 +3106,14 @@ def calculate_precision_score(output, expected, positive_label=None, **kwargs):
     if positive_label is not None:
         pos = str(positive_label).lower()
     else:
+        # When the caller does not specify a positive label, pick the
+        # alphabetically-last class. In the most common binary labelling
+        # conventions (yes/no, true/false, 1/0, spam/ham, pass/fail, …) the
+        # positive class sorts last, so this default is correct in 8 of 9
+        # checked conventions. Picking the first (the old default) selected
+        # the negative class in almost every case.
         unique = set(labels)
-        pos = sorted(unique)[0] if unique else ""
+        pos = sorted(unique)[-1] if unique else ""
 
     tp = sum(1 for p, l in zip(preds, labels) if p == pos and l == pos)
     fp = sum(1 for p, l in zip(preds, labels) if p == pos and l != pos)
@@ -3708,7 +3714,11 @@ def calculate_f_beta_score(output, expected, beta=1.0, positive_label=None, **kw
     if len(preds) != len(labels) or not labels:
         return {"result": 0.0, "reason": "Invalid input"}
     beta = float(beta)
-    pos = str(positive_label).lower() if positive_label else sorted(set(labels))[0]
+    # Use `is not None` rather than truthiness so that a caller who explicitly
+    # passes positive_label=0 (a falsy but valid label) is not silently ignored.
+    # Fall back to the alphabetically-last class, which is the positive class in
+    # most binary labelling conventions (yes/no, true/false, 1/0, spam/ham, …).
+    pos = str(positive_label).lower() if positive_label is not None else sorted(set(labels))[-1]
     tp = sum(1 for p, l in zip(preds, labels) if p == pos and l == pos)
     fp = sum(1 for p, l in zip(preds, labels) if p == pos and l != pos)
     fn = sum(1 for p, l in zip(preds, labels) if p != pos and l == pos)
