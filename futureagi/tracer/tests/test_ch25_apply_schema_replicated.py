@@ -431,6 +431,26 @@ class TestAttrValueBloomIndexFile:
             assert "ON CLUSTER 'default'" in out
 
 
+@pytest.mark.parametrize("replicated", [False, True])
+def test_strict_trace_id_index_is_metadata_only(replicated):
+    import pathlib
+
+    schema_dir = (
+        pathlib.Path(__file__).resolve().parents[1] / "services/clickhouse/v2/schema"
+    )
+    statements = split_statements(
+        (schema_dir / "028_trace_id_bloom_strict.sql").read_text()
+    )
+    # A schema apply must not rebuild historical parts or drop the existing index.
+    assert len(statements) == 1
+    stmt = _rewrite(statements[0]) if replicated else statements[0]
+    assert _extract_table_name(stmt) == "spans"
+    assert "ADD INDEX IF NOT EXISTS idx_trace_id_bloom_strict trace_id" in stmt
+    assert "TYPE bloom_filter(0.00001) GRANULARITY 1" in stmt
+    assert "MATERIALIZE" not in stmt and "DROP" not in stmt
+    assert ("ON CLUSTER 'default'" in stmt) is replicated
+
+
 class TestSpansCreatedAtIndexFile:
     """024_spans_created_at_index.sql — created_at minmax skip index on spans,
     so the continuous eval-task reconcile's arrival floor (created_at >= cursor)
