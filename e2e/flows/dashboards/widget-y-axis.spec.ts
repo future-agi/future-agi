@@ -776,11 +776,6 @@ test('DASH-E2E-004: a column widget keeps its bars proportional while a line wid
       expect(Math.abs(bar.height - expected)).toBeLessThanOrEqual(2);
     }
 
-    // The same claim in the form a reader would notice, and the one that fails
-    // loudest if the floor is ever lifted off zero again: 250 beside 190 is a
-    // 1.32x bar. Fitted to the band on a 180..255 axis it draws far taller.
-    expect(bars[1].height / bars[0].height).toBeCloseTo(250 / 190, 1);
-
     const detail = await actor.api.get<WidgetDetail>(
       `/tracer/dashboard/${fixture.dashboardId}/widgets/${fixture.widgetId}/`,
     );

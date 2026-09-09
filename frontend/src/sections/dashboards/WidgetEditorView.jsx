@@ -4000,6 +4000,7 @@ export default function WidgetEditorView() {
     isLineChart,
     isStacked,
     isHorizontal,
+    chartType,
     chartSeries,
     chartSeriesIndices,
     chartColors,
