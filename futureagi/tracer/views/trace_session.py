@@ -2411,37 +2411,12 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         project_ids=None,
         deadline: ReadDeadline | None = None,
     ):
-        """Fetch curated end-user fields for a session page from CH — PRIMARY
-        ``_list_sessions_clickhouse`` path ONLY (the PG-fallback branch uses
-        ``_fetch_end_user_info_pg`` so it degrades gracefully on a CH outage).
+        """Fetch curated user labels for each canonical session across all history.
 
-        CH-derived-dimensions cutover (DESIGN §4.3 / §5.2). The old read
-        traversed the PG ``ObservationSpan.end_user`` FK into ``tracer_enduser``
-        (``end_user__user_id``/``__user_id_type``/``__user_id_hash``). That FK
-        and table retire at P4, so the read now restructures:
-
-          1. Resolve the per-session ``end_user_id`` from the CH ``spans`` table
-             — ``argMaxIf(end_user_id, start_time, <has-user>)`` over the
-             session's spans that carry an end user (``end_user_id``
-             non-null/non-NIL). The ordering key is ``start_time``, which MATCHES
-             the old PG read exactly: ``_fetch_end_user_info_pg`` does
-             ``end_user__isnull=False`` then ``DISTINCT ON(trace__session_id)
-             ORDER BY trace__session_id, -start_time`` — i.e. the LATEST span
-             with a user, the same max-``start_time`` pick.
-             NOTE — the only residual delta is the tie-break among spans sharing
-             the EXACT same max ``start_time`` but DIFFERENT end users: PG
-             ``DISTINCT ON`` (single ``-start_time`` order) and CH ``argMaxIf``
-             both pick an arbitrary one, not guaranteed to be the same row. This
-             bites only multi-user sessions with start_time ties; sessions are
-             single-user in practice. If it ever matters, make the order total
-             on both sides (e.g. argMax over a ``(start_time, id)`` tuple).
-          2. Batch-resolve ``{end_user_id -> {user_id, user_id_type,
-             user_id_hash}}`` from ``end_users_dict`` (the curated labels), with
-             the FK-faithful NULL/'' normalization the reader documents.
-
-        Returns ``{session_id -> {user_id, user_id_type, user_id_hash}}``; a
-        session with no end-user span is simply absent (caller defaults to a
-        ``{}`` record → all-None fields), matching the old left-join miss.
+        Replay each physical span's latest version, then select the latest live
+        user-bearing span by ``(start_time, trace_id, id)`` across session aliases.
+        Resolve curated fields and re-key them to the caller's session IDs;
+        sessions without a qualifying user are absent from the result.
         """
         from tracer.services.clickhouse.v2.end_user_dict_reader import (
             resolve_end_user_fields,
@@ -2509,11 +2484,15 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         ts_map = bounded_survivor_map_subquery(
             "trace_session_id_remap", candidate_param="session_ids"
         )
+        # Replay the complete CH25 replacement key, including its indexed
+        # type/service/hour prefix. Exact timestamps and user/session values
+        # can change within that key; take them from one coherent winner.
         eu_by_session_q = f"""
             WITH
             ts_survivor_map AS ({ts_map}),
             candidate_span_identities AS (
-                SELECT DISTINCT project_id, trace_id, id, start_time
+                SELECT DISTINCT project_id, observation_type, service_name,
+                    toStartOfHour(start_time) AS start_hour, trace_id, id
                 FROM spans
                 PREWHERE 1 = 1
                   {proj_clause}
@@ -2531,25 +2510,29 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     project_id,
                     trace_id,
                     id,
-                    start_time,
-                    argMax(tuple(trace_session_id), _version).1
-                        AS latest_trace_session_id,
-                    argMax(tuple(end_user_id), _version).1 AS latest_end_user_id,
-                    argMax(is_deleted, _version) AS latest_is_deleted
+                    argMax(tuple(start_time, trace_session_id,
+                        end_user_id, is_deleted), _version) AS latest_span,
+                    latest_span.1 AS latest_start_time,
+                    latest_span.2 AS latest_trace_session_id,
+                    latest_span.3 AS latest_end_user_id,
+                    latest_span.4 AS latest_is_deleted
                 FROM spans
                 PREWHERE 1 = 1
                   {proj_clause}
-                  AND (project_id, trace_id, id, start_time) IN (
-                      SELECT project_id, trace_id, id, start_time
+                  AND (project_id, observation_type, service_name,
+                       toStartOfHour(start_time), trace_id, id) IN (
+                      SELECT project_id, observation_type, service_name,
+                          start_hour, trace_id, id
                       FROM candidate_span_identities
                   )
-                GROUP BY project_id, trace_id, id, start_time
+                GROUP BY project_id, observation_type, service_name,
+                         toStartOfHour(start_time), trace_id, id
             ),
             resolved_candidate_spans AS (
                 SELECT
                     {ts_resolved} AS session_id,
                     latest_end_user_id AS end_user_id,
-                    start_time,
+                    latest_start_time AS start_time,
                     trace_id,
                     id
                 FROM latest_candidate_spans
