@@ -36,10 +36,11 @@ import CustomCheckboxEditor from "src/sections/develop-detail/DataTab/CustomCell
 import CustomDevelopGroupCellHeader from "src/sections/common/DevelopCellRenderer/CustomDevelopGroupCellHeader";
 import _ from "lodash";
 import FormattedValueReason from "./FormattedReason";
-import logger from "src/utils/logger";
 import { APP_CONSTANTS } from "src/utils/constants";
+import { isGridApiLive, settleCancelledGridRead } from "src/utils/gridApi";
+import { isExpectedRequestCancellation } from "src/utils/cacheUtils";
 import { QUERY_FAILED_RETRY_MESSAGE } from "src/utils/queryReadState";
-import { readEvalLogGridPage } from "../utils/eval_log_grid_read";
+import { createEvalLogReadScope } from "../utils/eval_log_grid_read";
 import { INTERACTIVE_TABLE_PAGE_SIZE } from "src/config/runtime_limits";
 
 const EvaluateArrayCellRenderer = ({ value }) => {
@@ -587,9 +588,16 @@ const LogsTab = ({ evalFilterOpen, setEvalFilterOpen }) => {
     return filters.filter(validateFilter).map(transformFilter);
   }, [filters]);
 
+  // Each query scope owns its requests, even though the factory takes no arguments.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const readScope = useMemo(() => createEvalLogReadScope(), [evalId, validatedFilters]);
+  useEffect(() => () => readScope.cancel(), [readScope]);
+
   const dataSource = useMemo(
     () => ({
+      destroy: () => readScope.cancel(),
       getRows: async (params) => {
+        const generation = readScope.generation();
         const { request } = params;
         onSelectionChanged(null);
         setSelectedAll(false);
@@ -599,7 +607,7 @@ const LogsTab = ({ evalFilterOpen, setEvalFilterOpen }) => {
         const pageNumber = Math.floor(request.startRow / pageSize);
 
         try {
-          const page = await readEvalLogGridPage(
+          const page = await readScope.readPage(
             ({ signal, timeout }) =>
               axios.get(endpoints.develop.eval.getEvalsLogs, {
                 signal,
@@ -620,19 +628,24 @@ const LogsTab = ({ evalFilterOpen, setEvalFilterOpen }) => {
             { currentPageIndex: pageNumber, pageSize },
           );
 
+          if (!readScope.isCurrent(generation)) {
+            settleCancelledGridRead(params, { retry: true });
+            return;
+          }
+          if (!isGridApiLive(params.api)) return;
           setColumnDataNew(page.columns);
           const rows = page.rows;
           setRowData(rows);
           setReadError(null);
           if (!rows || rows.length === 0) {
             setTimeout(() => {
-              if (gridRef.current?.api) {
-                gridRef.current.api.showNoRowsOverlay();
+              if (readScope.isCurrent(generation) && isGridApiLive(params.api)) {
+                params.api.showNoRowsOverlay();
               }
             }, 0);
           } else {
-            if (gridRef.current?.api) {
-              gridRef.current.api.hideOverlay();
+            if (readScope.isCurrent(generation) && isGridApiLive(params.api)) {
+              params.api.hideOverlay();
             }
           }
 
@@ -645,12 +658,17 @@ const LogsTab = ({ evalFilterOpen, setEvalFilterOpen }) => {
           });
           if (rows?.length === 0) {
             setTimeout(() => {
-              if (gridRef.current?.api) {
-                gridRef.current.api.showNoRowsOverlay();
+              if (readScope.isCurrent(generation) && isGridApiLive(params.api)) {
+                params.api.showNoRowsOverlay();
               }
             }, 0);
           }
         } catch (error) {
+          if (!readScope.isCurrent(generation) || isExpectedRequestCancellation(error)) {
+            settleCancelledGridRead(params, { retry: true });
+            return;
+          }
+          if (!isGridApiLive(params.api)) return;
           setIsRefreshing(null);
           setReadError(QUERY_FAILED_RETRY_MESSAGE);
           params.fail();
@@ -658,7 +676,7 @@ const LogsTab = ({ evalFilterOpen, setEvalFilterOpen }) => {
       },
       getRowId: (data) => data.rowId,
     }),
-    [evalId, validatedFilters],
+    [evalId, validatedFilters, readScope],
   );
 
   const allColumns = useMemo(() => {
@@ -882,55 +900,17 @@ const LogsTab = ({ evalFilterOpen, setEvalFilterOpen }) => {
     return refresh;
   };
 
-  const refreshRowsManual = async () => {
-    const totalPages = Object.keys(
-      gridRef?.current?.api?.getCacheBlockState(),
-    ).length;
-
-    for (let p = 0; p < totalPages; p++) {
-      try {
-        const page = await readEvalLogGridPage(
-          ({ signal, timeout }) =>
-            axios.get(endpoints.develop.eval.getEvalsLogs, {
-              signal,
-              timeout,
-              params: {
-                eval_template_id: evalId,
-                current_page_index: p,
-                page_size: INTERACTIVE_TABLE_PAGE_SIZE,
-                filters: JSON.stringify(validatedFilters),
-                sort: JSON.stringify([]),
-              },
-            }),
-          { currentPageIndex: p, pageSize: INTERACTIVE_TABLE_PAGE_SIZE },
-        );
-
-        setColumnDataNew(page.columns, false, true);
-
-        const rows = page.rows;
-        setRowData(rows);
-        setReadError(null);
-        const transaction = {
-          update: rows,
-        };
-        if (gridRef.current?.api) {
-          gridRef.current.api.applyServerSideTransaction(transaction);
-        }
-      } catch (e) {
-        setReadError(QUERY_FAILED_RETRY_MESSAGE);
-        logger.error("Failed to refresh rows", e);
-      }
-    }
-  };
-
   useEffect(() => {
+    if (!isRefreshing) return undefined;
     const interval = setInterval(() => {
-      if (isRefreshing) {
-        refreshRowsManual();
-      }
+      const api = gridRef.current?.api;
+      if (!isGridApiLive(api) || readScope.hasPendingReads()) return;
+      // AG Grid owns the current filters, sort and cached block boundaries.
+      // Refresh through its datasource instead of inventing unsorted pages.
+      api.refreshServerSide({ purge: false });
     }, 10000);
     return () => clearInterval(interval);
-  }, [isRefreshing]);
+  }, [isRefreshing, readScope]);
 
   const closeModal = () => {
     setOpenDelete(false);

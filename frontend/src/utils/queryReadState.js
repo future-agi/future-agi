@@ -358,13 +358,17 @@ export function awaitAggregationRequestWithDeadline(
       once: true,
     });
 
-    timer = globalThis.setTimeout(() => {
-      if (settled) return;
-      if (isCurrent()) onTimeout();
-      const error = aggregationRequestError("aggregation_request_timeout");
-      finish(reject, error);
-      controller.abort(error);
-    }, deadlineMs);
+    // Infinity explicitly opts an exact read out of a browser wall deadline.
+    // Cancellation still settles even when the transport ignores its signal.
+    if (deadlineMs !== Infinity) {
+      timer = globalThis.setTimeout(() => {
+        if (settled) return;
+        if (isCurrent()) onTimeout();
+        const error = aggregationRequestError("aggregation_request_timeout");
+        finish(reject, error);
+        controller.abort(error);
+      }, deadlineMs);
+    }
 
     let request;
     try {

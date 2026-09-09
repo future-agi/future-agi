@@ -1,6 +1,4 @@
 import {
-  ANALYTICS_REQUEST_TIMEOUT_MS,
-  CURSOR_MAX_EMPTY_CONTINUATIONS,
   OBSERVE_CURSOR_MAX_CHECKPOINTS,
   OBSERVE_GRID_MAX_BLOCKS_IN_CACHE,
 } from "src/config/runtime_limits";
@@ -16,9 +14,23 @@ export const LIST_CURSOR_CONTINUATION_LIMIT_ERROR_CODE =
   "LIST_CURSOR_CONTINUATION_LIMIT";
 export const LIST_CURSOR_CONTINUATION_NOTICE =
   "Preparing exact results. Refresh or retry to continue.";
-const DEFAULT_MAX_EMPTY_CONTINUATIONS = CURSOR_MAX_EMPTY_CONTINUATIONS;
-const DEFAULT_EMPTY_CONTINUATION_DEADLINE_MS = ANALYTICS_REQUEST_TIMEOUT_MS;
+// Do not turn a valid sparse scan into a failed/partial visible page after
+// an arbitrary number of transport hops. Retained cursor history has its own
+// memory guard; callers can still opt into a bounded diagnostic attempt.
+const DEFAULT_MAX_EMPTY_CONTINUATIONS = Infinity;
+// Exact list reads continue until completion or cancellation. Explicit finite
+// deadlines remain available to diagnostics and bounded picker callers.
+const DEFAULT_EMPTY_CONTINUATION_DEADLINE_MS = Infinity;
 const CURSOR_BOUNDARY_FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/;
+
+const throwIfListRequestAborted = (signal) => {
+  if (!signal?.aborted) return;
+  // Avoid requiring throwIfAborted on older AbortSignals.
+  throw (
+    signal.reason ??
+    new DOMException("Exact list request was cancelled", "AbortError")
+  );
+};
 
 const requestWithinDeadline = async ({
   request,
@@ -851,13 +863,10 @@ const stableRowKey = (rowIdentity, row) => {
  * requested page while `has_more` remains true. Publishing that response to
  * AG Grid would make it infer end-of-data and hide every later match.
  *
- * Overflow is retained for the next visible page. The hop/time bound is a
- * hard safety boundary for this automatic read: returning a pending page and
- * immediately asking AG Grid to retry would reset the local counter and turn
- * an always-advancing sparse cursor into an endless loading loop. Fail closed
- * instead, while retaining the signed checkpoint in pagination state. A
- * deliberate grid refresh can start a new bounded exact attempt; an empty
- * transport page is never published as a genuine empty result.
+ * Overflow is retained for the next visible page. Normal reads continue until
+ * the page is exact or the caller cancels. When a diagnostic caller supplies a
+ * hop/time bound, fail closed at that bound while retaining the signed
+ * checkpoint. Never publish an empty transport page as a genuine empty result.
  */
 export const loadExactListPage = async ({
   pagination,
@@ -890,10 +899,16 @@ export const loadExactListPage = async ({
   if (typeof compactResponse !== "function") {
     throw new Error("Exact list response compactor must be a function");
   }
-  if (!Number.isInteger(maxContinuations) || maxContinuations < 1) {
+  if (
+    maxContinuations !== Infinity &&
+    (!Number.isInteger(maxContinuations) || maxContinuations < 1)
+  ) {
     throw new Error("Invalid list continuation limit");
   }
-  if (!Number.isFinite(maxElapsedMs) || maxElapsedMs < 1) {
+  if (
+    maxElapsedMs !== Infinity &&
+    (!Number.isFinite(maxElapsedMs) || maxElapsedMs < 1)
+  ) {
     throw new Error("Invalid list continuation deadline");
   }
   const activeCancellationSignal =
@@ -973,11 +988,15 @@ export const loadExactListPage = async ({
         cancellationSignal: activeCancellationSignal,
         remainingMs,
       });
+      // The transport removes its abort listener when it settles. Cancellation
+      // can still win before this await resumes, so retain the proven prefix.
+      throwIfListRequestAborted(activeCancellationSignal);
       if (!transport.completed) {
         throw createListCursorContinuationLimitError();
       }
       nextTransportResponse = transport.response;
     } catch (error) {
+      throwIfListRequestAborted(activeCancellationSignal);
       if (
         legacyFallbackAttempted ||
         pagination.mode() !== UNKNOWN_MODE ||
@@ -1098,10 +1117,16 @@ export const collectExactListRows = async ({
   if (typeof rowIdentity !== "function") {
     throw new Error("Exact list row identity is required");
   }
-  if (!Number.isInteger(maxContinuations) || maxContinuations < 1) {
+  if (
+    maxContinuations !== Infinity &&
+    (!Number.isInteger(maxContinuations) || maxContinuations < 1)
+  ) {
     throw new Error("Invalid list continuation limit");
   }
-  if (!Number.isFinite(maxElapsedMs) || maxElapsedMs < 1) {
+  if (
+    maxElapsedMs !== Infinity &&
+    (!Number.isFinite(maxElapsedMs) || maxElapsedMs < 1)
+  ) {
     throw new Error("Invalid list continuation deadline");
   }
 
@@ -1210,8 +1235,8 @@ export const collectExactListRows = async ({
         nextCursorIdentity,
       };
     }
-    followed.add(nextCursorIdentity);
-    onContinuation?.(metadata);
+    rememberBoundedListCursorIdentity(followed, nextCursorIdentity);
+    onContinuation?.(metadata, { rows: rows.slice(), response });
     continuationCount += 1;
     const remainingMs = Math.floor(maxElapsedMs - (now() - startedAt));
     if (remainingMs < 1) {
@@ -1242,6 +1267,7 @@ export const collectExactListRows = async ({
         nextCursorIdentity,
       };
     }
+    throwIfListRequestAborted(cancellationSignal);
     response = continuation.response;
   }
 
@@ -1318,10 +1344,16 @@ export const followEmptyListContinuations = async ({
   now = () => Date.now(),
   startedAt = now(),
 }) => {
-  if (!Number.isInteger(maxContinuations) || maxContinuations < 1) {
+  if (
+    maxContinuations !== Infinity &&
+    (!Number.isInteger(maxContinuations) || maxContinuations < 1)
+  ) {
     throw new Error("Invalid list continuation limit");
   }
-  if (!Number.isFinite(maxElapsedMs) || maxElapsedMs < 1) {
+  if (
+    maxElapsedMs !== Infinity &&
+    (!Number.isFinite(maxElapsedMs) || maxElapsedMs < 1)
+  ) {
     throw new Error("Invalid list continuation deadline");
   }
   let response = initialResponse;
@@ -1357,7 +1389,7 @@ export const followEmptyListContinuations = async ({
       // failure or starting an unbounded request fan-out.
       return response;
     }
-    followed.add(nextCursor);
+    rememberBoundedListCursorIdentity(followed, nextCursor);
     onContinuation?.(metadata);
     const remainingMs = Math.floor(maxElapsedMs - (now() - startedAt));
     if (remainingMs < 1) return response;
@@ -1368,6 +1400,7 @@ export const followEmptyListContinuations = async ({
       remainingMs,
     });
     if (!next.completed) return response;
+    throwIfListRequestAborted(cancellationSignal);
     response = next.response;
     rows = rowsFromResponse(response) || [];
   }
@@ -1399,10 +1432,16 @@ export const accumulateUniqueListContinuations = async ({
   if (!Number.isInteger(targetRowCount) || targetRowCount < 1) {
     throw new Error("Invalid list continuation target row count");
   }
-  if (!Number.isInteger(maxContinuations) || maxContinuations < 0) {
+  if (
+    maxContinuations !== Infinity &&
+    (!Number.isInteger(maxContinuations) || maxContinuations < 0)
+  ) {
     throw new Error("Invalid list continuation limit");
   }
-  if (!Number.isFinite(maxElapsedMs) || maxElapsedMs < 1) {
+  if (
+    maxElapsedMs !== Infinity &&
+    (!Number.isFinite(maxElapsedMs) || maxElapsedMs < 1)
+  ) {
     throw new Error("Invalid list continuation deadline");
   }
 
@@ -1453,7 +1492,8 @@ export const accumulateUniqueListContinuations = async ({
     });
     if (!next.completed) break;
 
-    followedCursors.add(nextCursor);
+    throwIfListRequestAborted(cancellationSignal);
+    rememberBoundedListCursorIdentity(followedCursors, nextCursor);
     onContinuation?.(metadata);
     response = next.response;
     appendRows();

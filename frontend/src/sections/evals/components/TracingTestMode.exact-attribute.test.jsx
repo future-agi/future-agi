@@ -184,7 +184,7 @@ describe("TracingTestMode exact task attribute mapping", () => {
   );
 
   it.each(["spans", "traces", "sessions"])(
-    "resumes a timed-out %s cursor without poisoning its history or column picker",
+    "lets a slow %s continuation complete without an extra request",
     async (rowType) => {
       vi.useFakeTimers();
       const checkpoint = `${rowType}-unconsumed`;
@@ -234,28 +234,18 @@ describe("TracingTestMode exact task attribute mapping", () => {
       await act(async () =>
         vi.advanceTimersByTimeAsync(ANALYTICS_REQUEST_TIMEOUT_MS - 10_000 + 1),
       );
-      expect(continuationSignal.aborted).toBe(true);
-      expect(
-        screen.getByRole("button", { name: "Continue search" }),
-      ).toBeEnabled();
-      expect(
-        screen.getByPlaceholderText("Search column..."),
-      ).not.toBeDisabled();
-      expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+      expect(continuationSignal.aborted).toBe(false);
+      expect(screen.queryByRole("button", { name: "Continue search" })).not.toBeInTheDocument();
       await act(async () => {
         resolveLate(page(false));
         await vi.advanceTimersByTimeAsync(1_000);
       });
       expect(listCalls).toBe(2);
-      await act(async () =>
-        screen.getByRole("button", { name: "Continue search" }).click(),
-      );
-      await act(async () => vi.advanceTimersByTimeAsync(10));
       const requests = mocks.get.mock.calls.filter(
         ([url]) => url === `/${rowType}/`,
       );
-      expect(requests).toHaveLength(3);
-      expect(requests[2][1].params.cursor).toBe(checkpoint);
+      expect(requests).toHaveLength(2);
+      expect(requests[1][1].params.cursor).toBe(checkpoint);
       expect(
         screen.queryByText(QUERY_FAILED_RETRY_MESSAGE),
       ).not.toBeInTheDocument();
@@ -270,7 +260,7 @@ describe("TracingTestMode exact task attribute mapping", () => {
     },
   );
 
-  it("keeps buffered preview rows across a deadline and deduplicates the resumed page", async () => {
+  it("keeps buffered rows after a slow transport fails and deduplicates the retry", async () => {
     vi.useFakeTimers();
     const defaultGet = mocks.get.getMockImplementation();
     const firstRow = {
@@ -285,10 +275,11 @@ describe("TracingTestMode exact task attribute mapping", () => {
       trace_id: "trace-2",
     };
     let listCalls = 0;
+    let rejectContinuation;
     mocks.get.mockImplementation((url, config) => {
       if (url !== "/spans/") return defaultGet(url, config);
       listCalls += 1;
-      if (listCalls === 2) return new Promise(() => {});
+      if (listCalls === 2) return new Promise((_resolve, reject) => { rejectContinuation = reject; });
       return Promise.resolve({
         data: {
           status: true,
@@ -309,6 +300,11 @@ describe("TracingTestMode exact task attribute mapping", () => {
       vi.advanceTimersByTimeAsync(ANALYTICS_REQUEST_TIMEOUT_MS + 1),
     );
     await act(async () => vi.advanceTimersByTimeAsync(10));
+    expect(screen.queryByRole("button", { name: "Continue search" })).not.toBeInTheDocument();
+    await act(async () => {
+      rejectContinuation(new Error("connection closed"));
+      await vi.advanceTimersByTimeAsync(10);
+    });
     expect(screen.getByText("Row 1 of 1")).toBeVisible();
     await act(async () =>
       screen.getByRole("button", { name: "Continue search" }).click(),
@@ -706,7 +702,7 @@ describe("TracingTestMode exact task attribute mapping", () => {
     );
   });
 
-  it("pauses at the cursor round bound and resumes only after explicit confirmation", async () => {
+  it("automatically completes an exact preview beyond twelve checkpoints", async () => {
     let spanListCalls = 0;
     mocks.get.mockImplementation(async (url) => {
       if (url === `/projects/${PROJECT_ID}`) {
@@ -782,14 +778,6 @@ describe("TracingTestMode exact task attribute mapping", () => {
     let spanRequests = mocks.get.mock.calls.filter(
       ([url]) => url === "/spans/",
     );
-    expect(spanRequests).toHaveLength(13);
-    expect(screen.queryByText(/no span data found/i)).not.toBeInTheDocument();
-
-    const continueSearch = await screen.findByRole("button", {
-      name: "Continue search",
-    });
-    await userEvent.click(continueSearch);
-
     await waitFor(() => {
       spanRequests = mocks.get.mock.calls.filter(([url]) => url === "/spans/");
       expect(spanRequests).toHaveLength(14);
@@ -889,9 +877,6 @@ describe("TracingTestMode exact task attribute mapping", () => {
     );
     expect(await screen.findByText("Row 1 of 1")).toBeInTheDocument();
 
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Continue search" }),
-    );
     await waitFor(() => {
       expect(
         mocks.get.mock.calls.filter(([url]) => url === "/spans/"),

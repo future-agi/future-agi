@@ -41,8 +41,10 @@ import TableFilterOptions from "src/components/TableFilterOptions/TableFilterOpt
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { useAuthContext } from "src/auth/hooks";
 import { APP_CONSTANTS } from "src/utils/constants";
+import { isGridApiLive, settleCancelledGridRead } from "src/utils/gridApi";
+import { isExpectedRequestCancellation } from "src/utils/cacheUtils";
 import { QUERY_FAILED_RETRY_MESSAGE } from "src/utils/queryReadState";
-import { readEvalLogGridPage } from "../../utils/eval_log_grid_read";
+import { createEvalLogReadScope } from "../../utils/eval_log_grid_read";
 
 const FeedbackOverlay = () => (
   <NoResultsUI
@@ -340,16 +342,23 @@ const LogsTabGrid = ({
     [debouncedSerializedFilters],
   );
 
+  // Each query scope owns its requests, even though the factory takes no arguments.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const readScope = useMemo(() => createEvalLogReadScope(), [evalsId, debouncedFilters, searchQuery, dateFilter, isFeedback, isEvalPlayGround]);
+  useEffect(() => () => readScope.cancel(), [readScope]);
+
   const dataSource = useMemo(
     () => ({
+      destroy: () => readScope.cancel(),
       getRows: async (params) => {
+        const generation = readScope.generation();
         setIsLoading(true);
         const { request } = params;
         onSelectionChanged(null);
         setSelectedAll(false);
 
         // Calculate page size dynamically from AG Grid request.
-        // onGridReady calls getRows without a `request`, so default safely.
+        // Keep fallback bounds for programmatic datasource callers.
         const startRow = request?.startRow ?? 0;
         const endRow = request?.endRow ?? startRow + 10;
         const pageSize = endRow - startRow;
@@ -386,7 +395,7 @@ const LogsTabGrid = ({
           filters.push(...debouncedFilters);
         }
         try {
-          const page = await readEvalLogGridPage(
+          const page = await readScope.readPage(
             ({ signal, timeout }) =>
               axios.get(endpoints.develop.eval.getEvalsLogs, {
                 signal,
@@ -409,6 +418,11 @@ const LogsTabGrid = ({
             { currentPageIndex: pageNumber, pageSize },
           );
 
+          if (!readScope.isCurrent(generation)) {
+            settleCancelledGridRead(params, { retry: true });
+            return;
+          }
+          if (!isGridApiLive(params.api)) return;
           setColumnDataNew(page.columns);
           const rows = page.rows;
           setReadError(null);
@@ -426,16 +440,21 @@ const LogsTabGrid = ({
             params.api.hideOverlay();
           }
         } catch (error) {
+          if (!readScope.isCurrent(generation) || isExpectedRequestCancellation(error)) {
+            settleCancelledGridRead(params, { retry: true });
+            return;
+          }
+          if (!isGridApiLive(params.api)) return;
           setReadError(QUERY_FAILED_RETRY_MESSAGE);
           params.fail();
           params.api?.hideOverlay();
         } finally {
-          setIsLoading(false);
+          if (readScope.isCurrent(generation) && isGridApiLive(params.api)) setIsLoading(false);
         }
       },
       getRowId: (data) => data.rowId,
     }),
-    [evalsId, debouncedFilters, searchQuery, dateFilter],
+    [evalsId, debouncedFilters, searchQuery, dateFilter, isFeedback, isEvalPlayGround, readScope],
   );
 
   const closeModal = () => {
@@ -605,29 +624,6 @@ const LogsTabGrid = ({
     },
   });
 
-  const onGridReady = useCallback(
-    (params) => {
-      params.api.setGridOption("serverSideDatasource", dataSource);
-
-      dataSource.getRows({
-        success: ({ rowData }) => {
-          if (rowData.length > 0) {
-            setIsData(true);
-          } else {
-            setIsData(false);
-          }
-          if (rowData?.length === 0) {
-            params.api.showNoRowsOverlay();
-          } else {
-            params.api.hideOverlay();
-          }
-        },
-        fail: () => params.api.hideOverlay(),
-      });
-    },
-    [dataSource],
-  );
-
   const NoRowOverLayComponent = useMemo(() => {
     if (isLoading) return null;
     if (readError) return null;
@@ -795,7 +791,7 @@ const LogsTabGrid = ({
       <Box className="ag-theme-quartz" style={{ height: "calc(100% - 65px)" }}>
         <SingleImageViewerProvider>
           <AgGridReact
-            onGridReady={onGridReady}
+            serverSideDatasource={dataSource}
             theme={agTheme}
             ref={(params) => {
               gridRef.current = params;

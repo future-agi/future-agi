@@ -277,6 +277,45 @@ describe("queryReadState", () => {
     vi.useRealTimers();
   });
 
+  it.each(["completion", "cancellation"])(
+    "keeps an Infinity request pending until %s",
+    async (outcome) => {
+      vi.useFakeTimers();
+      const upstream = new AbortController();
+      const settled = vi.fn();
+      let requestSignal;
+      let complete;
+      const request = awaitAggregationRequestWithDeadline(
+        (signal) => {
+          requestSignal = signal;
+          return new Promise((resolve) => {
+            complete = resolve;
+          });
+        },
+        { timeoutMs: Infinity, signal: upstream.signal },
+      );
+      const observed = request.then(settled, settled);
+      try {
+        await vi.advanceTimersByTimeAsync(120_000);
+        expect(settled).not.toHaveBeenCalled();
+        expect(requestSignal.aborted).toBe(false);
+
+        if (outcome === "completion") {
+          complete("exact page");
+          await expect(request).resolves.toBe("exact page");
+        } else {
+          upstream.abort();
+          await expect(request).rejects.toMatchObject({ name: "AbortError" });
+          expect(requestSignal.aborted).toBe(true);
+        }
+      } finally {
+        upstream.abort();
+        await observed;
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it("links caller cancellation to the underlying aggregation transport", async () => {
     const upstream = new AbortController();
     let requestSignal;

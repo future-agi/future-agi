@@ -581,7 +581,7 @@ describe("SessionGrid cursor continuation", () => {
     );
   });
 
-  it("stops automatic retries at the bound and preserves the manual retry cursor", async () => {
+  it("automatically completes a sparse exact page beyond twelve checkpoints", async () => {
     Array.from({ length: 13 }, (_, index) =>
       sessionResponse({
         hasMore: true,
@@ -603,40 +603,19 @@ describe("SessionGrid cursor continuation", () => {
     const boundedRound = makeParams();
     await getRows(boundedRound);
 
-    expect(getMock).toHaveBeenCalledTimes(13);
-    expect(boundedRound.success).not.toHaveBeenCalled();
+    expect(getMock).toHaveBeenCalledTimes(14);
+    expect(boundedRound.fail).not.toHaveBeenCalled();
     expect(boundedRound.api.showNoRowsOverlay).not.toHaveBeenCalled();
-    expect(boundedRound.fail).toHaveBeenCalledTimes(1);
     expect(boundedRound.api.retryServerSideLoads).not.toHaveBeenCalled();
-    expect(enqueueSnackbarMock).not.toHaveBeenCalled();
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Preparing exact results. Refresh or retry to continue.",
-    );
-    expect(gridState.props.className).toContain("ag-grid-cursor-paused");
-    expect(gridState.props.noRowsOverlayComponent()).toBeNull();
-
-    await userEvent.click(
-      screen.getByRole("button", { name: "Continue search" }),
-    );
-    expect(boundedRound.api.retryServerSideLoads).toHaveBeenCalledOnce();
-    expect(boundedRound.api.refreshServerSide).not.toHaveBeenCalled();
-    expect(
-      screen.queryByRole("button", { name: "Continue search" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Continue search" })).not.toBeInTheDocument();
     expect(gridState.props.className).not.toContain("ag-grid-cursor-paused");
-
-    // A deliberate retry resumes the retained exact checkpoint. The bounded
-    // automatic read itself never spins or publishes a false empty page.
-    const resumedPage = makeParams();
-    await getRows(resumedPage);
-
     expect(getMock.mock.calls[13][1].params).toEqual(
       expect.objectContaining({
         cursor_mode: true,
         cursor: "checkpoint-12",
       }),
     );
-    expect(resumedPage.success).toHaveBeenCalledWith({
+    expect(boundedRound.success).toHaveBeenCalledWith({
       rowData: [row(99)],
       rowCount: 1,
     });
@@ -700,7 +679,7 @@ describe("SessionGrid cursor continuation", () => {
     const params = makeParams();
     await getRows(params);
 
-    expect(params.fail).not.toHaveBeenCalled();
+    expect(params.fail).toHaveBeenCalledOnce();
     expect(params.success).not.toHaveBeenCalled();
     expect(enqueueSnackbarMock).not.toHaveBeenCalled();
   });
@@ -782,7 +761,7 @@ describe("SessionGrid cursor continuation", () => {
       expect(screen.getByRole("status")).toHaveTextContent("Loading page…");
       expect(screen.getByRole("button", { name: "page 2" })).toBeDisabled();
       expect(oldParams.success).not.toHaveBeenCalled();
-      expect(oldParams.fail).not.toHaveBeenCalled();
+      expect(oldParams.fail).toHaveBeenCalledOnce();
       expect(currentParams.success).not.toHaveBeenCalled();
       expect(enqueueSnackbarMock).not.toHaveBeenCalled();
       expect(currentParams.api.showNoRowsOverlay).not.toHaveBeenCalled();
@@ -834,7 +813,7 @@ describe("SessionGrid cursor continuation", () => {
     await act(async () => staleRead);
 
     expect(currentParams.success).toHaveBeenCalledTimes(1);
-    expect(staleParams.fail).not.toHaveBeenCalled();
+    expect(staleParams.fail).toHaveBeenCalledOnce();
     expect(staleParams.success).not.toHaveBeenCalled();
     expect(enqueueSnackbarMock).not.toHaveBeenCalled();
   });

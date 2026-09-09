@@ -1,10 +1,10 @@
 import {
-  ANALYTICS_REQUEST_TIMEOUT_MS,
   INTERACTIVE_MAX_PAGE_SIZE,
 } from "src/config/runtime_limits";
 import { awaitAggregationRequestWithDeadline } from "src/utils/queryReadState";
 
-export const EVAL_LOG_GRID_REQUEST_TIMEOUT_MS = ANALYTICS_REQUEST_TIMEOUT_MS;
+// Axios uses zero to disable its transport timeout for an exact read.
+export const EVAL_LOG_GRID_REQUEST_TIMEOUT_MS = 0;
 
 const invalidPage = () => {
   const error = new Error("Evaluation logs returned an invalid page");
@@ -20,13 +20,13 @@ const normalizeRow = (row) => {
 };
 
 /**
- * Read one exact server-side grid page under a browser-owned transport wall.
+ * Read one exact server-side grid page until completion or cancellation.
  * Rejections remain rejections so AG Grid callers can invoke `params.fail()`
  * and retain already-rendered cache blocks.
  */
 export async function readEvalLogGridPage(
   requestPage,
-  { currentPageIndex, pageSize } = {},
+  { currentPageIndex, pageSize, signal: cancellationSignal } = {},
 ) {
   const response = await awaitAggregationRequestWithDeadline(
     (signal) =>
@@ -34,7 +34,7 @@ export async function readEvalLogGridPage(
         signal,
         timeout: EVAL_LOG_GRID_REQUEST_TIMEOUT_MS,
       }),
-    { timeoutMs: EVAL_LOG_GRID_REQUEST_TIMEOUT_MS },
+    { timeoutMs: Infinity, signal: cancellationSignal },
   );
   const result = response?.data?.result;
   const metadata = result?.metadata;
@@ -74,5 +74,35 @@ export async function readEvalLogGridPage(
     columns: result.column_config,
     rows,
     totalRows: metadata.total_rows,
+  };
+}
+
+/** Own pending requests for one filter/evaluation datasource generation. */
+export function createEvalLogReadScope() {
+  let generation = 0;
+  const controllers = new Set();
+  return {
+    generation: () => generation,
+    hasPendingReads: () => controllers.size > 0,
+    isCurrent: (value) => value === generation,
+    cancel() {
+      generation += 1;
+      for (const controller of controllers) controller.abort();
+      controllers.clear();
+    },
+    async readPage(request, options) {
+      const controller = new AbortController();
+      controllers.add(controller);
+      try {
+        const page = await readEvalLogGridPage(request, {
+          ...options,
+          signal: controller.signal,
+        });
+        if (controller.signal.aborted) throw controller.signal.reason;
+        return page;
+      } finally {
+        controllers.delete(controller);
+      }
+    },
   };
 }

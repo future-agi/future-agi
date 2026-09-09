@@ -29,7 +29,6 @@ import Iconify from "src/components/iconify";
 import { useMapToVariable } from "./useMapToVariable";
 import axios, { readQuery, endpoints } from "src/utils/axios";
 import { PROJECT_SOURCE } from "src/utils/constants";
-import { ANALYTICS_REQUEST_TIMEOUT_MS } from "src/config/runtime_limits";
 import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 import { canonicalEntries } from "src/utils/utils";
 import {
@@ -588,9 +587,6 @@ const TracingTestMode = React.forwardRef(
       setListContinuationPending(false);
       let cancelled = false;
       const requestController = new AbortController();
-      const startedAt = Date.now();
-      const remainingMs = () =>
-        Math.max(1, ANALYTICS_REQUEST_TIMEOUT_MS - (Date.now() - startedAt));
       const fetchKey = `${selectedProjectId}:${rowType}:${effectiveFilterKey}`;
       if (listContinuationRef.current.signature !== fetchKey) {
         listContinuationRef.current = {
@@ -605,7 +601,7 @@ const TracingTestMode = React.forwardRef(
       const startingRows = startingCursor
         ? listContinuationRef.current.rows || []
         : [];
-      const continuationSnapshot = startingCursor
+      let continuationSnapshot = startingCursor
         ? {
             signature: fetchKey,
             cursor: startingCursor,
@@ -640,7 +636,7 @@ const TracingTestMode = React.forwardRef(
             assertUnconsumedCursor(startingCursorIdentity);
             cursorIdentityByToken.set(startingCursor, startingCursorIdentity);
           }
-          const recordContinuation = (metadata) => {
+          const recordContinuation = (metadata, checkpoint) => {
             const nextCursor = metadata?.next_cursor;
             const nextCursorIdentity = listCursorBoundaryIdentity(metadata);
             if (typeof nextCursor !== "string" || nextCursor.length === 0) {
@@ -648,10 +644,23 @@ const TracingTestMode = React.forwardRef(
                 "List API returned a repeated continuation cursor",
               );
             }
-            // A deadline can return this cursor as pending. Only successful
-            // responses may mark it consumed, otherwise Continue rejects it.
+            // Only successful responses consume this cursor. A transport
+            // failure must leave the same checkpoint available for retry.
             assertUnconsumedCursor(nextCursorIdentity);
             cursorIdentityByToken.set(nextCursor, nextCursorIdentity);
+            if (checkpoint) {
+              // Retain the proven prefix before dispatching the next request.
+              // A failure on the first attempt must be as resumable as a
+              // failure after an earlier explicitly paused attempt.
+              continuationSnapshot = {
+                signature: fetchKey,
+                cursor: nextCursor,
+                cursorIdentity: nextCursorIdentity,
+                rows: checkpoint.rows,
+                columns: checkpoint.response?.data?.config || [],
+                requestedCursorIdentities: [...requestedCursorIdentities],
+              };
+            }
           };
           const requestList = (
             endpoint,
@@ -689,7 +698,6 @@ const TracingTestMode = React.forwardRef(
               { voice: true, parser: parseVoiceCallListResponse },
             );
             const exactRows = await collectExactListRows({
-              maxElapsedMs: remainingMs(),
               initialResponse: response,
               initialRows: startingRows,
               targetRowCount: requestParams.page_size,
@@ -777,7 +785,6 @@ const TracingTestMode = React.forwardRef(
             parser: responseParser,
           });
           const exactRows = await collectExactListRows({
-            maxElapsedMs: remainingMs(),
             initialResponse: response,
             initialRows: startingRows,
             targetRowCount: params.page_size,
@@ -849,6 +856,9 @@ const TracingTestMode = React.forwardRef(
             listContinuationRef.current = continuationSnapshot;
             setListReadState("error");
             setListFailureRetryable(true);
+            if (continuationSnapshot.columns) {
+              setColumns(continuationSnapshot.columns);
+            }
             setRows(continuationSnapshot.rows);
             setTotalRows(continuationSnapshot.rows.length);
             setTotalRowsIsLowerBound(true);

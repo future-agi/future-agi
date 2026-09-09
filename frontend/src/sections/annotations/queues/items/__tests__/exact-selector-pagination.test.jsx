@@ -1,9 +1,10 @@
 import React from "react";
-import { act, render, screen, userEvent } from "src/utils/test-utils";
+import { act, render, renderHook, screen, userEvent } from "src/utils/test-utils";
 import { describe, expect, it, vi } from "vitest";
 import {
   ExactSelectorContinuationNotice,
   createExactSelectorDataSource,
+  useExactSelectorDataSource,
 } from "../exact-selector-pagination";
 import { createListCursorPagination } from "src/sections/projects/LLMTracing/listCursorPagination";
 
@@ -256,5 +257,65 @@ describe("ExactSelectorContinuationNotice", () => {
       screen.getByRole("button", { name: "Continue search" }),
     );
     expect(onContinue).toHaveBeenCalledOnce();
+  });
+});
+
+
+describe("annotation selector read lifecycle", () => {
+  const options = (request) => ({
+    querySignature: "project-1",
+    targetRowCount: 2,
+    getBaseParams: () => ({ project_id: "project-1" }),
+    request,
+    rowsFromResponse: (value) => value.data.result.table,
+    metadataFromResponse: (value) => value.data.result.metadata,
+    rowIdentity: (row) => row.id,
+    onPageLoaded: vi.fn(),
+    onFailure: vi.fn(),
+  });
+
+  it("aborts on unmount and ignores a late response to the destroyed grid", async () => {
+    let resolve;
+    const request = vi.fn(() => new Promise((done) => { resolve = done; }));
+    const config = options(request);
+    const { result, unmount } = renderHook(() => useExactSelectorDataSource(config));
+    const params = gridParams();
+    params.api.isDestroyed = vi.fn(() => false);
+    let pending;
+    act(() => { pending = result.current.dataSource.getRows(params); });
+    const signal = request.mock.calls[0][1];
+    params.api.isDestroyed.mockReturnValue(true);
+    unmount();
+    expect(signal.aborted).toBe(true);
+    await act(async () => {
+      resolve(response({ rows: [{ id: "stale" }], hasMore: false, cursor: null }));
+      await pending;
+    });
+    expect(params.success).not.toHaveBeenCalled();
+    expect(params.fail).not.toHaveBeenCalled();
+    expect(config.onPageLoaded).not.toHaveBeenCalled();
+    expect(config.onFailure).not.toHaveBeenCalled();
+  });
+
+  it("settles the old grid read when the query changes and loads a fresh page", async () => {
+    let resolve;
+    const request = vi.fn().mockImplementationOnce(() => new Promise((done) => { resolve = done; }))
+      .mockResolvedValue(response({ rows: [{ id: "new" }], hasMore: false, cursor: null }));
+    const config = options(request);
+    const { result, rerender } = renderHook(({ signature }) => useExactSelectorDataSource({ ...config, querySignature: signature }), { initialProps: { signature: "old" } });
+    const oldParams = gridParams();
+    let pending;
+    act(() => { pending = result.current.dataSource.getRows(oldParams); });
+    rerender({ signature: "new" });
+    await act(async () => { await pending; });
+    expect(request.mock.calls[0][1].aborted).toBe(true);
+    expect(oldParams.fail).toHaveBeenCalledOnce();
+    expect(oldParams.api.retryServerSideLoads).toHaveBeenCalledOnce();
+    const fresh = gridParams();
+    await act(async () => { await result.current.dataSource.getRows(fresh); });
+    expect(fresh.success).toHaveBeenCalledWith({ rowData: [{ id: "new" }], rowCount: 1 });
+    await act(async () => { resolve(response({ rows: [{ id: "old" }], hasMore: false, cursor: null })); });
+    expect(oldParams.success).not.toHaveBeenCalled();
+    expect(config.onFailure).not.toHaveBeenCalled();
   });
 });

@@ -59,7 +59,6 @@ import {
   verifySpanReadResponse,
 } from "src/sections/projects/LLMTracing/spanReadReference";
 import { serializeFilterForApi } from "src/api/contracts/filter-contract";
-import { ANALYTICS_REQUEST_TIMEOUT_MS } from "src/config/runtime_limits";
 import { useGetProjectDetails } from "src/api/project/project-detail";
 import { isTaskPreviewProjectKindReady } from "../taskProjectKind";
 import {
@@ -330,9 +329,6 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
     ],
     queryFn: async ({ signal }) => {
       if (!projectId) return { rows: [], total: 0, columns: [] };
-      const startedAt = Date.now();
-      const remainingMs = () =>
-        Math.max(1, ANALYTICS_REQUEST_TIMEOUT_MS - (Date.now() - startedAt));
 
       // A lazy continuation can traverse several empty bounded chunks before
       // its transport fails. Retry from the last unconsumed signed checkpoint
@@ -382,7 +378,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
           );
         }
         // A dispatched cursor is not consumed until its response succeeds.
-        // The follower returns this same cursor when its wall expires.
+        // A failed transport must leave this cursor available for retry.
         assertUnconsumedCursor(nextCursorIdentity);
         cursorIdentityByToken.set(nextCursor, nextCursorIdentity);
       };
@@ -484,7 +480,6 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
           { voice: true, parser: parseVoiceCallListResponse },
         );
         const exactRows = await collectExactListRows({
-          maxElapsedMs: remainingMs(),
           initialResponse: resp,
           initialRows: attemptListContinuation?.rows || [],
           targetRowCount:
@@ -571,7 +566,6 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
         { parser: responseParser },
       );
       const exactRows = await collectExactListRows({
-        maxElapsedMs: remainingMs(),
         initialResponse: resp,
         initialRows: attemptListContinuation?.rows || [],
         targetRowCount:

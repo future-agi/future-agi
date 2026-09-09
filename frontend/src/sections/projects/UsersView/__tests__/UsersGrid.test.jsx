@@ -1,6 +1,6 @@
 import React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, userEvent, waitFor } from "src/utils/test-utils";
+import { act, render, screen, waitFor } from "src/utils/test-utils";
 
 const storedValues = new Map();
 vi.stubGlobal("localStorage", {
@@ -396,7 +396,7 @@ describe("UsersGrid deterministic pagination", () => {
     expect(getMock.mock.calls[2][1].params.cursor).toBe("signed-users-page-2");
   });
 
-  it("stops automatic retries at the bound and preserves the manual retry cursor", async () => {
+  it("automatically completes a sparse exact page beyond twelve checkpoints", async () => {
     Array.from({ length: 13 }, (_, index) =>
       usersResponse({
         hasMore: true,
@@ -405,79 +405,31 @@ describe("UsersGrid deterministic pagination", () => {
       }),
     ).forEach((response) => getMock.mockResolvedValueOnce(response));
     getMock.mockResolvedValueOnce(usersResponse({ rows: [row(88)] }));
-    const props = renderGrid();
+    renderGrid();
 
     const boundedRound = makeGridParams();
-    const getLocaleText = gridState.props.getLocaleText;
-    boundedRound.fail.mockImplementation(() => {
-      // The grid reads these labels inside fail(), before React renders the
-      // continuation banner. CSS cannot replace the failed-row ARIA label.
-      expect(getLocaleText({ key: "loadingError", defaultValue: "ERR" })).toBe(
-        "Preparing exact results. Refresh or retry to continue.",
-      );
-      expect(
-        getLocaleText({
-          key: "ariaSkeletonCellLoadingFailed",
-          defaultValue: "Row failed to load",
-        }),
-      ).toBe("Preparing exact results. Refresh or retry to continue.");
-    });
     await readPage(boundedRound);
 
-    expect(getMock).toHaveBeenCalledTimes(13);
-    expect(boundedRound.success).not.toHaveBeenCalled();
+    expect(getMock).toHaveBeenCalledTimes(14);
+    expect(boundedRound.fail).not.toHaveBeenCalled();
     expect(boundedRound.api.showNoRowsOverlay).not.toHaveBeenCalled();
-    expect(boundedRound.fail).toHaveBeenCalledTimes(1);
     expect(boundedRound.api.retryServerSideLoads).not.toHaveBeenCalled();
-    expect(props.setHasData).not.toHaveBeenCalledWith(false);
-    expect(props.setIsLoading).toHaveBeenCalledWith(false);
-    expect(props.setSearchState).not.toHaveBeenCalledWith("error");
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Preparing exact results. Refresh or retry to continue.",
-    );
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(gridState.props.className).toContain("ag-grid-cursor-paused");
-    expect(gridState.props.noRowsOverlayComponent()).toBeNull();
-    expect(gridState.props.getLocaleText).toBe(getLocaleText);
-    expect(
-      getLocaleText({ key: "noRowsToShow", defaultValue: "No Rows" }),
-    ).toBe("No Rows");
-
-    await userEvent.click(
-      screen.getByRole("button", { name: "Continue search" }),
-    );
-    expect(boundedRound.api.retryServerSideLoads).toHaveBeenCalledOnce();
-    expect(boundedRound.api.refreshServerSide).not.toHaveBeenCalled();
-    expect(
-      screen.queryByRole("button", { name: "Continue search" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Continue search" })).not.toBeInTheDocument();
     expect(gridState.props.className).not.toContain("ag-grid-cursor-paused");
-    expect(
-      getLocaleText({
-        key: "ariaSkeletonCellLoadingFailed",
-        defaultValue: "Row failed to load",
-      }),
-    ).toBe("Row failed to load");
-
-    // A deliberate retry resumes the retained exact checkpoint. The bounded
-    // automatic read itself never spins or publishes a false empty page.
-    const resumedPage = makeGridParams();
-    await readPage(resumedPage);
-
     expect(getMock.mock.calls[13][1].params).toEqual(
       expect.objectContaining({
         cursor_mode: true,
         cursor: "checkpoint-12",
       }),
     );
-    expect(resumedPage.success).toHaveBeenCalledWith({
+    expect(boundedRound.success).toHaveBeenCalledWith({
       rowData: [row(88)],
       rowCount: 1,
     });
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
-  it("retains a short intermediate block and overflow across a continuation pause", async () => {
+  it("retains short intermediate blocks and overflow beyond twelve checkpoints", async () => {
     Array.from({ length: 13 }, (_, index) =>
       usersResponse({
         rows: [row(index)],
@@ -506,24 +458,18 @@ describe("UsersGrid deterministic pagination", () => {
 
     await readPage(boundedRound);
 
-    expect(getMock).toHaveBeenCalledTimes(13);
-    expect(boundedRound.success).not.toHaveBeenCalled();
-    expect(boundedRound.api.setGridOption).not.toHaveBeenCalled();
+    expect(getMock).toHaveBeenCalledTimes(14);
+    expect(boundedRound.fail).not.toHaveBeenCalled();
     expect(boundedRound.api.showNoRowsOverlay).not.toHaveBeenCalled();
     expect(storeState.clearSelection).not.toHaveBeenCalled();
     expect(props.setHasData).not.toHaveBeenCalledWith(false);
-
-    await userEvent.click(
-      screen.getByRole("button", { name: "Continue search" }),
-    );
-    const resumedPage = makeGridParams();
-    await readPage(resumedPage);
+    expect(screen.queryByRole("button", { name: "Continue search" })).not.toBeInTheDocument();
 
     expect(getMock.mock.calls[13][1].params.cursor).toBe("checkpoint-12");
     expect(getMock.mock.calls[13][1].params).not.toHaveProperty(
       "current_page_index",
     );
-    expect(resumedPage.success).toHaveBeenCalledWith({
+    expect(boundedRound.success).toHaveBeenCalledWith({
       rowData: Array.from({ length: 25 }, (_, index) => row(index)),
       rowCount: 26,
     });
@@ -541,7 +487,7 @@ describe("UsersGrid deterministic pagination", () => {
   });
 
   it.each(["complete", "failure"])(
-    "renders a real AG Grid continuation pause as preparing before a %s retry",
+    "renders a real AG Grid %s after automatically traversing thirteen sparse checkpoints",
     async (outcome) => {
       const { createGrid, ModuleRegistry } = await import("ag-grid-community");
       const { AllEnterpriseModule } = await import("ag-grid-enterprise");
@@ -579,22 +525,6 @@ describe("UsersGrid deterministic pagination", () => {
           gridState.api = api;
         });
 
-        await waitFor(() => {
-          expect(
-            host.querySelector(
-              '[aria-label="Preparing exact results. Refresh or retry to continue."]',
-            ),
-          ).not.toBeNull();
-        });
-        expect(
-          host.querySelector('[aria-label="Row failed to load"]'),
-        ).toBeNull();
-        expect(host.textContent).not.toContain("ERR");
-        expect(getMock).toHaveBeenCalledTimes(13);
-
-        await userEvent.click(
-          screen.getByRole("button", { name: "Continue search" }),
-        );
         if (outcome === "complete") {
           await waitFor(() =>
             expect(api.getDisplayedRowAtIndex(0)?.data).toEqual(row(88)),
@@ -610,6 +540,8 @@ describe("UsersGrid deterministic pagination", () => {
             "We couldn't load this data. Please retry in a moment.",
           );
         }
+        expect(host.querySelector('[aria-label="Preparing exact results. Refresh or retry to continue."]')).toBeNull();
+        expect(screen.queryByRole("button", { name: "Continue search" })).not.toBeInTheDocument();
         expect(getMock).toHaveBeenCalledTimes(14);
         expect(getMock.mock.calls[13][1].params.cursor).toBe("checkpoint-12");
         expect(screen.queryByRole("status")).not.toBeInTheDocument();
@@ -803,7 +735,7 @@ describe("UsersGrid deterministic pagination", () => {
 
     await readPage(params);
 
-    expect(params.fail).not.toHaveBeenCalled();
+    expect(params.fail).toHaveBeenCalledOnce();
     expect(params.success).not.toHaveBeenCalled();
     expect(props.setSearchState).not.toHaveBeenCalledWith("error");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -909,7 +841,7 @@ describe("UsersGrid deterministic pagination", () => {
         storeState.filters,
       );
       expect(staleParams.success).not.toHaveBeenCalled();
-      expect(staleParams.fail).not.toHaveBeenCalled();
+      expect(staleParams.fail).toHaveBeenCalledOnce();
       expect(props.setSearchState).not.toHaveBeenCalledWith("error");
       expect(currentParams.success).toHaveBeenCalledWith({
         rowData: [row(99)],
@@ -956,7 +888,7 @@ describe("UsersGrid deterministic pagination", () => {
       expect(oldSignal.aborted).toBe(true);
       expect(props.setIsLoading).toHaveBeenLastCalledWith(true);
       expect(oldParams.success).not.toHaveBeenCalled();
-      expect(oldParams.fail).not.toHaveBeenCalled();
+      expect(oldParams.fail).toHaveBeenCalledOnce();
       expect(currentParams.success).not.toHaveBeenCalled();
       expect(props.setHasData).not.toHaveBeenCalledWith(false);
       expect(props.setSearchState).not.toHaveBeenCalledWith("error");
@@ -1002,7 +934,7 @@ describe("UsersGrid deterministic pagination", () => {
     await act(async () => staleRead);
 
     expect(currentParams.success).toHaveBeenCalledTimes(1);
-    expect(staleParams.fail).not.toHaveBeenCalled();
+    expect(staleParams.fail).toHaveBeenCalledOnce();
     expect(staleParams.success).not.toHaveBeenCalled();
   });
 

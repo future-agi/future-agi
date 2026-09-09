@@ -319,7 +319,10 @@ describe.each(["trace", "span"])("%s grid theme retention", (kind) => {
     expect(themeParamReferences.at(-1)).toBe(firstParams);
   });
 
-  const themedSubject = (subject, { color = "#123456", weight = 500, spacing = 8 } = {}) => (
+  const themedSubject = (
+    subject,
+    { color = "#123456", weight = 500, spacing = 8 } = {},
+  ) => (
     <ThemeProvider
       theme={createTheme({
         palette: { text: { primary: color } },
@@ -841,7 +844,7 @@ describe.each([
     },
     emptyText: "No spans found",
   },
-])("$kind grid cursor continuation", ({ kind, endpoint, row, emptyText }) => {
+])("$kind grid cursor continuation", ({ kind, endpoint, row, emptyText: _emptyText }) => {
   beforeEach(() => {
     getMock.mockReset();
     gridState.api = null;
@@ -935,7 +938,7 @@ describe.each([
     expect(params.api.forEachNode).not.toHaveBeenCalled();
   });
 
-  it("pauses neutrally and resumes the retained checkpoint after one click", async () => {
+  it("automatically completes a sparse exact page beyond twelve checkpoints", async () => {
     Array.from({ length: 13 }, (_, index) =>
       listResponse({
         hasMore: true,
@@ -951,35 +954,12 @@ describe.each([
     const boundedRound = makeParams();
     await getRows(boundedRound);
 
-    expect(getMock).toHaveBeenCalledTimes(13);
-    expect(getMock.mock.calls.every(([url]) => url === endpoint)).toBe(true);
-    expect(boundedRound.success).not.toHaveBeenCalled();
-    expect(boundedRound.fail).toHaveBeenCalledOnce();
+    expect(getMock).toHaveBeenCalledTimes(14);
+    expect(boundedRound.fail).not.toHaveBeenCalled();
     expect(boundedRound.api.showNoRowsOverlay).not.toHaveBeenCalled();
     expect(boundedRound.api.retryServerSideLoads).not.toHaveBeenCalled();
-    expect(boundedRound.api.refreshServerSide).not.toHaveBeenCalled();
-    expect(gridState.props.className).toContain("ag-grid-cursor-paused");
-    expect(gridState.props.noRowsOverlayComponent()).toBeNull();
-    expect(screen.queryByText(emptyText)).not.toBeInTheDocument();
-    expect(screen.queryByText("ERR")).not.toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Preparing exact results. Refresh or retry to continue.",
-    );
-
-    await userEvent.click(
-      screen.getByRole("button", { name: "Continue search" }),
-    );
-
-    expect(boundedRound.api.retryServerSideLoads).toHaveBeenCalledOnce();
-    expect(boundedRound.api.refreshServerSide).not.toHaveBeenCalled();
-    expect(
-      screen.queryByRole("button", { name: "Continue search" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Continue search" })).not.toBeInTheDocument();
     expect(gridState.props.className).not.toContain("ag-grid-cursor-paused");
-
-    const resumedRound = makeParams();
-    await getRows(resumedRound);
-
     expect(getMock.mock.calls[13][1].params).toEqual(
       expect.objectContaining({
         cursor_mode: true,
@@ -988,11 +968,11 @@ describe.each([
       }),
     );
     expect(getMock.mock.calls[13][1].params).not.toHaveProperty("page_number");
-    expect(resumedRound.success).toHaveBeenCalledWith({
+    expect(boundedRound.success).toHaveBeenCalledWith({
       rowData: [row],
       rowCount: 1,
     });
-    expect(resumedRound.api.refreshServerSide).not.toHaveBeenCalled();
+    expect(boundedRound.api.refreshServerSide).not.toHaveBeenCalled();
   });
 
   it("retries the first page once as numbered against a strict legacy API", async () => {
@@ -1055,6 +1035,90 @@ describe.each(["trace", "span"])("%s grid loading lifecycle", (kind) => {
     gridState.props = null;
     resetMetricIds.mockReset();
   });
+
+  it.each(["filter", "refresh"])(
+    "releases the real grid request slot when %s cancels its first read",
+    async (action) => {
+      const { createGrid, ModuleRegistry } = await import("ag-grid-community");
+      const { AllEnterpriseModule } = await import("ag-grid-enterprise");
+      ModuleRegistry.registerModules([AllEnterpriseModule]);
+      // A transport that never resolves must not block the replacement datasource.
+      getMock.mockImplementationOnce(() => new Promise(() => {}));
+      const ref = React.createRef();
+      const props = baseProps();
+      const view = render(
+        renderGridSubject({ kind, ref, props, filters: props.filters }),
+      );
+      const host = document.createElement("div");
+      document.body.appendChild(host);
+      let api;
+      try {
+        act(() => {
+          api = createGrid(host, {
+            theme: "legacy",
+            domLayout: "autoHeight",
+            columnDefs: [{ field: "trace_id" }],
+            rowModelType: "serverSide",
+            cacheBlockSize: 25,
+            maxConcurrentDatasourceRequests: 1,
+            serverSideInitialRowCount: 1,
+            serverSideDatasource: gridState.props.serverSideDatasource,
+          });
+          gridState.api = api;
+        });
+        await waitFor(() => expect(getMock).toHaveBeenCalledOnce());
+        const firstSignal = getMock.mock.calls[0][1].signal;
+        const replacement = {
+          trace_id: "replacement",
+          span_id: "replacement",
+          project_id: "project-1",
+          start_time: "2026-01-01T00:00:00Z",
+        };
+        getMock.mockResolvedValueOnce(
+          listResponse({ rows: [replacement], totalRows: 1 }),
+        );
+        if (action === "filter") {
+          view.rerender(
+            renderGridSubject({
+              kind,
+              ref,
+              props,
+              filters: [
+                {
+                  column_id: "tenant_label",
+                  filter_config: {
+                    col_type: "SPAN_ATTRIBUTE",
+                    filter_type: "text",
+                    filter_op: "in",
+                    filter_value: ["alpha", "beta"],
+                  },
+                },
+              ],
+            }),
+          );
+          act(() =>
+            api.setGridOption(
+              "serverSideDatasource",
+              gridState.props.serverSideDatasource,
+            ),
+          );
+        } else {
+          act(() => window.dispatchEvent(new Event("observe-refresh")));
+        }
+        expect(firstSignal.aborted).toBe(true);
+        await waitFor(() =>
+          expect(api.getDisplayedRowAtIndex(0)?.data?.trace_id).toBe(
+            "replacement",
+          ),
+        );
+        expect(getMock).toHaveBeenCalledTimes(2);
+        expect(host.textContent).toContain("replacement");
+      } finally {
+        act(() => api?.destroy());
+        host.remove();
+      }
+    },
+  );
 
   it("settles an empty first page across an equivalent-filter rerender", async () => {
     let resolveResponse;
@@ -1183,8 +1247,9 @@ describe.each(["trace", "span"])("%s grid loading lifecycle", (kind) => {
       await pendingRead;
     });
 
-    // Reset now settles through the neutral cancellation path before late data.
-    expect(params.fail).not.toHaveBeenCalled();
+    // Cancellation releases the real grid slot without publishing stale rows.
+    expect(params.fail).toHaveBeenCalledOnce();
+    expect(params.api.retryServerSideLoads).toHaveBeenCalledOnce();
     expect(params.success).not.toHaveBeenCalled();
     await waitFor(() => expect(gridState.props.loading).toBe(false));
   });

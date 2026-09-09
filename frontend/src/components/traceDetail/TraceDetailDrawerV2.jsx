@@ -880,6 +880,7 @@ const TraceDetailDrawerV2 = ({
 
       {/* Header */}
       <DrawerHeader
+        open={open}
         traceId={traceId}
         projectId={projectId}
         onClose={onClose}

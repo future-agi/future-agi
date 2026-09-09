@@ -192,7 +192,7 @@ describe("TaskLivePreview sparse cursor continuation", () => {
   );
 
   it.each(["spans", "traces", "sessions"])(
-    "pauses a timed-out %s continuation without consuming its cursor",
+    "lets a slow %s continuation complete without a browser deadline",
     async (rowType) => {
       vi.useFakeTimers();
       const listUrl = `/${rowType}/`;
@@ -239,30 +239,17 @@ describe("TaskLivePreview sparse cursor continuation", () => {
       await act(async () =>
         vi.advanceTimersByTimeAsync(ANALYTICS_REQUEST_TIMEOUT_MS - 10_000 + 1),
       );
-      expect(continuationSignal.aborted).toBe(true);
-      expect(screen.getByText("Preparing the exact preview.")).toBeVisible();
-      expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
-      expect(
-        screen.queryByText(QUERY_FAILED_RETRY_MESSAGE),
-      ).not.toBeInTheDocument();
+      expect(continuationSignal.aborted).toBe(false);
+      expect(screen.queryByRole("button", { name: "Continue search" })).not.toBeInTheDocument();
       expect(screen.queryByText("No matching rows")).not.toBeInTheDocument();
-
-      // Even a transport that ignores abort must not publish a late terminal
-      // result, overwrite the pending cursor, or auto-start another attempt.
       await act(async () => {
         resolveLate(observeListPage({ hasMore: false, nextCursor: null }));
         await vi.advanceTimersByTimeAsync(1_000);
       });
       expect(listCalls).toBe(2);
-      expect(screen.getByText("Preparing the exact preview.")).toBeVisible();
-      await act(async () => {
-        screen.getByRole("button", { name: "Continue search" }).click();
-        await vi.advanceTimersByTimeAsync(1);
-      });
-      await act(async () => vi.advanceTimersByTimeAsync(10));
       expect(screen.getByText("No matching rows")).toBeVisible();
-      expect(mocks.get.mock.calls[2][1].params.cursor).toBe(checkpoint);
-      expect(mocks.get.mock.calls[2][1].params).not.toHaveProperty(
+      expect(mocks.get.mock.calls[1][1].params.cursor).toBe(checkpoint);
+      expect(mocks.get.mock.calls[1][1].params).not.toHaveProperty(
         "page_number",
       );
       expect(mocks.post).not.toHaveBeenCalled();
@@ -1018,7 +1005,7 @@ describe("TaskLivePreview sparse cursor continuation", () => {
     expect(screen.getByRole("button", { name: "Previous row" })).toBeEnabled();
   });
 
-  it("resumes a sparse voice-call preview beyond the first hop budget", async () => {
+  it("automatically completes a sparse voice-call preview beyond twelve hops", async () => {
     let listCalls = 0;
     mocks.get.mockImplementation(async (url) => {
       if (url === "/calls/") {
@@ -1051,12 +1038,7 @@ describe("TaskLivePreview sparse cursor continuation", () => {
       </QueryClientProvider>,
     );
 
-    const continueSearch = await screen.findByRole("button", {
-      name: "Continue search",
-    });
-    expect(listCalls).toBe(13);
 
-    await act(async () => continueSearch.click());
     await screen.findByText("Row 1 of 1");
 
     const listRequests = mocks.get.mock.calls.filter(
@@ -1071,7 +1053,7 @@ describe("TaskLivePreview sparse cursor continuation", () => {
     );
   });
 
-  it("resumes a valid sparse continuation beyond the first hop budget", async () => {
+  it("automatically completes a sparse preview beyond twelve hops", async () => {
     let spanListCalls = 0;
     mocks.get.mockImplementation(async (url) => {
       if (url === "/spans/") {
@@ -1139,16 +1121,7 @@ describe("TaskLivePreview sparse cursor continuation", () => {
       </QueryClientProvider>,
     );
 
-    const continueSearch = await screen.findByRole("button", {
-      name: "Continue search",
-    });
-    expect(spanListCalls).toBe(13);
-    expect(
-      screen.queryByText(QUERY_FAILED_RETRY_MESSAGE),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByText("No matching rows")).not.toBeInTheDocument();
 
-    await act(async () => continueSearch.click());
     await screen.findByText("Row 1 of 1");
     expect(spanListCalls).toBe(25);
     const resumedRequest = mocks.get.mock.calls.filter(
@@ -1162,7 +1135,7 @@ describe("TaskLivePreview sparse cursor continuation", () => {
     );
   });
 
-  it("shows a real empty state only after resumed terminal exhaustion", async () => {
+  it("shows an empty state only after automatic terminal exhaustion", async () => {
     let spanListCalls = 0;
     mocks.get.mockImplementation(async (url) => {
       if (url !== "/spans/") throw new Error(`Unexpected GET ${url}`);
@@ -1205,13 +1178,7 @@ describe("TaskLivePreview sparse cursor continuation", () => {
       </QueryClientProvider>,
     );
 
-    const continueSearch = await screen.findByRole("button", {
-      name: "Continue search",
-    });
-    expect(spanListCalls).toBe(13);
-    expect(screen.queryByText("No matching rows")).not.toBeInTheDocument();
 
-    await act(async () => continueSearch.click());
     await screen.findByText("No matching rows");
     expect(
       screen.queryByRole("button", { name: "Continue search" }),
@@ -1527,7 +1494,7 @@ describe("TaskLivePreview sparse cursor continuation", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("fails closed when a cursor cycles at a later attempt boundary", async () => {
+  it("fails closed when a cursor cycles beyond twelve hops", async () => {
     let spanListCalls = 0;
     mocks.get.mockImplementation(async (url) => {
       if (url !== "/spans/") throw new Error(`Unexpected GET ${url}`);
@@ -1559,10 +1526,7 @@ describe("TaskLivePreview sparse cursor continuation", () => {
       </QueryClientProvider>,
     );
 
-    const continueSearch = await screen.findByRole("button", {
-      name: "Continue search",
-    });
-    await act(async () => continueSearch.click());
+
 
     await screen.findByText(QUERY_FAILED_RETRY_MESSAGE);
     expect(spanListCalls).toBe(26);
@@ -1834,10 +1798,7 @@ describe("TaskLivePreview sparse cursor continuation", () => {
       </QueryClientProvider>,
     );
 
-    const continueSearch = await screen.findByRole("button", {
-      name: "Continue search",
-    });
-    await act(async () => continueSearch.click());
+
     await waitFor(() => expect(oldListCalls).toBe(14));
 
     view.rerender(
@@ -1887,6 +1848,7 @@ describe("TaskLivePreview sparse cursor continuation", () => {
       if (url === "/spans/" && projectId === "project-old") {
         const callIndex = oldScopeCalls;
         oldScopeCalls += 1;
+        if (callIndex === 13) return new Promise(() => {});
         if (callIndex < 13) {
           return {
             data: {
@@ -1985,8 +1947,7 @@ describe("TaskLivePreview sparse cursor continuation", () => {
       </QueryClientProvider>,
     );
 
-    await screen.findByRole("button", { name: "Continue search" });
-    expect(oldScopeCalls).toBe(13);
+    await waitFor(() => expect(oldScopeCalls).toBe(14));
 
     view.rerender(
       <QueryClientProvider client={queryClient}>
@@ -2005,9 +1966,9 @@ describe("TaskLivePreview sparse cursor continuation", () => {
     const returnedRequest = mocks.get.mock.calls.filter(
       ([url, options]) =>
         url === "/spans/" && options.params?.project_id === "project-old",
-    )[13];
+    )[14];
     expect(returnedRequest[1].params).not.toHaveProperty("cursor");
-    expect(oldScopeCalls).toBe(14);
+    expect(oldScopeCalls).toBe(15);
   });
 
   it("does not reuse cached detail data after the selected project changes", async () => {
