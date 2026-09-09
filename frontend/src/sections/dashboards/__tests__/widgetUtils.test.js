@@ -24,7 +24,6 @@ import {
   isAdditiveAggregation,
   getYAxisRangeWarning,
   getAutoYAxisBounds,
-  getSeriesExtent,
   getFittedYAxisBounds,
   getVisibleIndices,
   resolveAxisBounds,

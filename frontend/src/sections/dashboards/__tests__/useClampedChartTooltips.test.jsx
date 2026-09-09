@@ -1,3 +1,4 @@
+/* eslint-disable react/prop-types */
 import React, { useRef, useState } from "react";
 import { describe, it, expect } from "vitest";
 import { act, render, waitFor } from "src/utils/test-utils";
