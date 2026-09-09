@@ -164,7 +164,20 @@ export default function UseTemplate() {
   if (!env) {
     return (
       <Box sx={{ p: 3 }}>
-        <EmptyState icon="solar:danger-triangle-linear" title="Template not found" body="It may have been renamed." />
+        <EmptyState
+          icon="solar:widget-4-linear"
+          title="This template isn't here"
+          body="It may have been renamed, or the link is from an older version. Browse the full catalog to pick another."
+          action={
+            <Button
+              variant="contained" color="primary" size="small"
+              startIcon={<Iconify icon="solar:alt-arrow-left-linear" width={16} />}
+              onClick={() => navigate(paths.dashboard.simulate.environments)}
+            >
+              Browse environments
+            </Button>
+          }
+        />
       </Box>
     );
   }

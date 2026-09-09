@@ -19,6 +19,7 @@ import SalesforceSandboxMock from "./SalesforceSandboxMock";
 import GenericSandboxMock from "./GenericSandboxMock";
 import TwinControlsDrawer from "./TwinControlsDrawer";
 import { OpenApiDialog, OpenSurfaceDialog } from "./TwinSandboxDialogs";
+import { EmptyState } from "../components/primitives";
 
 const SANDBOX_MOCKS = {
   slack: SlackSandboxMock,
@@ -92,19 +93,21 @@ export default function TwinDetail() {
 
   if (!env || !backing) {
     return (
-      <Box sx={{ p: 4 }}>
-        <Typography sx={{ typography: "s1", fontWeight: 700 }}>
-          Clone environment not found
-        </Typography>
-        <Typography sx={{ typography: "s2", color: "text.subtitle", mb: 2 }}>
-          It may have been deleted, or the URL is stale.
-        </Typography>
-        <Button
-          variant="outlined" size="small"
-          onClick={() => navigate(paths.dashboard.simulate.twins)}
-        >
-          Back to Clones
-        </Button>
+      <Box sx={{ display: "grid", placeItems: "center", minHeight: "60vh", p: 4 }}>
+        <EmptyState
+          icon="solar:box-minimalistic-linear"
+          title="This environment isn't here"
+          body="It may have been deleted, or the link is from an older version. Your environments are all in one place."
+          action={
+            <Button
+              variant="contained" color="primary" size="small"
+              startIcon={<Iconify icon="solar:alt-arrow-left-linear" width={16} />}
+              onClick={() => navigate(paths.dashboard.simulate.environments)}
+            >
+              Back to environments
+            </Button>
+          }
+        />
       </Box>
     );
   }
