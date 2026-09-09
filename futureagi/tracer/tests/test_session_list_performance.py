@@ -4,9 +4,9 @@ Stress tests for the session list ClickHouse queries.
 These tests verify that:
 1. The query builder produces exact aggregate queries with finite page bounds
 2. The count-skip logic correctly eliminates unnecessary count queries
-3. The span attributes query is bounded (root spans + LIMIT)
+3. The span attributes query is scoped to selected sessions and root spans
 4. Large result sets are processed within acceptable time bounds
-5. The attribute key cap prevents pathological memory usage
+5. The real attribute aggregator retains every key and typed value
 
 Run with: bin/test -k "test_session_list_performance" --no-services unit
 """
@@ -99,14 +99,15 @@ class TestSessionListQueryPerformance:
         assert elapsed < 0.5, f"Aggregated count query too slow: {elapsed:.2f}s"
 
     def test_span_attributes_query_has_bounds(self):
-        """Span attributes query must have LIMIT to prevent unbounded scans."""
+        """Selected sessions bound hydration, not a silent physical-row cutoff."""
         builder = self._make_builder()
         builder.build()
 
         session_ids = [str(uuid.uuid4()) for _ in range(30)]
         query, params = builder.build_span_attributes_query(session_ids)
 
-        assert "LIMIT 500" in query
+        assert "LIMIT 500" not in query
+        assert params["attr_session_ids"] == tuple(session_ids)
         assert "(parent_span_id IS NULL OR parent_span_id = '')" in query
 
     def test_trace_count_is_exact_in_every_session_aggregate_query(self):
@@ -206,150 +207,44 @@ class TestSessionListCountSkipStress:
 
 @pytest.mark.unit
 class TestSpanAttributesProcessingStress:
-    """Stress test the span attribute parsing and key-cap logic."""
+    """Measure the real complete attribute aggregator, not a copied capped loop."""
 
     def _simulate_attribute_processing(
         self, num_sessions, attrs_per_session, keys_per_attr
     ):
-        """Simulate the attribute processing loop from _list_sessions_clickhouse."""
-        from tracer.views.trace_session import _json_loads
+        from tracer.views.trace_session import _aggregate_session_attribute_rows
 
-        _SKIP_ATTR_PREFIXES = (
-            "raw.",
-            "llm.input_messages",
-            "llm.output_messages",
-            "input.value",
-            "output.value",
-        )
-        _MAX_ATTR_KEYS_PER_SESSION = 50
+        rows = [
+            {
+                "session_id": f"session-{session}",
+                "span_attributes_raw": json.dumps({
+                    f"key_{key}": f"value_{session}_{root}_{key}"
+                    for key in range(keys_per_attr)
+                }),
+            }
+            for session in range(num_sessions)
+            for root in range(attrs_per_session)
+        ]
+        started = time.monotonic()
+        attributes = _aggregate_session_attribute_rows(rows)
+        elapsed = time.monotonic() - started
+        assert len(attributes) == num_sessions
+        for keys in attributes.values():
+            assert len(keys) == keys_per_attr
+            assert all(len(values) == attrs_per_session for values in keys.values())
+        return elapsed, attributes
 
-        attr_rows = []
-        for s_idx in range(num_sessions):
-            sid = f"session-{s_idx}"
-            for a_idx in range(attrs_per_session):
-                attrs = {
-                    f"key_{k}": f"val_{s_idx}_{a_idx}_{k}" for k in range(keys_per_attr)
-                }
-                attr_rows.append(
-                    {
-                        "session_id": sid,
-                        "span_attributes_raw": json.dumps(attrs),
-                        "span_attr_str": {},
-                        "span_attr_num": {},
-                    }
-                )
+    def test_attribute_processing_30_sessions_510_rows(self):
+        elapsed, _ = self._simulate_attribute_processing(30, 17, 10)
+        assert elapsed < 0.5, f"Took {elapsed:.3f}s"
 
-        aggregated_attrs: dict[str, dict] = {}
-        start = time.monotonic()
-
-        for attr_row in attr_rows:
-            sid = str(attr_row.get("session_id", ""))
-            if (
-                sid in aggregated_attrs
-                and len(aggregated_attrs[sid]) >= _MAX_ATTR_KEYS_PER_SESSION
-            ):
-                continue
-            raw = attr_row.get("span_attributes_raw", "{}")
-            try:
-                attrs = (
-                    _json_loads(raw) if isinstance(raw, str) and raw else (raw or {})
-                )
-            except (json.JSONDecodeError, ValueError, TypeError):
-                attrs = {}
-            if sid not in aggregated_attrs:
-                aggregated_attrs[sid] = {}
-            for key, value in attrs.items():
-                if len(aggregated_attrs[sid]) >= _MAX_ATTR_KEYS_PER_SESSION:
-                    break
-                if key.startswith(_SKIP_ATTR_PREFIXES):
-                    continue
-                if isinstance(value, str) and len(value) > 500:
-                    continue
-                if key not in aggregated_attrs[sid]:
-                    aggregated_attrs[sid][key] = set()
-                if isinstance(value, (str, int, float, bool)):
-                    aggregated_attrs[sid][key].add(value)
-
-        elapsed = time.monotonic() - start
-        return elapsed, aggregated_attrs
-
-    def test_attribute_processing_30_sessions_500_rows(self):
-        """Process 500 attribute rows for 30 sessions in < 500ms."""
-        elapsed, attrs = self._simulate_attribute_processing(
-            num_sessions=30, attrs_per_session=17, keys_per_attr=10
-        )
-        assert elapsed < 0.5, f"Took {elapsed:.3f}s (limit: 0.5s)"
-        for _sid, keys in attrs.items():
-            assert len(keys) <= 50
-
-    def test_attribute_processing_key_cap_effective(self):
-        """Key cap should prevent pathological memory usage with many unique keys."""
-        elapsed, attrs = self._simulate_attribute_processing(
-            num_sessions=30, attrs_per_session=100, keys_per_attr=100
-        )
-        for _sid, keys in attrs.items():
-            assert len(keys) <= 50
-        assert elapsed < 2.0, f"Took {elapsed:.3f}s (limit: 2.0s)"
+    def test_attribute_processing_preserves_all_keys_and_values(self):
+        elapsed, _ = self._simulate_attribute_processing(30, 100, 100)
+        assert elapsed < 2.0, f"Took {elapsed:.3f}s"
 
     def test_stress_many_sessions_many_attributes(self):
-        """Stress test: 30 sessions with 500 attribute rows."""
-        from tracer.views.trace_session import _json_loads
-
-        _MAX_ATTR_KEYS_PER_SESSION = 50
-        _SKIP_ATTR_PREFIXES = (
-            "raw.",
-            "llm.input_messages",
-            "llm.output_messages",
-            "input.value",
-            "output.value",
-        )
-
-        session_ids = [str(uuid.uuid4()) for _ in range(30)]
-        attr_data = []
-        for i in range(500):
-            sid = session_ids[i % 30]
-            attrs = {f"attr_{k}": f"value_{i}_{k}" for k in range(20)}
-            attr_data.append(
-                {
-                    "session_id": sid,
-                    "span_attributes_raw": json.dumps(attrs),
-                }
-            )
-
-        start = time.monotonic()
-        aggregated_attrs: dict[str, dict] = {}
-
-        for attr_row in attr_data:
-            sid = str(attr_row["session_id"])
-            if (
-                sid in aggregated_attrs
-                and len(aggregated_attrs[sid]) >= _MAX_ATTR_KEYS_PER_SESSION
-            ):
-                continue
-            raw = attr_row["span_attributes_raw"]
-            try:
-                attrs = _json_loads(raw) if raw else {}
-            except (json.JSONDecodeError, ValueError, TypeError):
-                attrs = {}
-            if sid not in aggregated_attrs:
-                aggregated_attrs[sid] = {}
-            for key, value in attrs.items():
-                if len(aggregated_attrs[sid]) >= _MAX_ATTR_KEYS_PER_SESSION:
-                    break
-                if key.startswith(_SKIP_ATTR_PREFIXES):
-                    continue
-                if isinstance(value, str) and len(value) > 500:
-                    continue
-                if key not in aggregated_attrs[sid]:
-                    aggregated_attrs[sid][key] = set()
-                if isinstance(value, (str, int, float, bool)):
-                    aggregated_attrs[sid][key].add(value)
-
-        elapsed = time.monotonic() - start
-        assert elapsed < 0.5, f"Stress test took {elapsed:.3f}s (limit: 0.5s)"
-        for sid in session_ids:
-            if sid in aggregated_attrs:
-                assert len(aggregated_attrs[sid]) <= 50
+        elapsed, _ = self._simulate_attribute_processing(30, 17, 260)
+        assert elapsed < 2.0, f"Took {elapsed:.3f}s"
 
 
 @pytest.mark.unit
@@ -388,7 +283,7 @@ class TestQueryTimeoutBudget:
         assert "dateDiff" not in query
 
     def test_timeout_budget_span_attributes_bounded(self):
-        """Span attributes query should be bounded by LIMIT and root-span filter."""
+        """Hydrate all roots of the finite session page without truncation."""
         from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
 
         builder = SessionListQueryBuilder(
@@ -400,13 +295,14 @@ class TestQueryTimeoutBudget:
         builder.build()
         session_ids = [str(uuid.uuid4()) for _ in range(30)]
         query, params = builder.build_span_attributes_query(session_ids)
-        assert "LIMIT 500" in query
+        assert "LIMIT 500" not in query
+        assert params["attr_session_ids"] == tuple(session_ids)
         assert "parent_span_id IS NULL OR parent_span_id = ''" in query
         # The committed PREWHERE micro-opt became a WHERE when the query gained
         # the P3b id-remap LEFT JOIN: ClickHouse PREWHERE cannot reference a
         # joined column, and the session-id filter now matches the resolved
         # `ts_remap.survivor_id` (see session_list.build_span_attributes_query).
-        # The query is still bounded by LIMIT 500 + the root-span filter above;
+        # The query is scoped to the selected sessions and root-span filter;
         # assert the resolved session filter is applied in the WHERE.
         assert "WHERE" in query
         assert "IN %(attr_session_ids)s" in query

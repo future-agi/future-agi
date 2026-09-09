@@ -11,7 +11,7 @@ import React, {
   useState,
 } from "react";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
-import axios, { endpoints } from "src/utils/axios";
+import { readQuery, endpoints } from "src/utils/axios";
 import NumberQuickFilterPopover from "src/components/ComplexFilter/QuickFilterComponents/NumberQuickFilterPopover/NumberQuickFilterPopover";
 import NoRowsOverlay from "src/sections/project-detail/CompareDrawer/NoRowsOverlay";
 import {
@@ -83,11 +83,12 @@ const traceRowIdentity = (row) => {
 };
 const EMPTY_EXTRA_FILTERS = [];
 const loadTraceObservePage = (params, signal) =>
-  axios
-    .get(endpoints.project.getTracesForObserveProject(), { params, signal })
-    .then((response) =>
-      parseAxiosResult(response, parseTraceObserveListResponse),
-    );
+  readQuery(endpoints.project.getTracesForObserveProject(), {
+    params,
+    signal,
+  }).then((response) =>
+    parseAxiosResult(response, parseTraceObserveListResponse),
+  );
 
 const TraceGrid = React.forwardRef(
   (
@@ -127,7 +128,7 @@ const TraceGrid = React.forwardRef(
         headerTextColor: theme.palette.text.primary,
         rowHoverColor: "rgba(120,87,252,0.04)",
       }),
-      [theme],
+      [theme.palette.text.primary],
     );
     const agTheme = useAgThemeWith(gridThemeParams);
     const [dateInterval] = useUrlState("dateInterval", "day");

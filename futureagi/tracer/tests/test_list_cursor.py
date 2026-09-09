@@ -611,10 +611,10 @@ def test_cursor_payload_has_no_merge_unstable_version_state():
     payload = signing.loads(
         token,
         key=settings.SECRET_KEY,
-        salt="tracer.clickhouse-list-cursor.v3",
+        salt="tracer.clickhouse-list-cursor.v4",
     )
 
-    assert payload["v"] == 3
+    assert payload["v"] == 4
     assert "version_ceiling" not in payload
     assert "relation_version_ceilings" not in payload
 
@@ -627,7 +627,7 @@ def test_v2_snapshot_cursor_is_rejected_after_contract_bump():
     current_payload = signing.loads(
         token,
         key=settings.SECRET_KEY,
-        salt="tracer.clickhouse-list-cursor.v3",
+        salt="tracer.clickhouse-list-cursor.v4",
     )
     old_payload = {
         **current_payload,

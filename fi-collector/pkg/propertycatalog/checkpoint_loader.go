@@ -14,8 +14,13 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
+
+// physicalSnapshotEnvelopeFormat is a completed backfill ledger format, NOT
+// a Kafka wire format. Only checkpoint recovery may accept this receipt.
+const physicalSnapshotEnvelopeFormat = "futureagi.property-catalog.physical-snapshot.v1"
 
 // checkpointInventoryQuery deliberately anchors every scope on the newest
 // serialized build reservation.  An open or draining newer revision must
@@ -301,9 +306,11 @@ const checkpointStreamQuery = `SELECT
   max(identity_variants) AS max_identity_variants,
   countIf(identity_variants != 1) AS conflict_sequences,
   countIf(previous_payload_sha256 != expected_previous_payload_sha256) AS chain_breaks,
+  countIf(envelope_format = {physical_snapshot_format:String}) AS physical_snapshot_sequences,
   countIf(
-    envelope_format != {envelope_format:String}
+    envelope_format NOT IN ({envelope_format:String}, {physical_snapshot_format:String})
     OR envelope_version != {envelope_version:UInt16}
+    OR invalid_snapshot_transports != 0
     OR terminal > 1
     OR NOT match(envelope_id, '^[0-9a-f]{64}$')
     OR NOT match(payload_sha256, '^[0-9a-f]{64}$')
@@ -359,6 +366,11 @@ FROM
       any(delivery.definition_rows) AS definition_rows,
       any(delivery.value_rows) AS value_rows,
       any(delivery.tombstone_rows) AS tombstone_rows,
+      countIf(
+        delivery.envelope_format = {physical_snapshot_format:String}
+        AND (toString(delivery.transport) != 'reconcile'
+          OR delivery.kafka_partition != -1 OR delivery.kafka_offset != -1)
+      ) AS invalid_snapshot_transports,
       uniqExact(tuple(
         delivery.projection_version, delivery.envelope_format,
         delivery.envelope_version, delivery.envelope_id, delivery.payload_sha256,
@@ -439,11 +451,19 @@ const (
 	MaximumCheckpointMaxStreams        = 262_144
 	DefaultCheckpointInventoryMaxBytes = int64(64 << 20)
 	MaximumCheckpointInventoryMaxBytes = int64(512 << 20)
+	// The one-shot startup inventory streams every producer stream's
+	// checkpoint state and is bounded by its own deadline. Per-delivery
+	// stages keep MaxDeliveryTimeout.
+	DefaultCheckpointInventoryTimeout = 120 * time.Second
+	MaximumCheckpointInventoryTimeout = 600 * time.Second
 )
 
 type CheckpointLoaderLimits struct {
 	MaxStreams        int
 	InventoryMaxBytes int64
+	// InventoryTimeout bounds the startup inventory query end to end. Zero
+	// selects DefaultCheckpointInventoryTimeout.
+	InventoryTimeout time.Duration
 }
 
 type CheckpointLoader interface {
@@ -452,6 +472,8 @@ type CheckpointLoader interface {
 
 type ClickHouseCheckpointLoader struct {
 	sink              *ClickHouseSink
+	inventoryClient   *http.Client
+	inventoryTimeout  time.Duration
 	now               func() time.Time
 	maxStreams        int
 	inventoryMaxBytes int64
@@ -482,12 +504,26 @@ func NewClickHouseCheckpointLoader(
 			MaximumCheckpointInventoryMaxBytes,
 		)
 	}
+	if limits.InventoryTimeout == 0 {
+		limits.InventoryTimeout = DefaultCheckpointInventoryTimeout
+	}
+	if limits.InventoryTimeout < time.Second || limits.InventoryTimeout > MaximumCheckpointInventoryTimeout {
+		return nil, fmt.Errorf(
+			"propertycatalog: checkpoint inventory timeout must be in [1s,%s]",
+			MaximumCheckpointInventoryTimeout,
+		)
+	}
 	sink, err := NewClickHouseSink(cfg)
 	if err != nil {
 		return nil, err
 	}
+	inventoryClient := &http.Client{
+		Transport: sink.client.Transport, Timeout: limits.InventoryTimeout,
+		CheckRedirect: sink.client.CheckRedirect,
+	}
 	return &ClickHouseCheckpointLoader{
-		sink: sink, now: time.Now,
+		sink: sink, inventoryClient: inventoryClient, inventoryTimeout: limits.InventoryTimeout,
+		now:        time.Now,
 		maxStreams: limits.MaxStreams, inventoryMaxBytes: limits.InventoryMaxBytes,
 	}, nil
 }
@@ -608,6 +644,7 @@ type checkpointStreamProofJSON struct {
 	MaxIdentityVariants             uint64 `json:"max_identity_variants"`
 	ConflictSequences               uint64 `json:"conflict_sequences"`
 	ChainBreaks                     uint64 `json:"chain_breaks"`
+	PhysicalSnapshotSequences       uint64 `json:"physical_snapshot_sequences"`
 	InvalidWireSequences            uint64 `json:"invalid_wire_sequences"`
 	InvalidOutcomeSequences         uint64 `json:"invalid_outcome_sequences"`
 	InvalidTerminalSequences        uint64 `json:"invalid_terminal_sequences"`
@@ -636,9 +673,10 @@ func (l *ClickHouseCheckpointLoader) LoadCheckpoints(ctx context.Context) ([]Str
 	inventory := make([]checkpointInventoryJSON, 0, 16)
 	err := l.queryJSONEachRow(
 		ctx,
+		l.inventoryClient,
 		checkpointInventoryQuery,
 		map[string]string{"param_inventory_limit": fmt.Sprintf("%d", l.maxStreams+1)},
-		map[string]string{"max_execution_time": "10"},
+		map[string]string{"max_execution_time": fmt.Sprintf("%d", int64(l.inventoryTimeout/time.Second))},
 		l.maxStreams,
 		l.inventoryMaxBytes,
 		"checkpoint inventory",
@@ -658,27 +696,69 @@ func (l *ClickHouseCheckpointLoader) LoadCheckpoints(ctx context.Context) ([]Str
 	if err != nil {
 		return nil, err
 	}
-	checkpoints := make([]StreamCheckpoint, 0, len(candidates))
-	for index, candidate := range candidates {
-		proof, found, err := l.loadCheckpointStreamProof(ctx, candidate)
-		if err != nil {
-			return nil, fmt.Errorf("propertycatalog: load checkpoint stream %d: %w", index, err)
-		}
-		if !found {
-			if err := validateEmptyCheckpointStream(candidate); err != nil {
-				return nil, err
+	// Bound proof reads without a goroutine or queued request per stream. Each
+	// worker owns one output index; compact only after all workers have joined.
+	const proofWorkers = 8
+	proofCtx, cancelProofs := context.WithCancelCause(ctx)
+	defer cancelProofs(nil)
+	checkpoints := make([]StreamCheckpoint, len(candidates))
+	found := make([]bool, len(candidates))
+	jobs := make(chan int)
+	var workers sync.WaitGroup
+	for range min(proofWorkers, len(candidates)) {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for index := range jobs {
+				if proofCtx.Err() != nil {
+					return
+				}
+				candidate := candidates[index]
+				proof, hasProof, err := l.loadCheckpointStreamProof(proofCtx, candidate)
+				if err != nil {
+					cancelProofs(fmt.Errorf("propertycatalog: load checkpoint stream %d: %w", index, err))
+					return
+				}
+				if !hasProof {
+					if err := validateEmptyCheckpointStream(candidate); err != nil {
+						cancelProofs(err)
+						return
+					}
+					continue
+				}
+				checkpoint, err := validateCheckpointStreamProof(candidate, proof)
+				if err != nil {
+					cancelProofs(fmt.Errorf(
+						"propertycatalog: invalid delivery stream %s: %w",
+						checkpointInventoryStreamKey(candidate), err,
+					))
+					return
+				}
+				checkpoints[index], found[index] = checkpoint, true
 			}
-			continue
-		}
-		checkpoint, err := validateCheckpointStreamProof(candidate, proof)
-		if err != nil {
-			return nil, fmt.Errorf(
-				"propertycatalog: invalid delivery stream %s: %w",
-				checkpointInventoryStreamKey(candidate), err,
-			)
-		}
-		checkpoints = append(checkpoints, checkpoint)
+		}()
 	}
+dispatch:
+	for index := range candidates {
+		select {
+		case jobs <- index:
+		case <-proofCtx.Done():
+			break dispatch
+		}
+	}
+	close(jobs)
+	workers.Wait()
+	if err := context.Cause(proofCtx); err != nil {
+		return nil, err
+	}
+	loaded := 0
+	for index := range checkpoints {
+		if found[index] {
+			checkpoints[loaded] = checkpoints[index]
+			loaded++
+		}
+	}
+	checkpoints = checkpoints[:loaded]
 	// Only a wholly absent inventory needs the orphan-ledger probe. An exact
 	// newest reservation with ten proven-empty streams is a legitimate restart
 	// window before sequence one. Older immutable delivery history must not make
@@ -692,6 +772,9 @@ func (l *ClickHouseCheckpointLoader) LoadCheckpoints(ctx context.Context) ([]Str
 			return nil, errors.New("propertycatalog: delivery ledger is nonempty without a reconstructable newest reservation stream")
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return checkpoints, nil
 }
 
@@ -699,25 +782,28 @@ func (l *ClickHouseCheckpointLoader) loadCheckpointStreamProof(
 	ctx context.Context, candidate checkpointInventoryJSON,
 ) (checkpointStreamProofJSON, bool, error) {
 	params := map[string]string{
-		"param_organization_id":    candidate.OrganizationID,
-		"param_workspace_id":       candidate.WorkspaceID,
-		"param_catalog_epoch":      fmt.Sprintf("%d", candidate.CatalogEpoch),
-		"param_catalog_revision":   fmt.Sprintf("%d", candidate.CatalogRevision),
-		"param_build_token":        candidate.BuildToken,
-		"param_source_adapter":     string(candidate.StreamSourceAdapter),
-		"param_producer_stream_id": candidate.StreamProducerStreamID,
-		"param_envelope_format":    EnvelopeFormat,
-		"param_envelope_version":   fmt.Sprintf("%d", EnvelopeVersion),
-		"param_zero_sha256":        ZeroSHA256,
+		"param_organization_id":          candidate.OrganizationID,
+		"param_workspace_id":             candidate.WorkspaceID,
+		"param_catalog_epoch":            fmt.Sprintf("%d", candidate.CatalogEpoch),
+		"param_catalog_revision":         fmt.Sprintf("%d", candidate.CatalogRevision),
+		"param_build_token":              candidate.BuildToken,
+		"param_source_adapter":           string(candidate.StreamSourceAdapter),
+		"param_producer_stream_id":       candidate.StreamProducerStreamID,
+		"param_envelope_format":          EnvelopeFormat,
+		"param_physical_snapshot_format": physicalSnapshotEnvelopeFormat,
+		"param_envelope_version":         fmt.Sprintf("%d", EnvelopeVersion),
+		"param_zero_sha256":              ZeroSHA256,
 	}
 	settings := map[string]string{
 		"max_execution_time":     "10",
+		"max_threads":            "1",
 		"max_rows_to_group_by":   fmt.Sprintf("%d", maxCheckpointSequencesPerStream+1),
 		"group_by_overflow_mode": "throw",
 	}
 	rows := make([]checkpointStreamProofJSON, 0, 1)
 	err := l.queryJSONEachRow(
 		ctx,
+		l.sink.client,
 		checkpointStreamQuery,
 		params,
 		settings,
@@ -746,6 +832,7 @@ func (l *ClickHouseCheckpointLoader) deliveryLedgerNonempty(ctx context.Context)
 	rows := make([]checkpointLedgerProbeJSON, 0, 1)
 	err := l.queryJSONEachRow(
 		ctx,
+		l.sink.client,
 		checkpointLedgerProbeQuery,
 		nil,
 		map[string]string{"max_execution_time": "2"},
@@ -775,6 +862,7 @@ func (l *ClickHouseCheckpointLoader) deliveryLedgerNonempty(ctx context.Context)
 
 func (l *ClickHouseCheckpointLoader) queryJSONEachRow(
 	ctx context.Context,
+	client *http.Client,
 	statement string,
 	params map[string]string,
 	settings map[string]string,
@@ -783,7 +871,7 @@ func (l *ClickHouseCheckpointLoader) queryJSONEachRow(
 	label string,
 	visit func(int, []byte) error,
 ) error {
-	if ctx == nil || statement == "" || maxRows < 1 || maxBytes < 1 || label == "" || visit == nil {
+	if ctx == nil || client == nil || statement == "" || maxRows < 1 || maxBytes < 1 || label == "" || visit == nil {
 		return errors.New("propertycatalog: invalid bounded checkpoint query")
 	}
 	endpoint := *l.sink.baseURL
@@ -807,7 +895,7 @@ func (l *ClickHouseCheckpointLoader) queryJSONEachRow(
 	}
 	request.Header.Set("Content-Type", "text/plain; charset=utf-8")
 	request.SetBasicAuth(l.sink.username, l.sink.password)
-	response, err := l.sink.client.Do(request)
+	response, err := client.Do(request)
 	if err != nil {
 		return fmt.Errorf("propertycatalog: %s: %w", label, err)
 	}
@@ -1290,6 +1378,7 @@ func validateCheckpointInventory(rows []checkpointInventoryJSON) ([]checkpointIn
 	reservations := make(map[string]checkpointInventoryJSON)
 	plans := make(map[string]buildPlanDocumentJSON)
 	candidates := make(map[string]checkpointInventoryJSON)
+	candidateKeysByScope := make(map[string]map[string]struct{})
 	for index, row := range rows {
 		if err := validateCheckpointReservation(row); err != nil {
 			return nil, fmt.Errorf("propertycatalog: checkpoint inventory reservation row %d: %w", index, err)
@@ -1331,6 +1420,10 @@ func validateCheckpointInventory(rows []checkpointInventoryJSON) ([]checkpointIn
 			return nil, fmt.Errorf("propertycatalog: checkpoint inventory duplicates stream %s", key)
 		}
 		candidates[key] = row
+		if candidateKeysByScope[scope] == nil {
+			candidateKeysByScope[scope] = make(map[string]struct{}, len(plans[scope].Streams))
+		}
+		candidateKeysByScope[scope][key] = struct{}{}
 	}
 	for scope, reservation := range reservations {
 		plan := plans[scope]
@@ -1338,12 +1431,7 @@ func validateCheckpointInventory(rows []checkpointInventoryJSON) ([]checkpointIn
 		for _, stream := range plan.Streams {
 			expected[checkpointPlanStreamKey(reservation, stream.SourceAdapter, stream.ProducerStreamID)] = struct{}{}
 		}
-		actual := make(map[string]struct{}, len(expected))
-		for key, candidate := range candidates {
-			if checkpointInventoryScopeKey(candidate) == scope {
-				actual[key] = struct{}{}
-			}
-		}
+		actual := candidateKeysByScope[scope]
 		if len(actual) != len(expected) {
 			return nil, fmt.Errorf("propertycatalog: newest reservation scope %s lacks its exact build-plan stream inventory", scope)
 		}
@@ -1590,10 +1678,28 @@ func validateCheckpointStreamProof(
 		return StreamCheckpoint{}, errors.New("delivery stream has a broken chain, wire identity, outcome, or terminal fence")
 	}
 	if proof.TailProjectionVersion != row.StreamProjectionVersion ||
-		proof.TailEnvelopeFormat != EnvelopeFormat || proof.TailEnvelopeVersion != EnvelopeVersion ||
+		(proof.TailEnvelopeFormat != EnvelopeFormat && proof.TailEnvelopeFormat != physicalSnapshotEnvelopeFormat) ||
+		proof.TailEnvelopeVersion != EnvelopeVersion ||
 		!isLowerSHA256(proof.TailEnvelopeID) || !isLowerSHA256(proof.TailPayloadSHA256) ||
 		proof.TailTerminal > 1 {
 		return StreamCheckpoint{}, errors.New("delivery tail does not match the reserved stream projection or wire contract")
+	}
+	if proof.PhysicalSnapshotSequences > 0 || proof.TailEnvelopeFormat == physicalSnapshotEnvelopeFormat {
+		// The finalizer emits one optional inventory receipt followed by one
+		// terminal receipt. Never seed an open/mixed Kafka stream from these
+		// operator records, or accept one without matching durable completion.
+		if proof.PhysicalSnapshotSequences != proof.SequenceRows ||
+			proof.TailEnvelopeFormat != physicalSnapshotEnvelopeFormat || proof.LastSequence > 2 ||
+			proof.TerminalSequences != 1 || proof.TailTerminal != 1 || proof.GapSequences != 0 ||
+			row.ReservationStatus != "fenced" || row.StreamStatus != "complete" ||
+			row.StreamFirstSequence != 1 || row.StreamMaxContiguousSequence != proof.LastSequence ||
+			row.StreamLastIssuedSequence != proof.LastSequence || row.StreamFencedSequence != proof.LastSequence ||
+			row.CheckpointEvidenceRows == 0 || row.CheckpointStatus != "complete" || row.CheckpointTerminal != 1 ||
+			row.CheckpointNullFirstSequences != 0 || row.CheckpointNullLastSequences != 0 ||
+			row.CheckpointFirstSequence != 1 || row.CheckpointLastSequence != proof.LastSequence ||
+			row.CheckpointLastIssuedSequence != proof.LastSequence || row.CheckpointFencedSequence != proof.LastSequence {
+			return StreamCheckpoint{}, errors.New("physical snapshot requires an unmixed completed backfill stream and checkpoint")
+		}
 	}
 	switch proof.TerminalSequences {
 	case 0:

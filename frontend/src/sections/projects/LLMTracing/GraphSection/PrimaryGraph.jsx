@@ -141,7 +141,7 @@ const COMPARE_DATE_OPTIONS = [
 // ---------------------------------------------------------------------------
 // Hook: fetch metrics from dashboard API (system + eval + annotation)
 // ---------------------------------------------------------------------------
-function useLegacyGraphMetrics(projectId, transportSource, enabled = true) {
+function useLegacyGraphMetrics(projectId, systemSource, enabled = true) {
   const query = useInfiniteQuery({
     queryKey: ["graph-metrics", projectId],
     queryFn: async ({ pageParam = 1, signal }) => {
@@ -181,7 +181,7 @@ function useLegacyGraphMetrics(projectId, transportSource, enabled = true) {
   );
   return {
     ...query,
-    data: buildGraphMetricGroups(metrics, transportSource),
+    data: buildGraphMetricGroups(metrics, systemSource),
     continuationKey:
       query.hasNextPage && Number.isSafeInteger(currentPage) && currentPage >= 1
         ? `legacy-page:${currentPage + 1}`
@@ -189,7 +189,7 @@ function useLegacyGraphMetrics(projectId, transportSource, enabled = true) {
   };
 }
 
-function buildGraphMetricGroups(metrics, transportSource) {
+function buildGraphMetricGroups(metrics, systemSource) {
   // Group by category, filter to graphable numeric types.
   const groups = {};
 
@@ -201,9 +201,11 @@ function buildGraphMetricGroups(metrics, transportSource) {
 
     const metricSources = Array.isArray(m.sources) ? m.sources : [];
     const compatibleSystemSources =
-      transportSource === "traces"
-        ? ["traces", "spans", "all", "both"]
-        : [transportSource, "traces", "spans", "all"];
+      systemSource === "users"
+        ? ["users", "all"]
+        : systemSource === "traces"
+          ? ["traces", "spans", "all", "both"]
+          : [systemSource, "traces", "spans", "all"];
     const supportsGraphSource =
       !m.source ||
       compatibleSystemSources.includes(m.source) ||
@@ -242,15 +244,21 @@ function buildGraphMetricGroups(metrics, transportSource) {
   return groups;
 }
 
-function useGraphMetrics(projectId, transportSource, enabled = true) {
+function useGraphMetrics(
+  projectId,
+  transportSource,
+  enabled = true,
+  systemSource = transportSource,
+) {
   const fallbackScopeKey = JSON.stringify([
     "graph-property-catalog",
     projectId || "",
+    systemSource,
   ]);
   const systemCatalog = usePropertyCatalog({
     category: GRAPH_METRIC_CATEGORIES[0],
     projectIds: projectId ? [projectId] : [],
-    source: transportSource,
+    source: systemSource,
     perEvalConfig: true,
     role: "metric",
     pageSize: PROPERTY_CATALOG_SEARCH_PAGE_SIZE,
@@ -286,7 +294,7 @@ function useGraphMetrics(projectId, transportSource, enabled = true) {
   );
   const legacy = useLegacyGraphMetrics(
     projectId,
-    transportSource,
+    systemSource,
     enabled && legacyFallbackRequired,
   );
 
@@ -312,7 +320,7 @@ function useGraphMetrics(projectId, transportSource, enabled = true) {
   return {
     data: buildGraphMetricGroups(
       catalogs.flatMap((catalog) => catalog.metrics || []),
-      transportSource,
+      systemSource,
     ),
     fetchNextPage: nextCatalog?.fetchNextPage || (() => Promise.resolve()),
     continuationKey:
@@ -472,6 +480,9 @@ const PrimaryGraph = ({
     effectiveObserveId,
     graphTransportSource,
     !staticMetrics && Boolean(pickerAnchor),
+    // Users system definitions live in their logical catalog, not sessions.
+    // Eval/annotation catalog lookups and graph requests keep the transport.
+    graphPropertyNamespace === "users" ? "users" : graphTransportSource,
   );
   // Use staticMetrics if provided (for sessions/users), otherwise dynamic
   const metricGroups = staticMetrics || dynamicMetricGroups;

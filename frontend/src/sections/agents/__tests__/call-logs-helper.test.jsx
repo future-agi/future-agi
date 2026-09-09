@@ -16,6 +16,7 @@ const axiosMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("src/utils/axios", () => ({
+  readQuery: axiosMocks.get,
   default: {
     get: axiosMocks.get,
   },
@@ -299,11 +300,11 @@ describe("useCallLogs", () => {
       ({ page }) =>
         useCallLogs({
           module: "project",
-          id: "project-colly",
+          id: "project-fixture",
           page,
           pageLimit: 1,
           params: {
-            project_id: "project-colly",
+            project_id: "project-fixture",
             filters: propertyFilters,
           },
           cursorPagination: pagination,
@@ -321,14 +322,14 @@ describe("useCallLogs", () => {
     );
 
     expect(axiosMocks.get.mock.calls[0][1].params).toEqual({
-      project_id: "project-colly",
+      project_id: "project-fixture",
       filters: propertyFilters,
       cursor_mode: true,
       page: 1,
       page_size: 1,
     });
     expect(axiosMocks.get.mock.calls[1][1].params).toEqual({
-      project_id: "project-colly",
+      project_id: "project-fixture",
       filters: propertyFilters,
       cursor_mode: true,
       cursor: "signed-voice-property-page-2",

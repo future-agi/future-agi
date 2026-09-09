@@ -47,13 +47,17 @@ var deliveryColumns = []string{
 }
 
 type ClickHouseSinkConfig struct {
-	URL            string
-	Database       string
-	Environment    string
-	Username       string
-	Password       string
-	RequestTimeout time.Duration
-	RoundTripper   http.RoundTripper
+	URL         string
+	Database    string
+	Environment string
+	// ProductionDatabase is the exact isolated catalog database this
+	// deployment binds every reader and writer to. Empty keeps the
+	// property_catalog default so existing installations are unchanged.
+	ProductionDatabase string
+	Username           string
+	Password           string
+	RequestTimeout     time.Duration
+	RoundTripper       http.RoundTripper
 }
 
 // ClickHouseSink is closed over the two new catalog data tables and their
@@ -74,7 +78,7 @@ func NewClickHouseSink(cfg ClickHouseSinkConfig) (*ClickHouseSink, error) {
 		(parsed.Path != "" && parsed.Path != "/") {
 		return nil, errors.New("propertycatalog: ClickHouse URL must be a bare http(s) origin")
 	}
-	if !safeClickHouseDatabase(cfg.Environment, cfg.Database) {
+	if !safeClickHouseDatabase(cfg.Environment, cfg.Database, cfg.ProductionDatabase) {
 		return nil, errors.New(
 			"propertycatalog: ClickHouse database must match the exact environment-specific isolated catalog name",
 		)
@@ -182,26 +186,36 @@ func (s *ClickHouseSink) insert(ctx context.Context, table string, columns []str
 	return nil
 }
 
-func safeClickHouseDatabase(environment, value string) bool {
+func safeClickHouseDatabase(environment, value, productionDatabase string) bool {
+	if productionDatabase == "" {
+		productionDatabase = prodCatalogDatabaseName
+	}
+	if !safeCatalogDatabaseIdentifier(productionDatabase) {
+		return false
+	}
 	switch environment {
 	case DevelopmentEnvironment:
-		if len(value) == 0 || len(value) > 128 || value == prodCatalogDatabaseName {
-			return false
-		}
-		if _, reserved := reservedCatalogDatabases[value]; reserved {
-			return false
-		}
-		for index, char := range value {
-			if char > 127 || (!(char >= 'a' && char <= 'z') &&
-				!(char >= '0' && char <= '9') && char != '_') ||
-				(index == 0 && !(char >= 'a' && char <= 'z')) {
-				return false
-			}
-		}
-		return true
+		return value != productionDatabase && safeCatalogDatabaseIdentifier(value)
 	case ProductionEnvironment:
-		return value == prodCatalogDatabaseName
+		return value == productionDatabase
 	default:
 		return false
 	}
+}
+
+func safeCatalogDatabaseIdentifier(value string) bool {
+	if len(value) == 0 || len(value) > 128 {
+		return false
+	}
+	if _, reserved := reservedCatalogDatabases[value]; reserved {
+		return false
+	}
+	for index, char := range value {
+		if char > 127 || (!(char >= 'a' && char <= 'z') &&
+			!(char >= '0' && char <= '9') && char != '_') ||
+			(index == 0 && !(char >= 'a' && char <= 'z')) {
+			return false
+		}
+	}
+	return true
 }

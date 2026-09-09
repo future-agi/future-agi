@@ -12,6 +12,7 @@ from typing import Any, Protocol
 
 from django.conf import settings
 
+from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_service import QueryResult
 from tracer.services.clickhouse.read_budget import is_read_budget_error
 
@@ -37,7 +38,7 @@ _MAX_OPTIONAL_ANCHOR_STRATA = 4
 # seed/classifier can run. Production showed successful reads at 0.79-1.26 s
 # under load, while constrained local qualification observed a valid 1.54 s
 # read. The caller's wall deadline, query count, rows, bytes, memory, and
-# single-thread settings remain the authoritative envelope. These aliases are
+# stage-specific worker settings remain the authoritative envelope. These aliases are
 # retained for test and builder compatibility; Django settings own the values.
 _QUERY_TIMEOUT_MS = settings.FILTER_SELECTOR_QUERY_TIMEOUT_MS
 _MAX_OPT_IN_QUERY_TIMEOUT_MS = settings.FILTER_SELECTOR_MAX_OPT_IN_QUERY_TIMEOUT_MS
@@ -56,11 +57,18 @@ _CANDIDATE_WITNESS_PREFILTER_STRATA = 8
 _CANDIDATE_WITNESS_PREFILTER_MAX_ATTEMPTS = 32
 _CANDIDATE_WITNESS_PREFILTER_TOTAL_MS = 2_000
 _CANDIDATE_WITNESS_EXACT_RESERVE_MS = 1_000
+_OPTIONAL_CANDIDATE_SEED_TIMEOUT_MS = 1_500
+_OPTIONAL_CANDIDATE_SEED_MAX_BYTES = 1024 * 1024 * 1024
 _UNINDEXED_POSITIVE_MICRO_SEED_TIMEOUT_MS = 200
 _UNINDEXED_POSITIVE_MICRO_SEED_MAX_BYTES = 96 * 1024 * 1024
 _EXACT_ZERO_PROBE_TIMEOUT_MS = 1_500
 _EXACT_ZERO_PROBE_MAX_BYTES = 256 * 1024 * 1024
 _EXACT_ZERO_FALLBACK_RESERVE_MS = 1_000
+_ROOT_TIME_DISCOVERY_MAX_WINDOW = timedelta(hours=24)
+_ROOT_TIME_DISCOVERY_TIMEOUT_MS = 1_000
+_ROOT_TIME_DISCOVERY_MAX_BYTES = 1024 * 1024 * 1024
+_ROOT_TIME_DISCOVERY_MAX_ATTEMPTS = 3
+_POPULATION_TIME_DISCOVERY_MAX_THREADS = settings.FILTER_SELECTOR_POPULATION_MAX_THREADS
 # Trace/span list queries fetch one additional page-sized de-duplication
 # margin; 5,000 is also the existing server-side result ceiling used by those
 # endpoints.  Keeping one public ceiling makes numbered-page work finite for
@@ -106,9 +114,7 @@ def long_filtered_read_requires_cursor(
     """
 
     has_non_time_filter = any(
-        (item.get("column_id") or item.get("columnId"))
-        not in {"created_at", "start_time"}
-        for item in filters
+        not BaseQueryBuilder.is_datetime_filter(item) for item in filters
     )
     return bool(
         (has_non_time_filter or search)
@@ -335,6 +341,7 @@ def read_bounded_filter_page(
     continuation_before_id: Any = None,
     bounded_continuation: bool = False,
     carry_continuation_slice_width: bool = False,
+    root_time_discovery: bool = False,
     read_settings: dict[str, Any] | None = None,
     classify_read_settings: dict[str, Any] | None = None,
     anchor_probe_only: bool = False,
@@ -348,7 +355,7 @@ def read_bounded_filter_page(
 
     Seed reads cover adjacent half-open time slices in descending order. Each
     seed is only an identity/order superset; every ID is reclassified against
-    global latest state before it can enter the page. A failed read is never
+    global latest state before it can enter the page. A failed required read is never
     hidden as a complete response; even the legacy opt-in retry path remains
     explicitly degraded. A partial prefix is never exposed as page N.
     Graph callers may opt into proven-but-incomplete page-zero rows; numbered
@@ -373,6 +380,15 @@ def read_bounded_filter_page(
     across empty cursor responses. Without it, each HTTP continuation starts
     again at the builder's initial slice width, so a sparse year-long filter
     can require thousands of otherwise successful transport pages.
+    ``root_time_discovery`` opts exact trace cursors into up to three optional
+    raw-root max-time probes, each over at most 24 remaining hours, sharing the
+    original one-second optional wall budget. Completed absence skips only
+    that interval; hits retain a full candidate hour and the exact classifier.
+    Disabled by default until the caller qualifies its bounded probe workload.
+    CH25 span cursors separately support raw-population discovery after an
+    empty seed. This reads only project/time columns, retains all versions and
+    tombstones, and does not depend on per-statement time/scan abort caps. It
+    shares the same conservative interval/checkpoint validation below.
     """
 
     if page_number < 0 or page_size <= 0 or deadline_ms <= 0:
@@ -444,6 +460,10 @@ def read_bounded_filter_page(
         )
     if carry_continuation_slice_width and not bounded_continuation:
         raise ValueError("continuation slice width carry requires bounded continuation")
+    if root_time_discovery and (
+        not bounded_continuation or anchor_probe_only or defer_classification
+    ):
+        raise ValueError("root time discovery requires an exact bounded cursor")
     if include_incomplete_rows and page_number != 0:
         raise ValueError("incomplete rows are available only for page zero")
     if defer_classification and (page_number != 0 or not include_incomplete_rows):
@@ -728,9 +748,11 @@ def read_bounded_filter_page(
     if identity_only_classification and reserved_hydration_ms < 25:
         raise ValueError("page hydration reserve must be at least 25 ms")
     classification_deadline = deadline - (reserved_hydration_ms / 1000)
-    probe_limits_enforced = bool(
-        getattr(analytics, "supports_per_query_read_settings", True)
+    from tracer.services.clickhouse.application_read_policy import (
+        supports_bounded_speculative_reads,
     )
+
+    probe_limits_enforced = supports_bounded_speculative_reads(analytics)
     if graph_key_witness_probe and not probe_limits_enforced:
         raise ValueError("graph key witness requires enforced per-query read limits")
 
@@ -792,8 +814,49 @@ def read_bounded_filter_page(
     )
     if candidate_seed_can_run and not candidate_seed_proves_result_order:
         raise ValueError("candidate-first seed must prove result order")
+    empty_prefix_seed_support = getattr(
+        builder, "filter_candidate_seed_requires_empty_prefix", None
+    )
+    deferred_candidate_seed = bool(
+        candidate_seed_can_run
+        and callable(ordered_seed_builder)
+        and callable(empty_prefix_seed_support)
+        and empty_prefix_seed_support()
+    )
+    if deferred_candidate_seed:
+        candidate_seed_can_run = False
     if candidate_seed_can_run:
         seed_proves_result_order = True
+    optional_seed_capability = getattr(
+        builder, "filter_candidate_seed_is_optional", None
+    )
+    optional_candidate_seed = bool(
+        candidate_seed_can_run
+        and callable(ordered_seed_builder)
+        and callable(optional_seed_capability)
+        and optional_seed_capability()
+    )
+    optional_seed_attempted = False
+    windowed_seed_builder = getattr(
+        builder, "build_filter_windowed_candidate_seed_page", None
+    )
+    windowed_seed_support = getattr(
+        builder, "supports_filter_windowed_candidate_seed_page", None
+    )
+    windowed_seed_available = bool(
+        optional_candidate_seed
+        and callable(windowed_seed_builder)
+        and callable(windowed_seed_support)
+        and windowed_seed_support()
+    )
+    optional_witness_capability = getattr(
+        builder, "filter_candidate_witness_is_optional", None
+    )
+    optional_candidate_witness = bool(
+        candidate_witness_prefilter_allowed
+        and callable(optional_witness_capability)
+        and optional_witness_capability()
+    )
     recommended_anchor_limit: int | None = None
     recommended_anchor_timeout_ms: int | None = None
     recommended_anchor_strata = 1
@@ -973,6 +1036,27 @@ def read_bounded_filter_page(
     if not 1 <= candidate_floor <= max_candidates:
         raise ValueError("recommended seed batch size exceeds max_candidates")
     candidate_limit = min(max_candidates, max(candidate_floor, prefix_needed))
+    adaptive_candidate_limit = candidate_limit
+    adaptive_seed_recommendation = getattr(
+        builder, "recommended_filter_cursor_adaptive_seed_batch_size", None
+    )
+    if (
+        bounded_continuation
+        and seed_proves_result_order
+        and not identity_only_classification
+        and not unhydrated_buffered_identity_classification
+        and not seed_proves_population_bound
+        and not optional_candidate_seed
+        and callable(adaptive_seed_recommendation)
+    ):
+        recommended_limit = adaptive_seed_recommendation()
+        if recommended_limit is not None:
+            if type(recommended_limit) is not int or recommended_limit <= 0:
+                raise ValueError("adaptive seed batch size must be a positive integer")
+            adaptive_candidate_limit = max(
+                candidate_limit,
+                min(recommended_limit, max_candidates, classify_batch_size),
+            )
     page_depth_kwargs = {
         "page_number": page_number,
         "page_size": page_size,
@@ -1026,6 +1110,7 @@ def read_bounded_filter_page(
         anchor_can_run = False
 
     attempts: list[FilterReadAttempt] = []
+    optional_failed_attempts: set[int] = set()
     # A trace any-span seed is a physical *span*, while the classified result
     # identity is its trace.  Keep these namespaces separate: using trace_id as
     # the seed key both breaks keyset continuation when one trace has multiple
@@ -1073,6 +1158,38 @@ def read_bounded_filter_page(
         and callable(candidate_witness_probe_preference)
         and candidate_witness_probe_preference()
     )
+    initial_batch_recommendation = getattr(
+        builder, "recommended_filter_initial_classify_batch_size", None
+    )
+    initial_identity_flush_pending = bool(
+        bounded_continuation
+        and key_field == "trace_id"
+        and identity_only_classification
+        and not (workflow_exact or anchor_probe_only or graph_key_witness_probe)
+        and not (optional_candidate_seed or candidate_witness_probe_enabled)
+        and classify_batch_size == candidate_limit == 200
+        and prefix_needed <= 50
+        and callable(initial_batch_recommendation)
+        and initial_batch_recommendation() == 50
+    )
+    adaptive_identity_start = False
+    empty_prefix_seed = False
+    last_classifier_empty = False
+    # Request-local acquisition sizing only; classification and ordered-prefix
+    # proofs remain authoritative. Leave special acquisition/buffering modes alone.
+    ordered_identity_refill = bool(
+        bounded_continuation
+        and key_field == "trace_id"
+        and identity_only_classification
+        and fill_bounded_cursor_page_across_slices
+        and prefix_needed <= 50
+        and classify_batch_size == candidate_limit
+        and not (workflow_exact or anchor_probe_only or graph_key_witness_probe)
+        and not (candidate_seed_can_run or deferred_candidate_seed or anchor_can_run)
+        and not (seed_proves_population_bound or initial_identity_flush_pending)
+        and not candidate_witness_probe_enabled
+    )
+    identity_refill_limit = candidate_limit
     candidate_witness_probe_strata = 1
     # Slice-aware builders advertise their temporal probe contract through the
     # strata recommendation hook. Legacy one-shot probes expose only
@@ -1286,6 +1403,95 @@ def read_bounded_filter_page(
         Hashable, tuple[dict[str, Any], datetime, datetime]
     ] = {}
     continuation_progressed = False
+    root_discovery_builder = getattr(
+        builder, "build_filter_root_time_discovery_query", None
+    )
+    root_discovery_support = getattr(
+        builder, "supports_filter_root_time_discovery", None
+    )
+    population_discovery_support = getattr(
+        builder, "supports_filter_population_time_discovery", None
+    )
+    population_discovery_builder = getattr(
+        builder, "build_filter_population_time_discovery_query", None
+    )
+    population_discovery = bool(
+        bounded_continuation
+        and key_field == "id"
+        and not anchor_probe_only
+        and not defer_classification
+        and callable(population_discovery_support)
+        and callable(population_discovery_builder)
+        and population_discovery_support() is True
+    )
+    # Typed-IN gap discovery is independent of deferred global acquisition.
+    # Both routes require an empty ordered seed before the raw-root time proof.
+    empty_seed_root_support = getattr(
+        builder, "supports_filter_empty_seed_root_time_discovery", None
+    )
+    empty_seed_root_discovery = bool(
+        root_time_discovery
+        and bounded_continuation
+        and key_field == "trace_id"
+        and not anchor_probe_only
+        and not defer_classification
+        and callable(empty_seed_root_support)
+        and empty_seed_root_support() is True
+    )
+    deferred_root_discovery = bool(
+        (deferred_candidate_seed and initial_identity_flush_pending)
+        or empty_seed_root_discovery
+    )
+    root_discovery_enabled = bool(
+        population_discovery
+        or (
+            root_time_discovery
+            and (probe_limits_enforced or deferred_root_discovery)
+            and callable(root_discovery_builder)
+            and callable(root_discovery_support)
+            and root_discovery_support()
+        )
+    )
+    discovery_ready = not (population_discovery or deferred_root_discovery)
+    discovery_window = _ROOT_TIME_DISCOVERY_MAX_WINDOW
+    discovery_windows = None
+    population_resume_below = None
+    if population_discovery:
+        root_discovery_builder = population_discovery_builder
+        recommend_window = getattr(
+            builder, "recommended_filter_population_time_discovery_window", None
+        )
+        if callable(recommend_window):
+            recommended_window = recommend_window()
+            if isinstance(
+                recommended_window, timedelta
+            ) and recommended_window > timedelta(0):
+                discovery_window = min(recommended_window, request_end - request_start)
+        recommend_windows = getattr(
+            builder, "recommended_filter_population_time_discovery_windows", None
+        )
+        if callable(recommend_windows):
+            proposed_windows = recommend_windows()
+            if isinstance(proposed_windows, (tuple, list)) and proposed_windows:
+                if not all(
+                    isinstance(width, timedelta) and width > timedelta(0)
+                    for width in proposed_windows
+                ):
+                    raise ValueError(
+                        "population discovery widths must be positive timedeltas"
+                    )
+                discovery_windows = tuple(
+                    min(width, request_end - request_start)
+                    for width in proposed_windows
+                )
+    discovery_kind = (
+        "population_time_discovery" if population_discovery else "root_time_discovery"
+    )
+    discovery_field = (
+        "newest_raw_time_us" if population_discovery else "newest_raw_root_us"
+    )
+    root_discovery_attempts = 0
+    root_discovery_started: float | None = None
     # Hydration is the final publication gate for identity-only trace pages.
     # Remember the last committed position *before* this request's first match
     # so a failed hydration can retry that matching classifier batch instead of
@@ -1341,6 +1547,27 @@ def read_bounded_filter_page(
             safe_before_id,
             continuation_progressed,
         ) = pre_match_continuation
+
+    def abandon_optional_candidate_seed() -> None:
+        """Resume finite roots without committing any speculative position."""
+
+        nonlocal seed_page_builder, optional_candidate_seed
+        nonlocal slice_width, max_slice_width, slice_start, slice_end
+        nonlocal active_slice_start, active_width
+        seed_page_builder = ordered_seed_builder
+        optional_candidate_seed = False
+        slice_width = _INITIAL_SLICE
+        max_slice_width = _MAX_SLICE
+        # A deep signed keyset already consumed the newer prefix, including
+        # same-time IDs above its tie-breaker. Retain that exact key and include
+        # its timestamp in the first small half-open fallback slice. Failure
+        # here still rolls back to the untouched safe_* checkpoint.
+        floor = active_slice_start or request_start
+        if before_start_time is not None:
+            slice_end = min(slice_end, before_start_time + timedelta(microseconds=1))
+        slice_start = max(floor, slice_end - _INITIAL_SLICE)
+        active_slice_start = slice_start
+        active_width = slice_end - slice_start
 
     def execute(
         *,
@@ -1413,6 +1640,35 @@ def read_bounded_filter_page(
                     int(settings["max_bytes_to_read"]),
                     max_bytes_to_read_cap,
                 )
+            if kind in {"root_time_discovery", "population_time_discovery"}:
+                if (
+                    kind == "population_time_discovery"
+                    and discovery_windows
+                    and active_end - active_start > timedelta(days=1)
+                ):
+                    # Thin indexed key proofs over a broad interval are CPU
+                    # work, not the small root/time-only metadata probes. An
+                    # explicit caller worker budget remains an upper bound.
+                    population_workers = _POPULATION_TIME_DISCOVERY_MAX_THREADS
+                    explicit_workers = (read_settings or {}).get("max_threads")
+                    if explicit_workers is not None and int(explicit_workers) > 0:
+                        population_workers = min(
+                            population_workers, int(explicit_workers)
+                        )
+                    settings["max_threads"] = population_workers
+                else:
+                    settings["max_threads"] = min(int(settings["max_threads"]), 1)
+                if kind == "root_time_discovery":
+                    settings["max_memory_usage"] = min(
+                        int(settings["max_memory_usage"]),
+                        _ROOT_TIME_DISCOVERY_MAX_BYTES,
+                    )
+                # Never accept partial aggregates as an absence/boundary proof.
+                settings.update(
+                    read_overflow_mode="throw",
+                    result_overflow_mode="throw",
+                    timeout_overflow_mode="throw",
+                )
             result = analytics.execute_ch_query(
                 query,
                 params,
@@ -1422,8 +1678,17 @@ def read_bounded_filter_page(
         except Exception as exc:
             if is_read_budget_error(exc):
                 error_code = "read_budget_exceeded"
-            elif kind in {"prefilter", "micro_seed", "zero_probe"} and isinstance(
-                exc, (RuntimeError, TimeoutError)
+            elif (
+                kind in {"prefilter", "micro_seed", "zero_probe"}
+                and isinstance(exc, (RuntimeError, TimeoutError))
+            ) or (
+                kind
+                in {
+                    "candidate_seed",
+                    "root_time_discovery",
+                    "population_time_discovery",
+                }
+                and isinstance(exc, TimeoutError)
             ):
                 # The witness probe is an optional optimization. Some guarded
                 # executors report their own statement timeout/resource cap as
@@ -1545,6 +1810,9 @@ def read_bounded_filter_page(
         nonlocal before_id
         nonlocal before_start_time
         nonlocal pre_match_continuation
+        nonlocal last_classifier_empty
+
+        last_classifier_empty = False
 
         candidate_identities = list(candidate_seed_rows)
         if defer_classification:
@@ -1681,6 +1949,13 @@ def read_bounded_filter_page(
                         max_bytes_to_read_cap=candidate_witness_probe_max_bytes,
                     )
                 except _BudgetExceeded as exc:
+                    if (
+                        optional_candidate_witness
+                        and attempts
+                        and attempts[-1].kind == "prefilter"
+                        and attempts[-1].error_code
+                    ):
+                        optional_failed_attempts.add(len(attempts) - 1)
                     probe_duration_us = (
                         (probe_end - probe_start).days * 86_400_000_000
                         + (probe_end - probe_start).seconds * 1_000_000
@@ -1810,6 +2085,7 @@ def read_bounded_filter_page(
                     active_end=active_end,
                     result_limit=max_candidates,
                 )
+                last_classifier_empty = not match_result.data
                 had_matches_before_query = bool(matched_by_id)
                 for row in match_result.data:
                     identity = row_identity(row)
@@ -1897,6 +2173,8 @@ def read_bounded_filter_page(
         a 10k+1 rejection sentinel.
         """
 
+        nonlocal initial_identity_flush_pending, adaptive_identity_start, empty_prefix_seed
+
         if (
             not identity_only_classification
             and not unhydrated_buffered_identity_classification
@@ -1926,17 +2204,40 @@ def read_bounded_filter_page(
             )
 
         def flush(batch_size: int) -> bool:
+            nonlocal identity_refill_limit
             batch_identities = list(pending_identity_candidates)[:batch_size]
             batch_entries = [
                 pending_identity_candidates.pop(identity)
                 for identity in batch_identities
             ]
-            return classify_seed_rows(
+            matches_before_flush = len(matched_by_id)
+            prefix_proven = classify_seed_rows(
                 [entry[0] for entry in batch_entries],
                 active_start=min(entry[1] for entry in batch_entries),
                 active_end=max(entry[2] for entry in batch_entries),
                 stop_on_ordered_prefix=stop_on_ordered_prefix,
             )
+            if ordered_identity_refill and not pending_identity_candidates:
+                gained = len(matched_by_id) - matches_before_flush
+                remaining = prefix_needed - len(matched_by_id)
+                # Twofold headroom, integer ceiling. A failed read never reaches
+                # here; zero yield or an unresolved corrected cutoff restores the
+                # existing maximum. No estimate proves exhaustion or advances a key.
+                identity_refill_limit = (
+                    min(
+                        candidate_limit,
+                        (2 * remaining * batch_size + gained - 1) // gained,
+                    )
+                    if stop_on_ordered_prefix
+                    and not prefix_proven
+                    and 0 < gained
+                    and 0 < remaining
+                    and batch_size < candidate_limit
+                    and min(map(result_row_key, matched_by_id.values()))
+                    >= seed_row_key(batch_entries[-1][0])
+                    else candidate_limit
+                )
+            return prefix_proven
 
         pending_flush_size = (
             max_candidates
@@ -1944,6 +2245,31 @@ def read_bounded_filter_page(
             and callable(candidate_witness_probe_builder)
             else classify_batch_size
         )
+        if (
+            initial_identity_flush_pending
+            and stop_on_ordered_prefix
+            and pending_identity_candidates
+            and (len(pending_identity_candidates) >= pending_flush_size or force)
+        ):
+            # Split only the first scheduled batch. Lack of an exact ordered
+            # prefix (including corrected root order) resumes baseline sizing.
+            adaptive_identity_start = True
+            scheduled = min(len(pending_identity_candidates), pending_flush_size)
+            first = min(50, scheduled)
+            prefix_proven = flush(first)
+            initial_identity_flush_pending = False
+            if prefix_proven:
+                return True
+            if (
+                deferred_candidate_seed
+                and first == 50
+                and last_classifier_empty
+                and not matched_by_id
+            ):
+                empty_prefix_seed = True
+                return False
+            if scheduled > first and flush(scheduled - first):
+                return True
         while len(pending_identity_candidates) >= pending_flush_size:
             if flush(pending_flush_size):
                 return True
@@ -2422,6 +2748,135 @@ def read_bounded_filter_page(
                 page_complete = True
                 break
 
+            # Only an unkeyed, fully classified boundary may jump. The probe
+            # never consumes IDs or changes an unfinished timestamp tie group.
+            # Leave one seed + classifier and the existing hydration reserve;
+            # failed probes retain telemetry but cannot move the checkpoint.
+            discovery_remaining_ms = (
+                query_timeout_ms
+                if deferred_root_discovery
+                else _ROOT_TIME_DISCOVERY_TIMEOUT_MS
+                if discovery_windows or root_discovery_started is None
+                else max(
+                    0,
+                    _ROOT_TIME_DISCOVERY_TIMEOUT_MS
+                    - int((monotonic() - root_discovery_started) * 1000),
+                )
+            )
+            if (
+                root_discovery_enabled
+                and discovery_ready
+                and root_discovery_attempts < _ROOT_TIME_DISCOVERY_MAX_ATTEMPTS
+                and discovery_remaining_ms >= 25
+                and seed_proves_result_order
+                and not optional_candidate_seed
+                and before_start_time is None
+                and not pending_identity_candidates
+                and slice_end - request_start > timedelta(hours=1)
+                and len(attempts) + 3 + reserved_hydration_queries <= max_query_count
+                and (classification_deadline - monotonic()) * 1000
+                >= min(query_timeout_ms, discovery_remaining_ms)
+                + _BOUNDED_CONTINUATION_MIN_QUERY_HEADROOM_MS
+            ):
+                active_discovery_window = (
+                    discovery_windows[
+                        min(root_discovery_attempts, len(discovery_windows) - 1)
+                    ]
+                    if discovery_windows
+                    else discovery_window
+                )
+                probe_start = max(request_start, slice_end - active_discovery_window)
+                probe_query, probe_params = root_discovery_builder(
+                    slice_start=probe_start, slice_end=slice_end
+                )
+                root_discovery_attempts += 1
+                if root_discovery_started is None:
+                    root_discovery_started = monotonic()
+                try:
+                    probe_result = execute(
+                        kind=discovery_kind,
+                        query=probe_query,
+                        params=probe_params,
+                        active_start=probe_start,
+                        active_end=slice_end,
+                        result_limit=1,
+                        timeout_cap_ms=None
+                        if population_discovery or deferred_root_discovery
+                        else discovery_remaining_ms,
+                        max_bytes_to_read_cap=None
+                        if population_discovery or deferred_root_discovery
+                        else _ROOT_TIME_DISCOVERY_MAX_BYTES,
+                    )
+                except _BudgetExceeded as exc:
+                    if exc.error_code not in {
+                        "read_budget_exceeded",
+                        "prefilter_unavailable",
+                    }:
+                        raise
+                    optional_failed_attempts.add(len(attempts) - 1)
+                    root_discovery_enabled = False
+                    population_resume_below = None
+                else:
+                    probe_rows = list(probe_result.data or [])
+                    if len(probe_rows) != 1 or discovery_field not in probe_rows[0]:
+                        raise ValueError(
+                            "root discovery requires one complete aggregate"
+                        )
+                    newest_us = probe_rows[0][discovery_field]
+                    if monotonic() >= classification_deadline:
+                        raise _BudgetExceeded("deadline_exceeded")
+                    if newest_us is None:
+                        # NULL proves only [probe_start, slice_end), not the
+                        # unscanned remainder of a seven-day/year-long request.
+                        next_end = probe_start
+                        next_start = None
+                    else:
+                        # A hit is only a temporal superset. Replay its entire
+                        # hour before any later discovery. The keyed variant
+                        # may restart only BELOW that fully exhausted hour.
+                        root_discovery_enabled = False
+                        if not isinstance(newest_us, int) or isinstance(
+                            newest_us, bool
+                        ):
+                            raise ValueError(
+                                "root discovery timestamp must be integer microseconds"
+                            )
+                        newest_time = datetime(1970, 1, 1) + timedelta(
+                            microseconds=newest_us
+                        )
+                        if not probe_start <= newest_time < slice_end:
+                            raise ValueError(
+                                "root discovery timestamp is outside its interval"
+                            )
+                        hour_start = newest_time.replace(
+                            minute=0, second=0, microsecond=0
+                        )
+                        if discovery_windows:
+                            population_resume_below = hour_start
+                            discovery_ready = False
+                        next_end = min(slice_end, hour_start + timedelta(hours=1))
+                        next_start = max(request_start, hour_start)
+                    advanced = next_end < slice_end
+                    slice_end = next_end
+                    active_slice_start = next_start
+                    # Discovery may widen coverage, never the ordered seed's
+                    # working set. Keep a known failed-width ceiling too.
+                    slice_width = min(slice_width, timedelta(hours=1))
+                    if forced_width_cap is not None and next_start is not None:
+                        active_slice_start = max(
+                            next_start, slice_end - forced_width_cap
+                        )
+                    if advanced:
+                        checkpoint_continuation()
+                    if slice_end <= request_start:
+                        page_complete = True
+                        break
+                    if newest_us is None and advanced:
+                        # A second cheap absence proof can skip another empty
+                        # day instead of fetching each empty hour. The next
+                        # iteration rechecks shared wall/query/hydration caps.
+                        continue
+
             remaining_attempts = max_seed_attempts - seed_index
             remaining_window = slice_end - request_start
             scheduled_width = slice_width
@@ -2452,28 +2907,124 @@ def read_bounded_filter_page(
 
             seed_before_start_time = before_start_time
             seed_before_id = before_id
+            if optional_candidate_seed and (
+                optional_seed_attempted
+                or not probe_limits_enforced
+                or len(attempts) + 3 + reserved_hydration_queries > max_query_count
+                or (classification_deadline - monotonic()) * 1000
+                < _OPTIONAL_CANDIDATE_SEED_TIMEOUT_MS
+                + _CANDIDATE_WITNESS_EXACT_RESERVE_MS
+            ):
+                abandon_optional_candidate_seed()
+            using_optional_seed = optional_candidate_seed
+            # Exhaustion must be judged using the limit of THIS statement,
+            # never a larger working set chosen after observing its yield.
+            active_seed_limit = candidate_limit
+            if (
+                ordered_identity_refill
+                and seed_proves_result_order
+                and seed_page_builder == ordered_seed_builder
+                and not (pending_identity_candidates or candidate_witness_probe_enabled)
+            ):
+                active_seed_limit = identity_refill_limit
             seed_query, seed_params = seed_page_builder(
                 slice_start=slice_start,
                 slice_end=slice_end,
-                limit=candidate_limit,
+                limit=active_seed_limit,
                 before_start_time=seed_before_start_time,
                 before_id=seed_before_id,
             )
             try:
+                optional_seed_attempted = optional_seed_attempted or using_optional_seed
                 seed_result = execute(
-                    kind="seed",
+                    kind="candidate_seed" if using_optional_seed else "seed",
                     query=seed_query,
                     params=seed_params,
                     active_start=slice_start,
                     active_end=slice_end,
+                    timeout_cap_ms=(
+                        _OPTIONAL_CANDIDATE_SEED_TIMEOUT_MS
+                        if using_optional_seed
+                        else None
+                    ),
+                    max_bytes_to_read_cap=(
+                        _OPTIONAL_CANDIDATE_SEED_MAX_BYTES
+                        if using_optional_seed
+                        else None
+                    ),
                 )
             except _BudgetExceeded as exc:
-                if (
+                if using_optional_seed and exc.error_code in {
+                    "read_budget_exceeded",
+                    "prefilter_unavailable",
+                }:
+                    # The global witness was inconclusive. Never narrow and
+                    # repeat its all-history Set, consume a seed ID, or infer
+                    # exhaustion from its failed/partial result. Only a later
+                    # ordinary seed plus exact replay can advance the cursor.
+                    optional_failed_attempts.add(len(attempts) - 1)
+                    seed_result = None
+                    if (
+                        windowed_seed_available
+                        and len(attempts) + 3 + reserved_hydration_queries
+                        <= max_query_count
+                        and (classification_deadline - monotonic()) * 1000
+                        >= query_timeout_ms + _CANDIDATE_WITNESS_EXACT_RESERVE_MS
+                    ):
+                        # This is a different necessary superset, not a retry
+                        # of the failed global Set. Failure of either read
+                        # cannot advance an ordering checkpoint.
+                        windowed_seed_available = False
+                        window_query, window_params = windowed_seed_builder(
+                            slice_start=slice_start,
+                            slice_end=slice_end,
+                            limit=active_seed_limit,
+                            before_start_time=seed_before_start_time,
+                            before_id=seed_before_id,
+                        )
+                        try:
+                            seed_result = execute(
+                                kind="windowed_candidate_seed",
+                                query=window_query,
+                                params=window_params,
+                                active_start=slice_start,
+                                active_end=slice_end,
+                            )
+                        except _BudgetExceeded as window_error:
+                            if window_error.error_code not in {
+                                "read_budget_exceeded",
+                                "prefilter_unavailable",
+                            }:
+                                raise
+                            optional_failed_attempts.add(len(attempts) - 1)
+                    # The failed all-project membership Set and the finite
+                    # witness probe are different reads. Retain the latter's
+                    # own budget/fallback: checking only the ordered seed IDs
+                    # can still avoid replaying hundreds of unrelated roots.
+                    # Its failure never removes an unclassified candidate.
+                    if seed_result is None:
+                        abandon_optional_candidate_seed()
+                        seed_query, seed_params = seed_page_builder(
+                            slice_start=slice_start,
+                            slice_end=slice_end,
+                            limit=active_seed_limit,
+                            before_start_time=seed_before_start_time,
+                            before_id=seed_before_id,
+                        )
+                        seed_result = execute(
+                            kind="seed",
+                            query=seed_query,
+                            params=seed_params,
+                            active_start=slice_start,
+                            active_end=slice_end,
+                        )
+                elif (
                     # Cursor reads can safely retry a failed wide seed at a
                     # narrower adjacent window without changing predicates or
                     # publishing unclassified rows. This prevents a dense
                     # initial slice from repeatedly returning the same token.
                     retry_wide_read_budget
+                    and not empty_prefix_seed
                     and exc.error_code == "read_budget_exceeded"
                     and active_width > _INITIAL_SLICE
                 ):
@@ -2488,8 +3039,15 @@ def read_bounded_filter_page(
                     before_start_time = None
                     before_id = None
                     continue
-                raise
+                else:
+                    raise
             seed_rows = sorted(seed_result.data, key=seed_row_key, reverse=True)
+            if (
+                population_discovery
+                or (deferred_root_discovery and initial_identity_flush_pending)
+                or empty_seed_root_discovery
+            ) and not seed_rows:
+                discovery_ready = True
             new_candidate_rows: list[dict[str, Any]] = []
             for row in seed_rows:
                 public_identity = str(row.get(key_field, ""))
@@ -2499,11 +3057,13 @@ def read_bounded_filter_page(
                 seen_seed_ids.add(raw_identity)
                 new_candidate_rows.append(row)
 
+            matches_before_seed_batch = len(matched_by_id)
             prefix_is_proven = classify_or_buffer_seed_rows(
                 new_candidate_rows,
                 active_start=slice_start,
                 active_end=slice_end,
                 stop_on_ordered_prefix=seed_proves_result_order,
+                force=active_seed_limit < candidate_limit,
             )
             if (
                 seed_proves_population_bound
@@ -2530,6 +3090,7 @@ def read_bounded_filter_page(
                 break
             if (
                 not prefix_is_proven
+                and not empty_prefix_seed
                 and seed_proves_result_order
                 and pending_identity_candidates
                 and (
@@ -2554,11 +3115,26 @@ def read_bounded_filter_page(
                     force=True,
                 )
 
+            if empty_prefix_seed and seed_page_builder is not candidate_seed_builder:
+                # Only the first50 are rejected. Release the acquired but
+                # unclassified suffix so the new necessary population can
+                # reacquire it. Retain the full tie key and the proven upper
+                # boundary; explicitly cover/bind every remaining older root.
+                seen_seed_ids.difference_update(
+                    seed_identity(entry[0])
+                    for entry in pending_identity_candidates.values()
+                )
+                pending_identity_candidates.clear()
+                active_slice_start = request_start
+                seed_page_builder = candidate_seed_builder
+                checkpoint_continuation()
+                continue
+
             if prefix_is_proven:
                 page_complete = True
                 break
 
-            slice_exhausted = len(seed_rows) < candidate_limit
+            slice_exhausted = len(seed_rows) < active_seed_limit
             if (
                 not pending_identity_candidates
                 and seed_proves_result_order
@@ -2601,6 +3177,20 @@ def read_bounded_filter_page(
                 before_start_time, before_id = next_start_time, next_id
                 if bounded_continuation:
                     checkpoint_continuation()
+                if (
+                    adaptive_candidate_limit > candidate_limit
+                    and not pending_identity_candidates
+                    and len(new_candidate_rows) == len(seed_rows)
+                    and (len(matched_by_id) - matches_before_seed_batch) * 4
+                    < len(seed_rows)
+                ):
+                    # Every candidate in this full batch crossed exact latest
+                    # classification. Only acquisition size changes; no raw
+                    # candidate is published or skipped, and no larger
+                    # classifier chunk/memory envelope is introduced.
+                    candidate_limit = min(
+                        adaptive_candidate_limit, active_seed_limit * 2
+                    )
                 continue
 
             if slice_start <= request_start:
@@ -2630,6 +3220,20 @@ def read_bounded_filter_page(
             )
             before_start_time = None
             before_id = None
+            if (
+                population_resume_below is not None
+                and slice_end <= population_resume_below
+            ):
+                # This whole hit hour has crossed seed + classification, with
+                # no unfinished keyset or pending identities. Older gaps are
+                # a NEW proof interval, not a repeat of the same failed value
+                # candidate. Restarting here avoids dozens of empty daily
+                # queries for a small result set without truncating history.
+                root_discovery_enabled = True
+                discovery_ready = True
+                root_discovery_attempts = 0
+                root_discovery_started = None
+                population_resume_below = None
             if bounded_continuation:
                 checkpoint_continuation()
                 if (
@@ -2668,23 +3272,31 @@ def read_bounded_filter_page(
             before_id = safe_before_id
 
     # A response may never claim completeness after a required ClickHouse
-    # statement failed, even if a later narrower fallback happened to find a
-    # sufficient prefix. The exact-zero probe is the sole exception: its
-    # contract treats every failure as inconclusive and deliberately restores
-    # the unchanged required seed/classify path. Keep the failed probe in the
-    # attempt telemetry, but do not let it invalidate a subsequently proven
-    # exact page. Required seed, classify, and hydration failures remain fatal.
+    # statement failed, even if a later narrower fallback found a sufficient
+    # prefix. Exact-zero and explicitly optional scalar accelerators only
+    # supply speculation: failures retain their attempt telemetry, but cannot
+    # invalidate a prefix subsequently proven by required seed/classify reads.
+    # Required seed, classify, and hydration failures remain fatal.
     failed_attempt = next(
         (
             attempt
-            for attempt in attempts
-            if attempt.error_code is not None and attempt.kind != "zero_probe"
+            for index, attempt in enumerate(attempts)
+            if attempt.error_code is not None
+            and attempt.kind != "zero_probe"
+            and index not in optional_failed_attempts
         ),
         None,
     )
     if failed_attempt is not None:
         page_complete = False
         degraded_error_code = failed_attempt.error_code
+
+    if adaptive_identity_start and not page_complete and matched_by_id:
+        # A corrected first chunk can match without proving global order.
+        # Never publish it after a failed/unfinished remainder; reacquire from
+        # before unpublished matches using the existing signed checkpoint.
+        matched_by_id.clear()
+        rollback_unhydrated_page()
 
     ordered_matches = sorted(matched_by_id.values(), key=result_row_key, reverse=True)
     offset = page_number * page_size

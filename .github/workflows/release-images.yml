@@ -7,24 +7,32 @@ name: release-images
 on:
   push:
     tags: ['v[0-9]+.[0-9]+.[0-9]+']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Stable platform tag whose completed image build needs a deployment bump retry
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-images-${{ github.ref_name }}
+  group: release-images-${{ inputs.version || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
   guard:
     runs-on: ubuntu-latest
+    env:
+      REQUESTED_VERSION: ${{ inputs.version }}
     outputs:
       version: ${{ steps.v.outputs.version }}
     steps:
       - id: v
         run: |
           set -eu
-          v="${GITHUB_REF_NAME}"
+          v="${REQUESTED_VERSION:-${GITHUB_REF_NAME}}"
           if ! printf '%s' "$v" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
             echo "::error::'$v' is not a stable platform version tag"
             exit 1
@@ -33,6 +41,7 @@ jobs:
 
   build:
     needs: guard
+    if: github.event_name == 'push'
     strategy:
       fail-fast: false
       matrix:
@@ -60,6 +69,7 @@ jobs:
 
   dispatch-ee:
     needs: [guard, build]
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/create-github-app-token@v2
@@ -84,6 +94,7 @@ jobs:
 
   dispatch-docs:
     needs: [guard, build]
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
@@ -109,6 +120,10 @@ jobs:
 
   bump-deployment:
     needs: [guard, dispatch-ee]
+    if: >-
+      always() &&
+      needs.guard.result == 'success' &&
+      (github.event_name == 'workflow_dispatch' || needs.dispatch-ee.result == 'success')
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.guard.outputs.version }}
@@ -119,7 +134,7 @@ jobs:
         .backend.image.tag .core_backend_beat.image.tag .core_backend_worker.image.tag
         .temporal_worker_default.image.tag .temporal_worker_tasks_s.image.tag
         .temporal_worker_tasks_l.image.tag .temporal_worker_tasks_xl.image.tag
-        .temporal_worker_trace.image.tag .temporal_worker_agent_compass.image.tag
+        .temporal_worker_agent_compass.image.tag
         .agentcc_gateway.image.tag .codeExecutor.image.tag .embedding.image.tag
     steps:
       - uses: actions/create-github-app-token@v2

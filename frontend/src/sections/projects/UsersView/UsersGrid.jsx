@@ -16,7 +16,7 @@ import {
   buildUsersRequestFilters,
 } from "./common";
 import { mergeCellStyle } from "../LLMTracing/common";
-import axios, { endpoints } from "src/utils/axios";
+import { readQuery, endpoints } from "src/utils/axios";
 import { useNavigate, useParams } from "react-router";
 import { useDebounce } from "src/hooks/use-debounce";
 import PropTypes from "prop-types";
@@ -25,6 +25,7 @@ import { APP_CONSTANTS } from "src/utils/constants";
 import {
   createListCursorPagination,
   isListCursorContinuationLimitError,
+  LIST_CURSOR_CONTINUATION_NOTICE,
   LIST_CURSOR_MODES,
   loadExactListPage,
   retryServerSideCursorLoad,
@@ -49,20 +50,11 @@ import { isGridApiLive, withLiveGridApi } from "src/utils/gridApi";
 import {
   OBSERVE_GRID_MAX_BLOCKS_IN_CACHE,
   OBSERVE_GRID_MAX_CONCURRENT_REQUESTS,
-  OBSERVE_LIST_DEFAULT_PAGE_SIZE,
-  OBSERVE_LIST_PAGE_SIZE_OPTIONS,
 } from "src/config/runtime_limits";
 import {
   dispatchObservePageChanged,
   OBSERVE_LIST_REFRESH_EVENT,
 } from "../observeEvents";
-import {
-  EMPTY_PAGER_FRONTIER,
-  getListPagerState,
-  hasBufferedOverflowPage,
-  pagerFlagsForPage,
-} from "../LLMTracing/listPagerState";
-import CursorGridPagination from "../LLMTracing/CursorGridPagination";
 
 const getUsersGridThemeParams = (theme) => ({
   columnBorder: false,
@@ -97,34 +89,47 @@ const UsersGrid = React.memo(
     );
     const agTheme = useAgThemeWith(gridThemeParams);
     const gridApiRef = useRef(null);
-    const activeListReadsRef = useRef(0);
+    const activeListReadsRef = useRef(new Set());
     const cursorPagination = useRef(
       createListCursorPagination({
         pageParam: "current_page_index",
         pageOffset: 0,
       }),
     );
+    const hasActiveListReads = useCallback(
+      () =>
+        Array.from(activeListReadsRef.current).some(({ generation }) =>
+          cursorPagination.current.isCurrent(generation),
+        ),
+      [],
+    );
     const cursorQueryKeyRef = useRef(null);
     const [readError, setReadError] = useState(null);
-    const [continuationNotice, setContinuationNotice] = useState(null);
-    const [page, setPage] = useState(1);
-    const [pageSize, setPageSize] = useState(OBSERVE_LIST_DEFAULT_PAGE_SIZE);
-    // A ref mutation re-renders nothing, so the pager cannot read
-    // activeListReadsRef to decide whether it is busy — it would only ever see
-    // whatever the ref held at the last render.
-    const [isPageReadPending, setIsPageReadPending] = useState(false);
-    // The deepest page this datasource has published, and the flags it reported
-    // there. AG Grid serves an already-cached block without re-invoking the
-    // datasource, so flags written by whichever read finished last would leave
-    // the terminal page's `false` in place and kill forward navigation the
-    // moment the user pressed Back.
-    const [pagerFrontier, setPagerFrontier] = useState(EMPTY_PAGER_FRONTIER);
+    const [continuationNotice, setContinuationNoticeState] = useState(null);
+    const continuationGenerationRef = useRef(null);
+    const setContinuationNotice = useCallback((pending) => {
+      // AG Grid creates its failed-load renderer synchronously in params.fail(),
+      // before React commits the banner. Keep its copy in sync with that pause.
+      continuationGenerationRef.current = pending
+        ? cursorPagination.current.generation()
+        : null;
+      setContinuationNoticeState(pending);
+    }, []);
+    const getGridLocaleText = useCallback(({ key, defaultValue }) => {
+      if (
+        cursorPagination.current.isCurrent(continuationGenerationRef.current) &&
+        (key === "loadingError" || key === "ariaSkeletonCellLoadingFailed")
+      ) {
+        return LIST_CURSOR_CONTINUATION_NOTICE;
+      }
+      return defaultValue;
+    }, []);
     const continueCursorSearch = useCallback(() => {
       if (!continuationNotice) return;
       if (retryServerSideCursorLoad(gridApiRef.current?.api)) {
         setContinuationNotice(null);
       }
-    }, [continuationNotice]);
+    }, [continuationNotice, setContinuationNotice]);
     const {
       setGridApi,
       searchQuery,
@@ -160,13 +165,7 @@ const UsersGrid = React.memo(
           dispatchObservePageChanged(currentPage);
           return;
         }
-        if (activeListReadsRef.current > 0) return;
-        // The other four cursor grids clear their pager frontier on refresh
-        // because refreshGrid() routes through resetPagination(). This grid
-        // calls refreshServerSide() directly, so getRows()'s monotone guard
-        // (never move the frontier backward) would otherwise keep a stale,
-        // deeper frontier alive after the list has shrunk.
-        setPagerFrontier(EMPTY_PAGER_FRONTIER);
+        if (hasActiveListReads()) return;
         withLiveGridApi(gridApiRef.current?.api, (api) =>
           api.refreshServerSide?.({ purge: false }),
         );
@@ -174,7 +173,7 @@ const UsersGrid = React.memo(
       window.addEventListener(OBSERVE_LIST_REFRESH_EVENT, refreshRows);
       return () =>
         window.removeEventListener(OBSERVE_LIST_REFRESH_EVENT, refreshRows);
-    }, []);
+    }, [hasActiveListReads]);
 
     useEffect(() => {
       const initial = getUsersColumnConfig();
@@ -295,11 +294,14 @@ const UsersGrid = React.memo(
         getRows: async (params) => {
           let pageNumber = 0;
           let requestGeneration = null;
+          let loadingOwner = null;
           let continuationPending = false;
           try {
             if (!isGridApiLive(params.api)) return;
-            activeListReadsRef.current += 1;
-            setIsPageReadPending(true);
+            loadingOwner = {
+              generation: cursorPagination.current.generation(),
+            };
+            activeListReadsRef.current.add(loadingOwner);
             setIsLoading(true);
             params.api.hideOverlay();
             const { request } = params;
@@ -377,7 +379,6 @@ const UsersGrid = React.memo(
             });
             if (cursorQueryKeyRef.current !== queryKey) {
               cursorPagination.current.reset();
-              setPagerFrontier(EMPTY_PAGER_FRONTIER);
               // The bounded users cursor has one deterministic candidate order.
               // Explicit AG Grid sorts retain the existing numbered/exact path;
               // mixing a sort with an opaque cursor would change row order.
@@ -387,6 +388,7 @@ const UsersGrid = React.memo(
               cursorQueryKeyRef.current = queryKey;
             }
             requestGeneration = cursorPagination.current.generation();
+            loadingOwner.generation = requestGeneration;
 
             const buildBaseParams = () => ({
               // Omit project_id when there's no project context — the
@@ -415,7 +417,7 @@ const UsersGrid = React.memo(
                 pageNumber,
                 targetRowCount: pageSize,
                 loadResponse: (signal) =>
-                  axios.get(endpoints.project.getUsersList(), {
+                  readQuery(endpoints.project.getUsersList(), {
                     params: buildParams(pageNumber),
                     signal,
                   }),
@@ -432,14 +434,14 @@ const UsersGrid = React.memo(
                 isCurrent: () =>
                   cursorPagination.current.isCurrent(requestGeneration),
                 nextResponse: (_cursor, signal) =>
-                  axios.get(endpoints.project.getUsersList(), {
+                  readQuery(endpoints.project.getUsersList(), {
                     params: buildParams(pageNumber),
                     signal,
                   }),
               });
               results = exactPage.response;
             } else {
-              results = await axios.get(endpoints.project.getUsersList(), {
+              results = await readQuery(endpoints.project.getUsersList(), {
                 params: buildParams(pageNumber),
               });
             }
@@ -497,29 +499,6 @@ const UsersGrid = React.memo(
             const countIsLowerBound =
               res?.count_is_lower_bound === true ||
               res?.total_count_is_lower_bound === true;
-            const { hasMore, provenNext } = getListPagerState({
-              metadata: res,
-              startRow: request.startRow,
-              rowCount: userData.length,
-            });
-            const bufferedOverflowPage = hasBufferedOverflowPage(
-              isLastPage,
-              res,
-            );
-            const publishedPage = pageNumber + 1;
-            setPagerFrontier((previous) =>
-              publishedPage < previous.page
-                ? previous
-                : {
-                    page: publishedPage,
-                    hasMore: isLastPage
-                      ? false
-                      : hasMore || bufferedOverflowPage,
-                    provenNext: isLastPage
-                      ? false
-                      : provenNext || bufferedOverflowPage,
-                  },
-            );
             const exactTotal = countIsLowerBound ? null : total;
             const lowerBoundTotal = countIsLowerBound ? total : null;
             const gridRowCount = isLastPage
@@ -611,13 +590,17 @@ const UsersGrid = React.memo(
             setSearchState("error");
             failServerSideGridRead(params);
           } finally {
-            activeListReadsRef.current = Math.max(
-              0,
-              activeListReadsRef.current - 1,
-            );
-            if (!continuationPending) {
-              setIsPageReadPending(false);
-              setIsLoading(false);
+            if (loadingOwner) {
+              activeListReadsRef.current.delete(loadingOwner);
+              // Obsolete reads cannot release loading during a filter handoff,
+              // and callbacks that never acquired ownership cannot release it.
+              if (
+                cursorPagination.current.isCurrent(loadingOwner.generation) &&
+                !continuationPending &&
+                !hasActiveListReads()
+              ) {
+                setIsLoading(false);
+              }
             }
           }
         },
@@ -630,6 +613,8 @@ const UsersGrid = React.memo(
       setHasData,
       setIsLoading,
       setSearchState,
+      setContinuationNotice,
+      hasActiveListReads,
       hasActiveFilter,
       sortStorageKey,
       requestedProjection,
@@ -794,35 +779,6 @@ const UsersGrid = React.memo(
       [columns, setColumns],
     );
 
-    // Every page below the frontier is already known to be followed by a page
-    // that has been fetched; only at the frontier itself does the last read
-    // get to decide whether anything follows.
-    const pagerFlags = pagerFlagsForPage(page, pagerFrontier);
-    // See useCursorGridPagination: the trailing ellipsis asks whether the end
-    // is still unknown, which only the frontier can answer.
-    const endUnknown = pagerFrontier.page > 0 && pagerFrontier.hasMore === true;
-
-    // Mirrors changePageSize() in useCursorGridPagination: the new size has to
-    // reach the request — AG Grid derives it from cacheBlockSize — and the
-    // cursor chain, the visible page and the pager frontier all restart with
-    // it. cacheBlockSize is not reactive, hence the keyed grid remount.
-    const handlePageSizeChange = useCallback(
-      (nextPageSize) => {
-        if (
-          nextPageSize === pageSize ||
-          !OBSERVE_LIST_PAGE_SIZE_OPTIONS.includes(nextPageSize)
-        ) {
-          return;
-        }
-        cursorPagination.current.reset();
-        cursorQueryKeyRef.current = null;
-        setPagerFrontier(EMPTY_PAGER_FRONTIER);
-        setPage(1);
-        setPageSize(nextPageSize);
-      },
-      [pageSize],
-    );
-
     const onSortChanged = (params) => {
       if (!isGridApiLive(params.api)) return;
       const requestedSortModel = params.api
@@ -859,9 +815,6 @@ const UsersGrid = React.memo(
         >
           <Box className="ag-theme-quartz" sx={fullHeightStyle}>
             <AgGridReact
-              // AG Grid reads cacheBlockSize once, at construction. Remounting
-              // is how the other cursor grids adopt a new page size.
-              key={`users-grid-${pageSize}`}
               className={`clean-data-table${continuationNotice ? " ag-grid-cursor-paused" : ""}`}
               ref={(params) => {
                 gridApiRef.current = params;
@@ -870,21 +823,21 @@ const UsersGrid = React.memo(
               onColumnMoved={onColumnMoved}
               columnDefs={userColumnDefs}
               serverSideDatasource={dataSource}
+              getLocaleText={getGridLocaleText}
               getRowId={({ data }) => userRowIdentity(data)}
               headerHeight={40}
               rowHeight={userTraceRowHeightMapping[cellHeight]?.height ?? 40}
               theme={agTheme}
               rowSelection={{ mode: "multiRow", enableClickSelection: false }}
               pagination={true}
-              paginationPageSize={pageSize}
-              paginationPageSizeSelector={false}
-              suppressPaginationPanel={true}
+              paginationPageSize={25}
               rowModelType="serverSide"
-              cacheBlockSize={pageSize}
+              cacheBlockSize={25}
               maxBlocksInCache={OBSERVE_GRID_MAX_BLOCKS_IN_CACHE}
               maxConcurrentDatasourceRequests={
                 OBSERVE_GRID_MAX_CONCURRENT_REQUESTS
               }
+              paginationPageSizeSelector={[10, 25, 50, 100]}
               defaultColDef={defaultColDef}
               onColumnHeaderClicked={onColumnHeaderClicked}
               rowStyle={{ cursor: "pointer" }}
@@ -899,10 +852,10 @@ const UsersGrid = React.memo(
               onRowSelected={onSelectionChanged}
               onGridReady={onGridReady}
               onPaginationChanged={({ api }) => {
-                const nextPage = Number(api?.paginationGetCurrentPage?.()) + 1;
-                if (!Number.isSafeInteger(nextPage)) return;
-                setPage(nextPage);
-                if (nextPage > 1) dispatchObservePageChanged(nextPage);
+                const page = Number(api?.paginationGetCurrentPage?.()) + 1;
+                if (Number.isSafeInteger(page) && page > 1) {
+                  dispatchObservePageChanged(page);
+                }
               }}
               noRowsOverlayComponent={() =>
                 continuationNotice
@@ -921,21 +874,6 @@ const UsersGrid = React.memo(
             />
           </Box>
         </Box>
-        <CursorGridPagination
-          disabled={isPageReadPending}
-          loading={isPageReadPending}
-          page={page}
-          pageSize={pageSize}
-          endUnknown={endUnknown}
-          hasMore={pagerFlags.hasMore}
-          provenNext={pagerFlags.provenNext}
-          onPageChange={(nextPage) =>
-            withLiveGridApi(gridApiRef.current?.api, (api) =>
-              api.paginationGoToPage?.(nextPage - 1),
-            )
-          }
-          onPageSizeChange={handlePageSizeChange}
-        />
       </Box>
     );
   },

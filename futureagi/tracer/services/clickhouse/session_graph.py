@@ -216,6 +216,13 @@ class _DeadlineBoundAnalytics:
         self.supports_per_query_read_settings = bool(
             getattr(delegate, "supports_per_query_read_settings", True)
         )
+        from tracer.services.clickhouse.application_read_policy import (
+            supports_bounded_speculative_reads,
+        )
+
+        self.supports_bounded_speculative_reads = supports_bounded_speculative_reads(
+            delegate
+        )
 
     def execute_ch_query(
         self,

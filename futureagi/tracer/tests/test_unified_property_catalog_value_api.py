@@ -8,7 +8,6 @@ from unittest.mock import Mock, patch
 import pytest
 from rest_framework.response import Response
 
-from tracer.services.clickhouse.v2.property_catalog.runtime_limits import RUNTIME_LIMITS
 from tracer.services.clickhouse.v2.property_catalog.source_adapters import (
     system_property_value_adapter,
 )
@@ -153,15 +152,19 @@ def test_filter_values_uses_authorized_activated_native_catalog_page(settings):
     legacy.assert_not_called()
 
 
-def test_filter_values_workspace_scope_binds_full_authorized_project_set(settings):
+@pytest.mark.parametrize("project_count", (1, 178, 257, 1024))
+def test_filter_values_workspace_scope_binds_full_authorized_project_set(
+    settings, project_count
+):
     _enable(settings)
+    projects = [f"00000000-0000-4000-8000-{i:012x}" for i in range(project_count)]
     reader = Mock()
     reader.read_page.return_value = _page()
 
     with (
         patch(
             "tracer.views.dashboard.resolve_property_catalog_project_scope",
-            return_value=[PROJECT_ID],
+            return_value=projects,
         ) as authorize,
         patch("tracer.views.dashboard.PropertyCatalogReadExecutor"),
         patch("tracer.views.dashboard.PropertyCatalogValueReader", return_value=reader),
@@ -173,7 +176,7 @@ def test_filter_values_workspace_scope_binds_full_authorized_project_set(setting
     assert response.status_code == 200
     assert authorize.call_args.kwargs["include_workspace_projects"] is True
     scope = reader.read_page.call_args.kwargs["scope"]
-    assert scope["project_ids"] == [PROJECT_ID]
+    assert scope["project_ids"] == projects
     assert scope["workspace_scope"] is True
 
 
@@ -337,7 +340,7 @@ def test_native_system_value_preflight_skips_catalog_queries(settings):
     deadline.remaining_ms.assert_not_called()
 
 
-def test_oversized_native_scope_is_400_before_legacy_fallback(settings):
+def test_malformed_large_native_scope_is_400_before_legacy_fallback(settings):
     _enable(settings)
     request = _request(
         property_id="system_attribute:traces:provider",
@@ -345,7 +348,7 @@ def test_oversized_native_scope_is_400_before_legacy_fallback(settings):
         metric_name="provider",
         metric_type="system_metric",
         search="",
-        project_ids=[PROJECT_ID] * (RUNTIME_LIMITS.max_projects + 1),
+        project_ids=[PROJECT_ID] * 1024 + ["not-a-uuid"],
     )
 
     with (

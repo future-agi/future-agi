@@ -8,7 +8,6 @@ Endpoints:
 """
 
 import re
-from contextlib import nullcontext
 from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 
@@ -17,7 +16,7 @@ from clickhouse_connect.driver.exceptions import (
     DatabaseError as ClickHouseConnectDatabaseError,
 )
 from clickhouse_driver.errors import Error as ClickHouseError
-from django.db import DatabaseError, connection, transaction
+from django.db import connection, transaction
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -55,7 +54,6 @@ from tracer.services.clickhouse.list_cursor import (
 )
 from tracer.services.clickhouse.read_budget import (
     ReadDeadline,
-    ReadDeadlineExceeded,
     is_clickhouse_api_read_unavailable_error,
 )
 from tracer.services.clickhouse.v2.attribute_catalog_cutover import (
@@ -77,6 +75,7 @@ from tracer.services.clickhouse.v2.attribute_catalog_snapshot import (
     mark_catalog_snapshot_response,
 )
 from tracer.services.exact_aggregation_cache import read_or_schedule_exact_snapshot
+from tracer.services.postgres_read_policy import application_postgres_reads
 from tracer.utils.workspace_scope import project_queryset_for_request
 
 logger = structlog.get_logger(__name__)
@@ -145,33 +144,16 @@ def _workspace_projects_are_in_request_scope(
 
 
 def _run_span_attribute_pg_read(deadline: ReadDeadline, read):
-    """Run one attribute-scope ORM read inside the request-owned wall."""
-
-    timeout_ms = deadline.remaining_ms(ATTRIBUTE_PROPERTY_PICKER_WALL_TIMEOUT_MS)
-    if connection.vendor != "postgresql":
-        result = read()
-        deadline.remaining_ms(floor_ms=1)
-        return result
-    already_in_atomic_block = connection.in_atomic_block
-    try:
-        transaction_context = (
-            nullcontext() if already_in_atomic_block else transaction.atomic()
-        )
-        with transaction_context:
-            with connection.cursor() as cursor:
-                if not already_in_atomic_block:
-                    cursor.execute("SET TRANSACTION READ ONLY")
-                cursor.execute(
-                    "SELECT set_config('statement_timeout', %s, true)",
-                    [str(timeout_ms)],
-                )
-            result = read()
-    except DatabaseError as exc:
-        raise ReadDeadlineExceeded(
-            "Span-attribute PostgreSQL read exceeded its request deadline"
-        ) from exc
-    deadline.remaining_ms(floor_ms=1)
-    return result
+    """Read attribute scope with cooperative checks, not a statement timer."""
+    with application_postgres_reads(
+        connection=connection,
+        atomic=transaction.atomic,
+        check_request=lambda: deadline.remaining_ms(
+            ATTRIBUTE_PROPERTY_PICKER_WALL_TIMEOUT_MS
+        ),
+        read_only=True,
+    ):
+        return read()
 
 
 def _clickhouse_error_code(exc: Exception) -> int | None:

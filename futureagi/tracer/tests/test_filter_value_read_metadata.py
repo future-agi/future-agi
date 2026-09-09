@@ -9,6 +9,7 @@ from tracer.services.clickhouse.filter_value_reads import (
     FILTER_VALUE_CURSOR_INITIAL_SEGMENT,
     FILTER_VALUE_CURSOR_MIN_SEGMENT,
     FILTER_VALUE_READ_TIMEOUT_MS,
+    SYSTEM_FILTER_VALUE_METRICS,
     FilterValueRead,
     _value_digest,
     read_end_user_filter_value_cursor_page,
@@ -20,6 +21,39 @@ from tracer.services.clickhouse.read_budget import ReadDeadline, ReadDeadlineExc
 
 NOW = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
 PROJECT_ID = "00000000-0000-4000-8000-000000000001"
+
+
+@pytest.mark.parametrize("cursor", [False, True])
+@pytest.mark.parametrize("metric_name", ["name", "trace_name", "span_name"])
+def test_trace_name_registry_alias_preserves_root_only_suggestions(cursor, metric_name):
+    class Analytics:
+        calls = []
+
+        def execute_ch_query(self, query, params, **kwargs):
+            self.calls.append(query)
+            return SimpleNamespace(data=[{"val": "example-name"}])
+
+    analytics = Analytics()
+    assert metric_name in SYSTEM_FILTER_VALUE_METRICS
+    if cursor:
+        page = read_span_system_filter_value_cursor_page(
+            analytics,
+            project_ids=[PROJECT_ID],
+            metric_name=metric_name,
+            page_size=1,
+            window_start=NOW - timedelta(days=1),
+            window_end=NOW,
+        )
+    else:
+        page = read_span_system_filter_values(
+            analytics, project_ids=[PROJECT_ID], metric_name=metric_name, now=NOW
+        )
+    assert page.values == ("example-name",)
+    assert analytics.calls
+    for query in analytics.calls:
+        assert ("AND (latest_parent_span_id IS NULL" in query) == (
+            metric_name != "span_name"
+        )
 
 
 def test_system_filter_values_use_the_reviewed_thirty_second_wall():

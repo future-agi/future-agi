@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({ get: vi.fn() }));
 
 vi.mock("src/utils/axios", () => ({
   default: mocks,
+  readQuery: mocks.get,
   endpoints: {
     project: { getAgentGraph: () => "/tracer/trace/agent-graph/" },
   },

@@ -5,11 +5,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -217,7 +220,7 @@ func checkpointRequestStatement(t *testing.T, request *http.Request) string {
 	return string(body)
 }
 
-func validCheckpointInventory(t *testing.T, terminal bool) []checkpointInventoryJSON {
+func validCheckpointInventory(t testing.TB, terminal bool) []checkpointInventoryJSON {
 	t.Helper()
 	planJSON, lease := validBuildPlan()
 	var plan buildPlanDocumentJSON
@@ -326,9 +329,9 @@ func TestCheckpointLoaderUsesNewestBoundedInventoryAndConstantStreamProofs(t *te
 				checkpointBody(t, validCheckpointProof(row, false))
 		}
 	}
-	calls := 0
+	var calls atomic.Int32
 	loader := checkpointLoaderForTransport(t, func(request *http.Request) (*http.Response, error) {
-		calls++
+		calls.Add(1)
 		if username, password, ok := request.BasicAuth(); !ok || username != "ledger_reader" || password != "secret" {
 			t.Fatalf("basic auth=%q/%q ok=%v", username, password, ok)
 		}
@@ -356,7 +359,7 @@ func TestCheckpointLoaderUsesNewestBoundedInventoryAndConstantStreamProofs(t *te
 			wantLimit := fmt.Sprintf("%d", DefaultCheckpointMaxStreams+1)
 			if values.Get("max_result_rows") != wantLimit ||
 				values.Get("param_inventory_limit") != wantLimit ||
-				values.Get("max_execution_time") != "10" {
+				values.Get("max_execution_time") != "120" {
 				t.Fatalf("inventory bounds=%v", values)
 			}
 			return checkpointHTTPResponse(checkpointBody(t, inventoryValues...)), nil
@@ -368,6 +371,7 @@ func TestCheckpointLoaderUsesNewestBoundedInventoryAndConstantStreamProofs(t *te
 				!strings.Contains(query, "chain_breaks") ||
 				strings.Contains(query, "LIMIT 100001") ||
 				values.Get("max_result_rows") != "2" ||
+				values.Get("max_threads") != "1" ||
 				values.Get("max_rows_to_group_by") != "100001" ||
 				values.Get("group_by_overflow_mode") != "throw" {
 				t.Fatalf("stream proof is not a bounded server-side full-chain reduction: %s %v", query, values)
@@ -393,8 +397,8 @@ func TestCheckpointLoaderUsesNewestBoundedInventoryAndConstantStreamProofs(t *te
 		}
 	})
 	checkpoints, err := loader.LoadCheckpoints(context.Background())
-	if err != nil || len(checkpoints) != 10 || calls != 11 {
-		t.Fatalf("checkpoints=%+v calls=%d err=%v", checkpoints, calls, err)
+	if err != nil || len(checkpoints) != 10 || calls.Load() != 11 {
+		t.Fatalf("checkpoints=%+v calls=%d err=%v", checkpoints, calls.Load(), err)
 	}
 	for _, checkpoint := range checkpoints {
 		if checkpoint.Sequence != 3 || checkpoint.Terminal || checkpoint.GapSeen ||
@@ -436,6 +440,444 @@ func TestCheckpointLoaderRestartReconstructsSameTerminalRevision(t *testing.T) {
 		if first[index] != second[index] || !first[index].Terminal {
 			t.Fatalf("restart reconstruction drifted at %d: %+v %+v", index, first[index], second[index])
 		}
+	}
+}
+
+func checkpointProofFixture(t *testing.T, terminal bool) (string, []checkpointInventoryJSON, map[string]string) {
+	t.Helper()
+	inventory := validCheckpointInventory(t, terminal)
+	values := make([]any, len(inventory))
+	proofs := make(map[string]string)
+	for index, row := range inventory {
+		values[index] = row
+		if row.StreamEnvelopeVersion == EnvelopeVersion {
+			proofs[row.StreamProducerStreamID] = checkpointBody(t, validCheckpointProof(row, terminal))
+		}
+	}
+	candidates, err := validateCheckpointInventory(inventory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return checkpointBody(t, values...), candidates, proofs
+}
+
+type checkpointLoadResult struct {
+	checkpoints []StreamCheckpoint
+	err         error
+}
+
+func startCheckpointLoad(ctx context.Context, loader *ClickHouseCheckpointLoader) <-chan checkpointLoadResult {
+	done := make(chan checkpointLoadResult, 1)
+	go func() {
+		checkpoints, err := loader.LoadCheckpoints(ctx)
+		done <- checkpointLoadResult{checkpoints, err}
+	}()
+	return done
+}
+
+func checkpointEvent(t *testing.T, ctx context.Context, events <-chan string) string {
+	t.Helper()
+	select {
+	case event := <-events:
+		return event
+	case <-ctx.Done():
+		t.Fatalf("waiting for checkpoint worker: %v", ctx.Err())
+		return ""
+	}
+}
+
+func TestCheckpointLoaderParallelProofsAreBoundedAndOrdered(t *testing.T) {
+	inventory, candidates, proofs := checkpointProofFixture(t, false)
+	gates := make(map[string]chan struct{})
+	var want []StreamCheckpoint
+	for index, row := range candidates {
+		gates[row.StreamProducerStreamID] = make(chan struct{})
+		if index == 2 || index == 7 {
+			proofs[row.StreamProducerStreamID] = ""
+			continue
+		}
+		checkpoint, err := validateCheckpointStreamProof(row, validCheckpointProof(row, false))
+		if err != nil {
+			t.Fatal(err)
+		}
+		want = append(want, checkpoint)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	started, completed := make(chan string, len(candidates)), make(chan string, len(candidates))
+	var active, peak atomic.Int32
+	loader := checkpointLoaderForTransport(t, func(request *http.Request) (*http.Response, error) {
+		id := request.URL.Query().Get("param_producer_stream_id")
+		if id == "" {
+			return checkpointHTTPResponse(inventory), nil
+		}
+		n := active.Add(1)
+		for old := peak.Load(); n > old; old = peak.Load() {
+			if peak.CompareAndSwap(old, n) {
+				break
+			}
+		}
+		defer active.Add(-1)
+		started <- id
+		select {
+		case <-gates[id]:
+			completed <- id
+			return checkpointHTTPResponse(proofs[id]), nil
+		case <-request.Context().Done():
+			return nil, request.Context().Err()
+		}
+	})
+	loader.sink.client.Timeout = 10 * time.Second
+	done := startCheckpointLoad(ctx, loader)
+	firstWave := make([]string, 8)
+	for index := range firstWave {
+		firstWave[index] = checkpointEvent(t, ctx, started)
+	}
+	if active.Load() != 8 {
+		t.Fatalf("proof reads are not actually concurrent: active=%d", active.Load())
+	}
+	// Keep the first sorted checkpoint blocked until every other read finishes.
+	first := candidates[0].StreamProducerStreamID
+	for _, id := range firstWave {
+		if id != first {
+			close(gates[id])
+		}
+	}
+	for range len(candidates) - len(firstWave) {
+		close(gates[checkpointEvent(t, ctx, started)])
+	}
+	for range len(candidates) - 1 {
+		checkpointEvent(t, ctx, completed)
+	}
+	close(gates[first])
+	select {
+	case result := <-done:
+		if result.err != nil || !reflect.DeepEqual(result.checkpoints, want) {
+			t.Fatalf("out-of-order proofs changed checkpoints: got=%+v want=%+v err=%v", result.checkpoints, want, result.err)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	if peak.Load() != 8 || active.Load() != 0 || len(started) != 0 {
+		t.Fatalf("worker bounds/join: peak=%d active=%d extra_reads=%d", peak.Load(), active.Load(), len(started))
+	}
+}
+
+func TestCheckpointLoaderParallelFailureCancelsAndJoinsWithoutPartialResults(t *testing.T) {
+	for _, failure := range []string{"transport", "corrupt proof", "missing durable proof", "parent cancellation"} {
+		t.Run(failure, func(t *testing.T) {
+			inventory, candidates, proofs := checkpointProofFixture(t, true)
+			badID, goodID := candidates[0].StreamProducerStreamID, candidates[1].StreamProducerStreamID
+			corrupt := validCheckpointProof(candidates[0], true)
+			corrupt.ChainBreaks = 1
+			corruptBody := checkpointBody(t, corrupt)
+			transportErr := errors.New("proof transport failed")
+			watchdog, stop := context.WithTimeout(context.Background(), 5*time.Second)
+			defer stop()
+			ctx, cancel := context.WithCancel(watchdog)
+			defer cancel()
+			goodGate, badGate, drain := make(chan struct{}), make(chan struct{}), make(chan struct{})
+			finishDrain := sync.OnceFunc(func() { close(drain) })
+			defer finishDrain()
+			started, canceled := make(chan string, len(candidates)), make(chan string, len(candidates))
+			var active atomic.Int32
+			loader := checkpointLoaderForTransport(t, func(request *http.Request) (*http.Response, error) {
+				id := request.URL.Query().Get("param_producer_stream_id")
+				if id == "" {
+					return checkpointHTTPResponse(inventory), nil
+				}
+				active.Add(1)
+				defer active.Add(-1)
+				started <- id
+				var gate <-chan struct{}
+				if id == goodID {
+					gate = goodGate
+				} else if id == badID {
+					gate = badGate
+				}
+				select {
+				case <-gate:
+					if id == goodID {
+						return checkpointHTTPResponse(proofs[id]), nil
+					}
+					switch failure {
+					case "transport":
+						return nil, transportErr
+					case "corrupt proof":
+						return checkpointHTTPResponse(corruptBody), nil
+					case "missing durable proof":
+						return checkpointHTTPResponse(""), nil
+					}
+				case <-request.Context().Done():
+				}
+				canceled <- id
+				<-drain
+				return nil, request.Context().Err()
+			})
+			loader.sink.client.Timeout = 10 * time.Second
+			done := startCheckpointLoad(ctx, loader)
+			for range 8 {
+				checkpointEvent(t, watchdog, started)
+			}
+			close(goodGate)
+			// The ninth read proves a valid checkpoint finished before failure.
+			checkpointEvent(t, watchdog, started)
+			waiting := 7
+			if failure == "parent cancellation" {
+				waiting = 8
+				cancel()
+			} else {
+				close(badGate)
+			}
+			for range waiting {
+				checkpointEvent(t, watchdog, canceled)
+			}
+			select {
+			case result := <-done:
+				t.Fatalf("load returned before outstanding reads joined: %+v", result)
+			case <-time.After(10 * time.Millisecond):
+			}
+			finishDrain()
+			select {
+			case result := <-done:
+				if result.err == nil || result.checkpoints != nil || active.Load() != 0 || len(started) != 0 {
+					t.Fatalf("failed load retained results/work: %+v active=%d extra_reads=%d", result, active.Load(), len(started))
+				}
+				switch failure {
+				case "transport":
+					if !errors.Is(result.err, transportErr) {
+						t.Fatalf("first error lost: %v", result.err)
+					}
+				case "parent cancellation":
+					if !errors.Is(result.err, context.Canceled) {
+						t.Fatalf("parent cancellation lost: %v", result.err)
+					}
+				case "corrupt proof":
+					if !strings.Contains(result.err.Error(), "broken chain") {
+						t.Fatalf("corrupt proof error lost: %v", result.err)
+					}
+				case "missing durable proof":
+					if !strings.Contains(result.err.Error(), "durable state but no physical delivery rows") {
+						t.Fatalf("missing proof error lost: %v", result.err)
+					}
+				}
+			case <-watchdog.Done():
+				t.Fatal(watchdog.Err())
+			}
+		})
+	}
+}
+
+func checkpointInventoryForWorkspaces(t testing.TB, count int) []checkpointInventoryJSON {
+	t.Helper()
+	base := validCheckpointInventory(t, false)
+	rows := make([]checkpointInventoryJSON, 0, count*len(base))
+	for index := range count {
+		workspace := fmt.Sprintf("%08x-aaaa-4aaa-8aaa-aaaaaaaaaaaa", index+1)
+		plan := strings.ReplaceAll(base[0].ReservationBuildPlanJSON, testWorkspace, workspace)
+		lease := fmt.Sprintf("%x", sha256.Sum256([]byte(plan)))
+		for _, row := range base {
+			row.WorkspaceID = workspace
+			row.ReservationBuildPlanJSON, row.StreamBuildPlanJSON = plan, plan
+			row.ReservationBuildLeaseSHA256, row.StreamBuildLeaseSHA256 = lease, lease
+			rows = append(rows, row)
+		}
+	}
+	return rows
+}
+
+func TestCheckpointInventoryRequiresExactStreamsPerWorkspace(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		mutate    func([]checkpointInventoryJSON) []checkpointInventoryJSON
+		wantError string
+	}{
+		{"same stream IDs in different workspaces", func(rows []checkpointInventoryJSON) []checkpointInventoryJSON { return rows }, ""},
+		{"missing stream", func(rows []checkpointInventoryJSON) []checkpointInventoryJSON { return append(rows[:1], rows[2:]...) }, "lacks its exact build-plan"},
+		{"extra stream", func(rows []checkpointInventoryJSON) []checkpointInventoryJSON {
+			extra := rows[1]
+			extra.StreamProducerStreamID = "99999999-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+			return append(rows, extra)
+		}, "absent from the build plan"},
+		{"duplicate stream", func(rows []checkpointInventoryJSON) []checkpointInventoryJSON { return append(rows, rows[1]) }, "duplicates stream"},
+		{"cross-scope substitution", func(rows []checkpointInventoryJSON) []checkpointInventoryJSON {
+			// Preserve total row count, replacing workspace one's stream with
+			// the same declared stream in workspace two. It cannot fill the gap.
+			rows[1] = rows[12]
+			return rows
+		}, "duplicates stream"},
+		{"cross-scope identity", func(rows []checkpointInventoryJSON) []checkpointInventoryJSON {
+			rows[12].WorkspaceID = rows[1].WorkspaceID
+			return rows
+		}, "conflicting identities"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rows := test.mutate(checkpointInventoryForWorkspaces(t, 2))
+			candidates, err := validateCheckpointInventory(rows)
+			if test.wantError != "" {
+				if err == nil || candidates != nil || !strings.Contains(err.Error(), test.wantError) {
+					t.Fatalf("invalid inventory accepted or wrong error: candidates=%d err=%v", len(candidates), err)
+				}
+			} else if err != nil || len(candidates) != 20 {
+				t.Fatalf("separate workspace inventories rejected: candidates=%d err=%v", len(candidates), err)
+			}
+		})
+	}
+}
+
+func BenchmarkCheckpointInventoryManyWorkspaces(b *testing.B) {
+	for _, workspaces := range []int{10, 100, 1000, 4329} {
+		b.Run(fmt.Sprintf("workspaces_%d", workspaces), func(b *testing.B) {
+			rows := checkpointInventoryForWorkspaces(b, workspaces)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
+				candidates, err := validateCheckpointInventory(rows)
+				if err != nil || len(candidates) != workspaces*10 {
+					b.Fatalf("candidates=%d err=%v", len(candidates), err)
+				}
+			}
+		})
+	}
+}
+
+func physicalSnapshotProof(t *testing.T, sequence uint64) (checkpointInventoryJSON, checkpointStreamProofJSON) {
+	t.Helper()
+	row := validCheckpointInventory(t, true)[1]
+	row.StreamLastSequence, row.StreamMaxContiguousSequence = sequence, sequence
+	row.StreamLastIssuedSequence, row.StreamFencedSequence = sequence, sequence
+	row.CheckpointLastSequence, row.CheckpointLastIssuedSequence, row.CheckpointFencedSequence = sequence, sequence, sequence
+	proof := validCheckpointProof(row, true)
+	proof.SequenceRows, proof.LastSequence, proof.DistinctSequences = sequence, sequence, sequence
+	proof.TerminalSequence, proof.PhysicalSnapshotSequences = sequence, sequence
+	proof.TailEnvelopeFormat = physicalSnapshotEnvelopeFormat
+	return row, proof
+}
+
+func TestCheckpointRecoveryAcceptsOnlyCompletedPhysicalSnapshots(t *testing.T) {
+	for _, lineage := range []struct {
+		epoch      uint16
+		revision   uint64
+		projection uint16
+	}{{3, 17, 1}, {1, 3, 3}, {1, 4, 3}} {
+		for _, sequence := range []uint64{1, 2} {
+			row, proof := physicalSnapshotProof(t, sequence)
+			row.CatalogEpoch, row.CatalogRevision = lineage.epoch, lineage.revision
+			row.ReservationProjectionVersion = lineage.projection
+			row.StreamProjectionVersion = lineage.projection
+			row.CheckpointProjectionVersion = lineage.projection
+			row.ActivationProjectionVersion = lineage.projection
+			proof.TailProjectionVersion = lineage.projection
+			checkpoint, err := validateCheckpointStreamProof(row, proof)
+			if err != nil || !checkpoint.Terminal || checkpoint.Sequence != sequence || checkpoint.PayloadSHA256 != proof.TailPayloadSHA256 {
+				t.Fatalf("physical snapshot lineage=%+v sequence=%d checkpoint=%+v err=%v", lineage, sequence, checkpoint, err)
+			}
+		}
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*checkpointInventoryJSON, *checkpointStreamProofJSON)
+	}{
+		{"mixed formats", func(_ *checkpointInventoryJSON, p *checkpointStreamProofJSON) { p.PhysicalSnapshotSequences = 1 }},
+		{"native tail on snapshot", func(_ *checkpointInventoryJSON, p *checkpointStreamProofJSON) { p.TailEnvelopeFormat = EnvelopeFormat }},
+		{"unknown format", func(_ *checkpointInventoryJSON, p *checkpointStreamProofJSON) {
+			p.TailEnvelopeFormat = "futureagi.unknown"
+		}},
+		{"unknown version", func(_ *checkpointInventoryJSON, p *checkpointStreamProofJSON) { p.TailEnvelopeVersion = 2 }},
+		{"broken chain", func(_ *checkpointInventoryJSON, p *checkpointStreamProofJSON) { p.ChainBreaks = 1 }},
+		{"invalid transport or wire", func(_ *checkpointInventoryJSON, p *checkpointStreamProofJSON) { p.InvalidWireSequences = 1 }},
+		{"conflicting replay", func(_ *checkpointInventoryJSON, p *checkpointStreamProofJSON) { p.ConflictSequences = 1 }},
+		{"projection conflict", func(_ *checkpointInventoryJSON, p *checkpointStreamProofJSON) { p.ProjectionVersions = 2 }},
+		{"wrong projection", func(_ *checkpointInventoryJSON, p *checkpointStreamProofJSON) { p.TailProjectionVersion++ }},
+		{"gap", func(_ *checkpointInventoryJSON, p *checkpointStreamProofJSON) { p.GapSequences = 1 }},
+		{"terminal carries data", func(_ *checkpointInventoryJSON, p *checkpointStreamProofJSON) { p.InvalidTerminalSequences = 1 }},
+		{"early terminal", func(_ *checkpointInventoryJSON, p *checkpointStreamProofJSON) { p.TerminalSequence = 1 }},
+		{"multiple terminals", func(_ *checkpointInventoryJSON, p *checkpointStreamProofJSON) { p.TerminalSequences = 2 }},
+		{"open reservation", func(r *checkpointInventoryJSON, _ *checkpointStreamProofJSON) { r.ReservationStatus = "open" }},
+		{"open stream", func(r *checkpointInventoryJSON, _ *checkpointStreamProofJSON) { r.StreamStatus = "open" }},
+		{"missing checkpoint", func(r *checkpointInventoryJSON, _ *checkpointStreamProofJSON) { r.CheckpointEvidenceRows = 0 }},
+		{"running checkpoint", func(r *checkpointInventoryJSON, _ *checkpointStreamProofJSON) { r.CheckpointStatus = "running" }},
+		{"missing terminal", func(_ *checkpointInventoryJSON, p *checkpointStreamProofJSON) { p.TailTerminal = 0 }},
+		{"wrong terminal hash", func(r *checkpointInventoryJSON, _ *checkpointStreamProofJSON) {
+			r.StreamTerminalPayloadSHA256 = ZeroSHA256
+		}},
+		{"wrong checkpoint hash", func(r *checkpointInventoryJSON, _ *checkpointStreamProofJSON) {
+			r.CheckpointTerminalPayloadSHA256 = ZeroSHA256
+		}},
+		{"wrong checkpoint fence", func(r *checkpointInventoryJSON, _ *checkpointStreamProofJSON) { r.CheckpointFencedSequence++ }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			row, proof := physicalSnapshotProof(t, 2)
+			test.mutate(&row, &proof)
+			if checkpoint, err := validateCheckpointStreamProof(row, proof); err == nil {
+				t.Fatalf("invalid physical snapshot accepted: %+v", checkpoint)
+			}
+		})
+	}
+}
+
+func TestPhysicalSnapshotRecoveryUsesBoundedReadOnlyLoader(t *testing.T) {
+	inventory := validCheckpointInventory(t, true)
+	values := make([]any, len(inventory))
+	proofs := make(map[string]string)
+	for index, row := range inventory {
+		if row.StreamEnvelopeVersion == EnvelopeVersion {
+			row.StreamLastSequence, row.StreamMaxContiguousSequence = 2, 2
+			row.StreamLastIssuedSequence, row.StreamFencedSequence = 2, 2
+			row.CheckpointLastSequence, row.CheckpointLastIssuedSequence, row.CheckpointFencedSequence = 2, 2, 2
+			proof := validCheckpointProof(row, true)
+			proof.SequenceRows, proof.LastSequence, proof.DistinctSequences = 2, 2, 2
+			proof.TerminalSequence, proof.PhysicalSnapshotSequences = 2, 2
+			proof.TailEnvelopeFormat = physicalSnapshotEnvelopeFormat
+			proofs[row.StreamProducerStreamID] = checkpointBody(t, proof)
+		}
+		values[index] = row
+	}
+	loader := checkpointLoaderForTransport(t, func(request *http.Request) (*http.Response, error) {
+		query := checkpointRequestStatement(t, request)
+		if !strings.HasPrefix(query, "SELECT") && !strings.HasPrefix(query, "WITH") {
+			t.Fatalf("recovery attempted a non-SELECT operation: %s", query)
+		}
+		if strings.Contains(query, "newest_reservation_revisions") {
+			return checkpointHTTPResponse(checkpointBody(t, values...)), nil
+		}
+		for _, fragment := range []string{
+			"envelope_format NOT IN ({envelope_format:String}, {physical_snapshot_format:String})",
+			"invalid_snapshot_transports != 0", "delivery.kafka_partition != -1",
+			"delivery.kafka_offset != -1", "toString(delivery.transport) != 'reconcile'",
+		} {
+			if !strings.Contains(query, fragment) {
+				t.Fatalf("missing snapshot transport guard: %s", fragment)
+			}
+		}
+		if request.URL.Query().Get("param_physical_snapshot_format") != physicalSnapshotEnvelopeFormat {
+			t.Fatal("physical snapshot format was not explicitly bound")
+		}
+		return checkpointHTTPResponse(proofs[request.URL.Query().Get("param_producer_stream_id")]), nil
+	})
+	checkpoints, err := loader.LoadCheckpoints(context.Background())
+	if err != nil || len(checkpoints) != 10 {
+		t.Fatalf("checkpoints=%+v err=%v", checkpoints, err)
+	}
+	for _, checkpoint := range checkpoints {
+		if !checkpoint.Terminal || checkpoint.Sequence != 2 {
+			t.Fatalf("invalid recovered tail: %+v", checkpoint)
+		}
+	}
+}
+
+func TestPhysicalSnapshotIsNeverAcceptedAsKafkaWireFormat(t *testing.T) {
+	envelope := mustEnvelope(t, testEnvelopeInput(t, 1, ZeroSHA256, 1))
+	raw, err := envelope.MarshalBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseWireEnvelope(raw); err != nil {
+		t.Fatal(err)
+	}
+	raw = bytes.Replace(raw, []byte(EnvelopeFormat), []byte(physicalSnapshotEnvelopeFormat), 1)
+	if _, err := ParseWireEnvelope(raw); err == nil {
+		t.Fatal("physical snapshot accepted as live Kafka envelope")
 	}
 }
 
@@ -549,9 +991,9 @@ func TestCheckpointLoaderAcceptsExactEmptyNewestRevisionOverOlderLedgerHistory(t
 	for index, row := range inventory {
 		values[index] = row
 	}
-	calls := 0
+	var calls atomic.Int32
 	loader := checkpointLoaderForTransport(t, func(request *http.Request) (*http.Response, error) {
-		calls++
+		calls.Add(1)
 		query := checkpointRequestStatement(t, request)
 		switch {
 		case strings.Contains(query, "newest_reservation_revisions"):
@@ -567,8 +1009,8 @@ func TestCheckpointLoaderAcceptsExactEmptyNewestRevisionOverOlderLedgerHistory(t
 		}
 	})
 	checkpoints, err := loader.LoadCheckpoints(context.Background())
-	if err != nil || len(checkpoints) != 0 || calls != 11 {
-		t.Fatalf("empty newest revision checkpoints=%+v calls=%d err=%v", checkpoints, calls, err)
+	if err != nil || len(checkpoints) != 0 || calls.Load() != 11 {
+		t.Fatalf("empty newest revision checkpoints=%+v calls=%d err=%v", checkpoints, calls.Load(), err)
 	}
 }
 
@@ -982,5 +1424,83 @@ func TestDeliveryLeaseGuardRequiresPhaseCoupledEqualLiveDeadlines(t *testing.T) 
 				t.Fatal("phase/deadline mismatch was accepted")
 			}
 		})
+	}
+}
+
+func TestCheckpointLoaderInventoryOutlivesDeliveryTransportTimeout(t *testing.T) {
+	inventory := validCheckpointInventory(t, false)
+	inventoryValues := make([]any, len(inventory))
+	proofs := make(map[string]string, len(inventory)-1)
+	for index, row := range inventory {
+		inventoryValues[index] = row
+		if row.StreamEnvelopeVersion == EnvelopeVersion {
+			proofs[string(row.StreamSourceAdapter)+"\x00"+row.StreamProducerStreamID] =
+				checkpointBody(t, validCheckpointProof(row, false))
+		}
+	}
+	const deliveryTimeout = 20 * time.Millisecond
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		values := request.URL.Query()
+		query := checkpointRequestStatement(t, request)
+		if strings.Contains(query, "newest_reservation_revisions") {
+			if values.Get("max_execution_time") != "5" {
+				t.Fatalf("inventory max_execution_time=%q", values.Get("max_execution_time"))
+			}
+			// The delivery transport would have cancelled this request; the
+			// inventory read must be governed by its own, longer deadline.
+			select {
+			case <-time.After(5 * deliveryTimeout):
+				return checkpointHTTPResponse(checkpointBody(t, inventoryValues...)), nil
+			case <-request.Context().Done():
+				return nil, request.Context().Err()
+			}
+		}
+		if values.Get("max_execution_time") != "10" {
+			t.Fatalf("stream proof max_execution_time=%q", values.Get("max_execution_time"))
+		}
+		body, exists := proofs[values.Get("param_source_adapter")+"\x00"+values.Get("param_producer_stream_id")]
+		if !exists {
+			t.Fatalf("unexpected proof scope: %v", values)
+		}
+		return checkpointHTTPResponse(body), nil
+	})
+	loader, err := NewClickHouseCheckpointLoader(ClickHouseSinkConfig{
+		URL: "http://clickhouse:8123", Database: "property_catalog_dev_checkpoint_test",
+		Environment: DevelopmentEnvironment,
+		Username:    "ledger_reader", Password: "secret", RequestTimeout: deliveryTimeout,
+		RoundTripper: transport,
+	}, CheckpointLoaderLimits{
+		MaxStreams:        DefaultCheckpointMaxStreams,
+		InventoryMaxBytes: DefaultCheckpointInventoryMaxBytes,
+		InventoryTimeout:  5 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoints, err := loader.LoadCheckpoints(context.Background())
+	if err != nil || len(checkpoints) != 10 {
+		t.Fatalf("checkpoints=%d err=%v", len(checkpoints), err)
+	}
+}
+
+func TestCheckpointLoaderBoundsInventoryTimeout(t *testing.T) {
+	base := ClickHouseSinkConfig{
+		URL: "http://clickhouse:8123", Database: "property_catalog_dev_checkpoint_test",
+		Environment: DevelopmentEnvironment, Username: "ledger_reader", Password: "secret",
+	}
+	loader, err := NewClickHouseCheckpointLoader(base, CheckpointLoaderLimits{
+		MaxStreams: DefaultCheckpointMaxStreams, InventoryMaxBytes: DefaultCheckpointInventoryMaxBytes,
+	})
+	if err != nil || loader.inventoryTimeout != DefaultCheckpointInventoryTimeout ||
+		loader.inventoryClient == nil || loader.inventoryClient.Timeout != DefaultCheckpointInventoryTimeout {
+		t.Fatalf("zero inventory timeout did not resolve to the default: %+v err=%v", loader, err)
+	}
+	for _, timeout := range []time.Duration{-time.Second, MaximumCheckpointInventoryTimeout + time.Second} {
+		if _, err := NewClickHouseCheckpointLoader(base, CheckpointLoaderLimits{
+			MaxStreams: DefaultCheckpointMaxStreams, InventoryMaxBytes: DefaultCheckpointInventoryMaxBytes,
+			InventoryTimeout: timeout,
+		}); err == nil {
+			t.Fatalf("inventory timeout %s was accepted", timeout)
+		}
 	}
 }

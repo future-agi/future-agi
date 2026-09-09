@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -648,6 +649,52 @@ def test_value_reader_pins_first_page_to_activation_time_coverage(settings):
     assert value_params["catalog_window_end_us"] == WINDOW_END_US
 
 
+@pytest.mark.parametrize("projection_version", [3, 4])
+def test_revision4_backfill_requires_the_retained_revision3_projection(
+    settings, projection_version
+):
+    settings.SECRET_KEY = "property-value-reader-secret"
+    rows = sorted(
+        [
+            _value_row(False),
+            _value_row(42),
+            _value_row("Straße / customer"),
+            _value_row("member", attribute_type="array"),
+        ],
+        key=lambda row: (row["attribute_type_rank"], row["value_fingerprint"]),
+    )
+    executor = FakeExecutor(
+        [
+            [
+                _activation_row(
+                    catalog_epoch=1,
+                    catalog_revision=4,
+                    projection_version=projection_version,
+                    lineage_anchor_revision=3,
+                    anchor_projection_version=3,
+                )
+            ],
+            [_definition_row(attribute_types=("array", "boolean", "number", "string"))],
+            [{"value_conflicts": 0}],
+            rows,
+        ]
+    )
+    if projection_version != 3:
+        with pytest.raises(PropertyCatalogValueUnavailable) as exc_info:
+            _read(_reader(executor), page_size=10)
+        assert exc_info.value.reason == "activation_lineage_scope_invalid"
+        assert len(executor.calls) == 1
+        return
+
+    page = _read(_reader(executor), page_size=10)
+    assert page.catalog_epoch == 1
+    assert page.catalog_revision == 4
+    assert [(value.attribute_type, value.value) for value in page.values] == [
+        (row["attribute_type"], json.loads(row["value_json"])) for row in rows
+    ]
+    assert executor.calls[-1]["params"]["catalog_lineage_anchor_revision"] == 3
+
+
 def test_value_reader_retains_anchor_window_across_incremental_lineage(settings):
     settings.SECRET_KEY = "property-value-reader-secret"
     anchor_start = WINDOW_START - timedelta(days=30)
@@ -1016,11 +1063,15 @@ def test_value_reader_accepts_workspace_scope_with_deleted_project_tombstones(
     assert executor.calls[1]["params"]["catalog_project_ids"] == (PROJECT_ID,)
 
 
-def test_value_reader_workspace_scope_uses_authorized_project_ids(settings):
+@pytest.mark.parametrize("project_count", (1, 178, 257))
+def test_value_reader_workspace_scope_uses_authorized_project_ids(
+    settings, project_count
+):
     settings.SECRET_KEY = "property-value-reader-secret"
+    projects = tuple(f"00000000-0000-4000-8000-{i:012x}" for i in range(project_count))
     executor = FakeExecutor(
         [
-            [_activation_row()],
+            [_activation_row(covered_project_ids=projects)],
             [_definition_row()],
             [{"value_conflicts": 0}],
             [],
@@ -1029,12 +1080,38 @@ def test_value_reader_workspace_scope_uses_authorized_project_ids(settings):
 
     _read(
         _reader(executor),
-        scope=_scope(project_ids=(PROJECT_ID,), workspace_scope=True),
+        scope=_scope(project_ids=projects, workspace_scope=True),
     )
 
     params = executor.calls[1]["params"]
-    assert params["catalog_project_ids"] == (PROJECT_ID,)
+    assert params["catalog_project_ids"] == projects
     assert params["catalog_include_all_projects"] == 0
+    assert params["catalog_organization_id"] == ORG_ID
+    assert params["catalog_workspace_id"] == WORKSPACE_ID
+
+
+@pytest.mark.parametrize("project_count", (178, 257))
+def test_value_reader_large_scope_rejects_incomplete_activation(
+    settings, project_count
+):
+    settings.SECRET_KEY = "property-value-reader-secret"
+    projects = tuple(f"00000000-0000-4000-8000-{i:012x}" for i in range(project_count))
+    executor = FakeExecutor([[_activation_row(covered_project_ids=projects[:-1])]])
+    with pytest.raises(PropertyCatalogValueUnavailable) as exc_info:
+        _read(
+            _reader(executor),
+            scope=_scope(project_ids=projects, workspace_scope=True),
+        )
+    assert exc_info.value.reason == "activation_scope_incomplete"
+    assert len(executor.calls) == 1
+
+
+def test_value_reader_scope_validation_has_no_project_count_cap():
+    projects = tuple(f"00000000-0000-4000-8000-{i:012x}" for i in range(1024))
+    scope = PropertyCatalogValueReader._validate_scope(
+        _scope(project_ids=projects, workspace_scope=True)
+    )
+    assert scope["project_ids"] == projects
 
 
 def test_value_reader_rejects_unproven_empty_project_scope(settings):

@@ -225,20 +225,17 @@ _V2_REQUIRED_SETTINGS = (
     # Encourage projection auto-routing for dashboard aggregates. Falls
     # through to base-table read if no projection matches — zero risk.
     "optimize_use_projections = 1",
-    # Streaming aggregation order: when ORDER BY matches the table's ORDER
-    # BY prefix, CH can stream-aggregate without sorting. Big win on time-
-    # bucketed dashboard queries.
-    "optimize_aggregation_in_order = 1",
 )
 
 
-def _append_v2_settings(sql: str) -> str:
+def _append_v2_settings(sql: str, *, aggregation_in_order: bool = True) -> str:
     """Append the v2-required settings to a SQL string.
 
     Idempotent: if the SQL already ends with a SETTINGS clause, merge the
     v2 settings into it (don't double-apply). If not, append a fresh one.
 
     Handles trailing FORMAT clause: SETTINGS must come BEFORE FORMAT.
+    Ordered aggregation remains the default; individual helpers may opt out.
     """
     sql_stripped = sql.rstrip().rstrip(";").rstrip()
     # Check for an existing SETTINGS clause (case-insensitive, at end before
@@ -254,12 +251,16 @@ def _append_v2_settings(sql: str) -> str:
     else:
         format_clause = ""
 
-    settings_clause = "SETTINGS " + ", ".join(_V2_REQUIRED_SETTINGS)
+    required_settings = (
+        *_V2_REQUIRED_SETTINGS,
+        f"optimize_aggregation_in_order = {int(aggregation_in_order)}",
+    )
+    settings_clause = "SETTINGS " + ", ".join(required_settings)
     existing = _re.search(r"\s+SETTINGS\s+", sql_stripped, _re.IGNORECASE)
     if existing:
         # Merge — append our settings to the existing clause (later wins on
         # duplicate keys, which is what we want).
-        sql_stripped = sql_stripped + ", " + ", ".join(_V2_REQUIRED_SETTINGS)
+        sql_stripped = sql_stripped + ", " + ", ".join(required_settings)
     else:
         sql_stripped = sql_stripped + "\n" + settings_clause
 
@@ -398,6 +399,165 @@ class ClickHouseFilterBuilderV2(ClickHouseFilterBuilder):
     _ENDUSER_DIM_TABLE = "end_users"
     _ENDUSER_DIM_ID_COL = "end_user_id"
     _ENDUSER_DIM_NOT_DELETED = "is_deleted = 0"
+
+    _TRACE_TAGS_TABLE = "traces"
+    _TRACE_TAGS_VERSION = "_version"
+    _TRACE_TAGS_DELETED = "is_deleted"
+
+    def _score_resolved_span_columns_sql(self) -> str:
+        return "project_id, id, trace_id, start_time, observation_type, service_name"
+
+    def _score_span_join_conditions_sql(self) -> tuple[str, str]:
+        scored_join, root_join = super()._score_span_join_conditions_sql()
+        if self.resolved_candidate_spans_table is None:
+            return scored_join, root_join
+        # Authorized project membership alone cannot correlate a Score with
+        # its target when multiple projects reuse an external trace/span ID.
+        # Span-backed Scores may omit trace_id (NULL/empty/NIL); a populated
+        # trace_id is authoritative and must not attach to another trace.
+        return (
+            scored_join
+            + " AND scored_sp.project_id = s.tracer_project_id"
+            + " AND (ifNull(toString(s.trace_id), '') IN "
+            "('', '00000000-0000-0000-0000-000000000000')"
+            " OR scored_sp.trace_id = toString(s.trace_id))",
+            root_join + " AND root_sp.project_id = s.tracer_project_id",
+        )
+
+    @staticmethod
+    def _score_physical_span_key_sql(
+        project: str,
+        trace: str,
+        span: str,
+        start: str,
+        observation: str,
+        service: str,
+    ) -> str:
+        """CH25 replacement identity, not the mutable exact start timestamp."""
+        return (
+            f"tuple(toString({project}), toString({trace}), toString({span}), "
+            f"toUnixTimestamp64Micro(toDateTime64(toStartOfHour({start}), 6, 'UTC')), "
+            f"toString({observation}), toString({service}))"
+        )
+
+    def _score_resolved_span_entity_sql(
+        self, score_trace_expr: str, score_span_expr: str
+    ) -> str:
+        # Both arms come from the caller's already-latest, live candidates.
+        # Select every discriminator from the same joined arm. In particular,
+        # a trace-only Score must retain root_sp's service/observation type.
+        def selected(column: str) -> str:
+            return (
+                "if(ifNull(s.observation_span_id, '') != '', "
+                f"scored_sp.{column}, root_sp.{column})"
+            )
+
+        return self._score_physical_span_key_sql(
+            selected("project_id"),
+            score_trace_expr,
+            score_span_expr,
+            selected("start_time"),
+            selected("observation_type"),
+            selected("service_name"),
+        )
+
+    def _score_entity_column(self) -> str:
+        if self.resolved_candidate_spans_table is not None:
+            return self._score_physical_span_key_sql(
+                "project_id",
+                "trace_id",
+                "id",
+                "start_time",
+                "observation_type",
+                "service_name",
+            )
+        # Unresolved candidate probes and trace-mode callers retain their
+        # existing contract; the six-part key requires a resolved v2 relation.
+        return super()._score_entity_column()
+
+    def _score_membership_condition(
+        self, extra_where: str = "", *, predicate: str = "", negate: bool = False
+    ) -> str:
+        if self.resolved_candidate_spans_table is None:
+            return super()._score_membership_condition(
+                extra_where, predicate=predicate, negate=negate
+            )
+
+        # Evaluate on the already-latest physical row, without Score/span joins.
+        # Every Score arm must still be bounded by the finite resolved domain.
+        score_trace = "ifNull(toString(s.trace_id), '')"
+        score_span = "ifNull(toString(s.observation_span_id), '')"
+        missing_trace = f"{score_trace} IN ('', '00000000-0000-0000-0000-000000000000')"
+
+        def score_set(
+            columns: str, arm: str, candidate_columns: str, *, root_only: bool = False
+        ) -> str:
+            # Reuse the candidate table/parameter restriction and project fence;
+            # the resolved relation supplies project/root columns even when the
+            # caller's narrower entity CTE contains only (trace_id, id).
+            candidates = self._scoped_spans_subquery(
+                select_cols=f"tuple(toString(project_id), {candidate_columns})",
+                extra_where="ifNull(parent_span_id, '') = ''" if root_only else "",
+            )
+            score_key = f"tuple(toString(s.tracer_project_id), {columns})"
+            return (
+                f"SELECT {score_key} "
+                "FROM model_hub_score AS s FINAL "
+                f"WHERE {self._score_live_predicate('s')}"
+                f"{self._score_project_filter('s')}{self._score_date_filter('s')} "
+                f"{extra_where}{predicate} AND ({arm}) AND {score_key} IN {candidates}"
+            )
+
+        trace_scores = score_set(
+            score_trace,
+            f"{score_span} = '' AND {score_trace} != ''",
+            "toString(trace_id)",
+            root_only=True,
+        )
+        span_scores = score_set(
+            score_span, f"{score_span} != '' AND {missing_trace}", "toString(id)"
+        )
+        trace_span_scores = score_set(
+            f"{score_trace}, {score_span}",
+            f"{score_span} != '' AND NOT ({missing_trace})",
+            "toString(trace_id), toString(id)",
+        )
+        # Preserve the old positive relation's valid-ID domain *inside* M;
+        # absence is NOT(M), not a new outer-row restriction. Root role belongs
+        # to this physical row, never a sibling service/type with the same ID.
+        membership = (
+            "(ifNull(toString(id), '') != '' AND "
+            "ifNull(toString(trace_id), '') != '' AND ("
+            "(ifNull(parent_span_id, '') = '' AND "
+            f"tuple(toString(project_id), toString(trace_id)) IN ({trace_scores})) "
+            f"OR tuple(toString(project_id), toString(id)) IN ({span_scores}) "
+            "OR tuple(toString(project_id), toString(trace_id), toString(id)) "
+            f"IN ({trace_span_scores})))"
+        )
+        return f"NOT {membership}" if negate else membership
+
+    def _score_label_completeness_condition(
+        self, label_ids: list[str], *, negate: bool = False
+    ) -> str:
+        if self.resolved_candidate_spans_table is None:
+            return super()._score_label_completeness_condition(label_ids, negate=negate)
+        # Preserve uniqExact(label) >= len(configured_labels), including its
+        # fail-closed behavior for an invalid duplicate-label configuration.
+        if len({str(label_id) for label_id in label_ids}) != len(label_ids):
+            return "1 = 1" if negate else "0 = 1"
+        conditions = []
+        for label_id in label_ids:
+            param = self._next_param("lbl")
+            self._params[param] = str(label_id)
+            conditions.append(
+                self._score_membership_condition(
+                    f"AND s.label_id = toUUID(%({param})s)"
+                )
+            )
+        # Different labels may be supplied by different Score arms. Requiring
+        # completeness separately within each arm loses those valid mixtures.
+        complete = "(" + " AND ".join(conditions) + ")"
+        return f"NOT {complete}" if negate else complete
 
     def _enduser_dimension_id_subquery(self, inner: str) -> str:
         """Expand a curated user to every old/new ID stored on spans.

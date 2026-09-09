@@ -921,6 +921,62 @@ def _validate_exact_replica_schema(
                 )
 
 
+def verify_runtime_catalog_tables(
+    tables: Sequence[ReplicaTable], *, target_database: str
+) -> str:
+    """Prove the six writer-visible tables without cluster/admin privileges.
+
+    The production runtime's Keeper contract is /clickhouse/tables/<database>/
+    {shard}/<table>. Activation-control is verified by its separate identity.
+    This is a local schema proof, not a cluster reachability/replication proof.
+    The caller must admit the configured production database before calling.
+    """
+    if re.fullmatch(r"[a-z][a-z0-9_]{0,127}", target_database) is None:
+        raise CatalogProdSchemaError("invalid runtime catalog database identifier")
+    # ON CLUSTER is only needed by the renderer; system.tables omits it. No
+    # topology query or DDL is issued using this presentation-only placeholder.
+    cluster = "runtime_schema_verification"
+    expected = {
+        statement.table: _render_table(
+            statement,
+            spec,
+            target_database=target_database,
+            cluster=cluster,
+            keeper_path_prefix="/clickhouse/tables",
+        )
+        for statement, spec in zip(
+            _load_canonical_statements(), _TABLE_SPECS, strict=True
+        )
+    }
+    if len(tables) != len(expected) or {table.name for table in tables} != set(
+        expected
+    ):
+        raise CatalogProdSchemaError(
+            "runtime requires exactly the six catalog writer tables"
+        )
+    pinned_tokens: dict[str, tuple[str, ...]] = {}
+    for actual in tables:
+        pinned = expected[actual.name]
+        if actual.database != target_database or actual.engine != pinned.engine:
+            raise CatalogProdSchemaError(
+                f"runtime table {actual.name} has a different database or replicated engine"
+            )
+        options = {
+            "target_database": target_database,
+            "expected_table": actual.name,
+            "cluster": cluster,
+        }
+        pinned_tokens[actual.name] = _canonical_create_tokens(pinned.sql, **options)
+        if (
+            _canonical_create_tokens(actual.create_table_query, **options)
+            != pinned_tokens[actual.name]
+        ):
+            raise CatalogProdSchemaError(
+                f"runtime table {actual.name} differs from the pinned replicated schema"
+            )
+    return _manifest_digest(pinned_tokens)
+
+
 def _create_query_tokens(value: str) -> tuple[str, ...]:
     tokens: list[str] = []
     index = 0

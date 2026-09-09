@@ -76,6 +76,7 @@ _SYSTEM_DEFINITION_ALLOWED_TRANSPORTS = {
 }
 
 _SYSTEM_FILTER_COLUMN_ALIASES = {
+    ("traces", "trace_name"): frozenset({"trace_name", "name"}),
     ("sessions", "session"): frozenset({"session", "session_id"}),
     ("sessions", "project"): frozenset({"project", "project_id"}),
     ("sessions", "user"): frozenset({"user", "user_id"}),
@@ -96,6 +97,7 @@ _SYSTEM_FILTER_COLUMN_ALIASES = {
 # catalog definition for them.  This mapping deliberately excludes similarly
 # named fields such as ``tag``/``tags``: those are distinct values.
 _SYSTEM_ATTRIBUTE_CANONICAL_NAMES = {
+    ("traces", "name"): "trace_name",
     ("traces", "project_id"): "project",
     ("traces", "session_id"): "session",
     ("traces", "user_id"): "user",

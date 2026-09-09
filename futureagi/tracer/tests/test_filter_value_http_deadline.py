@@ -47,191 +47,36 @@ class _ProjectScopeStub:
         ]
 
 
-def test_filter_value_pg_reads_use_the_remaining_request_wall(monkeypatch):
-    events = []
-    statements = []
+@pytest.mark.parametrize("outer", [False, True])
+@pytest.mark.parametrize("failure", [None, "statement"])
+def test_filter_value_pg_read_restores_without_statement_timer(monkeypatch, outer, failure):
+    from tracer.tests.test_postgres_application_read_policy import FakePostgres
 
-    class Deadline:
-        def remaining_ms(self, cap_ms):
-            events.append(("remaining", cap_ms))
-            return 3_725
+    pg = FakePostgres(outer=outer, failure=failure)
+    deadline = Mock()
+    deadline.remaining_ms.return_value = 3_725
+    monkeypatch.setattr(dashboard_view, "connection", pg)
+    monkeypatch.setattr(dashboard_view, "transaction", SimpleNamespace(atomic=pg.atomic))
 
-    class Cursor:
-        def __enter__(self):
-            return self
+    def read():
+        pg.execute("SELECT owned_project")
+        return ["project"]
 
-        def __exit__(self, *_args):
-            return None
-
-        def execute(self, statement, params=None):
-            statements.append((statement, params))
-
-    class Atomic:
-        def __enter__(self):
-            events.append("atomic")
-
-        def __exit__(self, *_args):
-            return None
-
-    monkeypatch.setattr(
-        dashboard_view,
-        "connection",
-        SimpleNamespace(
-            vendor="postgresql",
-            in_atomic_block=False,
-            cursor=Cursor,
-        ),
+    if failure:
+        with pytest.raises(dashboard_view.DatabaseError):
+            dashboard_view._run_filter_value_pg_read(deadline, read)
+    else:
+        assert dashboard_view._run_filter_value_pg_read(deadline, read) == ["project"]
+    assert pg.query_timeouts == ["0"]
+    assert pg.timeout == "750ms" and pg.in_atomic_block is outer and not pg.wrappers
+    assert deadline.remaining_ms.call_args_list
+    assert all(
+        call.args == (dashboard_view._FILTER_VALUES_INTERACTIVE_TIMEOUT_MS,)
+        for call in deadline.remaining_ms.call_args_list
     )
-    monkeypatch.setattr(
-        dashboard_view,
-        "transaction",
-        SimpleNamespace(atomic=lambda: Atomic()),
+    assert [sql for sql, _ in pg.events if sql.startswith("SET TRANSACTION")] == (
+        [] if outer else ["SET TRANSACTION READ ONLY"]
     )
-
-    result = dashboard_view._run_filter_value_pg_read(
-        Deadline(),
-        lambda: events.append("select") or ["project"],
-    )
-
-    assert result == ["project"]
-    assert events == [
-        ("remaining", dashboard_view._FILTER_VALUES_INTERACTIVE_TIMEOUT_MS),
-        "atomic",
-        "select",
-    ]
-    assert statements == [
-        ("SET TRANSACTION READ ONLY", None),
-        ("SELECT set_config('statement_timeout', %s, true)", ["3725"]),
-    ]
-
-
-def test_filter_value_pg_timeout_fails_closed(monkeypatch):
-    class Cursor:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-        def execute(self, _statement, _params=None):
-            raise dashboard_view.DatabaseError("statement timeout")
-
-    class Atomic:
-        def __enter__(self):
-            return None
-
-        def __exit__(self, *_args):
-            return None
-
-    monkeypatch.setattr(
-        dashboard_view,
-        "connection",
-        SimpleNamespace(
-            vendor="postgresql",
-            in_atomic_block=False,
-            cursor=Cursor,
-        ),
-    )
-    monkeypatch.setattr(
-        dashboard_view,
-        "transaction",
-        SimpleNamespace(atomic=lambda: Atomic()),
-    )
-
-    with pytest.raises(ReadDeadlineExceeded):
-        dashboard_view._run_filter_value_pg_read(
-            SimpleNamespace(remaining_ms=lambda _cap: 3_500),
-            lambda: [],
-        )
-
-
-def test_filter_value_pg_read_inside_outer_transaction_only_sets_local(monkeypatch):
-    statements = []
-
-    class Cursor:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-        def execute(self, statement, params=None):
-            statements.append((statement, params))
-
-        def fetchone(self):
-            return ("30s",)
-
-    monkeypatch.setattr(
-        dashboard_view,
-        "connection",
-        SimpleNamespace(
-            vendor="postgresql",
-            in_atomic_block=True,
-            needs_rollback=False,
-            cursor=Cursor,
-        ),
-    )
-    monkeypatch.setattr(
-        dashboard_view,
-        "transaction",
-        SimpleNamespace(
-            atomic=lambda: pytest.fail(
-                "an existing transaction must not open a nested savepoint"
-            )
-        ),
-    )
-
-    assert dashboard_view._run_filter_value_pg_read(
-        SimpleNamespace(remaining_ms=lambda _cap: 3_250),
-        lambda: ["project"],
-    ) == ["project"]
-    assert statements == [
-        ("SELECT current_setting('statement_timeout')", None),
-        ("SELECT set_config('statement_timeout', %s, true)", ["3250"]),
-        ("SELECT set_config('statement_timeout', %s, true)", ["30s"]),
-    ]
-
-
-def test_filter_value_pg_read_does_not_restore_a_broken_outer_transaction(
-    monkeypatch,
-):
-    statements = []
-
-    class Cursor:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-        def execute(self, statement, params=None):
-            statements.append((statement, params))
-
-        def fetchone(self):
-            return ("30s",)
-
-    fake_connection = SimpleNamespace(
-        vendor="postgresql",
-        in_atomic_block=True,
-        needs_rollback=False,
-        cursor=Cursor,
-    )
-    monkeypatch.setattr(dashboard_view, "connection", fake_connection)
-
-    def fail_read():
-        fake_connection.needs_rollback = True
-        raise dashboard_view.DatabaseError("statement timeout")
-
-    with pytest.raises(ReadDeadlineExceeded):
-        dashboard_view._run_filter_value_pg_read(
-            SimpleNamespace(remaining_ms=lambda _cap: 3_250),
-            fail_read,
-        )
-
-    assert statements == [
-        ("SELECT current_setting('statement_timeout')", None),
-        ("SELECT set_config('statement_timeout', %s, true)", ["3250"]),
-    ]
 
 
 def test_resumed_custom_value_cursor_captures_wall_after_state_restore(monkeypatch):

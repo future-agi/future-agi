@@ -167,9 +167,9 @@ def resolve_source_update(
 
     if current.binding_id != incoming.binding_id:
         raise ValueError("cannot resolve updates for different binding IDs")
-    if incoming.source_version < current.source_version:
+    if _version_order(incoming) < _version_order(current):
         return VersionResolution(VersionResolutionStatus.STALE, current)
-    if incoming.source_version == current.source_version:
+    if _version_order(incoming) == _version_order(current):
         if incoming.state_sha256 != current.state_sha256:
             return VersionResolution(VersionResolutionStatus.CONFLICT, current)
         winner = max((current, incoming), key=_transport_order)
@@ -195,12 +195,13 @@ def resolve_binding_history(
     if len(binding_ids) != 1:
         raise ValueError("binding history contains multiple binding IDs")
 
-    max_version = max(event.source_version for event in eligible)
-    candidates = [event for event in eligible if event.source_version == max_version]
+    max_version = max(_version_order(event) for event in eligible)
+    candidates = [event for event in eligible if _version_order(event) == max_version]
     state_hashes = {event.state_sha256 for event in candidates}
     if len(state_hashes) != 1:
         raise DefinitionConflictError(
-            f"binding {eligible[0].binding_id} has conflicting source version {max_version}"
+            f"binding {eligible[0].binding_id} has conflicting source version "
+            f"{max_version[1]} in catalog revision {max_version[0]}"
         )
     current = max(candidates, key=_transport_order)
     return BindingHistoryResolution(
@@ -268,6 +269,12 @@ def resolve_visible_definitions(
             )
         deduped.append(min(bindings, key=_visibility_order))
     return tuple(sorted(deduped, key=lambda row: row.order_key))
+
+
+def _version_order(row: PropertyBindingRow) -> tuple[int, int]:
+    # Match the SQL readers: source fences are comparable within a revision,
+    # not across a legacy physical snapshot and a later live-source build.
+    return row.catalog_revision, row.source_version
 
 
 def _transport_order(row: PropertyBindingRow) -> tuple[int, int, datetime, str]:
@@ -390,8 +397,10 @@ class PostgresSnapshotContext:
                 for project_id in self.project_ids
             )
         )
-        if not projects or len(projects) > 256 or len(set(projects)) != len(projects):
-            raise ValueError("project_ids must contain 1..256 unique canonical UUIDs")
+        if not projects or len(set(projects)) != len(projects):
+            raise ValueError(
+                "project_ids must contain non-empty unique canonical UUIDs"
+            )
         object.__setattr__(self, "project_ids", projects)
         if type(self.catalog_epoch) is not int or not 1 <= self.catalog_epoch <= 65_535:
             raise ValueError("catalog_epoch must be a positive UInt16")

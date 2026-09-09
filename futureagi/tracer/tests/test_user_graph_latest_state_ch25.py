@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import threading
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -115,9 +116,10 @@ def user_graph_tables(ch_client):
             created_at DateTime64(6, 'UTC'),
             is_deleted UInt8,
             _version UInt64
-        ) ENGINE = MergeTree
+        ) ENGINE = ReplacingMergeTree(_version, is_deleted)
+        PARTITION BY toDate(start_time)
         ORDER BY (project_id, observation_type, service_name,
-                  toStartOfHour(start_time), trace_id, id, _version)
+                  toStartOfHour(start_time), trace_id, id)
         """
     )
     ch_client.execute(
@@ -165,7 +167,7 @@ def _execute(ch_client, query, params):
     return [dict(zip(names, row, strict=True)) for row in rows]
 
 
-def test_user_rollup_cursor_keeps_string_tie_order_across_pages(ch_client):
+def test_user_rollup_cursor_keeps_string_tie_order_across_pages(ch_client, user_graph_tables):
     """ORDER BY and keyset continuation use the same public String domain."""
 
     table = f"_test_user_rollup_cursor_{uuid.uuid4().hex[:8]}"
@@ -196,6 +198,9 @@ def test_user_rollup_cursor_keeps_string_tie_order_across_pages(ch_client):
             end_user_id UUID,
             organization_id UUID,
             user_id String,
+            user_id_type String DEFAULT 'string',
+            user_id_hash UInt64 DEFAULT cityHash64(user_id),
+            first_seen DateTime64(6, 'UTC'),
             version UInt64,
             is_deleted UInt8
         ) ENGINE = ReplacingMergeTree(version)
@@ -221,6 +226,17 @@ def test_user_rollup_cursor_keeps_string_tie_order_across_pages(ch_client):
             },
         )
 
+        ch_client.execute(f"ALTER TABLE {user_graph_tables[0]} ADD COLUMN end_time Nullable(DateTime64(6, 'UTC'))")
+        # The current dimension reader certifies rollup candidates against the
+        # typed user dimension and latest physical spans before pagination.
+        ch_client.execute(
+            f"INSERT INTO {curated_table} (project_id, end_user_id, organization_id, user_id, first_seen, version) VALUES",
+            [(project_id, user_id, organization_id, user_id, first_seen, 1) for user_id in end_user_ids],
+        )
+        ch_client.execute(
+            f"INSERT INTO {user_graph_tables[0]} (project_id, end_user_id, observation_type, service_name, trace_id, id, start_time, end_time, _version) VALUES",
+            [(project_id, user_id, "span", "fixture", user_id, user_id, first_seen, first_seen, 1) for user_id in end_user_ids],
+        )
         actual: list[str] = []
         before_first_seen = None
         before_end_user_id = None
@@ -238,12 +254,15 @@ def test_user_rollup_cursor_keeps_string_tie_order_across_pages(ch_client):
             )
             query = query.replace(
                 "FROM span_user_rollup AS rollup", f"FROM {table} AS rollup"
+            ).replace("FROM end_users AS eu", f"FROM {curated_table} AS eu").replace(
+                "FROM end_user_id_remap", f"FROM {user_graph_tables[2]}"
             )
+            query = re.sub(r"\bspans\b", user_graph_tables[0], query)
             page = _execute(ch_client, query, params)
             if not page:
                 break
             actual.extend(str(row["end_user_id"]) for row in page)
-            before_first_seen = page[-1]["first_seen"]
+            before_first_seen = page[-1]["last_active"]
             before_end_user_id = str(page[-1]["end_user_id"])
 
         assert actual == sorted(end_user_ids, reverse=True)

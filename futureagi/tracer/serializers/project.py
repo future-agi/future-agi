@@ -9,6 +9,7 @@ from tracer.serializers.filters import (
     filter_list_field,
     filter_list_query_param_field,
 )
+from tracer.services.user_filter_capabilities import validate_users_filter_capabilities
 
 
 class ProjectSerializer(serializers.ModelSerializer):
@@ -189,6 +190,9 @@ class ProjectUserMetricsRequestSerializer(StrictInputSerializer):
     interval = serializers.CharField(required=False, default="day", allow_blank=False)
     filters = filter_list_field(required=False, default=list)
 
+    def validate_filters(self, value):
+        return validate_users_filter_capabilities(value)
+
 
 class ProjectUsersAggregateGraphDataRequestSerializer(StrictInputSerializer):
     project_id = serializers.UUIDField()
@@ -199,6 +203,9 @@ class ProjectUsersAggregateGraphDataRequestSerializer(StrictInputSerializer):
     )
     req_data_config = ObserveGraphMetricConfigField(required=False, default=dict)
 
+    def validate_filters(self, value):
+        return validate_users_filter_capabilities(value)
+
 
 class ProjectUserGraphDataQuerySerializer(StrictInputSerializer):
     project_id = serializers.UUIDField()
@@ -208,6 +215,9 @@ class ProjectUserGraphDataQuerySerializer(StrictInputSerializer):
 class ProjectUserGraphDataRequestSerializer(StrictInputSerializer):
     interval = serializers.CharField(required=False, default="hour", allow_blank=False)
     filters = filter_list_field(required=False, default=list)
+
+    def validate_filters(self, value):
+        return validate_users_filter_capabilities(value)
 
 
 class ProjectUserGraphDataResultSerializer(serializers.Serializer):

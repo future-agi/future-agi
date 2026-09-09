@@ -43,8 +43,6 @@ import axios, { endpoints } from "src/utils/axios";
 import { red } from "src/theme/palette";
 import { mappingChipLabel } from "src/sections/evals/utils/evalMappingPath";
 import {
-  extractAttributeFilters,
-  getTaskFilterApiKey,
   getNewTaskFilters,
   NewTaskValidationSchema,
 } from "../NewTaskDrawer/validation";
@@ -259,28 +257,11 @@ const EditTaskDrawerV2Content = ({
   const onUpdateSubmit = useCallback(
     (editType) => {
       const data = formValues;
-      const attributeFilters = extractAttributeFilters(data?.filters);
-
-      // Task system filter aggregation. Keep the update payload aligned with
-      // the backend-supported task filter contract instead of saving fields
-      // that the dispatcher would ignore.
-      const systemFilters = {};
-      (data.filters || []).forEach((f) => {
-        if (!f?.property || f.property === "attributes") return;
-        const apiKey = getTaskFilterApiKey(f.property);
-        const v = f?.filterConfig?.filterValue;
-        const values = Array.isArray(v)
-          ? v
-          : v !== undefined && v !== null && v !== ""
-            ? [v]
-            : [];
-        if (!values.length) return;
-        if (systemFilters[apiKey]) {
-          systemFilters[apiKey].push(...values);
-        } else {
-          systemFilters[apiKey] = [...values];
-        }
-      });
+      const { filters: systemFilters, attributeFilters } = getNewTaskFilters(
+        data,
+        data.project,
+        true,
+      );
 
       const transformedData = {
         evals: data.evalsDetails?.map((item) => item.id) || [],

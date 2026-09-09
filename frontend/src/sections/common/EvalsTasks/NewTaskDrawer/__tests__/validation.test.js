@@ -4,6 +4,136 @@ import { getNewTaskFilters, NewTaskValidationSchema } from "../validation";
 import { formatTaskFilters } from "../../common";
 
 describe("eval task filter payload contract", () => {
+  it.each(
+    ["filters", "span_attributes_filters"].flatMap((wireKey) =>
+      ["legacy", "raw"].map((source) => [wireKey, source]),
+    ),
+  )("round-trips %s %s session_id exclusions without changing source", (wireKey, source) => {
+    const isRaw = source === "raw";
+    const wire = {
+      column_id: "session_id",
+      ...(isRaw ? { property_id: "custom_attribute:session_id" } : {}),
+      filter_config: {
+        filter_type: "text",
+        filter_op: "not_in",
+        filter_value: isRaw ? ["001", 1, false] : ["session-a", "session-b"],
+        ...(isRaw
+          ? {
+              col_type: "SPAN_ATTRIBUTE",
+              attribute_value_types: ["string", "number", "boolean"],
+            }
+          : {}),
+      },
+    };
+    const colType = isRaw ? "SPAN_ATTRIBUTE" : "SYSTEM_METRIC";
+    const rows = formatTaskFilters({ [wireKey]: [wire] });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].apiColType).toBe(colType);
+
+    const saved = getNewTaskFilters({ filters: rows }, "project", true);
+    expect(saved).toEqual({
+      filters: { project_id: "project" },
+      attributeFilters: [{
+        ...wire,
+        filter_config: { ...wire.filter_config, col_type: colType },
+      }],
+    });
+    expect(getNewTaskFilters({
+      filters: formatTaskFilters({ [wireKey]: saved.attributeFilters }),
+    }, "project", true)).toEqual(saved);
+  });
+
+  it.each(["filters", "span_attributes_filters"])(
+    "keeps source-less legacy annotation controls through %s hydration/save",
+    (wireKey) => {
+      for (const [column_id, filter_type, filter_value] of [
+        ["annotator", "text", "00000000-0000-4000-8000-000000000123"],
+        ["my_annotations", "boolean", false],
+      ]) {
+        const wire = {
+          column_id,
+          filter_config: { filter_type, filter_op: "equals", filter_value },
+        };
+        const rows = formatTaskFilters({ [wireKey]: [wire] });
+        const { attributeFilters } = getNewTaskFilters(
+          { runType: "continuous", filters: rows },
+          "project",
+          true,
+        );
+        expect(attributeFilters).toEqual([
+          {
+            ...wire,
+            filter_config: { ...wire.filter_config, col_type: "ANNOTATION" },
+          },
+        ]);
+      }
+    },
+  );
+
+  it("keeps every explicit source when hydrating reserved annotation names", () => {
+    for (const column_id of ["annotator", "my_annotations"]) {
+      for (const col_type of [
+        "SPAN_ATTRIBUTE",
+        "ANNOTATION",
+        "EVAL_METRIC",
+        "SYSTEM_METRIC",
+      ]) {
+        const wire = {
+          column_id,
+          filter_config: {
+            col_type,
+            filter_type: "text",
+            filter_op: "in",
+            filter_value: ["001"],
+          },
+        };
+        const rows = formatTaskFilters({ filters: [wire] });
+        const { attributeFilters } = getNewTaskFilters(
+          { runType: "continuous", filters: rows },
+          "project",
+          true,
+        );
+        expect(attributeFilters).toEqual([wire]);
+      }
+    }
+  });
+
+  it("keeps a hydrated legacy span restriction on save", () => {
+    const rows = formatTaskFilters({ span_id: ["span-a", "span-b"] });
+    expect(getNewTaskFilters({ filters: rows }, "project", true)).toEqual({
+      filters: { project_id: "project", span_id: ["span-a", "span-b"] },
+      attributeFilters: [],
+    });
+  });
+
+  it.each(["SYSTEM_METRIC", "SPAN_ATTRIBUTE"])(
+    "does not turn a canonical %s span_id exclusion into a positive sibling",
+    (source) => {
+      const row = {
+        property: "span_id",
+        propertyId: "span_id",
+        apiColType: source,
+        filterConfig: {
+          filterType: "text",
+          filterOp: "not_in",
+          filterValue: ["span-a"],
+        },
+      };
+      expect(getNewTaskFilters({ filters: [row] }, "project", true)).toEqual({
+        filters: { project_id: "project" },
+        attributeFilters: [{
+          column_id: "span_id",
+          filter_config: {
+            col_type: source,
+            filter_type: "text",
+            filter_op: "not_in",
+            filter_value: ["span-a"],
+          },
+        }],
+      });
+    },
+  );
+
   it("hydrates property_id into registryId without replacing propertyId", () => {
     expect(
       formatTaskFilters({

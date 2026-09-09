@@ -3,6 +3,7 @@ from inspect import Parameter, iscoroutinefunction, signature
 
 import structlog
 from django.conf import settings
+from django.http import QueryDict
 from drf_yasg import openapi
 from drf_yasg.inspectors import SwaggerAutoSchema
 from drf_yasg.utils import swagger_auto_schema
@@ -50,12 +51,21 @@ class ManagementAPIAutoSchema(SwaggerAutoSchema):
     """Add a common typed error contract to management API operations."""
 
     def get_operation(self, operation_keys=None):
+        if (
+            self.overrides.get("read_query_post")
+            and self.method == "GET"
+            and getattr(self.view, "action", None)
+        ):
+            # A second action method must not rename existing generated GET clients.
+            operation_keys = (operation_keys or self.operation_keys)[:-1]
         operation = super().get_operation(operation_keys)
 
         if self.overrides.get("runtime_request_validation"):
             operation[RUNTIME_REQUEST_VALIDATION_EXTENSION] = True
         if self.overrides.get("runtime_response_validation"):
             operation[RUNTIME_RESPONSE_VALIDATION_EXTENSION] = True
+        if self.overrides.get("read_query_post") and self.method == "POST":
+            operation["x-read-query-post"] = True
 
         return operation
 
@@ -265,6 +275,7 @@ def validated_request(
     request_serializer=None,
     *,
     query_serializer=None,
+    read_post=False,
     responses=None,
     request_methods=None,
     strict_request_validation=True,
@@ -290,6 +301,8 @@ def validated_request(
     request_method_set = (
         {method.upper() for method in request_methods} if request_methods else None
     )
+    if read_post and (query_serializer is None or request_serializer is not None):
+        raise ValueError("Read POST requires only a query serializer.")
 
     def decorator(view_func):
         swagger_options = dict(swagger_kwargs)
@@ -306,6 +319,20 @@ def validated_request(
             # that is runtime-checked in DEBUG, and strictly enforced when
             # strict_response_validation=True.
             swagger_options["runtime_response_validation"] = True
+
+        def document(wrapper):
+            if not read_post:
+                return swagger_auto_schema(**swagger_options)(wrapper)
+            wrapper._read_query_post = True
+            post_options = {
+                k: v for k, v in swagger_options.items() if k != "query_serializer"
+            }
+            post_options.update(request_body=query_serializer, read_query_post=True)
+            wrapper._swagger_auto_schema = {
+                "get": {**swagger_options, "read_query_post": True},
+                "post": post_options,
+            }
+            return wrapper
 
         def prepare_request(*args, **kwargs):
             request = _request_from_call(args)
@@ -326,10 +353,24 @@ def validated_request(
                     request.query_params,
                     framework_query_params,
                 )
+                if read_post and request.method.upper() == "POST":
+                    if query_data:
+                        return gm.bad_request(
+                            "Read POST parameters belong only in the JSON body."
+                        )
+                    if not isinstance(request.data, dict) or hasattr(
+                        request.data, "getlist"
+                    ):
+                        return gm.bad_request("Read POST requires a JSON object.")
+                    # Retain query-field omission semantics without stringifying JSON values.
+                    query_data = QueryDict(mutable=True)
+                    for key, value in request.data.items():
+                        query_data[key] = value
                 serializer, errors, is_valid = _validate_serializer(
                     query_serializer,
                     query_data,
-                    reject_unknown_fields=reject_unknown_fields,
+                    reject_unknown_fields=reject_unknown_fields
+                    or (read_post and request.method.upper() == "POST"),
                     context=context,
                 )
                 if not is_valid:
@@ -400,7 +441,7 @@ def validated_request(
 
         if iscoroutinefunction(view_func):
 
-            @swagger_auto_schema(**swagger_options)
+            @document
             @wraps(view_func)
             async def wrapper(*args, **kwargs):
                 early_response = prepare_request(*args, **kwargs)
@@ -412,7 +453,7 @@ def validated_request(
 
             return wrapper
 
-        @swagger_auto_schema(**swagger_options)
+        @document
         @wraps(view_func)
         def wrapper(*args, **kwargs):
             early_response = prepare_request(*args, **kwargs)

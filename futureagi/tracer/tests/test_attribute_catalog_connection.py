@@ -383,6 +383,40 @@ def test_executor_shares_one_two_second_wall_and_forces_readonly_bounds():
 
 
 @pytest.mark.unit
+def test_public_attribute_catalog_drops_statement_caps_not_memory_or_sql_limit():
+    from tracer.services.clickhouse.application_read_policy import (
+        UNLIMITED_STATEMENT_SETTINGS,
+        is_application_read,
+    )
+
+    class ApplicationClient(_FakeClient):
+        def execute_read_with_progress(self, *args, **kwargs):
+            assert is_application_read()
+            return super().execute_read_with_progress(*args, **kwargs)
+
+    config = connection.AttributeCatalogConnectionConfig.from_settings(_settings())
+    fake = ApplicationClient()
+    executor = connection.AttributeCatalogReadExecutor(
+        config=config,
+        client_factory=lambda _config: fake,
+        application_read=True,
+    )
+    result = executor.execute(
+        CATALOG_QUERY,
+        {},
+        timeout_ms=1,
+        settings={"max_result_rows": 1, "max_memory_usage": 256 * 1024**2},
+    )
+    applied = fake.calls[0]
+    assert applied["query"] == CATALOG_QUERY
+    assert applied["timeout_ms"] is None
+    assert all(applied["settings"][key] == 0 for key in UNLIMITED_STATEMENT_SETTINGS)
+    assert applied["settings"]["max_memory_usage"] == 256 * 1024**2
+    assert result.read_rows == 1
+    assert not is_application_read()
+
+
+@pytest.mark.unit
 def test_read_mode_settings_import_fails_when_dedicated_config_is_missing():
     env, futureagi_root = _complete_read_mode_import_env()
     env.pop("SPAN_ATTRIBUTE_CATALOG_CH_PASSWORD")

@@ -1,14 +1,18 @@
 import React from "react";
 import PropTypes from "prop-types";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useForm } from "react-hook-form";
 import { act, render, screen, waitFor } from "src/utils/test-utils";
 import { QUERY_FAILED_RETRY_MESSAGE } from "src/utils/queryReadState";
+import { ANALYTICS_REQUEST_TIMEOUT_MS } from "src/config/runtime_limits";
+import { SPAN_REFERENCE_ERROR } from "src/sections/projects/LLMTracing/spanReadReference";
+import * as listReads from "src/sections/projects/LLMTracing/listCursorPagination";
 
 const mocks = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
 
 vi.mock("src/utils/axios", () => ({
+  readQuery: mocks.get,
   default: { get: mocks.get, post: mocks.post },
   endpoints: {
     project: {
@@ -17,6 +21,7 @@ vi.mock("src/utils/axios", () => ({
       getSpansForObserveProject: () => "/spans/",
       projectSessionList: () => "/sessions/",
       getTrace: (id) => `/traces/${id}/`,
+      getObservationSpan: (id) => `/span-details/${id}/`,
       getVoiceCallDetail: "/calls/detail/",
       traceSession: "/sessions/",
       projectExperimentDetail: (id) => `/projects/${id}/`,
@@ -44,6 +49,13 @@ vi.mock("src/components/inline-audio/inline-row-audio", () => ({
 import TaskLivePreview from "../TaskLivePreview";
 
 const PROJECT_ID = "00000000-0000-4000-8000-000000000902";
+const SPAN_REFERENCE = {
+  project_id: PROJECT_ID,
+  start_time: "2026-09-01T12:01:02.123456Z",
+  observation_type: "SPAN",
+  service_name: "test-service",
+  _version: "18446744073709551614",
+};
 
 function PreviewHarness({
   rowType = "spans",
@@ -124,6 +136,140 @@ describe("TaskLivePreview sparse cursor continuation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it.each(["spans", "traces", "sessions"])(
+    "allows a slow initial %s preview to finish beyond the performance target",
+    async (rowType) => {
+      vi.useFakeTimers();
+      const listUrl = `/${rowType}/`;
+      let requestSignal;
+      let resolveLate;
+      mocks.get.mockImplementation((_url, { signal }) => {
+        requestSignal = signal;
+        return new Promise((resolve) => {
+          resolveLate = resolve;
+        });
+      });
+      // Match the application's default: the preview must not silently spend
+      // another full request budget on an automatic retry.
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: 1 } },
+      });
+      const view = render(
+        <QueryClientProvider client={queryClient}>
+          <PreviewHarness rowType={rowType} />
+        </QueryClientProvider>,
+      );
+      await act(async () => vi.advanceTimersByTimeAsync(0));
+      expect(mocks.get.mock.calls[0][0]).toBe(listUrl);
+      await act(async () =>
+        vi.advanceTimersByTimeAsync(ANALYTICS_REQUEST_TIMEOUT_MS + 1),
+      );
+      expect(requestSignal.aborted).toBe(false);
+      expect(
+        screen.queryByText(QUERY_FAILED_RETRY_MESSAGE),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByText("No matching rows")).not.toBeInTheDocument();
+      await act(async () => vi.advanceTimersByTimeAsync(1_000));
+      expect(mocks.get).toHaveBeenCalledTimes(1);
+
+      await act(async () =>
+        resolveLate(observeListPage({ hasMore: false, nextCursor: null })),
+      );
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      expect(screen.getByText("No matching rows")).toBeVisible();
+      expect(mocks.get).toHaveBeenCalledTimes(1);
+      expect(mocks.post).not.toHaveBeenCalled();
+      view.unmount();
+      queryClient.clear();
+    },
+  );
+
+  it.each(["spans", "traces", "sessions"])(
+    "pauses a timed-out %s continuation without consuming its cursor",
+    async (rowType) => {
+      vi.useFakeTimers();
+      const listUrl = `/${rowType}/`;
+      const checkpoint = `${rowType}-unconsumed-checkpoint`;
+      let continuationSignal;
+      let resolveLate;
+      let listCalls = 0;
+      mocks.get.mockImplementation((_url, { signal }) => {
+        listCalls += 1;
+        if (listCalls === 1) {
+          return new Promise((resolve) => {
+            setTimeout(
+              () =>
+                resolve(
+                  observeListPage({ hasMore: true, nextCursor: checkpoint }),
+                ),
+              10_000,
+            );
+          });
+        }
+        if (listCalls === 2) {
+          continuationSignal = signal;
+          return new Promise((resolve) => {
+            resolveLate = resolve;
+          });
+        }
+        return Promise.resolve(
+          observeListPage({ hasMore: false, nextCursor: null }),
+        );
+      });
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: 1 } },
+      });
+      const view = render(
+        <QueryClientProvider client={queryClient}>
+          <PreviewHarness rowType={rowType} />
+        </QueryClientProvider>,
+      );
+      await act(async () => vi.advanceTimersByTimeAsync(10_001));
+      expect(mocks.get.mock.calls.map(([url]) => url)).toEqual([
+        listUrl,
+        listUrl,
+      ]);
+      await act(async () =>
+        vi.advanceTimersByTimeAsync(ANALYTICS_REQUEST_TIMEOUT_MS - 10_000 + 1),
+      );
+      expect(continuationSignal.aborted).toBe(true);
+      expect(screen.getByText("Preparing the exact preview.")).toBeVisible();
+      expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+      expect(
+        screen.queryByText(QUERY_FAILED_RETRY_MESSAGE),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByText("No matching rows")).not.toBeInTheDocument();
+
+      // Even a transport that ignores abort must not publish a late terminal
+      // result, overwrite the pending cursor, or auto-start another attempt.
+      await act(async () => {
+        resolveLate(observeListPage({ hasMore: false, nextCursor: null }));
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+      expect(listCalls).toBe(2);
+      expect(screen.getByText("Preparing the exact preview.")).toBeVisible();
+      await act(async () => {
+        screen.getByRole("button", { name: "Continue search" }).click();
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      await act(async () => vi.advanceTimersByTimeAsync(10));
+      expect(screen.getByText("No matching rows")).toBeVisible();
+      expect(mocks.get.mock.calls[2][1].params.cursor).toBe(checkpoint);
+      expect(mocks.get.mock.calls[2][1].params).not.toHaveProperty(
+        "page_number",
+      );
+      expect(mocks.post).not.toHaveBeenCalled();
+      view.unmount();
+      queryClient.clear();
+    },
+  );
 
   it.each([
     ["spans", "/spans/", "page_number"],
@@ -343,6 +489,7 @@ describe("TaskLivePreview sparse cursor continuation", () => {
               config: [],
               table: [
                 {
+                  ...SPAN_REFERENCE,
                   span_id: "span-rare",
                   trace_id: "trace-rare",
                   input: "rare preview value",
@@ -357,21 +504,17 @@ describe("TaskLivePreview sparse cursor continuation", () => {
           },
         };
       }
-      if (url === "/traces/trace-rare/") {
+      if (url === "/span-details/span-rare/") {
         return {
           data: {
             status: true,
             result: {
-              trace: { trace_id: "trace-rare" },
-              observation_spans: [
-                {
-                  observation_span: {
-                    id: "span-rare",
-                    input: "rare preview value",
-                  },
-                  children: [],
-                },
-              ],
+              observation_span: {
+                ...SPAN_REFERENCE,
+                trace_id: "trace-rare",
+                id: "span-rare",
+                input: "rare preview value",
+              },
             },
           },
         };
@@ -558,6 +701,7 @@ describe("TaskLivePreview sparse cursor continuation", () => {
       const row = (suffix) =>
         rowType === "spans"
           ? {
+              ...SPAN_REFERENCE,
               span_id: `span-${suffix}`,
               trace_id: `trace-${suffix}`,
             }
@@ -579,20 +723,13 @@ describe("TaskLivePreview sparse cursor continuation", () => {
                 nextCursor: null,
               });
         }
-        if (rowType === "spans" && url.startsWith("/traces/trace-")) {
-          const traceId = url.slice("/traces/".length, -1);
-          const suffix = traceId.replace("trace-", "");
+        if (rowType === "spans" && url.startsWith("/span-details/span-")) {
+          const suffix = url.slice("/span-details/span-".length, -1);
           return {
             data: {
               status: true,
               result: {
-                trace: { trace_id: traceId },
-                observation_spans: [
-                  {
-                    observation_span: { id: `span-${suffix}` },
-                    children: [],
-                  },
-                ],
+                observation_span: row(suffix),
               },
             },
           };
@@ -964,6 +1101,7 @@ describe("TaskLivePreview sparse cursor continuation", () => {
               config: [],
               table: [
                 {
+                  ...SPAN_REFERENCE,
                   span_id: "span-beyond-budget",
                   trace_id: "trace-beyond-budget",
                   input: "found after a resumed cursor",
@@ -974,21 +1112,17 @@ describe("TaskLivePreview sparse cursor continuation", () => {
           },
         };
       }
-      if (url === "/traces/trace-beyond-budget/") {
+      if (url === "/span-details/span-beyond-budget/") {
         return {
           data: {
             status: true,
             result: {
-              trace: { trace_id: "trace-beyond-budget" },
-              observation_spans: [
-                {
-                  observation_span: {
-                    id: "span-beyond-budget",
-                    input: "found after a resumed cursor",
-                  },
-                  children: [],
-                },
-              ],
+              observation_span: {
+                ...SPAN_REFERENCE,
+                trace_id: "trace-beyond-budget",
+                id: "span-beyond-budget",
+                input: "found after a resumed cursor",
+              },
             },
           },
         };
@@ -1101,6 +1235,7 @@ describe("TaskLivePreview sparse cursor continuation", () => {
                   callIndex === 0
                     ? [
                         {
+                          ...SPAN_REFERENCE,
                           span_id: "span-retained",
                           trace_id: "trace-retained",
                           input: "retained preview row",
@@ -1126,6 +1261,7 @@ describe("TaskLivePreview sparse cursor continuation", () => {
               config: [],
               table: [
                 {
+                  ...SPAN_REFERENCE,
                   span_id: "span-after-retry",
                   trace_id: "trace-after-retry",
                   input: "preview resumed after retry",
@@ -1136,40 +1272,32 @@ describe("TaskLivePreview sparse cursor continuation", () => {
           },
         };
       }
-      if (url === "/traces/trace-after-retry/") {
+      if (url === "/span-details/span-after-retry/") {
         return {
           data: {
             status: true,
             result: {
-              trace: { trace_id: "trace-after-retry" },
-              observation_spans: [
-                {
-                  observation_span: {
-                    id: "span-after-retry",
-                    input: "preview resumed after retry",
-                  },
-                  children: [],
-                },
-              ],
+              observation_span: {
+                ...SPAN_REFERENCE,
+                trace_id: "trace-after-retry",
+                id: "span-after-retry",
+                input: "preview resumed after retry",
+              },
             },
           },
         };
       }
-      if (url === "/traces/trace-retained/") {
+      if (url === "/span-details/span-retained/") {
         return {
           data: {
             status: true,
             result: {
-              trace: { trace_id: "trace-retained" },
-              observation_spans: [
-                {
-                  observation_span: {
-                    id: "span-retained",
-                    input: "retained preview row",
-                  },
-                  children: [],
-                },
-              ],
+              observation_span: {
+                ...SPAN_REFERENCE,
+                trace_id: "trace-retained",
+                id: "span-retained",
+                input: "retained preview row",
+              },
             },
           },
         };
@@ -1238,6 +1366,7 @@ describe("TaskLivePreview sparse cursor continuation", () => {
               config: [],
               table: [
                 {
+                  ...SPAN_REFERENCE,
                   span_id: "span-after-cold-retry",
                   trace_id: "trace-after-cold-retry",
                   input: "preview recovered after cold retry",
@@ -1248,21 +1377,17 @@ describe("TaskLivePreview sparse cursor continuation", () => {
           },
         };
       }
-      if (url === "/traces/trace-after-cold-retry/") {
+      if (url === "/span-details/span-after-cold-retry/") {
         return {
           data: {
             status: true,
             result: {
-              trace: { trace_id: "trace-after-cold-retry" },
-              observation_spans: [
-                {
-                  observation_span: {
-                    id: "span-after-cold-retry",
-                    input: "preview recovered after cold retry",
-                  },
-                  children: [],
-                },
-              ],
+              observation_span: {
+                ...SPAN_REFERENCE,
+                trace_id: "trace-after-cold-retry",
+                id: "span-after-cold-retry",
+                input: "preview recovered after cold retry",
+              },
             },
           },
         };
@@ -1319,6 +1444,7 @@ describe("TaskLivePreview sparse cursor continuation", () => {
               config: [],
               table: [
                 {
+                  ...SPAN_REFERENCE,
                   span_id: "span-legacy",
                   trace_id: "trace-legacy",
                   input: "legacy preview value",
@@ -1329,21 +1455,17 @@ describe("TaskLivePreview sparse cursor continuation", () => {
           },
         };
       }
-      if (url === "/traces/trace-legacy/") {
+      if (url === "/span-details/span-legacy/") {
         return {
           data: {
             status: true,
             result: {
-              trace: { trace_id: "trace-legacy" },
-              observation_spans: [
-                {
-                  observation_span: {
-                    id: "span-legacy",
-                    input: "legacy preview value",
-                  },
-                  children: [],
-                },
-              ],
+              observation_span: {
+                ...SPAN_REFERENCE,
+                trace_id: "trace-legacy",
+                id: "span-legacy",
+                input: "legacy preview value",
+              },
             },
           },
         };
@@ -1450,6 +1572,97 @@ describe("TaskLivePreview sparse cursor continuation", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("settles cancelled task continuations without releasing replacement preview loading", async () => {
+    const collect = vi.spyOn(listReads, "collectExactListRows"); // Call-through: real helper.
+    let resolveOld;
+    let resolveCurrent;
+    let oldSignal;
+    mocks.get.mockImplementation((url, { params, signal } = {}) => {
+      if (url === "/traces/") {
+        if (params.project_id === "project-old") {
+          if (!params.cursor)
+            return Promise.resolve(
+              observeListPage({ hasMore: true, nextCursor: "old-checkpoint" }),
+            );
+          oldSignal = signal;
+          return new Promise((resolve) => {
+            resolveOld = resolve;
+          });
+        }
+        return new Promise((resolve) => {
+          resolveCurrent = resolve;
+        });
+      }
+      if (url === "/traces/current/")
+        return Promise.resolve({
+          data: {
+            result: {
+              trace: { trace_id: "current", input: "current task preview" },
+              observation_spans: [],
+            },
+          },
+        });
+      throw new Error(`Unexpected GET ${url}`);
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const subject = (projectId) => (
+      <QueryClientProvider client={queryClient}>
+        <PreviewHarness projectId={projectId} rowType="traces" />
+      </QueryClientProvider>
+    );
+    const view = render(subject("project-old"));
+    await waitFor(() => expect(resolveOld).toBeTypeOf("function"));
+    const settled = vi.fn();
+    const oldRead = collect.mock.results[0].value.then(settled, settled);
+    view.rerender(subject("project-new"));
+    await waitFor(() => expect(resolveCurrent).toBeTypeOf("function"));
+    try {
+      await waitFor(() =>
+        expect(settled).toHaveBeenCalledWith(
+          expect.objectContaining({ name: "AbortError" }),
+        ),
+      );
+      expect(oldSignal.aborted).toBe(true);
+      expect(screen.getAllByRole("progressbar")[0]).toBeVisible();
+      expect(screen.queryByText("No matching rows")).not.toBeInTheDocument();
+      expect(
+        screen.queryByText(QUERY_FAILED_RETRY_MESSAGE),
+      ).not.toBeInTheDocument();
+      const currentRequest = mocks.get.mock.calls.find(
+        ([, options]) => options?.params?.project_id === "project-new",
+      );
+      expect(currentRequest[1].params).not.toHaveProperty("cursor");
+      await act(async () =>
+        resolveCurrent(
+          observeListPage({
+            rows: [{ trace_id: "current", input: "current task preview" }],
+            hasMore: false,
+            nextCursor: null,
+          }),
+        ),
+      );
+      await screen.findByText(/current task preview/);
+      expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+      expect(mocks.post).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => {
+        resolveOld(
+          observeListPage({
+            rows: [{ trace_id: "stale", input: "stale task preview" }],
+            hasMore: false,
+            nextCursor: null,
+          }),
+        );
+        await oldRead;
+      });
+      view.unmount();
+      queryClient.clear();
+      collect.mockRestore();
+    }
+  });
+
   it("does not let a superseded project response overwrite the active preview", async () => {
     let resolveOldResponse;
     let oldSignal;
@@ -1469,7 +1682,9 @@ describe("TaskLivePreview sparse cursor continuation", () => {
               config: [],
               table: [
                 {
+                  ...SPAN_REFERENCE,
                   span_id: "span-new",
+                  project_id: "project-new",
                   trace_id: "trace-new",
                   input: "fresh preview value",
                 },
@@ -1479,21 +1694,18 @@ describe("TaskLivePreview sparse cursor continuation", () => {
           },
         };
       }
-      if (url === "/traces/trace-new/") {
+      if (url === "/span-details/span-new/") {
         return {
           data: {
             status: true,
             result: {
-              trace: { trace_id: "trace-new" },
-              observation_spans: [
-                {
-                  observation_span: {
-                    id: "span-new",
-                    input: "fresh preview value",
-                  },
-                  children: [],
-                },
-              ],
+              observation_span: {
+                ...SPAN_REFERENCE,
+                trace_id: "trace-new",
+                project_id: "project-new",
+                id: "span-new",
+                input: "fresh preview value",
+              },
             },
           },
         };
@@ -1526,7 +1738,9 @@ describe("TaskLivePreview sparse cursor continuation", () => {
             config: [],
             table: [
               {
+                ...SPAN_REFERENCE,
                 span_id: "span-old",
+                project_id: "project-old",
                 trace_id: "trace-old",
                 input: "stale preview value",
               },
@@ -1581,7 +1795,9 @@ describe("TaskLivePreview sparse cursor continuation", () => {
               config: [],
               table: [
                 {
+                  ...SPAN_REFERENCE,
                   span_id: "span-new-scope",
+                  project_id: "project-new",
                   trace_id: "trace-new-scope",
                   input: "new scope preview",
                 },
@@ -1591,21 +1807,18 @@ describe("TaskLivePreview sparse cursor continuation", () => {
           },
         };
       }
-      if (url === "/traces/trace-new-scope/") {
+      if (url === "/span-details/span-new-scope/") {
         return {
           data: {
             status: true,
             result: {
-              trace: { trace_id: "trace-new-scope" },
-              observation_spans: [
-                {
-                  observation_span: {
-                    id: "span-new-scope",
-                    input: "new scope preview",
-                  },
-                  children: [],
-                },
-              ],
+              observation_span: {
+                ...SPAN_REFERENCE,
+                trace_id: "trace-new-scope",
+                project_id: "project-new",
+                id: "span-new-scope",
+                input: "new scope preview",
+              },
             },
           },
         };
@@ -1649,7 +1862,9 @@ describe("TaskLivePreview sparse cursor continuation", () => {
             config: [],
             table: [
               {
+                ...SPAN_REFERENCE,
                 span_id: "span-old-scope",
+                project_id: "project-old",
                 trace_id: "trace-old-scope",
                 input: "stale resumed preview",
               },
@@ -1695,7 +1910,9 @@ describe("TaskLivePreview sparse cursor continuation", () => {
               config: [],
               table: [
                 {
+                  ...SPAN_REFERENCE,
                   span_id: "span-old-fresh",
+                  project_id: "project-old",
                   trace_id: "trace-old-fresh",
                   input: "fresh read after returning to old scope",
                 },
@@ -1713,7 +1930,9 @@ describe("TaskLivePreview sparse cursor continuation", () => {
               config: [],
               table: [
                 {
+                  ...SPAN_REFERENCE,
                   span_id: "span-new",
+                  project_id: "project-new",
                   trace_id: "trace-new",
                   input: "new scope row",
                 },
@@ -1723,40 +1942,34 @@ describe("TaskLivePreview sparse cursor continuation", () => {
           },
         };
       }
-      if (url === "/traces/trace-new/") {
+      if (url === "/span-details/span-new/") {
         return {
           data: {
             status: true,
             result: {
-              trace: { trace_id: "trace-new" },
-              observation_spans: [
-                {
-                  observation_span: {
-                    id: "span-new",
-                    input: "new scope row",
-                  },
-                  children: [],
-                },
-              ],
+              observation_span: {
+                ...SPAN_REFERENCE,
+                trace_id: "trace-new",
+                project_id: "project-new",
+                id: "span-new",
+                input: "new scope row",
+              },
             },
           },
         };
       }
-      if (url === "/traces/trace-old-fresh/") {
+      if (url === "/span-details/span-old-fresh/") {
         return {
           data: {
             status: true,
             result: {
-              trace: { trace_id: "trace-old-fresh" },
-              observation_spans: [
-                {
-                  observation_span: {
-                    id: "span-old-fresh",
-                    input: "fresh read after returning to old scope",
-                  },
-                  children: [],
-                },
-              ],
+              observation_span: {
+                ...SPAN_REFERENCE,
+                trace_id: "trace-old-fresh",
+                project_id: "project-old",
+                id: "span-old-fresh",
+                input: "fresh read after returning to old scope",
+              },
             },
           },
         };
@@ -1808,7 +2021,9 @@ describe("TaskLivePreview sparse cursor continuation", () => {
               config: [],
               table: [
                 {
+                  ...SPAN_REFERENCE,
                   span_id: "span-shared",
+                  project_id: options.params.project_id,
                   trace_id: "trace-shared",
                   input: `${options.params?.project_id} list value`,
                 },
@@ -1818,7 +2033,7 @@ describe("TaskLivePreview sparse cursor continuation", () => {
           },
         };
       }
-      if (url === "/traces/trace-shared/") {
+      if (url === "/span-details/span-shared/") {
         detailCalls += 1;
         const detail =
           detailCalls === 1 ? "old project detail" : "new project detail";
@@ -1826,16 +2041,13 @@ describe("TaskLivePreview sparse cursor continuation", () => {
           data: {
             status: true,
             result: {
-              trace: { trace_id: "trace-shared" },
-              observation_spans: [
-                {
-                  observation_span: {
-                    id: "span-shared",
-                    input: detail,
-                  },
-                  children: [],
-                },
-              ],
+              observation_span: {
+                ...SPAN_REFERENCE,
+                trace_id: "trace-shared",
+                project_id: options.params.project_id,
+                id: "span-shared",
+                input: detail,
+              },
             },
           },
         };
@@ -1863,6 +2075,173 @@ describe("TaskLivePreview sparse cursor continuation", () => {
     expect(screen.queryByText(/old project detail/)).not.toBeInTheDocument();
   });
 
+  it("uses the complete selected physical span reference without loading a trace tree", async () => {
+    const row = { ...SPAN_REFERENCE, span_id: "same-id", trace_id: "trace-a" };
+    mocks.get.mockImplementation(async (url) => {
+      if (url === "/spans/")
+        return observeListPage({
+          rows: [row],
+          hasMore: false,
+          nextCursor: null,
+        });
+      if (url === "/span-details/same-id/")
+        return {
+          data: {
+            status: true,
+            result: {
+              observation_span: { ...row, input: "verified selected detail" },
+            },
+          },
+        };
+      throw new Error(`Unexpected GET ${url}`);
+    });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <PreviewHarness />
+      </QueryClientProvider>,
+    );
+    await screen.findByText(/verified selected detail/);
+    expect(mocks.get).toHaveBeenCalledWith("/span-details/same-id/", {
+      params: {
+        project_id: PROJECT_ID,
+        trace_id: "trace-a",
+        start_hour: "2026-09-01T12:00:00.000000Z",
+        observation_type: "SPAN",
+        service_name: "test-service",
+        expected_start_time: SPAN_REFERENCE.start_time,
+        expected_version: SPAN_REFERENCE._version,
+      },
+      signal: expect.any(AbortSignal),
+    });
+    expect(
+      mocks.get.mock.calls.some(([url]) => url.startsWith("/traces/")),
+    ).toBe(false);
+  });
+
+  it.each([
+    { project_id: "another-project" },
+    { trace_id: "another-trace" },
+    { span_id: "another-span" },
+    { service_name: "another-service" },
+    { observation_type: "LLM" },
+    { _version: "18446744073709551615" },
+    { start_time: "2026-09-01T12:01:02.123457Z" },
+  ])(
+    "rejects a detail response with a changed identity or winner: %j",
+    async (mismatch) => {
+      const row = {
+        ...SPAN_REFERENCE,
+        span_id: "same-id",
+        trace_id: "trace-a",
+      };
+      mocks.get.mockImplementation(async (url) => {
+        if (url === "/spans/")
+          return observeListPage({
+            rows: [row],
+            hasMore: false,
+            nextCursor: null,
+          });
+        if (url === "/span-details/same-id/")
+          return {
+            data: {
+              status: true,
+              result: {
+                observation_span: {
+                  ...row,
+                  ...mismatch,
+                  input: "wrong row must never render",
+                },
+              },
+            },
+          };
+        throw new Error(`Unexpected GET ${url}`);
+      });
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      render(
+        <QueryClientProvider client={client}>
+          <PreviewHarness />
+        </QueryClientProvider>,
+      );
+      await screen.findByText(SPAN_REFERENCE_ERROR);
+      expect(
+        screen.queryByText("wrong row must never render"),
+      ).not.toBeInTheDocument();
+      expect(
+        mocks.get.mock.calls.some(([url]) => url.startsWith("/traces/")),
+      ).toBe(false);
+    },
+  );
+
+  it("does not collapse service collisions or publish a late previous-span response", async () => {
+    const first = {
+      ...SPAN_REFERENCE,
+      span_id: "same-id",
+      trace_id: "trace-a",
+    };
+    const second = { ...first, service_name: "second-service" };
+    let resolveFirst, firstSignal;
+    mocks.get.mockImplementation(async (url, options = {}) => {
+      if (url === "/spans/")
+        return observeListPage({
+          rows: options.params.cursor ? [second] : [first],
+          total: 2,
+          hasMore: !options.params.cursor,
+          nextCursor: options.params.cursor ? null : "second-service-cursor",
+        });
+      if (url === "/span-details/same-id/") {
+        if (options.params.service_name === first.service_name) {
+          firstSignal = options.signal;
+          return new Promise((resolve) => {
+            resolveFirst = resolve;
+          });
+        }
+        return {
+          data: {
+            status: true,
+            result: {
+              observation_span: { ...second, input: "second service detail" },
+            },
+          },
+        };
+      }
+      throw new Error(`Unexpected GET ${url}`);
+    });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <PreviewHarness />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(resolveFirst).toBeTypeOf("function"));
+    await act(async () =>
+      screen.getByRole("button", { name: "Next row" }).click(),
+    );
+    await screen.findByText(/second service detail/);
+    expect(firstSignal.aborted).toBe(true);
+    await act(async () =>
+      resolveFirst({
+        data: {
+          status: true,
+          result: {
+            observation_span: { ...first, input: "late first service detail" },
+          },
+        },
+      }),
+    );
+    expect(
+      screen.queryByText(/late first service detail/),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText(/second service detail/)).toBeVisible();
+    expect(screen.getByText("Row 2 of 2")).toBeVisible();
+  });
+
   it("renders a sanitized failure state when row detail cannot be loaded", async () => {
     mocks.get.mockImplementation(async (url) => {
       if (url === "/spans/") {
@@ -1873,6 +2252,7 @@ describe("TaskLivePreview sparse cursor continuation", () => {
               config: [],
               table: [
                 {
+                  ...SPAN_REFERENCE,
                   span_id: "span-detail-error",
                   trace_id: "trace-detail-error",
                 },
@@ -1882,7 +2262,7 @@ describe("TaskLivePreview sparse cursor continuation", () => {
           },
         };
       }
-      if (url === "/traces/trace-detail-error/") {
+      if (url === "/span-details/span-detail-error/") {
         throw new Error("Code: 159. DB::Exception: internal detail");
       }
       throw new Error(`Unexpected GET ${url}`);
@@ -1897,7 +2277,7 @@ describe("TaskLivePreview sparse cursor continuation", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText(QUERY_FAILED_RETRY_MESSAGE)).toBeVisible();
+    expect(await screen.findByText(SPAN_REFERENCE_ERROR)).toBeVisible();
     expect(screen.queryByText(/DB::Exception/)).not.toBeInTheDocument();
     expect(screen.queryByText("No matching rows")).not.toBeInTheDocument();
   });

@@ -87,19 +87,19 @@ def test_user_default_page_replays_latest_state_before_pagination():
     assert "LIMIT 1" in physical_sql
     assert physical_params["project_id"] == builder.project_id
     assert "candidate_users AS" in page_sql
-    assert "FROM spans AS sp FINAL" in page_sql
-    assert "candidate_span_identities AS" not in page_sql
-    assert "latest_candidate_spans AS" not in page_sql
-    assert "sp.is_deleted = 0" in page_sql
+    assert "FROM spans" in page_sql
+    assert "candidate_span_identities AS" in page_sql
+    assert "latest_candidate_spans AS" in page_sql
+    assert "latest_is_deleted = 0" in page_sql
     assert "span_user_rollup" not in page_sql
     assert "span_user_rollup" not in combined_sql
     cursor_seed_sql, cursor_seed_params = builder.build_dimension_candidate_query(
         limit=26
     )
-    assert "FROM span_user_rollup AS rollup" in cursor_seed_sql
+    assert "latest_candidate_spans AS" in cursor_seed_sql
     assert (
-        cursor_seed_params["candidate_window_start"]
-        < cursor_seed_params["candidate_window_end"]
+        cursor_seed_params["user_window_start_us"]
+        < cursor_seed_params["user_window_end_us"]
     )
     assert "LIMIT %(limit)s OFFSET %(offset)s" in page_sql
     assert params["limit"] == 25
@@ -185,7 +185,10 @@ def test_session_candidate_page_is_physical_latest_and_page_metrics_are_scoped()
     assert metrics_params["candidate_session_ids"] == (session_id,)
     assert metrics_params["candidate_filter_session_id_array"] == [session_id]
     assert "candidate_root_identities AS" in metrics_sql
-    assert "(project_id, trace_id, id, start_time) IN" in metrics_sql
+    assert (
+        "(project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id) IN"
+        in metrics_sql
+    )
     assert "trace_session_id_remap" in metrics_sql
     assert "PREWHERE old_id IN (" in metrics_sql
     assert "WHERE new_id IN (" in metrics_sql
@@ -199,87 +202,68 @@ def test_session_candidate_page_is_physical_latest_and_page_metrics_are_scoped()
 
 
 @pytest.mark.unit
-def test_default_session_cursor_seeds_from_session_rollup_before_exact_replay():
+def test_default_session_cursor_uses_canonical_latest_roots_not_rollup():
     now = datetime(2026, 8, 11, 12, 0)
-    project_id = str(uuid.uuid4())
-    builder = SessionListQueryBuilderV2(
-        project_id=project_id,
-        page_size=25,
-        filters=_window(now),
-        bounded_internal_scan=True,
-    )
-
-    sql, params = builder.build_filter_candidate_seed_page(
-        slice_start=now - timedelta(days=1),
-        slice_end=now + timedelta(days=1),
-        limit=26,
-        before_start_time=now,
-        before_id=str(uuid.uuid4()),
-    )
-
-    assert builder.supports_filter_candidate_seed_page() is True
-    assert builder.filter_candidate_seed_proves_result_order() is True
-    assert builder.filter_candidate_seed_is_sampled() is True
-    assert builder.recommended_filter_cursor_seed_batch_size() == 101
-    assert builder.recommended_filter_initial_slice_width() == timedelta(days=2)
-    assert "FROM spans_per_session" in sql
-    assert "minMerge(first_seen) AS start_time" in sql
-    assert "GROUP BY trace_session_id" in sql
-    assert "ORDER BY start_time DESC, toString(session_id) DESC" in sql
-    assert "FROM spans AS" not in sql
-    assert "trace_session_id_remap" not in sql
-    assert "max_rows_to_read" not in sql
-    assert params["project_id"] == project_id
-    assert params["filter_seed_limit"] == 26
-    assert params["filter_slice_start_us"] < params["filter_slice_end_us"]
-    assert "filter_before_start_time_us" in params
-
-
-@pytest.mark.unit
-def test_default_session_rollup_classifier_preserves_finite_raw_seed_order():
-    now = datetime(2026, 8, 11, 12, 0)
-    raw_session_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
     builder = SessionListQueryBuilderV2(
         project_id=str(uuid.uuid4()),
         page_size=25,
         filters=_window(now),
         bounded_internal_scan=True,
     )
-    seed_rows = [
-        {
-            "session_id": raw_session_ids[0],
-            "start_time": now - timedelta(hours=1),
-        },
-        {
-            "session_id": raw_session_ids[1],
-            "start_time": now - timedelta(hours=2),
-        },
-    ]
+    sql, params = builder.build_candidate_cursor_page_query(
+        before_start_time=now,
+        before_session_id=str(uuid.uuid4()),
+    )
+    assert builder.supports_candidate_cursor_page() is True
+    assert builder.supports_filter_candidate_seed_page() is False
+    assert builder.filter_candidate_seed_proves_result_order() is False
+    assert builder.filter_candidate_seed_is_sampled() is False
+    assert "spans_per_session" not in sql
+    assert "min(start_time) AS session_start" in sql
+    assert "ORDER BY session_start DESC, session_id DESC" in sql
+    assert sql.index("latest_is_deleted = 0") < sql.index("min(start_time)")
+    assert params["limit"] == 26
+    with pytest.raises(ValueError, match="rollup candidate seed is unavailable"):
+        builder.build_filter_candidate_seed_page(
+            slice_start=now,
+            slice_end=now + timedelta(hours=1),
+            limit=26,
+        )
 
-    sql, params = builder.build_filter_match_query_from_seed_rows(seed_rows)
 
-    assert "candidate_seed_order_rows AS" in sql
-    assert "candidate_group_rollup_order_rows AS" in sql
-    assert "FROM spans_per_session" in sql
-    assert "SELECT any_id FROM ts_survivor_map" in sql
-    assert "resolved_candidate_seed_order AS" in sql
-    assert "LEFT JOIN ts_survivor_map AS seed_ts_remap" in sql
-    assert "INNER JOIN candidate_seed_order USING (session_id)" in sql
-    assert "AS _seed_order_start" in sql
-    assert "AS _seed_order_id" in sql
-    assert "ORDER BY _seed_order_start DESC, _seed_order_id DESC" in sql
+@pytest.mark.unit
+def test_default_session_classifier_uses_canonical_order_and_complete_aliases():
+    now = datetime(2026, 8, 11, 12, 0)
+    raw_session_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+    builder = SessionListQueryBuilderV2(
+        project_id=str(uuid.uuid4()),
+        filters=_window(now),
+        bounded_internal_scan=True,
+    )
+    sql, params = builder.build_filter_match_query_from_seed_rows(
+        [
+            {"session_id": sid, "start_time": now - timedelta(hours=i + 1)}
+            for i, sid in enumerate(raw_session_ids)
+        ]
+    )
+    assert "candidate_seed_order" not in sql
+    assert "spans_per_session" not in sql
+    assert "_seed_order" not in sql
+    assert "session_start AS start_time" in sql
+    assert "ORDER BY start_time DESC, toString(session_id) DESC" in sql
     assert "PREWHERE old_id IN (" in sql
     assert "WHERE new_id IN (" in sql
-    assert "OVER (PARTITION BY new_id)" not in sql
-    assert "max_rows_to_read" not in sql
-    assert params["candidate_seed_order_ids"] == raw_session_ids
-    assert len(params["candidate_seed_order_start_us"]) == 2
-    assert builder.bounded_filter_row_order_token(seed_rows[0]) == raw_session_ids[0]
-    classified_row = {
-        "session_id": str(uuid.uuid4()),
-        "_seed_order_id": raw_session_ids[0],
-    }
-    assert builder.bounded_filter_row_order_token(classified_row) == raw_session_ids[0]
+    assert params["candidate_filter_session_id_array"] == raw_session_ids
+    canonical_id = str(uuid.uuid4())
+    assert (
+        builder.bounded_filter_row_order_token(
+            {
+                "session_id": canonical_id,
+                "_seed_order_id": raw_session_ids[0],
+            }
+        )
+        == canonical_id
+    )
 
 
 @pytest.mark.unit
@@ -369,23 +353,18 @@ def test_attribute_bulk_filter_uses_bounded_seed_and_latest_candidate_classifier
     assert "latest_attr_value_0" in match_sql
     assert "latest_filter_key_0" not in seed_params
     assert "mapKeys(attrs_string)" not in seed_sql
-    candidate_roots = match_sql.split("candidate_root_identities AS (", 1)[1].split(
-        "latest_roots AS (", 1
+    candidates = match_sql.split("candidate_scalar_span_identities AS (", 1)[1].split(
+        "latest_candidate_scalar_spans AS (", 1
     )[0]
-    assert "mapKeys(attrs_string)" not in candidate_roots
-    assert "candidate_scalar_span_identities AS" in match_sql
+    assert "mapKeys(attrs_string)" not in candidates
     assert "latest_candidate_scalar_spans AS" in match_sql
     assert "resolved_candidate_scalar_spans AS" in match_sql
-    assert "matching_scalar_sessions AS" in match_sql
-    # Root replay remains the source of session ordering/aggregates. Scalar
-    # filters replay every span in the finite candidate sessions, then roll
-    # each independently up to session membership.
-    assert "latest_attr_exists_0 AND" in match_sql
+    # The fused reduction tests each leaf over all latest spans and derives
+    # ordering from roots without an extra root replay or trace-level nullness.
+    assert "GROUP BY project_id, session_id" in match_sql
     assert "HAVING countIf(latest_attr_exists_0 AND" in match_sql
-    assert (
-        "session_id IN (SELECT session_id FROM matching_scalar_sessions)" in match_sql
-    )
-    assert "min(start_time) AS session_start" in match_sql
+    assert "AND countIf(is_root) > 0" in match_sql
+    assert "minIf(latest_start_time, is_root) AS session_start" in match_sql
     assert "candidate_filter_session_id_array" in match_sql
     assert match_params["candidate_filter_session_ids"] == (session_id,)
     assert match_params["candidate_filter_session_id_array"] == [session_id]
@@ -464,7 +443,7 @@ def test_raw_new_session_seed_classifier_expands_group_and_keeps_all_filters():
     assert "countIf(latest_attr_exists_0 AND" in match_sql
     assert "countIf(latest_attr_exists_1 AND" in match_sql
     assert (
-        "session_id IN (SELECT session_id FROM matching_scalar_sessions)" in match_sql
+        "AND countIf(is_root) > 0" in match_sql
     )
     assert match_params["candidate_filter_session_id_array"] == [new_session_id]
     assert match_params["latest_filter_param_0"] == "rejected"
@@ -629,7 +608,7 @@ def test_sparse_session_any_span_anchor_exhausts_then_classifies_exactly():
                     else []
                 )
                 return SimpleNamespace(data=rows)
-            if "matching_scalar_sessions AS" in query:
+            if "resolved_candidate_scalar_spans" in query:
                 self.classify_calls += 1
                 assert params["candidate_filter_session_ids"] == (session_id,)
                 return SimpleNamespace(
@@ -944,10 +923,8 @@ def test_session_has_eval_is_finite_latest_state_and_page_n_safe(
         "eval_scan.trace_id IN (\n                SELECT trace_id "
         "FROM candidate_eval_trace_ids" in sql
     )
-    assert (
-        "eval_scan.created_at >= "
-        "fromUnixTimestamp64Micro(%(start_date_us)s, 'UTC') - INTERVAL 7 DAY" in sql
-    )
+    assert "eval_scan.created_at >=" not in sql
+    assert "latest_start_time >=" in sql and "latest_start_time <" in sql
     assert "ORDER BY eval_scan._version DESC" in sql
     assert "LIMIT 1 BY eval_scan.id" in sql
     assert "latest_eval.is_deleted = 0" in sql
@@ -1219,12 +1196,39 @@ def test_org_session_has_annotation_branches_by_project_and_disjoint_labels():
     assert "candidate_session_project_counts AS" in sql
     assert "uniqExact(project_id) AS project_count" in sql
     assert "max(project_count) AS project_count" in sql
-    assert "any(project_id) AS project_id" in sql
+    assert "any(resolved_root_sessions.project_id) AS project_id" in sql
     assert "SELECT session_id, session_start AS start_time" in sql
     assert ", project_id, project_count" in sql
-    # The OR-ed project branches are one membership unit and cannot bypass
-    # session/user predicates through SQL AND/OR precedence.
-    assert "AND ((project_id =" in sql
+    # The OR-ed tenant branches are one leaf, reduced over the session before
+    # intersecting other memberships. They must not filter away sibling roots
+    # that contribute to session start/metrics or bypass another AND predicate.
+    relational_sessions = sql.split("matching_relational_sessions AS (", 1)[1].split(
+        "\n        )", 1
+    )[0]
+    assert "FROM resolved_root_sessions" in relational_sessions
+    assert "GROUP BY project_id, session_id\n" in relational_sessions
+    assert relational_sessions.count("countIf(") == 1
+    assert (
+        "HAVING countIf(((project_id = "
+        "toUUID(%(session_relational_0_outer_project_id)s) AND"
+    ) in relational_sessions
+    assert (
+        " OR (project_id = toUUID(%(session_relational_1_outer_project_id)s) AND"
+    ) in relational_sessions
+    assert relational_sessions.strip().endswith(") > 0")
+    sessions = sql.split("\n        sessions AS (", 1)[1]
+    assert "FROM resolved_root_sessions" in sessions
+    assert "min(start_time) AS session_start" in sessions
+    assert (
+        "AND (resolved_root_sessions.project_id, session_id) IN (SELECT project_id, session_id "
+        "FROM matching_relational_sessions)"
+    ) in sessions
+    assert "outer_project_id" not in sessions
+    assert "model_hub_score" not in sessions
+    assert sessions.index("FROM matching_relational_sessions") < sessions.index(
+        "ORDER BY"
+    )
+    assert sessions.index("ORDER BY") < sessions.index("LIMIT %(bounded_match_limit)s")
 
 
 @pytest.mark.unit
@@ -1240,7 +1244,7 @@ def test_default_org_session_page_exposes_global_collision_guard():
 
     assert "candidate_session_project_counts AS" in page_sql
     assert "uniqExact(project_id) AS project_count" in page_sql
-    assert "any(project_id) AS project_id" in page_sql
+    assert "any(resolved_root_sessions.project_id) AS project_id" in page_sql
     assert "max(project_count) OVER() AS max_project_count" in page_sql
     assert "max(project_count) AS max_project_count" in count_sql
 
@@ -1776,7 +1780,7 @@ def test_non_positive_end_user_cursor_keeps_bounded_path(operator):
 
 
 @pytest.mark.unit
-def test_positive_end_user_cursor_with_another_filter_keeps_bounded_path():
+def test_positive_end_user_cursor_with_scalar_filter_uses_scoped_exact_path():
     builder = SessionListQueryBuilderV2(
         project_id=str(uuid.uuid4()),
         filters=[
@@ -1801,7 +1805,15 @@ def test_positive_end_user_cursor_with_another_filter_keeps_bounded_path():
         bounded_internal_scan=True,
     )
 
-    assert builder.supports_candidate_cursor_page() is False
+    assert builder.supports_candidate_cursor_page() is True
+    sql, _ = builder.build_candidate_cursor_page_query()
+    assert "candidate_user_raw_session_pairs" in sql
+    assert "matching_scalar_sessions AS" in sql
+    scalar_seed = sql.split("candidate_scalar_span_identities AS (", 1)[1].split(
+        "latest_candidate_scalar_spans AS (", 1
+    )[0]
+    assert "SELECT session_id FROM matching_user_root_ids" in scalar_seed
+    assert "parent_span_id" not in scalar_seed
 
 
 @pytest.mark.unit

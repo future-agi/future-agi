@@ -12,7 +12,11 @@ import { useTabStoreShallow } from "./tabStore";
 import { ID_ONLY_FIELDS } from "./idFields";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 import { formatDate } from "src/utils/report-utils";
-import { buildApiFilterFromPanelRow } from "src/api/contracts/filter-contract";
+import {
+  buildApiFilterFromPanelRow,
+  isNativeColumnType,
+  normalizeColumnType,
+} from "src/api/contracts/filter-contract";
 
 const DATE_OPTIONS = [
   { key: "Today", label: "Today" },
@@ -246,18 +250,14 @@ const ObserveToolbar = ({
         value = rawVal != null ? String(rawVal) : "";
       } else if (isMapType) {
         value = rawVal && typeof rawVal === "object" ? rawVal : "";
-      } else if (isArrayType || rawType === "json") {
+      } else {
+        // Canonical list members and exact scalar strings must stay intact.
+        // Splitting commas also corrupts aligned attribute_value_types.
         value = Array.isArray(rawVal)
           ? rawVal
           : rawVal !== undefined && rawVal !== null && rawVal !== ""
             ? [rawVal]
             : [];
-      } else {
-        value = rawVal
-          ? String(rawVal)
-              .split(",")
-              .map((v) => v.trim())
-          : [];
       }
       // Derive fieldCategory from col_type (reverse of colTypeMap)
       const colTypeReverseMap = {
@@ -266,13 +266,18 @@ const ObserveToolbar = ({
         EVAL_METRIC: "eval",
         ANNOTATION: "annotation",
       };
-      const isDirectIdFilter = ID_ONLY_FIELDS.has(gf.column_id);
+      const explicitColType = normalizeColumnType(
+        gf.filter_config?.col_type || gf.col_type,
+      );
+      const isDirectIdFilter =
+        ID_ONLY_FIELDS.has(gf.column_id) && !explicitColType;
       const rawColType =
-        gf.filter_config?.col_type ||
-        gf.col_type ||
+        explicitColType ||
         (isDirectIdFilter ? undefined : "SYSTEM_METRIC");
       const rawFilterType = gf.filter_config?.filter_type;
-      const isGlobalAnnotatorFilter = gf.column_id === "annotator";
+      const isGlobalAnnotatorFilter =
+        gf.column_id === "annotator" &&
+        (isNativeColumnType(explicitColType) || explicitColType === "ANNOTATION");
       // Auto-migrate legacy saved views: thumbs annotations used to be
       // stored as filter_type=categorical with values like ["Thumbs Up",
       // "Thumbs Down"]. Detect and upgrade to the dedicated `thumbs` type
@@ -316,11 +321,13 @@ const ObserveToolbar = ({
                             rawColType === "ANNOTATION"
                           ? "text"
                           : "string",
-        apiColType: isDirectIdFilter
-          ? undefined
-          : isGlobalAnnotatorFilter
-            ? "SYSTEM_METRIC"
-            : rawColType,
+        apiColType:
+          explicitColType ||
+          (isDirectIdFilter
+            ? undefined
+            : isGlobalAnnotatorFilter
+              ? "SYSTEM_METRIC"
+              : rawColType),
         operator: rawOp,
         value,
         valueTypes: gf.filter_config?.attribute_value_types,

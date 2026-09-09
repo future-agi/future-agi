@@ -45,6 +45,27 @@ def test_numeric_settings_accept_mapping_and_object_overrides():
     assert values["DASHBOARD_FILTER_VALUE_LEGACY_MAX"] == 500
 
 
+def test_population_worker_budget_is_separate_and_can_be_lowered():
+    defaults = load_numeric_settings(INTERACTIVE_READ_SETTING_SPECS, source={})
+    assert defaults["FILTER_SELECTOR_MAX_THREADS"] == 1
+    assert defaults["FILTER_SELECTOR_POPULATION_MAX_THREADS"] == 2
+    reduced = load_numeric_settings(
+        INTERACTIVE_READ_SETTING_SPECS,
+        source={"FILTER_SELECTOR_POPULATION_MAX_THREADS": "1"},
+    )
+    validate_interactive_read_settings(reduced)
+    assert reduced["FILTER_SELECTOR_POPULATION_MAX_THREADS"] == 1
+
+
+@pytest.mark.parametrize("value", [0, -1, 5, True, "unlimited"])
+def test_population_worker_budget_rejects_unbounded_or_invalid_values(value):
+    with pytest.raises(ValueError):
+        load_numeric_settings(
+            INTERACTIVE_READ_SETTING_SPECS,
+            source={"FILTER_SELECTOR_POPULATION_MAX_THREADS": value},
+        )
+
+
 def test_interactive_read_profile_accepts_a_thirty_second_filter_value_wall():
     values = load_numeric_settings(
         INTERACTIVE_READ_SETTING_SPECS,
@@ -100,7 +121,7 @@ def test_numeric_settings_reject_invalid_values(raw_value):
     with pytest.raises(ValueError):
         load_numeric_settings(
             PROPERTY_CATALOG_RUNTIME_SETTING_SPECS,
-            source={"PROPERTY_CATALOG_MAX_PROJECTS": raw_value},
+            source={"PROPERTY_CATALOG_MAX_PAGE_SIZE": raw_value},
         )
 
 

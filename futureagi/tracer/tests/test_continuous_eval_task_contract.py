@@ -1225,7 +1225,18 @@ def test_continuous_builder_requires_every_configured_annotation_label(
     )
 
     assert builder._annotation_label_set_known is True
-    assert "uniqExact(s.label_id) >= 2" in sql
+    if builder_class is SpanListQueryBuilderV2:
+        # Resolved span membership checks every label independently across its
+        # three Score arms, then ANDs the labels. A root-only label and a
+        # span-backed label can jointly establish completeness; requiring two
+        # labels within one arm would incorrectly reject that combination.
+        normalized = " ".join(sql.split())
+        assert "))) AND (ifNull(toString(id), '') != '' AND" in normalized
+        for label_id in label_ids:
+            parameter = next(key for key, value in params.items() if value == label_id)
+            assert sql.count(f"s.label_id = toUUID(%({parameter})s)") == 3
+    else:
+        assert "uniqExact(s.label_id) >= 2" in sql
     assert all(label_id in params.values() for label_id in label_ids)
 
 

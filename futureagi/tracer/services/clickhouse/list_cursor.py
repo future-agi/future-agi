@@ -17,13 +17,15 @@ from typing import Any
 from django.conf import settings
 from django.core import signing
 
-# Version 3 deliberately removes ReplacingMergeTree version ceilings.  A
+# Version 3 deliberately removed ReplacingMergeTree version ceilings.  A
 # ceiling is not an MVCC snapshot: after a background merge the older version
 # may no longer exist, so a continuation could silently lose a row.  Cursors
-# now freeze only immutable request bounds and keyset progress.  The salt bump
-# makes every token carrying the former false-snapshot contract fail closed.
-CURSOR_VERSION = 3
-CURSOR_SALT = "tracer.clickhouse-list-cursor.v3"
+# freeze only immutable request bounds and keyset progress. Version 4 also
+# invalidates progress computed before explicit custom-source precedence and
+# session/user independent-witness fixes: resuming that prefix could skip rows
+# that now qualify. This is not a database/projection revision change.
+CURSOR_VERSION = 4
+CURSOR_SALT = "tracer.clickhouse-list-cursor.v4"
 DEFAULT_CURSOR_MAX_AGE_SECONDS = 24 * 60 * 60
 
 
@@ -230,7 +232,11 @@ def exact_total_explicitly_required(
     implementing and exposing the same signed exact-continuation contract.
     """
 
-    query_params = getattr(request, "query_params", None)
+    query_params = getattr(
+        getattr(request, "validated_query_serializer", None),
+        "initial_data",
+        getattr(request, "query_params", None),
+    )
     return (
         query_params is not None
         and "allow_sampled" in query_params
@@ -433,9 +439,8 @@ def decode_list_cursor(
         or payload["seen_rows"] < 0
     ):
         raise ListCursorError("invalid_cursor", "The continuation cursor is invalid.")
-    # v3 cursors issued before scan_slice_start was added remain valid. A
-    # missing lower boundary falls back to the frozen request start when the
-    # selector resumes an in-slice keyset, which may rescan but cannot skip.
+    # A missing optional lower boundary falls back to the frozen request start
+    # when the selector resumes an in-slice keyset. It may rescan but cannot skip.
     scan_slice_start = _restore_json_value(payload.get("scan_slice_start"))
     scan_slice_end = _restore_json_value(payload.get("scan_slice_end"))
     scan_before_start_time = _restore_json_value(payload.get("scan_before_start_time"))

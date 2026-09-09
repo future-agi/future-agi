@@ -771,6 +771,7 @@ import type {
   ObservabilityProviderApi,
   ObservationAttributeListResponseApi,
   ObservationSpanApi,
+  ObservationSpanDetailResponseApi,
   ObserveDatasetApi,
   ObserveGraphDataErrorResponseApi,
   ObserveGraphDataRequestApi,
@@ -1073,6 +1074,10 @@ import type {
   SpanAttributeDetailResponseApi,
   SpanAttributeKeysResponseApi,
   SpanAttributeValuesResponseApi,
+  SpanIndexQueryApi,
+  SpanListQueryApi,
+  SpanObserveIndexQueryApi,
+  SpanObserveListQueryApi,
   SpanObserveListResponseApi,
   SpanPrototypeListResponseApi,
   SpendSummaryResponseApi,
@@ -1125,6 +1130,7 @@ import type {
   ToolDiscoveryResponseApi,
   ToolsApi,
   TopicCategoriesResponseApi,
+  TraceAgentGraphQueryApi,
   TraceAgentGraphResponseApi,
   TraceApi,
   TraceDetailResponseApi,
@@ -1132,16 +1138,25 @@ import type {
   TraceErrorTaskResponseApi,
   TraceErrorTaskUpdateRequestApi,
   TraceErrorTaskUpdateResponseApi,
+  TraceIndexQueryApi,
+  TraceListQueryApi,
+  TraceNavigationResponseApi,
+  TraceObserveIndexQueryApi,
+  TraceObserveListQueryApi,
   TraceObserveListResponseApi,
   TracePropertiesResponseApi,
   TracePrototypeListResponseApi,
   TraceSessionApi,
+  TraceSessionDetailResponseApi,
   TraceSessionGraphDataRequestApi,
+  TraceSessionListQueryApi,
   TraceSessionListResponseApi,
+  TraceSessionRetrieveQueryApi,
   TraceTagsUpdateApi,
   TraceToGraphRequestApi,
   TraceToGraphResponseApi,
   TraceVoiceCallDetailResponseApi,
+  TraceVoiceCallListQueryApi,
   TraceVoiceCallListResponseApi,
   TracerChartsFetchGraphParams,
   TracerCustomEvalConfigList200,
@@ -1192,14 +1207,13 @@ import type {
   TracerObservationSpanGetObservationSpanFieldsParams,
   TracerObservationSpanGetSpanAttributesListParams,
   TracerObservationSpanGetSpansExportDataParams,
-  TracerObservationSpanGetTraceIdByIndexSpansAsBase200,
   TracerObservationSpanGetTraceIdByIndexSpansAsBaseParams,
-  TracerObservationSpanGetTraceIdByIndexSpansAsObserve200,
   TracerObservationSpanGetTraceIdByIndexSpansAsObserveParams,
   TracerObservationSpanList200,
   TracerObservationSpanListParams,
   TracerObservationSpanListSpansObserveParams,
   TracerObservationSpanListSpansParams,
+  TracerObservationSpanReadParams,
   TracerObservationSpanRetrieveLoading200,
   TracerObservationSpanRetrieveLoadingParams,
   TracerObservationSpanRootSpansParams,
@@ -1231,8 +1245,6 @@ import type {
   TracerTraceGetEvalNamesParams,
   TracerTraceGetGraphMethodsParams,
   TracerTraceGetTraceExportDataParams,
-  TracerTraceGetTraceIdByIndex200,
-  TracerTraceGetTraceIdByIndexObserve200,
   TracerTraceGetTraceIdByIndexObserveParams,
   TracerTraceGetTraceIdByIndexParams,
   TracerTraceList200,
@@ -1246,6 +1258,7 @@ import type {
   TracerTraceSessionList200,
   TracerTraceSessionListParams,
   TracerTraceSessionListSessionsParams,
+  TracerTraceSessionQueryParams,
   TracerTraceVoiceCallDetailParams,
   TracerUserAlertLogsList200,
   TracerUserAlertLogsListAll200,
@@ -1342,6 +1355,7 @@ import type {
   UserRoleUpdateApi,
   UserRoleUpdateResponseApi,
   UserSecretKeyApi,
+  UsersQueryApi,
   UsersResponseApi,
   ValidateCELRequestApi,
   ValidateCELResponseApi,
@@ -69540,7 +69554,7 @@ export const tracerObservationSpanGetSpansExportData = async (
 };
 
 export type tracerObservationSpanGetTraceIdByIndexSpansAsBaseResponse200 = {
-  data: TracerObservationSpanGetTraceIdByIndexSpansAsBase200;
+  data: TraceNavigationResponseApi;
   status: 200;
 };
 
@@ -69601,8 +69615,57 @@ export const tracerObservationSpanGetTraceIdByIndexSpansAsBase = async (
   );
 };
 
+export type tracerObservationSpanGetTraceIdByIndexSpansAsBaseCreateResponse200 =
+  {
+    data: TraceNavigationResponseApi;
+    status: 200;
+  };
+
+export type tracerObservationSpanGetTraceIdByIndexSpansAsBaseCreateResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200>;
+  };
+
+export type tracerObservationSpanGetTraceIdByIndexSpansAsBaseCreateResponseSuccess =
+  tracerObservationSpanGetTraceIdByIndexSpansAsBaseCreateResponse200 & {
+    headers: Headers;
+  };
+export type tracerObservationSpanGetTraceIdByIndexSpansAsBaseCreateResponseError =
+  tracerObservationSpanGetTraceIdByIndexSpansAsBaseCreateResponseDefault & {
+    headers: Headers;
+  };
+
+export type tracerObservationSpanGetTraceIdByIndexSpansAsBaseCreateResponse =
+  | tracerObservationSpanGetTraceIdByIndexSpansAsBaseCreateResponseSuccess
+  | tracerObservationSpanGetTraceIdByIndexSpansAsBaseCreateResponseError;
+
+export const getTracerObservationSpanGetTraceIdByIndexSpansAsBaseCreateUrl =
+  () => {
+    return `/tracer/observation-span/get_trace_id_by_index_spans_as_base/`;
+  };
+
+/**
+ * Get the previous and next span id by index for non-observe projects.
+Mirrors the query/filter logic of list_spans.
+ */
+export const tracerObservationSpanGetTraceIdByIndexSpansAsBaseCreate = async (
+  spanIndexQueryApi: SpanIndexQueryApi,
+  options?: RequestInit,
+): Promise<tracerObservationSpanGetTraceIdByIndexSpansAsBaseCreateResponse> => {
+  return apiMutator<tracerObservationSpanGetTraceIdByIndexSpansAsBaseCreateResponse>(
+    getTracerObservationSpanGetTraceIdByIndexSpansAsBaseCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(spanIndexQueryApi),
+    },
+  );
+};
+
 export type tracerObservationSpanGetTraceIdByIndexSpansAsObserveResponse200 = {
-  data: TracerObservationSpanGetTraceIdByIndexSpansAsObserve200;
+  data: TraceNavigationResponseApi;
   status: 200;
 };
 
@@ -69663,6 +69726,57 @@ export const tracerObservationSpanGetTraceIdByIndexSpansAsObserve = async (
     },
   );
 };
+
+export type tracerObservationSpanGetTraceIdByIndexSpansAsObserveCreateResponse200 =
+  {
+    data: TraceNavigationResponseApi;
+    status: 200;
+  };
+
+export type tracerObservationSpanGetTraceIdByIndexSpansAsObserveCreateResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200>;
+  };
+
+export type tracerObservationSpanGetTraceIdByIndexSpansAsObserveCreateResponseSuccess =
+  tracerObservationSpanGetTraceIdByIndexSpansAsObserveCreateResponse200 & {
+    headers: Headers;
+  };
+export type tracerObservationSpanGetTraceIdByIndexSpansAsObserveCreateResponseError =
+  tracerObservationSpanGetTraceIdByIndexSpansAsObserveCreateResponseDefault & {
+    headers: Headers;
+  };
+
+export type tracerObservationSpanGetTraceIdByIndexSpansAsObserveCreateResponse =
+
+    | tracerObservationSpanGetTraceIdByIndexSpansAsObserveCreateResponseSuccess
+    | tracerObservationSpanGetTraceIdByIndexSpansAsObserveCreateResponseError;
+
+export const getTracerObservationSpanGetTraceIdByIndexSpansAsObserveCreateUrl =
+  () => {
+    return `/tracer/observation-span/get_trace_id_by_index_spans_as_observe/`;
+  };
+
+/**
+ * Get the previous and next trace id by index for observe projects.
+Mirrors the query/filter logic of list_spans_as_observe.
+ */
+export const tracerObservationSpanGetTraceIdByIndexSpansAsObserveCreate =
+  async (
+    spanObserveIndexQueryApi: SpanObserveIndexQueryApi,
+    options?: RequestInit,
+  ): Promise<tracerObservationSpanGetTraceIdByIndexSpansAsObserveCreateResponse> => {
+    return apiMutator<tracerObservationSpanGetTraceIdByIndexSpansAsObserveCreateResponse>(
+      getTracerObservationSpanGetTraceIdByIndexSpansAsObserveCreateUrl(),
+      {
+        ...options,
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...options?.headers },
+        body: JSON.stringify(spanObserveIndexQueryApi),
+      },
+    );
+  };
 
 export type tracerObservationSpanListSpansResponse200 = {
   data: SpanPrototypeListResponseApi;
@@ -69750,6 +69864,76 @@ export const tracerObservationSpanListSpans = async (
   );
 };
 
+export type tracerObservationSpanListSpansCreateResponse200 = {
+  data: SpanPrototypeListResponseApi;
+  status: 200;
+};
+
+export type tracerObservationSpanListSpansCreateResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerObservationSpanListSpansCreateResponse422 = {
+  data: PageDepthExceededErrorApi;
+  status: 422;
+};
+
+export type tracerObservationSpanListSpansCreateResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerObservationSpanListSpansCreateResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerObservationSpanListSpansCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 422 | 500 | 503>;
+};
+
+export type tracerObservationSpanListSpansCreateResponseSuccess =
+  tracerObservationSpanListSpansCreateResponse200 & {
+    headers: Headers;
+  };
+export type tracerObservationSpanListSpansCreateResponseError = (
+  | tracerObservationSpanListSpansCreateResponse400
+  | tracerObservationSpanListSpansCreateResponse422
+  | tracerObservationSpanListSpansCreateResponse500
+  | tracerObservationSpanListSpansCreateResponse503
+  | tracerObservationSpanListSpansCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type tracerObservationSpanListSpansCreateResponse =
+  | tracerObservationSpanListSpansCreateResponseSuccess
+  | tracerObservationSpanListSpansCreateResponseError;
+
+export const getTracerObservationSpanListSpansCreateUrl = () => {
+  return `/tracer/observation-span/list_spans/`;
+};
+
+/**
+ * List spans filtered by project ID and project version ID with optimized queries.
+ */
+export const tracerObservationSpanListSpansCreate = async (
+  spanListQueryApi: SpanListQueryApi,
+  options?: RequestInit,
+): Promise<tracerObservationSpanListSpansCreateResponse> => {
+  return apiMutator<tracerObservationSpanListSpansCreateResponse>(
+    getTracerObservationSpanListSpansCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(spanListQueryApi),
+    },
+  );
+};
+
 export type tracerObservationSpanListSpansObserveResponse200 = {
   data: SpanObserveListResponseApi;
   status: 200;
@@ -69829,6 +70013,73 @@ export const tracerObservationSpanListSpansObserve = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type tracerObservationSpanListSpansObserveCreateResponse200 = {
+  data: SpanObserveListResponseApi;
+  status: 200;
+};
+
+export type tracerObservationSpanListSpansObserveCreateResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerObservationSpanListSpansObserveCreateResponse422 = {
+  data: PageDepthExceededErrorApi;
+  status: 422;
+};
+
+export type tracerObservationSpanListSpansObserveCreateResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerObservationSpanListSpansObserveCreateResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerObservationSpanListSpansObserveCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 422 | 500 | 503>;
+};
+
+export type tracerObservationSpanListSpansObserveCreateResponseSuccess =
+  tracerObservationSpanListSpansObserveCreateResponse200 & {
+    headers: Headers;
+  };
+export type tracerObservationSpanListSpansObserveCreateResponseError = (
+  | tracerObservationSpanListSpansObserveCreateResponse400
+  | tracerObservationSpanListSpansObserveCreateResponse422
+  | tracerObservationSpanListSpansObserveCreateResponse500
+  | tracerObservationSpanListSpansObserveCreateResponse503
+  | tracerObservationSpanListSpansObserveCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type tracerObservationSpanListSpansObserveCreateResponse =
+  | tracerObservationSpanListSpansObserveCreateResponseSuccess
+  | tracerObservationSpanListSpansObserveCreateResponseError;
+
+export const getTracerObservationSpanListSpansObserveCreateUrl = () => {
+  return `/tracer/observation-span/list_spans_observe/`;
+};
+
+export const tracerObservationSpanListSpansObserveCreate = async (
+  spanObserveListQueryApi: SpanObserveListQueryApi,
+  options?: RequestInit,
+): Promise<tracerObservationSpanListSpansObserveCreateResponse> => {
+  return apiMutator<tracerObservationSpanListSpansObserveCreateResponse>(
+    getTracerObservationSpanListSpansObserveCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(spanObserveListQueryApi),
     },
   );
 };
@@ -70087,13 +70338,23 @@ export const tracerObservationSpanUpdateTags = async (
 };
 
 export type tracerObservationSpanReadResponse200 = {
-  data: ObservationSpanApi;
+  data: ObservationSpanDetailResponseApi;
   status: 200;
 };
 
 export type tracerObservationSpanReadResponse400 = {
   data: ApiErrorResponseApi;
   status: 400;
+};
+
+export type tracerObservationSpanReadResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerObservationSpanReadResponse409 = {
+  data: ApiErrorResponseApi;
+  status: 409;
 };
 
 export type tracerObservationSpanReadResponse500 = {
@@ -70108,7 +70369,7 @@ export type tracerObservationSpanReadResponse503 = {
 
 export type tracerObservationSpanReadResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 500 | 503>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 409 | 500 | 503>;
 };
 
 export type tracerObservationSpanReadResponseSuccess =
@@ -70117,6 +70378,8 @@ export type tracerObservationSpanReadResponseSuccess =
   };
 export type tracerObservationSpanReadResponseError = (
   | tracerObservationSpanReadResponse400
+  | tracerObservationSpanReadResponse404
+  | tracerObservationSpanReadResponse409
   | tracerObservationSpanReadResponse500
   | tracerObservationSpanReadResponse503
   | tracerObservationSpanReadResponseDefault
@@ -70128,16 +70391,36 @@ export type tracerObservationSpanReadResponse =
   | tracerObservationSpanReadResponseSuccess
   | tracerObservationSpanReadResponseError;
 
-export const getTracerObservationSpanReadUrl = (id: string) => {
-  return `/tracer/observation-span/${id}/`;
+export const getTracerObservationSpanReadUrl = (
+  id: string,
+  params?: TracerObservationSpanReadParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/observation-span/${id}/?${stringifiedParams}`
+    : `/tracer/observation-span/${id}/`;
 };
 
 export const tracerObservationSpanRead = async (
   id: string,
+  params?: TracerObservationSpanReadParams,
   options?: RequestInit,
 ): Promise<tracerObservationSpanReadResponse> => {
   return apiMutator<tracerObservationSpanReadResponse>(
-    getTracerObservationSpanReadUrl(id),
+    getTracerObservationSpanReadUrl(id, params),
     {
       ...options,
       method: "GET",
@@ -73658,6 +73941,76 @@ export const tracerTraceSessionListSessions = async (
   );
 };
 
+export type tracerTraceSessionListSessionsCreateResponse200 = {
+  data: TraceSessionListResponseApi;
+  status: 200;
+};
+
+export type tracerTraceSessionListSessionsCreateResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerTraceSessionListSessionsCreateResponse422 = {
+  data: PageDepthExceededErrorApi;
+  status: 422;
+};
+
+export type tracerTraceSessionListSessionsCreateResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerTraceSessionListSessionsCreateResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerTraceSessionListSessionsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 422 | 500 | 503>;
+};
+
+export type tracerTraceSessionListSessionsCreateResponseSuccess =
+  tracerTraceSessionListSessionsCreateResponse200 & {
+    headers: Headers;
+  };
+export type tracerTraceSessionListSessionsCreateResponseError = (
+  | tracerTraceSessionListSessionsCreateResponse400
+  | tracerTraceSessionListSessionsCreateResponse422
+  | tracerTraceSessionListSessionsCreateResponse500
+  | tracerTraceSessionListSessionsCreateResponse503
+  | tracerTraceSessionListSessionsCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type tracerTraceSessionListSessionsCreateResponse =
+  | tracerTraceSessionListSessionsCreateResponseSuccess
+  | tracerTraceSessionListSessionsCreateResponseError;
+
+export const getTracerTraceSessionListSessionsCreateUrl = () => {
+  return `/tracer/trace-session/list_sessions/`;
+};
+
+/**
+ * List traces filtered by project ID and project version ID with optimized queries.
+ */
+export const tracerTraceSessionListSessionsCreate = async (
+  traceSessionListQueryApi: TraceSessionListQueryApi,
+  options?: RequestInit,
+): Promise<tracerTraceSessionListSessionsCreateResponse> => {
+  return apiMutator<tracerTraceSessionListSessionsCreateResponse>(
+    getTracerTraceSessionListSessionsCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(traceSessionListQueryApi),
+    },
+  );
+};
+
 export type tracerTraceSessionReadResponse200 = {
   data: TraceSessionApi;
   status: 200;
@@ -73874,6 +74227,129 @@ export const tracerTraceSessionEvalLogs = async (
   );
 };
 
+export type tracerTraceSessionQueryResponse200 = {
+  data: TraceSessionDetailResponseApi;
+  status: 200;
+};
+
+export type tracerTraceSessionQueryResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerTraceSessionQueryResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400>;
+};
+
+export type tracerTraceSessionQueryResponseSuccess =
+  tracerTraceSessionQueryResponse200 & {
+    headers: Headers;
+  };
+export type tracerTraceSessionQueryResponseError = (
+  | tracerTraceSessionQueryResponse400
+  | tracerTraceSessionQueryResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type tracerTraceSessionQueryResponse =
+  | tracerTraceSessionQueryResponseSuccess
+  | tracerTraceSessionQueryResponseError;
+
+export const getTracerTraceSessionQueryUrl = (
+  id: string,
+  params?: TracerTraceSessionQueryParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/trace-session/${id}/query/?${stringifiedParams}`
+    : `/tracer/trace-session/${id}/query/`;
+};
+
+/**
+ * Read the same authorized detail without putting filters in the URL.
+ */
+export const tracerTraceSessionQuery = async (
+  id: string,
+  params?: TracerTraceSessionQueryParams,
+  options?: RequestInit,
+): Promise<tracerTraceSessionQueryResponse> => {
+  return apiMutator<tracerTraceSessionQueryResponse>(
+    getTracerTraceSessionQueryUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerTraceSessionQueryCreateResponse200 = {
+  data: TraceSessionDetailResponseApi;
+  status: 200;
+};
+
+export type tracerTraceSessionQueryCreateResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerTraceSessionQueryCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400>;
+};
+
+export type tracerTraceSessionQueryCreateResponseSuccess =
+  tracerTraceSessionQueryCreateResponse200 & {
+    headers: Headers;
+  };
+export type tracerTraceSessionQueryCreateResponseError = (
+  | tracerTraceSessionQueryCreateResponse400
+  | tracerTraceSessionQueryCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type tracerTraceSessionQueryCreateResponse =
+  | tracerTraceSessionQueryCreateResponseSuccess
+  | tracerTraceSessionQueryCreateResponseError;
+
+export const getTracerTraceSessionQueryCreateUrl = (id: string) => {
+  return `/tracer/trace-session/${id}/query/`;
+};
+
+/**
+ * Read the same authorized detail without putting filters in the URL.
+ */
+export const tracerTraceSessionQueryCreate = async (
+  id: string,
+  traceSessionRetrieveQueryApi: TraceSessionRetrieveQueryApi,
+  options?: RequestInit,
+): Promise<tracerTraceSessionQueryCreateResponse> => {
+  return apiMutator<tracerTraceSessionQueryCreateResponse>(
+    getTracerTraceSessionQueryCreateUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(traceSessionRetrieveQueryApi),
+    },
+  );
+};
+
 export type tracerTraceListResponse200 = {
   data: TracerTraceList200;
   status: 200;
@@ -74041,6 +74517,72 @@ export const tracerTraceAgentGraph = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type tracerTraceAgentGraphCreateResponse200 = {
+  data: TraceAgentGraphResponseApi;
+  status: 200;
+};
+
+export type tracerTraceAgentGraphCreateResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerTraceAgentGraphCreateResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerTraceAgentGraphCreateResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerTraceAgentGraphCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 500 | 503>;
+};
+
+export type tracerTraceAgentGraphCreateResponseSuccess =
+  tracerTraceAgentGraphCreateResponse200 & {
+    headers: Headers;
+  };
+export type tracerTraceAgentGraphCreateResponseError = (
+  | tracerTraceAgentGraphCreateResponse400
+  | tracerTraceAgentGraphCreateResponse500
+  | tracerTraceAgentGraphCreateResponse503
+  | tracerTraceAgentGraphCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type tracerTraceAgentGraphCreateResponse =
+  | tracerTraceAgentGraphCreateResponseSuccess
+  | tracerTraceAgentGraphCreateResponseError;
+
+export const getTracerTraceAgentGraphCreateUrl = () => {
+  return `/tracer/trace/agent_graph/`;
+};
+
+/**
+ * ``path_edges`` remains an empty compatibility field until telemetry
+records authoritative chronological execution transitions.
+ * @summary Return one cached exact Agent Graph.
+ */
+export const tracerTraceAgentGraphCreate = async (
+  traceAgentGraphQueryApi: TraceAgentGraphQueryApi,
+  options?: RequestInit,
+): Promise<tracerTraceAgentGraphCreateResponse> => {
+  return apiMutator<tracerTraceAgentGraphCreateResponse>(
+    getTracerTraceAgentGraphCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(traceAgentGraphQueryApi),
     },
   );
 };
@@ -74418,7 +74960,7 @@ export const tracerTraceGetTraceExportData = async (
 };
 
 export type tracerTraceGetTraceIdByIndexResponse200 = {
-  data: TracerTraceGetTraceIdByIndex200;
+  data: TraceNavigationResponseApi;
   status: 200;
 };
 
@@ -74478,8 +75020,53 @@ export const tracerTraceGetTraceIdByIndex = async (
   );
 };
 
+export type tracerTraceGetTraceIdByIndexCreateResponse200 = {
+  data: TraceNavigationResponseApi;
+  status: 200;
+};
+
+export type tracerTraceGetTraceIdByIndexCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerTraceGetTraceIdByIndexCreateResponseSuccess =
+  tracerTraceGetTraceIdByIndexCreateResponse200 & {
+    headers: Headers;
+  };
+export type tracerTraceGetTraceIdByIndexCreateResponseError =
+  tracerTraceGetTraceIdByIndexCreateResponseDefault & {
+    headers: Headers;
+  };
+
+export type tracerTraceGetTraceIdByIndexCreateResponse =
+  | tracerTraceGetTraceIdByIndexCreateResponseSuccess
+  | tracerTraceGetTraceIdByIndexCreateResponseError;
+
+export const getTracerTraceGetTraceIdByIndexCreateUrl = () => {
+  return `/tracer/trace/get_trace_id_by_index/`;
+};
+
+/**
+ * Get the previous and next trace id by index using efficient database queries.
+ */
+export const tracerTraceGetTraceIdByIndexCreate = async (
+  traceIndexQueryApi: TraceIndexQueryApi,
+  options?: RequestInit,
+): Promise<tracerTraceGetTraceIdByIndexCreateResponse> => {
+  return apiMutator<tracerTraceGetTraceIdByIndexCreateResponse>(
+    getTracerTraceGetTraceIdByIndexCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(traceIndexQueryApi),
+    },
+  );
+};
+
 export type tracerTraceGetTraceIdByIndexObserveResponse200 = {
-  data: TracerTraceGetTraceIdByIndexObserve200;
+  data: TraceNavigationResponseApi;
   status: 200;
 };
 
@@ -74535,6 +75122,51 @@ export const tracerTraceGetTraceIdByIndexObserve = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type tracerTraceGetTraceIdByIndexObserveCreateResponse200 = {
+  data: TraceNavigationResponseApi;
+  status: 200;
+};
+
+export type tracerTraceGetTraceIdByIndexObserveCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerTraceGetTraceIdByIndexObserveCreateResponseSuccess =
+  tracerTraceGetTraceIdByIndexObserveCreateResponse200 & {
+    headers: Headers;
+  };
+export type tracerTraceGetTraceIdByIndexObserveCreateResponseError =
+  tracerTraceGetTraceIdByIndexObserveCreateResponseDefault & {
+    headers: Headers;
+  };
+
+export type tracerTraceGetTraceIdByIndexObserveCreateResponse =
+  | tracerTraceGetTraceIdByIndexObserveCreateResponseSuccess
+  | tracerTraceGetTraceIdByIndexObserveCreateResponseError;
+
+export const getTracerTraceGetTraceIdByIndexObserveCreateUrl = () => {
+  return `/tracer/trace/get_trace_id_by_index_observe/`;
+};
+
+/**
+ * Get the previous and next trace id by index.
+ */
+export const tracerTraceGetTraceIdByIndexObserveCreate = async (
+  traceObserveIndexQueryApi: TraceObserveIndexQueryApi,
+  options?: RequestInit,
+): Promise<tracerTraceGetTraceIdByIndexObserveCreateResponse> => {
+  return apiMutator<tracerTraceGetTraceIdByIndexObserveCreateResponse>(
+    getTracerTraceGetTraceIdByIndexObserveCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(traceObserveIndexQueryApi),
     },
   );
 };
@@ -74625,6 +75257,76 @@ export const tracerTraceListTraces = async (
   );
 };
 
+export type tracerTraceListTracesCreateResponse200 = {
+  data: TracePrototypeListResponseApi;
+  status: 200;
+};
+
+export type tracerTraceListTracesCreateResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerTraceListTracesCreateResponse422 = {
+  data: PageDepthExceededErrorApi;
+  status: 422;
+};
+
+export type tracerTraceListTracesCreateResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerTraceListTracesCreateResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerTraceListTracesCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 422 | 500 | 503>;
+};
+
+export type tracerTraceListTracesCreateResponseSuccess =
+  tracerTraceListTracesCreateResponse200 & {
+    headers: Headers;
+  };
+export type tracerTraceListTracesCreateResponseError = (
+  | tracerTraceListTracesCreateResponse400
+  | tracerTraceListTracesCreateResponse422
+  | tracerTraceListTracesCreateResponse500
+  | tracerTraceListTracesCreateResponse503
+  | tracerTraceListTracesCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type tracerTraceListTracesCreateResponse =
+  | tracerTraceListTracesCreateResponseSuccess
+  | tracerTraceListTracesCreateResponseError;
+
+export const getTracerTraceListTracesCreateUrl = () => {
+  return `/tracer/trace/list_traces/`;
+};
+
+/**
+ * List traces filtered by project ID and project version ID with optimized queries.
+ */
+export const tracerTraceListTracesCreate = async (
+  traceListQueryApi: TraceListQueryApi,
+  options?: RequestInit,
+): Promise<tracerTraceListTracesCreateResponse> => {
+  return apiMutator<tracerTraceListTracesCreateResponse>(
+    getTracerTraceListTracesCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(traceListQueryApi),
+    },
+  );
+};
+
 export type tracerTraceListTracesOfSessionResponse200 = {
   data: TraceObserveListResponseApi;
   status: 200;
@@ -74707,6 +75409,76 @@ export const tracerTraceListTracesOfSession = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type tracerTraceListTracesOfSessionCreateResponse200 = {
+  data: TraceObserveListResponseApi;
+  status: 200;
+};
+
+export type tracerTraceListTracesOfSessionCreateResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerTraceListTracesOfSessionCreateResponse422 = {
+  data: PageDepthExceededErrorApi;
+  status: 422;
+};
+
+export type tracerTraceListTracesOfSessionCreateResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerTraceListTracesOfSessionCreateResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerTraceListTracesOfSessionCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 422 | 500 | 503>;
+};
+
+export type tracerTraceListTracesOfSessionCreateResponseSuccess =
+  tracerTraceListTracesOfSessionCreateResponse200 & {
+    headers: Headers;
+  };
+export type tracerTraceListTracesOfSessionCreateResponseError = (
+  | tracerTraceListTracesOfSessionCreateResponse400
+  | tracerTraceListTracesOfSessionCreateResponse422
+  | tracerTraceListTracesOfSessionCreateResponse500
+  | tracerTraceListTracesOfSessionCreateResponse503
+  | tracerTraceListTracesOfSessionCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type tracerTraceListTracesOfSessionCreateResponse =
+  | tracerTraceListTracesOfSessionCreateResponseSuccess
+  | tracerTraceListTracesOfSessionCreateResponseError;
+
+export const getTracerTraceListTracesOfSessionCreateUrl = () => {
+  return `/tracer/trace/list_traces_of_session/`;
+};
+
+/**
+ * List traces filtered by project ID with optimized queries.
+ */
+export const tracerTraceListTracesOfSessionCreate = async (
+  traceObserveListQueryApi: TraceObserveListQueryApi,
+  options?: RequestInit,
+): Promise<tracerTraceListTracesOfSessionCreateResponse> => {
+  return apiMutator<tracerTraceListTracesOfSessionCreateResponse>(
+    getTracerTraceListTracesOfSessionCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(traceObserveListQueryApi),
     },
   );
 };
@@ -74805,6 +75577,88 @@ export const tracerTraceListVoiceCalls = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type tracerTraceListVoiceCallsCreateResponse200 = {
+  data: TraceVoiceCallListResponseApi;
+  status: 200;
+};
+
+export type tracerTraceListVoiceCallsCreateResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerTraceListVoiceCallsCreateResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerTraceListVoiceCallsCreateResponse422 = {
+  data: PageDepthExceededErrorApi;
+  status: 422;
+};
+
+export type tracerTraceListVoiceCallsCreateResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerTraceListVoiceCallsCreateResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerTraceListVoiceCallsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 422 | 500 | 503>;
+};
+
+export type tracerTraceListVoiceCallsCreateResponseSuccess =
+  tracerTraceListVoiceCallsCreateResponse200 & {
+    headers: Headers;
+  };
+export type tracerTraceListVoiceCallsCreateResponseError = (
+  | tracerTraceListVoiceCallsCreateResponse400
+  | tracerTraceListVoiceCallsCreateResponse404
+  | tracerTraceListVoiceCallsCreateResponse422
+  | tracerTraceListVoiceCallsCreateResponse500
+  | tracerTraceListVoiceCallsCreateResponse503
+  | tracerTraceListVoiceCallsCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type tracerTraceListVoiceCallsCreateResponse =
+  | tracerTraceListVoiceCallsCreateResponseSuccess
+  | tracerTraceListVoiceCallsCreateResponseError;
+
+export const getTracerTraceListVoiceCallsCreateUrl = () => {
+  return `/tracer/trace/list_voice_calls/`;
+};
+
+/**
+ * List voice/conversation traces for a project in an optimized way and
+return a response similar to the provided call object schema.
+
+Query params:
+- project_id (required)
+- page (1-based, optional, default 1)
+- page_size (optional, default 30)
+ */
+export const tracerTraceListVoiceCallsCreate = async (
+  traceVoiceCallListQueryApi: TraceVoiceCallListQueryApi,
+  options?: RequestInit,
+): Promise<tracerTraceListVoiceCallsCreateResponse> => {
+  return apiMutator<tracerTraceListVoiceCallsCreateResponse>(
+    getTracerTraceListVoiceCallsCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(traceVoiceCallListQueryApi),
     },
   );
 };
@@ -76322,6 +77176,72 @@ export const tracerUsersList = async (
   return apiMutator<tracerUsersListResponse>(getTracerUsersListUrl(params), {
     ...options,
     method: "GET",
+  });
+};
+
+export type tracerUsersCreateResponse200 = {
+  data: UsersResponseApi;
+  status: 200;
+};
+
+export type tracerUsersCreateResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerUsersCreateResponse422 = {
+  data: ApiErrorResponseApi;
+  status: 422;
+};
+
+export type tracerUsersCreateResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerUsersCreateResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerUsersCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 422 | 500 | 503>;
+};
+
+export type tracerUsersCreateResponseSuccess = tracerUsersCreateResponse200 & {
+  headers: Headers;
+};
+export type tracerUsersCreateResponseError = (
+  | tracerUsersCreateResponse400
+  | tracerUsersCreateResponse422
+  | tracerUsersCreateResponse500
+  | tracerUsersCreateResponse503
+  | tracerUsersCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type tracerUsersCreateResponse =
+  | tracerUsersCreateResponseSuccess
+  | tracerUsersCreateResponseError;
+
+export const getTracerUsersCreateUrl = () => {
+  return `/tracer/users/`;
+};
+
+/**
+ * List traces filtered by project ID with optimized queries.
+ */
+export const tracerUsersCreate = async (
+  usersQueryApi: UsersQueryApi,
+  options?: RequestInit,
+): Promise<tracerUsersCreateResponse> => {
+  return apiMutator<tracerUsersCreateResponse>(getTracerUsersCreateUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(usersQueryApi),
   });
 };
 

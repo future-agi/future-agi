@@ -30,10 +30,16 @@ DATE_FILTER = {
 
 
 def _assert_latest_replay_precedes_live_filter(sql: str) -> None:
-    replay = sql.index("LIMIT 1 BY project_id, trace_id, id, start_time")
-    live_filter = sql.index("WHERE is_deleted = 0", replay)
-    assert replay < live_filter
-    assert "FROM spans FINAL" not in sql
+    replay = sql.index("FROM spans FINAL")
+    fence = sql.index("AS latest_membership", replay)
+    live_filter = sql.index("WHERE snapshot_spans.is_deleted = 0", fence)
+    assert replay < fence < live_filter
+    assert "LIMIT 1 BY" not in sql
+    physical = sql[replay:fence].split(") AS physical", 1)[0]
+    assert "toStartOfHour(start_time) >= %(user_snapshot_scan_start)s" in physical
+    assert "toStartOfHour(start_time) < %(user_snapshot_scan_end)s" in physical
+    assert "user_snapshot_start_us" not in physical
+    assert "user_snapshot_end_us" not in physical
 
 
 def test_user_aggregate_graph_replays_latest_physical_span_versions():
@@ -57,7 +63,7 @@ def test_user_aggregate_graph_replays_latest_physical_span_versions():
     sql, params = builder.build()
 
     _assert_latest_replay_precedes_live_filter(sql)
-    assert "ORDER BY project_id, trace_id, id, start_time, _version DESC" in sql
+    assert "physical.start_time, physical.is_deleted, physical.end_user_id, physical.trace_session_id" in sql
     # Both the aggregate and trace-membership filter read the replayed CTE.
     assert sql.count("FROM latest_spans") >= 2
     assert "FROM latest_spans WHERE" in " ".join(sql.split())
@@ -79,7 +85,12 @@ def test_project_user_detail_graph_prunes_and_buckets_on_start_time():
 
     sql, params = builder.build()
 
-    _assert_latest_replay_precedes_live_filter(sql)
+    replay = sql.index("FROM spans FINAL")
+    fence = sql.index("AS latest_membership", replay)
+    assert replay < fence < sql.index("WHERE is_deleted = 0", fence)
+    assert "LIMIT 1 BY project_id, trace_id, id, start_time" not in sql
+    assert "project_id, observation_type, service_name," in sql
+    assert "toStartOfHour(start_time), trace_id, id" in sql
     assert "candidate_span_identities AS" in sql
     assert sql.count("FROM spans") == 2
     assert "FROM latest_spans AS rs" in sql
@@ -95,7 +106,7 @@ def test_project_user_detail_graph_prunes_and_buckets_on_start_time():
     assert "ts_survivor_map AS" in sql
     assert "OVER (PARTITION BY new_id)" not in sql
     assert "FROM spans AS rs" not in sql
-    assert re.search(r"\bFINAL\b", sql)  # bounded remap tables only
+    assert re.search(r"\bFINAL\b", sql)
     assert params["project_id"] == PROJECT_ID
     assert params["org_id"] == ORGANIZATION_ID
     assert params["end_user_id"] == END_USER_ID
