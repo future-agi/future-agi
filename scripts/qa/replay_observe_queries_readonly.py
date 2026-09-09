@@ -138,6 +138,8 @@ def qualification_summary(plan, rows, fingerprint):
     """Account for the entire plan, not just successful or selected requests.
 
     First-page identity checks do not prove full rows, pagination or UI.
+    Empty lists do not prove positive-data coverage; graph buckets do not
+    establish that any source records matched the filter.
     Old-source results and duplicate attempts are never additional coverage.
     """
     current, historical = {}, 0
@@ -202,6 +204,14 @@ def qualification_summary(plan, rows, fingerprint):
             # No real typed seed/request must not disappear as zero coverage.
             op_keys.add("BLOCKED_OR_UNRESOLVED/" + case.get("variant", "UNKNOWN"))
         counters += [operators[key] for key in op_keys]
+        list_result_kind = None
+        if (row and case["surface"] in replay.LISTS
+                and status == "COMPLETE_UNVERIFIED" and row.get("complete") is True):
+            cardinality = row.get("result_rows")
+            list_result_kind = (
+                "rows_unknown" if type(cardinality) is not int or cardinality < 0
+                else "nonempty" if cardinality > 0 else "empty"
+            )
         for counts in counters:
             counts["planned"] += 1
             counts[status] += 1
@@ -214,6 +224,11 @@ def qualification_summary(plan, rows, fingerprint):
                     counts["identity_order_verified"] += 1
                 elif reference.get("status") == "ID_ORDER_MISMATCH":
                     counts["identity_order_mismatch"] += 1
+                if list_result_kind:
+                    counts[f"list_complete_{list_result_kind}"] += 1
+                    if (list_result_kind != "rows_unknown"
+                            and reference.get("status") == "ID_ORDER_MATCH"):
+                        counts[f"list_identity_order_verified_{list_result_kind}"] += 1
     return {
         "plan_id": plan["plan_id"],
         "source_sha256": fingerprint,
@@ -354,11 +369,25 @@ def diagnostic_read_settings(
     return limits
 
 
-_USERS_ORIGIN_SHA = "20d339691652b7d0120ae3b6b8d1dfaf2a859c778688f19cce0e74e66e944f1f"
+# Reviewed first-page SQL shapes, not a blanket exemption for Users queries.
+# Keep each run bound to its exact selected shape and parameters below.
+_USERS_ORIGIN_SHAS = frozenset({
+    # Direct immutable-hour replay for unseeded Users, with 48 native latest
+    # state/window cases. Seeded shapes below differ only in whitespace from
+    # their original reviewed shapes; candidate membership is unchanged.
+    "ba51ea62b5e2f3831b6d9d1e4ab345283c068af90f1795bb7b7082526cd4d4e5",  # direct unseeded
+    "7b8c40bf16c6d1a869f19c75d26304d755298c7016ac451233958599369f3f51",  # text equality
+    "40aca43c4986c4b67e5d8b99ae753c347c7101d29735d7edf9f3de139ef97c95",  # string picker
+    "6c104d494f91458151c8e8ac48000b655c2535f31a34bb6e13642cf4ee2badd5",  # numeric witness
+    "47bc881ae53416886c98e29bbfe7ad3c76ac1f5be2e85c28580453da25a80278",  # numeric > witness
+    "2d41d1e3c331f81153c381c9b749e63aceeeac7ed7cb3d02da98bdda51951533",  # no scalar witness
+    "b7d8c12ae5adefc8e9776a4241fd77139d6f80407a002c6a292b32ab730397a4",  # ordinary text equality
+    "84c58fe4e006998b9f7d09a3cff2ea62f4209ffa724528b6cf6ae9978ef31fb0",  # single string picker
+})
 _USERS_REMAP_SHA = "090df268267944b22e713077c59d4836e4046fadb60bfbb78116f3a43af46676"
 _USERS_SOURCE_PINS = {
     "tracer.services.users_list_manager": "b5da3657a94ab71710a8db384990e018269929e80c2f651cf8a25b02df3eb831",
-    "tracer.services.clickhouse.query_builders.user_list": "97c47542622bb599cb003d2e7c5dfcc6bcba0989aaef41e8c3461ed6d6435ba8",
+    "tracer.services.clickhouse.query_builders.user_list": "6d6f39cd0f5f65a0a71056e9006727113d5f4fa0da38131f67b3814831039093",
     "tracer.services.clickhouse.v2.query_builders.user_list": "d5024fe5a46b7cbdf2621d04dfd02027c17816f7250f84120c920a0dd3c9908e",
     "tracer.services.clickhouse.v2.id_remap_sql": "56903f382c0f8dc40099e5ebfda45a8ab853c0b8f7ec16b5712f9c11092fe24a",
 }
@@ -387,6 +416,8 @@ class _UsersRemapContext:
     authorized_projects: tuple[str, ...]
     origin_bindings: str
     binding: str
+    origin_sql_sha256: str
+    origin_row_limit: int
 
 
 @dataclass(frozen=True)
@@ -433,6 +464,7 @@ class ReadOnlyExecutor:
         return max(0, int((self.deadline - time.monotonic()) * 1000))
 
     def _configure_users_remap(self, manager, case, scope, plan_id):
+        from tracer.services import users_list_manager as users
         from tracer.services.clickhouse.v2.query_builders.user_list import UserListQueryBuilderV2
 
         self._users_context = self._users_certificate = None
@@ -450,22 +482,31 @@ class ReadOnlyExecutor:
                 or tuple(manager.scoped_project_ids) != projects
                 or not projects or len(set(projects)) != len(projects)
                 or not set(projects) <= set(self.projects)
+                or manager._attribute_witness_disabled
                 or replay.digest(safe_json(manager.filters)) != replay.digest(safe_json(normalize_filters(request)))
                 or not _users_sources_current()):
             raise replay.ReplayError("USERS_REMAP_CONTEXT_NOT_QUALIFIED")
         builder = UserListQueryBuilderV2(organization_id=manager.organization_id,
                                        project_ids=list(projects), filters=manager.filters,
                                        search=manager.search, empty_scope=manager.empty_scope)
+        # Mirror only the reviewed manager's initial batch, including lookahead.
+        # This finite identity bound is separate from the unchanged query caps.
+        origin_limit = 1 + (users.USER_LIST_ATTRIBUTE_WITNESS_BATCH_SIZE
+                            if manager.attribute_exact_text_filters
+                            else users.USER_LIST_CANDIDATE_BATCH_SIZE)
         sql, bindings = builder.build_dimension_candidate_query(
-            limit=26, window_start=replay.utc(case["window"]["start"]),
+            limit=origin_limit, window_start=replay.utc(case["window"]["start"]),
             window_end=replay.utc(case["window"]["end"]),
         )
-        if hashlib.sha256(sql.strip().rstrip(";").encode()).hexdigest() != _USERS_ORIGIN_SHA:
+        origin_sha = hashlib.sha256(sql.strip().rstrip(";").encode()).hexdigest()
+        if origin_sha not in _USERS_ORIGIN_SHAS:
             raise replay.ReplayError("USERS_REMAP_ORIGIN_NOT_QUALIFIED")
         self._users_context = _UsersRemapContext(
             tuple(_user_uuid(p) for p in projects), tuple(map(str, self.projects)),
             replay.digest(safe_json(bindings)),
             replay.digest({"case": case, "scope": scope, "plan_id": plan_id, "projects": projects}),
+            origin_sha,
+            origin_limit,
         )
         self._users_origin_expected = True
 
@@ -483,7 +524,8 @@ class ReadOnlyExecutor:
 
     def _users_result(self, result, *, origin, certificate, query_id):
         if origin:
-            if (result.row_count != len(result.data) or result.row_count > 26
+            if (result.row_count != len(result.data)
+                    or result.row_count > self._users_context.origin_row_limit
                     or len(result.columns) != len(set(result.columns))):
                 raise replay.ReplayError("USERS_REMAP_ORIGIN_RESULT_INVALID")
             try:
@@ -528,7 +570,7 @@ class ReadOnlyExecutor:
                 raise
             self._validate_users_remap(query, params, pending)
             sql, certified = query, pending
-        if origin and (hashlib.sha256(sql.encode()).hexdigest() != _USERS_ORIGIN_SHA
+        if origin and (hashlib.sha256(sql.encode()).hexdigest() != self._users_context.origin_sql_sha256
                        or replay.digest(safe_json(params)) != self._users_context.origin_bindings):
             raise replay.ReplayError("USERS_REMAP_ORIGIN_BINDINGS_CHANGED")
         remaining = self.remaining_read_ms()
@@ -563,7 +605,7 @@ class ReadOnlyExecutor:
             record["scope_certificate"] = {
                 "kind": "finite_users_remap_certificate.v1",
                 "origin_query_id": certified.origin_query_id,
-                "origin_sql_sha256": _USERS_ORIGIN_SHA,
+                "origin_sql_sha256": certified.context.origin_sql_sha256,
                 "source_sha256": replay.digest(_USERS_SOURCE_PINS),
                 "scope_binding_sha256": certified.context.binding,
                 "candidate_count": len(certified.ids), "candidate_ids_sha256": replay.digest(certified.ids),

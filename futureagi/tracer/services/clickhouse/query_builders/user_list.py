@@ -426,7 +426,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
         return " AND ".join(clauses), params
 
     def _positive_scalar_user_witness(self) -> tuple[str, dict[str, Any]]:
-        """Reuse the compiler's complete numeric witness; decline all other shapes."""
+        """Reuse complete numeric or ordinary text witnesses for group acquisition."""
         from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
             compile_trace_filter_plans,
         )
@@ -439,6 +439,10 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 self._is_date_filter(item)
                 or self._is_relation_filter(item)
                 or self._is_output_filter(item)
+                or (
+                    item.get("column_id") == "eval_score"
+                    and self._filter_col_type(item) != "SPAN_ATTRIBUTE"
+                )
             ):
                 continue
             config = dict(item.get("filter_config") or item.get("filterConfig") or {})
@@ -452,11 +456,30 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 continue
             plan = plans[0]
             witness = plan.raw_graph_value_witness_predicate or ""
+            raw_values = config.get("filter_value", config.get("filterValue"))
+            values = raw_values if isinstance(raw_values, list) else [raw_values]
+            # Users canonicalizes boolean/JSON-looking text and uses Python's
+            # Unicode lower(). Do not narrow those domains with a raw string
+            # comparison. Unsupported shapes keep the complete existing path.
+            plain_text = (
+                (config.get("filter_type") or config.get("filterType")) in {"text", "string"}
+                and (config.get("filter_op") or config.get("filterOp")) in {"equals", "in"}
+                and bool(values)
+                and all(
+                    isinstance(value, str)
+                    and value
+                    and value.isascii()
+                    and value.strip().lower() not in {"true", "false"}
+                    and not value.strip().startswith(("{", "["))
+                    for value in values
+                )
+            )
+            numeric_witness = "span_attr_num[" in witness and "span_attr_str" not in witness
+            text_witness = plain_text and "span_attr_str[" in witness and "span_attr_num" not in witness
             if (
                 plan.scope == "any"
                 and not plan.exclude_group_matches
-                and "span_attr_num[" in witness
-                and "span_attr_str" not in witness
+                and (numeric_witness or text_witness)
                 and "span_attr_bool" not in witness
                 and "JSONExtract" not in witness
             ):
@@ -731,7 +754,15 @@ class UserListQueryBuilder(BaseQueryBuilder):
             """
         else:
             embedded_session_projection = "toUInt64(0) AS num_sessions,"
-        usage_ctes = f"""
+        # With scalar acquisition, the final INNER JOIN already applies this
+        # dimension membership. Repeating it here expands the witness/dimension
+        # CTE branch again. Keep it for unseeded reads to bound aggregation.
+        usage_user_filter = "" if scalar_ctes else f"""
+          AND {resolved_latest_eu} IN (
+              SELECT end_user_id FROM filtered_end_users
+          )
+        """
+        identity_acquisition_cte = f"""
     candidate_span_identities AS (
         SELECT DISTINCT
             project_id,
@@ -747,6 +778,39 @@ class UserListQueryBuilder(BaseQueryBuilder):
           AND start_time < fromUnixTimestamp64Micro(%(user_window_end_us)s, 'UTC')
           {candidate_span_filter}
     ),
+        """ if candidate_span_filter else ""
+        # Without a user/scalar seed, every latest row in the exact window
+        # witnesses its own identity. Replay the intersecting immutable hours
+        # directly instead of constructing the same identity population twice.
+        # Seeded reads must retain the identity set: end_user_id is mutable.
+        replay_identity_filter = """
+          AND (
+              project_id,
+              observation_type,
+              service_name,
+              toStartOfHour(start_time),
+              trace_id,
+              id
+          ) IN (
+              SELECT
+                  project_id,
+                  observation_type,
+                  service_name,
+                  identity_hour,
+                  trace_id,
+                  id
+              FROM candidate_span_identities
+          )
+        """ if candidate_span_filter else """
+          AND toStartOfHour(start_time) >= toStartOfHour(
+              fromUnixTimestamp64Micro(%(user_window_start_us)s, 'UTC')
+          )
+          AND toStartOfHour(start_time) < fromUnixTimestamp64Micro(
+              %(user_window_end_us)s, 'UTC'
+          )
+        """
+        usage_ctes = f"""
+    {identity_acquisition_cte}
     latest_candidate_spans AS (
         SELECT
             project_id,
@@ -767,23 +831,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
         FROM spans
         PREWHERE {self._project_predicate("spans")}
           AND toDate(start_time) BETWEEN toDate(%(start_date)s) AND toDate(%(end_date)s)
-          AND (
-              project_id,
-              observation_type,
-              service_name,
-              toStartOfHour(start_time),
-              trace_id,
-              id
-          ) IN (
-              SELECT
-                  project_id,
-                  observation_type,
-                  service_name,
-                  identity_hour,
-                  trace_id,
-                  id
-              FROM candidate_span_identities
-          )
+          {replay_identity_filter}
         GROUP BY
             project_id,
             observation_type,
@@ -808,9 +856,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
         WHERE latest_is_deleted = 0
           AND latest_start_time >= fromUnixTimestamp64Micro(%(user_window_start_us)s, 'UTC')
           AND latest_start_time < fromUnixTimestamp64Micro(%(user_window_end_us)s, 'UTC')
-          AND {resolved_latest_eu} IN (
-              SELECT end_user_id FROM filtered_end_users
-          )
+          {usage_user_filter}
         GROUP BY end_user_id
     )
         """
@@ -1233,92 +1279,32 @@ class UserListQueryBuilder(BaseQueryBuilder):
 
         if not end_user_ids:
             return "", {}
-        start_date, end_date = self.parse_time_range(self.filters)
-        params: dict[str, Any] = {
-            "candidate_end_user_ids": tuple(str(value) for value in end_user_ids),
-            "start_date": start_date,
-            "end_date": end_date,
-        }
-        if self.project_ids:
-            params["project_ids"] = tuple(self.project_ids)
-        else:
-            params["project_id"] = self.project_id
-
-        # Page hydration runs only after a finite user page is selected. Building
-        # the global remap window here made this read exceed the 256 MiB
-        # production ceiling on large remap tables. Expand only the consolidation
-        # groups touched by the page ids.
-        eu_map, finite_map_params = self._finite_end_user_map(
-            candidate_param="candidate_end_user_ids"
+        prefix, params = self._finite_user_activity_ctes(
+            end_user_ids,
+            [
+                "argMax(tuple(trace_session_id), _version).1 AS latest_trace_session_id",
+                "argMax(status, _version) AS latest_status",
+                "argMax(tuple(end_time), _version).1 AS latest_end_time",
+                "argMax(latency_ms, _version) AS latest_latency_ms",
+            ],
+            include_sessions=True,
         )
-        params.update(finite_map_params)
-        ts_map = survivor_map_subquery("trace_session_id_remap")
         resolved_latest_eu = resolved_id_expr("latest_end_user_id", "span_eu_remap")
         resolved_latest_session = resolved_id_expr(
             "latest_trace_session_id", "span_ts_remap"
         )
 
         query = f"""
-        WITH
-        eu_survivor_map AS ({eu_map}),
-        ts_survivor_map AS ({ts_map}),
-        expanded_candidate_user_ids AS (
-            SELECT any_id AS end_user_id
-            FROM eu_survivor_map
-            WHERE survivor_id IN %(candidate_end_user_ids)s
-            UNION DISTINCT
-            SELECT end_user_id
-            FROM end_users FINAL
-            WHERE end_user_id IN %(candidate_end_user_ids)s
-        ),
-        candidate_span_identities AS (
-            SELECT DISTINCT
-                project_id,
-                trace_id,
-                id,
-                start_time
-            FROM spans
-            PREWHERE {self._project_predicate("spans")}
-              AND toDate(start_time) BETWEEN toDate(%(start_date)s) AND toDate(%(end_date)s)
-              AND start_time >= %(start_date)s
-              AND start_time < %(end_date)s
-              AND end_user_id IN (
-                  SELECT end_user_id FROM expanded_candidate_user_ids
-              )
-        ),
-        latest_candidate_spans AS (
-            SELECT
-                project_id,
-                trace_id,
-                id,
-                start_time,
-                argMax(tuple(end_user_id), _version).1 AS latest_end_user_id,
-                argMax(tuple(trace_session_id), _version).1 AS latest_trace_session_id,
-                argMax(observation_type, _version) AS latest_observation_type,
-                argMax(status, _version) AS latest_status,
-                argMax(tuple(end_time), _version).1 AS latest_end_time,
-                argMax(latency_ms, _version) AS latest_latency_ms,
-                argMax(is_deleted, _version) AS latest_is_deleted
-            FROM spans
-            PREWHERE {self._project_predicate("spans")}
-              AND toDate(start_time) BETWEEN toDate(%(start_date)s) AND toDate(%(end_date)s)
-              AND start_time >= %(start_date)s
-              AND start_time < %(end_date)s
-              AND (project_id, trace_id, id, start_time) IN (
-                  SELECT project_id, trace_id, id, start_time
-                  FROM candidate_span_identities
-              )
-            GROUP BY project_id, trace_id, id, start_time
-        ),
+        {prefix},
         resolved_candidate_spans AS (
             SELECT
                 {resolved_latest_eu} AS end_user_id,
                 {resolved_latest_session} AS trace_session_id,
                 trace_id,
-                start_time,
+                latest_start_time AS start_time,
                 latest_end_time AS end_time,
                 latest_latency_ms AS latency_ms,
-                latest_observation_type AS observation_type,
+                observation_type,
                 latest_status AS status
             FROM latest_candidate_spans
             LEFT JOIN eu_survivor_map AS span_eu_remap
@@ -1326,6 +1312,8 @@ class UserListQueryBuilder(BaseQueryBuilder):
             LEFT JOIN ts_survivor_map AS span_ts_remap
                 ON latest_trace_session_id = span_ts_remap.any_id
             WHERE latest_is_deleted = 0
+              AND latest_start_time >= fromUnixTimestamp64Micro(%(user_window_start_us)s, 'UTC')
+              AND latest_start_time < fromUnixTimestamp64Micro(%(user_window_end_us)s, 'UTC')
               AND {resolved_latest_eu} IN %(candidate_end_user_ids)s
         ),
         extra_metrics AS (

@@ -245,7 +245,9 @@ class UsersRemapCertificateTests(unittest.TestCase):
         project, user, foreign = (str(UUID(int=i)) for i in (1, 2, 3))
         reader = object.__new__(queries.ReadOnlyExecutor)
         reader.client, reader._users_certificate = object(), None
-        reader._users_context = queries._UsersRemapContext((project,), (project,), "bindings", "scope")
+        reader._users_context = queries._UsersRemapContext(
+            (project,), (project,), "bindings", "scope", "reviewed-origin-hash", 26
+        )
         origin = SimpleNamespace(row_count=1, columns=["end_user_id", "project_id"],
                                  data=[{"end_user_id": user, "project_id": project}])
         reader._users_result(origin, origin=True, certificate=None, query_id="actual-origin")
@@ -924,6 +926,41 @@ class OutcomeTests(unittest.TestCase):
             queries.qualification_summary(
                 {"plan_id": "other", "cases": cases}, rows, "current"
             )
+
+    def test_empty_list_or_bucket_results_cannot_prove_positive_list_coverage(self):
+        examples = [
+            ("traces", True, 25, "COMPLETE_UNVERIFIED"),
+            ("sessions", True, 0, "COMPLETE_UNVERIFIED"),
+            ("users_project", True, None, "COMPLETE_UNVERIFIED"),
+            ("traces", True, True, "COMPLETE_UNVERIFIED"),
+            ("traces", False, 25, "INCOMPLETE"),
+            ("traces", True, 25, "INEXACT"),
+            ("trace_graph", True, 365, "COMPLETE_UNVERIFIED"),
+        ]
+        cases, rows = [], []
+        for i, (surface, complete, count, status) in enumerate(examples):
+            cases.append({"id": str(i), "surface": surface, "period": "7D",
+                          "attributes": ["field"], "blocked": None})
+            rows.append({"case_id": str(i), "plan_id": "plan",
+                         "source_sha256": "current", "complete": complete,
+                         "result_rows": count, "status": status, "latency_met": True,
+                         "independent_reference": {"status": "ID_ORDER_MATCH"}})
+        plan = {"plan_id": "plan", "cases": cases}
+        summary = queries.qualification_summary(plan, rows, "current")
+        for counts in (summary["totals"], summary["by_attribute"]["field"]):
+            self.assertEqual(counts["list_complete_nonempty"], 1)
+            self.assertEqual(counts["list_complete_empty"], 1)
+            self.assertEqual(counts["list_complete_rows_unknown"], 2)
+            self.assertEqual(counts["list_identity_order_verified_nonempty"], 1)
+            self.assertEqual(counts["list_identity_order_verified_empty"], 1)
+        self.assertNotIn("list_complete_nonempty", summary["by_surface_period"]["trace_graph/7D"])
+        # A later failed attempt supersedes a prior positive match; attempts
+        # are not additional case coverage, and stale source rows do not count.
+        rows += [{**rows[0], "status": "ERROR", "complete": False},
+                 {**rows[0], "source_sha256": "old"}]
+        summary = queries.qualification_summary(plan, rows, "current")
+        self.assertEqual(summary["totals"].get("list_complete_nonempty", 0), 0)
+        self.assertEqual(summary["qualification"], "NOT_QUALIFIED")
 
     def test_completed_identity_mismatch_is_visible_even_if_fast(self):
         plan = {
