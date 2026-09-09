@@ -48,7 +48,7 @@ MAX_FILE_SIZE_BYTES = 1 * 1024 * 1024  # 1 MB — allow stdout writes, but no la
 MAX_PROCESSES = 50  # Python/Node need internal threads
 
 # Python modules safe to import inside the sandbox
-SAFE_MODULES = [
+DEFAULT_SAFE_MODULES = [
     "json", "re", "math", "collections", "itertools", "functools",
     "string", "datetime", "decimal", "statistics", "copy", "difflib",
     "textwrap", "hashlib", "base64", "uuid", "enum", "dataclasses",
@@ -71,6 +71,17 @@ SAFE_MODULES = [
     "sklearn", "sklearn.metrics",  # ML metrics
     "jinja2",  # Template rendering
 ]
+
+# Extract and sanitize extra modules from the environment
+env_extra_modules = os.environ.get("CODE_EVAL_ADDITIONAL_SAFE_MODULES", "")
+extra_modules = [
+    module.strip() 
+    for module in env_extra_modules.split(",") 
+    if module.strip()
+]
+
+# Combine defaults with user-configured modules
+SAFE_MODULES = list(set(DEFAULT_SAFE_MODULES + extra_modules))
 
 # os module with dangerous functions removed
 def _build_safe_os_module():
