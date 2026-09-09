@@ -554,9 +554,12 @@ import type {
   HarnessArtifactUploadResponseApi,
   HarnessEventBatchApi,
   HarnessEventBatchResponseApi,
+  HarnessIngressRequestApi,
+  HarnessIngressResponseApi,
   HarnessJobActionApi,
   HarnessJobAdjustmentApi,
   HarnessJobCreateApi,
+  HarnessJobExtendApi,
   HarnessJobReadApi,
   HarnessManifestApi,
   HarnessPreflightApi,
@@ -58401,6 +58404,55 @@ export const simulateApiHarnessJobsCancel = async (
   );
 };
 
+export type simulateApiHarnessJobsExtendResponse201 = {
+  data: HarnessJobExtendApi;
+  status: 201;
+};
+
+export type simulateApiHarnessJobsExtendResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiHarnessJobsExtendResponseSuccess =
+  simulateApiHarnessJobsExtendResponse201 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessJobsExtendResponseError =
+  simulateApiHarnessJobsExtendResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessJobsExtendResponse =
+  | simulateApiHarnessJobsExtendResponseSuccess
+  | simulateApiHarnessJobsExtendResponseError;
+
+export const getSimulateApiHarnessJobsExtendUrl = (id: string) => {
+  return `/simulate/api/harness-jobs/${id}/extend/`;
+};
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the backend
+selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
+``sandbox``). See ``simulate.services.harness_provider``.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const simulateApiHarnessJobsExtend = async (
+  id: string,
+  harnessJobExtendApi: HarnessJobExtendApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessJobsExtendResponse> => {
+  return apiMutator<simulateApiHarnessJobsExtendResponse>(
+    getSimulateApiHarnessJobsExtendUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessJobExtendApi),
+    },
+  );
+};
+
 export type simulateApiHarnessAttemptsArtifactsArtifactManifestResponse200 = {
   data: HarnessAcceptedResponseApi;
   status: 200;
@@ -58540,6 +58592,54 @@ export const simulateApiHarnessAttemptsEvents = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(harnessEventBatchApi),
+    },
+  );
+};
+
+export type simulateApiHarnessAttemptsIngressResponse200 = {
+  data: HarnessIngressResponseApi;
+  status: 200;
+};
+
+export type simulateApiHarnessAttemptsIngressResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessAttemptsIngressResponseSuccess =
+  simulateApiHarnessAttemptsIngressResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessAttemptsIngressResponseError =
+  simulateApiHarnessAttemptsIngressResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessAttemptsIngressResponse =
+  | simulateApiHarnessAttemptsIngressResponseSuccess
+  | simulateApiHarnessAttemptsIngressResponseError;
+
+export const getSimulateApiHarnessAttemptsIngressUrl = (id: string) => {
+  return `/simulate/api/harness/attempts/${id}/ingress/`;
+};
+
+/**
+ * The attempt capability authenticates the trusted ALK guest. Customer processes never
+receive that bearer and therefore cannot expose arbitrary sandbox ports themselves.
+ * @summary Mint a short-lived, no-header Daytona URL for one guest-selected HTTP port.
+ */
+export const simulateApiHarnessAttemptsIngress = async (
+  id: string,
+  harnessIngressRequestApi: HarnessIngressRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessAttemptsIngressResponse> => {
+  return apiMutator<simulateApiHarnessAttemptsIngressResponse>(
+    getSimulateApiHarnessAttemptsIngressUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessIngressRequestApi),
     },
   );
 };

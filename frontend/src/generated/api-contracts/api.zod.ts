@@ -34966,7 +34966,7 @@ export const simulateApiHarnessJobsCreateBodyAgentSecretRefsVersionMax = 255;
 
 export const simulateApiHarnessJobsCreateBodyAgentSecretRefsDefault = {};
 export const simulateApiHarnessJobsCreateBodyScenarioCountDefault = 10;
-export const simulateApiHarnessJobsCreateBodyScenarioCountMax = 10;
+export const simulateApiHarnessJobsCreateBodyScenarioCountMax = 200;
 
 export const simulateApiHarnessJobsCreateBodyRuntimeIsolationDefault = `dedicated_vm`;
 export const simulateApiHarnessJobsCreateBodyRuntimeCpuUnitsDefault = 4;
@@ -35078,6 +35078,9 @@ export const SimulateApiHarnessJobsCreateBody = zod.object({
   }),
   agent: zod.object({
     connector: zod.enum(["livekit", "vapi", "retell", "auto"]),
+    mode: zod
+      .enum(["connect_only", "environment_backed", "provider_import"])
+      .optional(),
     config: zod
       .record(zod.string(), zod.string())
       .default(simulateApiHarnessJobsCreateBodyAgentConfigDefault),
@@ -35085,7 +35088,7 @@ export const SimulateApiHarnessJobsCreateBody = zod.object({
       .record(
         zod.string(),
         zod.object({
-          manager: zod.enum(["platform-vault"]),
+          manager: zod.enum(["platform-vault", "platform-config"]),
           key: zod
             .string()
             .min(1)
@@ -35095,7 +35098,11 @@ export const SimulateApiHarnessJobsCreateBody = zod.object({
             .min(1)
             .max(simulateApiHarnessJobsCreateBodyAgentSecretRefsVersionMax)
             .optional(),
-          purpose: zod.enum(["target_provider", "source_checkout"]),
+          purpose: zod.enum([
+            "target_provider",
+            "simulator_provider",
+            "source_checkout",
+          ]),
         }),
       )
       .default(simulateApiHarnessJobsCreateBodyAgentSecretRefsDefault),
@@ -35264,7 +35271,7 @@ export const simulateApiHarnessJobsPreflightBodyAgentSecretRefsVersionMax = 255;
 
 export const simulateApiHarnessJobsPreflightBodyAgentSecretRefsDefault = {};
 export const simulateApiHarnessJobsPreflightBodyScenarioCountDefault = 10;
-export const simulateApiHarnessJobsPreflightBodyScenarioCountMax = 10;
+export const simulateApiHarnessJobsPreflightBodyScenarioCountMax = 200;
 
 export const simulateApiHarnessJobsPreflightBodyRuntimeIsolationDefault = `dedicated_vm`;
 export const simulateApiHarnessJobsPreflightBodyRuntimeCpuUnitsDefault = 4;
@@ -35340,6 +35347,7 @@ export const simulateApiHarnessJobsPreflightBodyArtifactsMaxArtifactBytesMin = 0
 export const simulateApiHarnessJobsPreflightBodyPlatformRunIdMax = 255;
 
 export const simulateApiHarnessJobsPreflightBodyMetadataDefault = {};
+export const simulateApiHarnessJobsPreflightBodyCredentialValuesMaxOne = 4096;
 
 export const SimulateApiHarnessJobsPreflightBody = zod.object({
   schema_version: zod
@@ -35376,6 +35384,9 @@ export const SimulateApiHarnessJobsPreflightBody = zod.object({
   }),
   agent: zod.object({
     connector: zod.enum(["livekit", "vapi", "retell", "auto"]),
+    mode: zod
+      .enum(["connect_only", "environment_backed", "provider_import"])
+      .optional(),
     config: zod
       .record(zod.string(), zod.string())
       .default(simulateApiHarnessJobsPreflightBodyAgentConfigDefault),
@@ -35383,7 +35394,7 @@ export const SimulateApiHarnessJobsPreflightBody = zod.object({
       .record(
         zod.string(),
         zod.object({
-          manager: zod.enum(["platform-vault"]),
+          manager: zod.enum(["platform-vault", "platform-config"]),
           key: zod
             .string()
             .min(1)
@@ -35393,7 +35404,11 @@ export const SimulateApiHarnessJobsPreflightBody = zod.object({
             .min(1)
             .max(simulateApiHarnessJobsPreflightBodyAgentSecretRefsVersionMax)
             .optional(),
-          purpose: zod.enum(["target_provider", "source_checkout"]),
+          purpose: zod.enum([
+            "target_provider",
+            "simulator_provider",
+            "source_checkout",
+          ]),
         }),
       )
       .default(simulateApiHarnessJobsPreflightBodyAgentSecretRefsDefault),
@@ -35543,6 +35558,17 @@ export const SimulateApiHarnessJobsPreflightBody = zod.object({
   metadata: zod
     .record(zod.string(), zod.string())
     .default(simulateApiHarnessJobsPreflightBodyMetadataDefault),
+  credential_values: zod
+    .record(
+      zod.string(),
+      zod
+        .string()
+        .max(simulateApiHarnessJobsPreflightBodyCredentialValuesMaxOne),
+    )
+    .optional()
+    .describe(
+      "Target-provider values to verify live; used for this check only.",
+    ),
 });
 
 /**
@@ -35762,6 +35788,43 @@ export const SimulateApiHarnessJobsCancelResponse = zod.object({
   }),
 });
 
+/**
+ * Validates the v1.6 request contract and delegates execution to the backend
+selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
+``sandbox``). See ``simulate.services.harness_provider``.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const SimulateApiHarnessJobsExtendParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessJobsExtendBodyCountMax = 50;
+
+export const simulateApiHarnessJobsExtendBodyGuidanceDefault = ``;
+export const simulateApiHarnessJobsExtendBodyGuidanceMax = 2000;
+
+export const simulateApiHarnessJobsExtendBodyClientRequestIdMax = 128;
+
+export const SimulateApiHarnessJobsExtendBody = zod.object({
+  count: zod
+    .number()
+    .min(1)
+    .max(simulateApiHarnessJobsExtendBodyCountMax)
+    .describe("How many new scenarios to add to the saved world."),
+  guidance: zod
+    .string()
+    .max(simulateApiHarnessJobsExtendBodyGuidanceMax)
+    .default(simulateApiHarnessJobsExtendBodyGuidanceDefault)
+    .describe(
+      "Optional natural-language steering for the added scenarios (e.g. 'calm first-time riders booking an airport pickup'). Existing scenarios are preserved.",
+    ),
+  client_request_id: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessJobsExtendBodyClientRequestIdMax)
+    .optional(),
+});
+
 export const SimulateApiHarnessAttemptsArtifactsArtifactManifestParams =
   zod.object({
     id: zod.string(),
@@ -35894,6 +35957,41 @@ export const SimulateApiHarnessAttemptsEventsResponse = zod.object({
       message: zod.string().min(1),
     }),
   ),
+});
+
+/**
+ * The attempt capability authenticates the trusted ALK guest. Customer processes never
+receive that bearer and therefore cannot expose arbitrary sandbox ports themselves.
+ * @summary Mint a short-lived, no-header Daytona URL for one guest-selected HTTP port.
+ */
+export const SimulateApiHarnessAttemptsIngressParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessAttemptsIngressBodyPortMax = 65535;
+
+export const simulateApiHarnessAttemptsIngressBodyExpiresInSecondsDefault = 7200;
+export const simulateApiHarnessAttemptsIngressBodyExpiresInSecondsMin = 60;
+export const simulateApiHarnessAttemptsIngressBodyExpiresInSecondsMax = 86400;
+
+export const SimulateApiHarnessAttemptsIngressBody = zod.object({
+  port: zod.number().min(1).max(simulateApiHarnessAttemptsIngressBodyPortMax),
+  expires_in_seconds: zod
+    .number()
+    .min(simulateApiHarnessAttemptsIngressBodyExpiresInSecondsMin)
+    .max(simulateApiHarnessAttemptsIngressBodyExpiresInSecondsMax)
+    .default(simulateApiHarnessAttemptsIngressBodyExpiresInSecondsDefault),
+});
+
+export const simulateApiHarnessAttemptsIngressResponseExpiresInSecondsMin = 60;
+export const simulateApiHarnessAttemptsIngressResponseExpiresInSecondsMax = 86400;
+
+export const SimulateApiHarnessAttemptsIngressResponse = zod.object({
+  url: zod.string().url().min(1),
+  expires_in_seconds: zod
+    .number()
+    .min(simulateApiHarnessAttemptsIngressResponseExpiresInSecondsMin)
+    .max(simulateApiHarnessAttemptsIngressResponseExpiresInSecondsMax),
 });
 
 export const SimulateApiHarnessAttemptsResultsParams = zod.object({
@@ -36034,6 +36132,8 @@ export const simulateApiHarnessAttemptsScenariosBodyPersonasItemRoleMax = 255;
 
 export const simulateApiHarnessAttemptsScenariosBodyAgentNameMax = 255;
 
+export const simulateApiHarnessAttemptsScenariosBodyChosenEvalsItemMax = 2000;
+
 export const simulateApiHarnessAttemptsScenariosBodyScenarioKeysItemMax = 255;
 
 export const SimulateApiHarnessAttemptsScenariosBody = zod.object({
@@ -36072,6 +36172,15 @@ export const SimulateApiHarnessAttemptsScenariosBody = zod.object({
   agent_name: zod
     .string()
     .max(simulateApiHarnessAttemptsScenariosBodyAgentNameMax)
+    .optional(),
+  agent_prompt: zod.string().optional(),
+  chosen_evals: zod
+    .array(
+      zod
+        .string()
+        .min(1)
+        .max(simulateApiHarnessAttemptsScenariosBodyChosenEvalsItemMax),
+    )
     .optional(),
   run_test_id: zod.string().uuid().optional(),
   scenario_keys: zod

@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 999,
+  endpointCount: 1001,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -27621,6 +27621,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/api/harness-jobs/{id}/extend/": {
+      post: {
+        operationId: "simulate_api_harness-jobs_extend",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: false,
+        requestBody: {
+          $ref: "#/definitions/HarnessJobExtend",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/HarnessJobExtend",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/api/harness/attempts/{id}/artifacts/manifest/": {
       post: {
         operationId:
@@ -27676,6 +27695,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/HarnessEventBatchResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness/attempts/{id}/ingress/": {
+      post: {
+        operationId: "simulate_api_harness_attempts_ingress",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessIngressRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessIngressResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -58521,6 +58559,43 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessIngressRequest: {
+      required: ["port"],
+      type: "object",
+      properties: {
+        port: {
+          title: "Port",
+          type: "integer",
+          maximum: 65535,
+          minimum: 1,
+        },
+        expires_in_seconds: {
+          title: "Expires in seconds",
+          type: "integer",
+          default: 7200,
+          maximum: 86400,
+          minimum: 60,
+        },
+      },
+    },
+    HarnessIngressResponse: {
+      required: ["url", "expires_in_seconds"],
+      type: "object",
+      properties: {
+        url: {
+          title: "Url",
+          type: "string",
+          format: "uri",
+          minLength: 1,
+        },
+        expires_in_seconds: {
+          title: "Expires in seconds",
+          type: "integer",
+          maximum: 86400,
+          minimum: 60,
+        },
+      },
+    },
     HarnessJobAction: {
       type: "object",
       properties: {
@@ -58577,7 +58652,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Scenario count",
           type: "integer",
           default: 10,
-          maximum: 10,
+          maximum: 200,
           minimum: 1,
         },
         seed: {
@@ -58612,6 +58687,33 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "x-nullable": true,
           },
           default: {},
+        },
+      },
+    },
+    HarnessJobExtend: {
+      required: ["count"],
+      type: "object",
+      properties: {
+        count: {
+          title: "Count",
+          description: "How many new scenarios to add to the saved world.",
+          type: "integer",
+          maximum: 50,
+          minimum: 1,
+        },
+        guidance: {
+          title: "Guidance",
+          description:
+            "Optional natural-language steering for the added scenarios (e.g. 'calm first-time riders booking an airport pickup'). Existing scenarios are preserved.",
+          type: "string",
+          default: "",
+          maxLength: 2000,
+        },
+        client_request_id: {
+          title: "Client request id",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
         },
       },
     },
@@ -58737,7 +58839,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Scenario count",
           type: "integer",
           default: 10,
-          maximum: 10,
+          maximum: 200,
           minimum: 1,
         },
         seed: {
@@ -58772,6 +58874,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "x-nullable": true,
           },
           default: {},
+        },
+        credential_values: {
+          title: "Credential values",
+          description:
+            "Target-provider values to verify live; used for this check only.",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            maxLength: 4096,
+          },
         },
       },
     },
@@ -58907,6 +59019,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Agent name",
           type: "string",
           maxLength: 255,
+        },
+        agent_prompt: {
+          title: "Agent prompt",
+          type: "string",
+        },
+        chosen_evals: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 2000,
+            minLength: 1,
+          },
         },
         run_test_id: {
           title: "Run test id",
@@ -84516,6 +84640,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           enum: ["livekit", "vapi", "retell", "auto"],
         },
+        mode: {
+          title: "Mode",
+          type: "string",
+          enum: ["connect_only", "environment_backed", "provider_import"],
+          "x-nullable": true,
+        },
         config: {
           title: "Config",
           type: "object",
@@ -85207,7 +85337,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         manager: {
           title: "Manager",
           type: "string",
-          enum: ["platform-vault"],
+          enum: ["platform-vault", "platform-config"],
         },
         key: {
           title: "Key",
@@ -85225,7 +85355,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         purpose: {
           title: "Purpose",
           type: "string",
-          enum: ["target_provider", "source_checkout"],
+          enum: ["target_provider", "simulator_provider", "source_checkout"],
         },
       },
     },

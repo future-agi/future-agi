@@ -16977,11 +16977,21 @@ export const HarnessAgentApiConnector = {
   auto: "auto",
 } as const;
 
+export type HarnessAgentApiMode =
+  (typeof HarnessAgentApiMode)[keyof typeof HarnessAgentApiMode];
+
+export const HarnessAgentApiMode = {
+  connect_only: "connect_only",
+  environment_backed: "environment_backed",
+  provider_import: "provider_import",
+} as const;
+
 export type SecretReferenceApiManager =
   (typeof SecretReferenceApiManager)[keyof typeof SecretReferenceApiManager];
 
 export const SecretReferenceApiManager = {
   "platform-vault": "platform-vault",
+  "platform-config": "platform-config",
 } as const;
 
 export type SecretReferenceApiPurpose =
@@ -16989,6 +16999,7 @@ export type SecretReferenceApiPurpose =
 
 export const SecretReferenceApiPurpose = {
   target_provider: "target_provider",
+  simulator_provider: "simulator_provider",
   source_checkout: "source_checkout",
 } as const;
 
@@ -17013,6 +17024,7 @@ export type HarnessAgentApiSecretRefs = { [key: string]: SecretReferenceApi };
 
 export interface HarnessAgentApi {
   connector: HarnessAgentApiConnector;
+  mode?: HarnessAgentApiMode;
   config?: HarnessAgentApiConfig;
   secret_refs?: HarnessAgentApiSecretRefs;
 }
@@ -17120,7 +17132,7 @@ export interface HarnessJobCreateApi {
   agent: HarnessAgentApi;
   /**
    * @minimum 1
-   * @maximum 10
+   * @maximum 200
    */
   scenario_count?: number;
   seed?: number;
@@ -17145,6 +17157,11 @@ export const HarnessPreflightApiSchemaVersion = {
 
 export type HarnessPreflightApiMetadata = { [key: string]: string };
 
+/**
+ * Target-provider values to verify live; used for this check only.
+ */
+export type HarnessPreflightApiCredentialValues = { [key: string]: string };
+
 export interface HarnessPreflightApi {
   schema_version?: HarnessPreflightApiSchemaVersion;
   run_id?: string;
@@ -17152,7 +17169,7 @@ export interface HarnessPreflightApi {
   agent: HarnessAgentApi;
   /**
    * @minimum 1
-   * @maximum 10
+   * @maximum 200
    */
   scenario_count?: number;
   seed?: number;
@@ -17166,6 +17183,8 @@ export interface HarnessPreflightApi {
    */
   platform_run_id?: string;
   metadata?: HarnessPreflightApiMetadata;
+  /** Target-provider values to verify live; used for this check only. */
+  credential_values?: HarnessPreflightApiCredentialValues;
 }
 
 export interface HarnessSecretFileUploadResponseApi {
@@ -17217,6 +17236,25 @@ export const HarnessJobActionApiReason = {
 
 export interface HarnessJobActionApi {
   reason?: HarnessJobActionApiReason;
+}
+
+export interface HarnessJobExtendApi {
+  /**
+   * How many new scenarios to add to the saved world.
+   * @minimum 1
+   * @maximum 50
+   */
+  count: number;
+  /**
+   * Optional natural-language steering for the added scenarios (e.g. 'calm first-time riders booking an airport pickup'). Existing scenarios are preserved.
+   * @maxLength 2000
+   */
+  guidance?: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  client_request_id?: string;
 }
 
 export type HarnessManifestApiSchemaVersion =
@@ -17330,6 +17368,29 @@ export interface HarnessEventRejectionApi {
 export interface HarnessEventBatchResponseApi {
   acked_through_sequence: number;
   rejected: HarnessEventRejectionApi[];
+}
+
+export interface HarnessIngressRequestApi {
+  /**
+   * @minimum 1
+   * @maximum 65535
+   */
+  port: number;
+  /**
+   * @minimum 60
+   * @maximum 86400
+   */
+  expires_in_seconds?: number;
+}
+
+export interface HarnessIngressResponseApi {
+  /** @minLength 1 */
+  url: string;
+  /**
+   * @minimum 60
+   * @maximum 86400
+   */
+  expires_in_seconds: number;
 }
 
 export type HarnessResultReceiptApiSchemaVersion =
@@ -17489,6 +17550,8 @@ export interface HarnessScenarioOperationApi {
   agent_definition_id?: string;
   /** @maxLength 255 */
   agent_name?: string;
+  agent_prompt?: string;
+  chosen_evals?: string[];
   run_test_id?: string;
   scenario_keys?: string[];
 }

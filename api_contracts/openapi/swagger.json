@@ -13,9 +13,9 @@
         },
         "version": "v1"
     },
-    "host": "localhost:8000",
+    "host": "dev.api.futureagi.com",
     "schemes": [
-        "http"
+        "https"
     ],
     "basePath": "/",
     "consumes": [
@@ -50126,6 +50126,49 @@
                 }
             ]
         },
+        "/simulate/api/harness-jobs/{id}/extend/": {
+            "post": {
+                "operationId": "simulate_api_harness-jobs_extend",
+                "summary": "Provider-neutral control plane for hosted ALK harness jobs.",
+                "description": "Validates the v1.6 request contract and delegates execution to the backend\nselected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or\n``sandbox``). See ``simulate.services.harness_provider``.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessJobExtend"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessJobExtend"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness/attempts/{id}/artifacts/manifest/": {
             "post": {
                 "operationId": "simulate_api_harness_attempts_artifacts_artifact_manifest",
@@ -50243,6 +50286,50 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/HarnessEventBatchResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness/attempts/{id}/ingress/": {
+            "post": {
+                "operationId": "simulate_api_harness_attempts_ingress",
+                "summary": "Mint a short-lived, no-header Daytona URL for one guest-selected HTTP port.",
+                "description": "The attempt capability authenticates the trusted ALK guest. Customer processes never\nreceive that bearer and therefore cannot expose arbitrary sandbox ports themselves.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessIngressRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessIngressResponse"
                         }
                     },
                     "default": {
@@ -60554,9 +60641,6 @@
                         }
                     }
                 },
-                "produces": [
-                    "text/csv"
-                ],
                 "tags": [
                     "tracer"
                 ],
@@ -64237,9 +64321,6 @@
                         }
                     }
                 },
-                "produces": [
-                    "text/csv"
-                ],
                 "tags": [
                     "tracer"
                 ],
@@ -65045,9 +65126,6 @@
                         }
                     }
                 },
-                "produces": [
-                    "text/csv"
-                ],
                 "tags": [
                     "tracer"
                 ],
@@ -117597,7 +117675,8 @@
                     "title": "Manager",
                     "type": "string",
                     "enum": [
-                        "platform-vault"
+                        "platform-vault",
+                        "platform-config"
                     ]
                 },
                 "key": {
@@ -117618,6 +117697,7 @@
                     "type": "string",
                     "enum": [
                         "target_provider",
+                        "simulator_provider",
                         "source_checkout"
                     ]
                 }
@@ -117638,6 +117718,16 @@
                         "retell",
                         "auto"
                     ]
+                },
+                "mode": {
+                    "title": "Mode",
+                    "type": "string",
+                    "enum": [
+                        "connect_only",
+                        "environment_backed",
+                        "provider_import"
+                    ],
+                    "x-nullable": true
                 },
                 "config": {
                     "title": "Config",
@@ -117879,7 +117969,7 @@
                     "title": "Scenario count",
                     "type": "integer",
                     "default": 10,
-                    "maximum": 10,
+                    "maximum": 200,
                     "minimum": 1
                 },
                 "seed": {
@@ -117948,7 +118038,7 @@
                     "title": "Scenario count",
                     "type": "integer",
                     "default": 10,
-                    "maximum": 10,
+                    "maximum": 200,
                     "minimum": 1
                 },
                 "seed": {
@@ -117983,6 +118073,15 @@
                         "x-nullable": true
                     },
                     "default": {}
+                },
+                "credential_values": {
+                    "title": "Credential values",
+                    "description": "Target-provider values to verify live; used for this check only.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "maxLength": 4096
+                    }
                 }
             }
         },
@@ -118088,6 +118187,34 @@
                         "ttl_exceeded"
                     ],
                     "default": "user_canceled"
+                }
+            }
+        },
+        "HarnessJobExtend": {
+            "required": [
+                "count"
+            ],
+            "type": "object",
+            "properties": {
+                "count": {
+                    "title": "Count",
+                    "description": "How many new scenarios to add to the saved world.",
+                    "type": "integer",
+                    "maximum": 50,
+                    "minimum": 1
+                },
+                "guidance": {
+                    "title": "Guidance",
+                    "description": "Optional natural-language steering for the added scenarios (e.g. 'calm first-time riders booking an airport pickup'). Existing scenarios are preserved.",
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 2000
+                },
+                "client_request_id": {
+                    "title": "Client request id",
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 1
                 }
             }
         },
@@ -118350,6 +118477,48 @@
                     "items": {
                         "$ref": "#/definitions/HarnessEventRejection"
                     }
+                }
+            }
+        },
+        "HarnessIngressRequest": {
+            "required": [
+                "port"
+            ],
+            "type": "object",
+            "properties": {
+                "port": {
+                    "title": "Port",
+                    "type": "integer",
+                    "maximum": 65535,
+                    "minimum": 1
+                },
+                "expires_in_seconds": {
+                    "title": "Expires in seconds",
+                    "type": "integer",
+                    "default": 7200,
+                    "maximum": 86400,
+                    "minimum": 60
+                }
+            }
+        },
+        "HarnessIngressResponse": {
+            "required": [
+                "url",
+                "expires_in_seconds"
+            ],
+            "type": "object",
+            "properties": {
+                "url": {
+                    "title": "Url",
+                    "type": "string",
+                    "format": "uri",
+                    "minLength": 1
+                },
+                "expires_in_seconds": {
+                    "title": "Expires in seconds",
+                    "type": "integer",
+                    "maximum": 86400,
+                    "minimum": 60
                 }
             }
         },
@@ -118657,6 +118826,18 @@
                     "title": "Agent name",
                     "type": "string",
                     "maxLength": 255
+                },
+                "agent_prompt": {
+                    "title": "Agent prompt",
+                    "type": "string"
+                },
+                "chosen_evals": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 2000,
+                        "minLength": 1
+                    }
                 },
                 "run_test_id": {
                     "title": "Run test id",
