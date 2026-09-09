@@ -171,10 +171,11 @@ def test_query_uses_one_coherent_full_storage_key_winner_and_presentation_order(
         "GROUP BY project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id"
         in compact
     )
-    assert (
-        "argMax(tuple(start_time, attributes_extra, attrs_string, attrs_number, attrs_bool, is_deleted), _version) AS latest_span"
-        in compact
-    )
+    assert "argMax(tuple(start_time, arrayMap(key -> multiIf(" in compact
+    assert "%(requested_attribute_keys)s), is_deleted), _version) AS latest_span" in compact
+    assert "latest_attribute_values AS candidate_attribute_value_json" in compact
+    for full_map_state in ("latest_attrs_", "latest_attributes_extra"):
+        assert full_map_state not in sql
     assert sql.count("argMax(") == 2  # Physical winner + final page/key presentation.
     assert "tuple(latest_start_time, id, observation_type, service_name)" in compact
     assert "WHERE latest_is_deleted = 0" in sql
@@ -358,3 +359,36 @@ def test_many_physical_spans_emit_only_page_times_requested_keys(engine):
     assert execute(engine, rows, ("k", "b", "k"), fanout=5002) == expected(
         k="5001", b="v"
     )
+
+
+def test_requested_key_projection_keeps_position_and_coherent_removals(engine):
+    rows = [
+        row(strings={"a": "old", "b": "removed", "ignored": "x" * 65536}),
+        row(version=2, strings={"a": "new", "c": ""},
+            extra='{"d":null}', booleans={"e": 0}, numbers={"f": 0}),
+    ]
+    assert execute(engine, rows, ("f", "missing", "d", "b", "e", "c", "a")) == expected(
+        a="new", c="", d=None, e=False, f=0
+    )
+
+
+@pytest.mark.parametrize("key_count", [1, 10, 260])
+def test_projection_multiple_typed_keys_preserves_requested_order(engine, key_count):
+    strings, numbers, booleans, extra, values = {}, {}, {}, {}, {}
+    for index in range(key_count):
+        key = f"field_{index}"
+        if index % 4 == 0:
+            strings[key] = values[key] = 'quoted "value"\\suffix' * 32
+        elif index % 4 == 1:
+            numbers[key] = values[key] = index + 0.25
+        elif index % 4 == 2:
+            booleans[key], values[key] = 0, False
+        else:
+            extra[key] = values[key] = {"nested": [index, None]}
+    rows = [
+        row(strings={**strings, "removed": "old"}),
+        row(version=2, strings=strings, numbers=numbers, booleans=booleans,
+            extra=json.dumps(extra)),
+    ]
+    keys = ["missing", *reversed(values), "removed", "missing"]
+    assert execute(engine, rows, keys) == expected(**values)

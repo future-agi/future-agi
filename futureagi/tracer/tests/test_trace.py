@@ -779,7 +779,8 @@ def test_get_span_trace_map_selects_from_spans(monkeypatch):
     assert out == {"s1": "t1"}
     assert "FROM spans" in captured["query"]
     assert "latest_trace_id IN %(trace_ids)s" in captured["query"]
-    assert "argMax(is_deleted, _version) AS latest_is_deleted" in captured["query"]
+    assert "argMax(tuple(start_time, is_deleted), _version) AS latest_span" in captured["query"]
+    assert "latest_span.2 AS latest_is_deleted" in captured["query"]
     assert "WHERE latest_is_deleted = 0" in captured["query"]
     assert (
         "groupArray(tuple(span_id, live_trace_ids)) AS span_mappings"
@@ -788,8 +789,8 @@ def test_get_span_trace_map_selects_from_spans(monkeypatch):
     assert captured["params"] == {"trace_ids": ["t1"]}
     assert captured["settings"] is None
     # The physical latest-state replay groups by the full ReplacingMergeTree
-    # identity, which includes project_id/start_time.  With no scope supplied,
-    # neither may appear as a pruning predicate.
+    # identity, including project/type/service/hour/trace/span. With no scope
+    # supplied, neither project nor time may appear as a pruning predicate.
     assert "project_id = %(project_id)s" not in captured["query"]
     assert "start_time >=" not in captured["query"]
     assert "start_time <" not in captured["query"]
@@ -891,13 +892,19 @@ def test_get_span_trace_map_uses_latest_state_before_trace_membership(monkeypatc
     )
     compact = " ".join(captured["query"].split())
 
-    assert "argMax(trace_id, _version)" in compact
-    assert "argMax(is_deleted, _version) AS latest_is_deleted" in compact
+    assert "toString(trace_id) AS latest_trace_id" in compact
+    assert "argMax(tuple(start_time, is_deleted), _version) AS latest_span" in compact
+    assert "latest_span.2 AS latest_is_deleted" in compact
     assert "WHERE latest_is_deleted = 0" in compact
     assert "latest_trace_id IN %(trace_ids)s" in compact
-    # Filtering physical versions by old trace/deleted state would resurrect
-    # stale rows before argMax classifies a reassignment/tombstone.
-    physical_scan = compact.split("GROUP BY project_id, id, start_time", 1)[0]
+    # A span ID may be reused across immutable trace identities. Resolve each
+    # key's tombstone before selecting the requested trace population.
+    physical_key = (
+        "GROUP BY project_id, observation_type, service_name, "
+        "toStartOfHour(start_time), trace_id, id"
+    )
+    assert physical_key in compact
+    physical_scan = compact.split(physical_key, 1)[0]
     assert "trace_id IN %(trace_ids)s" not in physical_scan
     assert "is_deleted = 0" not in physical_scan
 

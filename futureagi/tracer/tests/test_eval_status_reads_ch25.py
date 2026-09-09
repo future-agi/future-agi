@@ -78,12 +78,16 @@ def spans_table(ch_client, monkeypatch):
         f"""
         CREATE TABLE {table} (
             project_id UUID,
+            observation_type String DEFAULT 'SPAN',
+            service_name String DEFAULT 'fixture-service',
+            start_time DateTime64(6, 'UTC') DEFAULT '2026-08-01 12:00:00',
             trace_id String,
             id String,
             is_deleted UInt8,
             _version UInt64
         ) ENGINE = MergeTree
-        ORDER BY (project_id, trace_id, id, _version)
+        ORDER BY (project_id, observation_type, service_name,
+                  toStartOfHour(start_time), trace_id, id)
         """
     )
     monkeypatch.setattr(query_service_config, "_SPANS_TABLE", table)
@@ -230,7 +234,7 @@ def test_eval_status_result_and_detail_use_latest_live_candidate_on_ch25(
     ]
     ch_client.execute(f"INSERT INTO {eval_table} VALUES", rows)
     ch_client.execute(
-        f"INSERT INTO {spans_table} VALUES",
+        f"INSERT INTO {spans_table} (project_id, trace_id, id, is_deleted, _version) VALUES",
         [
             (project_id, str(trace_id), "span-live", 0, 1),
             # Same span id in another project is a valid global collision and

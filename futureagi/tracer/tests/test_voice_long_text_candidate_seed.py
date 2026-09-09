@@ -12,6 +12,8 @@ from tracer.services.clickhouse.v2.query_builders.voice_call_list import (
 )
 from tracer.tests.test_trace_root_physical_replay import (
     complete_root_row,
+    execute,
+    physical_row,
 )
 
 pytestmark = pytest.mark.unit
@@ -181,3 +183,92 @@ def test_voice_filters_without_exhaustive_long_text_witness_keep_existing_plan(
 )
 def test_voice_internal_and_sampled_consumers_keep_existing_plan(mode):
     assert not voice_builder(**mode).supports_filter_candidate_seed_page()
+
+
+@pytest.fixture(scope="module")
+def engine():
+    return pytest.importorskip("chdb")
+
+
+@pytest.mark.parametrize("days", [7, 30, 365])
+@pytest.mark.parametrize(
+    "operation", ["equals", "in", "contains", "starts_with", "ends_with"]
+)
+@pytest.mark.parametrize("latest_state", ["matching", "changed", "removed", "deleted"])
+def test_voice_long_text_seed_is_rechecked_against_latest_child_state(
+    engine, days, operation, latest_state
+):
+    """A raw historical text hit is not proof of current voice membership.
+
+    The child intentionally predates every root window. Acquisition must not
+    exclude it by time, and classification must reject its removed/changed or
+    tombstoned latest value. Execute both generated statements, not SQL strings
+    that have been replaced with hand-written predicates.
+    """
+    builder = voice_builder(
+        days=days,
+        operation=operation,
+        values=VALUES if operation == "in" else VALUES[0],
+    )
+    root_start = END - timedelta(days=1)
+    child_start = END - timedelta(days=400)
+    rows = [
+        physical_row(
+            observation_type="conversation",
+            start_time=root_start,
+        ),
+        physical_row(
+            id="child",
+            parent_span_id="root",
+            start_time=child_start,
+            _version=1,
+        ),
+        physical_row(
+            id="child",
+            parent_span_id="root",
+            start_time=child_start,
+            _version=2,
+            is_deleted=int(latest_state == "deleted"),
+        ),
+    ]
+
+    class AttributeFixture:
+        def query(self, sql, fmt):
+            latest_value = (
+                VALUES[0] if latest_state in {"matching", "deleted"} else "changed"
+            )
+            latest_map = (
+                "map('unrelated', 'value')"
+                if latest_state == "removed"
+                else f"map('call.recording.url', '{latest_value}')"
+            )
+            attributes = (
+                "if(id = 'child', "
+                f"if(_version = 1, map('call.recording.url', '{VALUES[0]}'), {latest_map}), "
+                "map('unrelated', 'root')) AS attrs_string"
+            )
+            return engine.query(
+                sql.replace("map('company_id', 'company') AS attrs_string", attributes),
+                fmt,
+            )
+
+    fixture = AttributeFixture()
+    start, end = builder.parse_time_range(builder.filters)
+    candidates = execute(
+        fixture,
+        builder,
+        rows,
+        builder.build_filter_candidate_seed_page(
+            slice_start=start, slice_end=end, limit=25
+        ),
+    )
+    assert [row["trace_id"] for row in candidates] == ["trace"]
+    matched = execute(
+        fixture,
+        builder,
+        rows,
+        builder.build_filter_identity_match_query_from_seed_rows(candidates),
+    )
+    assert [row["trace_id"] for row in matched] == (
+        ["trace"] if latest_state == "matching" else []
+    )

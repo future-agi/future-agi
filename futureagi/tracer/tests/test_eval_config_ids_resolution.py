@@ -439,6 +439,10 @@ class TestEvalReadSelectors:
         assert "FROM spans" in anchor_query
         assert "project_id = toUUID(%(project_id)s)" in anchor_query
         assert "HAVING argMax(is_deleted, _version) = 0" in anchor_query
+        assert (
+            "GROUP BY project_id, observation_type, service_name, "
+            "toStartOfHour(start_time), trace_id, id"
+        ) in " ".join(anchor_query.split())
         assert "LIMIT 2" in anchor_query
         assert anchor_params == {"project_id": "project-1", "span_id": "span-1"}
 

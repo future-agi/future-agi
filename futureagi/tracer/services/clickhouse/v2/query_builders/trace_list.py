@@ -505,13 +505,15 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
         # selected seed root is allowed to choose the replay population.
         # No inner LIMIT: an overflowing coordinate set must throw, not hide
         # a span. The outer full replacement-key argMax remains authoritative.
+        # Read the project UUID only after trace_id filtering; WHERE still
+        # enforces project scope before DISTINCT and preserves index pruning.
         return f"""
                   AND (observation_type, service_name, toStartOfHour(start_time), trace_id) IN (
                       SELECT DISTINCT observation_type, service_name,
                           toStartOfHour(start_time), trace_id
                       FROM {self.TABLE}
-                      PREWHERE {self.project_filter_sql()}
-                          AND trace_id IN %(candidate_trace_ids)s
+                      PREWHERE trace_id IN %(candidate_trace_ids)s
+                      WHERE {self.project_filter_sql()}
                   )
         """
 
@@ -823,8 +825,10 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
 
         A trace's physical span fanout is unbounded. Packing every span's full
         maps into one ``groupArray`` merely hides that fanout from the result-row
-        limit while retaining unbounded ClickHouse/Python memory. This query
-        projects only requested keys and deterministically selects one value per
+        limit while retaining unbounded ClickHouse/Python memory. Project requested
+        keys BEFORE argMax so its per-span state never retains unrelated maps/JSON.
+        This deterministic row projection preserves the same coherent winner,
+        including key removal, JSON null and type precedence. Select one value per
         ``(project, trace, key)``: the value on the latest live physical span by
         ``(latest_start_time, id, observation_type, service_name)``. Versions
         collapse on the six-part storage key with one coherent tuple before
@@ -906,21 +910,7 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
                 service_name,
                 latest_start_time,
                 attribute_key,
-                multiIf(
-                    notEmpty(JSONExtractRaw(latest_attributes_extra, attribute_key)),
-                        JSONExtractRaw(latest_attributes_extra, attribute_key),
-                    mapContains(latest_attrs_bool, attribute_key),
-                        if(latest_attrs_bool[attribute_key] != 0, 'true', 'false'),
-                    mapContains(latest_attrs_number, attribute_key),
-                        if(
-                            isFinite(latest_attrs_number[attribute_key]),
-                            toString(latest_attrs_number[attribute_key]),
-                            'null'
-                        ),
-                    mapContains(latest_attrs_string, attribute_key),
-                        toJSONString(latest_attrs_string[attribute_key]),
-                    ''
-                ) AS candidate_attribute_value_json
+                candidate_attribute_value_json
             FROM (
                 SELECT
                     project_id,
@@ -928,14 +918,23 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
                     id,
                     observation_type,
                     service_name,
-                    argMax(tuple(start_time, attributes_extra, attrs_string,
-                        attrs_number, attrs_bool, is_deleted), _version) AS latest_span,
+                    argMax(tuple(start_time,
+                        arrayMap(key -> multiIf(
+                            notEmpty(JSONExtractRaw(attributes_extra, key)),
+                                JSONExtractRaw(attributes_extra, key),
+                            mapContains(attrs_bool, key),
+                                if(attrs_bool[key] != 0, 'true', 'false'),
+                            mapContains(attrs_number, key),
+                                if(isFinite(attrs_number[key]),
+                                    toString(attrs_number[key]), 'null'),
+                            mapContains(attrs_string, key),
+                                toJSONString(attrs_string[key]),
+                            ''
+                        ), %(requested_attribute_keys)s),
+                        is_deleted), _version) AS latest_span,
                     latest_span.1 AS latest_start_time,
-                    latest_span.2 AS latest_attributes_extra,
-                    latest_span.3 AS latest_attrs_string,
-                    latest_span.4 AS latest_attrs_number,
-                    latest_span.5 AS latest_attrs_bool,
-                    latest_span.6 AS latest_is_deleted
+                    latest_span.2 AS latest_attribute_values,
+                    latest_span.3 AS latest_is_deleted
                 FROM {self.TABLE}
                 PREWHERE (toString(project_id), trace_id)
                     IN %(attr_trace_identities)s
@@ -943,7 +942,8 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
                 GROUP BY project_id, observation_type, service_name,
                     toStartOfHour(start_time), trace_id, id
             ) AS latest_physical_spans
-            ARRAY JOIN %(requested_attribute_keys)s AS attribute_key
+            ARRAY JOIN %(requested_attribute_keys)s AS attribute_key,
+                latest_attribute_values AS candidate_attribute_value_json
             WHERE latest_is_deleted = 0
         ) AS projected_attribute_values
         WHERE notEmpty(candidate_attribute_value_json)

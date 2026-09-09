@@ -1190,6 +1190,7 @@ def read_bounded_filter_page(
         and not candidate_witness_probe_enabled
     )
     identity_refill_limit = candidate_limit
+    identity_prefix_slice_end: datetime | None = None
     candidate_witness_probe_strata = 1
     # Slice-aware builders advertise their temporal probe contract through the
     # strata recommendation hook. Legacy one-shot probes expose only
@@ -2174,6 +2175,7 @@ def read_bounded_filter_page(
         """
 
         nonlocal initial_identity_flush_pending, adaptive_identity_start, empty_prefix_seed
+        nonlocal identity_prefix_slice_end
 
         if (
             not identity_only_classification
@@ -2245,8 +2247,17 @@ def read_bounded_filter_page(
             and callable(candidate_witness_probe_builder)
             else classify_batch_size
         )
+        # Recheck density once per new ordered slice, not after every sparse
+        # batch. A newer empty population says nothing about an older one.
+        new_slice_prefix = (
+            ordered_identity_refill
+            and not matched_by_id
+            and identity_prefix_slice_end != active_end
+            and pending_flush_size == 200
+            and len(pending_identity_candidates) >= pending_flush_size
+        )
         if (
-            initial_identity_flush_pending
+            (initial_identity_flush_pending or new_slice_prefix)
             and stop_on_ordered_prefix
             and pending_identity_candidates
             and (len(pending_identity_candidates) >= pending_flush_size or force)
@@ -2254,6 +2265,7 @@ def read_bounded_filter_page(
             # Split only the first scheduled batch. Lack of an exact ordered
             # prefix (including corrected root order) resumes baseline sizing.
             adaptive_identity_start = True
+            identity_prefix_slice_end = active_end
             scheduled = min(len(pending_identity_candidates), pending_flush_size)
             first = min(50, scheduled)
             prefix_proven = flush(first)

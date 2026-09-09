@@ -54,17 +54,12 @@ def test_trace_attribute_hydration_projects_latest_requested_key_value():
     )
 
     compact = " ".join(sql.split())
-    assert (
-        "argMax(tuple(start_time, attributes_extra, attrs_string, attrs_number, attrs_bool, is_deleted), _version) AS latest_span"
-        in compact
-    )
+    assert "argMax(tuple(start_time, arrayMap(key -> multiIf(" in compact
+    assert "%(requested_attribute_keys)s), is_deleted), _version) AS latest_span" in compact
     for slot, alias in enumerate(
         (
             "latest_start_time",
-            "latest_attributes_extra",
-            "latest_attrs_string",
-            "latest_attrs_number",
-            "latest_attrs_bool",
+            "latest_attribute_values",
             "latest_is_deleted",
         ),
         start=1,
@@ -85,10 +80,11 @@ def test_trace_attribute_hydration_projects_latest_requested_key_value():
         in compact
     )
     assert "attribute_value_json" in sql
-    assert "JSONExtractRaw(latest_attributes_extra, attribute_key)" in sql
-    assert "mapContains(latest_attrs_bool, attribute_key)" in sql
-    assert "mapContains(latest_attrs_number, attribute_key)" in sql
-    assert "mapContains(latest_attrs_string, attribute_key)" in sql
+    assert "JSONExtractRaw(attributes_extra, key)" in sql
+    assert "mapContains(attrs_bool, key)" in sql
+    assert "mapContains(attrs_number, key)" in sql
+    assert "mapContains(attrs_string, key)" in sql
+    assert "latest_attribute_values AS candidate_attribute_value_json" in sql
     assert "LIMIT" not in sql
     assert "INTERVAL 1 DAY" not in sql
     assert "start_time >= %(start_date)s" not in sql

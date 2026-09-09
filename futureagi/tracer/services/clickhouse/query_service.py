@@ -580,10 +580,11 @@ class AnalyticsQueryService:
                 "start_time >= %(start_date)s - INTERVAL 1 DAY "
                 "AND start_time < %(end_date)s + INTERVAL 1 DAY"
             )
-        # Resolve ReplacingMergeTree state before checking live membership.
+        # Resolve the full CH25 ReplacingMergeTree key before live membership.
         # Filtering ``is_deleted = 0`` in the physical scan resurrects an older
-        # version after a tombstone. A span id can also be reused/reassigned;
-        # retain every live candidate trace so Python can reject ambiguity.
+        # version after a tombstone. Exact start_time is mutable within its
+        # storage hour; service, observation type and trace are distinct keys.
+        # Retain every live candidate trace so Python can reject ambiguity.
         physical_where = (
             list(where)
             if pair_scoped
@@ -596,6 +597,7 @@ class AnalyticsQueryService:
             ]
         )
         window_fragment = ""
+        physical_window_fragment = ""
         if (
             not pair_scoped
             and normalized_scored_span_ids is None
@@ -603,8 +605,16 @@ class AnalyticsQueryService:
             and end_date is not None
         ):
             window_fragment = (
-                "AND start_time >= %(start_date)s - INTERVAL 1 DAY "
-                "AND start_time < %(end_date)s + INTERVAL 1 DAY"
+                "AND latest_start_time >= %(start_date)s - INTERVAL 1 DAY "
+                "AND latest_start_time < %(end_date)s + INTERVAL 1 DAY"
+            )
+            # Coarse immutable-hour pruning retains all corrected versions;
+            # the exact compatibility window applies only to the winner.
+            physical_window_fragment = (
+                "AND toStartOfHour(start_time) >= "
+                "toStartOfHour(%(start_date)s - INTERVAL 1 DAY) "
+                "AND toStartOfHour(start_time) <= "
+                "toStartOfHour(%(end_date)s + INTERVAL 1 DAY)"
             )
         mapping_columns = (
             "project_id_string, span_id, live_trace_ids"
@@ -630,15 +640,18 @@ class AnalyticsQueryService:
                     project_id,
                     toString(project_id) AS project_id_string,
                     toString(id) AS span_id,
-                    start_time,
-                    toString(argMax(trace_id, _version)) AS latest_trace_id,
-                    argMax(is_deleted, _version) AS latest_is_deleted
+                    toString(trace_id) AS latest_trace_id,
+                    argMax(tuple(start_time, is_deleted), _version) AS latest_span,
+                    latest_span.1 AS latest_start_time,
+                    latest_span.2 AS latest_is_deleted
                 FROM spans
                 WHERE {" AND ".join(physical_where) or "1"}
-                  {window_fragment}
-                GROUP BY project_id, id, start_time
+                  {physical_window_fragment}
+                GROUP BY project_id, observation_type, service_name,
+                         toStartOfHour(start_time), trace_id, id
             ) AS latest_physical_spans
             WHERE latest_is_deleted = 0
+              {window_fragment}
               AND {membership_predicate}
             GROUP BY {candidate_group_by}
         ) AS scored_span_candidates
@@ -823,12 +836,16 @@ class AnalyticsQueryService:
                 raise ReadDeadlineExceeded("evaluation detail read deadline exceeded")
             return remaining
 
+        # A tombstone in one service/type/hour cannot delete another physical
+        # span sharing the external ID. Keep duplicate trace IDs as separate
+        # anchors too: the LIMIT 2 sentinel must reject that ambiguity.
         span_anchor_query = f"""
             SELECT toString(trace_id) AS trace_id
             FROM {_SPANS_TABLE}
             PREWHERE project_id = toUUID(%(project_id)s)
             WHERE id = %(span_id)s
-            GROUP BY trace_id, id
+            GROUP BY project_id, observation_type, service_name,
+                     toStartOfHour(start_time), trace_id, id
             HAVING argMax(is_deleted, _version) = 0
             LIMIT 2
         """

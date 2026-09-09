@@ -208,7 +208,16 @@ def values_where(sql):
     return re.sub(r"'(?:\\.|[^'\\])*'|\b(?:SELECT|PREWHERE|WHERE)\b|[()]", token, sql)
 
 
-def execute(engine, builder, rows, sql_and_params, *, tag_rows=None, join_use_nulls=0):
+def execute(
+    engine,
+    builder,
+    rows,
+    sql_and_params,
+    *,
+    tag_rows=None,
+    join_use_nulls=0,
+    row_source=None,
+):
     """Execute actual generated SQL on inline values, explicitly matching UTC storage.
 
     PREWHERE becomes WHERE because values() is not MergeTree. This is semantic
@@ -249,6 +258,9 @@ def execute(engine, builder, rows, sql_and_params, *, tag_rows=None, join_use_nu
     sql, bindings = sql_and_params
     sql = values_where(without_query_settings(sql))
     sql = sql % escape_params(bindings, context)
+    # The inline fixture already opens WITH. Merge generated candidate CTEs
+    # into that list instead of producing two adjacent WITH clauses.
+    sql = re.sub(r"^\s*WITH\b", ",", sql, count=1)
     traces_relation = """
         SELECT toUUID('11111111-1111-4111-8111-111111111111') AS project_id,
             'trace' AS id, '[]' AS tags, toUInt64(1) AS _version, toUInt8(0) AS is_deleted
@@ -262,6 +274,7 @@ def execute(engine, builder, rows, sql_and_params, *, tag_rows=None, join_use_nu
                 'project_id UUID, id UUID, tags String, _version UInt64, is_deleted UInt8',
                 {tag_bindings["rows"][1:-1]})
         """
+    source = row_source or f"values({params['columns']}, {params['rows'][1:-1]})"
     fixture = f"""WITH spans AS (
         SELECT *, 'trace-name' AS trace_name, 'ok' AS status,
             CAST(NULL AS Nullable(DateTime64(6, 'UTC'))) AS end_time,
@@ -272,10 +285,10 @@ def execute(engine, builder, rows, sql_and_params, *, tag_rows=None, join_use_nu
             map('company_id', 'company') AS attrs_string,
             map('duration', 2.0) AS attrs_number, map('flag', toUInt8(1)) AS attrs_bool,
             '{{}}' AS attributes_extra, map('source', 'fixture') AS metadata
-        FROM values({params["columns"]}, {params["rows"][1:-1]})
+        FROM {source}
     ), traces AS ({traces_relation})
     {sql} SETTINGS max_threads=1, max_memory_usage=536870912,
-        join_use_nulls={int(join_use_nulls)}
+        join_use_nulls={int(join_use_nulls)}, output_format_json_quote_64bit_integers=0
     """
     result = [
         json.loads(line)
@@ -558,8 +571,10 @@ def test_legacy_keeps_four_part_contract(cls):
 
 
 class InlineAnalytics:
-    def __init__(self, engine, builder, rows, *, drift=False):
+    def __init__(self, engine, builder, rows, *, drift=False, row_source=None):
+        assert not (drift and row_source is not None)
         self.engine, self.builder, self.rows, self.drift = engine, builder, rows, drift
+        self.row_source = row_source
         self.calls = []
 
     def execute_ch_query(self, query, params, **kwargs):
@@ -569,7 +584,9 @@ class InlineAnalytics:
         rows = self.rows
         if self.drift and params.get("page_hydration_physical_keys"):
             rows = [*rows, {**rows[0], "_version": rows[0]["_version"] + 1}]
-        result = execute(self.engine, self.builder, rows, (query, params))
+        result = execute(
+            self.engine, self.builder, rows, (query, params), row_source=self.row_source
+        )
         return QueryResult(result, len(result), "clickhouse", 1.0)
 
 
