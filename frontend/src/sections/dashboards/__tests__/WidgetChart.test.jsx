@@ -1639,7 +1639,9 @@ describe("WidgetChart — dense-series budget (TH-7757)", () => {
       enabled: true,
       speed: 400,
     });
+    // Sparse series get one resting marker per point, not the thinned array.
     expect(lastChart().options.markers.size).toBeGreaterThan(0);
+    expect(lastChart().options.markers.discrete).toHaveLength(0);
   });
 
   it("draws a dense chart in one static pass", () => {
@@ -1649,13 +1651,20 @@ describe("WidgetChart — dense-series budget (TH-7757)", () => {
     expect(lastChart().options.chart.animations.enabled).toBe(false);
   });
 
-  it("keeps resting markers on a dense series", () => {
-    // Markers are what show where observations actually sit; dropping them made
-    // a sparse series spread over months read as continuous data.
+  it("thins resting markers to a bounded set on a dense series", () => {
+    // A marker per point over thousands of points costs real render time for
+    // a signal a coarse, evenly spaced sampling already conveys. The uniform
+    // size is dropped in favour of `discrete` entries so only the sampled
+    // points get a dot.
     h.query.data = queryResult(pointsAt(1200));
     render(<WidgetChart widget={baseWidget} globalDateRange={null} />);
 
-    expect(lastChart().options.markers.size).toBeGreaterThan(0);
+    const { markers } = lastChart().options;
+    expect(markers.size).toBe(0);
+    expect(Array.isArray(markers.discrete)).toBe(true);
+    expect(markers.discrete.length).toBeGreaterThan(0);
+    expect(markers.discrete.length).toBeLessThanOrEqual(60);
+    expect(markers.discrete.length).toBeLessThan(1200);
   });
 
   it("still marks the hovered point on a dense chart", () => {
@@ -1696,8 +1705,7 @@ describe("WidgetChart — table bucket pruning (TH-7757)", () => {
     chart_config: { chart_type: "table" },
   };
 
-  const bodyRowCount = () =>
-    document.querySelectorAll("tbody tr").length;
+  const bodyRowCount = () => document.querySelectorAll("tbody tr").length;
 
   it("renders one row per bucket while the table is short enough to read", () => {
     h.query.data = queryResult(bucketsSpanning(30, (i) => (i % 3 ? null : i)));

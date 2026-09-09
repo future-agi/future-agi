@@ -543,6 +543,41 @@ export default function WidgetChart({
   );
   const pieColorFor = (name) => getSeriesColorFromMap(pieColorMap, name);
 
+  // Past the animation budget, a marker per point costs real render time for
+  // a signal a coarse, evenly spaced sampling already conveys. Thinned to
+  // ~60 dots per series via `discrete` rather than dropped outright — see
+  // CHART_DENSE_POINT_BUDGET for why resting markers stay on a sparse series.
+  const isDenseSeries = isDenseChartSeries(plottedChartSeries);
+  const normalMarkerSize = isLineChart ? 5 : apexType === "area" ? 4 : 0;
+  const discreteMarkers = useMemo(() => {
+    if (!isDenseSeries || normalMarkerSize === 0) return [];
+    const points = [];
+    plottedChartSeries.forEach((s, si) => {
+      const data = s?.data || [];
+      const stride = Math.max(1, Math.ceil(data.length / 60));
+      const color = colorFor(s?.name);
+      for (let j = 0; j < data.length; j += stride) {
+        if (!Number.isFinite(data[j]?.y)) continue;
+        points.push({
+          seriesIndex: si,
+          dataPointIndex: j,
+          size: normalMarkerSize,
+          fillColor: color,
+          strokeColor: color,
+        });
+      }
+    });
+    return points;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    plottedChartSeries,
+    seriesColorMap,
+    apexType,
+    isLineChart,
+    isDenseSeries,
+    normalMarkerSize,
+  ]);
+
   const outOfRangeWarning = useMemo(
     () => getYAxisRangeWarning(chartSeries, axisConfig),
     [chartSeries, axisConfig],
@@ -1181,7 +1216,7 @@ export default function WidgetChart({
       zoom: { enabled: true },
       stacked: isStacked,
       animations: {
-        enabled: !isDenseChartSeries(plottedChartSeries),
+        enabled: !isDenseSeries,
         easing: "easeinout",
         speed: 400,
       },
@@ -1416,7 +1451,8 @@ export default function WidgetChart({
       };
     })(),
     markers: {
-      size: isLineChart ? 5 : apexType === "area" ? 4 : 0,
+      size: isDenseSeries ? 0 : normalMarkerSize,
+      discrete: discreteMarkers,
       strokeWidth: 2,
       strokeColors: isDark ? theme.palette.background.paper : "#fff",
       hover: isLineChart
