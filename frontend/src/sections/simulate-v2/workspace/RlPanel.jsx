@@ -92,7 +92,12 @@ export default function RlPanel({ env, envState, patch }) {
               <Box
                 component="pre"
                 sx={{
-                  m: 0, px: 2.5, py: 2, overflowX: "auto",
+                  m: 0, pl: 2.5, pr: 6, py: 2,
+                  /* Wrap instead of hiding overflow: these are short config /
+                     loop snippets, so a wrapped line reads better than a
+                     hidden horizontal scroll with no affordance. pr leaves
+                     room for the copy button so it never sits on the code. */
+                  whiteSpace: "pre-wrap", wordBreak: "break-word",
                   typography: "s2", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
                   color: "text.secondary", lineHeight: 1.7,
                 }}
@@ -241,7 +246,7 @@ export default function RlPanel({ env, envState, patch }) {
         <Box
           component="pre"
           sx={{
-            m: 0, px: 2.5, py: 2, overflowX: "auto",
+            m: 0, px: 2.5, py: 2, whiteSpace: "pre-wrap", wordBreak: "break-word",
             borderTop: "1px solid", borderColor: "divider", bgcolor: "background.neutral",
             typography: "s3", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
             color: "text.subtitle", lineHeight: 1.7,

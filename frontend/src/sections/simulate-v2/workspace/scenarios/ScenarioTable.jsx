@@ -89,9 +89,23 @@ export default function ScenarioTable({ rows, groups, env, onEdit, onRemove }) {
   ];
   let counter = 0;
 
+  /*
+    Fixed layout + an explicit colgroup: with table-layout:auto the cell
+    maxWidths were advisory, so `noWrap` bodies grew the column and clipped
+    mid-glyph at the viewport edge instead of ellipsising inside their cell.
+    Pinning each column's width makes every truncation land in-cell.
+    Widths sum to 1534 (== minWidth) so the last column can't be squeezed.
+  */
+  const colWidths = [44, 44, 260, 180, 240, 300, 150, 220, 96];
+
   return (
     <Box sx={{ overflowX: "auto" }}>
-      <Table size="small" sx={{ minWidth: 1400 }}>
+      <Table size="small" sx={{ minWidth: 1534, tableLayout: "fixed" }}>
+        <colgroup>
+          {colWidths.map((w, i) => (
+            <col key={i} style={{ width: w }} />
+          ))}
+        </colgroup>
         <TableHead>
           <TableRow>
             {columns.map((h, i) => {
@@ -414,14 +428,14 @@ function SubTasksCell({ subTasks }) {
     <TruncTooltip title={fullList}>
       <Stack spacing={0.375}>
         {list.slice(0, 3).map((st, i) => (
-          <Stack key={st.id} direction="row" spacing={0.75} alignItems="flex-start">
+          <Stack key={st.id} direction="row" spacing={0.75} alignItems="flex-start" sx={{ minWidth: 0 }}>
             <Typography sx={{
               typography: "s3", color: "text.subtitle",
               fontVariantNumeric: "tabular-nums", flexShrink: 0, mt: "1px",
             }}>
               {i + 1}.
             </Typography>
-            <Typography noWrap sx={{ typography: "s3", color: "text.secondary", minWidth: 0 }}>
+            <Typography noWrap sx={{ typography: "s3", color: "text.secondary", flex: 1, minWidth: 0 }}>
               {st.label}
             </Typography>
           </Stack>
