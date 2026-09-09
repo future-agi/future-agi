@@ -12,6 +12,8 @@ import LoadingStateComponent from "src/components/CallLogsDetailDrawer/LoadingSt
 import { getLoadingStateWithRespectiveStatus } from "../common";
 import { normalizeRecordings } from "src/utils/utils";
 import useStereoChannels from "src/hooks/use-stereo-channels";
+import RecordingFailure from "src/components/multi-track-audio-player/RecordingFailure";
+import { UNAVAILABLE } from "src/components/multi-track-audio-player/failureVariants";
 
 const isUpdatedWithinTwoMinutes = (timestamp) => {
   if (!timestamp) return false;
@@ -227,12 +229,16 @@ const AudioPlayerCustom = ({ data, onInstance }) => {
         normalizedRecordings.customer,
     );
     if (!hasAnyUrl) {
-      return (
+      return data?.recording_detail_pending ? (
         <Box sx={{ height: 200 }}>
           <LoadingStateComponent
             status="fetching"
             message="Fetching the recording"
           />
+        </Box>
+      ) : (
+        <Box sx={{ position: "relative", height: 200 }}>
+          <RecordingFailure variant={UNAVAILABLE} />
         </Box>
       );
     }
@@ -281,12 +287,16 @@ const AudioPlayerCustom = ({ data, onInstance }) => {
       recordings?.customer,
   );
   if (hasRecordingData && !hasPlayableUrl) {
-    return (
+    return data?.recording_detail_pending ? (
       <Box sx={{ height: 200 }}>
         <LoadingStateComponent
           status="fetching"
           message="Fetching the recording"
         />
+      </Box>
+    ) : (
+      <Box sx={{ position: "relative", height: 200 }}>
+        <RecordingFailure variant={UNAVAILABLE} />
       </Box>
     );
   }
@@ -342,7 +352,8 @@ const areRecordingPropsEqual = (prev, next) => {
     p?.recordings === n?.recordings &&
     p?.audio_url === n?.audio_url &&
     p?.id === n?.id &&
-    p?.timestamp === n?.timestamp
+    p?.timestamp === n?.timestamp &&
+    p?.recording_detail_pending === n?.recording_detail_pending
   );
 };
 //Avoid re-rendering while change in other data other than data of this component

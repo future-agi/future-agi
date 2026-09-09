@@ -97,7 +97,7 @@ const TestDetailSideDrawerChild = ({
     urlOrigin === "agent-definition";
   const isChatSim = data?.simulation_call_type === AGENT_TYPES.CHAT;
   const needsDetailFetch = isSimulate && (isVoiceCall || isChatSim);
-  const { data: callExecDetail, isLoading: _isCallExecDetailLoading } =
+  const { data: callExecDetail, isLoading: isCallExecDetailLoading } =
     useCallExecutionDetail(data?.id, needsDetailFetch && !!data?.id);
 
   // When `voiceDetail` or `callExecDetail` arrives async, the transcript
@@ -124,11 +124,14 @@ const TestDetailSideDrawerChild = ({
       }
       return out;
     };
+    const recordingDetailPending =
+      isVoiceDetailLoading || isCallExecDetailLoading;
     if (voiceDetail) {
       return {
         ...base,
         ...voiceDetail,
         transcript: mergeTranscripts(base.transcript, voiceDetail.transcript),
+        recording_detail_pending: recordingDetailPending,
       };
     }
     if (callExecDetail) {
@@ -139,9 +142,10 @@ const TestDetailSideDrawerChild = ({
           base.transcript,
           callExecDetail.transcript,
         ),
+        recording_detail_pending: recordingDetailPending,
       };
     }
-    return base;
+    return { ...base, recording_detail_pending: recordingDetailPending };
   }, [
     data,
     voiceDetail,
@@ -149,6 +153,8 @@ const TestDetailSideDrawerChild = ({
     urlModule,
     urlOrigin,
     resolvedProjectId,
+    isVoiceDetailLoading,
+    isCallExecDetailLoading,
   ]);
 
   const {
