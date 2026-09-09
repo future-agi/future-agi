@@ -306,7 +306,8 @@ function ClusterTableRow({ cluster, picked, alreadyIn, onToggle }) {
             onChange={onToggle}
             sx={{
               p: 0.5, color: "text.disabled",
-              "&.Mui-checked": { color: "#7857FC" },
+              "&.Mui-checked": { color: "text.primary" },
+              "&.MuiCheckbox-indeterminate": { color: "text.primary" },
             }}
           />
         </TableCell>

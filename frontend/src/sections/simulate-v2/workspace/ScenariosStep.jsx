@@ -833,7 +833,8 @@ function UseCaseFilterPopover({ anchorEl, onClose, allUseCases, countBy, selecte
                   sx={{
                     p: 0, mt: "1px", flexShrink: 0,
                     color: "text.disabled",
-                    "&.Mui-checked": { color: "#7857FC" },
+                    "&.Mui-checked": { color: "text.primary" },
+                    "&.MuiCheckbox-indeterminate": { color: "text.primary" },
                   }}
                 />
                 <Typography

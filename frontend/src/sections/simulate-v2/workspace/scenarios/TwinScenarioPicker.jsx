@@ -173,7 +173,8 @@ export default function TwinScenarioPicker({ env, envState, selected, onAdd }) {
                     sx={{
                       p: 0, mt: "1px", flexShrink: 0,
                       color: "text.disabled",
-                      "&.Mui-checked": { color: TWIN_TINT },
+                      "&.Mui-checked": { color: "text.primary" },
+                      "&.MuiCheckbox-indeterminate": { color: "text.primary" },
                     }}
                   />
                   <Box flex={1} minWidth={0}>
