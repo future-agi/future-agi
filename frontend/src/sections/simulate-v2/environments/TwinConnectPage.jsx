@@ -1,3 +1,4 @@
+import PropTypes from "prop-types";
 import { useMemo, useState, useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Helmet } from "react-helmet-async";
@@ -53,7 +54,20 @@ export default function TwinConnectPage() {
   if (!env) {
     return (
       <Box sx={{ p: 4 }}>
-        <EmptyState icon="solar:danger-triangle-linear" title="Environment not found" body="It may have been renamed or deleted." />
+        <EmptyState
+          icon="solar:box-minimalistic-linear"
+          title="This environment isn't here"
+          body="It may have been deleted, or the link is from an older version."
+          action={
+            <Button
+              variant="contained" color="primary" size="small"
+              startIcon={<Iconify icon="solar:alt-arrow-left-linear" width={16} />}
+              onClick={() => navigate(paths.dashboard.simulate.environments)}
+            >
+              Back to environments
+            </Button>
+          }
+        />
       </Box>
     );
   }
@@ -232,3 +246,4 @@ function Line({ label, value }) {
     </Stack>
   );
 }
+Line.propTypes = { label: PropTypes.node, value: PropTypes.node };

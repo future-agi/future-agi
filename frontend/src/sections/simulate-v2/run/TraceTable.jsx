@@ -8,6 +8,7 @@ import {
 import Iconify from "src/components/iconify";
 import { interpolateColorBasedOnScore } from "src/utils/utils";
 import { subTasksFor } from "../_mock/contract";
+import { Verdict } from "../components/primitives";
 
 /**
  * The traces, as a table with optional grouping.
@@ -43,7 +44,10 @@ const latencyOf = (t) => 280 + (hash(t.id) % 320);
   the highlight stays rare and meaningful.
 */
 const METRIC_THRESHOLDS = {
-  csat:    { direction: "lowIsBad",  bad: 4 },
+  /* Only genuinely low satisfaction is an alarm. CSAT runs ~1-6 here, so a
+     4 is a good result — flagging it red next to a "Passed" verdict read as a
+     contradiction. Reserve the red triangle for 1-2. */
+  csat:    { direction: "lowIsBad",  bad: 2 },
   turns:   { direction: "highIsBad", bad: 12 },
   latency: { direction: "highIsBad", bad: 550 },
   tokens:  { direction: "highIsBad", bad: 6000 },
@@ -330,22 +334,21 @@ export default function TraceTable({
     return arr;
   }, [tasks, groupBy, env]);
 
+  /* Row separators only — the vertical grid lines that used to border every
+     cell made a dense results table read as a spreadsheet from a decade ago. */
   const headCell = {
     typography: "s2", fontWeight: 500, color: "text.secondary",
     whiteSpace: "nowrap", bgcolor: "background.paper", height: 44, py: 0,
     borderBottom: "1px solid", borderColor: "divider",
-    "&:not(:first-of-type)": { borderLeft: "1px solid", borderColor: "divider" },
   };
   const num = {
     verticalAlign: "top", py: 1.5,
     typography: "s2", color: "text.secondary", fontVariantNumeric: "tabular-nums",
     borderBottom: "1px solid", borderColor: "divider",
-    "&:not(:first-of-type)": { borderLeft: "1px solid", borderColor: "divider" },
   };
   const bodyCell = {
     verticalAlign: "top", py: 1.5,
     borderBottom: "1px solid", borderColor: "divider",
-    "&:not(:first-of-type)": { borderLeft: "1px solid", borderColor: "divider" },
   };
   const checkCell = {
     width: 48, p: 0, pl: 1.25, verticalAlign: "middle",
@@ -440,14 +443,22 @@ export default function TraceTable({
 
       {show("callDetails") && (
         <TableCell sx={bodyCell} onClick={() => onOpen(t)}>
-          <Typography sx={{ typography: "s2", fontWeight: 500 }}>
-            {t.status === "failed" ? "Failed" : t.status === "error" ? "Errored" : "Completed"}
+          {/* Lead with the verdict, not the lifecycle status: a reader
+              scanning results wants "did it pass" first, and every passed
+              row used to read a grey "Completed" that buried the answer.
+              Then the specific scenario name (not the goal template, which
+              repeats down the group), its human summary, then duration. */}
+          <Verdict status={t.status} passes={t.passes} repeats={t.repeats} />
+          <Typography noWrap sx={{ typography: "s3", color: "text.secondary", fontWeight: 600, mt: 0.375 }}>
+            {t.name || t.title || t.id}
           </Typography>
-          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-            Duration : {((t.durationMs || 0) / 1000).toFixed(1)}s
-          </Typography>
-          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-            {t.id}
+          {(t.summary || t.title) && (
+            <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
+              {t.summary || t.title}
+            </Typography>
+          )}
+          <Typography noWrap sx={{ typography: "s3", color: "text.disabled" }}>
+            {((t.durationMs || 0) / 1000).toFixed(1)}s
           </Typography>
         </TableCell>
       )}
@@ -475,9 +486,15 @@ export default function TraceTable({
 
       {showEvals && evals.map((e) => {
         const r = t.evalResults?.find((x) => x.id === e.id);
+        /* A task with no verdict (infra never let it be judged) must not show a
+           grader score — a "Not measured" row that reads "Passed 81" is the
+           contradiction reviewers notice first. */
+        const measured = t.status !== "unmeasured" && t.status !== "error";
         return (
           <TableCell key={e.id} sx={{ ...bodyCell, p: 0, position: "relative" }} onClick={() => onOpen(t)}>
-            {r ? <Score result={r} /> : <Box sx={{ p: 2, typography: "s2", color: "text.disabled" }}>—</Box>}
+            {r && measured
+              ? <Score result={r} />
+              : <Box sx={{ p: 2, display: "grid", placeItems: "center", typography: "s2", fontWeight: 600, color: "text.disabled" }}>—</Box>}
           </TableCell>
         );
       })}

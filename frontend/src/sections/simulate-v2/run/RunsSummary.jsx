@@ -269,9 +269,9 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
               acceptable is a subtitle that keeps promising "the same scenarios"
               while one of the rows below covered three of them. */}
           <Typography sx={{ typography: "s1", color: "text.secondary" }}>
-            {summaries.length} runs
+            {summaries.length} {summaries.length === 1 ? "run" : "runs"}
             {full.length === summaries.length
-              ? `. The same ${envState.scenarios.length} scenarios every time, so what changed is the agent. 3 samples per scenario.`
+              ? `. The same ${envState.scenarios.length} scenarios every time — compare two runs to see what moved. 3 samples per scenario.`
               : `. ${full.length} over the full ${envState.scenarios.length} scenarios, ${summaries.length - full.length} over a subset. 3 samples per scenario.`}
             {trials.length > 0 && ` · ${trials.length} self-improvement trial${trials.length === 1 ? "" : "s"} live under their parent run`}
           </Typography>
@@ -318,6 +318,11 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
           bgcolor: "background.paper", overflow: "hidden",
         }}
       >
+        {/* A two-point line across the full width was flat noise ("we have a
+            chart component"); the table reads a 2-run comparison better than a
+            line does. Hold the trend until a third run gives it a shape — until
+            then the runs table below carries the comparison. */}
+        {summaries.length >= 3 && (<>
         {/*
           Its own row rather than the card's action slot. Seven graders make
           both the selector's summary and the legend long, and in the header
@@ -466,6 +471,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
             }}
           />
         </Box>
+        </>)}
 
         {/* ── did the fix do what it was projected to do ── */}
       {expectation && verified && (

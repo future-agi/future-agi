@@ -240,7 +240,8 @@ function HeroCard({ icon, title, tag, description, chips, moreLabel, selected, o
           : "background.paper",
         transition: "border-color .12s ease, background-color .12s ease",
         "&:hover": {
-          borderColor: (th) => selected ? undefined : (th.palette.mode === "dark" ? alpha(th.palette.text.primary, 0.32) : th.palette.text.disabled),
+          borderColor: (th) => selected ? undefined : alpha(th.palette.primary.main, 0.55),
+          bgcolor: (th) => selected ? undefined : alpha(th.palette.primary.main, th.palette.mode === "dark" ? 0.08 : 0.035),
         },
       }}
     >
@@ -368,11 +369,27 @@ function OptionCard({ option, selected, onClick }) {
           ? alpha(th.palette.text.primary, th.palette.mode === "dark" ? 0.06 : 0.03)
           : "background.paper",
         transition: "border-color .12s ease, background-color .12s ease",
+        /* A clearer, on-brand affordance: these are the pick-your-on-ramp
+           cards, so hover pulls the violet accent and the corner arrow leans
+           in — the static card no longer reads as a passive tile. */
         "&:hover": {
-          borderColor: (th) => selected ? undefined : (th.palette.mode === "dark" ? alpha(th.palette.text.primary, 0.32) : th.palette.text.disabled),
+          borderColor: (th) => selected ? undefined : alpha(th.palette.primary.main, 0.55),
+          bgcolor: (th) => selected ? undefined : alpha(th.palette.primary.main, th.palette.mode === "dark" ? 0.08 : 0.035),
+          "& .opt-arrow": { opacity: 1, transform: "translateX(2px)", color: "primary.main" },
         },
       }}
     >
+      {!selected && (
+        <Iconify
+          className="opt-arrow"
+          icon="solar:arrow-right-linear"
+          width={16}
+          sx={{
+            position: "absolute", top: 12, right: 12, color: "text.disabled", opacity: 0.45,
+            transition: "opacity .12s ease, transform .12s ease, color .12s ease",
+          }}
+        />
+      )}
       <Stack direction="row" alignItems="center" spacing={1.25}>
         <Box
           sx={{

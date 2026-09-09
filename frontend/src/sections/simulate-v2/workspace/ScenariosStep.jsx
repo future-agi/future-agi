@@ -212,9 +212,9 @@ export default function ScenariosStep({ env, envState, patch, buildMode }) {
                 : edited.length === stale.length ? " after being edited" : ""}
             </Typography>
             <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              This environment is on {proofStatus(stale[0], env, envState).current}.{" "}
-              {staleReasons.map((r) => INVALIDATING[r]).join("; ")}. They will still run and still
-              report a number — the number is just no longer standing on a proof.
+              This environment moved to {proofStatus(stale[0], env, envState).current} —{" "}
+              {staleReasons.map((r) => INVALIDATING[r]).join("; ")}. They still run and still report a
+              number; it just isn&apos;t standing on a proof yet.
             </Typography>
           </Box>
           <Button

@@ -1412,6 +1412,14 @@ export const dashboardRoutes = (
               element: <Navigate to="/dashboard/simulate/environments" replace />,
             },
             {
+              /* The global runs list moved onto the My Environments tab, but
+                 the paths.simulate.simulationRuns constant still points here.
+                 Redirect stale links/bookmarks instead of hitting the catch-all
+                 404. */
+              path: "runs",
+              element: <Navigate to="/dashboard/simulate/environments" replace />,
+            },
+            {
               /* Twin detail page still lives — post-provisioning UX. */
               path: "twins/:envId",
               element: <SimTwinDetail />,

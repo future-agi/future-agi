@@ -253,10 +253,16 @@ export default function DiagnosisPane({
                 <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 1 }}>
                   These change the environment, not the agent — and no prompt edit substitutes for them.
                 </Typography>
+                {/* Amber, not red: these are measurement fixes to apply, not
+                    errors. A red border read as "something is broken here". */}
                 <Stack
                   spacing={0}
                   divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}
-                  sx={{ border: "1px solid", borderColor: alpha("#DC2626", 0.3), borderRadius: 1 }}
+                  sx={{
+                    border: "1px solid", borderColor: "divider",
+                    borderLeft: "3px solid", borderLeftColor: alpha("#CA8A04", 0.8),
+                    borderRadius: 1,
+                  }}
                 >
                   {checks.map((c) => (
                     <Box key={c.id} sx={{ p: 1.75 }}>
@@ -464,10 +470,12 @@ export default function DiagnosisPane({
                 <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
                   With {included.length} included
                 </Typography>
+                {/* A projection, not a promise — 'up to', and neutral, because a
+                    green 100% reads as an outcome the run already reached. */}
                 <Typography
-                  sx={{ typography: "s1", fontWeight: 700, color: "#16A34A", fontVariantNumeric: "tabular-nums" }}
+                  sx={{ typography: "s1", fontWeight: 700, color: "text.primary", fontVariantNumeric: "tabular-nums" }}
                 >
-                  {projected}%
+                  up to {projected}%
                 </Typography>
               </Box>
               <Box flex={1} />
