@@ -176,48 +176,31 @@ def test_no_filter_poll_at_a_later_time_reuses_the_original_frozen_job(monkeypat
 
 
 @pytest.mark.unit
-def test_filtered_system_graph_uses_inline_raw_reader_without_snapshot(
-    monkeypatch,
-):
+def test_filtered_system_graph_uses_exact_snapshot(monkeypatch):
     from tracer.services.clickhouse import graph_dispatch
 
-    direct_calls = []
-
-    def direct_read(**kwargs):
-        direct_calls.append(kwargs)
-        return {
-            "metric_name": "latency",
-            "data": [],
-            "query_complete": True,
-            "query_status": "complete",
-            "query_sampled": False,
-            "query_exact": False,
-            "query_provenance": "bounded_candidates",
-        }
-
-    monkeypatch.setattr(
-        graph_dispatch,
-        "_fetch_direct_raw_system_metric_graph",
-        direct_read,
-    )
+    calls = []
+    expected = {"query_status": "pending", "query_complete": False, "data": []}
+    def schedule(namespace, identity, **options):
+        calls.append((namespace, identity, options))
+        return expected
+    monkeypatch.setattr(graph_dispatch, "read_or_schedule_exact_snapshot", schedule)
+    def reject_raw(**kwargs):
+        raise AssertionError("raw physical versions cannot supply an exact graph")
+    monkeypatch.setattr(graph_dispatch, "_fetch_direct_raw_system_metric_graph", reject_raw)
     result = graph_dispatch.fetch_system_metric_graph_ch(
-        analytics=object(),
-        project_id=PROJECT_ID,
-        filters=[_attribute_filter()],
-        interval="day",
-        metric_id="latency",
-        observe_type="span",
+        analytics=object(), project_id=PROJECT_ID, filters=[_attribute_filter()],
+        interval="day", metric_id="latency", observe_type="span",
     )
-
-    assert result["query_status"] == "complete"
-    assert result["query_complete"] is True
-    assert result["query_sampled"] is False
-    assert result["query_exact"] is False
-    assert result["query_provenance"] == "bounded_candidates"
-    assert len(direct_calls) == 1
-    assert direct_calls[0]["project_id"] == PROJECT_ID
-    assert direct_calls[0]["filters"] == [_attribute_filter()]
-    assert direct_calls[0]["observe_type"] == "span"
+    assert result is expected
+    assert len(calls) == 1
+    namespace, identity, options = calls[0]
+    assert namespace == "observe-system-graph"
+    assert identity["project_id"] == PROJECT_ID
+    assert identity["filters"] == [_attribute_filter()]
+    assert identity["observe_type"] == "span"
+    assert identity["payload_version"] == 2
+    assert options["schedule_on_miss"] is True
 
 
 @pytest.mark.unit

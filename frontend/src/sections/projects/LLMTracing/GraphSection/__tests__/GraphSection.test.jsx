@@ -6,7 +6,6 @@ import axios from "src/utils/axios";
 import {
   AGGREGATION_POLL_MAX_ATTEMPTS,
   AGGREGATION_POLLING_PAUSED_MESSAGE,
-  AGGREGATION_REQUEST_TIMEOUT_MS,
   GRAPH_LOADING_MESSAGE,
   QUERY_FAILED_RETRY_MESSAGE,
 } from "src/utils/queryReadState";
@@ -583,7 +582,7 @@ describe("GraphSection exact graph boundary", () => {
     },
   );
 
-  it("bounds a never-resolving transport, ignores its late response, and restarts on refresh", async () => {
+  it("accepts a slow exact read and supports a later explicit refresh", async () => {
     vi.useFakeTimers();
     let resolveLateRequest;
     axios.post.mockImplementationOnce(
@@ -604,11 +603,11 @@ describe("GraphSection exact graph boundary", () => {
     ).not.toBeInTheDocument();
 
     await act(async () =>
-      vi.advanceTimersByTimeAsync(AGGREGATION_REQUEST_TIMEOUT_MS),
+      vi.advanceTimersByTimeAsync(120_000),
     );
     expect(
-      screen.getByText("We couldn't load this data. Please retry in a moment."),
-    ).toBeInTheDocument();
+      screen.queryByText("We couldn't load this data. Please retry in a moment."),
+    ).not.toBeInTheDocument();
     expect(axios.post).toHaveBeenCalledOnce();
 
     resolveLateRequest({
@@ -629,7 +628,7 @@ describe("GraphSection exact graph boundary", () => {
       },
     });
     await act(async () => vi.advanceTimersByTimeAsync(0));
-    expect(screen.queryByTestId("apex-chart")).not.toBeInTheDocument();
+    expect(screen.getByTestId("apex-chart")).toHaveAttribute("data-primary-first-y", "999");
 
     axios.post.mockResolvedValueOnce({
       data: {

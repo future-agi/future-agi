@@ -47,13 +47,14 @@ FINAL_STATUS_FILTER = {
 
 
 @pytest.mark.unit
-def test_public_chart_routes_have_no_full_window_latest_spans_collapse():
+def test_public_chart_routes_schedule_exact_background_population():
     source = inspect.getsource(graph_dispatch.fetch_all_system_metrics_ch)
     assert "WITH latest_spans AS" not in source
     assert "ORDER BY _version DESC" not in source
-    assert "read_exact_all_system_metrics" in source
-    assert "_DeadlineBoundGraphAnalytics" in source
-    assert "_read_or_refresh_exact_graph" not in source
+    assert "read_exact_all_system_metrics" not in source
+    assert "_DeadlineBoundGraphAnalytics" not in source
+    assert "_read_or_refresh_exact_graph" in source
+    assert "observe-all-system-graphs" in source
     assert "read_graph_candidates" not in source
 
 

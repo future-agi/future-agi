@@ -57,7 +57,6 @@ import { toBackendFilters } from "../common";
 import { combineGraphFilters } from "./graphFilterUtils";
 import {
   AGGREGATION_POLLING_PAUSED_MESSAGE,
-  AGGREGATION_REQUEST_TIMEOUT_MS,
   GRAPH_LOADING_MESSAGE,
   QUERY_FAILED_RETRY_MESSAGE,
   createAggregationPollController,
@@ -595,19 +594,15 @@ const PrimaryGraph = ({
         setAggregationPollingPaused(false);
       }
 
-      // The first HTTP read and any pending-response polls share one visible
-      // action wall. The user-facing Refresh path resets this controller.
+      // Bound polling of pending responses separately. A valid exact HTTP
+      // read may finish later; scope changes and unmount still cancel it.
       pollingControllerRef.current.start();
       pollingControllerRef.current.recordAttempt();
       const generation = requestGenerationRef.current;
       return awaitAggregationRequestWithDeadline(request, {
-        timeoutMs: pollingControllerRef.current.remainingMs(
-          AGGREGATION_REQUEST_TIMEOUT_MS,
-        ),
+        timeoutMs: Infinity,
         signal,
         isCurrent: () => generation === requestGenerationRef.current,
-        onTimeout: () =>
-          pollingControllerRef.current.terminate("action_deadline"),
       });
     },
     [],

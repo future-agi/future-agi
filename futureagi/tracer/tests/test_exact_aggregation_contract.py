@@ -6228,48 +6228,27 @@ def test_exact_graph_budget_failure_does_not_publish_or_split_contribution_batch
 
 
 @pytest.mark.unit
-def test_public_filtered_graph_runs_direct_raw_reader_inline_without_scheduling():
+def test_public_filtered_graph_schedules_complete_latest_state_snapshot():
     from tracer.services.clickhouse import graph_dispatch
-
-    cache.clear()
 
     start = datetime(2026, 8, 1, 0, 0)
     end = datetime(2026, 8, 8, 0, 0)
-    exact_calls = []
-
-    def direct_read(**kwargs):
-        exact_calls.append(kwargs)
-        return {
-            "metric_name": "traffic",
-            "data": [],
-            "query_complete": True,
-            "query_status": "complete",
-            "query_sampled": False,
-            "query_exact": False,
-            "query_provenance": "bounded_candidates",
-        }
-
+    expected = {"data": [], "query_status": "pending", "query_complete": False}
     with patch.object(
-        graph_dispatch,
-        "_fetch_direct_raw_system_metric_graph",
-        side_effect=direct_read,
-    ):
+        graph_dispatch, "read_or_schedule_exact_snapshot", return_value=expected,
+    ) as schedule:
         result = graph_dispatch.fetch_system_metric_graph_ch(
-            analytics=object(),
-            project_id="11111111-1111-4111-8111-111111111111",
-            filters=_exact_multi_filters(start, end),
-            interval="day",
-            metric_id="traffic",
-            observe_type="trace",
-            timeout_ms=30_000,
+            analytics=object(), project_id="11111111-1111-4111-8111-111111111111",
+            filters=_exact_multi_filters(start, end), interval="day",
+            metric_id="traffic", observe_type="trace", timeout_ms=30_000,
         )
-
-    assert result["query_status"] == "complete"
-    assert result["query_complete"] is True
-    assert result["query_sampled"] is False
-    assert result["query_exact"] is False
-    assert result["query_provenance"] == "bounded_candidates"
-    assert exact_calls[0]["filters"] == _exact_multi_filters(start, end)
+    assert result is expected
+    schedule.assert_called_once()
+    namespace, identity = schedule.call_args.args
+    assert namespace == "observe-system-graph"
+    assert identity["filters"] == _exact_multi_filters(start, end)
+    assert identity["payload_version"] == 2
+    assert schedule.call_args.kwargs["pending_payload"]["query_sampled"] is False
 
 
 @pytest.mark.unit
@@ -7692,7 +7671,7 @@ def test_exact_annotation_graph_supports_combined_structured_filters(
         ("annotation", "read_exact_annotation_graph"),
     ],
 )
-def test_session_eval_annotation_direct_reader_keeps_session_context(
+def test_session_eval_annotation_snapshot_keeps_session_context(
     monkeypatch,
     metric_type,
     reader_name,
@@ -7701,8 +7680,8 @@ def test_session_eval_annotation_direct_reader_keeps_session_context(
 
     captured = {}
 
-    def direct_reader(**kwargs):
-        captured.update(kwargs)
+    def snapshot(namespace, identity, **options):
+        captured.update(identity)
         return {
             "metric_name": "metric",
             "data": [],
@@ -7713,8 +7692,8 @@ def test_session_eval_annotation_direct_reader_keeps_session_context(
 
     monkeypatch.setattr(
         graph_dispatch,
-        reader_name,
-        direct_reader,
+        "read_or_schedule_exact_snapshot",
+        snapshot,
     )
     common = {
         "analytics": object(),
@@ -7743,7 +7722,7 @@ def test_session_eval_annotation_direct_reader_keeps_session_context(
         ("annotation", "read_exact_annotation_graph"),
     ],
 )
-def test_user_eval_annotation_direct_reader_keeps_user_context(
+def test_user_eval_annotation_snapshot_keeps_user_context(
     monkeypatch,
     metric_type,
     reader_name,
@@ -7752,8 +7731,8 @@ def test_user_eval_annotation_direct_reader_keeps_user_context(
 
     captured = {}
 
-    def direct_reader(**kwargs):
-        captured.update(kwargs)
+    def snapshot(namespace, identity, **options):
+        captured.update(identity)
         return {
             "metric_name": "metric",
             "data": [],
@@ -7764,8 +7743,8 @@ def test_user_eval_annotation_direct_reader_keeps_user_context(
 
     monkeypatch.setattr(
         graph_dispatch,
-        reader_name,
-        direct_reader,
+        "read_or_schedule_exact_snapshot",
+        snapshot,
     )
     common = {
         "analytics": object(),

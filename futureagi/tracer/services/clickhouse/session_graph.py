@@ -705,7 +705,7 @@ def fetch_session_graph_ch(
     organization_id: str | None = None,
     workspace_id: str | None = None,
 ) -> dict[str, Any]:
-    """Dispatch rollups, bounded average-trace samples, or exact snapshots."""
+    """Dispatch all public Session graph metrics through exact snapshots."""
 
     if wall_deadline_ms <= 0:
         raise ValueError("session graph wall deadline must be positive")
@@ -716,54 +716,10 @@ def fetch_session_graph_ch(
     if metric_type == "SYSTEM_METRIC":
         if metric_id not in SESSION_SYSTEM_METRICS:
             raise ValueError("Unsupported session system metric")
-        if metric_id in _SESSION_ROLLUP_METRICS and _has_only_positive_window_filters(
-            filters
-        ):
-            if not bool(getattr(analytics, "supports_per_query_read_settings", True)):
-                return degraded_graph_response(
-                    metric_id,
-                    BoundedGraphReadError("query_failed", retryable=True),
-                    provenance="server_read_policy_unavailable",
-                )
-            started = monotonic()
-            deadline = ReadDeadline.start(
-                min(
-                    int(wall_deadline_ms),
-                    SESSION_GRAPH_INTERACTIVE_QUERY_TIMEOUT_MS,
-                )
-            )
-            return _fetch_rollup_system_metric_graph(
-                analytics=_DeadlineBoundAnalytics(analytics, deadline),
-                project_id=str(project_id),
-                filters=filters,
-                interval=interval,
-                metric_id=metric_id,
-                started=started,
-            )
-        if metric_id == "avg_traces_per_session" and _has_only_positive_window_filters(
-            filters
-        ):
-            started = monotonic()
-            deadline_ms = min(int(wall_deadline_ms), SESSION_GRAPH_WALL_DEADLINE_MS)
-            response = _fetch_system_metric_graph(
-                analytics=_DeadlineBoundAnalytics(
-                    analytics,
-                    ReadDeadline.start(deadline_ms),
-                ),
-                project_id=str(project_id),
-                filters=filters,
-                interval=interval,
-                metric_id=metric_id,
-                started=started,
-                deadline_ms=deadline_ms,
-            )
-            response.update(
-                {
-                    "query_exact": False,
-                    "query_provenance": "bounded_candidates",
-                }
-            )
-            return response
+        # Time-only requests require the same exact latest-session population
+        # as attribute-filtered requests. Rollups and bounded candidates cannot
+        # replace that population merely because no property leaf is present.
+        # The existing snapshot reader owns pending/cache/refresh behavior.
         identity = {
             "project_id": str(project_id),
             "filters": filters,

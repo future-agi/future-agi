@@ -132,8 +132,16 @@ class RecordingAnalytics:
         return SimpleNamespace(data=[], columns=COLUMNS, query_time_ms=1)
 
 
-def direct(filters, observe_type):
+def direct(monkeypatch, filters, observe_type):
     analytics = RecordingAnalytics()
+    scheduled = []
+
+    def schedule(namespace, identity, **options):
+        assert namespace == "observe-system-graph"
+        scheduled.append(identity)
+        return options["pending_payload"]
+
+    monkeypatch.setattr(dispatch, "read_or_schedule_exact_snapshot", schedule)
     result = dispatch.fetch_system_metric_graph_ch(
         analytics=analytics,
         project_id=PROJECT,
@@ -142,9 +150,44 @@ def direct(filters, observe_type):
         metric_id="traffic",
         observe_type=observe_type,
     )
+    assert result["query_status"] == "pending"
+    assert analytics.calls == []
+    assert len(scheduled) == 1
+    identity = scheduled[0]
+    compiled = []
+
+    def enumerate_ids(**kwargs):
+        builder = TraceListQueryBuilderV2(
+            project_id=PROJECT,
+            filters=kwargs["filters"],
+            bounded_internal_scan=True,
+            bounded_identity_only=True,
+            bounded_bulk_scan=True,
+            bounded_include_filter_witnesses=False,
+            bounded_global_span_witnesses=True,
+        )
+        query, params = builder.build_filter_identity_match_query_from_seed_rows(
+            [{"trace_id": "trace-1", "start_time": END - timedelta(hours=1)}]
+        )
+        assert "latest_is_deleted = 0" in query
+        compiled.append((query, params, {}))
+        return ["trace-1"], 1, 1
+
+    monkeypatch.setattr(exact, "_enumerate_exact_trace_ids", enumerate_ids)
+    result = exact.read_exact_system_graph(
+        analytics=analytics,
+        project_id=identity["project_id"],
+        filters=identity["filters"],
+        interval=identity["interval"],
+        metric_id=identity["metric_id"],
+        observe_type=identity["observe_type"],
+    )
     assert result["query_complete"] is True
-    assert len(analytics.calls) == 1
-    return analytics.calls[0]
+    if observe_type == "trace":
+        assert len(compiled) == 1
+        return compiled
+    assert analytics.calls
+    return analytics.calls
 
 
 @pytest.mark.parametrize("key", RAW_NAMES)
@@ -158,19 +201,22 @@ def direct(filters, observe_type):
 )
 @pytest.mark.parametrize("observe_type", ["trace", "span"])
 def test_public_dispatch_raw_alias_compiles_map_not_native_relation(
+    monkeypatch,
     key,
     kind,
     value,
     column,
     observe_type,
 ):
-    query, params, _ = direct([window(), leaf(key, value, kind=kind)], observe_type)
-    assert f"{column}['{key}']" in query
-    assert "FROM spans" in query
-    assert "tracer_eval_logger" not in query
-    assert "model_hub_score" not in query
-    assert "FROM end_users" not in query
-    assert "spans_hourly_rollup" not in query
+    calls = direct(monkeypatch, [window(), leaf(key, value, kind=kind)], observe_type)
+    for query, params, _ in calls:
+        assert column in query
+        assert key in params.values() or f"{column}['{key}']" in query
+        assert "FROM spans" in query
+        assert "tracer_eval_logger" not in query
+        assert "model_hub_score" not in query
+        assert "FROM end_users" not in query
+        assert "spans_hourly_rollup" not in query
 
 
 @pytest.mark.parametrize("key", ["created_at", "start_time"])
@@ -180,15 +226,17 @@ def test_public_dispatch_raw_alias_compiles_map_not_native_relation(
 )
 @pytest.mark.parametrize("observe_type", ["trace", "span"])
 def test_public_dispatch_raw_date_is_not_date_only_rollup(
-    key, days, op, value, observe_type
+    monkeypatch, key, days, op, value, observe_type
 ):
-    query, params, _ = direct([window(days), leaf(key, value, op=op)], observe_type)
-    assert "spans_hourly_rollup" not in query
-    assert f"mapContains(attrs_string, '{key}')" in query
-    if op != "is_null":
-        assert f"attrs_string['{key}']" in query
-    assert params["start_date"] == END - timedelta(days=days)
-    assert params["end_date"] == END
+    calls = direct(monkeypatch, [window(days), leaf(key, value, op=op)], observe_type)
+    for query, params, _ in calls:
+        assert "spans_hourly_rollup" not in query
+        assert "mapContains" in query and "attrs_string" in query
+        assert key in params.values() or f"'{key}'" in query
+        if op != "is_null":
+            assert "attrs_string[" in query
+        assert params["start_date"] == END - timedelta(days=days)
+        assert params["end_date"] == END
 
 
 @pytest.mark.parametrize("key", ["created_at", "start_time"])

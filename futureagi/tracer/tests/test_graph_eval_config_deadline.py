@@ -1,4 +1,8 @@
-"""Offline ownership/PG-control contracts; no database or wall-time benchmark."""
+"""Offline ownership/PG-control contracts; no database or wall-time benchmark.
+
+Bounded adapters here exercise diagnostic opt-in reads. Public application
+snapshot routing and pending state are covered by the graph routing suites.
+"""
 
 from contextlib import contextmanager
 from functools import partial
@@ -294,7 +298,7 @@ def test_public_user_eval_expired_wall_does_not_start_ownership_lookup(monkeypat
     "budget_ms,elapsed_ms",
     [(500, 250), (5_000, 4_750), (9_500, 9_250), (9_500, 0)],
 )
-def test_public_request_checks_do_not_become_owned_metadata_statement_caps(
+def test_diagnostic_request_checks_do_not_become_owned_metadata_statement_caps(
     install, monkeypatch, budget_ms, elapsed_ms
 ):
     from tracer.services.clickhouse import graph_dispatch as dispatch
@@ -317,13 +321,14 @@ def test_public_request_checks_do_not_become_owned_metadata_statement_caps(
 
     monkeypatch.setattr(graph, "_user_filter_clauses", expensive_clauses)
     analytics = RecordingAnalytics()
-    result = dispatch.fetch_user_system_metric_graph_ch(
-        analytics=analytics,
+    result = graph.read_exact_user_system_graph(
+        analytics=dispatch._DeadlineBoundGraphAnalytics(
+            analytics, read_budget.ReadDeadline.start(budget_ms)
+        ),
         project_id=PROJECT,
         filters=eval_filters(),
         interval="day",
         metric_id="active_users",
-        timeout_ms=budget_ms,
     )
     assert pg.config_query_timeout == 0
     assert result["query_complete"] is True
@@ -337,7 +342,7 @@ def test_public_request_checks_do_not_become_owned_metadata_statement_caps(
 
 @pytest.mark.parametrize("outer", [False, True])
 @pytest.mark.parametrize("phase", ["before-lookup", "after-install", "after-select"])
-def test_public_expiry_skips_or_discards_ownership_without_background_grant(
+def test_diagnostic_expiry_skips_or_discards_ownership_without_background_grant(
     install, monkeypatch, outer, phase
 ):
     from tracer.services.clickhouse import graph_dispatch as dispatch
@@ -366,16 +371,16 @@ def test_public_expiry_skips_or_discards_ownership_without_background_grant(
 
     monkeypatch.setattr(graph, "_user_filter_clauses", expensive_clauses)
     analytics = RecordingAnalytics()
-    result = dispatch.fetch_user_system_metric_graph_ch(
-        analytics=analytics,
-        project_id=PROJECT,
-        filters=eval_filters(),
-        interval="day",
-        metric_id="active_users",
-        timeout_ms=500,
-    )
-    assert result["query_complete"] is False
-    assert result["query_error_code"] == "read_budget_exceeded"
+    with pytest.raises((graph.ExactGraphReadError, read_budget.ReadDeadlineExceeded)):
+        graph.read_exact_user_system_graph(
+            analytics=dispatch._DeadlineBoundGraphAnalytics(
+                analytics, read_budget.ReadDeadline.start(500)
+            ),
+            project_id=PROJECT,
+            filters=eval_filters(),
+            interval="day",
+            metric_id="active_users",
+        )
     assert analytics.calls == []
     assert pg.timeout == "8s" and pg.in_atomic_block is outer
     assert pg.wrappers == []
@@ -426,7 +431,7 @@ def test_adapter_remaining_read_ms_does_not_restart_request(monkeypatch):
 
 
 @pytest.mark.parametrize("surface", ["eval", "annotation"])
-def test_public_entity_graph_forwards_original_wall_to_each_owned_lookup(
+def test_diagnostic_entity_graph_forwards_original_wall_to_each_owned_lookup(
     install, monkeypatch, surface
 ):
     from tracer.services.clickhouse import graph_dispatch as dispatch
@@ -488,19 +493,20 @@ def test_public_entity_graph_forwards_original_wall_to_each_owned_lookup(
     )
     analytics = RecordingAnalytics()
     fetch = (
-        dispatch.fetch_eval_graph_ch
+        graph.read_exact_eval_graph
         if surface == "eval"
-        else dispatch.fetch_annotation_graph_ch
+        else graph.read_exact_annotation_graph
     )
     result = fetch(
-        analytics=analytics,
+        analytics=dispatch._DeadlineBoundGraphAnalytics(
+            analytics, read_budget.ReadDeadline.start(500)
+        ),
         project_id=PROJECT,
         filters=eval_filters(),
         interval="day",
         req_data_config={"id": CONFIG, "output_type": "float"},
         observe_type="trace",
         aggregation_context="user",
-        timeout_ms=500,
     )
     assert result["query_complete"] is True
     expected = [0] if surface == "eval" else [0, 0]

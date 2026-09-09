@@ -476,7 +476,9 @@ def test_exact_graph_raw_candidate_page_stays_finite_and_keyset_ordered():
     )
 
     assert (
-        _builder(_system_filter()).exact_graph_candidate_witness_replays_global_membership()
+        _builder(
+            _system_filter()
+        ).exact_graph_candidate_witness_replays_global_membership()
         is False
     )
 
@@ -509,9 +511,7 @@ def test_exact_graph_candidate_reports_only_deployed_value_indexes(
         )
     )
 
-    assert (
-        builder.exact_graph_candidate_witness_has_deployed_value_index() is expected
-    )
+    assert builder.exact_graph_candidate_witness_has_deployed_value_index() is expected
 
 
 @pytest.mark.unit
@@ -1398,10 +1398,16 @@ def test_authoritative_anchor_orchestrator_grows_across_sparse_year(monkeypatch)
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("application_mode", [False, True])
 def test_authoritative_anchor_orchestrator_runs_two_disjoint_partitions_in_parallel(
     monkeypatch,
+    application_mode,
 ):
     from tracer.services.clickhouse import exact_graph_reads as exact_module
+    from tracer.services.clickhouse.application_read_policy import (
+        application_read_context,
+        is_application_read,
+    )
 
     monkeypatch.setattr(exact_module, "EXACT_GRAPH_TRACE_ANCHOR_MAX_WORKERS", 2)
 
@@ -1425,6 +1431,7 @@ def test_authoritative_anchor_orchestrator_runs_two_disjoint_partitions_in_paral
     class Analytics:
         @staticmethod
         def execute_ch_query(query: str, params: dict[str, Any], **kwargs: Any):
+            assert is_application_read() is application_mode
             del params, kwargs
             if query == "bounds":
                 return SimpleNamespace(
@@ -1452,13 +1459,14 @@ def test_authoritative_anchor_orchestrator_runs_two_disjoint_partitions_in_paral
                 )
             raise AssertionError(f"unexpected fake query: {query}")
 
-    result = exact_module._enumerate_authoritative_anchor_trace_ids(
-        analytics=Analytics(),
-        builder=builder,
-        request_start=WINDOW_START,
-        request_end=WINDOW_END,
-        started=monotonic(),
-    )
+    with application_read_context(application_mode):
+        result = exact_module._enumerate_authoritative_anchor_trace_ids(
+            analytics=Analytics(),
+            builder=builder,
+            request_start=WINDOW_START,
+            request_end=WINDOW_END,
+            started=monotonic(),
+        )
 
     assert result == (["trace-00", "trace-02"], 4, 5)
     assert {(call[0], call[1]) for call in builder.partition_calls} == {

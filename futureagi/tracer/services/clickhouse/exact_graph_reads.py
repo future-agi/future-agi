@@ -19,6 +19,7 @@ import json
 from collections import defaultdict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextvars import copy_context
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -36,6 +37,7 @@ from model_hub.models.choices import AnnotationTypeChoices
 from model_hub.models.score import Score
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.services.annotation_label_source import AnnotationScoreReadUnavailable
+from tracer.services.clickhouse.application_read_policy import is_application_read
 from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.services.clickhouse.query_builders import TimeSeriesQueryBuilder
 from tracer.services.clickhouse.query_builders.agent_graph import (
@@ -407,7 +409,7 @@ def _metadata(
     rows_returned: int,
 ) -> dict[str, Any]:
     elapsed_ms = max(monotonic() - started, 0.0) * 1000
-    if elapsed_ms >= EXACT_GRAPH_QUERY_TIMEOUT_MS:
+    if not is_application_read() and elapsed_ms >= EXACT_GRAPH_QUERY_TIMEOUT_MS:
         raise ExactGraphReadError("exact graph refresh deadline exceeded")
     metadata = {
         "query_complete": True,
@@ -424,13 +426,19 @@ def _remaining_exact_graph_timeout_ms(
     started: float,
     statement_ceiling_ms: int | None = None,
 ) -> int:
-    """Return the time left on one authoritative exact-refresh wall.
+    """Keep a shared wall for diagnostics and a compatibility hint for app reads.
 
-    Background readers do builder, relation, database, formatting, and
-    publication work under one reviewed graph budget. A later statement may
-    consume only the remaining portion; it never receives a fresh
-    per-statement grant.
+    Application query services ignore the timeout hint. Their complete results
+    must remain publishable regardless of elapsed builder or database time.
     """
+    if statement_ceiling_ms is not None and statement_ceiling_ms <= 0:
+        raise ValueError("exact graph statement timeout must be positive")
+    if is_application_read():
+        return int(
+            EXACT_GRAPH_QUERY_TIMEOUT_MS
+            if statement_ceiling_ms is None
+            else statement_ceiling_ms
+        )
 
     elapsed_ms = max(monotonic() - started, 0.0) * 1000
     # Floor the remaining duration, rather than subtracting a floored elapsed
@@ -440,8 +448,6 @@ def _remaining_exact_graph_timeout_ms(
         raise ExactGraphReadError("exact graph refresh bounded deadline exceeded")
     if statement_ceiling_ms is None:
         return remaining_ms
-    if statement_ceiling_ms <= 0:
-        raise ValueError("exact graph statement timeout must be positive")
     return min(int(statement_ceiling_ms), remaining_ms)
 
 
@@ -837,6 +843,7 @@ def _enumerate_authoritative_anchor_trace_ids(
         ) as executor:
             futures = [
                 executor.submit(
+                    copy_context().run,
                     scan_adaptive_lane,
                     lane_start,
                     lane_end,
@@ -1004,6 +1011,7 @@ def _enumerate_authoritative_anchor_trace_ids(
             ) as executor:
                 futures = [
                     executor.submit(
+                        copy_context().run,
                         scan_adaptive_lane,
                         lane_start,
                         lane_end,

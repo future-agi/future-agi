@@ -6,7 +6,6 @@ import axios from "src/utils/axios";
 import {
   AGGREGATION_POLL_MAX_ATTEMPTS,
   AGGREGATION_POLLING_PAUSED_MESSAGE,
-  AGGREGATION_REQUEST_TIMEOUT_MS,
   GRAPH_LOADING_MESSAGE,
   QUERY_FAILED_RETRY_MESSAGE,
 } from "src/utils/queryReadState";
@@ -1141,7 +1140,7 @@ describe("PrimaryGraph", () => {
     );
   });
 
-  it("bounds a never-resolving refresh, preserves exact data, and ignores its late response", async () => {
+  it("preserves exact data during a slow refresh and accepts its complete response", async () => {
     vi.useFakeTimers();
     const exactResponse = {
       data: {
@@ -1186,15 +1185,15 @@ describe("PrimaryGraph", () => {
     expect(screen.getByTestId("apex-chart")).toBeInTheDocument();
 
     await act(async () =>
-      vi.advanceTimersByTimeAsync(AGGREGATION_REQUEST_TIMEOUT_MS),
+      vi.advanceTimersByTimeAsync(120_000),
     );
     expect(screen.getByTestId("apex-chart")).toBeInTheDocument();
     expect(
-      screen.getByText("We couldn't load this data. Please retry in a moment."),
-    ).toBeInTheDocument();
-    const boundedRequestCount = axios.post.mock.calls.length;
-    expect(boundedRequestCount).toBe(2);
-    expect(refreshSignal.aborted).toBe(true);
+      screen.queryByText("We couldn't load this data. Please retry in a moment."),
+    ).not.toBeInTheDocument();
+    const requestCount = axios.post.mock.calls.length;
+    expect(requestCount).toBe(2);
+    expect(refreshSignal.aborted).toBe(false);
 
     resolveLateRefresh({
       data: {
@@ -1215,10 +1214,10 @@ describe("PrimaryGraph", () => {
     });
     await act(async () => vi.advanceTimersByTimeAsync(0));
 
-    expect(axios.post).toHaveBeenCalledTimes(boundedRequestCount);
+    expect(axios.post).toHaveBeenCalledTimes(requestCount);
     expect(screen.getByTestId("apex-chart")).toHaveAttribute(
       "data-primary-first-y",
-      "12",
+      "999",
     );
 
     axios.post.mockResolvedValueOnce({
@@ -1253,7 +1252,7 @@ describe("PrimaryGraph", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("starts a fresh transport budget when the graph query changes", async () => {
+  it("cancels a slow read when the graph query changes", async () => {
     vi.useFakeTimers();
     axios.post.mockImplementationOnce(() => new Promise(() => {}));
     const queryClient = new QueryClient({
@@ -1270,11 +1269,13 @@ describe("PrimaryGraph", () => {
     await act(async () => vi.advanceTimersByTimeAsync(10));
 
     await act(async () =>
-      vi.advanceTimersByTimeAsync(AGGREGATION_REQUEST_TIMEOUT_MS),
+      vi.advanceTimersByTimeAsync(120_000),
     );
     expect(
-      screen.getByText("We couldn't load this data. Please retry in a moment."),
-    ).toBeInTheDocument();
+      screen.queryByText("We couldn't load this data. Please retry in a moment."),
+    ).not.toBeInTheDocument();
+    const oldSignal = axios.post.mock.calls[0][2].signal;
+    expect(oldSignal.aborted).toBe(false);
 
     axios.post.mockResolvedValueOnce({
       data: {
@@ -1304,6 +1305,7 @@ describe("PrimaryGraph", () => {
     await act(async () => vi.advanceTimersByTimeAsync(10));
 
     expect(axios.post).toHaveBeenCalledTimes(2);
+    expect(oldSignal.aborted).toBe(true);
     expect(screen.getByTestId("apex-chart")).toHaveAttribute(
       "data-primary-first-y",
       "36",

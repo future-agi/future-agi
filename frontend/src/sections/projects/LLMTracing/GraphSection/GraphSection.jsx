@@ -34,7 +34,6 @@ import { FILTER_FOR_HAS_EVAL, toBackendFilters } from "../common";
 import { buildDefaultDateEntry } from "./graphFilterUtils";
 import {
   AGGREGATION_POLLING_PAUSED_MESSAGE,
-  AGGREGATION_REQUEST_TIMEOUT_MS,
   GRAPH_LOADING_MESSAGE,
   QUERY_FAILED_RETRY_MESSAGE,
   createAggregationPollController,
@@ -211,20 +210,15 @@ const GraphSection = ({
         setAggregationPollingPaused(false);
       }
 
-      // Start the action clock before the first HTTP read. Pending-response
-      // polling consumes this same sub-ten-second budget; an explicit Refresh
-      // resets it through resetAggregationBudget().
+      // Bound polling of pending responses separately. A valid exact HTTP
+      // read may finish later; scope changes and unmount still cancel it.
       pollingControllerRef.current.start();
       pollingControllerRef.current.recordAttempt();
       const generation = requestGenerationRef.current;
       return awaitAggregationRequestWithDeadline(request, {
-        timeoutMs: pollingControllerRef.current.remainingMs(
-          AGGREGATION_REQUEST_TIMEOUT_MS,
-        ),
+        timeoutMs: Infinity,
         signal,
         isCurrent: () => generation === requestGenerationRef.current,
-        onTimeout: () =>
-          pollingControllerRef.current.terminate("action_deadline"),
       });
     },
     [],

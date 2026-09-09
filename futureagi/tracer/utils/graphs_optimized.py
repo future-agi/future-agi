@@ -438,7 +438,7 @@ def _read_direct_system_metrics(
     organization_id: str | None = None,
     workspace_id: str | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
-    """Execute the direct-write system-metric builder on the CH25 service."""
+    """Read or schedule the exact CH25 system-metric snapshot."""
     try:
         from tracer.services.clickhouse.graph_dispatch import (
             fetch_all_system_metrics_ch,
@@ -481,7 +481,7 @@ def get_all_system_metrics(
     organization_id: str | None = None,
     workspace_id: str | None = None,
 ) -> dict:
-    """Read latency, token, cost, and traffic series in one CH25 query."""
+    """Return latency, token, cost, and traffic series from one exact snapshot."""
     del property
 
     project_id = system_metric_filters.get("project_id")

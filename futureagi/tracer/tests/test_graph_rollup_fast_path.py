@@ -13,6 +13,97 @@ from tracer.services.clickhouse.session_graph import fetch_session_graph_ch
 PROJECT_ID = "22222222-2222-4222-8222-222222222222"
 
 
+def _assert_exact_route(
+    monkeypatch,
+    *,
+    surface="trace",
+    filters=None,
+    interval="day",
+    refresh=False,
+    payload=None,
+    analytics=None,
+):
+    from tracer.services.clickhouse import session_graph
+
+    analytics = analytics if analytics is not None else mock.Mock()
+    filters = list(filters or [])
+    payload = (
+        payload
+        if payload is not None
+        else {
+            "metric_name": "latency",
+            "data": [],
+            "query_status": "pending",
+            "query_complete": False,
+            "query_sampled": False,
+            "query_refreshing": True,
+        }
+    )
+    schedule = mock.Mock(return_value=payload)
+    owner = session_graph if surface == "session" else graph_dispatch
+    monkeypatch.setattr(owner, "read_or_schedule_exact_snapshot", schedule)
+    raw = mock.Mock(
+        side_effect=AssertionError("public graphs must not read raw versions")
+    )
+    monkeypatch.setattr(graph_dispatch, "_fetch_direct_raw_system_metric_graph", raw)
+    common = {
+        "analytics": analytics,
+        "project_id": PROJECT_ID,
+        "filters": filters,
+        "interval": interval,
+        "refresh": refresh,
+        "organization_id": "organization",
+        "workspace_id": "workspace",
+    }
+    if surface == "session":
+        result = fetch_session_graph_ch(
+            **common, req_data_config={"type": "SYSTEM_METRIC", "id": "latency"}
+        )
+    else:
+        result = graph_dispatch.fetch_system_metric_graph_ch(
+            **common, metric_id="latency", observe_type=surface
+        )
+    assert result is payload
+    schedule.assert_called_once()
+    namespace, identity = schedule.call_args.args
+    assert namespace == (
+        "observe-session-system-graph"
+        if surface == "session"
+        else "observe-system-graph"
+    )
+    assert identity["filters"] == filters and identity["interval"] == interval
+    assert identity["organization_id"] == "organization"
+    assert identity["workspace_id"] == "workspace"
+    assert schedule.call_args.kwargs["refresh"] is refresh
+    analytics.execute_ch_query.assert_not_called()
+    raw.assert_not_called()
+    return schedule
+
+
+def _legacy_rollup(
+    *, surface="trace", analytics, filters, interval="day", metric_id="latency"
+):
+    # Retain low-level rollup diagnostics without routing public exact reads here.
+    from time import monotonic
+
+    from tracer.services.clickhouse import session_graph
+
+    common = {
+        "analytics": analytics,
+        "project_id": PROJECT_ID,
+        "filters": filters,
+        "interval": interval,
+        "metric_id": metric_id,
+    }
+    if surface == "session":
+        return session_graph._fetch_rollup_system_metric_graph(
+            **common, started=monotonic()
+        )
+    return graph_dispatch._fetch_rollup_system_metric_graph(
+        **common, observe_type="trace", timeout_ms=30000
+    )
+
+
 def _date_filter(start: str, end: str) -> dict:
     return {
         "column_id": "created_at",
@@ -108,7 +199,7 @@ FILTER_SHAPES = [
         *[([_date_filter(start, end)], interval) for start, end, interval in WINDOWS],
     ],
 )
-def test_trace_primary_date_only_uses_one_interactive_rollup_query(
+def test_legacy_trace_primary_date_only_uses_one_interactive_rollup_query(
     monkeypatch, filters, interval
 ):
     analytics = mock.Mock()
@@ -143,13 +234,11 @@ def test_trace_primary_date_only_uses_one_interactive_rollup_query(
         exact_read,
     )
 
-    response = graph_dispatch.fetch_system_metric_graph_ch(
+    response = _legacy_rollup(
         analytics=analytics,
-        project_id=PROJECT_ID,
         filters=filters,
         interval=interval,
         metric_id="latency",
-        observe_type="trace",
     )
 
     exact_read.assert_not_called()
@@ -188,144 +277,52 @@ def test_trace_primary_date_only_uses_one_interactive_rollup_query(
 
 @pytest.mark.unit
 @pytest.mark.parametrize("observe_type", ["trace", "span"])
-def test_date_only_rollup_fails_closed_when_query_settings_are_locked(observe_type):
+def test_time_only_graph_schedules_worker_with_own_read_policy(
+    monkeypatch, observe_type
+):
     analytics = mock.Mock()
     analytics.supports_per_query_read_settings = False
-
-    response = graph_dispatch.fetch_system_metric_graph_ch(
-        analytics=analytics,
-        project_id=PROJECT_ID,
-        filters=[],
-        interval="day",
-        metric_id="latency",
-        observe_type=observe_type,
-    )
-
-    analytics.execute_ch_query.assert_not_called()
-    assert response["data"] == []
-    assert response["query_complete"] is False
-    assert response["query_status"] == "degraded"
-    assert response["query_error_code"] == "query_failed"
-    assert response["query_provenance"] == "server_read_policy_unavailable"
+    _assert_exact_route(monkeypatch, surface=observe_type, analytics=analytics)
 
 
 @pytest.mark.unit
-def test_session_date_only_rollup_fails_closed_when_query_settings_are_locked():
+def test_session_graph_schedules_worker_with_own_read_policy(monkeypatch):
     analytics = mock.Mock()
     analytics.supports_per_query_read_settings = False
-
-    response = fetch_session_graph_ch(
-        analytics=analytics,
-        project_id=PROJECT_ID,
-        filters=[],
-        interval="day",
-        req_data_config={"type": "SYSTEM_METRIC", "id": "latency"},
-    )
-
-    analytics.execute_ch_query.assert_not_called()
-    assert response["data"] == []
-    assert response["query_complete"] is False
-    assert response["query_status"] == "degraded"
-    assert response["query_error_code"] == "query_failed"
-    assert response["query_provenance"] == "server_read_policy_unavailable"
+    _assert_exact_route(monkeypatch, surface="session", analytics=analytics)
 
 
 @pytest.mark.unit
 @pytest.mark.parametrize(("start", "end", "interval"), WINDOWS)
 @pytest.mark.parametrize("row_filter", FILTER_SHAPES)
-def test_span_filtered_w1_w6_and_sparse_dense_eval_annotation_matrix_is_complete(
-    monkeypatch,
-    start,
-    end,
-    interval,
-    row_filter,
+def test_span_filter_matrix_schedules_exact_population(
+    monkeypatch, start, end, interval, row_filter
 ):
-    direct_read = mock.Mock(
-        return_value={
-            "metric_name": "latency",
-            "data": [{"timestamp": start, "value": 42, "primary_traffic": 1}],
-            "query_complete": True,
-            "query_status": "complete",
-            "query_sampled": False,
-            "query_exact": False,
-            "query_provenance": "bounded_candidates",
-        }
-    )
-    monkeypatch.setattr(
-        graph_dispatch,
-        "_fetch_direct_raw_system_metric_graph",
-        direct_read,
-    )
-
-    response = graph_dispatch.fetch_system_metric_graph_ch(
-        analytics=mock.Mock(),
-        project_id=PROJECT_ID,
+    _assert_exact_route(
+        monkeypatch,
+        surface="span",
         filters=[_date_filter(start, end), row_filter],
         interval=interval,
-        metric_id="latency",
-        observe_type="span",
     )
-
-    assert response["query_complete"] is True
-    assert response["query_status"] == "complete"
-    assert response["query_sampled"] is False
-    assert response["query_exact"] is False
-    assert response["query_provenance"] == "bounded_candidates"
-    assert response["data"][0]["value"] == 42
-    assert graph_dispatch.graph_payload_is_publishable(response, allow_sampled=False)
-    direct_read.assert_called_once()
-    assert direct_read.call_args.kwargs["filters"][-1] == row_filter
-    assert direct_read.call_args.kwargs["observe_type"] == "span"
 
 
 @pytest.mark.unit
-def test_trace_filtered_system_graph_uses_direct_raw_reader(
-    monkeypatch,
-):
-    analytics = mock.Mock()
-    direct_payload = {
+def test_trace_graph_preserves_last_complete_exact_snapshot(monkeypatch):
+    payload = {
         "metric_name": "latency",
         "data": [
-            {
-                "timestamp": "2026-08-01T00:00:00",
-                "value": 12,
-                "primary_traffic": 1,
-            }
+            {"timestamp": "2026-08-01T00:00:00", "value": 12, "primary_traffic": 1}
         ],
         "query_complete": True,
         "query_status": "complete",
         "query_sampled": False,
-        "query_exact": False,
-        "query_provenance": "bounded_candidates",
+        "query_exact": True,
+        "query_provenance": "exact_snapshot",
+        "query_refreshing": True,
     }
-    direct_read = mock.Mock(return_value=direct_payload)
-    monkeypatch.setattr(
-        graph_dispatch,
-        "_fetch_direct_raw_system_metric_graph",
-        direct_read,
+    _assert_exact_route(
+        monkeypatch, filters=[_attribute_filter()], payload=payload, refresh=True
     )
-    filters = [
-        _date_filter("2026-08-01T00:00:00Z", "2026-08-12T00:00:00Z"),
-        _attribute_filter(),
-    ]
-
-    response = graph_dispatch.fetch_system_metric_graph_ch(
-        analytics=analytics,
-        project_id=PROJECT_ID,
-        filters=filters,
-        interval="day",
-        metric_id="latency",
-        observe_type="trace",
-    )
-
-    assert response["data"] == direct_payload["data"]
-    assert response["query_exact"] is False
-    assert response["query_provenance"] == "bounded_candidates"
-    direct_read.assert_called_once()
-    assert direct_read.call_args.kwargs["project_id"] == PROJECT_ID
-    assert direct_read.call_args.kwargs["filters"] == filters
-    assert direct_read.call_args.kwargs["metric_id"] == "latency"
-    assert direct_read.call_args.kwargs["observe_type"] == "trace"
 
 
 def _empty_graph_query_result():
@@ -561,100 +558,26 @@ def test_negative_and_span_graph_filters_never_use_trace_seed(monkeypatch):
 
 
 @pytest.mark.unit
-def test_filtered_raw_graph_statement_uses_one_interactive_deadline(
-    monkeypatch,
-):
-    analytics = mock.Mock()
-    analytics.execute_ch_query.return_value = mock.Mock(data=[], columns=[])
-    deadline = mock.Mock()
-    deadline.remaining_ms.return_value = 9_300
-    observed_analytics = []
-
-    def direct_read(*, analytics, **_kwargs):
-        observed_analytics.append(analytics)
-        analytics.execute_ch_query(
-            "SELECT raw aggregation",
-            {},
-            timeout_ms=60_000,
-            settings={"max_rows_to_read": 1, "max_threads": 8},
-        )
-        return {
-            "metric_name": "latency",
-            "data": [],
-            "query_complete": True,
-            "query_status": "complete",
-            "query_sampled": False,
-            "query_exact": False,
-            "query_provenance": "bounded_candidates",
-        }
-
-    deadline_start = mock.Mock(return_value=deadline)
+def test_filtered_graph_does_not_start_interactive_statement_deadline(monkeypatch):
+    deadline_start = mock.Mock(side_effect=AssertionError("no synchronous graph read"))
     monkeypatch.setattr(graph_dispatch.ReadDeadline, "start", deadline_start)
-    monkeypatch.setattr(
-        graph_dispatch,
-        "_fetch_direct_raw_system_metric_graph",
-        direct_read,
-    )
-
-    response = graph_dispatch.fetch_system_metric_graph_ch(
-        analytics=analytics,
-        project_id=PROJECT_ID,
-        filters=[_attribute_filter()],
-        interval="day",
-        metric_id="latency",
-        observe_type="trace",
-    )
-
-    assert response["query_status"] == "complete"
-    deadline_start.assert_called_once_with(
-        django_settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
-    )
-    assert len(observed_analytics) == 1
-    assert deadline.remaining_ms.call_count == 1
-    assert [
-        call.kwargs["timeout_ms"] for call in analytics.execute_ch_query.call_args_list
-    ] == [9_300]
-    for call in analytics.execute_ch_query.call_args_list:
-        read_settings = call.kwargs["settings"]
-        assert "max_rows_to_read" not in read_settings
-        assert (
-            read_settings["max_threads"]
-            == django_settings.DASHBOARD_TRACE_READ_MAX_THREADS
-        )
-        assert (
-            read_settings["max_memory_usage"]
-            == django_settings.OBSERVABILITY_LIST_MAX_MEMORY_BYTES
-        )
+    _assert_exact_route(monkeypatch, filters=[_attribute_filter()])
+    deadline_start.assert_not_called()
 
 
 @pytest.mark.unit
-def test_filtered_graph_raw_budget_failure_fails_closed_without_sample(
-    monkeypatch,
-):
-    direct_read = mock.Mock(
-        side_effect=graph_dispatch.ExactGraphReadError("exact graph deadline exceeded")
+def test_filtered_graph_preserves_failed_snapshot_without_sample_fallback(monkeypatch):
+    payload = {
+        "metric_name": "latency",
+        "data": [],
+        "query_complete": False,
+        "query_status": "failed",
+        "query_sampled": False,
+        "query_error_code": "query_failed",
+    }
+    _assert_exact_route(
+        monkeypatch, surface="span", filters=[_attribute_filter()], payload=payload
     )
-    monkeypatch.setattr(
-        graph_dispatch,
-        "_fetch_direct_raw_system_metric_graph",
-        direct_read,
-    )
-
-    response = graph_dispatch.fetch_system_metric_graph_ch(
-        analytics=mock.Mock(),
-        project_id=PROJECT_ID,
-        filters=[_attribute_filter()],
-        interval="month",
-        metric_id="traffic",
-        observe_type="span",
-    )
-
-    assert response["data"] == []
-    assert response["query_status"] == "degraded"
-    assert response["query_sampled"] is False
-    assert response["query_exact"] is False
-    assert response["query_provenance"] == "bounded_candidates"
-    direct_read.assert_called_once()
 
 
 @pytest.mark.unit
@@ -693,61 +616,14 @@ def test_filtered_graph_poll_does_not_duplicate_running_background_read(monkeypa
     assert response == pending
     direct_read.assert_not_called()
     assert cache_probe.call_count == 1
-    assert cache_probe.call_args.kwargs["schedule_on_miss"] is False
+    assert cache_probe.call_args.kwargs["schedule_on_miss"] is True
 
 
 @pytest.mark.unit
-def test_filtered_graph_budget_failure_schedules_one_heavy_read(monkeypatch):
-    pending = {
-        "metric_name": "latency",
-        "data": [],
-        "query_complete": False,
-        "query_status": "pending",
-        "query_sampled": False,
-        "query_refreshing": True,
-    }
-    cache_calls = []
-
-    def cache_read(*args, **kwargs):
-        cache_calls.append((args, kwargs))
-        if kwargs.get("schedule_on_miss") is False:
-            return {**pending, "query_refreshing": False}
-        return pending
-
-    monkeypatch.setattr(
-        graph_dispatch,
-        "read_or_schedule_exact_snapshot",
-        cache_read,
-    )
-    monkeypatch.setattr(
-        graph_dispatch,
-        "_fetch_direct_raw_system_metric_graph",
-        mock.Mock(
-            side_effect=graph_dispatch.ExactGraphReadError(
-                "exact graph deadline exceeded"
-            )
-        ),
-    )
-
-    response = graph_dispatch.fetch_system_metric_graph_ch(
-        analytics=mock.Mock(),
-        project_id=PROJECT_ID,
-        filters=[_attribute_filter()],
-        interval="day",
-        metric_id="latency",
-        observe_type="trace",
-        organization_id="33333333-3333-4333-8333-333333333333",
-        workspace_id="44444444-4444-4444-8444-444444444444",
-    )
-
-    assert response == pending
-    assert len(cache_calls) == 2
-    assert cache_calls[0][1]["schedule_on_miss"] is False
-    assert cache_calls[1][1]["schedule_on_miss"] is True
-    assert cache_calls[1][1]["refresh"] is True
-    assert cache_calls[1][0][1]["organization_id"] == (
-        "33333333-3333-4333-8333-333333333333"
-    )
+def test_filtered_graph_cold_miss_schedules_one_exact_read(monkeypatch):
+    schedule = _assert_exact_route(monkeypatch, filters=[_attribute_filter()])
+    assert schedule.call_args.kwargs["schedule_on_miss"] is True
+    assert schedule.call_args.kwargs["refresh"] is False
 
 
 @pytest.mark.unit
@@ -777,16 +653,13 @@ def test_exact_graph_forces_weekly_buckets_only_beyond_three_months(
 
 
 @pytest.mark.unit
-def test_filtered_graph_programming_defect_is_not_disguised_as_degraded(
-    monkeypatch,
-):
-    direct_read = mock.Mock(side_effect=AssertionError("malformed candidate row"))
+def test_filtered_graph_dispatch_defect_is_not_disguised_as_degraded(monkeypatch):
     monkeypatch.setattr(
         graph_dispatch,
-        "_fetch_direct_raw_system_metric_graph",
-        direct_read,
+        "read_or_schedule_exact_snapshot",
+        mock.Mock(side_effect=AssertionError("malformed snapshot")),
     )
-    with pytest.raises(AssertionError, match="malformed candidate row"):
+    with pytest.raises(AssertionError, match="malformed snapshot"):
         graph_dispatch.fetch_system_metric_graph_ch(
             analytics=mock.Mock(),
             project_id=PROJECT_ID,
@@ -798,7 +671,9 @@ def test_filtered_graph_programming_defect_is_not_disguised_as_degraded(
 
 
 @pytest.mark.unit
-def test_trace_rollup_failure_propagates_without_exact_or_raw_fallback(monkeypatch):
+def test_legacy_trace_rollup_failure_propagates_without_exact_or_raw_fallback(
+    monkeypatch,
+):
     analytics = mock.Mock()
     failure = NetworkError("private ClickHouse details")
     analytics.execute_ch_query.side_effect = failure
@@ -810,9 +685,8 @@ def test_trace_rollup_failure_propagates_without_exact_or_raw_fallback(monkeypat
     )
 
     with pytest.raises(NetworkError) as raised:
-        graph_dispatch.fetch_system_metric_graph_ch(
+        _legacy_rollup(
             analytics=analytics,
-            project_id=PROJECT_ID,
             filters=[
                 _date_filter(
                     "2026-08-01T00:00:00Z",
@@ -829,7 +703,9 @@ def test_trace_rollup_failure_propagates_without_exact_or_raw_fallback(monkeypat
 
 
 @pytest.mark.unit
-def test_session_rollup_failure_propagates_without_exact_or_raw_fallback(monkeypatch):
+def test_legacy_session_rollup_failure_propagates_without_exact_or_raw_fallback(
+    monkeypatch,
+):
     analytics = mock.Mock()
     failure = NetworkError("private ClickHouse details")
     analytics.execute_ch_query.side_effect = failure
@@ -840,9 +716,9 @@ def test_session_rollup_failure_propagates_without_exact_or_raw_fallback(monkeyp
     )
 
     with pytest.raises(NetworkError) as raised:
-        fetch_session_graph_ch(
+        _legacy_rollup(
+            surface="session",
             analytics=analytics,
-            project_id=PROJECT_ID,
             filters=[
                 _date_filter(
                     "2026-08-01T00:00:00Z",
@@ -850,7 +726,7 @@ def test_session_rollup_failure_propagates_without_exact_or_raw_fallback(monkeyp
                 )
             ],
             interval="day",
-            req_data_config={"id": "session_count", "type": "SYSTEM_METRIC"},
+            metric_id="session_count",
         )
 
     assert raised.value is failure
@@ -862,7 +738,7 @@ def test_session_rollup_failure_propagates_without_exact_or_raw_fallback(monkeyp
 
 @pytest.mark.unit
 @pytest.mark.parametrize("surface", ["trace", "session"])
-def test_rollup_schema_drift_fails_closed_instead_of_publishing_zero(
+def test_legacy_rollup_schema_drift_fails_closed_instead_of_publishing_zero(
     monkeypatch, surface
 ):
     analytics = mock.Mock()
@@ -879,9 +755,8 @@ def test_rollup_schema_drift_fails_closed_instead_of_publishing_zero(
         )
 
         def invoke():
-            return graph_dispatch.fetch_system_metric_graph_ch(
+            return _legacy_rollup(
                 analytics=analytics,
-                project_id=PROJECT_ID,
                 filters=[
                     _date_filter(
                         "2026-08-01T00:00:00Z",
@@ -898,9 +773,9 @@ def test_rollup_schema_drift_fails_closed_instead_of_publishing_zero(
         )
 
         def invoke():
-            return fetch_session_graph_ch(
+            return _legacy_rollup(
+                surface="session",
                 analytics=analytics,
-                project_id=PROJECT_ID,
                 filters=[
                     _date_filter(
                         "2026-08-01T00:00:00Z",
@@ -908,7 +783,7 @@ def test_rollup_schema_drift_fails_closed_instead_of_publishing_zero(
                     )
                 ],
                 interval="day",
-                req_data_config={"id": "session_count", "type": "SYSTEM_METRIC"},
+                metric_id="session_count",
             )
 
     with pytest.raises(graph_dispatch.BoundedGraphReadError) as raised:

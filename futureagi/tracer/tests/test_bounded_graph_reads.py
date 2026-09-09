@@ -3731,12 +3731,6 @@ def test_public_graph_wrappers_use_exact_snapshot_without_inline_reads(
     ("fetch_name", "reader_name", "expected_exact", "expected_provenance"),
     [
         (
-            "fetch_system_metric_graph_ch",
-            "_fetch_direct_raw_system_metric_graph",
-            False,
-            "bounded_candidates",
-        ),
-        (
             "fetch_user_system_metric_graph_ch",
             "read_exact_user_system_graph",
             True,
@@ -3756,7 +3750,7 @@ def test_public_graph_wrappers_use_exact_snapshot_without_inline_reads(
         ),
     ],
 )
-def test_public_primary_graph_wrappers_use_inline_reads(
+def test_public_entity_and_decoration_graph_wrappers_use_exact_snapshots(
     monkeypatch,
     fetch_name,
     reader_name,
@@ -3765,19 +3759,15 @@ def test_public_primary_graph_wrappers_use_inline_reads(
 ):
     calls = []
 
-    def direct_reader(**kwargs):
-        calls.append(kwargs)
+    def snapshot(namespace, identity, **options):
+        calls.append(identity)
         return {
-            "metric_name": "metric",
-            "data": [],
-            "query_complete": True,
-            "query_status": "complete",
-            "query_sampled": False,
-            "query_exact": expected_exact,
+            "metric_name": "metric", "data": [],
+            "query_complete": True, "query_status": "complete",
+            "query_sampled": False, "query_exact": expected_exact,
             "query_provenance": expected_provenance,
         }
-
-    monkeypatch.setattr(graph_dispatch, reader_name, direct_reader)
+    monkeypatch.setattr(graph_dispatch, "read_or_schedule_exact_snapshot", snapshot)
     filters = [_date_filter(), _attribute_filter("final_status", "Rejected")]
     common = {
         "analytics": object(),
@@ -3785,13 +3775,7 @@ def test_public_primary_graph_wrappers_use_inline_reads(
         "filters": filters,
         "interval": "hour",
     }
-    if fetch_name == "fetch_system_metric_graph_ch":
-        response = graph_dispatch.fetch_system_metric_graph_ch(
-            **common,
-            metric_id="latency",
-            observe_type="trace",
-        )
-    elif fetch_name == "fetch_user_system_metric_graph_ch":
+    if fetch_name == "fetch_user_system_metric_graph_ch":
         response = graph_dispatch.fetch_user_system_metric_graph_ch(
             **common,
             metric_id="active_users",
@@ -3825,44 +3809,29 @@ def test_public_primary_graph_wrappers_use_inline_reads(
 
 
 @pytest.mark.unit
-def test_all_system_metrics_wrapper_uses_one_inline_exact_snapshot_read(monkeypatch):
+def test_all_system_metrics_wrapper_preserves_exact_snapshot(monkeypatch):
+    expected = {
+        "latency": [], "tokens": [], "cost": [], "traffic": [],
+        "query_complete": True, "query_status": "complete",
+        "query_sampled": False, "query_exact": True,
+        "query_provenance": "exact_snapshot",
+    }
     calls = []
-
-    def direct_reader(**kwargs):
-        calls.append(kwargs)
-        return {
-            "latency": [],
-            "tokens": [],
-            "cost": [],
-            "traffic": [],
-            "query_complete": True,
-            "query_status": "complete",
-            "query_sampled": False,
-        }
-
-    monkeypatch.setattr(
-        graph_dispatch,
-        "read_exact_all_system_metrics",
-        direct_reader,
-    )
+    def snapshot(namespace, identity, **options):
+        calls.append((namespace, identity, options))
+        return expected
+    monkeypatch.setattr(graph_dispatch, "read_or_schedule_exact_snapshot", snapshot)
     filters = [_date_filter(), _attribute_filter("final_status", "Rejected")]
-
-    response = graph_dispatch.fetch_all_system_metrics_ch(
-        analytics=object(),
-        project_id=PROJECT_ID,
-        filters=filters,
-        interval="hour",
+    result = graph_dispatch.fetch_all_system_metrics_ch(
+        analytics=object(), project_id=PROJECT_ID, filters=filters, interval="hour",
     )
-
+    assert result is expected
     assert len(calls) == 1
-    assert calls[0]["project_id"] == PROJECT_ID
-    assert calls[0]["filters"] == filters
-    assert calls[0]["interval"] == "hour"
-    assert response["query_status"] == "complete"
-    assert response["query_complete"] is True
-    assert response["query_sampled"] is False
-    assert response["query_exact"] is True
-    assert response["query_provenance"] == "exact_snapshot"
+    namespace, identity, _ = calls[0]
+    assert namespace == "observe-all-system-graphs"
+    assert identity["project_id"] == PROJECT_ID
+    assert identity["filters"] == filters
+    assert identity["interval"] == "hour"
 
 
 @pytest.mark.unit

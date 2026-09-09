@@ -1,4 +1,4 @@
-"""One request-owned wall deadline for latency-critical Observe graph actions."""
+"""Application graph admission and explicit diagnostic deadline handling."""
 
 from __future__ import annotations
 
@@ -26,10 +26,23 @@ class GraphActionUnavailable(RuntimeError):
     """A graph action exhausted its wall or could not complete a read."""
 
 
-def start_graph_action_deadline() -> ReadDeadline:
-    """Start the single wall clock before any graph-action database read."""
+class ApplicationGraphReadDeadline(ReadDeadline):
+    """Track elapsed time without rejecting an application graph request.
 
-    return ReadDeadline.start(GRAPH_ACTION_WALL_DEADLINE_MS)
+    Legacy call sites require a positive timeout argument. Return that hint
+    without subtracting elapsed time; application transports own their read
+    policy and do not enforce this diagnostic compatibility value.
+    """
+
+    def remaining_ms(self, cap_ms: int | None = None, *, floor_ms: int = 25) -> int:
+        if cap_ms is not None and cap_ms <= 0:
+            raise ValueError("read timeout cap must be positive")
+        return self.total_ms if cap_ms is None else int(cap_ms)
+
+
+def start_graph_action_deadline() -> ReadDeadline:
+    """Start elapsed-time tracking without an application admission cutoff."""
+    return ApplicationGraphReadDeadline.start(GRAPH_ACTION_WALL_DEADLINE_MS)
 
 
 def graph_action_remaining_ms(
@@ -38,7 +51,7 @@ def graph_action_remaining_ms(
     *,
     floor_ms: int = 1,
 ) -> int:
-    """Return only the action's remaining wall, mapped to its public boundary."""
+    """Resolve an application compatibility hint or a diagnostic remaining wall."""
 
     try:
         return deadline.remaining_ms(cap_ms, floor_ms=floor_ms)
@@ -56,7 +69,7 @@ def bounded_graph_action_request(
     *,
     resource: str,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-    """Start the graph wall before validation and finish after validation."""
+    """Track the graph request across validation and preserve its response."""
 
     def decorate(view_method):
         @wraps(view_method)
