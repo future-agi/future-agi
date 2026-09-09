@@ -36,9 +36,16 @@ import ActorsPanel from "./ActorsPanel";
  * feed the progress counter. The rest are views of the environment itself, so
  * the rail splits them rather than presenting eight equal steps.
  */
+/*
+  Nikhil's env-first feedback: the environment is the reusable asset;
+  the agent is not. The standalone Agents tab implied the env was
+  owned by / tightly coupled to one agent. Agent details now live
+  as a section inside Overview instead. The route id "agent" still
+  resolves (deep links keep working) — it just redirects to overview
+  in the router below so the retired tab is not orphaned.
+*/
 const STEPS = [
   { id: "overview",  label: "Overview",  icon: "solar:widget-5-linear", group: "Setup" },
-  { id: "agent",     label: "Agents",    icon: "solar:cpu-bolt-linear", group: "Setup", setup: true },
   { id: "contract",  label: "Contract", icon: "solar:document-text-linear", group: "Setup" },
   { id: "build",     label: "How this was built", icon: "solar:history-linear", group: "Setup" },
 
@@ -305,6 +312,53 @@ export default function EnvironmentWorkspace() {
           </Stack>
           <Typography noWrap sx={{ typography: "s2", color: "text.subtitle" }}>{env.tagline}</Typography>
         </Box>
+
+        {/*
+          Fork this environment — mints a fresh env instance carrying
+          the same world (tools, rules, scenarios, evals, seed) but
+          with no agent binding and no run history. Reflects Nikhil's
+          feedback: envs are portable, an env should be reusable across
+          different agents / teams. Adopting the fork lands the user on
+          the new workspace so they can attach a different agent.
+        */}
+        <Tooltip arrow title="Duplicate this environment for a different agent or team. World stays; agent + runs reset.">
+          <Button
+            variant="outlined"
+            size="small"
+            startIcon={<Iconify icon="solar:copy-linear" width={15} />}
+            onClick={() => {
+              const suffix = Math.random().toString(36).slice(2, 8);
+              const forkedId = `${env.id}-fork-${suffix}`;
+              const forked = {
+                ...env,
+                id: forkedId,
+                name: `${env.name} · fork`,
+                custom: true,
+                adoptedAt: undefined,
+                buildProgress: undefined,
+                forkedFrom: env.id,
+              };
+              dispatch({ type: "adoptEnvironment", env: forked, now: new Date().toISOString() });
+              /* Copy the world-shaped envState but drop the agent
+                 binding and runs — the fork's own agent + run history
+                 will accumulate independently. */
+              dispatch({
+                type: "patchEnvState",
+                envId: forkedId,
+                patch: {
+                  scenarios: envState.scenarios || [],
+                  evals: envState.evals || [],
+                  scenarioSource: envState.scenarioSource,
+                  twinBacking: envState.twinBacking,
+                },
+              });
+              navigate(paths.dashboard.simulate.environmentDetail(forkedId));
+            }}
+            sx={{ color: "text.primary", borderColor: "divider", typography: "s2", fontWeight: 600 }}
+          >
+            Fork
+          </Button>
+        </Tooltip>
 
         <Button
           variant="outlined"

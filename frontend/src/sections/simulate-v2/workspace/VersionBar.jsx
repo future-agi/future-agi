@@ -39,17 +39,28 @@ export default function VersionBar({ env, envState, scenarioCount = 0, onAddVers
       spacing={1}
       sx={{ px: 2, py: 0.875, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0, flexWrap: "wrap", rowGap: 1 }}
     >
+      {/*
+        Env-first framing (Nikhil): the environment is the primary
+        identity. The agent version is *the current test subject*
+        running against this env — same env can host different
+        agents over time. Reading order: env is bold and stated first;
+        agent is prefixed "Test subject" and rendered lighter so it
+        reads as a rotating attribute rather than shared identity.
+      */}
       <Tooltip
         arrow
-        title={`Environment ${envV.label} — ${envV.note}. Agent ${agentV.label} is what the next run will use.`}
+        title={`Environment ${envV.label} — ${envV.note}. Test subject: agent ${agentV.label}. Different agents can run against this env; the env stays put.`}
       >
         <Stack direction="row" alignItems="center" spacing={0.75} sx={{ cursor: "default" }}>
           <Iconify icon="solar:box-linear" width={14} sx={{ color: "text.subtitle" }} />
           <Typography sx={{ typography: "s2", color: "text.secondary" }}>
             env <Box component="span" sx={{ color: "text.primary", fontWeight: 700 }}>{envV.label}</Box>
           </Typography>
-          <Typography sx={{ typography: "s3", color: "text.disabled" }}>×</Typography>
+          <Typography sx={{ typography: "s3", color: "text.disabled", mx: 0.25 }}>·</Typography>
           <Iconify icon="solar:cpu-bolt-linear" width={14} sx={{ color: "text.subtitle" }} />
+          <Typography sx={{ typography: "s3", color: "text.subtitle", fontWeight: 600 }}>
+            Test subject
+          </Typography>
           <Typography sx={{ typography: "s2", color: "text.secondary" }}>
             agent <Box component="span" sx={{ color: "text.primary", fontWeight: 700 }}>{agentV.label}</Box>
           </Typography>

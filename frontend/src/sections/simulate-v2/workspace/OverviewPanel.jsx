@@ -170,6 +170,17 @@ export default function OverviewPanel({ buildMode, env, envState, patch, onGo, a
       </Stack>
 
       {/*
+        Agent summary — the env's current "test subject". Nikhil's
+        feedback: the env is the reusable asset, the agent is one
+        attribute. So this is a compact card inside Overview, not a
+        standalone tab. Reads: "here's the agent currently attached;
+        manage its versions or swap it out via the actions". Different
+        agents can attach to the same env over time — the env is
+        frozen, the test subject rotates.
+      */}
+      <AgentSummarySection env={env} envState={envState} onGo={onGo} agentConnected={agentConnected} />
+
+      {/*
         Getting-started checklist for envs that haven't been seeded
         yet (no agent, no derived rules/scenarios). Scratch envs come
         in already carrying derived world + scenarios + eval
@@ -432,6 +443,86 @@ function Fact({ label, value, color }) {
   );
 }
 Fact.propTypes = { label: PropTypes.string, value: PropTypes.node, color: PropTypes.string };
+
+/* ── agent summary section ──────────────────────────────────────────────────
+   Compact card that reflects Nikhil's env-first feedback: the agent is a
+   *test subject* attached to the env, not the env's identity. Shows the
+   current agent's version + connection, and a "Manage versions" button
+   that jumps to the full AgentsPanel via the still-live `agent` deep-link
+   route. The tab was retired from the rail but the panel is reachable
+   from this button, and from any deep link that arrives with step=agent. */
+
+function AgentSummarySection({ env, envState, onGo, agentConnected }) {
+  const agent = envState?.agent;
+  const versions = envState?.agentVersions || [];
+  const activeLabel = envState?.activeAgentVersion
+    || versions[versions.length - 1]?.label
+    || "v1";
+  const versionCount = Math.max(1, versions.length);
+  const endpoint = agent?.values?.sdkEndpoint || agent?.values?.endpoint || null;
+
+  return (
+    <Box
+      sx={{
+        my: 2, p: 2, borderRadius: 1.5, border: "1px solid", borderColor: "divider",
+      }}
+    >
+      <Stack direction={{ xs: "column", sm: "row" }} spacing={2} alignItems={{ sm: "center" }}>
+        <Box
+          sx={{
+            width: 34, height: 34, borderRadius: 1, display: "grid", placeItems: "center",
+            bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.06 : 0.04),
+            color: "text.secondary", flexShrink: 0,
+          }}
+        >
+          <Iconify icon="solar:cpu-bolt-linear" width={18} />
+        </Box>
+        <Box flex={1} minWidth={0}>
+          <Stack direction="row" alignItems="center" spacing={1}>
+            <Typography sx={{ typography: "s3", color: "text.subtitle", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4 }}>
+              Test subject
+            </Typography>
+            {agentConnected && (
+              <Box
+                sx={{
+                  height: 18, px: 0.75, borderRadius: 0.75,
+                  display: "inline-flex", alignItems: "center",
+                  bgcolor: (t) => alpha("#16A34A", t.palette.mode === "dark" ? 0.16 : 0.1),
+                  color: "#16A34A",
+                }}
+              >
+                <Typography sx={{ typography: "s3", fontWeight: 700 }}>Connected</Typography>
+              </Box>
+            )}
+          </Stack>
+          <Typography sx={{ typography: "s1", fontWeight: 700, mt: 0.25 }}>
+            {agent ? `Agent ${activeLabel}` : "No agent attached"}
+          </Typography>
+          <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>
+            {agent
+              ? `${versionCount} version${versionCount === 1 ? "" : "s"} on record${endpoint ? ` · ${endpoint}` : ""}. This environment stays put — swap in another agent to compare.`
+              : "This environment is portable. Attach an agent as the test subject; you can swap in different agents later without rebuilding the env."}
+          </Typography>
+        </Box>
+        <Stack direction="row" spacing={1} sx={{ flexShrink: 0 }}>
+          <Button
+            variant="outlined" size="small"
+            onClick={() => onGo("agent")}
+            sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider" }}
+          >
+            {agent ? "Manage versions" : "Attach agent"}
+          </Button>
+        </Stack>
+      </Stack>
+    </Box>
+  );
+}
+AgentSummarySection.propTypes = {
+  env: PropTypes.object,
+  envState: PropTypes.object,
+  onGo: PropTypes.func,
+  agentConnected: PropTypes.bool,
+};
 
 /* ── twin backing surface panel ───────────────────────────────────────────── */
 
