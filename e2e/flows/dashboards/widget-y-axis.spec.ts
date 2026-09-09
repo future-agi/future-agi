@@ -38,7 +38,11 @@ const TROUGH_MS = 219;
 const FILLER_MS = 11;
 const BUCKET_A_LATENCIES = [PEAK_MS, ...Array<number>(8).fill(FILLER_MS)];
 const BUCKET_B_LATENCIES = [TROUGH_MS, FILLER_MS];
-const SEEDED_SPANS = BUCKET_A_LATENCIES.length + BUCKET_B_LATENCIES.length;
+interface Bucket { msAgo: number; latencies: number[] }
+const DEFAULT_BUCKETS: Bucket[] = [
+  { msAgo: 4 * 60_000, latencies: BUCKET_A_LATENCIES },
+  { msAgo: 2 * 60_000, latencies: BUCKET_B_LATENCIES },
+];
 const AUTO_TICKS = [7500, 6000, 4500, 3000, 1500, 0];
 const COUNT_TICKS = [10, 8, 6, 4, 2, 0];
 // latency/max per bucket, newest bucket last — the exact numbers the axis is
@@ -46,6 +50,35 @@ const COUNT_TICKS = [10, 8, 6, 4, 2, 0];
 // there instead of showing up as a mystery axis.
 const EXPECTED_LATENCY_SERIES = [PEAK_MS, TROUGH_MS];
 const EXPECTED_COUNT_SERIES = [BUCKET_A_LATENCIES.length, BUCKET_B_LATENCIES.length];
+
+// A second seeded shape: three one-minute buckets whose latency maxima form a
+// narrow band sitting well above zero.
+//
+// This is the shape TH-7680 was actually reported against — "a large empty
+// space" — and the only one that reaches getFittedYAxisBounds' band-fitting
+// path at all. The buckets above cannot: their floor of 219 is under 0.3 x the
+// 7043 peak, so getAutoYAxisBounds zero-anchors and returns before the fitted
+// path is ever consulted.
+//
+// Per-minute latency maxima, oldest bucket first, one span per bucket.
+const BAND_MAXIMA = [190, 250, 210];
+const NARROW_BAND_BUCKETS: Bucket[] = BAND_MAXIMA.map((ms, i) => ({
+  msAgo: (6 - i * 2) * 60_000,
+  latencies: [ms],
+}));
+
+// A column's length is read from a baseline, so its axis stays anchored at zero
+// whatever the band looks like: step = niceCeil(250 / 5) = 50, max = 50 x 5
+// (widgetUtils.js getAutoYAxisBounds, called with deferNarrowBand: false for a
+// bar-shaped chartType).
+const COLUMN_AXIS_MAX = 250;
+const COLUMN_TICKS = [250, 200, 150, 100, 50, 0];
+// A line's value is read from a position, so the same band is fitted where it
+// sits (getFittedYAxisBounds): span 60, step = niceCeil(60 / 5) = 15, min =
+// floor(190 / 15) x 15 = 180, max = 180 + 15 x 5 = 255. That 180 floor is the
+// dead space TH-7680 is about — ApexCharts' own ladder draws 0..250 and spends
+// three quarters of the plot on nothing.
+const LINE_TICKS = [255, 240, 225, 210, 195, 180];
 
 /**
  * One OTLP export of `latencies.length` single-span traces, all sharing one
@@ -104,6 +137,7 @@ async function seedLatencyBuckets(
   actor: TestActor,
   probe: StateProbe,
   projectName: string,
+  buckets: Bucket[] = DEFAULT_BUCKETS,
 ): Promise<Seeded> {
   const cfg = {
     collectorUrl: E2E.collectorUrl,
@@ -111,10 +145,10 @@ async function seedLatencyBuckets(
     secretKey: actor.secretKey,
     projectName,
   };
-  const traceIds = [
-    ...(await seedBucket(req, cfg, 4 * 60_000, BUCKET_A_LATENCIES)),
-    ...(await seedBucket(req, cfg, 2 * 60_000, BUCKET_B_LATENCIES)),
-  ];
+  const traceIds: string[] = [];
+  for (const bucket of buckets) {
+    traceIds.push(...(await seedBucket(req, cfg, bucket.msAgo, bucket.latencies)));
+  }
   const params = Object.fromEntries(traceIds.map((t, i) => [`t${i}`, t]));
   const placeholders = traceIds.map((_, i) => `{t${i}:String}`).join(',');
   await expect
@@ -125,7 +159,7 @@ async function seedLatencyBuckets(
       );
       return Number(rows[0].n);
     }, POLL.SPAN_VISIBLE)
-    .toBe(SEEDED_SPANS);
+    .toBe(traceIds.length);
 
   const [{ project_id: projectId }] = await probe.ch<{ project_id: string }>(
     'SELECT DISTINCT project_id FROM spans FINAL WHERE trace_id = {t:String}',
@@ -171,17 +205,22 @@ const axisPayload = (overrides: Record<string, unknown> = {}) => ({
 });
 
 const chartConfig = ({
+  chartType = 'line',
   leftY = {},
   rightY = {},
   seriesAxis = {},
   visibleSeries = null,
 }: {
+  // The widget's own type, not ApexCharts': `column` and `stacked_column` both
+  // map to apexType `bar` (WidgetChart.jsx getApexType, mirrored at
+  // WidgetEditorView.jsx).
+  chartType?: string;
   leftY?: Record<string, unknown>;
   rightY?: Record<string, unknown>;
   seriesAxis?: Record<string, string>;
   visibleSeries?: string[] | null;
 } = {}) => ({
-  chart_type: 'line',
+  chart_type: chartType,
   axis_config: {
     left_y: axisPayload(leftY),
     // The editor's right-axis default: hidden, and "Out of Bounds: Hidden".
@@ -192,19 +231,21 @@ const chartConfig = ({
   visible_series: visibleSeries,
 });
 
+/** One drawn bar: the value ApexCharts says it carries, and its height on screen. */
+interface Bar { value: number; height: number }
 interface RawChart {
   gridTop: number;
   gridBottom: number;
   canvasMid: number;
   axes: { left: number; labels: string[] }[];
-  series: { markers: number[] }[];
+  series: { markers: number[]; bars: Bar[] }[];
 }
 interface Chart {
   gridTop: number;
   gridBottom: number;
   canvasMid: number;
   axes: { left: number; ticks: number[] }[];
-  series: { markers: number[] }[];
+  series: { markers: number[]; bars: Bar[] }[];
 }
 
 /**
@@ -246,6 +287,31 @@ async function readChart(page: Page): Promise<Chart | null> {
         .filter((a) => a.labels.length > 0),
       series: [...canvas.querySelectorAll('.apexcharts-series')].map((g) => ({
         markers: [...g.querySelectorAll('circle.apexcharts-marker')].map(centreY),
+        // Every bar that carries a data point, in bucket order.
+        //
+        // ApexCharts emits one path per bucket in the window — 31 of them over
+        // the 30-minute range at minute granularity — and the null-padded ones
+        // the backend returns come back as zero-height paths with no `val`.
+        // Selecting on `val` is what keeps this in terms of data points, and it
+        // stays honest for a bar clipped to nothing: that one still carries its
+        // `val`, so it is counted and its height reads 0.
+        //
+        // The height is clamped to the grid rather than read off the path's own
+        // box, because ApexCharts draws a bar from the value's zero line even
+        // when the axis floor is above it — on a 180..255 axis the 190 bar's
+        // raw box extends well past the plot. What a reader compares is the
+        // part that is actually drawn.
+        bars: [...g.querySelectorAll('path.apexcharts-bar-area')]
+          .filter((el) => el.getAttribute('val') !== null)
+          .map((el) => {
+            const r = el.getBoundingClientRect();
+            const top = Math.max(r.top, gridRect.top);
+            const bottom = Math.min(r.bottom, gridRect.bottom);
+            return {
+              value: Number(el.getAttribute('val')),
+              height: Math.round(Math.max(0, bottom - top)),
+            };
+          }),
       })),
     };
   });
@@ -321,6 +387,7 @@ interface DashboardEnvelope { result: { id: string } }
 // every other dashboard route. Asserted through this shape on purpose.
 interface WidgetDetail {
   chart_config: {
+    chart_type: string;
     axis_config: {
       left_y: Record<string, unknown>;
       right_y: Record<string, unknown>;
@@ -342,6 +409,7 @@ interface Fixture {
   projectId: string;
   dashboardId: string;
   widgetId: string;
+  traceIds: string[];
   query: ReturnType<typeof queryConfig>;
 }
 
@@ -353,8 +421,11 @@ async function seedWidget(
   name: string,
   metrics: ReturnType<typeof systemMetric>[],
   chart: ReturnType<typeof chartConfig>,
+  buckets: Bucket[] = DEFAULT_BUCKETS,
 ): Promise<Fixture> {
-  const { projectId } = await seedLatencyBuckets(req, actor, probe, `${name}-project`);
+  const { projectId, traceIds } = await seedLatencyBuckets(
+    req, actor, probe, `${name}-project`, buckets,
+  );
   const query = queryConfig(projectId, metrics);
   const dashboard = await actor.api.post<DashboardEnvelope>('/tracer/dashboard/', {
     name,
@@ -370,7 +441,7 @@ async function seedWidget(
     height: 320,
     position: 0,
   });
-  return { projectId, dashboardId, widgetId: widget.result.id, query };
+  return { projectId, dashboardId, widgetId: widget.result.id, traceIds, query };
 }
 
 const uniqueName = (flow: string, testInfo: { workerIndex: number }) =>
@@ -636,6 +707,98 @@ test('DASH-E2E-003: a dual-axis widget keeps one scale per side and keeps it whe
       'span_count|count|total',
       'trace_count|count|total',
     ]);
+  });
+
+  await req.dispose();
+});
+
+test('DASH-E2E-004: a column widget keeps its bars proportional while a line widget fits the band', {
+  tag: ['@flow'],
+  annotation: flowAnnotation({
+    id: 'DASH-E2E-004',
+    area: 'dashboards',
+    userGoal:
+      'A user switching a widget to columns reads bar heights that are true to their values, while the same data on a line widget still gets the tight fitted axis',
+    steps: [
+      'seed traces whose per-minute latency maxima form a narrow band above zero — 190, 250 and 210 ms',
+      'create a dashboard holding one column widget over that latency metric, with no typed bounds',
+      'open the dashboard and read the rendered y-axis and every bar height',
+      'switch the same widget to a line chart and re-read the axis',
+    ],
+    backendChecks: [
+      'the widget query returns exactly the seeded per-bucket maxima (190, 250, 210) for latency/max',
+      'chart_config.chart_type round-trips as column and then as line through the widget detail endpoint',
+    ],
+  }),
+}, async ({ page, actor, probe }, testInfo) => {
+  test.setTimeout(240_000);
+  const req = await request.newContext();
+  const name = uniqueName('dash4', testInfo);
+  const metrics = [systemMetric('latency', 'max')];
+  const fixture = await seedWidget(
+    req, actor, probe, name, metrics,
+    chartConfig({ chartType: 'column' }),
+    NARROW_BAND_BUCKETS,
+  );
+  // CI uploads the HTML report and nothing else, so the ids that would let
+  // anyone re-query these rows have to be in it.
+  await testInfo.attach('seeded', {
+    contentType: 'application/json',
+    body: JSON.stringify({
+      projectId: fixture.projectId,
+      dashboardId: fixture.dashboardId,
+      widgetId: fixture.widgetId,
+      traceIds: fixture.traceIds,
+    }, null, 2),
+  });
+
+  await test.step('API: the widget query returns the band the axis is derived from', async () => {
+    const body = await actor.api.post<QueryEnvelope>('/tracer/dashboard/query/', fixture.query);
+    expect(seriesValues(body, 'latency')).toEqual(BAND_MAXIMA);
+  });
+
+  await page.goto(`/dashboard/dashboards/${fixture.dashboardId}`, { waitUntil: 'domcontentloaded' });
+
+  await test.step('UI: the column axis stays anchored at zero and every bar is its own value', async () => {
+    const chart = await chartWithTicks(page, [COLUMN_TICKS]);
+    expect(chart.series).toHaveLength(1);
+    const bars = chart.series[0].bars;
+    // Exactly the seeded band, in bucket order — a drifted seed fails here
+    // rather than as an unreadable height mismatch below.
+    expect(bars.map((b) => b.value)).toEqual(BAND_MAXIMA);
+
+    // A bar states its value as a length from the baseline, so each drawn
+    // height has to be that value's share of the axis maximum. 2px of slack for
+    // the stroke and the rounding — the same allowance clippedAboveGrid makes.
+    const plotHeight = chart.gridBottom - chart.gridTop;
+    for (const bar of bars) {
+      const expected = (bar.value / COLUMN_AXIS_MAX) * plotHeight;
+      expect(Math.abs(bar.height - expected)).toBeLessThanOrEqual(2);
+    }
+
+    const detail = await actor.api.get<WidgetDetail>(
+      `/tracer/dashboard/${fixture.dashboardId}/widgets/${fixture.widgetId}/`,
+    );
+    expect(detail.chart_config.chart_type).toBe('column');
+  });
+
+  await test.step('UI: the same band on a line chart is fitted where it sits', async () => {
+    await actor.api.patch(`/tracer/dashboard/${fixture.dashboardId}/widgets/${fixture.widgetId}/`, {
+      chart_config: chartConfig({ chartType: 'line' }),
+    });
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    // 180..255, not the 0..250 a column gets and not ApexCharts' own ladder.
+    // Both halves of the rule are pinned here on purpose: turning the fit off
+    // everywhere would fix the column half and fail this one.
+    const chart = await chartWithTicks(page, [LINE_TICKS]);
+    expect(chart.series).toHaveLength(1);
+    expect(plottedPoints(chart, 0)).toHaveLength(BAND_MAXIMA.length);
+    expect(clippedAboveGrid(chart)).toBe(0);
+
+    const detail = await actor.api.get<WidgetDetail>(
+      `/tracer/dashboard/${fixture.dashboardId}/widgets/${fixture.widgetId}/`,
+    );
+    expect(detail.chart_config.chart_type).toBe('line');
   });
 
   await req.dispose();

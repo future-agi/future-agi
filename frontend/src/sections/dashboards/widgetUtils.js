@@ -524,6 +524,23 @@ export const getAggColumnLabel = (metrics, allAggregations) => {
 export const seriesHasDataPoints = (series = []) =>
   series.some((s) => (s?.data || []).length > 0);
 
+// Lines encode a value as a position, so fitting the band around the data
+// reads correctly. Bars encode it as a length measured from the baseline, so
+// a fitted non-zero floor lies about the data — a 250 bar on a 180-255 axis
+// draws as though it were 70. ApexCharts itself forces minY to 0 for bar
+// series unless an explicit min overrides it, so this only has to keep the
+// caller from asking it to fit. `bar`/`stacked_bar` are listed here for
+// completeness, though in this codebase they render as the horizontal table,
+// not a y-axis chart.
+const BASELINE_ANCHORED_CHART_TYPES = new Set([
+  "column",
+  "stacked_column",
+  "bar",
+  "stacked_bar",
+]);
+export const chartTypeFitsBand = (chartType) =>
+  !BASELINE_ANCHORED_CHART_TYPES.has(chartType);
+
 // ApexCharts silently clips any series point outside yaxis min/max — if
 // every point in every series falls outside the configured bounds, the
 // chart renders fully blank with no indication why. Surface that as a
@@ -542,8 +559,9 @@ export const seriesHasDataPoints = (series = []) =>
  * that comes with it.
  *
  * Null still comes back where there is no band to fit: a logarithmic side,
- * one with fewer than two finite points, or one whose points are all equal.
- * Those keep ApexCharts' own scaling, so the invariant above is not absolute.
+ * one with no finite points, or whose points are all equal — a single point
+ * being the degenerate case. Those keep ApexCharts' own scaling, so the
+ * invariant above is not absolute.
  */
 export const getFittedYAxisBounds = (
   series = [],
@@ -595,12 +613,22 @@ export const resolveAxisBounds = (
   cfg = {},
   { stacked = false, tickAmount = 5, fit = false } = {},
 ) => {
-  const compute = fit ? getFittedYAxisBounds : getAutoYAxisBounds;
-  const auto = compute(series, {
-    stacked,
-    logarithmic: cfg.scale === "logarithmic",
-    tickAmount,
-  });
+  // A non-fitting axis (bars) still needs explicit bounds wherever the
+  // dual-axis invariant requires them — it just may not leave zero the way
+  // the fitted path does for a narrow band, so the deferral is switched off
+  // rather than falling back to getFittedYAxisBounds.
+  const auto = fit
+    ? getFittedYAxisBounds(series, {
+        stacked,
+        logarithmic: cfg.scale === "logarithmic",
+        tickAmount,
+      })
+    : getAutoYAxisBounds(series, {
+        stacked,
+        logarithmic: cfg.scale === "logarithmic",
+        tickAmount,
+        deferNarrowBand: false,
+      });
   const extent = getSeriesExtent(series, { stacked });
   const widen = cfg.outOfBounds !== "hidden" && extent;
   const typedMin = parseBound(cfg.min);
@@ -629,7 +657,7 @@ export const resolveWidgetAxisPlan = (
   chartSeries = [],
   chartSeriesIndices = [],
   axisConfig = {},
-  { stacked = false } = {},
+  { stacked = false, chartType = "line" } = {},
 ) => {
   const leftCfg = axisConfig?.leftY || {};
   const rightCfg = axisConfig?.rightY || {};
@@ -647,10 +675,14 @@ export const resolveWidgetAxisPlan = (
       ? "right"
       : "left";
 
-  // fit on both paths. Zero-anchoring still wins wherever the data runs to the
-  // floor; fitting only adds the case it declines — a band well above zero,
-  // which otherwise falls to ApexCharts' coarse {1,2,5,10} step ladder.
-  const opts = { stacked, fit: true };
+  // fit on both paths for a line-shaped chart type. Zero-anchoring still wins
+  // wherever the data runs to the floor; fitting only adds the case it
+  // declines — a band well above zero, which otherwise falls to ApexCharts'
+  // coarse {1,2,5,10} step ladder. A bar-shaped chartType (column,
+  // stacked_column, bar, stacked_bar) never fits: its baseline is the value
+  // itself, so it stays anchored at zero even for a narrow band — see
+  // chartTypeFitsBand.
+  const opts = { stacked, fit: chartTypeFitsBand(chartType) };
   const on = (side) => chartSeries.filter((__, i) => sideOf(i) === side);
 
   return {
@@ -665,32 +697,9 @@ export const resolveWidgetAxisPlan = (
   };
 };
 
-export const getYAxisRangeWarning = (series = [], axisConfig = {}) => {
-  const rightCfg = axisConfig?.rightY || {};
-  const seriesAxis = axisConfig?.seriesAxis || {};
-  const hasRightAxis =
-    rightCfg.visible && Object.values(seriesAxis).some((s) => s === "right");
-  if (hasRightAxis) return null;
-
-  const leftAxisConfig = axisConfig?.leftY || {};
-  const min = parseBound(leftAxisConfig.min);
-  const max = parseBound(leftAxisConfig.max);
-  if (min == null && max == null) return null;
-
-  let sawPoint = false;
-  for (const s of series) {
-    for (const pt of s.data || []) {
-      if (pt?.y == null) continue;
-      const y = Number(pt.y);
-      if (!Number.isFinite(y)) continue;
-      sawPoint = true;
-      if ((min == null || y >= min) && (max == null || y <= max)) {
-        return null;
-      }
-    }
-  }
-  if (!sawPoint) return null;
-
+// The three warning strings, unchanged in wording from before this rewrite —
+// an e2e spec greps them, so the text stays byte-identical.
+const rangeMessage = (min, max) => {
   if (min != null && max != null) {
     return `Data is outside your configured Y-axis range (${min}–${max}). Adjust bounds to see your data.`;
   }
@@ -698,6 +707,67 @@ export const getYAxisRangeWarning = (series = [], axisConfig = {}) => {
     return `Data is outside your configured Y-axis minimum (${min}). Adjust bounds to see your data.`;
   }
   return `Data is outside your configured Y-axis maximum (${max}). Adjust bounds to see your data.`;
+};
+
+/**
+ * ApexCharts clips a series point outside the axis's *resolved* min/max, not
+ * its typed one — "Out of Bounds: Visible" widens a typed bound away
+ * whenever it would clip data (see resolveAxisBounds), so a typed bound is
+ * not proof anything is actually cut off. The old version judged straight
+ * from the typed value, so it used to fire "Adjust bounds to see your data"
+ * over a chart that was drawing every point fine, because the axis had
+ * already been widened underneath it before it ever reached the chart.
+ *
+ * So this reads the same resolved plan the chart itself is scaled against
+ * (`resolveWidgetAxisPlan`) and asks, per side, whether that side's resolved
+ * bounds actually clip every point assigned to it. A side widened by
+ * "Visible" resolves to bounds that contain the data, so it can never fire;
+ * a side left "Hidden" keeps its typed bound as a hard cap, so a fully
+ * clipped side — left or right — is reported instead of silently vanishing.
+ */
+export const getYAxisRangeWarning = (
+  chartSeries = [],
+  chartSeriesIndices = [],
+  axisConfig = {},
+  { stacked = false, chartType = "line" } = {},
+) => {
+  const { sideOf, bounds } = resolveWidgetAxisPlan(
+    chartSeries,
+    chartSeriesIndices,
+    axisConfig,
+    { stacked, chartType },
+  );
+
+  for (const side of ["left", "right"]) {
+    if (!bounds[side]) continue;
+
+    const cfg = axisConfig?.[side === "right" ? "rightY" : "leftY"] || {};
+    const typedMin = parseBound(cfg.min);
+    const typedMax = parseBound(cfg.max);
+    if (typedMin == null && typedMax == null) continue;
+
+    const { min, max } = bounds[side];
+    if (min === undefined && max === undefined) continue;
+
+    let sawPoint = false;
+    let anyVisible = false;
+    chartSeries.forEach((s, i) => {
+      if (sideOf(i) !== side) return;
+      for (const pt of s.data || []) {
+        if (pt?.y == null) continue;
+        const y = Number(pt.y);
+        if (!Number.isFinite(y)) continue;
+        sawPoint = true;
+        if ((min == null || y >= min) && (max == null || y <= max)) {
+          anyVisible = true;
+        }
+      }
+    });
+
+    if (sawPoint && !anyVisible) return rangeMessage(typedMin, typedMax);
+  }
+
+  return null;
 };
 
 // A bound counts as user-set only when it parses to a finite number. The
@@ -731,6 +801,12 @@ const niceCeil = (value) => {
 /**
  * Lowest and highest value the chart actually plots, or null if there is
  * nothing finite to measure. Stacked charts are read off the summed height.
+ *
+ * One finite point is enough to return an extent — callers that need a real
+ * span (a min/max pair that differ) check for that themselves. The raw value
+ * must be checked for null/undefined before it reaches `Number()`, because
+ * `Number(null) === 0` would otherwise fold a gap bucket into the data as a
+ * real zero instead of skipping it.
  */
 export const getSeriesExtent = (series = [], { stacked = false } = {}) => {
   // `Number(null)` is 0, so reading a point's value arithmetically would let an
@@ -778,7 +854,7 @@ export const getSeriesExtent = (series = [], { stacked = false } = {}) => {
     }
   }
 
-  return observed < 2 ? null : { min, max };
+  return observed < 1 ? null : { min, max };
 };
 
 /**
@@ -792,10 +868,19 @@ export const getSeriesExtent = (series = [], { stacked = false } = {}) => {
  * forcing 0 would waste *more* space than it saves. Null is a deferral, not a
  * verdict: callers pass it to getFittedYAxisBounds, which fits the band where
  * it actually sits.
+ *
+ * `deferNarrowBand` (default true) gates that deferral. A mark that must stay
+ * anchored at zero regardless — a bar, whose height *is* the value — passes
+ * `false` so a narrow band still comes back zero-anchored instead of null.
  */
 export const getAutoYAxisBounds = (
   series = [],
-  { stacked = false, logarithmic = false, tickAmount = 5 } = {},
+  {
+    stacked = false,
+    logarithmic = false,
+    tickAmount = 5,
+    deferNarrowBand = true,
+  } = {},
 ) => {
   if (logarithmic) return null;
 
@@ -807,8 +892,9 @@ export const getAutoYAxisBounds = (
   if (peak <= 0) return null;
 
   // Only act where the data already runs most of the way to zero. Above that
-  // the series is a narrow high band and zero-anchoring is a regression.
-  if (floor > 0.3 * peak) return null;
+  // the series is a narrow high band and zero-anchoring is a regression —
+  // unless the caller has already ruled out fitting the band instead.
+  if (deferNarrowBand && floor > 0.3 * peak) return null;
 
   const step = niceCeil(peak / tickAmount);
   const max = normalize(step * tickAmount);

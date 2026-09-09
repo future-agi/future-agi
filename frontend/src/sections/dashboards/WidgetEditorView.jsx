@@ -115,6 +115,7 @@ import {
   getVisibleIndices,
   resolveWidgetAxisPlan,
   makeSeriesKey,
+  shouldConnectAcrossMissingBuckets,
   resolveSavedSelection,
   toAxisConfigPayload,
 } from "./widgetUtils";
@@ -3528,8 +3529,12 @@ export default function WidgetEditorView() {
   );
 
   const outOfRangeWarning = useMemo(
-    () => getYAxisRangeWarning(chartSeries, axisConfig),
-    [chartSeries, axisConfig],
+    () =>
+      getYAxisRangeWarning(chartSeries, chartSeriesIndices, axisConfig, {
+        stacked: isStacked,
+        chartType,
+      }),
+    [chartSeries, chartSeriesIndices, axisConfig, isStacked, chartType],
   );
 
   const autoDecimals = useMemo(
@@ -3881,7 +3886,7 @@ export default function WidgetEditorView() {
           chartSeries,
           chartSeriesIndices,
           axisConfig,
-          { stacked: isStacked },
+          { stacked: isStacked, chartType },
         );
         if (!hasRightAxis) {
           const { min, max } = bounds.left;
@@ -4054,6 +4059,7 @@ export default function WidgetEditorView() {
     isLineChart,
     isStacked,
     isHorizontal,
+    chartType,
     chartSeries,
     plottedChartSeries,
     chartTimeWindow,

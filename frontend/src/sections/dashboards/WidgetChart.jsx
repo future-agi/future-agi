@@ -579,8 +579,12 @@ export default function WidgetChart({
   ]);
 
   const outOfRangeWarning = useMemo(
-    () => getYAxisRangeWarning(chartSeries, axisConfig),
-    [chartSeries, axisConfig],
+    () =>
+      getYAxisRangeWarning(chartSeries, chartSeriesIndices, axisConfig, {
+        stacked: isStacked,
+        chartType,
+      }),
+    [chartSeries, chartSeriesIndices, axisConfig, isStacked, chartType],
   );
 
   const hasNoDataForRange = useMemo(
@@ -1368,7 +1372,7 @@ export default function WidgetChart({
         chartSeries,
         chartSeriesIndices,
         axisConfig,
-        { stacked: isStacked },
+        { stacked: isStacked, chartType },
       );
       if (!hasRightAxis) {
         const hideOOB = leftCfg.outOfBounds === "hidden";
