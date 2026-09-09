@@ -5258,7 +5258,6 @@ export default function WidgetEditorView() {
                     ) : isTable ? (
                       /* Data table — Time as rows, Segments as columns */
                       (() => {
-                        const timeData = chartSeries[0]?.data || [];
                         // One row per bucket becomes thousands of rows at
                         // minute granularity, so empty buckets are dropped and
                         // the remainder capped (TH-7757).
@@ -5367,7 +5366,13 @@ export default function WidgetEditorView() {
                               </thead>
                               <tbody>
                                 {bucketPlan.indices.map((ri) => {
-                                  const pt = timeData[ri];
+                                  // The plan is sized by the widest series, so
+                                  // a shorter chartSeries[0] must not drop a
+                                  // row another series still reports
+                                  // (TH-7757 review).
+                                  const pt = chartSeries.find(
+                                    (s) => s?.data?.[ri],
+                                  )?.data?.[ri];
                                   if (!pt) return null;
                                   const hasData = chartSeries.some(
                                     (s) =>
@@ -5687,10 +5692,14 @@ export default function WidgetEditorView() {
                 // Empty buckets are dropped and the remainder capped, so a
                 // minute-granularity range cannot render thousands of columns.
                 // The CSV export above still writes every bucket.
-                const allDataPoints = previewSeries[0]?.data || [];
                 const bucketPlan = getTableBucketPlan(previewSeries);
+                // The plan is sized by the widest series, so a shorter
+                // previewSeries[0] must not drop a row another series still
+                // reports (TH-7757 review).
                 const displayData = bucketPlan.indices
-                  .map((i) => allDataPoints[i])
+                  .map(
+                    (i) => previewSeries.find((s) => s?.data?.[i])?.data?.[i],
+                  )
                   .filter(Boolean);
                 const displayIndicesSet = new Set(bucketPlan.indices);
 

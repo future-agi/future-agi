@@ -740,7 +740,6 @@ export default function WidgetChart({
   // Table
   if (isTable) {
     // Time as rows, Segments as columns
-    const timeData = series[0]?.data || [];
     // One row per bucket becomes thousands of rows at minute granularity, so
     // empty buckets are dropped and the remainder capped (TH-7757).
     const bucketPlan = getTableBucketPlan(series);
@@ -866,7 +865,9 @@ export default function WidgetChart({
           </thead>
           <tbody>
             {bucketPlan.indices.map((ri) => {
-              const pt = timeData[ri];
+              // The plan is sized by the widest series, so a shorter series[0]
+              // must not drop a row another series still reports (TH-7757 review).
+              const pt = series.find((s) => s?.data?.[ri])?.data?.[ri];
               if (!pt) return null;
               const hasNonZero = series.some(
                 (s) => s.data[ri]?.y != null && s.data[ri].y !== 0,
