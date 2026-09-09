@@ -159,6 +159,33 @@ describe("MultiTrackAudioPlayer — recording unavailable", () => {
 
     expect(screen.queryByText(UNAVAILABLE_COPY)).not.toBeInTheDocument();
     expect(screen.queryByText(FAILED_COPY)).not.toBeInTheDocument();
+    expect(instances).toHaveLength(0);
+  });
+
+  it("plays the one track that has a url", async () => {
+    renderPlayer({
+      trackUrls: [
+        { url: "", color: "#f00", name: "Customer Audio" },
+        {
+          url: "https://example.test/assistant.wav",
+          color: "#00f",
+          name: "Assistant Audio",
+        },
+      ],
+    });
+
+    expect(instances).toHaveLength(1);
+    expect(latest().tracks).toHaveLength(1);
+    expect(latest().tracks[0].name).toBe("Assistant Audio");
+
+    act(() => latest().succeed());
+
+    await waitFor(() =>
+      expect(screen.queryByText(LOADING_COPY)).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.getByRole("button", { name: /play-pause/i }),
+    ).not.toBeDisabled();
   });
 });
 
@@ -209,22 +236,65 @@ describe("MultiTrackAudioPlayer — audio failed to load", () => {
   });
 });
 
-// The media element loading is only half the load: wavesurfer fetches and
-// decodes the file again for the waveform. That second pass can fail on a
-// source the element played, and nothing else reports it.
-describe("MultiTrackAudioPlayer — wavesurfer's own load fails", () => {
-  it("reports a load failure when a waveform fails after the media arrived", async () => {
-    renderPlayer();
+describe("MultiTrackAudioPlayer — stale instances after teardown", () => {
+  it("ignores a stale instance that finishes loading after a rebuild", async () => {
+    const { rerender } = renderPlayer({ height: 50 });
+    const stale = latest();
 
-    act(() => latest().arrive());
+    rerender(
+      <MultiTrackAudioPlayer trackUrls={TRACKS} id="call-1" height={80} />,
+    );
+
+    act(() => stale.succeed());
     expect(screen.getByText(LOADING_COPY)).toBeInTheDocument();
 
-    act(() => latest().wavesurfers[0].emit("error", new Error("decode failed")));
-
-    expect(await screen.findByText(FAILED_COPY)).toBeInTheDocument();
-    expect(screen.queryByText(LOADING_COPY)).not.toBeInTheDocument();
+    act(() => latest().succeed());
+    await waitFor(() =>
+      expect(screen.queryByText(LOADING_COPY)).not.toBeInTheDocument(),
+    );
   });
 
+  it("ignores ready events from wavesurfers subscribed before teardown", async () => {
+    const { rerender } = renderPlayer({ height: 50 });
+    const stale = latest();
+    act(() => stale.arrive());
+
+    rerender(
+      <MultiTrackAudioPlayer trackUrls={TRACKS} id="call-1" height={80} />,
+    );
+
+    act(() => stale.wavesurfers.forEach((ws) => ws.emit("ready")));
+    expect(screen.getByText(LOADING_COPY)).toBeInTheDocument();
+
+    act(() => latest().succeed());
+    await waitFor(() =>
+      expect(screen.queryByText(LOADING_COPY)).not.toBeInTheDocument(),
+    );
+  });
+
+  it("ignores the failed instance after a retry succeeds", async () => {
+    const user = userEvent.setup();
+    renderPlayer();
+    const stale = latest();
+
+    failMedia(0, NETWORK);
+    await screen.findByText(FAILED_COPY);
+
+    await user.click(screen.getByRole("button", { name: /^retry$/i }));
+    await waitFor(() => expect(instances.length).toBeGreaterThan(1));
+
+    act(() => stale.succeed());
+    expect(screen.getByText(LOADING_COPY)).toBeInTheDocument();
+    expect(screen.queryByText(FAILED_COPY)).not.toBeInTheDocument();
+
+    act(() => latest().succeed());
+    await waitFor(() =>
+      expect(screen.queryByText(LOADING_COPY)).not.toBeInTheDocument(),
+    );
+  });
+});
+
+describe("MultiTrackAudioPlayer — wavesurfer readiness", () => {
   it("still shows the waveform when one track readies and none error", async () => {
     renderPlayer();
 
@@ -284,7 +354,9 @@ describe("MultiTrackAudioPlayer failure behaviour", () => {
     failMedia(0, SRC_NOT_SUPPORTED);
 
     await screen.findByText(UNAVAILABLE_COPY);
-    expect(screen.queryByRole("button", { name: /play-pause/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /play-pause/i }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByTestId("download")).not.toBeInTheDocument();
   });
 
@@ -304,7 +376,7 @@ describe("MultiTrackAudioPlayer failure behaviour", () => {
     expect(screen.queryByText(/example\.test/)).not.toBeInTheDocument();
   });
 
-  it("hands the track the media element it owns, so playback is not fetched twice", () => {
+  it("hands the track the media element it owns, so a load error can be observed", () => {
     renderPlayer();
 
     expect(medias).toHaveLength(TRACKS.length);
