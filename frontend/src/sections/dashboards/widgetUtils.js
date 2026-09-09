@@ -353,8 +353,9 @@ export const seriesHasDataPoints = (series = []) =>
  * that comes with it.
  *
  * Null still comes back where there is no band to fit: a logarithmic side,
- * one with fewer than two finite points, or one whose points are all equal.
- * Those keep ApexCharts' own scaling, so the invariant above is not absolute.
+ * one with no finite points, or whose points are all equal — a single point
+ * being the degenerate case. Those keep ApexCharts' own scaling, so the
+ * invariant above is not absolute.
  */
 export const getFittedYAxisBounds = (
   series = [],
@@ -542,6 +543,12 @@ const niceCeil = (value) => {
 /**
  * Lowest and highest value the chart actually plots, or null if there is
  * nothing finite to measure. Stacked charts are read off the summed height.
+ *
+ * One finite point is enough to return an extent — callers that need a real
+ * span (a min/max pair that differ) check for that themselves. The raw value
+ * must be checked for null/undefined before it reaches `Number()`, because
+ * `Number(null) === 0` would otherwise fold a gap bucket into the data as a
+ * real zero instead of skipping it.
  */
 export const getSeriesExtent = (series = [], { stacked = false } = {}) => {
   const totals = [];
@@ -551,7 +558,9 @@ export const getSeriesExtent = (series = [], { stacked = false } = {}) => {
     const byIndex = [];
     for (const s of series) {
       (s?.data || []).forEach((pt, i) => {
-        const value = Number(typeof pt === "number" ? pt : pt?.y);
+        const raw = typeof pt === "number" ? pt : pt?.y;
+        if (raw == null) return;
+        const value = Number(raw);
         if (!Number.isFinite(value)) return;
         byIndex[i] = (byIndex[i] || 0) + value;
       });
@@ -560,13 +569,15 @@ export const getSeriesExtent = (series = [], { stacked = false } = {}) => {
   } else {
     for (const s of series) {
       for (const pt of s?.data || []) {
-        const value = Number(typeof pt === "number" ? pt : pt?.y);
+        const raw = typeof pt === "number" ? pt : pt?.y;
+        if (raw == null) continue;
+        const value = Number(raw);
         if (Number.isFinite(value)) totals.push(value);
       }
     }
   }
 
-  if (totals.length < 2) return null;
+  if (!totals.length) return null;
   return { min: Math.min(...totals), max: Math.max(...totals) };
 };
 

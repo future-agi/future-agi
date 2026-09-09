@@ -11,6 +11,7 @@ import {
   getExactDashboardResult,
   getDashboardMetricSeriesState,
   getPlottedChartSeries,
+  getSeriesExtent,
   getSeriesScalar,
   groupPieSeries,
   isAdditiveAggregation,
@@ -753,6 +754,46 @@ describe("resolveSavedSelection", () => {
 
 const pts = (...ys) => ys.map((y, i) => ({ x: i, y }));
 
+describe("getSeriesExtent", () => {
+  it("measures a single bucket instead of requiring two to have an extent", () => {
+    // currently null — the "<2" rule
+    expect(getSeriesExtent([{ data: pts(500) }])).toEqual({
+      min: 500,
+      max: 500,
+    });
+  });
+
+  it("skips a null gap-bucket instead of letting it coerce to 0", () => {
+    // currently { min: 0, max: 250 } — null coerces to 0
+    expect(getSeriesExtent([{ data: pts(null, 190, null, 250) }])).toEqual({
+      min: 190,
+      max: 250,
+    });
+  });
+
+  it("treats a real zero as a value, not a gap", () => {
+    expect(getSeriesExtent([{ data: pts(0, 200) }])).toEqual({
+      min: 0,
+      max: 200,
+    });
+  });
+
+  it("skips an all-null stacked bucket instead of summing it to 0", () => {
+    // currently min 0
+    expect(
+      getSeriesExtent(
+        [{ data: pts(100, null) }, { data: pts(50, null) }],
+        { stacked: true },
+      ),
+    ).toEqual({ min: 150, max: 150 });
+  });
+
+  it("returns null when there is still nothing to measure", () => {
+    expect(getSeriesExtent([{ data: pts(null, null) }])).toBeNull();
+    expect(getSeriesExtent([])).toBeNull();
+  });
+});
+
 describe("parseBound", () => {
   it("treats empty, undefined and non-numeric input as unset", () => {
     expect(parseBound("")).toBeNull();
@@ -897,6 +938,37 @@ describe("resolveAxisBounds", () => {
       min: 0,
       max: 7500,
     });
+  });
+
+  it("keeps a typed min that clips nothing, even across a gappy window", () => {
+    // currently dropped: the null-inflated floor of 0 makes 150 look clipping
+    expect(
+      resolveAxisBounds(
+        [{ data: pts2(null, 190, null, 250) }],
+        { min: "150", outOfBounds: "visible" },
+        { fit: true },
+      ).min,
+    ).toBe(150);
+  });
+
+  it("widens a clipping max for a single bucket when out of bounds is visible", () => {
+    // currently max === 100, clipping the one point
+    const one = resolveAxisBounds(
+      [{ data: pts2(500) }],
+      { max: "100", outOfBounds: "visible" },
+      { fit: true },
+    );
+    expect(one.max === undefined || one.max >= 500).toBe(true);
+  });
+
+  it("keeps a clipping max for a single bucket as a hard cap when hidden", () => {
+    expect(
+      resolveAxisBounds(
+        [{ data: pts2(500) }],
+        { max: "100", outOfBounds: "hidden" },
+        { fit: true },
+      ).max,
+    ).toBe(100);
   });
 });
 
