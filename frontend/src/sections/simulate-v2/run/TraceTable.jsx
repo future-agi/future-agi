@@ -492,7 +492,9 @@ export default function TraceTable({
         const measured = t.status !== "unmeasured" && t.status !== "error";
         return (
           <TableCell key={e.id} sx={{ ...bodyCell, p: 0, position: "relative" }} onClick={() => onOpen(t)}>
-            {r && measured ? <Score result={r} /> : <Box sx={{ p: 2, typography: "s2", color: "text.disabled" }}>—</Box>}
+            {r && measured
+              ? <Score result={r} />
+              : <Box sx={{ p: 2, display: "grid", placeItems: "center", typography: "s2", fontWeight: 600, color: "text.disabled" }}>—</Box>}
           </TableCell>
         );
       })}

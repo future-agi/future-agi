@@ -426,16 +426,19 @@ function SubTasksCell({ subTasks }) {
   const fullList = list.map((st, i) => `${i + 1}. ${st.label}`).join("\n");
   return (
     <TruncTooltip title={fullList}>
-      <Stack spacing={0.375}>
+      <Stack spacing={0.375} sx={{ width: "100%", minWidth: 0 }}>
         {list.slice(0, 3).map((st, i) => (
-          <Stack key={st.id} direction="row" spacing={0.75} alignItems="flex-start" sx={{ minWidth: 0 }}>
+          <Stack key={st.id} direction="row" spacing={0.75} alignItems="flex-start" sx={{ minWidth: 0, width: "100%" }}>
             <Typography sx={{
               typography: "s3", color: "text.subtitle",
               fontVariantNumeric: "tabular-nums", flexShrink: 0, mt: "1px",
             }}>
               {i + 1}.
             </Typography>
-            <Typography noWrap sx={{ typography: "s3", color: "text.secondary", flex: 1, minWidth: 0 }}>
+            {/* Explicit maxWidth (the Sub-tasks colgroup width minus the number
+                + padding) so the ellipsis triggers reliably — nested flex inside
+                a table cell wasn't giving noWrap a width to truncate against. */}
+            <Typography noWrap sx={{ typography: "s3", color: "text.secondary", flex: 1, minWidth: 0, maxWidth: 228 }}>
               {st.label}
             </Typography>
           </Stack>

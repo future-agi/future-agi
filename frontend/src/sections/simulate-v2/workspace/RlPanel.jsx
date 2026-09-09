@@ -93,11 +93,11 @@ export default function RlPanel({ env, envState, patch }) {
                 component="pre"
                 sx={{
                   m: 0, pl: 2.5, pr: 6, py: 2,
-                  /* Wrap instead of hiding overflow: these are short config /
-                     loop snippets, so a wrapped line reads better than a
-                     hidden horizontal scroll with no affordance. pr leaves
-                     room for the copy button so it never sits on the code. */
-                  whiteSpace: "pre-wrap", wordBreak: "break-word",
+                  /* Real code: keep lines intact and scroll horizontally.
+                     Soft-wrapping a Python comment spilled "being trained"
+                     onto its own column-0 line, which read as a statement.
+                     pr keeps the copy button clear of the code. */
+                  whiteSpace: "pre", overflowX: "auto",
                   typography: "s2", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
                   color: "text.secondary", lineHeight: 1.7,
                 }}
@@ -246,7 +246,7 @@ export default function RlPanel({ env, envState, patch }) {
         <Box
           component="pre"
           sx={{
-            m: 0, px: 2.5, py: 2, whiteSpace: "pre-wrap", wordBreak: "break-word",
+            m: 0, px: 2.5, py: 2, whiteSpace: "pre", overflowX: "auto",
             borderTop: "1px solid", borderColor: "divider", bgcolor: "background.neutral",
             typography: "s3", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
             color: "text.subtitle", lineHeight: 1.7,
