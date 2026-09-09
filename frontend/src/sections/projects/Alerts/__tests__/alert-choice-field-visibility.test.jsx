@@ -263,3 +263,117 @@ describe("Choice field visibility depends on the eval's output type", () => {
     expect(body).toHaveProperty("metric", detail.metric);
   });
 });
+
+// The alert preview graph is enabled through onPayloadChange's second argument.
+// A "Pass/Fail" or "choices" eval's graph endpoint requires the chosen label,
+// so the preview must not be enabled until a choice is set — otherwise it fires
+// and the backend returns 400. A "score" eval needs no choice and previews as
+// soon as the metric is chosen.
+describe("Choice-thresholded evals gate the preview graph on a chosen label", () => {
+  const CHOICES_EVAL = {
+    id: "eval-2",
+    name: "Politeness",
+    output_type: "choices",
+    choices: ["never", "occasionally", "frequently", "always"],
+  };
+  const SCORE_EVAL = {
+    id: "eval-3",
+    name: "Coherence",
+    output_type: "score",
+    choices: null,
+  };
+
+  const renderDirtiedAlert = async (evaluation, thresholdMetricValue) => {
+    // savedAlert carries valid thresholds (less_than, 5 < 12), so the only
+    // variable under test is whether a choice is present.
+    const detail = {
+      ...baseSavedAlert,
+      metric: evaluation.id,
+      metric_name: evaluation.name,
+      threshold_metric_value: thresholdMetricValue,
+      filters: {},
+    };
+
+    vi.spyOn(axios, "get").mockImplementation((url) =>
+      Promise.resolve({
+        data: {
+          result: url === endpoints.project.getTraceEvals() ? [evaluation] : [],
+        },
+      }),
+    );
+
+    useAlertStore.setState({
+      openSheetView: detail.id,
+      selectedProject: detail.project,
+    });
+    useAlertSheetStore.setState({
+      alertRuleDetails: null,
+      gridRef: { current: null },
+    });
+
+    const payloadCalls = [];
+    const onPayloadChange = vi.fn((payload, enabled) =>
+      payloadCalls.push({ payload, enabled }),
+    );
+
+    renderWithRouter(
+      <QueryClientProvider
+        client={
+          new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        }
+      >
+        <SnackbarProvider>
+          <AlertSettingsForm
+            onThresholdTypeChange={vi.fn()}
+            setThresholdOperator={vi.fn()}
+            setWarningValue={vi.fn()}
+            setCriticalValue={vi.fn()}
+            setFormIsDirty={vi.fn()}
+            onPayloadChange={onPayloadChange}
+          />
+        </SnackbarProvider>
+      </QueryClientProvider>,
+    );
+
+    act(() => {
+      useAlertSheetStore.setState({
+        alertRuleDetails: normalizeAlertDetail(detail),
+      });
+    });
+
+    await waitFor(() =>
+      expect(screen.getByDisplayValue(evaluation.name)).toBeInTheDocument(),
+    );
+
+    // isQueryEnabled requires the edited form to be dirty; a name edit dirties
+    // it without touching the choice under test.
+    const nameInput = document.querySelector('[data-alert-field="name"]');
+    act(() => {
+      fireEvent.change(nameInput, { target: { value: "Edited alert name" } });
+    });
+
+    return payloadCalls;
+  };
+
+  const lastEnabled = (calls) =>
+    calls.length ? calls[calls.length - 1].enabled : undefined;
+
+  it("enables the preview once a choices eval has a chosen label (edit mode)", async () => {
+    const calls = await renderDirtiedAlert(CHOICES_EVAL, "frequently");
+    await waitFor(() => expect(lastEnabled(calls)).toBe(true));
+  });
+
+  it("keeps the preview disabled for a choices eval with no chosen label", async () => {
+    const calls = await renderDirtiedAlert(CHOICES_EVAL, "");
+    // Every gating field is debounced 300ms; wait comfortably past that so a
+    // would-be enable (the pre-fix behaviour, which enabled as soon as the
+    // metric was set) has had time to fire before we assert it never did.
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    expect(calls.some(({ enabled }) => enabled === true)).toBe(false);
+  });
+
+  it("enables the preview for a score eval without a choice (no regression)", async () => {
+    const calls = await renderDirtiedAlert(SCORE_EVAL, "");
+    await waitFor(() => expect(lastEnabled(calls)).toBe(true));
+  });
+});

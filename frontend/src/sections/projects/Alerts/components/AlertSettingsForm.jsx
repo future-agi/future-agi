@@ -237,7 +237,13 @@ export default function AlertSettingsForm({
       debouncedWarning &&
       debouncedFrequency &&
       !hasErrors &&
-      (debouncedMetricType === "evaluation_metrics" ? debouncedMetric : true);
+      (debouncedMetricType === "evaluation_metrics"
+        ? debouncedMetric &&
+          // A choice-thresholded eval's graph requires the chosen label; firing
+          // the preview before it is set 400s. Score evals need no choice.
+          (!evalUsesChoiceThreshold(selectedEval) ||
+            debouncedThresHoldMetricValue)
+        : true);
 
     const isThresholdValid = (() => {
       if (debouncedOperator === "less_than") {
@@ -261,6 +267,8 @@ export default function AlertSettingsForm({
     debouncedWarning,
     debouncedFrequency,
     debouncedMetric,
+    debouncedThresHoldMetricValue,
+    selectedEval,
     errors,
     openSheetView,
     isDirty,
