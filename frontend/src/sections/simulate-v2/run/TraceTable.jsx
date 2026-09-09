@@ -8,6 +8,7 @@ import {
 import Iconify from "src/components/iconify";
 import { interpolateColorBasedOnScore } from "src/utils/utils";
 import { subTasksFor } from "../_mock/contract";
+import { Verdict } from "../components/primitives";
 
 /**
  * The traces, as a table with optional grouping.
@@ -43,7 +44,10 @@ const latencyOf = (t) => 280 + (hash(t.id) % 320);
   the highlight stays rare and meaningful.
 */
 const METRIC_THRESHOLDS = {
-  csat:    { direction: "lowIsBad",  bad: 4 },
+  /* Only genuinely low satisfaction is an alarm. CSAT runs ~1-6 here, so a
+     4 is a good result — flagging it red next to a "Passed" verdict read as a
+     contradiction. Reserve the red triangle for 1-2. */
+  csat:    { direction: "lowIsBad",  bad: 2 },
   turns:   { direction: "highIsBad", bad: 12 },
   latency: { direction: "highIsBad", bad: 550 },
   tokens:  { direction: "highIsBad", bad: 6000 },
@@ -440,14 +444,15 @@ export default function TraceTable({
 
       {show("callDetails") && (
         <TableCell sx={bodyCell} onClick={() => onOpen(t)}>
-          <Typography sx={{ typography: "s2", fontWeight: 500 }}>
-            {t.status === "failed" ? "Failed" : t.status === "error" ? "Errored" : "Completed"}
+          {/* Lead with the verdict, not the lifecycle status: a reader
+              scanning results wants "did it pass" first, and every passed
+              row used to read a grey "Completed" that buried the answer. */}
+          <Verdict status={t.status} passes={t.passes} repeats={t.repeats} />
+          <Typography noWrap sx={{ typography: "s3", color: "text.secondary", fontWeight: 600, mt: 0.375 }}>
+            {t.name || t.title || t.id}
           </Typography>
-          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-            Duration : {((t.durationMs || 0) / 1000).toFixed(1)}s
-          </Typography>
-          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-            {t.id}
+          <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
+            {((t.durationMs || 0) / 1000).toFixed(1)}s · {t.id}
           </Typography>
         </TableCell>
       )}

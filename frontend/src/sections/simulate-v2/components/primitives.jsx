@@ -144,6 +144,10 @@ export const VERDICT_TONE = {
   passed:  { color: "#5AA47B", label: "Passed" },
   failed:  { color: "#C2603F", label: "Failed" },
   flaky:   { color: "#B98A3C", label: "Flaky" },
+  /* Infra fell over before the agent could be judged — deliberately amber,
+     not red: this is our failure, not the agent's, and it never counts against
+     the agent's score. */
+  error:   { color: "#C67A2E", label: "Errored" },
   unmeasured: { color: "#9AA0A6", label: "Not measured" },
   missing: { color: "#9AA0A6", label: "Not run" },
 };
