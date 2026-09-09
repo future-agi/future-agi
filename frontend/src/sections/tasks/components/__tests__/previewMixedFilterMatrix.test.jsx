@@ -575,12 +575,15 @@ describe("offline mixed-filter preview matrix", () => {
   );
 
   it.each(matrix)(
-    "%s %s preserves all 10 filters when a timed-out continuation resumes",
+    "%s %s preserves all 10 filters when a slow continuation fails and retries",
     async (surface, rowType) => {
       vi.useFakeTimers();
+      const retryButtonName =
+        surface === "Tasks" ? "Retry search" : "Continue search";
       const defaultGet = mocks.get.getMockImplementation();
       let listCount = 0;
       let pendingSignal;
+      let rejectContinuation;
       mocks.get.mockImplementation((url, config) => {
         if (url !== ENDPOINTS[rowType]) return defaultGet(url, config);
         listCount += 1;
@@ -588,7 +591,9 @@ describe("offline mixed-filter preview matrix", () => {
           return Promise.resolve(page("unconsumed-matrix-cursor"));
         if (listCount === 2) {
           pendingSignal = config.signal;
-          return new Promise(() => {});
+          return new Promise((_resolve, reject) => {
+            rejectContinuation = reject;
+          });
         }
         return Promise.resolve(page());
       });
@@ -596,9 +601,21 @@ describe("offline mixed-filter preview matrix", () => {
       await act(async () =>
         vi.advanceTimersByTimeAsync(ANALYTICS_REQUEST_TIMEOUT_MS + 10),
       );
-      expect(pendingSignal.aborted).toBe(true);
+      expect(pendingSignal.aborted).toBe(false);
+      expect(listCalls(rowType)).toHaveLength(2);
       expect(
-        screen.getByRole("button", { name: "Continue search" }),
+        screen.queryByRole("button", { name: retryButtonName }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByText(QUERY_FAILED_RETRY_MESSAGE),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByText("No matching rows")).not.toBeInTheDocument();
+      await act(async () => {
+        rejectContinuation(new Error("connection closed"));
+        await vi.advanceTimersByTimeAsync(10);
+      });
+      expect(
+        screen.getByRole("button", { name: retryButtonName }),
       ).toBeEnabled();
       expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
       expect(
@@ -606,7 +623,7 @@ describe("offline mixed-filter preview matrix", () => {
       ).not.toBeInTheDocument();
       expect(screen.queryByText("No matching rows")).not.toBeInTheDocument();
       await act(async () =>
-        screen.getByRole("button", { name: "Continue search" }).click(),
+        screen.getByRole("button", { name: retryButtonName }).click(),
       );
       await act(async () => vi.advanceTimersByTimeAsync(10));
       expect(listCalls(rowType)).toHaveLength(3);
@@ -619,7 +636,7 @@ describe("offline mixed-filter preview matrix", () => {
         assertCompanyStrings(JSON.parse(config.params.filters));
       }
       expect(
-        screen.queryByRole("button", { name: "Continue search" }),
+        screen.queryByRole("button", { name: retryButtonName }),
       ).not.toBeInTheDocument();
       expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
     },
