@@ -23,6 +23,29 @@ function Harness({ mountChartImmediately = true }) {
 
 const setTop = (el, top) => act(() => { el.style.top = top; });
 
+// A caller can end up handing the same ref object to genuinely different DOM
+// nodes across renders — e.g. a loading state and a loaded state that render
+// different element types at the same position, which React unmounts and
+// remounts rather than reusing. A `useEffect` keyed on the ref objects alone
+// would attach once and never notice the ref now points somewhere else.
+function RemountingHarness() {
+  const containerRef = useRef(null);
+  const [loaded, setLoaded] = useState(false);
+  useClampedChartTooltips(containerRef);
+  return (
+    <div>
+      <button onClick={() => setLoaded(true)}>load chart</button>
+      {loaded ? (
+        <section ref={containerRef} data-testid="container">
+          <div className="apexcharts-tooltip" data-testid="tooltip" />
+        </section>
+      ) : (
+        <article ref={containerRef} data-testid="spinner" />
+      )}
+    </div>
+  );
+}
+
 describe("useClampedChartTooltips", () => {
   it("pulls a tooltip drawn above the canvas back to the top edge", async () => {
     const { getByTestId } = render(<Harness />);
@@ -71,5 +94,15 @@ describe("useClampedChartTooltips", () => {
 
     expect(stray.style.top).toBe("-50px");
     stray.remove();
+  });
+
+  it("re-targets when containerRef is reattached to a new node (spinner → chart)", async () => {
+    const { getByText, getByTestId } = render(<RemountingHarness />);
+
+    act(() => getByText("load chart").click());
+    const tooltip = getByTestId("tooltip");
+    setTop(tooltip, "-30px");
+
+    await waitFor(() => expect(tooltip.style.top).toBe("0px"));
   });
 });

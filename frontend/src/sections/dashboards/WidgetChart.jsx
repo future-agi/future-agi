@@ -186,7 +186,8 @@ export default function WidgetChart({
   const containerRef = useRef(null);
   const [chartHeight, setChartHeight] = useState(CHART_HEIGHT_FALLBACK);
 
-  useClampedChartTooltips(containerRef);
+  // Mounted on first render, so this doubles as the tooltip observer's root.
+  useClampedChartTooltips(containerRef, containerRef);
 
   useEffect(() => {
     const el = containerRef.current;

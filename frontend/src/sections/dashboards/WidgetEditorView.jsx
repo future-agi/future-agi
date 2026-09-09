@@ -2256,6 +2256,10 @@ export default function WidgetEditorView() {
   const [customDateRange, setCustomDateRange] = useState(null); // [startDate, endDate]
   const customDateAnchorRef = useRef(null);
   const lineChartRef = useRef(null);
+  // Stable ancestor for the tooltip-clamp observer: lineChartRef only mounts
+  // once the preview query resolves, but this container is present from the
+  // first render.
+  const chartAncestorRef = useRef(null);
   const saveNavTimerRef = useRef(null);
   useEffect(() => () => clearTimeout(saveNavTimerRef.current), []);
 
@@ -3620,7 +3624,7 @@ export default function WidgetEditorView() {
     [isPie, pieHasBreakdown, previewSeries],
   );
 
-  useClampedChartTooltips(lineChartRef);
+  useClampedChartTooltips(lineChartRef, chartAncestorRef);
 
   // Legend hover → highlight series by dimming others via SVG opacity
   const handleLegendHover = useCallback((seriesIndex) => {
@@ -4788,6 +4792,7 @@ export default function WidgetEditorView() {
 
           {/* Chart + View toggles + Data table */}
           <Box
+            ref={chartAncestorRef}
             sx={{
               flex: 1,
               border: `1px solid ${theme.palette.divider}`,
