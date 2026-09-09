@@ -209,7 +209,7 @@ def test_all_explicit_raw_aliases_keep_custom_replay_envelope(key):
     assert builder._custom_span_attribute_filter_count() == 1
     assert builder.recommended_filter_classify_batch_size() == 200
     assert builder._uses_scalar_coordinate_replay()
-    assert "SELECT DISTINCT observation_type, service_name," in (
+    assert "SELECT observation_type, service_name," in (
         builder._filter_classifier_coordinate_predicate()
     )
     assert builder.recommended_filter_classify_read_settings() is not None

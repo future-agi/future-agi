@@ -506,10 +506,10 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
         # No inner LIMIT: an overflowing coordinate set must throw, not hide
         # a span. The outer full replacement-key argMax remains authoritative.
         # Read the project UUID only after trace_id filtering; WHERE still
-        # enforces project scope before DISTINCT and preserves index pruning.
+        # enforces project scope; IN already deduplicates coordinate tuples.
         return f"""
                   AND (observation_type, service_name, toStartOfHour(start_time), trace_id) IN (
-                      SELECT DISTINCT observation_type, service_name,
+                      SELECT observation_type, service_name,
                           toStartOfHour(start_time), trace_id
                       FROM {self.TABLE}
                       PREWHERE trace_id IN %(candidate_trace_ids)s

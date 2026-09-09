@@ -85,7 +85,7 @@ def test_coordinate_seed_cannot_filter_versions_values_roots_or_child_time(
         "latest_filter",
     ):
         assert forbidden not in coordinates
-    assert "SELECT DISTINCT observation_type, service_name," in coordinates
+    assert "SELECT observation_type, service_name," in coordinates
     assert "toStartOfHour(start_time), trace_id" in coordinates
     assert "project_id = %(project_id)s" in coordinates
     assert "trace_id IN %(candidate_trace_ids)s" in coordinates
@@ -95,7 +95,7 @@ def test_coordinate_seed_cannot_filter_versions_values_roots_or_child_time(
             {"trace_id": "two", "root_span_id": "other-root"},
         ]
     )
-    assert "SELECT DISTINCT observation_type, service_name," in sql
+    assert "SELECT observation_type, service_name," in sql
     assert (
         "GROUP BY observation_type, service_name, toStartOfHour(start_time), trace_id, id"
         in sql
@@ -172,7 +172,7 @@ def test_json_uses_same_complete_prefix_and_exact_typed_classifier(
         [{"trace_id": "one", "root_span_id": "not-authoritative"}]
     )
     assert "JSON" in sql
-    assert "SELECT DISTINCT observation_type, service_name," in sql
+    assert "SELECT observation_type, service_name," in sql
     assert (
         "GROUP BY observation_type, service_name, toStartOfHour(start_time), trace_id, id"
         in sql
