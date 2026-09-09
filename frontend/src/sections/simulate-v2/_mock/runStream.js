@@ -446,6 +446,12 @@ export function buildRun({
     return {
       id: sc.id,
       callLog,
+      /* Carry the scenario's own name + human summary so the traces table can
+         lead each row with the specific scenario (matching the Scenarios tab)
+         instead of the goal template, which repeats across every row in a
+         group. */
+      name: sc.name,
+      summary: sc.summary,
       title: sc.title,
       task: sc.task,
       persona: sc.persona,
