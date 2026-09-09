@@ -5,7 +5,6 @@ import WidgetChart from "../WidgetChart";
 import {
   AGGREGATION_POLL_MAX_ATTEMPTS,
   AGGREGATION_POLLING_PAUSED_MESSAGE,
-  AGGREGATION_REQUEST_TIMEOUT_MS,
 } from "src/utils/queryReadState";
 import WidgetPieCharts from "../WidgetPieCharts";
 import { NO_DATA_FOR_RANGE_MESSAGE } from "../constants";
@@ -467,35 +466,20 @@ describe("WidgetChart — queued exact refresh", () => {
     );
   });
 
-  it("leaves a cold spinner after the component deadline even when the mutation adapter stays pending", async () => {
+  it("keeps a cold exact read pending until its slow complete response", async () => {
     vi.useFakeTimers();
     h.query.isPending = true;
     h.query.mutate.mockImplementation(() => {});
     const onQuerySettled = vi.fn();
-
-    render(
-      <WidgetChart
-        widget={baseWidget}
-        dashboardId="dashboard-1"
-        globalDateRange={null}
-        onQuerySettled={onQuerySettled}
-      />,
-    );
-
+    render(<WidgetChart widget={baseWidget} dashboardId="dashboard-1" globalDateRange={null} onQuerySettled={onQuerySettled} />);
     expect(screen.getByRole("progressbar")).toBeInTheDocument();
-
-    await act(async () =>
-      vi.advanceTimersByTimeAsync(AGGREGATION_REQUEST_TIMEOUT_MS),
-    );
-
-    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
-    expect(
-      screen.getByText("We couldn't load this data. Please retry in a moment."),
-    ).toBeInTheDocument();
-    expect(onQuerySettled).toHaveBeenCalledOnce();
-    expect(onQuerySettled).toHaveBeenCalledWith(
-      expect.objectContaining({ exact: false, updatedAt: null }),
-    );
+    await act(async () => vi.advanceTimersByTimeAsync(120_000));
+    expect(screen.getByRole("progressbar")).toBeInTheDocument();
+    expect(onQuerySettled).not.toHaveBeenCalled();
+    expect(h.query.mutate.mock.calls[0][0].signal.aborted).toBe(false);
+    act(() => h.query.mutate.mock.calls[0][1].onSuccess(queryResult([{ timestamp: "2026-07-09T00:00:00Z", value: 24 }])));
+    expect(screen.getByTestId("apex-line")).toBeInTheDocument();
+    expect(onQuerySettled).toHaveBeenCalledWith(expect.objectContaining({ exact: true }));
   });
 
   it("keeps cached exact data, stops at the finite budget, and resumes on explicit refresh", async () => {
@@ -617,79 +601,37 @@ describe("WidgetChart — queued exact refresh", () => {
     );
   });
 
-  it("times out an unresolved request while preserving the previous exact snapshot", async () => {
+  it("preserves cached exact data during a slow read and accepts its completion", async () => {
     vi.useFakeTimers();
-    const cachedResponse = queryResult([
-      { timestamp: "2026-07-09T00:00:00Z", value: 12 },
-    ]);
-    const onQuerySettled = vi.fn();
-    h.query.data = cachedResponse;
+    h.query.data = queryResult([{ timestamp: "2026-07-09T00:00:00Z", value: 12 }]);
     h.query.mutate.mockImplementation(() => {});
-
-    render(
-      <WidgetChart
-        widget={baseWidget}
-        dashboardId="dashboard-1"
-        globalDateRange={null}
-        onQuerySettled={onQuerySettled}
-      />,
-    );
-
-    expect(h.query.mutate).toHaveBeenCalledOnce();
+    const onQuerySettled = vi.fn();
+    render(<WidgetChart widget={baseWidget} dashboardId="dashboard-1" globalDateRange={null} onQuerySettled={onQuerySettled} />);
     const requestSignal = h.query.mutate.mock.calls[0][0].signal;
+    await act(async () => vi.advanceTimersByTimeAsync(120_000));
+    expect(screen.getByTestId("apex-line")).toBeInTheDocument();
+    expect(screen.queryByText("We couldn't load this data. Please retry in a moment.")).not.toBeInTheDocument();
     expect(requestSignal.aborted).toBe(false);
-    expect(screen.getByTestId("apex-line")).toBeInTheDocument();
     expect(onQuerySettled).not.toHaveBeenCalled();
-
-    await act(async () =>
-      vi.advanceTimersByTimeAsync(AGGREGATION_REQUEST_TIMEOUT_MS),
-    );
-
-    expect(screen.getByTestId("apex-line")).toBeInTheDocument();
-    expect(
-      screen.getByText("We couldn't load this data. Please retry in a moment."),
-    ).toBeInTheDocument();
-    expect(onQuerySettled).toHaveBeenCalledOnce();
-    expect(onQuerySettled).toHaveBeenCalledWith(
-      expect.objectContaining({ exact: false, updatedAt: null }),
-    );
-    expect(requestSignal.aborted).toBe(true);
-
-    await act(async () =>
-      vi.advanceTimersByTimeAsync(AGGREGATION_REQUEST_TIMEOUT_MS * 2),
-    );
     expect(h.query.mutate).toHaveBeenCalledOnce();
+    act(() => h.query.mutate.mock.calls[0][1].onSuccess(queryResult([{ timestamp: "2026-07-09T00:00:00Z", value: 24 }])));
     expect(onQuerySettled).toHaveBeenCalledOnce();
+    expect(onQuerySettled).toHaveBeenCalledWith(expect.objectContaining({ exact: true }));
   });
 
-  it("aborts a cold hung request and leaves a finite retry state", async () => {
+  it("aborts a pending read on unmount and ignores a late exact response", async () => {
     vi.useFakeTimers();
     const onQuerySettled = vi.fn();
     h.query.mutate.mockImplementation(() => {});
-
-    render(
-      <WidgetChart
-        widget={baseWidget}
-        dashboardId="dashboard-1"
-        globalDateRange={null}
-        onQuerySettled={onQuerySettled}
-      />,
-    );
-
+    const view = render(<WidgetChart widget={baseWidget} dashboardId="dashboard-1" globalDateRange={null} onQuerySettled={onQuerySettled} />);
     const requestSignal = h.query.mutate.mock.calls[0][0].signal;
+    await act(async () => vi.advanceTimersByTimeAsync(120_000));
     expect(requestSignal.aborted).toBe(false);
     expect(screen.getByText(PREPARING_MESSAGE)).toBeInTheDocument();
-
-    await act(async () =>
-      vi.advanceTimersByTimeAsync(AGGREGATION_REQUEST_TIMEOUT_MS),
-    );
-
+    view.unmount();
     expect(requestSignal.aborted).toBe(true);
-    expect(screen.queryByText(PREPARING_MESSAGE)).not.toBeInTheDocument();
-    expect(
-      screen.getByText("We couldn't load this data. Please retry in a moment."),
-    ).toBeInTheDocument();
-    expect(onQuerySettled).toHaveBeenCalledOnce();
+    act(() => h.query.mutate.mock.calls[0][1].onSuccess(queryResult([{ timestamp: "2026-07-09T00:00:00Z", value: 24 }])));
+    expect(onQuerySettled).not.toHaveBeenCalled();
   });
 
   it("aborts an obsolete request and ignores its late response after the query scope changes", () => {

@@ -99,7 +99,6 @@ import {
   fromAxisConfigPayload,
   getAggColumnLabel,
   getAutoDecimals,
-  getExactDashboardResult,
   getDashboardMetricSeriesState,
   getPlottedChartSeries,
   getSeriesScalar,
@@ -113,10 +112,7 @@ import {
 } from "./widgetUtils";
 import {
   AGGREGATION_PREPARING_MESSAGE,
-  createAggregationPollController,
   getFilterValueReadMessage,
-  getAggregationRefreshState,
-  getExactAggregationReadState,
 } from "src/utils/queryReadState";
 import {
   AGGREGATION_OPTIONS,
@@ -133,11 +129,9 @@ import {
   getWidgetEditorLoadState,
   getWidgetPreviewState,
   shouldBlockWidgetPreviewForFailure,
-  WIDGET_PREVIEW_MAX_WAIT_MS,
 } from "./widgetEditorState";
-import { INTERACTIVE_REQUEST_TIMEOUT_MS } from "src/config/runtime_limits";
+import { useWidgetPreviewReads } from "./useWidgetPreviewReads";
 
-const WIDGET_PREVIEW_REQUEST_TIMEOUT_MS = INTERACTIVE_REQUEST_TIMEOUT_MS;
 
 const escapeCsvField = (field) => {
   const str = String(field ?? "");
@@ -2157,14 +2151,7 @@ export default function WidgetEditorView() {
   const mutateDashboardQuery = queryMutation.mutate;
   const resetDashboardQuery = queryMutation.reset;
   const { data: simulationAgents = [] } = useSimulationAgents();
-  const [lastExactPreview, setLastExactPreview] = useState(null);
-  const currentPreviewSignatureRef = useRef("");
-  const previewPollTimerRef = useRef(null);
-  const previewRequestControllerRef = useRef(null);
-  const previewRequestTimerRef = useRef(null);
-  const previewGenerationRef = useRef(0);
-  const [isPreviewRefreshing, setIsPreviewRefreshing] = useState(false);
-  const [previewFailed, setPreviewFailed] = useState(false);
+
 
   // Build a map: agent_definition_id → observability project for cross-source correlation
   const simAgentObsMap = useMemo(() => {
@@ -2924,166 +2911,8 @@ export default function WidgetEditorView() {
 
   const previewQueryConfig = buildQueryConfig();
   const previewQuerySignature = JSON.stringify(previewQueryConfig);
-  currentPreviewSignatureRef.current = previewQuerySignature;
-
-  useEffect(() => {
-    previewGenerationRef.current += 1;
-    previewRequestControllerRef.current?.abort();
-    previewRequestControllerRef.current = null;
-    clearTimeout(previewRequestTimerRef.current);
-    previewRequestTimerRef.current = null;
-    clearTimeout(previewPollTimerRef.current);
-    previewPollTimerRef.current = null;
-    setIsPreviewRefreshing(false);
-    setPreviewFailed(false);
-  }, [previewQuerySignature]);
-
-  useEffect(
-    () => () => {
-      previewGenerationRef.current += 1;
-      previewRequestControllerRef.current?.abort();
-      previewRequestControllerRef.current = null;
-      clearTimeout(previewRequestTimerRef.current);
-      clearTimeout(previewPollTimerRef.current);
-    },
-    [],
-  );
-
-  const runPreviewQuery = useCallback(
-    (queryConfig, { refresh = false } = {}) => {
-      const signature = JSON.stringify(queryConfig);
-      const generation = previewGenerationRef.current + 1;
-      previewGenerationRef.current = generation;
-      clearTimeout(previewPollTimerRef.current);
-      previewPollTimerRef.current = null;
-      const pollingController = createAggregationPollController();
-      // Include the first preview request in the same sub-ten-second action
-      // budget as any pending-response polls. Retry creates a fresh controller.
-      pollingController.start();
-      pollingController.recordAttempt();
-      let refreshWasQueued = false;
-      setPreviewFailed(false);
-
-      const isCurrent = () =>
-        previewGenerationRef.current === generation &&
-        currentPreviewSignatureRef.current === signature;
-
-      const schedulePoll = () => {
-        if (!isCurrent() || previewPollTimerRef.current !== null) return;
-        pollingController.start();
-        const delay = pollingController.nextDelay();
-        if (delay === false) {
-          setIsPreviewRefreshing(false);
-          setPreviewFailed(true);
-          return;
-        }
-        previewPollTimerRef.current = window.setTimeout(() => {
-          previewPollTimerRef.current = null;
-          pollingController.recordAttempt();
-          execute(false);
-        }, delay);
-      };
-
-      const execute = (forceRefresh) => {
-        previewRequestControllerRef.current?.abort();
-        clearTimeout(previewRequestTimerRef.current);
-        const requestController = new AbortController();
-        previewRequestControllerRef.current = requestController;
-        const finishAttempt = () => {
-          clearTimeout(previewRequestTimerRef.current);
-          previewRequestTimerRef.current = null;
-          if (previewRequestControllerRef.current === requestController) {
-            previewRequestControllerRef.current = null;
-          }
-        };
-        const requestTimeoutMs = pollingController.remainingMs(
-          WIDGET_PREVIEW_REQUEST_TIMEOUT_MS,
-        );
-        previewRequestTimerRef.current = window.setTimeout(() => {
-          if (
-            !isCurrent() ||
-            previewRequestControllerRef.current !== requestController
-          ) {
-            return;
-          }
-          finishAttempt();
-          previewGenerationRef.current = generation + 1;
-          requestController.abort();
-          setIsPreviewRefreshing(false);
-          setPreviewFailed(true);
-        }, requestTimeoutMs);
-        mutateDashboardQuery(
-          {
-            queryConfig,
-            refresh: forceRefresh,
-            signal: requestController.signal,
-          },
-          {
-            onSuccess: (response) => {
-              finishAttempt();
-              if (!isCurrent()) return;
-
-              const exactResult = getExactDashboardResult(response);
-              const { isRefreshing, refreshFailed } =
-                getAggregationRefreshState(response);
-              const readState = getExactAggregationReadState(response);
-              const responsePreviewState = getWidgetPreviewState(
-                response?.data?.result,
-                { isSuccess: true },
-              );
-              pollingController.recordSuccess();
-              if (exactResult) {
-                setLastExactPreview({ signature, result: exactResult });
-                setPreviewFailed(false);
-              }
-              if (
-                isRefreshing &&
-                !refreshFailed &&
-                (exactResult || readState === "pending")
-              ) {
-                refreshWasQueued = true;
-                setIsPreviewRefreshing(true);
-                schedulePoll();
-                return;
-              }
-              if (
-                !refreshFailed &&
-                !exactResult &&
-                responsePreviewState === "preparing"
-              ) {
-                refreshWasQueued = true;
-                setIsPreviewRefreshing(true);
-                schedulePoll();
-                return;
-              }
-              setIsPreviewRefreshing(false);
-              if (
-                !exactResult &&
-                (refreshFailed ||
-                  responsePreviewState === "failed" ||
-                  readState !== "complete")
-              ) {
-                setPreviewFailed(true);
-              }
-            },
-            onError: () => {
-              finishAttempt();
-              if (!isCurrent()) return;
-              if (refreshWasQueued && pollingController.recordFailure()) {
-                schedulePoll();
-                return;
-              }
-              setIsPreviewRefreshing(false);
-              setPreviewFailed(true);
-            },
-          },
-        );
-      };
-
-      execute(refresh);
-    },
-    [mutateDashboardQuery],
-  );
+  const { previewPollingPaused, lastExactPreview, isPreviewRefreshing, previewFailed, setPreviewFailed, runPreviewQuery } =
+    useWidgetPreviewReads(mutateDashboardQuery, previewQuerySignature);
 
   // Auto-preview when config changes (debounced)
   const previewTimerRef = useRef(null);
@@ -4039,36 +3868,25 @@ export default function WidgetEditorView() {
     queryMutation,
   );
   const previewPreparing =
+    !previewPollingPaused &&
     !previewFailed &&
     canPreview &&
     !activeExactPreview &&
     (queryMutation.isPending ||
       isPreviewRefreshing ||
       serverPreviewState === "preparing");
-  const previewActivity = previewPreparing && !activeExactPreview;
   const previewFailureBlocksRendering = shouldBlockWidgetPreviewForFailure({
     previewFailed,
     hasExactPreview: Boolean(activeExactPreview),
   });
 
-  useEffect(() => {
-    if (!previewActivity) return undefined;
-    const timer = setTimeout(() => {
-      previewGenerationRef.current += 1;
-      clearTimeout(previewPollTimerRef.current);
-      previewPollTimerRef.current = null;
-      setIsPreviewRefreshing(false);
-      setPreviewFailed(true);
-    }, WIDGET_PREVIEW_MAX_WAIT_MS);
-    return () => clearTimeout(timer);
-  }, [previewActivity]);
-
   const retryPreview = useCallback(() => {
     setPreviewFailed(false);
     runPreviewQuery(buildQueryConfig(), { refresh: true });
-  }, [buildQueryConfig, runPreviewQuery]);
+  }, [buildQueryConfig, runPreviewQuery, setPreviewFailed]);
 
   const previewLoading =
+    !previewPollingPaused &&
     !previewFailed &&
     ((queryMutation.isPending && !activeExactPreview) ||
       (isEditing && isDashboardLoading) ||
@@ -4766,6 +4584,9 @@ export default function WidgetEditorView() {
               overflow: "hidden",
             }}
           >
+            {previewPollingPaused && (
+              <Box sx={{ p: 2 }}><WidgetPreviewStatus state="paused" onRetry={retryPreview} /></Box>
+            )}
             {/* Bar chart — horizontal bars (left) + search/checkboxes (right) */}
             {isHorizontal && (previewLoading || previewPreparing) && (
               <Box
@@ -4790,6 +4611,7 @@ export default function WidgetEditorView() {
               !previewLoading &&
               !previewPreparing &&
               !previewFailureBlocksRendering &&
+              !previewPollingPaused &&
               previewSeries.length === 0 && (
                 <Box
                   sx={{
@@ -5179,7 +5001,7 @@ export default function WidgetEditorView() {
                   overflow: "hidden",
                 }}
               >
-                {previewLoading || previewPreparing ? (
+                {previewPollingPaused && !activeExactPreview ? null : previewLoading || previewPreparing ? (
                   <WidgetPreviewStatus
                     state={previewPreparing ? "preparing" : "loading"}
                   />

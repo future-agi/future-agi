@@ -127,3 +127,12 @@ describe("exact widget preview states", () => {
     expect(retry).toHaveBeenCalledOnce();
   });
 });
+
+it("renders a neutral continuation for a pending preview whose polling paused", () => {
+  const resume = vi.fn();
+  render(<WidgetPreviewStatus state="paused" onRetry={resume} />);
+  expect(screen.queryByText(/could not be prepared/i)).not.toBeInTheDocument();
+  expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+  expect(resume).toHaveBeenCalledOnce();
+});

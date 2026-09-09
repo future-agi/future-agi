@@ -27,7 +27,6 @@ import WidgetPieCharts from "./WidgetPieCharts";
 import { toTimeRangePayload } from "./dashboardDateRange";
 import {
   AGGREGATION_POLLING_PAUSED_MESSAGE,
-  AGGREGATION_REQUEST_TIMEOUT_MS,
   AGGREGATION_PREPARING_MESSAGE,
   QUERY_FAILED_RETRY_MESSAGE,
   createAggregationPollController,
@@ -262,7 +261,6 @@ export default function WidgetChart({
     previousRefreshRequestRef.current = refreshRequestId;
     let active = true;
     let pollTimer = null;
-    let requestTimer = null;
     let requestController = null;
     let requestGeneration = 0;
     const pollingController = createAggregationPollController();
@@ -275,10 +273,6 @@ export default function WidgetChart({
       if (pollTimer !== null) {
         window.clearTimeout(pollTimer);
         pollTimer = null;
-      }
-      if (requestTimer !== null) {
-        window.clearTimeout(requestTimer);
-        requestTimer = null;
       }
       requestController?.abort();
       requestController = null;
@@ -322,7 +316,6 @@ export default function WidgetChart({
       requestController?.abort();
       const controller = new AbortController();
       requestController = controller;
-      if (requestTimer !== null) window.clearTimeout(requestTimer);
 
       const handleQueuedTransportFailure = () => {
         const exhausted = !pollingController.recordFailure();
@@ -336,31 +329,11 @@ export default function WidgetChart({
         else schedulePoll();
       };
 
-      requestTimer = window.setTimeout(() => {
-        if (!active || settled || generation !== requestGeneration) return;
-        requestGeneration += 1;
-        requestTimer = null;
-        controller.abort();
-        if (refreshWasQueued) {
-          handleQueuedTransportFailure();
-          return;
-        }
-        setLatestOutcome({
-          signature: querySignature,
-          unavailable: true,
-          retryUnavailable: true,
-          pollingPaused: false,
-        });
-        settle(null, false);
-      }, AGGREGATION_REQUEST_TIMEOUT_MS);
-
+      // Exact reads can outlive a browser deadline. Their controller remains
+      // owned by this widget scope and is cancelled on replacement or unmount.
       const acceptResponse = () => {
         if (!active || settled || generation !== requestGeneration)
           return false;
-        if (requestTimer !== null) {
-          window.clearTimeout(requestTimer);
-          requestTimer = null;
-        }
         if (requestController === controller) requestController = null;
         return true;
       };
@@ -451,7 +424,6 @@ export default function WidgetChart({
       active = false;
       requestGeneration += 1;
       if (pollTimer !== null) window.clearTimeout(pollTimer);
-      if (requestTimer !== null) window.clearTimeout(requestTimer);
       requestController?.abort();
     };
   }, [

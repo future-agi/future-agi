@@ -9,6 +9,8 @@ import {
   Typography,
 } from "@mui/material";
 
+import { AGGREGATION_POLLING_PAUSED_MESSAGE } from "src/utils/queryReadState";
+
 export function WidgetPreviewStatus({ state, onRetry }) {
   if (state === "loading") {
     return <CircularProgress size={24} aria-label="Loading preview" />;
@@ -21,6 +23,20 @@ export function WidgetPreviewStatus({ state, onRetry }) {
           Preparing data…
         </Typography>
       </Stack>
+    );
+  }
+  if (state === "paused") {
+    return (
+      <Alert
+        severity="info"
+        action={
+          <Button color="inherit" size="small" onClick={onRetry}>
+            Continue
+          </Button>
+        }
+      >
+        {AGGREGATION_POLLING_PAUSED_MESSAGE}
+      </Alert>
     );
   }
   if (state === "failed") {
@@ -41,7 +57,7 @@ export function WidgetPreviewStatus({ state, onRetry }) {
 }
 
 WidgetPreviewStatus.propTypes = {
-  state: PropTypes.oneOf(["loading", "preparing", "failed", "ready"])
+  state: PropTypes.oneOf(["loading", "preparing", "paused", "failed", "ready"])
     .isRequired,
   onRetry: PropTypes.func,
 };
