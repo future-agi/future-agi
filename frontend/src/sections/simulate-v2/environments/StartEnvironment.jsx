@@ -336,7 +336,7 @@ function ClonesHeroCard({ onClick }) {
   return (
     <HeroCard
       icon="solar:copy-linear"
-      title="Clones"
+      title="Web Environment"
       tag="Live SaaS sandboxes"
       description={"Your agent calls the real SDKs — Slack, Notion, Salesforce — but the calls land in a sandbox we own, seeded to your prompt and torn down between runs."}
       chips={HERO_CLONES}
@@ -1317,7 +1317,7 @@ const OPTIONS = [
   {
     id: "templates",
     group: "bring",
-    title: "Use our template",
+    title: "Prebuilt Environments",
     icon: "solar:widget-linear",
     blurb: "Skip world setup — pick a prebuilt world, then connect your agent to it.",
     setupSubtitle: "Prebuilt environments you can adapt in minutes — pick one, then wire your agent.",
