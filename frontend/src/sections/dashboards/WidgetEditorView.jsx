@@ -3511,7 +3511,12 @@ export default function WidgetEditorView() {
 
   // Match the saved-dashboard renderer: null means an absent aggregate
   // bucket, not zero, so line previews connect the neighbouring exact points.
-  const chartTimeWindow = getChartTimeWindow(previewResult);
+  // Memoized so the big chartOptions memo below (which depends on this
+  // object) doesn't recompute on every render from a fresh {min,max}.
+  const chartTimeWindow = useMemo(
+    () => getChartTimeWindow(previewResult),
+    [previewResult],
+  );
 
   const plottedChartSeries = useMemo(
     () => getPlottedChartSeries(chartSeries, { stacked: isStacked }),
