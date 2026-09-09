@@ -37,12 +37,10 @@ import ActorsPanel from "./ActorsPanel";
  * the rail splits them rather than presenting eight equal steps.
  */
 /*
-  Nikhil's env-first feedback: the environment is the reusable asset;
-  the agent is not. The standalone Agents tab implied the env was
-  owned by / tightly coupled to one agent. Agent details now live
-  as a section inside Overview instead. The route id "agent" still
-  resolves (deep links keep working) — it just redirects to overview
-  in the router below so the retired tab is not orphaned.
+  Nikhil's env-first feedback: env is the reusable asset, agent is
+  one attribute. Agent details AND version management live inside
+  Overview — no standalone tab. "Manage versions" opens a drawer
+  overlaying Overview so the user stays on the same tab.
 */
 const STEPS = [
   { id: "overview",  label: "Overview",  icon: "solar:widget-5-linear", group: "Setup" },
@@ -175,17 +173,7 @@ export default function EnvironmentWorkspace() {
     Scenarios instead made the rail item look broken: you click Evals and
     nothing appears to happen.
   */
-  /*
-    Agent is a valid destination for deep links and for the "Manage
-    versions" button on the Overview's AgentSummarySection, even
-    though it's no longer in the visible rail. Whitelist it so
-    onGo("agent") lands on the full AgentsPanel instead of silently
-    falling back to Overview.
-  */
-  const HIDDEN_PANELS = ["agent"];
-  const panel = STEPS.some((s) => s.id === step) || HIDDEN_PANELS.includes(step)
-    ? step
-    : "overview";
+  const panel = STEPS.some((s) => s.id === step) ? step : "overview";
 
   const doneById = Object.fromEntries(steps.map((s) => [s.id, s.done]));
   const counts = {

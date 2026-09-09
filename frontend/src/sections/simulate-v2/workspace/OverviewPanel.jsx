@@ -3,8 +3,10 @@ import { useMemo, useState } from "react";
 import { alpha } from "@mui/material/styles";
 import {
   Box, Stack, Typography, Button, Grid, MenuItem, TextField, Chip, Tooltip,
+  Drawer, IconButton,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import AgentsPanel from "./AgentsPanel";
 import { getSurface, getDomain } from "../_mock/surfaces";
 import { twinById, detectedTwinsFor, liveSandboxContentFor } from "../_mock/twins";
 import TwinLogo from "./../components/TwinLogo";
@@ -43,6 +45,16 @@ const seedBlurb = (rows) =>
   `${rows.toLocaleString()} rows that fill this environment before your agent arrives — the world it actually works in. Rebuilt for every task, so nothing carries over.`;
 
 export default function OverviewPanel({ buildMode, env, envState, patch, onGo, agentConnected }) {
+
+  /*
+    Nikhil's env-first feedback: agent version management stays inside
+    Overview, not on its own tab. Clicking "Manage versions" in
+    AgentSummarySection opens this drawer overlaying the tab — the
+    user sees the version-history + add-version affordance without
+    losing their place. The drawer hosts the full AgentsPanel so we
+    don't have to reimplement version-history / roll-back / add.
+  */
+  const [agentDrawerOpen, setAgentDrawerOpen] = useState(false);
 
   const surface = getSurface(env.surface);
   const domain = getDomain(env.domain);
@@ -178,7 +190,13 @@ export default function OverviewPanel({ buildMode, env, envState, patch, onGo, a
         agents can attach to the same env over time — the env is
         frozen, the test subject rotates.
       */}
-      <AgentSummarySection env={env} envState={envState} onGo={onGo} agentConnected={agentConnected} />
+      <AgentSummarySection
+        env={env}
+        envState={envState}
+        onGo={onGo}
+        onManageVersions={() => setAgentDrawerOpen(true)}
+        agentConnected={agentConnected}
+      />
 
       {/*
         Getting-started checklist for envs that haven't been seeded
@@ -405,6 +423,59 @@ export default function OverviewPanel({ buildMode, env, envState, patch, onGo, a
       </>
       )}
 
+      {/*
+        Agent version-management drawer. Overlays Overview so the user
+        never leaves this tab — the full AgentsPanel content (endpoint,
+        active version, version history, add / roll back) is rendered
+        inside. Closing returns them to Overview exactly where they were.
+      */}
+      <Drawer
+        anchor="right"
+        open={agentDrawerOpen}
+        onClose={() => setAgentDrawerOpen(false)}
+        PaperProps={{
+          sx: {
+            width: { xs: "100%", sm: 720, md: 880 },
+            maxWidth: "100vw",
+            bgcolor: "background.default",
+          },
+        }}
+      >
+        <Stack sx={{ height: "100%", minHeight: 0 }}>
+          <Stack
+            direction="row" alignItems="center" spacing={1.5}
+            sx={{
+              px: 2.5, py: 1.5, borderBottom: "1px solid",
+              borderColor: "divider", flexShrink: 0,
+            }}
+          >
+            <Iconify icon="solar:cpu-bolt-linear" width={18} sx={{ color: "text.secondary" }} />
+            <Box flex={1} minWidth={0}>
+              <Typography sx={{ typography: "s1", fontWeight: 700 }}>
+                Test subject
+              </Typography>
+              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                Manage the agent versions running against this environment
+              </Typography>
+            </Box>
+            <IconButton size="small" onClick={() => setAgentDrawerOpen(false)}>
+              <Iconify icon="solar:close-circle-linear" width={20} />
+            </IconButton>
+          </Stack>
+          <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+            <AgentsPanel
+              env={env}
+              envState={envState}
+              patch={patch}
+              onGo={(step) => {
+                setAgentDrawerOpen(false);
+                onGo?.(step);
+              }}
+            />
+          </Box>
+        </Stack>
+      </Drawer>
+
     </Box>
   );
 }
@@ -452,7 +523,7 @@ Fact.propTypes = { label: PropTypes.string, value: PropTypes.node, color: PropTy
    route. The tab was retired from the rail but the panel is reachable
    from this button, and from any deep link that arrives with step=agent. */
 
-function AgentSummarySection({ env, envState, onGo, agentConnected }) {
+function AgentSummarySection({ env, envState, onGo, onManageVersions, agentConnected }) {
   const agent = envState?.agent;
   const versions = envState?.agentVersions || [];
   const activeLabel = envState?.activeAgentVersion
@@ -507,7 +578,7 @@ function AgentSummarySection({ env, envState, onGo, agentConnected }) {
         <Stack direction="row" spacing={1} sx={{ flexShrink: 0 }}>
           <Button
             variant="outlined" size="small"
-            onClick={() => onGo("agent")}
+            onClick={onManageVersions}
             sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider" }}
           >
             {agent ? "Manage versions" : "Attach agent"}
@@ -521,6 +592,7 @@ AgentSummarySection.propTypes = {
   env: PropTypes.object,
   envState: PropTypes.object,
   onGo: PropTypes.func,
+  onManageVersions: PropTypes.func,
   agentConnected: PropTypes.bool,
 };
 

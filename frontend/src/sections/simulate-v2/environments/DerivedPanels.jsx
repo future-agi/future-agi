@@ -43,12 +43,11 @@ import EvalsStep from "../workspace/EvalsStep";
   graded against.
 */
 /*
-  Nikhil's env-first feedback: the environment is the reusable asset,
-  the agent is one attribute of it. The Agents tab implied one-env =
-  one-agent tight coupling. Agent details still render on the Overview
-  tab (see AgentSummarySection inside OverviewPanel), but the standalone
-  Agents entry is retired here to match the same feedback we applied
-  on the post-adopt workspace.
+  Nikhil's env-first feedback: env is the reusable asset, agent is
+  one attribute. Agent details + version management live inside
+  Overview via AgentSummarySection — clicking "Manage versions"
+  opens a drawer overlaying Overview so the user stays on the tab
+  they came from. No standalone Agents / Test-subject tab.
 */
 const TABS = [
   { id: "overview",  label: "Overview",         needs: null },
@@ -116,17 +115,7 @@ export default function DerivedPanels({
     setTab(firstReadyTab(done));
   }, [done, touched, isLoading]);
 
-  /*
-    "agent" is a valid deep destination even though it's no longer in
-    the visible tab strip — the AgentSummarySection on Overview has
-    a "Manage versions" button that routes here to open the full
-    AgentsPanel. HIDDEN_PANEL_IDS keeps the panel switcher permissive
-    without re-adding the tab to the strip.
-  */
-  const HIDDEN_PANEL_IDS = ["agent"];
-  const current = TABS.find((t) => t.id === tab)
-    || (HIDDEN_PANEL_IDS.includes(tab) ? { id: tab, label: "" } : null)
-    || TABS[0];
+  const current = TABS.find((t) => t.id === tab) || TABS[0];
 
   /*
     All in-panel CTAs (RlContractPanel, PersonasPanel, ActorsPanel,
@@ -136,8 +125,7 @@ export default function DerivedPanels({
     nothing. Wire it to the tab setter that already exists.
   */
   const go = (tabId) => {
-    const isVisible = TABS.some((tt) => tt.id === tabId);
-    if (!isVisible && !HIDDEN_PANEL_IDS.includes(tabId)) return;
+    if (!TABS.some((tt) => tt.id === tabId)) return;
     setTab(tabId);
     setTouched(true);
   };
