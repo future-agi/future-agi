@@ -335,6 +335,23 @@ export const getAggColumnLabel = (metrics, allAggregations) => {
 export const seriesHasDataPoints = (series = []) =>
   series.some((s) => (s?.data || []).length > 0);
 
+// Lines encode a value as a position, so fitting the band around the data
+// reads correctly. Bars encode it as a length measured from the baseline, so
+// a fitted non-zero floor lies about the data — a 250 bar on a 180-255 axis
+// draws as though it were 70. ApexCharts itself forces minY to 0 for bar
+// series unless an explicit min overrides it, so this only has to keep the
+// caller from asking it to fit. `bar`/`stacked_bar` are listed here for
+// completeness, though in this codebase they render as the horizontal table,
+// not a y-axis chart.
+const BASELINE_ANCHORED_CHART_TYPES = new Set([
+  "column",
+  "stacked_column",
+  "bar",
+  "stacked_bar",
+]);
+export const chartTypeFitsBand = (chartType) =>
+  !BASELINE_ANCHORED_CHART_TYPES.has(chartType);
+
 // ApexCharts silently clips any series point outside yaxis min/max — if
 // every point in every series falls outside the configured bounds, the
 // chart renders fully blank with no indication why. Surface that as a
@@ -407,12 +424,22 @@ export const resolveAxisBounds = (
   cfg = {},
   { stacked = false, tickAmount = 5, fit = false } = {},
 ) => {
-  const compute = fit ? getFittedYAxisBounds : getAutoYAxisBounds;
-  const auto = compute(series, {
-    stacked,
-    logarithmic: cfg.scale === "logarithmic",
-    tickAmount,
-  });
+  // A non-fitting axis (bars) still needs explicit bounds wherever the
+  // dual-axis invariant requires them — it just may not leave zero the way
+  // the fitted path does for a narrow band, so the deferral is switched off
+  // rather than falling back to getFittedYAxisBounds.
+  const auto = fit
+    ? getFittedYAxisBounds(series, {
+        stacked,
+        logarithmic: cfg.scale === "logarithmic",
+        tickAmount,
+      })
+    : getAutoYAxisBounds(series, {
+        stacked,
+        logarithmic: cfg.scale === "logarithmic",
+        tickAmount,
+        deferNarrowBand: false,
+      });
   const extent = getSeriesExtent(series, { stacked });
   const widen = cfg.outOfBounds !== "hidden" && extent;
   const typedMin = parseBound(cfg.min);
@@ -441,7 +468,7 @@ export const resolveWidgetAxisPlan = (
   chartSeries = [],
   chartSeriesIndices = [],
   axisConfig = {},
-  { stacked = false } = {},
+  { stacked = false, chartType = "line" } = {},
 ) => {
   const leftCfg = axisConfig?.leftY || {};
   const rightCfg = axisConfig?.rightY || {};
@@ -459,10 +486,14 @@ export const resolveWidgetAxisPlan = (
       ? "right"
       : "left";
 
-  // fit on both paths. Zero-anchoring still wins wherever the data runs to the
-  // floor; fitting only adds the case it declines — a band well above zero,
-  // which otherwise falls to ApexCharts' coarse {1,2,5,10} step ladder.
-  const opts = { stacked, fit: true };
+  // fit on both paths for a line-shaped chart type. Zero-anchoring still wins
+  // wherever the data runs to the floor; fitting only adds the case it
+  // declines — a band well above zero, which otherwise falls to ApexCharts'
+  // coarse {1,2,5,10} step ladder. A bar-shaped chartType (column,
+  // stacked_column, bar, stacked_bar) never fits: its baseline is the value
+  // itself, so it stays anchored at zero even for a narrow band — see
+  // chartTypeFitsBand.
+  const opts = { stacked, fit: chartTypeFitsBand(chartType) };
   const on = (side) => chartSeries.filter((__, i) => sideOf(i) === side);
 
   return {
@@ -592,10 +623,19 @@ export const getSeriesExtent = (series = [], { stacked = false } = {}) => {
  * forcing 0 would waste *more* space than it saves. Null is a deferral, not a
  * verdict: callers pass it to getFittedYAxisBounds, which fits the band where
  * it actually sits.
+ *
+ * `deferNarrowBand` (default true) gates that deferral. A mark that must stay
+ * anchored at zero regardless — a bar, whose height *is* the value — passes
+ * `false` so a narrow band still comes back zero-anchored instead of null.
  */
 export const getAutoYAxisBounds = (
   series = [],
-  { stacked = false, logarithmic = false, tickAmount = 5 } = {},
+  {
+    stacked = false,
+    logarithmic = false,
+    tickAmount = 5,
+    deferNarrowBand = true,
+  } = {},
 ) => {
   if (logarithmic) return null;
 
@@ -607,8 +647,9 @@ export const getAutoYAxisBounds = (
   if (peak <= 0) return null;
 
   // Only act where the data already runs most of the way to zero. Above that
-  // the series is a narrow high band and zero-anchoring is a regression.
-  if (floor > 0.3 * peak) return null;
+  // the series is a narrow high band and zero-anchoring is a regression —
+  // unless the caller has already ruled out fitting the band instead.
+  if (deferNarrowBand && floor > 0.3 * peak) return null;
 
   const step = niceCeil(peak / tickAmount);
   const max = normalize(step * tickAmount);

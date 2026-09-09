@@ -3830,7 +3830,7 @@ export default function WidgetEditorView() {
           chartSeries,
           chartSeriesIndices,
           axisConfig,
-          { stacked: isStacked },
+          { stacked: isStacked, chartType },
         );
         if (!hasRightAxis) {
           const { min, max } = bounds.left;

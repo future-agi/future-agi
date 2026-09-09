@@ -21,6 +21,7 @@ import {
   getVisibleIndices,
   resolveAxisBounds,
   resolveWidgetAxisPlan,
+  chartTypeFitsBand,
   parseBound,
   makeSeriesKey,
   resolveSavedSelection,
@@ -1094,6 +1095,85 @@ describe("resolveWidgetAxisPlan", () => {
     expect(plan.hasRightAxis).toBe(false);
     expect(plan.bounds.left).toEqual({ min: 0, max: 7500 });
   });
+
+  // Bars encode value as length from the baseline, so a fitted non-zero floor
+  // lies about the data; lines encode value as position and keep the fitted
+  // band. Both go through the same shared plan so neither renderer can drift.
+  const band = [{ data: pts(190, 210, 250) }];
+
+  it("anchors a column chart at zero instead of fitting the band", () => {
+    expect(
+      resolveWidgetAxisPlan(band, [0], {}, { chartType: "column" }).bounds
+        .left,
+    ).toEqual({ min: 0, max: 250 });
+  });
+
+  it("still fits the band on a line chart", () => {
+    expect(
+      resolveWidgetAxisPlan(band, [0], {}, { chartType: "line" }).bounds.left,
+    ).toEqual({ min: 180, max: 255 });
+  });
+
+  it("anchors a stacked column chart at zero", () => {
+    expect(
+      resolveWidgetAxisPlan(
+        [{ data: pts(100, 110, 120) }, { data: pts(90, 100, 130) }],
+        [0, 1],
+        {},
+        { stacked: true, chartType: "stacked_column" },
+      ).bounds.left,
+    ).toEqual({ min: 0, max: 250 });
+  });
+
+  it("anchors every entry of a dual-axis column chart at zero", () => {
+    const dual = resolveWidgetAxisPlan(
+      [{ data: pts(190, 210, 250) }, { data: pts(41, 45, 51) }],
+      [0, 1],
+      { rightY: { visible: true }, seriesAxis: { 1: "right" } },
+      { chartType: "column" },
+    );
+    expect(dual.bounds.left).toEqual({ min: 0, max: 250 });
+    expect(dual.bounds.right).toEqual({ min: 0, max: 75 });
+  });
+
+  it("still lets a typed bound win over the zero baseline", () => {
+    expect(
+      resolveWidgetAxisPlan(band, [0], { leftY: { min: "100" } }, {
+        chartType: "column",
+      }).bounds.left,
+    ).toEqual({ min: 100, max: 250 });
+  });
+
+  it("anchors a single-point column at zero", () => {
+    expect(
+      resolveWidgetAxisPlan([{ data: pts(500) }], [0], {}, {
+        chartType: "column",
+      }).bounds.left,
+    ).toEqual({ min: 0, max: 500 });
+  });
+
+  it("falls through to ApexCharts for a mixed-sign column", () => {
+    expect(
+      resolveWidgetAxisPlan([{ data: pts(-50, 100, 200) }], [0], {}, {
+        chartType: "column",
+      }).bounds.left,
+    ).toEqual({ min: undefined, max: undefined });
+  });
+});
+
+describe("chartTypeFitsBand", () => {
+  it("does not fit the band for bar-shaped chart types, which stay anchored at zero", () => {
+    expect(chartTypeFitsBand("column")).toBe(false);
+    expect(chartTypeFitsBand("stacked_column")).toBe(false);
+    expect(chartTypeFitsBand("bar")).toBe(false);
+    expect(chartTypeFitsBand("stacked_bar")).toBe(false);
+  });
+
+  it("fits the band for line-shaped chart types", () => {
+    expect(chartTypeFitsBand("line")).toBe(true);
+    expect(chartTypeFitsBand("stacked_line")).toBe(true);
+    expect(chartTypeFitsBand(undefined)).toBe(true);
+  });
 });
 
 // The saved widget and the editor preview render the same widget through two
@@ -1118,6 +1198,9 @@ describe("the saved widget and the editor preview share one axis plan", () => {
       const src = read(file);
       expect(src).toContain("resolveWidgetAxisPlan(");
       expect(src).not.toContain("resolveAxisBounds(");
+      // A caller that drops chartType silently loses the zero-baseline fix for
+      // bar-shaped charts, so pin that the call site actually passes it.
+      expect(src).toMatch(/resolveWidgetAxisPlan\([\s\S]{0,200}?chartType/);
     },
   );
 });

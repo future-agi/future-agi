@@ -1330,7 +1330,7 @@ export default function WidgetChart({
         chartSeries,
         chartSeriesIndices,
         axisConfig,
-        { stacked: isStacked },
+        { stacked: isStacked, chartType },
       );
       if (!hasRightAxis) {
         const hideOOB = leftCfg.outOfBounds === "hidden";

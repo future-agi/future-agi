@@ -1446,8 +1446,8 @@ describe("WidgetChart — auto-scaled y-axis (TH-7680)", () => {
     value,
   });
 
-  const yaxisOf = () =>
-    JSON.parse(screen.getByTestId("apex-line").getAttribute("data-yaxis"));
+  const yaxisOf = (type = "line") =>
+    JSON.parse(screen.getByTestId(`apex-${type}`).getAttribute("data-yaxis"));
 
   const renderWith = (axis_config) => {
     h.query.data = queryResult([at(0, 219), at(1, 7043), at(2, 1500)]);
@@ -1457,6 +1457,23 @@ describe("WidgetChart — auto-scaled y-axis (TH-7680)", () => {
           ...baseWidget,
           chart_config: {
             ...baseWidget.chart_config,
+            ...(axis_config ? { axis_config } : {}),
+          },
+        }}
+        globalDateRange={null}
+      />,
+    );
+  };
+
+  const renderTyped = (chart_type, values, axis_config) => {
+    h.query.data = queryResult(values.map((v, i) => at(i, v)));
+    render(
+      <WidgetChart
+        widget={{
+          ...baseWidget,
+          chart_config: {
+            ...baseWidget.chart_config,
+            chart_type,
             ...(axis_config ? { axis_config } : {}),
           },
         }}
@@ -1534,6 +1551,19 @@ describe("WidgetChart — auto-scaled y-axis (TH-7680)", () => {
     render(<WidgetChart widget={baseWidget} globalDateRange={null} />);
     expect(yaxisOf()).toMatchObject({ min: 180, max: 255 });
   });
+
+  // Bars lie about the data if their baseline isn't zero — a fitted 180-255
+  // axis draws a 250 bar as though it were 70. Column charts must stay
+  // anchored at zero even though lines on the same band get the fitted look.
+  it("anchors a column chart at zero instead of fitting the band", () => {
+    renderTyped("column", [190, 210, 250]);
+    expect(yaxisOf("bar")).toMatchObject({ min: 0, max: 250 });
+  });
+
+  it("still fits the same band on a line chart", () => {
+    renderTyped("line", [190, 210, 250]);
+    expect(yaxisOf("line")).toMatchObject({ min: 180, max: 255 });
+  });
 });
 
 // TH-7680 follow-up: the dual-axis branch is chosen from the series that are
@@ -1558,7 +1588,7 @@ describe("WidgetChart — dual axis follows the visible series (TH-7680)", () =>
     series: [{ name: "total", data: values.map((v, i) => at(i, v)) }],
   });
 
-  const dualWidget = (visibleSeries) => ({
+  const dualWidget = (visibleSeries, chart_type = "line") => ({
     id: "w-1",
     query_config: {
       metrics: [
@@ -1567,14 +1597,14 @@ describe("WidgetChart — dual axis follows the visible series (TH-7680)", () =>
       ],
     },
     chart_config: {
-      chart_type: "line",
+      chart_type,
       axis_config: { right_y: { visible: true }, series_axis: { 1: "right" } },
       ...(visibleSeries ? { visible_series: visibleSeries } : {}),
     },
   });
 
-  const yaxisOf = () =>
-    JSON.parse(screen.getByTestId("apex-line").getAttribute("data-yaxis"));
+  const yaxisOf = (type = "line") =>
+    JSON.parse(screen.getByTestId(`apex-${type}`).getAttribute("data-yaxis"));
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -1618,5 +1648,15 @@ describe("WidgetChart — dual axis follows the visible series (TH-7680)", () =>
     expect(Array.isArray(yaxis)).toBe(false);
     // Identical to the plain single-axis widget on the same data.
     expect(yaxis).toMatchObject({ min: 0, max: 7500 });
+  });
+
+  it("anchors every entry of a dual-axis column chart at zero", () => {
+    render(
+      <WidgetChart
+        widget={dualWidget(undefined, "column")}
+        globalDateRange={null}
+      />,
+    );
+    expect(yaxisOf("bar").every((y) => y.min === 0)).toBe(true);
   });
 });
