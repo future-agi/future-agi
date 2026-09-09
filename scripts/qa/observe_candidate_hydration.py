@@ -23,6 +23,106 @@ CONTENT_KEYS = (
 )
 
 
+def hydrate_voice_page(reader, builder, payload):
+    """Read every selected Voice root's raw content under the existing guards.
+
+    Reuse the public physical-identity builders, finite batches and memory-only
+    split policy. Provider formatting and relational enrichments remain a
+    separate gate; this diagnostic cannot claim a complete public request.
+    """
+    if payload.get("query_complete") is not True:
+        return payload
+    from django.conf import settings
+    from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
+
+    rows = [dict(row) for row in payload.get("table", [])]
+    # Validate the complete page before any batch, including cross-batch
+    # duplicates and project escape. Never silently truncate identities.
+    identities = builder.content_root_identities_for_rows(rows) if rows else []
+    if len(set(identities)) != len(rows):
+        raise replay.ReplayError("REPLAY_DUPLICATE_VOICE_ROOT_IDENTITY")
+    phases, hydrated = [], []
+    attempts = 0
+
+    def hydrate_batch(batch):
+        nonlocal attempts
+        if attempts >= settings.VOICE_CONTENT_MAX_QUERY_ATTEMPTS:
+            raise ReadDeadlineExceeded("voice content hydration query budget exceeded")
+        remaining = reader.remaining_read_ms()
+        if remaining < 25:
+            raise ReadDeadlineExceeded("voice content hydration read deadline exceeded")
+        batch_identities = builder.content_root_identities_for_rows(batch)
+        sql, params = builder.build_content_query(
+            [identity[2] for identity in batch_identities],
+            root_identities=batch_identities,
+        )
+        if not sql:
+            raise replay.ReplayError("REPLAY_REQUIRED_HYDRATION_QUERY_MISSING")
+        attempts += 1
+        try:
+            content = reader.execute_ch_query(
+                sql,
+                params,
+                timeout_ms=min(remaining, settings.VOICE_CONTENT_MIN_REMAINING_MS),
+                settings={
+                    "max_result_rows": len(batch_identities),
+                    "result_overflow_mode": "throw",
+                },
+            ).data
+        except Exception as exc:
+            if getattr(exc, "code", None) != 241 or len(batch) == 1:
+                raise
+            midpoint = len(batch) // 2
+            return hydrate_batch(batch[:midpoint]) + hydrate_batch(batch[midpoint:])
+        if not builder.content_root_rows_match(batch, content):
+            raise replay.ReplayError("REPLAY_CONTENT_IDENTITY_OR_VERSION_DRIFT")
+        required = {
+            "provider",
+            "span_attributes",
+            "attrs_string",
+            "attrs_number",
+            "attrs_bool",
+        }
+        if any(not required <= row.keys() for row in content):
+            raise replay.ReplayError("REPLAY_VOICE_CONTENT_FIELDS_MISSING")
+        phases.append({"name": "content", "rows": len(content)})
+        return content
+
+    for start in range(0, len(rows), settings.VOICE_CONTENT_MAX_BATCH_SIZE):
+        hydrated.extend(
+            hydrate_batch(rows[start : start + settings.VOICE_CONTENT_MAX_BATCH_SIZE])
+        )
+    if rows and not builder.content_root_rows_match(rows, hydrated):
+        raise replay.ReplayError("REPLAY_CONTENT_IDENTITY_OR_VERSION_DRIFT")
+    content_by_identity = {
+        builder.bounded_filter_page_hydration_identity(row): row for row in hydrated
+    }
+    for row, identity in zip(rows, identities):
+        content = content_by_identity[identity]
+        # Preserve actual NULLs, long values and all fields returned by the
+        # public content builder. Only that builder excludes bulky call_logs.
+        row.update(content)
+    return {
+        **payload,
+        "table": rows,
+        "hydration_phases": phases,
+        "query_layer_coverage": {
+            "contract": "CH25_voice_physical_root_content.v1",
+            "selection": True,
+            "content": True,
+            "execution": "serial_read_only_candidate_diagnostic_guards",
+            "omitted_public_phases": [
+                "provider_attribute_normalization_and_formatting",
+                "eval_query_and_cell_enrichment",
+                "annotation_query_and_cell_enrichment",
+                "PG_configuration",
+                "HTTP_serializer_and_transport",
+            ],
+            "full_public_request": False,
+        },
+    }
+
+
 def hydrate_session_queries(reader, builder, payload, *, remaining_ms):
     """Time all three real Session hydration builders on either selector route.
 

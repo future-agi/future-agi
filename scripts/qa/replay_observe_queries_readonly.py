@@ -29,6 +29,9 @@ from uuid import UUID, uuid4
 import replay_observe_filters as replay
 
 ROOT = Path(__file__).resolve().parents[2]
+VOICE_LIST_PATH = "/tracer/trace/list_voice_calls/"
+NATIVE_LISTS = {**replay.LISTS, "voice_calls": VOICE_LIST_PATH}
+NATIVE_SURFACES = (*replay.SURFACES, "voice_calls")
 
 
 @contextmanager
@@ -125,6 +128,7 @@ def candidate_runtime_profile():
                 "EXACT_GRAPH_",
                 "USER_LIST_",
                 "DASHBOARD_",
+                "VOICE_CONTENT_",
                 "CLICKHOUSE_APPLICATION_READ_",
             )
         )
@@ -205,7 +209,7 @@ def qualification_summary(plan, rows, fingerprint):
             op_keys.add("BLOCKED_OR_UNRESOLVED/" + case.get("variant", "UNKNOWN"))
         counters += [operators[key] for key in op_keys]
         list_result_kind = None
-        if (row and case["surface"] in replay.LISTS
+        if (row and case["surface"] in NATIVE_LISTS
                 and status == "COMPLETE_UNVERIFIED" and row.get("complete") is True):
             cardinality = row.get("result_rows")
             list_result_kind = (
@@ -829,8 +833,10 @@ class CandidateQueries:
             }
         try:
             req = case["request"]
-            filters = normalize_filters(req)
             surface = case["surface"]
+            # Voice uses its public request serializer in entity_list, including
+            # filters supplied either as JSON query text or a read-POST body.
+            filters = [] if surface == "voice_calls" else normalize_filters(req)
             with self.metadata.metadata_io() if self.metadata else nullcontext():
                 if surface in replay.GRAPHS:
                     payload = self.graph(reader, case, filters)
@@ -1186,16 +1192,41 @@ class CandidateQueries:
         from tracer.services.clickhouse.v2.query_builders.session_list import (
             SessionListQueryBuilderV2,
         )
+        from tracer.services.clickhouse.v2.query_builders.voice_call_list import (
+            VoiceCallListQueryBuilderV2,
+        )
         from observe_candidate_hydration import hydrate_session_queries
 
         surface = case["surface"]
+        if surface not in NATIVE_LISTS or surface.startswith("users_"):
+            raise replay.ReplayError("REPLAY_LIST_SURFACE_UNSUPPORTED")
         entity = (
-            "sessions"
-            if "sessions" in surface
-            else "spans"
-            if "spans" in surface
-            else "traces"
+            "voice_calls" if surface == "voice_calls" else surface.rsplit("_", 1)[-1]
         )
+        voice_request = None
+        if entity == "voice_calls":
+            from tracer.serializers.trace import TraceVoiceCallListQuerySerializer
+
+            request = case["request"]
+            data = (
+                request.get("body")
+                if request.get("method") == "POST"
+                else request.get("params")
+            )
+            serializer = TraceVoiceCallListQuerySerializer(data=data)
+            serializer.is_valid(raise_exception=True)
+            voice_request = serializer.validated_data
+            if (
+                request.get("method") not in {"GET", "POST"}
+                or request.get("path") != VOICE_LIST_PATH
+                or str(voice_request["project_id"]) != self.plan["scope"]["project_id"]
+                or voice_request["page_size"] != request["target_rows"]
+                or voice_request["page"] != 1
+                or voice_request.get("cursor")
+                or not voice_request["cursor_mode"]
+            ):
+                raise replay.ReplayError("REPLAY_VOICE_FIRST_PAGE_WORKLOAD_MISMATCH")
+            filters = voice_request["filters"]
         candidate_deadline = time.monotonic() + (
             settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS / 1000
         )
@@ -1219,6 +1250,7 @@ class CandidateQueries:
             "traces": TraceListQueryBuilderV2,
             "spans": SpanListQueryBuilderV2,
             "sessions": SessionListQueryBuilderV2,
+            "voice_calls": VoiceCallListQueryBuilderV2,
         }[entity]
         page_size = case["request"]["target_rows"]
         builder_kwargs = {
@@ -1227,8 +1259,12 @@ class CandidateQueries:
             "page_number": 0,
             "page_size": page_size,
         }
-        if entity != "traces":
+        if entity in {"spans", "sessions"}:
             builder_kwargs["bounded_internal_scan"] = True
+        if voice_request is not None:
+            builder_kwargs["remove_simulation_calls"] = voice_request[
+                "remove_simulation_calls"
+            ]
         if self.metadata:
             builder_kwargs.update(
                 self.metadata.builder_kwargs(self.plan["scope"]["project_id"])
@@ -1248,7 +1284,12 @@ class CandidateQueries:
                 "table": chosen,
                 "has_more": len(candidates) > page_size,
             }, remaining_ms=session_timeout_ms)
-        key = {"traces": "trace_id", "spans": "id", "sessions": "session_id"}[entity]
+        key = {
+            "traces": "trace_id",
+            "voice_calls": "trace_id",
+            "spans": "id",
+            "sessions": "session_id",
+        }[entity]
 
         def read_page(state):
             options = {}
@@ -1273,7 +1314,7 @@ class CandidateQueries:
                 ),
                 include_incomplete_rows=True,
                 bounded_continuation=True,
-                carry_continuation_slice_width=entity == "traces",
+                carry_continuation_slice_width=entity in {"traces", "voice_calls"},
                 root_time_discovery=bool(
                     entity == "traces"
                     and not state.get("continuation_before_start_time")
@@ -1298,6 +1339,10 @@ class CandidateQueries:
                 reader, builder, payload, entity=entity, request=case["request"],
                 timing=getattr(reader, "local_phase", None),
             )
+        if entity == "voice_calls":
+            from observe_candidate_hydration import hydrate_voice_page
+
+            payload = hydrate_voice_page(reader, builder, payload)
         return payload
 
     def resolve_session_user_filters(self, reader, filters, remaining_ms):
@@ -1366,7 +1411,7 @@ def main():
         help="Scoped real PG metadata capture, not a query-result fixture",
     )
     parser.add_argument("--ledger", required=True)
-    parser.add_argument("--surface", choices=replay.SURFACES)
+    parser.add_argument("--surface", choices=NATIVE_SURFACES)
     parser.add_argument("--period", choices=("7D", "30D", "12M"))
     parser.add_argument("--attribute")
     parser.add_argument("--variant")
