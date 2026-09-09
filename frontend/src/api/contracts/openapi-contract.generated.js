@@ -86131,7 +86131,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         tools: {
           type: "array",
           items: {
-            $ref: "#/definitions/ToolDiscoveryItem",
+            $ref: "#/definitions/MCPToolDiscoveryItem",
           },
         },
         total: {
@@ -99123,7 +99123,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    ToolDiscoveryItem: {
+    MCPToolDiscoveryItem: {
       type: "object",
       properties: {
         name: {
@@ -99146,21 +99146,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         parameters: {
           type: "array",
           items: {
-            $ref: "#/definitions/ToolParameter",
+            $ref: "#/definitions/MCPToolParameter",
           },
           readOnly: true,
-        },
-        returns: {
-          title: "Returns",
-          type: "object",
-          readOnly: true,
-          "x-nullable": true,
-        },
-        metadata: {
-          title: "Metadata",
-          type: "object",
-          readOnly: true,
-          "x-nullable": true,
         },
       },
     },
@@ -101527,6 +101515,47 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    ToolDiscoveryItem: {
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        category: {
+          title: "Category",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+          readOnly: true,
+        },
+        parameters: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ToolParameter",
+          },
+          readOnly: true,
+        },
+        returns: {
+          title: "Returns",
+          type: "object",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        metadata: {
+          title: "Metadata",
+          type: "object",
+          readOnly: true,
+          "x-nullable": true,
+        },
+      },
+    },
     TraceAgentGraphEdge: {
       required: [
         "source",
@@ -103758,7 +103787,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    ToolParameter: {
+    MCPToolParameter: {
       type: "object",
       properties: {
         name: {
@@ -104047,6 +104076,33 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Role",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    ToolParameter: {
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+          readOnly: true,
+        },
+        required: {
+          title: "Required",
+          type: "boolean",
+          readOnly: true,
         },
       },
     },

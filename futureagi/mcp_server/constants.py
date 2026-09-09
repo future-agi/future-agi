@@ -57,6 +57,10 @@ TOOL_GROUPS = {
         "name": "Usage & Costs",
         "description": "Cost analytics and billing information",
     },
+    "gateway": {
+        "name": "AI Gateway",
+        "description": "Gateway configuration, request logs, and analytics",
+    },
     "docs": {
         "name": "Docs & Guides",
         "description": "Search and query Future AGI documentation, setup guides, and API references",
@@ -77,26 +81,9 @@ DEFAULT_TOOL_GROUPS = [
     "prompts",
     "users",
     "usage",
+    "gateway",
     "docs",
 ]
-
-# Maps ai_tools category → MCP tool group
-CATEGORY_TO_GROUP = {
-    "context": "context",
-    "evaluations": "evaluations",
-    "datasets": "datasets",
-    "annotations": "annotations",
-    "optimization": "optimization",
-    "tracing": "observability",
-    "error_feed": "error_feed",
-    "experiments": "experiments",
-    "agents": "agents",
-    "simulation": "simulation",
-    "prompts": "prompts",
-    "users": "users",
-    "usage": "usage",
-    "docs": "docs",
-}
 
 RATE_LIMITS = {
     "free": {"per_minute": 200, "per_day": 5000, "concurrent_sessions": 5},

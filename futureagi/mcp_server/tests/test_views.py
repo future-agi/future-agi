@@ -1,14 +1,7 @@
-import uuid
-
-import pytest
-from django.conf import settings
 from rest_framework.test import APIClient
 
-from mcp_server.models.connection import MCPConnection
 from mcp_server.models.session import MCPSession
-from mcp_server.models.tool_config import MCPToolGroupConfig
 from mcp_server.models.usage import MCPUsageRecord
-
 
 AUTH_REQUIRED_STATUS_CODES = (401, 403)
 
@@ -101,7 +94,11 @@ class TestMCPToolCallView:
         )
         assert response.status_code == 200
         assert response.data["status"] is True
-        assert "Datasets" in response.data["result"]["content"]
+        assert response.data["result"]["data"] == {
+            "datasets": [],
+            "total_pages": 0,
+            "total_count": 0,
+        }
 
     def test_tool_call_unauthenticated(self, db):
         client = APIClient()

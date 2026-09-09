@@ -89600,6 +89600,62 @@
                 }
             }
         },
+        "MCPToolParameter": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "required": {
+                    "title": "Required",
+                    "type": "boolean",
+                    "readOnly": true
+                }
+            }
+        },
+        "MCPToolDiscoveryItem": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "category": {
+                    "title": "Category",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "parameters": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/MCPToolParameter"
+                    },
+                    "readOnly": true
+                }
+            }
+        },
         "MCPToolListResult": {
             "required": [
                 "tools",
@@ -89611,7 +89667,7 @@
                 "tools": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/ToolDiscoveryItem"
+                        "$ref": "#/definitions/MCPToolDiscoveryItem"
                     }
                 },
                 "total": {

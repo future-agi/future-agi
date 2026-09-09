@@ -5584,8 +5584,26 @@ export interface MCPToolCallResponseApi {
   session_id: string;
 }
 
+export interface MCPToolParameterApi {
+  /** @minLength 1 */
+  readonly name?: string;
+  /** @minLength 1 */
+  readonly type?: string;
+  readonly description?: string;
+  readonly required?: boolean;
+}
+
+export interface MCPToolDiscoveryItemApi {
+  /** @minLength 1 */
+  readonly name?: string;
+  /** @minLength 1 */
+  readonly category?: string;
+  readonly description?: string;
+  readonly parameters?: readonly MCPToolParameterApi[];
+}
+
 export interface MCPToolListResultApi {
-  tools: ToolDiscoveryItemApi[];
+  tools: MCPToolDiscoveryItemApi[];
   total: number;
   session_id: string;
 }

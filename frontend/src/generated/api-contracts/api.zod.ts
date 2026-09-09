@@ -11878,8 +11878,6 @@ export const McpInternalToolsListResponse = zod.object({
             }),
           )
           .optional(),
-        returns: zod.object({}).passthrough().optional(),
-        metadata: zod.object({}).passthrough().optional(),
       }),
     ),
     total: zod.number(),

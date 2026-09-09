@@ -37,6 +37,9 @@ on:
       - "futureagi/tracer/utils/helper.py"
       - "futureagi/tracer/views/**"
       - "futureagi/tfc/deployment_telemetry/**"
+      - "futureagi/mcp_server/catalog/**"
+      - "futureagi/mcp_server/tool_generation.py"
+      - "scripts/generate-mcp-tools.py"
       - ".github/workflows/api-contracts.yml"
   push:
     branches: [main, develop, dev]
@@ -74,6 +77,9 @@ on:
       - "futureagi/tracer/utils/helper.py"
       - "futureagi/tracer/views/**"
       - "futureagi/tfc/deployment_telemetry/**"
+      - "futureagi/mcp_server/catalog/**"
+      - "futureagi/mcp_server/tool_generation.py"
+      - "scripts/generate-mcp-tools.py"
       - ".github/workflows/api-contracts.yml"
   workflow_dispatch:
 
@@ -307,6 +313,9 @@ jobs:
             exit 1
           fi
           git diff --exit-code api_contracts/openapi/swagger.json
+
+      - name: Check generated MCP tool manifest
+        run: uv run python ../scripts/generate-mcp-tools.py --check
 
       - name: Run annotation/filter contract tests
         env:

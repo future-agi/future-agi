@@ -1,0 +1,4466 @@
+{
+  "schema_version": 1,
+  "source_contract": "swagger.json",
+  "source_contract_sha256": "5bb8dd75fa727a04afab3e585d97e6199616b632fe64b056541c9f0a76434163",
+  "tool_count": 60,
+  "tools": [
+    {
+      "name": "whoami",
+      "description": "Return the authenticated user, organization, and workspace context.",
+      "group": "context",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/accounts/user-info/",
+        "parameters": {
+          "path": [],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "accounts_user-info_list"
+      }
+    },
+    {
+      "name": "list_workspaces",
+      "description": "List workspaces available to the authenticated user.",
+      "group": "context",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/accounts/workspaces/",
+        "parameters": {
+          "path": [],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "accounts_workspaces_list"
+      }
+    },
+    {
+      "name": "get_workspace",
+      "description": "Return a workspace by its identifier.",
+      "group": "context",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "workspace_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "workspace_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/accounts/workspaces/{workspace_id}/",
+        "parameters": {
+          "path": [
+            "workspace_id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "accounts_workspaces_read"
+      }
+    },
+    {
+      "name": "list_datasets",
+      "description": "List datasets available in the current workspace.",
+      "group": "datasets",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "search_text": {
+            "type": "string",
+            "default": ""
+          },
+          "page": {
+            "type": "integer",
+            "default": 0,
+            "minimum": 0
+          },
+          "page_size": {
+            "type": "integer",
+            "default": 10,
+            "minimum": 1,
+            "maximum": 100
+          },
+          "sort": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/model-hub/develops/get-datasets/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "search_text",
+            "page",
+            "page_size",
+            "sort"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_develops_get-datasets_list"
+      }
+    },
+    {
+      "name": "get_dataset",
+      "description": "Return the rows, columns, and metadata for a dataset.",
+      "group": "datasets",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "dataset_id": {
+            "type": "string"
+          },
+          "filters": {
+            "type": "string",
+            "default": "[]",
+            "minLength": 1
+          },
+          "sort": {
+            "type": "string",
+            "default": "[]",
+            "minLength": 1
+          },
+          "search": {
+            "type": "string",
+            "default": {}
+          },
+          "page_size": {
+            "type": "integer",
+            "default": 10,
+            "minimum": 1
+          },
+          "current_page_index": {
+            "type": "integer",
+            "default": 0,
+            "minimum": 0
+          },
+          "column_config_only": {
+            "type": "boolean",
+            "default": false
+          },
+          "exact_snapshot": {
+            "type": "boolean",
+            "default": false,
+            "description": "Start an exact MVCC-bound dataset read. Exact reads start at page 0 and return a signed next_cursor when more rows remain."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "description": "Signed next_cursor from the preceding exact dataset page. Keep the same page_size and current_page_index sequence."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "dataset_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/model-hub/develops/{dataset_id}/get-dataset-table/",
+        "parameters": {
+          "path": [
+            "dataset_id"
+          ],
+          "query": [
+            "filters",
+            "sort",
+            "search",
+            "page_size",
+            "current_page_index",
+            "column_config_only",
+            "exact_snapshot",
+            "cursor"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_develops_get-dataset-table_list"
+      }
+    },
+    {
+      "name": "get_dataset_eval_stats",
+      "description": "Return evaluation statistics for a dataset.",
+      "group": "datasets",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "dataset_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "dataset_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/model-hub/dataset/{dataset_id}/eval-stats/",
+        "parameters": {
+          "path": [
+            "dataset_id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_dataset_eval-stats_list"
+      }
+    },
+    {
+      "name": "create_dataset",
+      "description": "Create an empty dataset in the current workspace.",
+      "group": "datasets",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "new_dataset_name": {
+            "title": "New dataset name",
+            "type": "string",
+            "minLength": 1
+          },
+          "model_type": {
+            "title": "Model type",
+            "type": "string"
+          },
+          "is_sdk": {
+            "title": "Is sdk",
+            "type": "boolean",
+            "default": false
+          },
+          "row": {
+            "title": "Row",
+            "type": "integer",
+            "maximum": 10,
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "new_dataset_name"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/model-hub/develops/create-empty-dataset/",
+        "parameters": {
+          "path": [],
+          "query": [],
+          "body": [
+            "new_dataset_name",
+            "model_type",
+            "is_sdk",
+            "row"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_develops_create-empty-dataset_create"
+      }
+    },
+    {
+      "name": "add_dataset_rows",
+      "description": "Add rows to an existing dataset.",
+      "group": "datasets",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "dataset_id": {
+            "type": "string"
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "dataset_id",
+          "rows"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/model-hub/develops/{dataset_id}/add_rows/",
+        "parameters": {
+          "path": [
+            "dataset_id"
+          ],
+          "query": [],
+          "body": [
+            "rows"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_develops_add_rows_create"
+      }
+    },
+    {
+      "name": "run_dataset_evals",
+      "description": "Start the configured evaluations for a dataset.",
+      "group": "datasets",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "dataset_id": {
+            "type": "string"
+          },
+          "user_eval_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "experiment_id": {
+            "title": "Experiment id",
+            "type": "string",
+            "format": "uuid"
+          },
+          "failed_only": {
+            "title": "Failed only",
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "dataset_id",
+          "user_eval_ids"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/model-hub/develops/{dataset_id}/start_evals_process/",
+        "parameters": {
+          "path": [
+            "dataset_id"
+          ],
+          "query": [],
+          "body": [
+            "user_eval_ids",
+            "experiment_id",
+            "failed_only"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_develops_start_evals_process_create"
+      }
+    },
+    {
+      "name": "list_prompt_templates",
+      "description": "List prompt templates available in the current workspace.",
+      "group": "prompts",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "search": {
+            "type": "string",
+            "description": "A search term."
+          },
+          "ordering": {
+            "type": "string",
+            "description": "Which field to use when ordering the results."
+          },
+          "page": {
+            "type": "integer",
+            "description": "A page number within the paginated result set."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of results to return per page."
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/model-hub/prompt-templates/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "name",
+            "version",
+            "created_at",
+            "search",
+            "ordering",
+            "page",
+            "limit"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_prompt-templates_list"
+      }
+    },
+    {
+      "name": "get_prompt_template",
+      "description": "Return a prompt template by its identifier.",
+      "group": "prompts",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "A UUID string identifying this prompt template."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/model-hub/prompt-templates/{id}/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_prompt-templates_read"
+      }
+    },
+    {
+      "name": "list_prompt_versions",
+      "description": "List versions of a prompt template.",
+      "group": "prompts",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "A UUID string identifying this prompt template."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/model-hub/prompt-templates/{id}/versions/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_prompt-templates_versions"
+      }
+    },
+    {
+      "name": "create_prompt_template",
+      "description": "Create a prompt template in the current workspace.",
+      "group": "prompts",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1
+          },
+          "description": {
+            "title": "Description",
+            "type": "string",
+            "x-nullable": true
+          },
+          "variable_names": {
+            "title": "Variable names",
+            "type": "object",
+            "x-nullable": true
+          },
+          "prompt_folder": {
+            "title": "Prompt folder",
+            "type": "string",
+            "format": "uuid",
+            "x-nullable": true
+          },
+          "placeholders": {
+            "title": "Placeholders",
+            "type": "object",
+            "x-nullable": true
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "name"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/model-hub/prompt-templates/",
+        "parameters": {
+          "path": [],
+          "query": [],
+          "body": [
+            "name",
+            "description",
+            "variable_names",
+            "prompt_folder",
+            "placeholders"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_prompt-templates_create"
+      }
+    },
+    {
+      "name": "update_prompt_template",
+      "description": "Update selected fields on an existing prompt template.",
+      "group": "prompts",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "A UUID string identifying this prompt template."
+          },
+          "name": {
+            "title": "Name",
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1
+          },
+          "description": {
+            "title": "Description",
+            "type": "string",
+            "x-nullable": true
+          },
+          "variable_names": {
+            "title": "Variable names",
+            "type": "object",
+            "x-nullable": true
+          },
+          "prompt_folder": {
+            "title": "Prompt folder",
+            "type": "string",
+            "format": "uuid",
+            "x-nullable": true
+          },
+          "placeholders": {
+            "title": "Placeholders",
+            "type": "object",
+            "x-nullable": true
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "PATCH",
+        "path": "/model-hub/prompt-templates/{id}/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": [
+            "name",
+            "description",
+            "variable_names",
+            "prompt_folder",
+            "placeholders"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_prompt-templates_partial_update"
+      }
+    },
+    {
+      "name": "run_prompt",
+      "description": "Run a prompt template with the supplied variables and model configuration.",
+      "group": "prompts",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "A UUID string identifying this prompt template."
+          },
+          "name": {
+            "title": "Name",
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1
+          },
+          "description": {
+            "title": "Description",
+            "type": "string",
+            "x-nullable": true
+          },
+          "variable_names": {
+            "title": "Variable names",
+            "type": "object",
+            "x-nullable": true
+          },
+          "prompt_folder": {
+            "title": "Prompt folder",
+            "type": "string",
+            "format": "uuid",
+            "x-nullable": true
+          },
+          "placeholders": {
+            "title": "Placeholders",
+            "type": "object",
+            "x-nullable": true
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/model-hub/prompt-templates/{id}/run_template/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": [
+            "name",
+            "description",
+            "variable_names",
+            "prompt_folder",
+            "placeholders"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_prompt-templates_run_template"
+      }
+    },
+    {
+      "name": "list_eval_templates",
+      "description": "List evaluation templates using the supplied filters.",
+      "group": "evaluations",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "title": "Page",
+            "type": "integer",
+            "default": 0,
+            "minimum": 0
+          },
+          "page_size": {
+            "title": "Page size",
+            "type": "integer",
+            "default": 25,
+            "maximum": 100,
+            "minimum": 1
+          },
+          "search": {
+            "title": "Search",
+            "type": "string",
+            "x-nullable": true
+          },
+          "owner_filter": {
+            "title": "Owner filter",
+            "type": "string",
+            "enum": [
+              "all",
+              "user",
+              "system"
+            ],
+            "default": "all"
+          },
+          "filters": {
+            "$ref": "#/definitions/EvalListFilters"
+          },
+          "sort_by": {
+            "title": "Sort by",
+            "type": "string",
+            "enum": [
+              "name",
+              "updated_at",
+              "created_at"
+            ],
+            "default": "updated_at"
+          },
+          "sort_order": {
+            "title": "Sort order",
+            "type": "string",
+            "enum": [
+              "asc",
+              "desc"
+            ],
+            "default": "desc"
+          }
+        },
+        "additionalProperties": false,
+        "definitions": {
+          "EvalListFilters": {
+            "type": "object",
+            "properties": {
+              "eval_type": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "llm",
+                    "code",
+                    "agent"
+                  ]
+                }
+              },
+              "eval_type_not": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "llm",
+                    "code",
+                    "agent"
+                  ]
+                }
+              },
+              "output_type": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "pass_fail",
+                    "percentage",
+                    "deterministic"
+                  ]
+                }
+              },
+              "output_type_not": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "pass_fail",
+                    "percentage",
+                    "deterministic"
+                  ]
+                }
+              },
+              "template_type": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "single",
+                    "composite"
+                  ]
+                }
+              },
+              "template_type_not": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "single",
+                    "composite"
+                  ]
+                }
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "tags_not": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "created_by": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "created_by_not": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "names": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "names_not": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "x-nullable": true
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/model-hub/eval-templates/list/",
+        "parameters": {
+          "path": [],
+          "query": [],
+          "body": [
+            "page",
+            "page_size",
+            "search",
+            "owner_filter",
+            "filters",
+            "sort_by",
+            "sort_order"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_eval-templates_list_create"
+      }
+    },
+    {
+      "name": "get_eval_template",
+      "description": "Return an evaluation template by its identifier.",
+      "group": "evaluations",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "template_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "template_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/model-hub/eval-templates/{template_id}/detail/",
+        "parameters": {
+          "path": [
+            "template_id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_eval-templates_detail_list"
+      }
+    },
+    {
+      "name": "create_eval_template",
+      "description": "Create an evaluation template.",
+      "group": "evaluations",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string",
+            "maxLength": 255
+          },
+          "is_draft": {
+            "title": "Is draft",
+            "type": "boolean",
+            "default": false
+          },
+          "eval_type": {
+            "title": "Eval type",
+            "type": "string",
+            "enum": [
+              "llm",
+              "code",
+              "agent"
+            ],
+            "default": "llm"
+          },
+          "instructions": {
+            "title": "Instructions",
+            "type": "string",
+            "maxLength": 100000
+          },
+          "model": {
+            "title": "Model",
+            "type": "string",
+            "default": "turing_large",
+            "minLength": 1
+          },
+          "output_type": {
+            "title": "Output type",
+            "type": "string",
+            "enum": [
+              "pass_fail",
+              "percentage",
+              "deterministic"
+            ],
+            "default": "pass_fail"
+          },
+          "pass_threshold": {
+            "title": "Pass threshold",
+            "type": "number",
+            "maximum": 1,
+            "minimum": 0
+          },
+          "choice_scores": {
+            "title": "Choice scores",
+            "type": "object",
+            "x-nullable": true
+          },
+          "description": {
+            "title": "Description",
+            "type": "string",
+            "x-nullable": true
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "default": []
+          },
+          "check_internet": {
+            "title": "Check internet",
+            "type": "boolean",
+            "default": false
+          },
+          "code": {
+            "title": "Code",
+            "type": "string",
+            "maxLength": 100000,
+            "x-nullable": true
+          },
+          "code_language": {
+            "title": "Code language",
+            "type": "string",
+            "enum": [
+              "python",
+              "javascript"
+            ],
+            "x-nullable": true
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "x-nullable": true
+          },
+          "few_shot_examples": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "x-nullable": true
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string",
+            "enum": [
+              "auto",
+              "agent",
+              "quick"
+            ],
+            "x-nullable": true
+          },
+          "tools": {
+            "title": "Tools",
+            "type": "object",
+            "x-nullable": true
+          },
+          "knowledge_bases": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "x-nullable": true
+          },
+          "data_injection": {
+            "title": "Data injection",
+            "type": "object",
+            "x-nullable": true
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "object",
+            "x-nullable": true
+          },
+          "error_localizer_enabled": {
+            "title": "Error localizer enabled",
+            "type": "boolean",
+            "default": false
+          },
+          "template_format": {
+            "title": "Template format",
+            "type": "string",
+            "enum": [
+              "mustache",
+              "jinja"
+            ],
+            "default": "mustache"
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/model-hub/eval-templates/create-v2/",
+        "parameters": {
+          "path": [],
+          "query": [],
+          "body": [
+            "name",
+            "is_draft",
+            "eval_type",
+            "instructions",
+            "model",
+            "output_type",
+            "pass_threshold",
+            "choice_scores",
+            "description",
+            "tags",
+            "check_internet",
+            "code",
+            "code_language",
+            "messages",
+            "few_shot_examples",
+            "mode",
+            "tools",
+            "knowledge_bases",
+            "data_injection",
+            "summary",
+            "error_localizer_enabled",
+            "template_format"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_eval-templates_create-v2_create"
+      }
+    },
+    {
+      "name": "update_eval_template",
+      "description": "Update an existing evaluation template.",
+      "group": "evaluations",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "template_id": {
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "x-nullable": true
+          },
+          "eval_type": {
+            "title": "Eval type",
+            "type": "string",
+            "enum": [
+              "llm",
+              "code",
+              "agent"
+            ],
+            "x-nullable": true
+          },
+          "instructions": {
+            "title": "Instructions",
+            "type": "string",
+            "minLength": 1,
+            "x-nullable": true
+          },
+          "model": {
+            "title": "Model",
+            "type": "string",
+            "minLength": 1,
+            "x-nullable": true
+          },
+          "output_type": {
+            "title": "Output type",
+            "type": "string",
+            "enum": [
+              "pass_fail",
+              "percentage",
+              "deterministic"
+            ],
+            "x-nullable": true
+          },
+          "pass_threshold": {
+            "title": "Pass threshold",
+            "type": "number",
+            "maximum": 1,
+            "minimum": 0,
+            "x-nullable": true
+          },
+          "choice_scores": {
+            "title": "Choice scores",
+            "type": "object",
+            "x-nullable": true
+          },
+          "multi_choice": {
+            "title": "Multi choice",
+            "type": "boolean",
+            "x-nullable": true
+          },
+          "description": {
+            "title": "Description",
+            "type": "string",
+            "x-nullable": true
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "x-nullable": true
+          },
+          "check_internet": {
+            "title": "Check internet",
+            "type": "boolean",
+            "x-nullable": true
+          },
+          "code": {
+            "title": "Code",
+            "type": "string",
+            "x-nullable": true
+          },
+          "code_language": {
+            "title": "Code language",
+            "type": "string",
+            "enum": [
+              "python",
+              "javascript"
+            ],
+            "x-nullable": true
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "x-nullable": true
+          },
+          "few_shot_examples": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "x-nullable": true
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string",
+            "enum": [
+              "auto",
+              "agent",
+              "quick"
+            ],
+            "x-nullable": true
+          },
+          "tools": {
+            "title": "Tools",
+            "type": "object",
+            "x-nullable": true
+          },
+          "knowledge_bases": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "x-nullable": true
+          },
+          "data_injection": {
+            "title": "Data injection",
+            "type": "object",
+            "x-nullable": true
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "object",
+            "x-nullable": true
+          },
+          "error_localizer_enabled": {
+            "title": "Error localizer enabled",
+            "type": "boolean",
+            "x-nullable": true
+          },
+          "publish": {
+            "title": "Publish",
+            "type": "boolean",
+            "x-nullable": true
+          },
+          "template_format": {
+            "title": "Template format",
+            "type": "string",
+            "enum": [
+              "mustache",
+              "jinja"
+            ],
+            "x-nullable": true
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "template_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "PUT",
+        "path": "/model-hub/eval-templates/{template_id}/update/",
+        "parameters": {
+          "path": [
+            "template_id"
+          ],
+          "query": [],
+          "body": [
+            "name",
+            "eval_type",
+            "instructions",
+            "model",
+            "output_type",
+            "pass_threshold",
+            "choice_scores",
+            "multi_choice",
+            "description",
+            "tags",
+            "check_internet",
+            "code",
+            "code_language",
+            "messages",
+            "few_shot_examples",
+            "mode",
+            "tools",
+            "knowledge_bases",
+            "data_injection",
+            "summary",
+            "error_localizer_enabled",
+            "publish",
+            "template_format"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_eval-templates_update_update"
+      }
+    },
+    {
+      "name": "list_eval_groups",
+      "description": "List evaluation groups in the current workspace.",
+      "group": "evaluations",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "description": "A page number within the paginated result set."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of results to return per page."
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/model-hub/eval-groups/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "page",
+            "limit"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_eval-groups_list"
+      }
+    },
+    {
+      "name": "get_eval_group",
+      "description": "Return an evaluation group by its identifier.",
+      "group": "evaluations",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/model-hub/eval-groups/{id}/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_eval-groups_read"
+      }
+    },
+    {
+      "name": "test_evaluation",
+      "description": "Execute an evaluation template against supplied test inputs.",
+      "group": "evaluations",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "config": {
+            "title": "Config",
+            "type": "object"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string",
+            "default": "turing_large",
+            "maxLength": 100,
+            "x-nullable": true
+          },
+          "eval_tags": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "default": []
+          },
+          "criteria": {
+            "title": "Criteria",
+            "type": "string",
+            "x-nullable": true
+          },
+          "multi_choice": {
+            "title": "Multi choice",
+            "type": "boolean",
+            "default": false
+          },
+          "choices": {
+            "title": "Choices",
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "minLength": 1
+            },
+            "default": {},
+            "x-nullable": true
+          },
+          "input_data_types": {
+            "title": "Input data types",
+            "type": "object",
+            "default": {}
+          },
+          "name": {
+            "title": "Name",
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1
+          },
+          "description": {
+            "title": "Description",
+            "type": "string",
+            "default": "",
+            "maxLength": 255,
+            "x-nullable": true
+          },
+          "output_type": {
+            "title": "Output type",
+            "type": "string",
+            "maxLength": 50,
+            "minLength": 1
+          },
+          "check_internet": {
+            "title": "Check internet",
+            "type": "boolean",
+            "default": false
+          },
+          "required_keys": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "x-nullable": true
+            },
+            "default": []
+          },
+          "template_type": {
+            "title": "Template type",
+            "type": "string",
+            "default": "",
+            "minLength": 1
+          },
+          "eval_type_id": {
+            "title": "Eval type id",
+            "type": "string",
+            "maxLength": 100,
+            "x-nullable": true
+          },
+          "template_id": {
+            "title": "Template id",
+            "type": "string",
+            "format": "uuid",
+            "x-nullable": true
+          },
+          "eval_type": {
+            "title": "Eval type",
+            "type": "string",
+            "x-nullable": true
+          },
+          "error_localizer": {
+            "title": "Error localizer",
+            "type": "boolean",
+            "default": false
+          },
+          "reason_column": {
+            "title": "Reason column",
+            "type": "boolean",
+            "default": false
+          },
+          "optional_keys": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "default": []
+          },
+          "variable_keys": {
+            "title": "Variable keys",
+            "type": "object",
+            "default": []
+          },
+          "run_prompt_column": {
+            "title": "Run prompt column",
+            "type": "boolean",
+            "default": false
+          },
+          "template_name": {
+            "title": "Template name",
+            "type": "string",
+            "x-nullable": true
+          },
+          "mapping": {
+            "title": "Mapping",
+            "type": "object",
+            "default": {}
+          },
+          "output": {
+            "title": "Output",
+            "type": "string",
+            "x-nullable": true
+          },
+          "config_params_desc": {
+            "title": "Config params desc",
+            "type": "object",
+            "default": {}
+          },
+          "config_params_option": {
+            "title": "Config params option",
+            "type": "object",
+            "default": {}
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "config",
+          "name",
+          "output_type"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/model-hub/test-evaluation/",
+        "parameters": {
+          "path": [],
+          "query": [],
+          "body": [
+            "config",
+            "model",
+            "eval_tags",
+            "criteria",
+            "multi_choice",
+            "choices",
+            "input_data_types",
+            "name",
+            "description",
+            "output_type",
+            "check_internet",
+            "required_keys",
+            "template_type",
+            "eval_type_id",
+            "template_id",
+            "eval_type",
+            "error_localizer",
+            "reason_column",
+            "optional_keys",
+            "variable_keys",
+            "run_prompt_column",
+            "template_name",
+            "mapping",
+            "output",
+            "config_params_desc",
+            "config_params_option"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_test-evaluation_create"
+      }
+    },
+    {
+      "name": "list_projects",
+      "description": "List tracing projects available in the current workspace.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "description": "A page number within the paginated result set."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of results to return per page."
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/tracer/project/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "page",
+            "limit"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "tracer_project_list"
+      }
+    },
+    {
+      "name": "get_project",
+      "description": "Return a tracing project by its identifier.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/tracer/project/{id}/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "tracer_project_read"
+      }
+    },
+    {
+      "name": "search_traces",
+      "description": "Search traces using project, time range, status, and attribute filters.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "description": "A page number within the paginated result set."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of results to return per page."
+          },
+          "project_version_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "trace_ids": {
+            "type": "string",
+            "default": []
+          },
+          "filters": {
+            "type": "string",
+            "default": "[]",
+            "minLength": 1
+          },
+          "sort_params": {
+            "type": "string",
+            "default": "[]",
+            "minLength": 1
+          },
+          "page_number": {
+            "type": "integer",
+            "default": 0,
+            "minimum": 0,
+            "description": "Zero-based numbered page. Pages whose required ordered work exceeds the finite read contract return HTTP 422 with code page_depth_exceeded; request an earlier page or narrow the time range."
+          },
+          "page_size": {
+            "type": "integer",
+            "default": 30,
+            "minimum": 1,
+            "maximum": 500
+          },
+          "allow_sampled": {
+            "type": "boolean",
+            "description": "Omit for backward-compatible complete bounded pages, which may label total_rows as a lower bound. Send false to require an exact total, or true to opt in explicitly to lower-bound totals."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "project_version_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/tracer/trace/list_traces/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "page",
+            "limit",
+            "project_version_id",
+            "trace_ids",
+            "filters",
+            "sort_params",
+            "page_number",
+            "page_size",
+            "allow_sampled"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "tracer_trace_list_traces"
+      }
+    },
+    {
+      "name": "get_trace",
+      "description": "Return a trace by its identifier.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/tracer/trace/{id}/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "tracer_trace_read"
+      }
+    },
+    {
+      "name": "list_spans",
+      "description": "List observation spans using the supplied filters.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "description": "A page number within the paginated result set."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of results to return per page."
+          },
+          "project_version_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "filters": {
+            "type": "string",
+            "default": "[]",
+            "minLength": 1
+          },
+          "page_number": {
+            "type": "integer",
+            "default": 0,
+            "minimum": 0,
+            "description": "Zero-based numbered page. Pages whose required ordered work exceeds the finite read contract return HTTP 422 with code page_depth_exceeded; request an earlier page or narrow the time range."
+          },
+          "page_size": {
+            "type": "integer",
+            "default": 30,
+            "minimum": 1,
+            "maximum": 500
+          },
+          "allow_sampled": {
+            "type": "boolean",
+            "description": "Omit for backward-compatible complete bounded pages, which may label total_rows as a lower bound. Send false to require an exact total, or true to opt in explicitly to lower-bound totals."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "project_version_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/tracer/observation-span/list_spans/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "page",
+            "limit",
+            "project_version_id",
+            "filters",
+            "page_number",
+            "page_size",
+            "allow_sampled"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "tracer_observation-span_list_spans"
+      }
+    },
+    {
+      "name": "get_span",
+      "description": "Return an observation span by its identifier.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "trace_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "start_hour": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "observation_type": {
+            "type": "string"
+          },
+          "service_name": {
+            "type": "string"
+          },
+          "expected_start_time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expected_version": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/tracer/observation-span/{id}/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [
+            "project_id",
+            "trace_id",
+            "start_hour",
+            "observation_type",
+            "service_name",
+            "expected_start_time",
+            "expected_version"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "tracer_observation-span_read"
+      }
+    },
+    {
+      "name": "list_sessions",
+      "description": "List trace sessions using the supplied filters.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "description": "A page number within the paginated result set."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of results to return per page."
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "bookmarked": {
+            "type": "boolean"
+          },
+          "filters": {
+            "type": "string",
+            "default": "[]",
+            "minLength": 1
+          },
+          "sort_params": {
+            "type": "string",
+            "default": "[]",
+            "minLength": 1
+          },
+          "page_number": {
+            "type": "integer",
+            "default": 0,
+            "minimum": 0,
+            "description": "Zero-based numbered page. Pages whose required ordered work exceeds the finite read contract return HTTP 422 with code page_depth_exceeded; request an earlier page or narrow the time range."
+          },
+          "page_size": {
+            "type": "integer",
+            "default": 30,
+            "minimum": 1,
+            "maximum": 500
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "description": "Opaque continuation token returned by the previous page. When supplied, do not also send the numbered-page parameter."
+          },
+          "cursor_mode": {
+            "type": "boolean",
+            "default": false
+          },
+          "interval": {
+            "type": "string"
+          },
+          "allow_sampled": {
+            "type": "boolean",
+            "description": "Omit for backward-compatible complete bounded pages, which may label total_rows as a lower bound. Send false to require an exact total, or true to opt in explicitly to lower-bound totals."
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/tracer/trace-session/list_sessions/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "page",
+            "limit",
+            "project_id",
+            "user_id",
+            "bookmarked",
+            "filters",
+            "sort_params",
+            "page_number",
+            "page_size",
+            "cursor",
+            "cursor_mode",
+            "interval",
+            "allow_sampled"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "tracer_trace-session_list_sessions"
+      }
+    },
+    {
+      "name": "get_session",
+      "description": "Return a trace session by its identifier.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/tracer/trace-session/{id}/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "tracer_trace-session_read"
+      }
+    },
+    {
+      "name": "get_trace_error_analysis",
+      "description": "Return the recorded error analysis for a trace.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "trace_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "trace_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/tracer/trace-error-analysis/{trace_id}/",
+        "parameters": {
+          "path": [
+            "trace_id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "tracer_trace-error-analysis_read"
+      }
+    },
+    {
+      "name": "list_eval_tasks",
+      "description": "List online evaluation tasks in the current workspace.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "filters": {
+            "type": "string",
+            "default": "[]",
+            "minLength": 1
+          },
+          "sort_params": {
+            "type": "string",
+            "default": "[]",
+            "minLength": 1
+          },
+          "page_number": {
+            "type": "integer",
+            "default": 0,
+            "minimum": 0
+          },
+          "page_size": {
+            "type": "integer",
+            "default": 30,
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/tracer/eval-task/list_eval_tasks/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "project_id",
+            "name",
+            "filters",
+            "sort_params",
+            "page_number",
+            "page_size"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "tracer_eval-task_list_eval_tasks"
+      }
+    },
+    {
+      "name": "get_eval_task",
+      "description": "Return an online evaluation task by its identifier.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/tracer/eval-task/{id}/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "tracer_eval-task_read"
+      }
+    },
+    {
+      "name": "create_eval_task",
+      "description": "Create an online evaluation task.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "title": "Project",
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1
+          },
+          "filters": {
+            "title": "Filters",
+            "type": "object",
+            "default": {},
+            "x-nullable": true,
+            "properties": {
+              "project_id": {
+                "type": "string",
+                "x-nullable": true,
+                "description": "Project scope for the evaluation task."
+              },
+              "date_range": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 2,
+                "maxItems": 2,
+                "description": "Half-open [start, end) ISO timestamps, normalized to UTC."
+              },
+              "date_preset": {
+                "type": "string",
+                "enum": [
+                  "30m",
+                  "6h",
+                  "today",
+                  "yesterday",
+                  "7d",
+                  "30d",
+                  "3m",
+                  "6m",
+                  "12m",
+                  "custom"
+                ],
+                "description": "Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query \u2014 date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced."
+              },
+              "created_at": {
+                "type": "string",
+                "description": "Exclusive lower-bound ISO timestamp for legacy task filters, normalized to UTC."
+              },
+              "session_id": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Trace session id(s) to constrain the task."
+              },
+              "trace_id": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Trace id(s) to constrain linked-source tasks."
+              },
+              "span_id": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Observation span id(s) to constrain linked-source tasks."
+              },
+              "observation_type": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Observation span type(s), for example llm, tool, or chain."
+              },
+              "filters": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "column_id": {
+                      "type": "string",
+                      "description": "Column or attribute id to filter on."
+                    },
+                    "property_id": {
+                      "type": "string",
+                      "description": "Optional stable namespaced Property Registry identity."
+                    },
+                    "display_name": {
+                      "type": "string",
+                      "description": "Optional UI label for chips and saved views."
+                    },
+                    "source": {
+                      "type": "string",
+                      "description": "Optional source surface for mixed-source filters, for example traces, datasets, or simulation."
+                    },
+                    "output_type": {
+                      "type": "string",
+                      "description": "Optional metric output type metadata used by eval and annotation filters."
+                    },
+                    "filter_config": {
+                      "type": "object",
+                      "properties": {
+                        "filter_type": {
+                          "type": "string",
+                          "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map."
+                        },
+                        "filter_op": {
+                          "type": "string",
+                          "description": "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null."
+                        },
+                        "filter_value": {
+                          "description": "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type."
+                        },
+                        "col_type": {
+                          "type": "string",
+                          "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                        },
+                        "attribute_value_types": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "string",
+                              "number",
+                              "boolean"
+                            ],
+                            "x-nullable": true
+                          },
+                          "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
+                        }
+                      },
+                      "required": [
+                        "filter_type",
+                        "filter_op"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "column_id",
+                    "filter_config"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "span_attributes_filters": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "column_id": {
+                      "type": "string",
+                      "description": "Column or attribute id to filter on."
+                    },
+                    "property_id": {
+                      "type": "string",
+                      "description": "Optional stable namespaced Property Registry identity."
+                    },
+                    "display_name": {
+                      "type": "string",
+                      "description": "Optional UI label for chips and saved views."
+                    },
+                    "source": {
+                      "type": "string",
+                      "description": "Optional source surface for mixed-source filters, for example traces, datasets, or simulation."
+                    },
+                    "output_type": {
+                      "type": "string",
+                      "description": "Optional metric output type metadata used by eval and annotation filters."
+                    },
+                    "filter_config": {
+                      "type": "object",
+                      "properties": {
+                        "filter_type": {
+                          "type": "string",
+                          "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map."
+                        },
+                        "filter_op": {
+                          "type": "string",
+                          "description": "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null."
+                        },
+                        "filter_value": {
+                          "description": "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type."
+                        },
+                        "col_type": {
+                          "type": "string",
+                          "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                        },
+                        "attribute_value_types": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "string",
+                              "number",
+                              "boolean"
+                            ],
+                            "x-nullable": true
+                          },
+                          "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
+                        }
+                      },
+                      "required": [
+                        "filter_type",
+                        "filter_op"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "column_id",
+                    "filter_config"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          "sampling_rate": {
+            "title": "Sampling rate",
+            "type": "number",
+            "maximum": 100.0,
+            "minimum": 1.0
+          },
+          "last_run": {
+            "title": "Last run",
+            "type": "string",
+            "format": "date-time",
+            "x-nullable": true
+          },
+          "spans_limit": {
+            "title": "Spans limit",
+            "type": "integer",
+            "maximum": 1000000,
+            "minimum": 1,
+            "x-nullable": true
+          },
+          "run_type": {
+            "title": "Run type",
+            "type": "string",
+            "enum": [
+              "continuous",
+              "historical"
+            ]
+          },
+          "row_type": {
+            "title": "Row type",
+            "type": "string",
+            "enum": [
+              "spans",
+              "traces",
+              "sessions",
+              "voiceCalls"
+            ],
+            "default": "spans"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "completed",
+              "failed",
+              "paused",
+              "deleted"
+            ],
+            "x-nullable": true
+          },
+          "start_time": {
+            "title": "Start time",
+            "type": "string",
+            "format": "date-time",
+            "x-nullable": true
+          },
+          "end_time": {
+            "title": "End time",
+            "type": "string",
+            "format": "date-time",
+            "x-nullable": true
+          },
+          "evals_details": {
+            "title": "Evals details",
+            "type": "object",
+            "x-nullable": true
+          },
+          "evals": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "uniqueItems": true
+          },
+          "failed_spans": {
+            "title": "Failed spans",
+            "type": "object",
+            "x-nullable": true
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "project",
+          "name",
+          "sampling_rate",
+          "run_type",
+          "evals"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/tracer/eval-task/",
+        "parameters": {
+          "path": [],
+          "query": [],
+          "body": [
+            "project",
+            "name",
+            "filters",
+            "sampling_rate",
+            "last_run",
+            "spans_limit",
+            "run_type",
+            "row_type",
+            "status",
+            "start_time",
+            "end_time",
+            "evals_details",
+            "evals",
+            "failed_spans"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "tracer_eval-task_create"
+      }
+    },
+    {
+      "name": "list_error_clusters",
+      "description": "List grouped error issues detected in project traces.",
+      "group": "error_feed",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "search": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "escalating",
+              "for_review",
+              "acknowledged",
+              "resolved"
+            ]
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "critical",
+              "high",
+              "medium",
+              "low"
+            ]
+          },
+          "fix_layer": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "scanner",
+              "eval"
+            ]
+          },
+          "issue_group": {
+            "type": "string"
+          },
+          "time_range_days": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "sort_by": {
+            "type": "string",
+            "enum": [
+              "last_seen",
+              "first_seen",
+              "error_count",
+              "unique_traces",
+              "severity"
+            ],
+            "default": "last_seen"
+          },
+          "sort_dir": {
+            "type": "string",
+            "enum": [
+              "asc",
+              "desc"
+            ],
+            "default": "desc"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 25,
+            "minimum": 1,
+            "maximum": 200
+          },
+          "offset": {
+            "type": "integer",
+            "default": 0,
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/tracer/feed/issues/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "project_id",
+            "search",
+            "status",
+            "severity",
+            "fix_layer",
+            "source",
+            "issue_group",
+            "time_range_days",
+            "sort_by",
+            "sort_dir",
+            "limit",
+            "offset"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "tracer_feed_issues_list"
+      }
+    },
+    {
+      "name": "get_error_cluster",
+      "description": "Return an error issue and its grouped trace information.",
+      "group": "error_feed",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "cluster_id": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "cluster_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/tracer/feed/issues/{cluster_id}/",
+        "parameters": {
+          "path": [
+            "cluster_id"
+          ],
+          "query": [
+            "project_id"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "tracer_feed_issues_read"
+      }
+    },
+    {
+      "name": "list_annotation_queues",
+      "description": "List annotation queues in the current workspace.",
+      "group": "annotations",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "description": "A page number within the paginated result set."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of results to return per page."
+          },
+          "status": {
+            "type": "string"
+          },
+          "search": {
+            "type": "string"
+          },
+          "include_counts": {
+            "type": "boolean"
+          },
+          "archived": {
+            "type": "boolean",
+            "default": false
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/model-hub/annotation-queues/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "page",
+            "limit",
+            "status",
+            "search",
+            "include_counts",
+            "archived",
+            "page_size"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_annotation-queues_list"
+      }
+    },
+    {
+      "name": "get_annotation_queue",
+      "description": "Return an annotation queue by its identifier.",
+      "group": "annotations",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "A UUID string identifying this annotation queue."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/model-hub/annotation-queues/{id}/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_annotation-queues_read"
+      }
+    },
+    {
+      "name": "list_annotation_queue_items",
+      "description": "List items belonging to an annotation queue.",
+      "group": "annotations",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "queue_id": {
+            "type": "string"
+          },
+          "page": {
+            "type": "integer",
+            "description": "A page number within the paginated result set."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of results to return per page."
+          },
+          "status": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "source_type": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "assigned_to": {
+            "type": "string"
+          },
+          "review_status": {
+            "type": "string"
+          },
+          "ordering": {
+            "type": "string",
+            "enum": [
+              "created_at",
+              "-created_at"
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "queue_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/model-hub/annotation-queues/{queue_id}/items/",
+        "parameters": {
+          "path": [
+            "queue_id"
+          ],
+          "query": [
+            "page",
+            "limit",
+            "status",
+            "source_type",
+            "assigned_to",
+            "review_status",
+            "ordering"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_annotation-queues_items_list"
+      }
+    },
+    {
+      "name": "submit_annotation",
+      "description": "Submit annotation values for an item in an annotation queue.",
+      "group": "annotations",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "queue_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "A UUID string identifying this queue item."
+          },
+          "annotations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/SubmitAnnotationEntry"
+            }
+          },
+          "notes": {
+            "title": "Notes",
+            "type": "string",
+            "default": ""
+          },
+          "item_notes": {
+            "title": "Item notes",
+            "type": "string",
+            "x-nullable": true
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "queue_id",
+          "id",
+          "annotations"
+        ],
+        "definitions": {
+          "SubmitAnnotationEntry": {
+            "required": [
+              "label_id",
+              "value"
+            ],
+            "type": "object",
+            "properties": {
+              "label_id": {
+                "title": "Label id",
+                "type": "string",
+                "format": "uuid"
+              },
+              "value": {
+                "title": "Value",
+                "type": "object"
+              },
+              "notes": {
+                "title": "Notes",
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/model-hub/annotation-queues/{queue_id}/items/{id}/annotations/submit/",
+        "parameters": {
+          "path": [
+            "queue_id",
+            "id"
+          ],
+          "query": [],
+          "body": [
+            "annotations",
+            "notes",
+            "item_notes"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_annotation-queues_items_annotations_submit_annotations"
+      }
+    },
+    {
+      "name": "list_experiments",
+      "description": "List experiments in the current workspace.",
+      "group": "experiments",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "dataset_id": {
+            "type": "string"
+          },
+          "search": {
+            "type": "string",
+            "description": "A search term."
+          },
+          "ordering": {
+            "type": "string",
+            "description": "Which field to use when ordering the results."
+          },
+          "page": {
+            "type": "integer",
+            "description": "A page number within the paginated result set."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of results to return per page."
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/model-hub/experiments/v2/list/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "created_at",
+            "status",
+            "dataset_id",
+            "search",
+            "ordering",
+            "page",
+            "limit"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_experiments_v2_list_list"
+      }
+    },
+    {
+      "name": "get_experiment",
+      "description": "Return an experiment by its identifier.",
+      "group": "experiments",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "experiment_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "experiment_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/model-hub/experiments/v2/{experiment_id}/",
+        "parameters": {
+          "path": [
+            "experiment_id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_experiments_v2_read"
+      }
+    },
+    {
+      "name": "create_experiment",
+      "description": "Create and start an experiment.",
+      "group": "experiments",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1
+          },
+          "dataset_id": {
+            "title": "Dataset id",
+            "type": "string",
+            "format": "uuid"
+          },
+          "column_id": {
+            "title": "Column id",
+            "type": "string",
+            "format": "uuid",
+            "x-nullable": true
+          },
+          "experiment_type": {
+            "title": "Experiment type",
+            "type": "string",
+            "enum": [
+              "llm",
+              "tts",
+              "stt",
+              "image"
+            ],
+            "default": "llm"
+          },
+          "prompt_config": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/PromptConfigEntry"
+            }
+          },
+          "user_eval_metrics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/EvalMetricEntry"
+            }
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "dataset_id",
+          "prompt_config",
+          "user_eval_metrics"
+        ],
+        "definitions": {
+          "EvalMetricEntry": {
+            "required": [
+              "template_id",
+              "name",
+              "config"
+            ],
+            "type": "object",
+            "properties": {
+              "id": {
+                "title": "Id",
+                "type": "string",
+                "format": "uuid",
+                "x-nullable": true
+              },
+              "template_id": {
+                "title": "Template id",
+                "type": "string",
+                "format": "uuid"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string",
+                "maxLength": 2000,
+                "minLength": 1
+              },
+              "config": {
+                "title": "Config",
+                "type": "object"
+              },
+              "model": {
+                "title": "Model",
+                "type": "string",
+                "default": "",
+                "maxLength": 255
+              },
+              "error_localizer": {
+                "title": "Error localizer",
+                "type": "boolean",
+                "default": false
+              },
+              "kb_id": {
+                "title": "Kb id",
+                "type": "string",
+                "format": "uuid",
+                "x-nullable": true
+              },
+              "composite_weight_overrides": {
+                "title": "Composite weight overrides",
+                "type": "object",
+                "x-nullable": true
+              }
+            }
+          },
+          "MessageItem": {
+            "required": [
+              "role",
+              "content"
+            ],
+            "type": "object",
+            "properties": {
+              "role": {
+                "title": "Role",
+                "type": "string",
+                "minLength": 1
+              },
+              "content": {
+                "title": "Content",
+                "type": "object",
+                "x-string-or-array": true,
+                "description": "Plain text string or array of content-part objects."
+              },
+              "name": {
+                "title": "Name",
+                "type": "string",
+                "minLength": 1
+              },
+              "tool_calls": {
+                "title": "Tool calls",
+                "type": "object",
+                "x-json-value": true,
+                "description": "Any valid JSON value."
+              },
+              "tool_call_id": {
+                "title": "Tool call id",
+                "type": "string",
+                "minLength": 1
+              },
+              "id": {
+                "title": "Id",
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": true
+          },
+          "PromptConfigEntry": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "title": "Id",
+                "type": "string",
+                "format": "uuid",
+                "x-nullable": true
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "prompt_id": {
+                "title": "Prompt id",
+                "type": "string",
+                "format": "uuid",
+                "x-nullable": true
+              },
+              "prompt_version": {
+                "title": "Prompt version",
+                "type": "string",
+                "format": "uuid",
+                "x-nullable": true
+              },
+              "agent_id": {
+                "title": "Agent id",
+                "type": "string",
+                "format": "uuid",
+                "x-nullable": true
+              },
+              "agent_version": {
+                "title": "Agent version",
+                "type": "string",
+                "format": "uuid",
+                "x-nullable": true
+              },
+              "model": {
+                "title": "Model",
+                "type": "object",
+                "x-string-or-object": true,
+                "description": "String or JSON object."
+              },
+              "model_params": {
+                "$ref": "#/definitions/PromptModelParams"
+              },
+              "configuration": {
+                "$ref": "#/definitions/PromptConfiguration"
+              },
+              "output_format": {
+                "title": "Output format",
+                "type": "string",
+                "default": "string",
+                "minLength": 1
+              },
+              "messages": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/MessageItem"
+                }
+              },
+              "voice_input_column_id": {
+                "title": "Voice input column id",
+                "type": "string",
+                "format": "uuid",
+                "x-nullable": true
+              }
+            }
+          },
+          "PromptConfiguration": {
+            "type": "object",
+            "properties": {
+              "tool_choice": {
+                "title": "Tool choice",
+                "type": "string"
+              },
+              "template_format": {
+                "title": "Template format",
+                "type": "string"
+              },
+              "tools": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "x-json-value": true,
+                  "description": "Any valid JSON value."
+                }
+              },
+              "output_format": {
+                "title": "Output format",
+                "type": "string"
+              },
+              "model_type": {
+                "title": "Model type",
+                "type": "string"
+              },
+              "model_detail": {
+                "title": "Model detail",
+                "type": "object",
+                "x-json-value": true,
+                "description": "Any valid JSON value."
+              },
+              "voice_id": {
+                "title": "Voice id",
+                "type": "string"
+              }
+            },
+            "default": {},
+            "additionalProperties": true
+          },
+          "PromptModelParams": {
+            "type": "object",
+            "properties": {
+              "temperature": {
+                "title": "Temperature",
+                "type": "number"
+              },
+              "max_tokens": {
+                "title": "Max tokens",
+                "type": "integer"
+              },
+              "top_p": {
+                "title": "Top p",
+                "type": "number"
+              },
+              "frequency_penalty": {
+                "title": "Frequency penalty",
+                "type": "number"
+              },
+              "presence_penalty": {
+                "title": "Presence penalty",
+                "type": "number"
+              },
+              "response_format": {
+                "title": "Response format",
+                "type": "object",
+                "x-string-or-object": true,
+                "description": "String or JSON object."
+              }
+            },
+            "default": {},
+            "additionalProperties": true
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/model-hub/experiments/v2/",
+        "parameters": {
+          "path": [],
+          "query": [],
+          "body": [
+            "name",
+            "dataset_id",
+            "column_id",
+            "experiment_type",
+            "prompt_config",
+            "user_eval_metrics"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_experiments_v2_create"
+      }
+    },
+    {
+      "name": "list_optimization_runs",
+      "description": "List dataset optimization runs.",
+      "group": "optimization",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "description": "A page number within the paginated result set."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of results to return per page."
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/model-hub/dataset-optimization/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "page",
+            "limit"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_dataset-optimization_list"
+      }
+    },
+    {
+      "name": "get_optimization_run",
+      "description": "Return a dataset optimization run by its identifier.",
+      "group": "optimization",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "A UUID string identifying this optimize dataset."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/model-hub/dataset-optimization/{id}/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_dataset-optimization_read"
+      }
+    },
+    {
+      "name": "create_optimization_run",
+      "description": "Create a dataset optimization run.",
+      "group": "optimization",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1
+          },
+          "column_id": {
+            "title": "Column id",
+            "type": "string",
+            "format": "uuid"
+          },
+          "optimizer_algorithm": {
+            "title": "Optimizer algorithm",
+            "type": "string",
+            "enum": [
+              "random_search",
+              "bayesian",
+              "metaprompt",
+              "protegi",
+              "promptwizard",
+              "gepa"
+            ]
+          },
+          "optimizer_model_id": {
+            "title": "Optimizer model id",
+            "type": "string"
+          },
+          "optimizer_config": {
+            "title": "Optimizer config",
+            "description": "Optimizer-specific configuration (num_trials, etc.)",
+            "type": "object",
+            "x-nullable": true
+          },
+          "user_eval_template_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "default": []
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "column_id",
+          "optimizer_algorithm"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/model-hub/dataset-optimization/",
+        "parameters": {
+          "path": [],
+          "query": [],
+          "body": [
+            "name",
+            "column_id",
+            "optimizer_algorithm",
+            "optimizer_model_id",
+            "optimizer_config",
+            "user_eval_template_ids"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_dataset-optimization_create"
+      }
+    },
+    {
+      "name": "list_agents",
+      "description": "List agent definitions in the current workspace.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "search": {
+            "type": "string",
+            "default": ""
+          },
+          "agent_type": {
+            "type": "string",
+            "enum": [
+              "voice",
+              "text"
+            ]
+          },
+          "agent_definition_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "page": {
+            "type": "integer",
+            "default": 1,
+            "minimum": 1
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/agent-definitions/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "search",
+            "agent_type",
+            "agent_definition_id",
+            "page",
+            "limit"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_agent-definitions_list"
+      }
+    },
+    {
+      "name": "get_agent",
+      "description": "Return an agent definition by its identifier.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "agent_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "agent_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/agent-definitions/{agent_id}/",
+        "parameters": {
+          "path": [
+            "agent_id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_agent-definitions_read"
+      }
+    },
+    {
+      "name": "list_scenarios",
+      "description": "List simulation scenarios in the current workspace.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "search": {
+            "type": "string",
+            "default": ""
+          },
+          "agent_definition_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "agent_type": {
+            "type": "string",
+            "minLength": 1
+          },
+          "page": {
+            "type": "integer",
+            "default": 1,
+            "minimum": 1
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/scenarios/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "search",
+            "agent_definition_id",
+            "agent_type",
+            "page",
+            "limit"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_scenarios_list"
+      }
+    },
+    {
+      "name": "get_scenario",
+      "description": "Return a simulation scenario by its identifier.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "scenario_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "scenario_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/scenarios/{scenario_id}/",
+        "parameters": {
+          "path": [
+            "scenario_id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_scenarios_read"
+      }
+    },
+    {
+      "name": "list_test_executions",
+      "description": "List simulation test executions.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/test-executions/",
+        "parameters": {
+          "path": [],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_test-executions_list"
+      }
+    },
+    {
+      "name": "get_test_execution",
+      "description": "Return a simulation test execution by its identifier.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "test_execution_id": {
+            "type": "string"
+          },
+          "search": {
+            "type": "string",
+            "default": ""
+          },
+          "filters": {
+            "type": "string",
+            "default": "[]",
+            "minLength": 1
+          },
+          "row_groups": {
+            "type": "string",
+            "default": "[]",
+            "minLength": 1
+          },
+          "group_keys": {
+            "type": "string",
+            "default": "[]",
+            "minLength": 1
+          },
+          "page": {
+            "type": "integer",
+            "default": 1,
+            "minimum": 1
+          },
+          "limit": {
+            "type": "integer",
+            "default": 30,
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "test_execution_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/test-executions/{test_execution_id}/",
+        "parameters": {
+          "path": [
+            "test_execution_id"
+          ],
+          "query": [
+            "search",
+            "filters",
+            "row_groups",
+            "group_keys",
+            "page",
+            "limit"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_test-executions_read"
+      }
+    },
+    {
+      "name": "get_test_execution_analytics",
+      "description": "Return aggregated analytics for a simulation test execution.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "test_execution_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "test_execution_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/test-executions/{test_execution_id}/analytics/",
+        "parameters": {
+          "path": [
+            "test_execution_id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_test-executions_analytics_list"
+      }
+    },
+    {
+      "name": "list_gateways",
+      "description": "List configured AI gateways.",
+      "group": "gateway",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/agentcc/gateways/",
+        "parameters": {
+          "path": [],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "agentcc_gateways_list"
+      }
+    },
+    {
+      "name": "get_gateway_config",
+      "description": "Return the effective configuration for an AI gateway.",
+      "group": "gateway",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/agentcc/gateways/{id}/config/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "agentcc_gateways_config"
+      }
+    },
+    {
+      "name": "list_gateway_request_logs",
+      "description": "List request logs recorded by the AI gateway.",
+      "group": "gateway",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "description": "A page number within the paginated result set."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of results to return per page."
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/agentcc/request-logs/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "page",
+            "limit"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "agentcc_request-logs_list"
+      }
+    },
+    {
+      "name": "get_gateway_analytics",
+      "description": "Return overview usage, latency, error, and cost analytics for the AI gateway.",
+      "group": "gateway",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "description": "A page number within the paginated result set."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of results to return per page."
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/agentcc/analytics/overview/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "page",
+            "limit"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "agentcc_analytics_overview"
+      }
+    },
+    {
+      "name": "list_knowledge_bases",
+      "description": "List knowledge bases in the current workspace.",
+      "group": "datasets",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/model-hub/knowledge-base/list/",
+        "parameters": {
+          "path": [],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_knowledge-base_list_list"
+      }
+    },
+    {
+      "name": "get_knowledge_base",
+      "description": "Return a knowledge base and its configuration.",
+      "group": "datasets",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/model-hub/knowledge-base/get/",
+        "parameters": {
+          "path": [],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_knowledge-base_get_list"
+      }
+    },
+    {
+      "name": "get_usage_overview",
+      "description": "Return the current organization's usage and cost overview.",
+      "group": "usage",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "period": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^\\d{4}-\\d{2}$"
+          },
+          "period_end": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^\\d{4}-\\d{2}$"
+          },
+          "workspace_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/usage/v2/usage-overview/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "period",
+            "period_end",
+            "workspace_id"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "usage_v2_usage-overview_list"
+      }
+    }
+  ]
+}

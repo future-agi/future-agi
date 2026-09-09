@@ -5,7 +5,7 @@ import uuid
 
 import structlog
 
-from mcp_server.constants import CATEGORY_TO_GROUP, DEFAULT_TOOL_GROUPS
+from mcp_server.constants import DEFAULT_TOOL_GROUPS
 from mcp_server.models.connection import MCPConnection
 from mcp_server.models.session import MCPSession
 from mcp_server.models.tool_config import MCPToolGroupConfig
@@ -55,21 +55,22 @@ def get_or_create_session(connection, session_id=None, transport="stdio"):
         except MCPSession.DoesNotExist:
             pass
 
-    # For stateless transports, reuse the most recent active session
-    # within a 30-minute window to avoid creating a new session per request.
-    cutoff = timezone.now() - timedelta(minutes=30)
-    recent = (
-        MCPSession.objects.filter(
-            connection=connection,
-            transport=transport,
-            status="active",
-            last_activity_at__gte=cutoff,
+    if transport == "streamable_http":
+        # Stateless HTTP has no caller-provided session identifier, so reuse
+        # the recent logical session instead of creating one for every POST.
+        cutoff = timezone.now() - timedelta(minutes=30)
+        recent = (
+            MCPSession.objects.filter(
+                connection=connection,
+                transport=transport,
+                status="active",
+                last_activity_at__gte=cutoff,
+            )
+            .order_by("-last_activity_at")
+            .first()
         )
-        .order_by("-last_activity_at")
-        .first()
-    )
-    if recent:
-        return recent
+        if recent:
+            return recent
 
     return MCPSession.objects.create(
         connection=connection,
@@ -82,7 +83,7 @@ def get_or_create_session(connection, session_id=None, transport="stdio"):
 
 def get_enabled_tools(connection):
     """Get the set of enabled tool names for a connection."""
-    from ai_tools.registry import registry
+    from mcp_server.generated_registry import registry
 
     try:
         config = connection.tool_config
@@ -95,8 +96,7 @@ def get_enabled_tools(connection):
 
     enabled_tool_names = set()
     for tool in registry.list_all():
-        group = CATEGORY_TO_GROUP.get(tool.category)
-        if group and group in enabled_groups and tool.name not in disabled_tools:
+        if tool.group in enabled_groups and tool.name not in disabled_tools:
             enabled_tool_names.add(tool.name)
 
     return enabled_tool_names

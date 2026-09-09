@@ -1,21 +1,26 @@
-"""MCP Server application that wraps ai_tools as MCP tools.
+"""Python MCP server backed by OpenAPI-generated Django API tools.
 
-Creates a FastMCP server exposing all registered ai_tools via Streamable HTTP transport.
 Authentication: API key or OAuth Bearer token on each request.
 
 Streamable HTTP uses a single /mcp endpoint (stateless) — no persistent connections,
 no session affinity, survives server restarts, horizontally scalable.
 """
 
+import json
 import os
 import time
 
 import structlog
-from mcp.server.fastmcp import FastMCP
+from asgiref.sync import sync_to_async
+from mcp.server import Server
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.server.transport_security import TransportSecuritySettings
+from mcp.types import CallToolResult, TextContent
+from starlette.applications import Starlette
+from starlette.routing import Route
 
-from ai_tools.base import ToolContext
-from ai_tools.registry import registry as ai_registry
+from mcp_server.api_executor import APIExecutionError, MCPRequestContext, executor
+from mcp_server.generated_registry import registry
 from tfc.middleware.workspace_context import (
     get_current_organization,
     get_current_user,
@@ -27,7 +32,7 @@ logger = structlog.get_logger(__name__)
 
 # Build allowed hosts from MCP_SERVER_BASE_URL for DNS rebinding protection.
 _mcp_base_url = os.environ.get("MCP_SERVER_BASE_URL", "")
-_allowed_hosts: list[str] = []
+_allowed_hosts = ["localhost", "localhost:*", "127.0.0.1", "127.0.0.1:*"]
 if _mcp_base_url:
     from urllib.parse import urlparse
 
@@ -37,24 +42,25 @@ if _mcp_base_url:
         if _parsed.port:
             _allowed_hosts.append(f"{_parsed.hostname}:{_parsed.port}")
 
-# Create the MCP server (stateless Streamable HTTP)
-mcp = FastMCP(
-    name="Future AGI",
+# Create the low-level MCP server so inputSchema comes directly from OpenAPI.
+mcp = Server(
+    "Future AGI",
     instructions=(
         "You are connected to the Future AGI platform. "
         "Use the available tools to explore evaluations, datasets, traces, "
         "and other resources in your workspace."
     ),
-    stateless_http=True,
-    json_response=True,
-    transport_security=TransportSecuritySettings(
-        enable_dns_rebinding_protection=True,
-        allowed_hosts=_allowed_hosts,
-    ),
+)
+
+_transport_security = TransportSecuritySettings(
+    enable_dns_rebinding_protection=True,
+    allowed_hosts=_allowed_hosts,
 )
 
 
-def _authenticate_and_set_context(api_key: str, secret_key: str) -> ToolContext | None:
+def _authenticate_and_set_context(
+    api_key: str, secret_key: str
+) -> MCPRequestContext | None:
     """Authenticate via API key and set per-request context."""
     from accounts.models.user import OrgApiKey, User
     from accounts.models.workspace import Workspace
@@ -99,10 +105,10 @@ def _authenticate_and_set_context(api_key: str, secret_key: str) -> ToolContext 
 
     set_workspace_context(workspace=workspace, organization=organization, user=user)
 
-    return ToolContext(user=user, organization=organization, workspace=workspace)
+    return MCPRequestContext(user=user, organization=organization, workspace=workspace)
 
 
-def _authenticate_via_oauth(token: str) -> ToolContext | None:
+def _authenticate_via_oauth(token: str) -> MCPRequestContext | None:
     """Authenticate via OAuth Bearer token and set per-request context."""
     from accounts.models.user import User
     from accounts.models.workspace import Workspace
@@ -139,160 +145,120 @@ def _authenticate_via_oauth(token: str) -> ToolContext | None:
 
     set_workspace_context(workspace=workspace, organization=organization, user=user)
 
-    return ToolContext(user=user, organization=organization, workspace=workspace)
+    return MCPRequestContext(user=user, organization=organization, workspace=workspace)
 
 
-def _register_ai_tools():
-    """Register all ai_tools as MCP tools on the FastMCP server.
-
-    Each tool handler gets a proper ``__signature__`` derived from the tool's
-    Pydantic input_model so that FastMCP generates the correct JSON Schema
-    for MCP clients.  At runtime, ``**kwargs`` still captures the actual
-    arguments and passes them through to ``tool.run()``.
-    """
-    import inspect
-
-    from asgiref.sync import sync_to_async
-
-    for tool in ai_registry.list_all():
-
-        def make_handler(t):
-            def _sync_run(kwargs_dict):
-                from mcp_server.constants import CATEGORY_TO_GROUP
-                from mcp_server.exceptions import RateLimitExceededError
-                from mcp_server.rate_limiter import (
-                    check_rate_limit,
-                    get_rate_limit_tier,
-                )
-                from mcp_server.usage_helpers import (
-                    record_usage,
-                    update_session_counters,
-                )
-
-                org = get_current_organization()
-                ws = get_current_workspace()
-                usr = get_current_user()
-
-                # If context vars not set (OAuth flow), try auth context
-                if not org or not usr:
-                    try:
-                        from mcp.server.auth.middleware.auth_context import (
-                            get_access_token,
-                        )
-
-                        from mcp_server.oauth_provider import FutureAGIAccessToken
-
-                        access = get_access_token()
-                        if isinstance(access, FutureAGIAccessToken):
-                            from accounts.models.user import User
-                            from accounts.models.workspace import Workspace
-
-                            usr = (
-                                User.objects.all()
-                                .select_related("organization")
-                                .get(id=access.user_id)
-                            )
-                            org = usr.organization
-                            ws = (
-                                Workspace.objects.all()
-                                .filter(id=access.workspace_id)
-                                .first()
-                                if access.workspace_id
-                                else None
-                            )
-                            set_workspace_context(
-                                workspace=ws, organization=org, user=usr
-                            )
-                    except Exception:
-                        pass
-
-                if not org or not usr:
-                    return "Error: Not authenticated."
-
-                # Rate limit check
-                tier = get_rate_limit_tier(org)
-                try:
-                    check_rate_limit(str(org.id), tier)
-                except RateLimitExceededError as e:
-                    return f"Error: {e} (retry after {e.retry_after}s)"
-
-                context = ToolContext(user=usr, organization=org, workspace=ws)
-
-                start = time.time()
-                result = t.run(kwargs_dict, context)
-                latency_ms = int((time.time() - start) * 1000)
-
-                # Record usage (get or create a session for this user)
-                try:
-                    from mcp_server.usage_helpers import (
-                        get_or_create_connection,
-                        get_or_create_session,
-                    )
-
-                    connection = get_or_create_connection(usr, org, ws)
-                    session = get_or_create_session(
-                        connection, transport="streamable_http"
-                    )
-                    tool_group = CATEGORY_TO_GROUP.get(t.category, "")
-                    is_error = result.is_error
-                    record_usage(
-                        session=session,
-                        tool_name=t.name,
-                        tool_group=tool_group,
-                        params=kwargs_dict,
-                        status="error" if is_error else "success",
-                        error_msg=result.content if is_error else "",
-                        latency_ms=latency_ms,
-                    )
-                    update_session_counters(session, is_error)
-                except Exception:
-                    logger.exception("usage_recording_failed", tool=t.name)
-
-                if result.is_error:
-                    code = result.error_code or "INTERNAL_ERROR"
-                    return f"Error [{code}]: {result.content}"
-                return result.content
-
-            async def handler(**kwargs) -> str:
-                return await sync_to_async(_sync_run)(kwargs)
-
-            handler.__name__ = t.name
-            handler.__doc__ = t.description
-
-            # Build a proper inspect.Signature from the tool's Pydantic model
-            # so FastMCP generates the correct input schema for MCP clients.
-            params = []
-            for field_name, field_info in t.input_model.model_fields.items():
-                default = (
-                    field_info.default
-                    if field_info.default is not None
-                    else inspect.Parameter.empty
-                )
-                if not field_info.is_required():
-                    default = field_info.default
-                else:
-                    default = inspect.Parameter.empty
-
-                params.append(
-                    inspect.Parameter(
-                        field_name,
-                        inspect.Parameter.KEYWORD_ONLY,
-                        default=default,
-                        annotation=field_info.annotation,
-                    )
-                )
-
-            handler.__signature__ = inspect.Signature(params, return_annotation=str)
-
-            return handler
-
-        mcp.tool(name=tool.name, description=tool.description)(make_handler(tool))
+def _current_context() -> MCPRequestContext | None:
+    organization = get_current_organization()
+    workspace = get_current_workspace()
+    user = get_current_user()
+    if not organization or not user:
+        return None
+    return MCPRequestContext(user=user, organization=organization, workspace=workspace)
 
 
-_register_ai_tools()
+def _enabled_tools_for_context(context: MCPRequestContext):
+    from mcp_server.usage_helpers import get_enabled_tools, get_or_create_connection
+
+    connection = get_or_create_connection(
+        context.user, context.organization, context.workspace
+    )
+    return connection, get_enabled_tools(connection)
+
+
+def _json_safe(value):
+    return json.loads(json.dumps(value, default=str))
+
+
+def _error_result(message: str, *, code: str, data=None) -> CallToolResult:
+    payload = {"error": {"code": code, "message": message}}
+    if data is not None:
+        payload["error"]["details"] = _json_safe(data)
+    return CallToolResult(
+        content=[TextContent(type="text", text=json.dumps(payload))],
+        structuredContent=payload,
+        isError=True,
+    )
+
+
+@mcp.list_tools()
+async def list_generated_tools():
+    context = _current_context()
+    if context is None:
+        return []
+    _, enabled_names = await sync_to_async(_enabled_tools_for_context)(context)
+    return [
+        tool.to_mcp_tool() for tool in registry.list_all() if tool.name in enabled_names
+    ]
+
+
+@mcp.call_tool()
+async def call_generated_tool(name: str, arguments: dict):
+    context = _current_context()
+    if context is None:
+        return _error_result("Not authenticated", code="UNAUTHENTICATED")
+
+    tool = registry.get(name)
+    if tool is None:
+        return _error_result(f"Tool not found: {name}", code="NOT_FOUND")
+
+    from mcp_server.exceptions import RateLimitExceededError
+    from mcp_server.rate_limiter import check_rate_limit, get_rate_limit_tier
+    from mcp_server.usage_helpers import (
+        get_or_create_session,
+        record_usage,
+        update_session_counters,
+    )
+
+    connection, enabled_names = await sync_to_async(_enabled_tools_for_context)(context)
+    if name not in enabled_names:
+        return _error_result(f"Tool is disabled: {name}", code="FORBIDDEN")
+
+    try:
+        tier = await sync_to_async(get_rate_limit_tier)(context.organization)
+        await sync_to_async(check_rate_limit)(str(context.organization.id), tier)
+    except RateLimitExceededError as exc:
+        return _error_result(str(exc), code="RATE_LIMITED")
+
+    session = await sync_to_async(get_or_create_session)(
+        connection, transport="streamable_http"
+    )
+    started_at = time.time()
+    try:
+        data = await executor.execute(tool, arguments, context)
+        payload = _json_safe(data if isinstance(data, dict) else {"result": data})
+        is_error = False
+        error_message = ""
+        result = payload
+    except APIExecutionError as exc:
+        is_error = True
+        error_message = str(exc)
+        result = _error_result(str(exc), code=f"HTTP_{exc.status_code}", data=exc.data)
+    except Exception as exc:
+        logger.exception("mcp_generated_tool_failed", tool=name)
+        is_error = True
+        error_message = str(exc)
+        result = _error_result(str(exc), code="INTERNAL_ERROR")
+
+    latency_ms = int((time.time() - started_at) * 1000)
+    try:
+        await sync_to_async(record_usage)(
+            session=session,
+            tool_name=name,
+            tool_group=tool.group,
+            params=arguments,
+            status="error" if is_error else "success",
+            error_msg=error_message,
+            latency_ms=latency_ms,
+        )
+        await sync_to_async(update_session_counters)(session, is_error)
+    except Exception:
+        logger.exception("usage_recording_failed", tool=name)
+    return result
 
 
 _streamable_app = None
+_session_manager = None
 _oauth_app = None
 
 
@@ -356,9 +322,24 @@ def get_mcp_streamable_app():
     Returns a Starlette app with a single /mcp route.
     Stateless mode — no persistent sessions, survives restarts.
     """
-    global _streamable_app
+    global _session_manager, _streamable_app
     if _streamable_app is None:
-        _streamable_app = mcp.streamable_http_app()
+        _session_manager = StreamableHTTPSessionManager(
+            app=mcp,
+            event_store=None,
+            json_response=True,
+            stateless=True,
+            security_settings=_transport_security,
+        )
+
+        class StreamableHTTPASGIApp:
+            async def __call__(self, scope, receive, send):
+                await _session_manager.handle_request(scope, receive, send)
+
+        _streamable_app = Starlette(
+            routes=[Route("/mcp", endpoint=StreamableHTTPASGIApp())],
+            lifespan=lambda app: _session_manager.run(),
+        )
     return _streamable_app
 
 
