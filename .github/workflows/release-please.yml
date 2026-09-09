@@ -26,8 +26,8 @@ jobs:
         with:
           app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
-      # release-please-config.json pins release-as 1.23.0 for the epoch release. REMOVE that key immediately after v1.23.0 ships or every subsequent release will propose 1.23.0 again.
-      # changelog-sections there must stay in lockstep with SECTION_MAP in future-agi/docs scripts/changelog-from-release.mjs.
+      # changelog-sections in release-please-config.json must stay in lockstep with
+      # SECTION_MAP in future-agi/docs scripts/changelog-from-release.mjs.
       - uses: googleapis/release-please-action@v4
         with:
           token: ${{ steps.app-token.outputs.token }}
