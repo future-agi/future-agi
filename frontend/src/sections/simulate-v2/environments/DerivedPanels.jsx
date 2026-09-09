@@ -116,7 +116,17 @@ export default function DerivedPanels({
     setTab(firstReadyTab(done));
   }, [done, touched, isLoading]);
 
-  const current = TABS.find((t) => t.id === tab) || TABS[0];
+  /*
+    "agent" is a valid deep destination even though it's no longer in
+    the visible tab strip — the AgentSummarySection on Overview has
+    a "Manage versions" button that routes here to open the full
+    AgentsPanel. HIDDEN_PANEL_IDS keeps the panel switcher permissive
+    without re-adding the tab to the strip.
+  */
+  const HIDDEN_PANEL_IDS = ["agent"];
+  const current = TABS.find((t) => t.id === tab)
+    || (HIDDEN_PANEL_IDS.includes(tab) ? { id: tab, label: "" } : null)
+    || TABS[0];
 
   /*
     All in-panel CTAs (RlContractPanel, PersonasPanel, ActorsPanel,
@@ -126,7 +136,8 @@ export default function DerivedPanels({
     nothing. Wire it to the tab setter that already exists.
   */
   const go = (tabId) => {
-    if (!TABS.some((tt) => tt.id === tabId)) return;
+    const isVisible = TABS.some((tt) => tt.id === tabId);
+    if (!isVisible && !HIDDEN_PANEL_IDS.includes(tabId)) return;
     setTab(tabId);
     setTouched(true);
   };
