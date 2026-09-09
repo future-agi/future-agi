@@ -11,6 +11,11 @@ import pytest
 from rest_framework.exceptions import ValidationError
 
 from tracer.serializers.trace import UsersQuerySerializer
+from tracer.serializers.trace_session import (
+    TraceSessionGraphDataRequestSerializer,
+    TraceSessionListQuerySerializer,
+    TraceSessionRetrieveQuerySerializer,
+)
 from tracer.services.clickhouse import exact_graph_reads as graph
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.filters import EvalFilterMetadata
@@ -39,6 +44,78 @@ NATIVE_CASES = tuple(
     for surface in ("traces", "sessions", "users")
     for item in INVENTORY["eval_configurations"]
 )
+SESSION_IDENTITY_COLUMNS = ("session", "session_id", "trace_session_id")
+SESSION_IDENTITY_SUPPORTED_OPS = frozenset(
+    {"equals", "not_equals", "in", "not_in", "is_null", "is_not_null"}
+)
+SESSION_IDENTITY_OPERATOR_CASES = tuple(
+    (column_id, filter_op, filter_op in SESSION_IDENTITY_SUPPORTED_OPS)
+    for column_id in SESSION_IDENTITY_COLUMNS
+    for filter_op in (
+        "equals",
+        "not_equals",
+        "in",
+        "not_in",
+        "contains",
+        "not_contains",
+        "starts_with",
+        "ends_with",
+        "is_null",
+        "is_not_null",
+    )
+)
+SESSION_IDENTITY_SERIALIZERS = (
+    TraceSessionListQuerySerializer,
+    TraceSessionRetrieveQuerySerializer,
+    TraceSessionGraphDataRequestSerializer,
+)
+
+
+@pytest.mark.parametrize(
+    "serializer_class",
+    SESSION_IDENTITY_SERIALIZERS,
+    ids=lambda serializer_class: serializer_class.__name__,
+)
+@pytest.mark.parametrize(
+    "column_id,filter_op,supported",
+    SESSION_IDENTITY_OPERATOR_CASES,
+    ids=lambda case: str(case),
+)
+def test_session_identity_operator_matrix(
+    serializer_class,
+    column_id,
+    filter_op,
+    supported,
+):
+    if filter_op in {"is_null", "is_not_null"}:
+        filter_value = None
+    elif filter_op in {"in", "not_in"}:
+        filter_value = ["external-session", "missing-session"]
+    else:
+        filter_value = "external-session"
+    leaf = {
+        "column_id": column_id,
+        "filter_config": {
+            "col_type": "SYSTEM_METRIC",
+            "filter_type": "text",
+            "filter_op": filter_op,
+            "filter_value": filter_value,
+        },
+    }
+    if serializer_class is TraceSessionGraphDataRequestSerializer:
+        data = {
+            "project_id": PROJECT,
+            "req_data_config": {"id": "session_count", "type": "SYSTEM_METRIC"},
+            "filters": [leaf],
+        }
+    else:
+        data = {"filters": json.dumps([leaf])}
+
+    serializer = serializer_class(data=data)
+
+    assert serializer.is_valid(), serializer.errors
+    expected = [leaf] if supported else []
+    assert serializer.validated_data["filters"] == expected
 
 
 def _compile(surface, filters, days):

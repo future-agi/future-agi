@@ -87,6 +87,18 @@ def _session_numeric_membership_filter(
     }
 
 
+def _session_id_filter(filter_value, filter_op="in", column_id="session"):
+    return {
+        "column_id": column_id,
+        "filter_config": {
+            "col_type": "SYSTEM_METRIC",
+            "filter_type": "text",
+            "filter_op": filter_op,
+            "filter_value": filter_value,
+        },
+    }
+
+
 class TestFilterSerializerContracts:
     @pytest.mark.parametrize(
         "serializer_class",
@@ -451,6 +463,106 @@ class TestFilterSerializerContracts:
         ]
         assert serializer.validated_data["page_size"] == 75
         assert serializer.validated_data["bookmarked"] is True
+
+    @pytest.mark.parametrize(
+        "serializer_class",
+        [TraceSessionListQuerySerializer, TraceSessionRetrieveQuerySerializer],
+    )
+    @pytest.mark.parametrize("column_id", ["session", "session_id", "trace_session_id"])
+    def test_session_queries_preserve_external_session_ids(
+        self, serializer_class, column_id
+    ):
+        serializer = serializer_class(
+            data={
+                "filters": json.dumps(
+                    [
+                        _session_id_filter(
+                            ["external-session", "missing-session"],
+                            column_id=column_id,
+                        )
+                    ]
+                )
+            }
+        )
+
+        assert serializer.is_valid(), serializer.errors
+        assert serializer.validated_data["filters"][0]["filter_config"][
+            "filter_value"
+        ] == ["external-session", "missing-session"]
+
+    def test_session_graph_preserves_external_session_ids(self):
+        serializer = TraceSessionGraphDataRequestSerializer(
+            data={
+                "project_id": "1372e742-a10b-4d98-9ca4-31ef4d67115f",
+                "req_data_config": {
+                    "id": "session_count",
+                    "type": "SYSTEM_METRIC",
+                },
+                "filters": [_session_id_filter(["external-session"])],
+            }
+        )
+
+        assert serializer.is_valid(), serializer.errors
+        assert serializer.validated_data["filters"][0]["filter_config"][
+            "filter_value"
+        ] == ["external-session"]
+
+    @pytest.mark.parametrize(
+        "serializer_class",
+        [
+            TraceSessionListQuerySerializer,
+            TraceSessionRetrieveQuerySerializer,
+            TraceSessionGraphDataRequestSerializer,
+        ],
+    )
+    @pytest.mark.parametrize("filter_op", ["contains", "not_contains", "starts_with"])
+    def test_session_queries_drop_non_identity_operators(
+        self, serializer_class, filter_op
+    ):
+        filters = [
+            _session_id_filter("session", filter_op),
+            _session_id_filter(["external-session"], column_id="session_id"),
+        ]
+        data = {"filters": json.dumps(filters)}
+        if serializer_class is TraceSessionGraphDataRequestSerializer:
+            data = {
+                "project_id": "1372e742-a10b-4d98-9ca4-31ef4d67115f",
+                "req_data_config": {
+                    "id": "session_count",
+                    "type": "SYSTEM_METRIC",
+                },
+                "filters": filters,
+            }
+        serializer = serializer_class(data=data)
+
+        assert serializer.is_valid(), serializer.errors
+        assert serializer.validated_data["filters"] == [filters[1]]
+
+    @pytest.mark.parametrize(
+        "serializer_class",
+        [
+            TraceSessionListQuerySerializer,
+            TraceSessionRetrieveQuerySerializer,
+            TraceSessionGraphDataRequestSerializer,
+        ],
+    )
+    @pytest.mark.parametrize("filter_op", ["is_null", "is_not_null"])
+    def test_session_queries_accept_identity_null_operators(
+        self, serializer_class, filter_op
+    ):
+        data = {"filters": json.dumps([_session_id_filter(None, filter_op)])}
+        if serializer_class is TraceSessionGraphDataRequestSerializer:
+            data = {
+                "project_id": "1372e742-a10b-4d98-9ca4-31ef4d67115f",
+                "req_data_config": {
+                    "id": "session_count",
+                    "type": "SYSTEM_METRIC",
+                },
+                "filters": [_session_id_filter(None, filter_op)],
+            }
+        serializer = serializer_class(data=data)
+
+        assert serializer.is_valid(), serializer.errors
 
     def test_session_list_query_rejects_legacy_query_and_filter_aliases(self):
         serializer = TraceSessionListQuerySerializer(

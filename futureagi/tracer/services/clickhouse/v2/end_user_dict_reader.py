@@ -270,6 +270,72 @@ def resolve_end_user_fields(
     return out
 
 
+def resolve_end_user_ids_by_user_ids(
+    user_ids: Iterable[object],
+    *,
+    project_id: object | None = None,
+    organization_id: object | None = None,
+    timeout_ms: int | None = None,
+    settings: dict | None = None,
+) -> dict[str, list[str]]:
+    """Batch-resolve external user IDs to scoped curated end-user UUIDs."""
+    if project_id is None and organization_id is None:
+        raise ValueError(
+            "resolve_end_user_ids_by_user_ids requires project_id and/or "
+            "organization_id (an unscoped reverse lookup would cross tenants)"
+        )
+    values = tuple(dict.fromkeys(str(value) for value in user_ids if value))
+    if not values:
+        return {}
+    if timeout_ms is not None and timeout_ms <= 0:
+        raise ValueError("timeout_ms must be positive")
+
+    client = _get_client()
+    if timeout_ms is not None:
+        from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
+        from tracer.services.clickhouse.server_readonly import (
+            ServerEnforcedReadOnlyNativeClient,
+        )
+
+        if isinstance(client, ServerEnforcedReadOnlyNativeClient):
+            raise ReadDeadlineExceeded(
+                "server-locked end-user lookup cannot enforce request deadline"
+            )
+
+    conds = ["user_id IN %(uids)s", "is_deleted = 0"]
+    params: dict[str, object] = {"uids": values}
+    if project_id is not None:
+        conds.append("project_id = %(pid)s")
+        params["pid"] = str(project_id)
+    if organization_id is not None:
+        conds.append("organization_id = %(oid)s")
+        params["oid"] = str(organization_id)
+
+    try:
+        result = client.query(
+            (
+                "SELECT user_id, toString(end_user_id) "
+                f"FROM end_users FINAL WHERE {' AND '.join(conds)}"
+            ),
+            parameters=params,
+            settings=application_read_settings(
+                {**current_settings(), **(settings or {})},
+                timeout_ms=timeout_ms,
+            ),
+        )
+    except Exception:
+        _reset_client()
+        raise
+
+    resolved = {value: [] for value in values}
+    for user_id, end_user_id in result.result_rows:
+        if user_id in resolved and end_user_id:
+            resolved[user_id].append(str(end_user_id))
+    for user_id, ids in resolved.items():
+        resolved[user_id] = list(dict.fromkeys(ids))
+    return resolved
+
+
 def resolve_end_user_ids_by_user_id(
     user_id: object,
     *,

@@ -165,7 +165,7 @@ def navigation_context_call():
     with mock.patch("tracer.services.clickhouse.v2.query_service.V2AnalyticsQueryService", return_value=service), \
          mock.patch("tracer.views.trace_session._project_queryset_for_request", return_value=projects), \
          mock.patch("tracer.views.trace_session._bounded_session_list_postgres_reads"),          mock.patch("tracer.views.trace_session.EndUser.objects.filter") as display_users, \
-         mock.patch("tracer.services.clickhouse.v2.end_user_dict_reader.resolve_end_user_ids_by_user_id", return_value=[USER_ID]) as users, \
+         mock.patch("tracer.services.clickhouse.v2.end_user_dict_reader.resolve_end_user_ids_by_user_ids", return_value={"public-user": [USER_ID]}) as users, \
          mock.patch.object(SessionAnalyticsQueryBuilderV2, "build_session_navigation_query", side_effect=AssertionError("context cannot use legacy navigation")) as legacy:
         display_users.return_value.filter.return_value = display_users.return_value
         display_users.return_value.values.return_value.first.return_value = None
@@ -279,12 +279,19 @@ def test_context_user_leaves_remain_and_and_custom_user_id_is_not_resolved(navig
         "col_type": "SPAN_ATTRIBUTE", "filter_type": "number",
         "filter_op": "greater_than", "filter_value": 2,
     }})
-    users.side_effect = lambda value, **_: {
-        "public-user": [USER_ID], "second-user": [OTHER_PROJECT_ID], "excluded-user": [],
-    }[value]
+    users.side_effect = lambda values, **_: {
+        value: {
+            "public-user": [USER_ID], "second-user": [OTHER_PROJECT_ID],
+            "excluded-user": [],
+        }[value]
+        for value in values
+    }
     assert call(context) == (OTHER_PROJECT_ID, None)
     query, params = service.execute_ch_query.call_args.args
-    assert users.call_count == 3
+    users.assert_called_once()
+    assert set(users.call_args.args[0]) == {
+        "public-user", "second-user", "excluded-user",
+    }
     assert "matching_scalar_sessions" in query
     assert "user_id" in params.values()
     assert (USER_ID,) in params.values() and (OTHER_PROJECT_ID,) in params.values()
