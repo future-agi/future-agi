@@ -22,7 +22,7 @@ import {
 } from "../common";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import AlertFilterBar from "./AlertFilterBar";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import RadioField from "src/components/RadioField/RadioField";
 import { ShowComponent } from "src/components/show";
@@ -62,6 +62,7 @@ export default function AlertSettingsForm({
 
   const { alertRuleDetails, refreshGrid: refreshIssues } = useAlertSheetView();
   const { currentOrganizationId } = useOrganization();
+  const queryClient = useQueryClient();
   const observeId = selectedProject || alertRuleDetails?.project || null;
 
   const buildFormValues = useCallback(
@@ -325,6 +326,10 @@ export default function AlertSettingsForm({
       handleCloseCreateAlert();
       refreshGrid();
       refreshIssues();
+      // The details-page graph is keyed only on the alert id + date window, so
+      // a threshold_type or config change leaves its cache stale until the 10s
+      // poll happens to refetch. Invalidate it so the saved graph updates now.
+      queryClient.invalidateQueries({ queryKey: ["alert-graph"] });
     },
   });
 

@@ -377,3 +377,88 @@ describe("Choice-thresholded evals gate the preview graph on a chosen label", ()
     await waitFor(() => expect(lastEnabled(calls)).toBe(true));
   });
 });
+
+// Saving an edit changes the alert's server-side graph, but the details-page
+// graph query is keyed only on the alert id + date window, so its cache goes
+// stale after a threshold_type/config change. The update must invalidate
+// ["alert-graph"] so the saved graph refetches immediately instead of waiting
+// on the 10s poll.
+describe("Saving an alert refreshes the details-page graph", () => {
+  it("invalidates the alert-graph query on update success", async () => {
+    const evaluation = {
+      id: "eval-1",
+      name: "Groundedness",
+      output_type: "Pass/Fail",
+      choices: ["Passed", "Failed"],
+    };
+    const detail = {
+      ...baseSavedAlert,
+      metric: evaluation.id,
+      metric_name: evaluation.name,
+      threshold_metric_value: "Passed",
+      filters: {},
+    };
+
+    vi.spyOn(axios, "get").mockImplementation((url) =>
+      Promise.resolve({
+        data: {
+          result: url === endpoints.project.getTraceEvals() ? [evaluation] : [],
+        },
+      }),
+    );
+
+    useAlertStore.setState({
+      openSheetView: detail.id,
+      selectedProject: detail.project,
+    });
+    useAlertSheetStore.setState({
+      alertRuleDetails: null,
+      gridRef: { current: null },
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+
+    renderWithRouter(
+      <QueryClientProvider client={queryClient}>
+        <SnackbarProvider>
+          <AlertSettingsForm
+            onThresholdTypeChange={vi.fn()}
+            setThresholdOperator={vi.fn()}
+            setWarningValue={vi.fn()}
+            setCriticalValue={vi.fn()}
+            setFormIsDirty={vi.fn()}
+            onPayloadChange={vi.fn()}
+          />
+        </SnackbarProvider>
+      </QueryClientProvider>,
+    );
+
+    act(() => {
+      useAlertSheetStore.setState({
+        alertRuleDetails: normalizeAlertDetail(detail),
+      });
+    });
+
+    await waitFor(() =>
+      expect(screen.getByDisplayValue(evaluation.name)).toBeInTheDocument(),
+    );
+
+    const patch = vi
+      .spyOn(axios, "patch")
+      .mockResolvedValue({ data: { result: "ok" } });
+
+    await act(async () => {
+      fireEvent.click(
+        document.querySelector('[data-alert-form-submit="update"]'),
+      );
+    });
+
+    await waitFor(() => expect(patch).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: ["alert-graph"] }),
+    );
+  });
+});
