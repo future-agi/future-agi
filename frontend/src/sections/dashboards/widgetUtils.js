@@ -113,7 +113,14 @@ export const getPlottedChartSeries = (
   }
   return rows.map((item) => ({
     ...item,
-    data: kept.map(({ index, x }) => item?.data?.[index] ?? { x, y: null }),
+    data: kept.map(({ index, x }) => {
+      const point = item?.data?.[index];
+      const y = point?.y;
+      // Stacked rendering is a smooth apex area chart: a null pushed into the
+      // stack baseline makes the next series' point render above the grid
+      // top. Absent is 0 contribution to the stack, not a gap.
+      return { x: point ? point.x : x, y: Number.isFinite(y) ? y : 0 };
+    }),
   }));
 };
 

@@ -1393,9 +1393,27 @@ describe("getPlottedChartSeries — stacked alignment (TH-7757 review D1)", () =
   it("pads a series that did not report a kept bucket, rather than shifting it", () => {
     const out = getPlottedChartSeries(padded(), { stacked: true });
     expect(out[1].data).toEqual([
-      { x: 0, y: null },
-      { x: 1, y: null },
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
       { x: 5, y: 100 },
+    ]);
+  });
+
+  it("coerces a present null to 0 instead of feeding the smooth apex stacker a gap (TH-7757 review fix)", () => {
+    // stacked_line renders as a smooth apex area chart: a null pushed into the
+    // stack baseline makes the next series' point render above the grid top.
+    const series = [
+      { name: "A", data: [10, null, 10].map((y, x) => ({ x, y })) },
+      { name: "B", data: [5, 5, 5].map((y, x) => ({ x, y })) },
+    ];
+    const out = getPlottedChartSeries(series, { stacked: true });
+    out.forEach((item) => {
+      expect(item.data.some((point) => point.y === null)).toBe(false);
+    });
+    expect(out[0].data).toEqual([
+      { x: 0, y: 10 },
+      { x: 1, y: 0 },
+      { x: 2, y: 10 },
     ]);
   });
 
