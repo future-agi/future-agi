@@ -177,7 +177,6 @@ from tfc.ee_gates import strip_turing_from_config_options
 from tfc.settings import settings as app_settings
 from tfc.settings.settings import VAPI_INDIAN_PHONE_NUMBER_ID
 from tfc.utils.api_contracts import validated_request
-from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.api_serializers import (
     ApiTextErrorResponseSerializer,
     EmptyRequestSerializer,
@@ -441,7 +440,7 @@ def _empty_call_log_summary(reason: str) -> dict:
     }
 
 
-def _voice_sim_gate_response(user_organization, gm):
+def _voice_sim_gate_response(user_organization, _gm):
     """Return a Response blocking voice simulation if it's not available in
     this deployment for this org, else None.
 
@@ -449,43 +448,9 @@ def _voice_sim_gate_response(user_organization, gm):
       1. OSS gate (402, upgrade_required) — via tfc.ee_gates.
       2. Cloud/EE plan entitlement (`has_voice_sim`) — 403 on denial.
     """
-    from tfc.ee_gates import voice_sim_oss_gate_response
+    from tfc.ee_gates import voice_sim_gate_response
 
-    oss_gate = voice_sim_oss_gate_response()
-    if oss_gate is not None:
-        return oss_gate
-
-    try:
-        from ee.usage.services.entitlements import Entitlements
-    except ImportError:
-        # ee.usage.deployment exists but entitlements is missing — partial
-        # EE install. Fail closed.
-        message = (
-            "Voice simulation is not available on this deployment. "
-            "Upgrade to cloud or enterprise to run voice calls."
-        )
-        return Response(
-            build_error_envelope(
-                message,
-                status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                code="payment_required",
-                extra={"upgrade_required": True, "feature": "voice_sim"},
-            ),
-            status=status.HTTP_402_PAYMENT_REQUIRED,
-        )
-
-    from ee.usage.deployment import DeploymentMode
-
-    if not DeploymentMode.is_cloud():
-        # Voice sim is open on self-hosted (voice_sim is not in the
-        # oss_locked set), and plan entitlements are a cloud-only concept.
-        # Nothing to gate off-cloud.
-        return None
-
-    feat_check = Entitlements.check_feature(str(user_organization.id), "has_voice_sim")
-    if not feat_check.allowed:
-        return gm.forbidden_response(feat_check.reason)
-    return None
+    return voice_sim_gate_response(user_organization)
 
 
 def _visible_eval_template_query(user_organization, workspace):

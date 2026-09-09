@@ -21,6 +21,82 @@ def _reset_engines():
 
 
 # ---------------------------------------------------------------------------
+# _ensure_engines — init-failure latch
+# ---------------------------------------------------------------------------
+class TestEnsureEnginesLatch:
+    """The fail-closed batch path makes the latch load-bearing: it must only
+    stick for failures that can never resolve without a rebuild/restart."""
+
+    @staticmethod
+    def _patch_analyzer(side_effect):
+        return mock.patch("presidio_analyzer.AnalyzerEngine", side_effect=side_effect)
+
+    def test_import_error_latches_permanently(self):
+        from tracer.utils import pii_scrubber
+
+        with self._patch_analyzer(ImportError("No module named presidio_analyzer")):
+            assert pii_scrubber._ensure_engines() is False
+        assert pii_scrubber._INIT_FAILED is True
+
+        # Latched: no re-initialisation attempt on subsequent calls.
+        with self._patch_analyzer(AssertionError("must not retry")):
+            assert pii_scrubber._ensure_engines() is False
+
+    def test_missing_spacy_model_latches_permanently(self):
+        from tracer.utils import pii_scrubber
+
+        with self._patch_analyzer(OSError("[E050] Can't find model 'en_core_web_sm'.")):
+            assert pii_scrubber._ensure_engines() is False
+        assert pii_scrubber._INIT_FAILED is True
+
+    def test_transient_failure_does_not_latch_and_retries(self):
+        from tracer.utils import pii_scrubber
+
+        with self._patch_analyzer(MemoryError("model load OOM")):
+            assert pii_scrubber._ensure_engines() is False
+        assert pii_scrubber._INIT_FAILED is False
+        assert pii_scrubber._analyzer is None
+        assert pii_scrubber._anonymizer is None
+
+        # Next call re-attempts and succeeds with the real engines.
+        assert pii_scrubber._ensure_engines() is True
+        assert pii_scrubber._analyzer is not None
+        assert pii_scrubber._anonymizer is not None
+
+    def test_transient_os_error_does_not_latch(self):
+        from tracer.utils import pii_scrubber
+
+        # An OSError that is *not* spaCy's missing-model code (e.g. file
+        # contention on first load) must be retried, not latched.
+        with self._patch_analyzer(PermissionError("resource temporarily locked")):
+            assert pii_scrubber._ensure_engines() is False
+        assert pii_scrubber._INIT_FAILED is False
+
+    def test_half_initialised_state_is_never_published(self):
+        from tracer.utils import pii_scrubber
+
+        with mock.patch(
+            "presidio_anonymizer.AnonymizerEngine",
+            side_effect=RuntimeError("anonymizer boom"),
+        ):
+            assert pii_scrubber._ensure_engines() is False
+        # Analyzer construction succeeded, but must not be exposed alone.
+        assert pii_scrubber._analyzer is None
+        assert pii_scrubber._anonymizer is None
+        assert pii_scrubber._INIT_FAILED is False
+
+    def test_is_permanent_init_error_classification(self):
+        from tracer.utils.pii_scrubber import _is_permanent_init_error
+
+        assert _is_permanent_init_error(ImportError("x")) is True
+        assert _is_permanent_init_error(ModuleNotFoundError("x")) is True
+        assert _is_permanent_init_error(OSError("[E050] Can't find model")) is True
+        assert _is_permanent_init_error(OSError("disk I/O error")) is False
+        assert _is_permanent_init_error(MemoryError()) is False
+        assert _is_permanent_init_error(RuntimeError("x")) is False
+
+
+# ---------------------------------------------------------------------------
 # scrub_pii_in_string
 # ---------------------------------------------------------------------------
 class TestScrubPiiInString:
@@ -161,6 +237,37 @@ class TestIsContentKey:
 # scrub_pii_in_span_batch
 # ---------------------------------------------------------------------------
 class TestScrubPiiInSpanBatch:
+    def test_enabled_project_fails_closed_when_engines_unavailable(self):
+        from tracer.utils.pii_scrubber import scrub_pii_in_span_batch
+
+        spans = [
+            {
+                "project_name": "proj",
+                "attributes": {"fi.input.value": "Email: a@b.com"},
+            }
+        ]
+        with mock.patch(
+            "tracer.utils.pii_scrubber._ensure_engines", return_value=False
+        ):
+            with pytest.raises(RuntimeError, match="EXTRAS=pii"):
+                scrub_pii_in_span_batch(spans, {"proj": True})
+
+        assert spans[0]["attributes"]["fi.input.value"] == "Email: a@b.com"
+
+    def test_disabled_projects_do_not_require_engines(self):
+        from tracer.utils.pii_scrubber import scrub_pii_in_span_batch
+
+        spans = [
+            {
+                "project_name": "proj",
+                "attributes": {"fi.input.value": "Email: a@b.com"},
+            }
+        ]
+        with mock.patch("tracer.utils.pii_scrubber._ensure_engines") as ensure_engines:
+            scrub_pii_in_span_batch(spans, {"proj": False})
+
+        ensure_engines.assert_not_called()
+
     def test_scrubs_enabled_project_only(self):
         from tracer.utils.pii_scrubber import scrub_pii_in_span_batch
 

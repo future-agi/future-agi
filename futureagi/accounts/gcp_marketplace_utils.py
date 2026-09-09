@@ -492,7 +492,7 @@ def process_signup(onboarding_token: str, email: str, full_name: str) -> User:
         )
         organization.name = full_name or organization.name
         organization.display_name = full_name or organization.display_name
-        organization.save(update_fields=["name", "display_name", "updated_at"])
+        organization.save(update_fields=["name", "display_name"])
 
     process_post_registration(user.id, generated_password)
     _finish_signup(gcp_account, onboarding_token)

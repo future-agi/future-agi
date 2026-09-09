@@ -14,6 +14,7 @@ If you just want to try it on your laptop, jump to [Quick start](#quick-start).
   - [Full OSS stack (default)](#mode-1-full-oss-stack)
   - [Development mode (hot reload)](#mode-2-development-mode)
   - [Frontend-only deploy](#mode-3-frontend-only)
+- [Optional feature extras](#optional-feature-extras)
 - [Configuration](#configuration)
   - [The `.env` file](#the-env-file)
   - [Secrets that must be changed](#secrets-that-must-be-changed)
@@ -189,6 +190,35 @@ VITE_HOST_API=https://api.your-backend.example.com \
 ```
 
 Or set `VITE_HOST_API` in `.env` and run without the inline variable. Restart the container to pick up changes — no rebuild required (the entrypoint regenerates `/config.js` from `VITE_HOST_API` on each start).
+
+---
+
+## Optional feature extras
+
+The published backend image is a **slim build**: heavy ML, audio, and voice dependencies are not installed, which keeps the image around 2 GB instead of 14 GB. Most features work out of the box. The ones below need an optional dependency group ("extra") baked into the image:
+
+| Feature                                                        | Extra        |
+| -------------------------------------------------------------- | ------------ |
+| Audio evals — TTS/STT via ElevenLabs, audio decoding (av, librosa) | `audio`      |
+| ML-based evals — torch models, HuggingFace datasets/transformers | `ml`         |
+| Voice simulation — LiveKit calls, Retell agents                | `voice`      |
+| PII detection/scrubbing (Presidio, spaCy)                       | `pii`        |
+| Prompt optimization (Optuna, GEPA)                              | `prompt-opt` |
+| Vector-DB dataset columns (Pinecone, Qdrant, Weaviate, Chroma)  | `vectordb`   |
+
+**What happens without the extra:** most optional features fail with an `ImportError` that names the missing extra and points here; some evaluation and clustering paths degrade gracefully and log that the capability is unavailable. Voice simulation is gated up front and returns a clear "not available in this build" API error. If PII redaction is enabled for a project, ingestion fails closed until the `pii` extra is installed so unredacted data is never stored silently.
+
+**To enable extras**, rebuild the backend image with the `EXTRAS` build argument (comma-separated):
+
+```bash
+docker build -f futureagi/Dockerfile.oss \
+  --build-arg EXTRAS=audio,pii \
+  -t future-agi-backend:with-extras ./futureagi
+```
+
+Then point your compose file at the new tag (or add a `build:` override for the `backend` and `worker` services). Extra versions install from `uv.lock`, so a rebuilt image gets the exact dependency resolution CI tests — not a fresh re-resolve.
+
+Installing all six extras reproduces the full "fat" image (~14 GB, GPU wheels included) — only do that if you need everything.
 
 ---
 

@@ -796,10 +796,10 @@ def _reconcile_entitlement(entitlement, period: str) -> list[dict]:
         # After the allowance, because that is what we report: the raw
         # total would flag every org by its own allowance. None means no
         # usage row, so zero, not skip -- skipping hides an over-report.
-        ledger_total = _billable_total(entitlement, dimension, period, plan)
-        ledger_total = (ledger_total or Decimal(0)).to_integral_value(
-            rounding=ROUND_FLOOR
-        )
+        billable = _billable_total(entitlement, dimension, period, plan)
+        ledger_total = billable or Decimal(0)
+        if dimension not in settings.GCP_MARKETPLACE_FLOAT_DIMENSIONS:
+            ledger_total = ledger_total.to_integral_value(rounding=ROUND_FLOOR)
 
         reported = GCPMarketplaceUsageCheckpoint.objects.filter(
             entitlement=entitlement,
