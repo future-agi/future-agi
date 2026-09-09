@@ -508,32 +508,9 @@ export const resolveWidgetAxisPlan = (
   };
 };
 
-export const getYAxisRangeWarning = (series = [], axisConfig = {}) => {
-  const rightCfg = axisConfig?.rightY || {};
-  const seriesAxis = axisConfig?.seriesAxis || {};
-  const hasRightAxis =
-    rightCfg.visible && Object.values(seriesAxis).some((s) => s === "right");
-  if (hasRightAxis) return null;
-
-  const leftAxisConfig = axisConfig?.leftY || {};
-  const min = parseBound(leftAxisConfig.min);
-  const max = parseBound(leftAxisConfig.max);
-  if (min == null && max == null) return null;
-
-  let sawPoint = false;
-  for (const s of series) {
-    for (const pt of s.data || []) {
-      if (pt?.y == null) continue;
-      const y = Number(pt.y);
-      if (!Number.isFinite(y)) continue;
-      sawPoint = true;
-      if ((min == null || y >= min) && (max == null || y <= max)) {
-        return null;
-      }
-    }
-  }
-  if (!sawPoint) return null;
-
+// The three warning strings, unchanged in wording from before this rewrite —
+// an e2e spec greps them, so the text stays byte-identical.
+const rangeMessage = (min, max) => {
   if (min != null && max != null) {
     return `Data is outside your configured Y-axis range (${min}–${max}). Adjust bounds to see your data.`;
   }
@@ -541,6 +518,67 @@ export const getYAxisRangeWarning = (series = [], axisConfig = {}) => {
     return `Data is outside your configured Y-axis minimum (${min}). Adjust bounds to see your data.`;
   }
   return `Data is outside your configured Y-axis maximum (${max}). Adjust bounds to see your data.`;
+};
+
+/**
+ * ApexCharts clips a series point outside the axis's *resolved* min/max, not
+ * its typed one — "Out of Bounds: Visible" widens a typed bound away
+ * whenever it would clip data (see resolveAxisBounds), so a typed bound is
+ * not proof anything is actually cut off. The old version judged straight
+ * from the typed value, so it used to fire "Adjust bounds to see your data"
+ * over a chart that was drawing every point fine, because the axis had
+ * already been widened underneath it before it ever reached the chart.
+ *
+ * So this reads the same resolved plan the chart itself is scaled against
+ * (`resolveWidgetAxisPlan`) and asks, per side, whether that side's resolved
+ * bounds actually clip every point assigned to it. A side widened by
+ * "Visible" resolves to bounds that contain the data, so it can never fire;
+ * a side left "Hidden" keeps its typed bound as a hard cap, so a fully
+ * clipped side — left or right — is reported instead of silently vanishing.
+ */
+export const getYAxisRangeWarning = (
+  chartSeries = [],
+  chartSeriesIndices = [],
+  axisConfig = {},
+  { stacked = false, chartType = "line" } = {},
+) => {
+  const { sideOf, bounds } = resolveWidgetAxisPlan(
+    chartSeries,
+    chartSeriesIndices,
+    axisConfig,
+    { stacked, chartType },
+  );
+
+  for (const side of ["left", "right"]) {
+    if (!bounds[side]) continue;
+
+    const cfg = axisConfig?.[side === "right" ? "rightY" : "leftY"] || {};
+    const typedMin = parseBound(cfg.min);
+    const typedMax = parseBound(cfg.max);
+    if (typedMin == null && typedMax == null) continue;
+
+    const { min, max } = bounds[side];
+    if (min === undefined && max === undefined) continue;
+
+    let sawPoint = false;
+    let anyVisible = false;
+    chartSeries.forEach((s, i) => {
+      if (sideOf(i) !== side) return;
+      for (const pt of s.data || []) {
+        if (pt?.y == null) continue;
+        const y = Number(pt.y);
+        if (!Number.isFinite(y)) continue;
+        sawPoint = true;
+        if ((min == null || y >= min) && (max == null || y <= max)) {
+          anyVisible = true;
+        }
+      }
+    });
+
+    if (sawPoint && !anyVisible) return rangeMessage(typedMin, typedMax);
+  }
+
+  return null;
 };
 
 // A bound counts as user-set only when it parses to a finite number. The

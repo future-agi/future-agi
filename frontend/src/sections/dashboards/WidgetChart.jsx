@@ -566,8 +566,12 @@ export default function WidgetChart({
   const pieColorFor = (name) => getSeriesColorFromMap(pieColorMap, name);
 
   const outOfRangeWarning = useMemo(
-    () => getYAxisRangeWarning(chartSeries, axisConfig),
-    [chartSeries, axisConfig],
+    () =>
+      getYAxisRangeWarning(chartSeries, chartSeriesIndices, axisConfig, {
+        stacked: isStacked,
+        chartType,
+      }),
+    [chartSeries, chartSeriesIndices, axisConfig, isStacked, chartType],
   );
 
   const hasNoDataForRange = useMemo(

@@ -1564,6 +1564,22 @@ describe("WidgetChart — auto-scaled y-axis (TH-7680)", () => {
     renderTyped("line", [190, 210, 250]);
     expect(yaxisOf("line")).toMatchObject({ min: 180, max: 255 });
   });
+
+  // TH-7680 review: the warning used to read the typed bound directly,
+  // regardless of Out of Bounds — so a bound widened away by "Visible" still
+  // replaced the chart with "Adjust bounds to see your data" even though
+  // every point renders fine. It must judge from the same resolved axis
+  // driving the chart above.
+  it("renders the chart, not the warning, when a clipping bound is widened by Visible", () => {
+    renderWith({ left_y: { max: "100", out_of_bounds: "visible" } });
+    expect(screen.queryByText(/Adjust bounds/)).toBeNull();
+    expect(yaxisOf().max).toBe(7500);
+  });
+
+  it("replaces the chart with the warning when Hidden clips every point", () => {
+    renderWith({ left_y: { max: "100", out_of_bounds: "hidden" } });
+    expect(screen.getByText(/maximum \(100\)/)).toBeInTheDocument();
+  });
 });
 
 // TH-7680 follow-up: the dual-axis branch is chosen from the series that are

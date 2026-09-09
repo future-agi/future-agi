@@ -355,26 +355,30 @@ describe("getExactDashboardResult", () => {
 
 describe("getYAxisRangeWarning", () => {
   it("returns null when no min/max is configured", () => {
-    expect(getYAxisRangeWarning(series([2, 7]), leftAxis({}))).toBeNull();
     expect(
-      getYAxisRangeWarning(series([2, 7]), leftAxis({ min: "", max: "" })),
+      getYAxisRangeWarning(series([2, 7]), [0], leftAxis({})),
+    ).toBeNull();
+    expect(
+      getYAxisRangeWarning(series([2, 7]), [0], leftAxis({ min: "", max: "" })),
     ).toBeNull();
   });
 
-  it("warns when every data point falls below the configured min", () => {
+  it("warns when Hidden clips every data point below the configured min", () => {
     const msg = getYAxisRangeWarning(
       series([2, 7]),
-      leftAxis({ min: "34", max: "545" }),
+      [0],
+      leftAxis({ min: "34", max: "545", outOfBounds: "hidden" }),
     );
     expect(msg).toBe(
       "Data is outside your configured Y-axis range (34–545). Adjust bounds to see your data.",
     );
   });
 
-  it("warns when every data point falls above the configured max", () => {
+  it("warns when Hidden clips every data point above the configured max", () => {
     const msg = getYAxisRangeWarning(
       series([900]),
-      leftAxis({ min: "34", max: "545" }),
+      [0],
+      leftAxis({ min: "34", max: "545", outOfBounds: "hidden" }),
     );
     expect(msg).toBe(
       "Data is outside your configured Y-axis range (34–545). Adjust bounds to see your data.",
@@ -385,7 +389,8 @@ describe("getYAxisRangeWarning", () => {
     expect(
       getYAxisRangeWarning(
         series([2, 400]),
-        leftAxis({ min: "34", max: "545" }),
+        [0],
+        leftAxis({ min: "34", max: "545", outOfBounds: "hidden" }),
       ),
     ).toBeNull();
   });
@@ -394,32 +399,134 @@ describe("getYAxisRangeWarning", () => {
     expect(
       getYAxisRangeWarning(
         series([null, null]),
-        leftAxis({ min: "34", max: "545" }),
+        [0],
+        leftAxis({ min: "34", max: "545", outOfBounds: "hidden" }),
       ),
     ).toBeNull();
   });
 
   it("supports a min-only or max-only bound", () => {
-    expect(getYAxisRangeWarning(series([2, 7]), leftAxis({ min: "34" }))).toBe(
+    expect(
+      getYAxisRangeWarning(
+        series([2, 7]),
+        [0],
+        leftAxis({ min: "34", outOfBounds: "hidden" }),
+      ),
+    ).toBe(
       "Data is outside your configured Y-axis minimum (34). Adjust bounds to see your data.",
     );
-    expect(getYAxisRangeWarning(series([900]), leftAxis({ max: "545" }))).toBe(
+    expect(
+      getYAxisRangeWarning(
+        series([900]),
+        [0],
+        leftAxis({ max: "545", outOfBounds: "hidden" }),
+      ),
+    ).toBe(
       "Data is outside your configured Y-axis maximum (545). Adjust bounds to see your data.",
     );
   });
 
-  it("returns null when a right axis is in use (dual-axis charts unsupported)", () => {
+  it("returns null for the left side when every series is assigned to the right axis", () => {
     const axisConfig = {
-      leftY: { min: "34", max: "545" },
+      leftY: { min: "34", max: "545", outOfBounds: "hidden" },
       rightY: { visible: true },
       seriesAxis: { 0: "right" },
     };
-    expect(getYAxisRangeWarning(series([2, 7]), axisConfig)).toBeNull();
+    expect(getYAxisRangeWarning(series([2, 7]), [0], axisConfig)).toBeNull();
   });
 
   it("treats a non-numeric bound as unset instead of forcing a false-positive warning", () => {
     expect(
-      getYAxisRangeWarning(series([2, 7]), leftAxis({ min: "not-a-number" })),
+      getYAxisRangeWarning(
+        series([2, 7]),
+        [0],
+        leftAxis({ min: "not-a-number", outOfBounds: "hidden" }),
+      ),
+    ).toBeNull();
+  });
+
+  // TH-7680 review: the warning used to read the typed bound directly, so
+  // widening it away under "Out of Bounds: Visible" (the left-axis default)
+  // still fired a false-positive "Adjust bounds" message over a fully
+  // visible chart. It must judge from the same resolved axis the chart
+  // itself is drawn against.
+  it("never fires when Visible widens a clipping bound away", () => {
+    const hi = [{ data: pts(7043, 5000, 3000) }];
+    expect(
+      getYAxisRangeWarning(hi, [0], {
+        leftY: { max: "100", outOfBounds: "visible" },
+      }),
+    ).toBeNull();
+  });
+
+  it("fires when Hidden clips every point against the resolved bound", () => {
+    const hi = [{ data: pts(7043, 5000, 3000) }];
+    expect(
+      getYAxisRangeWarning(hi, [0], {
+        leftY: { max: "100", outOfBounds: "hidden" },
+      }),
+    ).toMatch(/maximum \(100\)/);
+  });
+
+  it("treats a non-numeric typed bound as unset even under Hidden", () => {
+    const hi = [{ data: pts(7043, 5000, 3000) }];
+    expect(
+      getYAxisRangeWarning(hi, [0], {
+        leftY: { max: "abc", outOfBounds: "hidden" },
+      }),
+    ).toBeNull();
+  });
+
+  it("returns null with no typed bound at all", () => {
+    const hi = [{ data: pts(7043, 5000, 3000) }];
+    expect(getYAxisRangeWarning(hi, [0], {})).toBeNull();
+  });
+
+  it("returns null for a low-value series with no bound configured", () => {
+    expect(
+      getYAxisRangeWarning([{ data: pts(500) }], [0], {
+        leftY: { max: "100", outOfBounds: "visible" },
+      }),
+    ).toBeNull();
+  });
+
+  it("warns for a low-value series clipped by Hidden", () => {
+    expect(
+      getYAxisRangeWarning([{ data: pts(500) }], [0], {
+        leftY: { max: "100", outOfBounds: "hidden" },
+      }),
+    ).toMatch(/maximum \(100\)/);
+  });
+
+  // A dual-axis chart used to bail out with an early `if (hasRightAxis)
+  // return null`, so a right side clipped down to nothing vanished silently
+  // instead of explaining why. Judging per side from the resolved bounds
+  // catches that case and still stays silent when the side is widened.
+  it("reports a fully-clipped right side on a dual-axis chart instead of silently vanishing", () => {
+    const cfgH = {
+      rightY: { visible: true, max: "10", outOfBounds: "hidden" },
+      seriesAxis: { 1: "right" },
+    };
+    expect(
+      getYAxisRangeWarning(
+        [{ data: pts(219, 7043, 1500) }, { data: pts(41, 45, 51) }],
+        [0, 1],
+        cfgH,
+      ),
+    ).toMatch(/maximum \(10\)/);
+  });
+
+  it("stays silent on a dual-axis chart when the right side is merely widened", () => {
+    const cfgV = {
+      rightY: { visible: true, max: "10", outOfBounds: "visible" },
+      seriesAxis: { 1: "right" },
+    };
+    expect(
+      getYAxisRangeWarning(
+        [{ data: pts(219, 7043, 1500) }, { data: pts(41, 45, 51) }],
+        [0, 1],
+        cfgV,
+      ),
     ).toBeNull();
   });
 });

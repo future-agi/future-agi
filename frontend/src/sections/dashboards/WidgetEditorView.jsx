@@ -3515,8 +3515,12 @@ export default function WidgetEditorView() {
   );
 
   const outOfRangeWarning = useMemo(
-    () => getYAxisRangeWarning(chartSeries, axisConfig),
-    [chartSeries, axisConfig],
+    () =>
+      getYAxisRangeWarning(chartSeries, chartSeriesIndices, axisConfig, {
+        stacked: isStacked,
+        chartType,
+      }),
+    [chartSeries, chartSeriesIndices, axisConfig, isStacked, chartType],
   );
 
   const autoDecimals = useMemo(
