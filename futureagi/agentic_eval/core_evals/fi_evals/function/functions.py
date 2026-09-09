@@ -1327,29 +1327,30 @@ def contains_valid_link(text, **kwargs):
         dict: A dictionary containing the result of the link check and the reason for the result.
     """
     pattern = r"(?!.*@)(?:https?://)?(?:www\.)?\S+\.\S+"
-    link_match = re.search(pattern=pattern, string=text)
-    if link_match:
-        matched_url = link_match.group()
-        if matched_url:
-            standardized_url = _standardize_url(matched_url)
-            try:
-                text = requests.head(standardized_url)
-                if text.status_code == 200:
-                    return {
-                        "result": True,
-                        "reason": f"link {matched_url} found in output and is valid",
-                    }
-                else:
-                    return {
-                        "result": False,
-                        "reason": f"link {matched_url} found in output but is invalid",
-                    }
-            except:
+    # Use findall so every link in the text is checked, not just the first one.
+    # The contract is "at least one valid link exists" — we return True on the
+    # first link that resolves successfully rather than giving up after one miss.
+    matched_urls = re.findall(pattern=pattern, string=text)
+    if not matched_urls:
+        return {"result": False, "reason": "no link found in output"}
+    invalid_links = []
+    for matched_url in matched_urls:
+        standardized_url = _standardize_url(matched_url)
+        try:
+            response = requests.head(standardized_url)
+            if response.status_code == 200:
                 return {
-                    "result": False,
-                    "reason": f"link {matched_url} found in output but is invalid",
+                    "result": True,
+                    "reason": f"link {matched_url} found in output and is valid",
                 }
-    return {"result": False, "reason": "no link found in output"}
+            else:
+                invalid_links.append(matched_url)
+        except Exception:
+            invalid_links.append(matched_url)
+    return {
+        "result": False,
+        "reason": f"all links found in output are invalid: {', '.join(invalid_links)}",
+    }
 
 
 def no_invalid_links(text, **kwargs):
@@ -1363,29 +1364,27 @@ def no_invalid_links(text, **kwargs):
         dict: A dictionary containing the result of the link check and the reason for the result.
     """
     pattern = r"(?!.*@)(?:https?://)?(?:htp?://)?(?://?)?(?:http?://)?(?:www\.)?\S+\.\S+"
-    link_match = re.search(pattern=pattern, string=text)
-    if link_match:
-        matched_url = link_match.group()
-        if matched_url:
-            standardized_url = _standardize_url(matched_url)
-            try:
-                text = requests.head(standardized_url)
-                if text.status_code == 200:
-                    return {
-                        "result": True,
-                        "reason": f"link {matched_url} found in output and is valid",
-                    }
-                else:
-                    return {
-                        "result": False,
-                        "reason": f"link {matched_url} found in output but is invalid",
-                    }
-            except:
-                return {
-                    "result": False,
-                    "reason": f"link {matched_url} found in output but is invalid",
-                }
-    return {"result": True, "reason": "no invalid link found in output"}
+    # Use findall to check every link in the text, not just the first match.
+    # The contract is "no link in the text is broken" — a single invalid link
+    # anywhere should cause this evaluator to return False.
+    matched_urls = re.findall(pattern=pattern, string=text)
+    if not matched_urls:
+        return {"result": True, "reason": "no links found in output, so none are invalid"}
+    invalid_links = []
+    for matched_url in matched_urls:
+        standardized_url = _standardize_url(matched_url)
+        try:
+            response = requests.head(standardized_url)
+            if response.status_code != 200:
+                invalid_links.append(matched_url)
+        except Exception:
+            invalid_links.append(matched_url)
+    if invalid_links:
+        return {
+            "result": False,
+            "reason": f"invalid link(s) found in output: {', '.join(invalid_links)}",
+        }
+    return {"result": True, "reason": "all links found in output are valid"}
 
 
 def api_call(
