@@ -336,7 +336,7 @@ function ClonesHeroCard({ onClick }) {
   return (
     <HeroCard
       icon="solar:copy-linear"
-      title="Web Environment"
+      title="Web Environments"
       tag="Live SaaS sandboxes"
       description={"Your agent calls the real SDKs — Slack, Notion, Salesforce — but the calls land in a sandbox we own, seeded to your prompt and torn down between runs."}
       chips={HERO_CLONES}
