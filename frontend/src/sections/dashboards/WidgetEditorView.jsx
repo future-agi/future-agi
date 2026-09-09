@@ -109,7 +109,6 @@ import {
   getYAxisRangeWarning,
   getVisibleIndices,
   resolveWidgetAxisPlan,
-  makeSeriesKey,
   shouldConnectAcrossMissingBuckets,
   resolveSavedSelection,
   toAxisConfigPayload,
