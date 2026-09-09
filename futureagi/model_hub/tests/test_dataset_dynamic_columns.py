@@ -102,8 +102,9 @@ class DynamicColumnsBaseTestCase(APITestCase):
         workspace = self.workspace
 
         def initial_with_workspace(view_self, request, *args, **view_kwargs):
-            # Inject workspace before view processing
             request.workspace = workspace
+            if getattr(self, "request_organization", None):
+                request.organization = self.request_organization
             return self.original_initial(view_self, request, *args, **view_kwargs)
 
         self.workspace_patcher = patch.object(
@@ -1352,3 +1353,39 @@ class TestAddVectorDBColumnView(DynamicColumnsBaseTestCase):
         assert response.status_code == status.HTTP_200_OK
         assert "new_column_id" in response.json()["result"]
         mock_task.assert_called_once()
+
+    @patch("model_hub.views.dynamic_columns.add_vector_db_column_async.delay")
+    def test_vector_db_serializes_request_organization_id_for_async_task(self, mock_task):
+        """The task payload must contain an organization UUID, never the model object."""
+        # Production middleware places an Organization model on the request.
+        self.request_organization = self.organization
+        dataset, columns, _ = self.create_test_dataset()
+        secret = SecretModel.objects.create(
+            name="Async Pinecone Key",
+            key="test-pinecone-api-key",
+            organization=self.organization,
+        )
+        url = reverse("add_vector_db_column", kwargs={"dataset_id": str(dataset.id)})
+
+        response = self.client.post(
+            url,
+            data={
+                "column_id": str(columns[0].id),
+                "new_column_name": "Vector Result",
+                "sub_type": "pinecone",
+                "api_key": str(secret.id),
+                "index_name": "test-index",
+                "top_k": 1,
+                "embedding_config": {
+                    "type": "openai",
+                    "model": "text-embedding-3-small",
+                },
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        mock_task.assert_called_once()
+        organization_id = mock_task.call_args.args[4]
+        assert organization_id == str(self.organization.id)
+        assert isinstance(organization_id, str)

@@ -25,6 +25,31 @@ const EmbeddingConfigField = ({ control }) => {
         value: "huggingface",
         disabled: false,
       },
+      {
+        label: "Cohere",
+        value: "cohere",
+        disabled: false,
+      },
+      {
+        label: "Gemini",
+        value: "gemini",
+        disabled: false,
+      },
+      {
+        label: "Vertex AI",
+        value: "vertex_ai",
+        disabled: false,
+      },
+      {
+        label: "Voyage",
+        value: "voyage",
+        disabled: false,
+      },
+      {
+        label: "Mistral",
+        value: "mistral",
+        disabled: false,
+      },
     ];
 
     defaultOptions.forEach((item, index) => {
