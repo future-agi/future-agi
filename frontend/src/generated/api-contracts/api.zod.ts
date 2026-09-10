@@ -9446,13 +9446,15 @@ export const ApiSetupChecksListResponse = zod.object({
  * GET /api/traces/span-attribute-detail/?project_id=<uuid>&key=<attr_key>
  * @summary Serve the last complete exact attribute snapshot and refresh out of band.
  */
-export const apiTracesSpanAttributeDetailListQueryKeyMax = 512;
-
 export const apiTracesSpanAttributeDetailListQueryRefreshDefault = false;
 
 export const ApiTracesSpanAttributeDetailListQueryParams = zod.object({
   project_id: zod.string().uuid(),
-  key: zod.string().min(1).max(apiTracesSpanAttributeDetailListQueryKeyMax),
+  key: zod
+    .string()
+    .describe(
+      "Nonempty exact attribute key, at most 4096 UTF-8 bytes. Whitespace, controls and case are preserved.",
+    ),
   refresh: zod
     .boolean()
     .default(apiTracesSpanAttributeDetailListQueryRefreshDefault),
@@ -9547,8 +9549,6 @@ GET /api/traces/span-attribute-keys/?project_id=<uuid>&page_size=10
  */
 export const apiTracesSpanAttributeKeysListQueryWorkspaceScopeDefault = false;
 export const apiTracesSpanAttributeKeysListQueryDiscoveryModeDefault = `filter`;
-export const apiTracesSpanAttributeKeysListQueryQMax = 512;
-
 export const apiTracesSpanAttributeKeysListQueryPageSizeMax = 50;
 
 export const apiTracesSpanAttributeKeysListQueryCursorMax = 8192;
@@ -9566,9 +9566,10 @@ export const ApiTracesSpanAttributeKeysListQueryParams = zod.object({
     ),
   q: zod
     .string()
-    .min(1)
-    .max(apiTracesSpanAttributeKeysListQueryQMax)
-    .optional(),
+    .optional()
+    .describe(
+      "Nonempty exact attribute key, at most 4096 UTF-8 bytes. Whitespace, controls and case are preserved.",
+    ),
   page_size: zod
     .number()
     .min(1)
@@ -9639,15 +9640,17 @@ with optional prefix search filtering.
 GET /api/traces/span-attribute-values/?project_id=<uuid>&key=<attr_key>[&q=<search>][&limit=50]
  * @summary Get top values for a specific span attribute key.
  */
-export const apiTracesSpanAttributeValuesListQueryKeyMax = 512;
-
 export const apiTracesSpanAttributeValuesListQueryQMax = 512;
 
 export const apiTracesSpanAttributeValuesListQueryLimitMax = 500;
 
 export const ApiTracesSpanAttributeValuesListQueryParams = zod.object({
   project_id: zod.string().uuid(),
-  key: zod.string().min(1).max(apiTracesSpanAttributeValuesListQueryKeyMax),
+  key: zod
+    .string()
+    .describe(
+      "Nonempty exact attribute key, at most 4096 UTF-8 bytes. Whitespace, controls and case are preserved.",
+    ),
   q: zod.string().max(apiTracesSpanAttributeValuesListQueryQMax).optional(),
   limit: zod
     .number()
@@ -51470,7 +51473,6 @@ export const TracerObservationSpanGetObservationSpanFieldsResponse = zod.object(
  */
 
 export const tracerObservationSpanGetSpanAttributesListQueryRowTypeDefault = `spans`;
-export const tracerObservationSpanGetSpanAttributesListQueryQMax = 512;
 
 export const TracerObservationSpanGetSpanAttributesListQueryParams = zod.object(
   {
@@ -51488,9 +51490,10 @@ export const TracerObservationSpanGetSpanAttributesListQueryParams = zod.object(
       .default(tracerObservationSpanGetSpanAttributesListQueryRowTypeDefault),
     q: zod
       .string()
-      .min(1)
-      .max(tracerObservationSpanGetSpanAttributesListQueryQMax)
-      .optional(),
+      .optional()
+      .describe(
+        "Nonempty exact attribute key, at most 4096 UTF-8 bytes. Whitespace, controls and case are preserved.",
+      ),
   },
 );
 

@@ -7,6 +7,7 @@ from several provider attributes. Raw SPAN_ATTRIBUTE filtering stays separate.
 from datetime import datetime, timedelta
 
 import pytest
+from clickhouse_connect.driver.binding import finalize_query
 
 from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
     compile_exact_graph_row_predicates,
@@ -328,15 +329,20 @@ def test_raw_voice_attributes_remain_available_as_span_attributes(
             "col_type": "SPAN_ATTRIBUTE",
         },
     }
-    where, _ = ClickHouseFilterBuilderV2().translate([filter_item])
+    where, params = ClickHouseFilterBuilderV2().translate([filter_item])
     graph_plan = compile_exact_graph_row_predicates(
         [filter_item],
         project_id=PROJECT_ID,
         observe_type="trace",
     )
 
-    for predicate in (where, " AND ".join(graph_plan.predicates)):
-        assert expected_marker in predicate
+    for predicate, bound_params in (
+        (where, params),
+        (" AND ".join(graph_plan.predicates), graph_plan.params),
+    ):
+        assert column_id in bound_params.values()
+        assert expected_marker not in predicate
+        assert expected_marker in finalize_query(predicate, bound_params)
         assert forbidden_marker not in predicate
 
 

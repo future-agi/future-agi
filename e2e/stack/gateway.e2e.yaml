@@ -26,6 +26,7 @@ providers:
       - gpt-3.5-turbo
       - o1
       - o1-mini
+      - turing_flash
 
   # anthropic:
   #   base_url: "https://api.anthropic.com"

@@ -5,6 +5,8 @@ from accounts.serializers.user import UserSerializer
 from tracer.constants.dashboard import (
     DASHBOARD_AGGREGATIONS,
     DASHBOARD_NUMERIC_ONLY_AGGREGATIONS,
+    annotation_breakdown_error,
+    text_annotation_aggregation_error,
 )
 from tracer.models.dashboard import Dashboard, DashboardWidget
 from tracer.serializers.filters import (
@@ -223,6 +225,13 @@ class DashboardMetricSerializer(StrictInputSerializer):
         Dashboard Y-axis aggregations are numeric unless the caller explicitly
         requests a text-safe count operation; explicit types always win.
         """
+
+        if attrs.get("type") == "annotation_metric":
+            error = text_annotation_aggregation_error(
+                attrs.get("output_type", ""), attrs.get("aggregation", "avg")
+            )
+            if error:
+                raise serializers.ValidationError({"aggregation": error})
 
         property_id = attrs.get("property_id")
         if property_id:
@@ -504,6 +513,11 @@ class DashboardQuerySerializer(StrictInputSerializer):
 
     def validate(self, attrs):
         metrics = attrs.get("metrics") or []
+        annotation_error = annotation_breakdown_error(
+            metrics, attrs.get("breakdowns") or []
+        )
+        if annotation_error:
+            raise serializers.ValidationError({"breakdowns": annotation_error})
         dataset_metrics = [
             metric for metric in metrics if metric.get("source") == "datasets"
         ]

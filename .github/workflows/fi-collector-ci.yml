@@ -11,6 +11,8 @@ on:
       - "deploy/**"
       - "e2e/stack/**"
       - "futureagi/scripts/property_catalog_oss/**"
+      - "futureagi/tracer/services/clickhouse/oss_*.py"
+      - "futureagi/tracer/services/clickhouse/tests/test_oss_*.py"
       - "futureagi/tracer/services/clickhouse/v2/observed_catalog/**"
       - ".github/workflows/fi-collector-ci.yml"
   push:
@@ -23,6 +25,8 @@ on:
       - "deploy/**"
       - "e2e/stack/**"
       - "futureagi/scripts/property_catalog_oss/**"
+      - "futureagi/tracer/services/clickhouse/oss_*.py"
+      - "futureagi/tracer/services/clickhouse/tests/test_oss_*.py"
       - "futureagi/tracer/services/clickhouse/v2/observed_catalog/**"
       - ".github/workflows/fi-collector-ci.yml"
   merge_group:
@@ -156,7 +160,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Compose and bootstrap contracts without running services
-        run: python -m unittest discover -s deploy/tests -p 'test_observed_catalog_compose.py' -v
+        run: python -m unittest discover -s deploy/tests -p 'test_observed_catalog_*.py' -v
       - name: Shell syntax
         run: |
           bash -n bin/install bin/e2e

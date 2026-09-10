@@ -1,7 +1,18 @@
 #!/bin/sh
 set -eu
 
-# Local OSS bootstrap only. This schema is separate from source migrations.
+# No arguments provisions local OSS; --check only validates a provisioned index.
+# Reject every other invocation before any client call.
+CHECK_ONLY=false
+if [ "$#" -ne 0 ]; then
+  if [ "$#" -eq 1 ] && [ "$1" = "--check" ]; then
+    CHECK_ONLY=true
+  else
+    echo >&2 "usage: bootstrap_clickhouse.sh [--check]"; exit 64
+  fi
+fi
+
+# This schema is separate from source migrations.
 SOURCE_DATABASE=${PROPERTY_CATALOG_SOURCE_DATABASE:-default}
 TARGET_DATABASE=${PROPERTY_CATALOG_DATABASE:-property_catalog}
 SCHEMA_FILE=${PROPERTY_CATALOG_SCHEMA_FILE:-/observed-catalog/schema.sql}
@@ -42,17 +53,29 @@ clickhouse() {
 password_parameter() {
   printf '%s' "$1" | od -An -v -tx1 | tr -d ' \n' | sed 's/../\\x&/g'
 }
-WRITER_PARAMETER=$(password_parameter "$WRITER_PASSWORD")
-READER_PARAMETER=$(password_parameter "$READER_PASSWORD")
 
-clickhouse --query "CREATE DATABASE IF NOT EXISTS \`$TARGET_DATABASE\`"
-clickhouse --database "$TARGET_DATABASE" --multiquery < "$SCHEMA_FILE"
+if [ "$CHECK_ONLY" = false ]; then
+  WRITER_PARAMETER=$(password_parameter "$WRITER_PASSWORD")
+  READER_PARAMETER=$(password_parameter "$READER_PASSWORD")
+  clickhouse --query "CREATE DATABASE IF NOT EXISTS \`$TARGET_DATABASE\`"
+  clickhouse --database "$TARGET_DATABASE" --multiquery < "$SCHEMA_FILE"
+fi
 
 # Check only our new tables: historical tables and their rows remain untouched.
 SCHEMA_MATCHES=$(clickhouse --param_database "$TARGET_DATABASE" --format TabSeparatedRaw --queries-file "$VALIDATION_FILE")
 [ "$SCHEMA_MATCHES" = "1" ] || {
   echo >&2 "observed catalog schema is incompatible (columns, identity, engine or constraints)"; exit 65;
 }
+
+if [ "$CHECK_ONLY" = true ]; then
+  # Metadata compatibility alone does not prove this reader can query both indexes.
+  # LIMIT 0 checks every column's SELECT permission without reading stored rows.
+  for table in observed_attribute_keys observed_attribute_values; do
+    clickhouse --query "SELECT * FROM \`$TARGET_DATABASE\`.$table LIMIT 0"
+  done
+  echo "Observed attribute index validated: $TARGET_DATABASE"
+  exit 0
+fi
 
 clickhouse --param_password "$WRITER_PARAMETER" --query "CREATE USER IF NOT EXISTS observed_catalog_writer IDENTIFIED WITH sha256_password BY {password:String} HOST ANY"
 clickhouse --param_password "$WRITER_PARAMETER" --query "ALTER USER observed_catalog_writer IDENTIFIED WITH sha256_password BY {password:String} HOST ANY"

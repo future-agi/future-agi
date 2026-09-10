@@ -32,6 +32,96 @@
 - the header button carries the window spanning every fire
 - the monitor’s span-type filter travels in the link and renders as a chip
 
+## annotations
+
+### ANNOT-E2E-001 — workspace annotation choices follow UI edits without scores
+
+**Goal:** Create a projectless annotation label and discover its current choices in a workspace filter  
+**Spec:** `flows/annotations/label-catalog.spec.ts:25`  
+**Tags:** —
+
+**User steps:**
+
+1. create a categorical label through the label drawer
+2. open a workspace dashboard widget filter and inspect its choices
+3. rename one option through the label drawer
+4. refresh the widget editor and inspect the replacement choices
+
+**Backend state verified:**
+
+- label retains exact options and actor organization/workspace, with no project or scores
+- workspace catalog and widget filter expose the exact label and never-used choices
+- UI edit preserves label identity and replaces the old option in PG, values API and refreshed picker
+
+### ANNOT-E2E-002 — corrected trace annotations change exact filter matches
+
+**Goal:** Submit and correct typed human trace annotations and find only traces with the current score  
+**Spec:** `flows/annotations/catalog-score-lifecycle.spec.ts:34`  
+**Tags:** —
+
+**User steps:**
+
+1. ingest two traces and configure six native label controls
+2. submit numeric, star, text, thumbs and single/multiple choices on the selected trace
+3. select every annotation in the real Observe filter
+4. correct the same scores in the drawer and compare old/new matches
+5. soft-delete only the synthetic scores through the public endpoint and verify exclusion
+
+**Backend state verified:**
+
+- UI-submitted scores have exact label, trace, annotator, queue and tenant identities in Postgres
+- latest ClickHouse scores retain every typed value and exact Postgres identity
+- configured catalog choices and real UI/list filters agree for every annotation type
+- UI corrections preserve score IDs and append the old typed value to latest PG/CH history
+- old and soft-deleted scores cannot match while current corrected scores match only the annotated trace
+
+### ANNOT-E2E-003 — corrected span annotations change exact filter matches
+
+**Goal:** Submit and correct typed human span annotations and find only spans with the current score  
+**Spec:** `flows/annotations/catalog-score-lifecycle.spec.ts:34`  
+**Tags:** —
+
+**User steps:**
+
+1. ingest two traces and configure six native label controls
+2. submit numeric, star, text, thumbs and single/multiple choices on the selected span
+3. select every annotation in the real Observe filter
+4. correct the same scores in the drawer and compare old/new matches
+5. soft-delete only the synthetic scores through the public endpoint and verify exclusion
+
+**Backend state verified:**
+
+- UI-submitted scores have exact label, span, annotator, queue and tenant identities in Postgres
+- latest ClickHouse scores retain every typed value and exact Postgres identity
+- configured catalog choices and real UI/list filters agree for every annotation type
+- UI corrections preserve score IDs and append the old typed value to latest PG/CH history
+- old and soft-deleted scores cannot match while current corrected scores match only the annotated span
+
+### ANNOT-E2E-004 — corrected session annotations match only current authorized sessions
+
+**Goal:** Submit and correct all six native session annotations, then find only sessions with current, authorized scores  
+**Spec:** `flows/annotations/session-score-lifecycle.spec.ts:41`  
+**Tags:** —
+
+**User steps:**
+
+1. ingest two sessions and a same-named sibling-project session; configure six projectless labels on the default queue
+2. open Session History and submit all six native controls with Annotate and Save
+3. discover configured choices and select each annotation in the real session filter
+4. use Edit and Save to correct the same scores and compare old/new exact matches
+5. verify sibling-project and explicit organization/workspace isolation
+6. soft-delete only the synthetic scores through the public endpoint and reload the retained session filter
+
+**Backend state verified:**
+
+- exact cohort grouping, scoped projectless labels/default queue and unchanged source telemetry
+- six UI-created Scores have exact session, label, annotator, queue, tenant and typed values; trace/span references are null
+- latest ClickHouse Scores equal exact Postgres identities and typed state
+- definition choices and actual UI/list results agree for every annotation type
+- correction preserves Score IDs and appends exactly the previous typed value/history timestamp
+- public soft deletion excludes retained predicates without changing source spans
+- sibling project, owner B organization and owner A explicit other workspace cannot read target Scores/catalog/results
+
 ## auth
 
 ### AUTH-E2E-001 — user signs in with email and password
@@ -51,6 +141,311 @@
 
 - POST /accounts/token/ returns 200 with a token pair
 - the UI login persists a new active AuthToken row in PG for the user
+
+### AUTH-E2E-002 — workspace switching updates implicit scope without replacing the signed-in session
+
+**Goal:** Switch workspaces and continue seeing the selected workspace after refresh, while explicitly scoped requests still reach the requested authorized workspace  
+**Spec:** `flows/auth/default-workspace-switch.spec.ts:44`  
+**Tags:** —
+
+**User steps:**
+
+1. open A1 with the existing signed-in member and prime no-workspace-header reads
+2. select A2 through the real workspace switcher
+3. read exactly A2 projects without a workspace header using the unchanged bearer
+4. explicitly read A1 then confirm implicit reads still use A2
+5. open Observe and reload with the exact A2 sidebar and projects
+
+**Backend state verified:**
+
+- UI switching persists A2 in all three workspace preferences for the same signed-in user
+- the unchanged bearer resolves no-workspace-header project reads to A2 after the UI switch
+- explicit A1 scope returns P1 without changing subsequent implicit A2 scope or persisted preferences
+- normal navigation and reload retain A2’s sidebar, exact project rows and unchanged bearer
+
+## dashboards
+
+### DASH-E2E-001 — an imported numeric dataset column works in a saved widget
+
+**Goal:** Select a newly imported numeric dataset column and see its correct aggregate in a saved dashboard widget  
+**Spec:** `flows/dashboards/dataset-catalog-widget.spec.ts:27`  
+**Tags:** —
+
+**User steps:**
+
+1. upload a synthetic CSV through the dataset form
+2. give the imported numeric column a unique name through its column menu
+3. create and name a dashboard through the UI
+4. select the new numeric metric, sum aggregation and dataset filter
+5. verify the preview, save the widget and reopen it
+
+**Backend state verified:**
+
+- the metric catalog identifies the imported numeric column under the actor dataset and workspace
+- exact imported PG and CH cell identities produce the independently calculated sum in the real preview API and UI
+- the saved widget retains its exact column and dataset scope in PG, API and reopened UI with the same aggregate
+
+### DASH-E2E-002 — a saved trace-metric widget preserves its project, cohort and model results
+
+**Goal:** A developer saves a trace-metric widget for one project and cohort and sees the same exact model results after reopening it  
+**Spec:** `flows/dashboards/catalog-source-parity.spec.ts:47`  
+**Tags:** —
+
+**User steps:**
+
+1. ingest five independently identified traces in primary, sibling and foreign projects
+2. create a dashboard and select five native trace metrics
+3. select the primary Project and typed cohort filter through native catalog/value pickers
+4. verify ungrouped and Model-grouped results against the planted facts
+5. save, reload and reopen the widget and verify its table and unchanged sources
+
+**Backend state verified:**
+
+- The ten minted spans and five traces retain their exact typed facts and three owned project bindings without source rewrites.
+- Native catalog choices and Project/cohort filters retain exact property types and actor scope, and the preview contains only the independently expected model facts.
+- The saved widget and reopened table preserve the full selected query binding and exact model series.
+
+### DASH-E2E-003 — a metric-specific Model filter changes only that metric after save and reopen
+
+**Goal:** A metric-specific Model filter changes only that metric after save and reopen.  
+**Spec:** `flows/dashboards/trace-metric-local-filter.spec.ts:53`  
+**Tags:** —
+
+**User steps:**
+
+1. ingest independently identified traces with explicit cost, numeric TTFT and a custom number in three scoped projects
+2. create a Table widget and select Cost, TTFT, trace/span counts and the custom sum
+3. select primary Project and cohort, then inspect the two Model groups
+4. apply Model Alpha only inside Cost and verify every other metric retains both groups
+5. save, reload and reopen the widget with exact values, controls and unchanged source facts
+
+**Backend state verified:**
+
+- Native catalog and selected property identities preserve this flow's source, types, choices and actor scope.
+- This flow's exact publicly produced source identities and typed latest facts are present and unchanged outside its authorized UI actions.
+- The preview, saved binding and reopened widget equal this flow's independently specified filtered and grouped result.
+
+### DASH-E2E-004 — a saved numeric attribute widget preserves numeric filtering and groups
+
+**Goal:** A saved numeric attribute widget preserves numeric filtering and groups.  
+**Spec:** `flows/dashboards/numeric-attribute-widget.spec.ts:53`  
+**Tags:** —
+
+**User steps:**
+
+1. ingest five independently identified traces with native numbers and a foreign numeric-looking string
+2. create a Table widget and discover the scoped numeric sum and Spans metrics
+3. select primary Project, native numeric Equals 10 and the same numeric breakdown
+4. save, reload and reopen the exact binding, groups and native controls
+5. try disjoint 999, restore 10 and verify unchanged source and saved facts
+
+**Backend state verified:**
+
+- Native catalog and selected property identities preserve this flow's source, types, choices and actor scope.
+- This flow's exact publicly produced source identities and typed latest facts are present and unchanged outside its authorized UI actions.
+- The preview, saved binding and reopened widget equal this flow's independently specified filtered and grouped result.
+
+### DASH-E2E-005 — a saved widget keeps boolean scope distinct from same-spelled text
+
+**Goal:** A saved widget keeps boolean scope distinct from same-spelled text.  
+**Spec:** `flows/dashboards/boolean-attribute-widget.spec.ts:55`  
+**Tags:** —
+
+**User steps:**
+
+1. ingest five independent traces with true, false and foreign same-key text witnesses
+2. exclude the boolean from native metrics and select Spans plus an independent numeric Sum
+3. select primary Project, inspect both boolean groups and choose native Equals true
+4. save, reload and reopen the full scoped binding and exact table
+5. select false, restore true and verify unchanged source versions and saved facts
+
+**Backend state verified:**
+
+- Native catalog and selected property identities preserve this flow's source, types, choices and actor scope.
+- This flow's exact publicly produced source identities and typed latest facts are present and unchanged outside its authorized UI actions.
+- The preview, saved binding and reopened widget equal this flow's independently specified filtered and grouped result.
+
+### DASH-E2E-006 — a saved widget retains native array membership through popup edits
+
+**Goal:** A saved widget retains array membership without treating arrays as scalar metrics.  
+**Spec:** `flows/dashboards/array-membership-widget.spec.ts:50`  
+**Tags:** —
+
+**User steps:**
+
+1. ingest five independently identified traces with mixed array members and scoped scalar/object controls
+2. create a Table widget and exclude arrays/maps from metrics before selecting Traces and Spans
+3. select primary Project, the native array token and a string cohort breakdown
+4. select both same-labelled scalar pairs, save, reload and reopen the mixed membership
+5. deselect visible and hidden members, Specify a never-observed value and save the same widget
+6. reopen the persisted Specify selection, restore the original token and verify tenant/source invariance
+
+**Backend state verified:**
+
+- Native catalog and selected property identities preserve this flow's source, types, choices and actor scope.
+- This flow's exact publicly produced source identities and typed latest facts are present and unchanged outside its authorized UI actions.
+- The preview, saved binding and reopened widget equal this flow's independently specified filtered and grouped result.
+
+### DASH-E2E-007 — a saved Session widget counts only the selected project session traces
+
+**Goal:** A saved Session widget counts only the selected project's session traces.  
+**Spec:** `flows/dashboards/trace-backed-session-widget.spec.ts:53`  
+**Tags:** —
+
+**User steps:**
+
+1. create and name a Table widget with 7D and Day after ingesting five independently identified traces
+2. discover Sessions, Traces and Spans and select Distinct Count for each
+3. select primary Project and verify its two sessions, three traces and six spans
+4. distinguish same-labelled sessions by UUID, select primary S1 and add native Session grouping
+5. save S1 and verify the exact persisted binding and saved table
+6. reload and reopen S1 with its exact selected UUID, label, controls and 1/2/4 result
+7. replace S1 with S2, verify 1/1/2 and save the same widget
+8. reload and reopen S2, then Specify a never-ingested UUID and verify exact empty results
+9. restore and save S1 and verify tenant isolation and unchanged source versions
+
+**Backend state verified:**
+
+- Native catalog and selected property identities preserve this flow's source, types, choices and actor scope.
+- This flow's exact publicly produced source identities and typed latest facts are present and unchanged outside its authorized UI actions.
+- The preview, saved binding and reopened widget equal this flow's independently specified filtered and grouped result.
+
+### DASH-E2E-008 — a saved User widget keeps project and identifier-type scope
+
+**Goal:** A saved User widget keeps project and identifier-type scope.  
+**Spec:** `flows/dashboards/trace-backed-user-widget.spec.ts:60`  
+**Tags:** —
+
+**User steps:**
+
+1. create and name a Table widget with 7D and Day after ingesting five independently identified user traces
+2. discover Users, Traces and Spans and explicitly select Distinct Count with typed scoped catalog checks
+3. select primary Project and User breakdown, verify both groups and positive sibling and foreign controls
+4. select native User U1 and email type, verify the phone intersection is empty, and restore email
+5. save U1 and email and verify the exact native persisted binding and table
+6. reload and reopen U1 and email with exact controls and the independent 1/2/4 result
+7. replace User with U2, prove email is empty, select phone and save the same widget with 1/1/2
+8. reload and reopen U2 and phone with exact selected controls, stored configuration and 1/1/2
+9. restore and save U1 and email, verify the intermediate empty intersection and unchanged scoped source versions
+
+**Backend state verified:**
+
+- Native catalog and selected property identities preserve this flow's source, types, choices and actor scope.
+- This flow's exact publicly produced source identities and typed latest facts are present and unchanged outside its authorized UI actions.
+- The preview, saved binding and reopened widget equal this flow's independently specified filtered and grouped result.
+
+### DASH-E2E-009 — a saved conversation widget excludes child-model call-metric decoys
+
+**Goal:** A saved conversation widget excludes child-model call-metric decoys.  
+**Spec:** `flows/dashboards/conversation-attribute-widget.spec.ts:54`  
+**Tags:** —
+
+**User steps:**
+
+1. create and name a Table widget with 7D and Day after seeding five scoped traces
+2. discover two numeric custom call metrics and explicitly select Sum with typed scope checks
+3. select primary Project through its native exhausted cursor chain and verify all primary-span values
+4. select conversation, prove the LLM-only contrast and restore conversation
+5. filter and group by native custom call_type, distinguish inbound/outbound and restore both
+6. save the exact both-group binding and inspect its persisted Table and ownership
+7. reload the saved dashboard and read the exact four series again
+8. reopen the same widget, verify controls and results and conserve every seeded source version
+
+**Backend state verified:**
+
+- Native catalog and selected property identities preserve this flow's source, types, choices and actor scope.
+- This flow's exact publicly produced source identities and typed latest facts are present and unchanged outside its authorized UI actions.
+- The preview, saved binding and reopened widget equal this flow's independently specified filtered and grouped result.
+
+### DASH-E2E-010 — a saved trace annotation widget retains numeric scores
+
+**Goal:** A saved trace annotation widget retains numeric scores.  
+**Spec:** `flows/dashboards/trace-numeric-annotation-widget.spec.ts:59`  
+**Tags:** —
+
+**User steps:**
+
+1. submit three native numeric trace Scores in independently seeded primary, sibling and foreign projects
+2. create and name a Table widget with 7D and Day
+3. discover the numeric annotation and Traces metrics and explicitly choose Average and Distinct Count
+4. select primary Project through its native exhausted cursor chain and verify scoped unfiltered facts
+5. select numeric Equals25 and the same label breakdown, prove disjoint75 and restore25
+6. save the exact binding and inspect its persisted Table and ownership
+7. reload the saved dashboard and read the exact independent-clock series
+8. reopen the same widget, verify controls and results and conserve source and Score versions
+
+**Backend state verified:**
+
+- Native catalog and selected property identities preserve this flow's source, types, choices and actor scope.
+- This flow's exact publicly produced source identities and typed latest facts are present and unchanged outside its authorized UI actions.
+- The preview, saved binding and reopened widget equal this flow's independently specified filtered and grouped result.
+
+### DASH-E2E-011 — a saved trace annotation widget retains star ratings
+
+**Goal:** A saved trace annotation widget retains star ratings.  
+**Spec:** `flows/dashboards/trace-star-annotation-widget.spec.ts:60`  
+**Tags:** —
+
+**User steps:**
+
+1. submit three native star trace Scores in independently seeded primary, sibling and foreign projects
+2. create and name a Table widget with 7D and Day
+3. discover the star annotation and Traces metrics and explicitly choose Average and Distinct Count
+4. select primary Project through its native exhausted cursor chain and verify scoped unfiltered facts
+5. select star Equals2 and the same label breakdown, prove disjoint4 and restore2
+6. save the exact binding and inspect its persisted Table and ownership
+7. reload the saved dashboard and read the exact independent-clock series
+8. reopen the same widget, verify controls and results and conserve source and Score versions
+
+**Backend state verified:**
+
+- Native catalog and selected property identities preserve this flow's source, types, choices and actor scope.
+- This flow's exact publicly produced source identities and typed latest facts are present and unchanged outside its authorized UI actions.
+- The preview, saved binding and reopened widget equal this flow's independently specified filtered and grouped result.
+
+## datasets
+
+### DATA-E2E-001 — uploaded dataset values can be discovered and filtered
+
+**Goal:** Upload a dataset and select a real column value to narrow its rows  
+**Spec:** `flows/datasets/uploaded-catalog-values.spec.ts:12`  
+**Tags:** —
+
+**User steps:**
+
+1. upload a synthetic CSV using the dataset form
+2. wait for imported cells
+3. open the region value picker
+4. select a region and verify its rows
+5. refresh, reselect the region and verify the same filtered result
+
+**Backend state verified:**
+
+- uploaded dataset, columns and cells belong to the actor scope
+- imported region cells reach ClickHouse with their exact dataset, column and row IDs
+- the dataset value endpoint returns exactly the two imported region choices
+- selecting a region yields exactly the corresponding UI and API rows
+
+### DATA-E2E-002 — dataset discovery follows cell edits and column deletion
+
+**Goal:** Edit dataset cells and columns and discover only their current authorized values without manual catalog repair  
+**Spec:** `flows/datasets/catalog-column-lifecycle.spec.ts:18`  
+**Tags:** —
+
+**User steps:**
+
+1. upload a synthetic CSV through the dataset form
+2. edit a cell and rename its column through the table
+3. inspect the renamed property and select its new value
+4. delete the column through its menu
+5. delete the synthetic dataset through Configure and check discovery again
+
+**Backend state verified:**
+
+- scoped cell and column edits preserve their exact immutable identities
+- latest edited ClickHouse cells match the exact Postgres identities and values
+- current property label, value choices and filtered UI/API rows agree after editing
+- removed columns and datasets cannot be rediscovered through metadata or value requests
 
 ## evals
 
@@ -75,6 +470,71 @@
 - result rows land in CH tracer_eval_logger via the PeerDB CDC mirror (PG EvalLogger → CH)
 - the stored explanation is exactly the verdict the judge prompt dictated, with the span's mapped attribute substituted in, and the result carries the mock LLM's token usage
 - the Pass verdict is parsed out of the model response into output_bool = true
+
+### EVAL-E2E-002 — configured evaluator choices stay current in the bound project
+
+**Goal:** Create and edit a choice evaluator through the UI and discover only its current choices in its bound Observe project  
+**Spec:** `flows/evals/choice-catalog.spec.ts:32`  
+**Tags:** —
+
+**User steps:**
+
+1. configure a mock-backed model and ingest two projects
+2. create and publish a choice evaluator through the UI
+3. attach it to only one project through the public API
+4. inspect its Observe filter choices
+5. rename a choice with Save Version
+6. refresh the picker and reject a cursor from the old vocabulary
+
+**Backend state verified:**
+
+- current choices and the project binding persist under the actor organization/workspace
+- the catalog exposes the config in its bound project and excludes it from the sibling project
+- values API and Observe picker reflect exact current never-used choices before and after UI editing
+- a valid old-vocabulary cursor is rejected after Save Version changes the definition
+
+### EVAL-E2E-003 — typed executed evaluations retain exact native results and reject invalid output
+
+**Goal:** Read typed evaluations on real spans, find exactly their matching traces and reject invalid judge output visibly  
+**Spec:** `flows/evals/catalog-result-types.spec.ts:138`  
+**Tags:** —
+
+**User steps:**
+
+1. ingest distinct mapped inputs for five mock-backed evaluation families
+2. enable multiple choices through Save Version and bind all five evaluations
+3. run a historical task on exactly the two LLM children and inspect their stored results
+4. inspect each span evaluation and select positive, multiple and zero-match native filters
+5. compare both numeric score graphs with the exact matching result identities
+6. execute malformed and semantic-invalid inputs and require visible errors without scored matches
+
+**Backend state verified:**
+
+- the task and exact source/config pairs belong to the actor scope and finish successfully
+- every typed result, explanation and mock usage reaches latest ClickHouse with its exact Postgres identity
+- native discovery, detail, filtered rows and numeric graph equal the independent outcome matrix
+- invalid judge output is visibly errored and cannot masquerade as a successful typed result
+
+### EVAL-E2E-004 — executed dataset evaluations retain typed cells, exact filters and a saved numeric widget
+
+**Goal:** Evaluate new dataset rows and use their actual results in dataset filters and a saved dashboard widget  
+**Spec:** `flows/evals/dataset-catalog-results.spec.ts:86`  
+**Tags:** —
+
+**User steps:**
+
+1. upload the synthetic CSV and attach two local mock-backed evaluations through the dataset UI
+2. use native Run All once and read both completed evaluations and their result/reason cells
+3. verify exact typed Postgres and latest ClickHouse cell identities with unchanged inputs
+4. select discovered choice, numeric boundary and intersection filters and read exact rows
+5. save and reopen a numeric Sum widget scoped to this dataset
+
+**Backend state verified:**
+
+- the imported input matrix and two save-only evaluation bindings retain exact tenant, model, version and column mappings
+- both native Run All requests complete and the public table contains exactly six correct result and six reason cells
+- latest ClickHouse cells equal exact Postgres identities and independently expected typed values without changing imported inputs
+- native choice, numeric and intersection filters return exact row identities and the saved/reopened widget retains its scoped sum
 
 ## observe
 
@@ -157,6 +617,133 @@
 - numeric-looking strings remain distinct from numbers; booleans remain booleans
 - the selected suggestion filters authoritative spans to the expected root
 
+### OBS-E2E-005 — discovered attributes filter traces and graph traffic consistently
+
+**Goal:** Select typed attribute suggestions and see the same exact traces in the list and graph  
+**Spec:** `flows/observe/catalog-trace-filter-parity.spec.ts:16`  
+**Tags:** —
+
+**User steps:**
+
+1. ingest two traces with string and numeric customer IDs
+2. discover both typed values
+3. select each value in trace view
+4. select both values and then a nonexistent value
+5. clear the filter and refresh
+
+**Backend state verified:**
+
+- observed customer ID suggestions preserve string and number types
+- both authoritative trace identities belong to the seeded project
+- each UI filter returns the exact trace IDs and matching span traffic and latency, including multiple and zero matches
+
+### OBS-E2E-006 — session suggestions select only their own traces
+
+**Goal:** Find a session through discovered values and inspect only its traces  
+**Spec:** `flows/observe/catalog-session-parity.spec.ts:19`  
+**Tags:** —
+
+**User steps:**
+
+1. ingest two traces in one session, a different session and a same-named sibling-project session
+2. read scoped session suggestions and paginated values
+3. select a session in the Sessions filter
+4. open its detail and inspect the two trace identities
+5. open one trace from the session
+
+**Backend state verified:**
+
+- curated session identities and all source spans retain their exact project grouping
+- native and catalog value reads return only the requested project sessions, including pagination and custom values
+- the UI filter, session list and detail return exactly the selected session and its two traces
+
+### OBS-E2E-007 — Users discovery selects only authorized user activity
+
+**Goal:** Find a user through supported system/custom filters and navigate to exactly their authorized sessions and traces after changing workspace  
+**Spec:** `flows/observe/catalog-user-parity.spec.ts:76`  
+**Tags:** —
+
+**User steps:**
+
+1. inspect empty Users then ingest an isolated multi-scope cohort
+2. choose native identity and metric filters in project Users
+3. discover typed custom values and select positive, multiple and zero matches
+4. inspect structured, missing and colliding attributes in workspace Users
+5. open the user and select Past 7D for their sessions and traces
+6. switch workspace, reopen the same spelling and refresh
+
+**Backend state verified:**
+
+- curated user and session identities and authoritative spans equal the independent fixture IDs in each organization, workspace and project
+- native and custom discovery retain exact identities and typed scoped values, with supported value adapters and explicit unsupported contracts
+- Users filters and paging return exactly the independently expected user IDs for supported native and custom predicates
+- the selected user opens exactly its authorized sessions and traces across sibling projects
+- workspace changes, fresh reads and cursor validation preserve exact destination scope without foreign identities
+
+### OBS-E2E-008 — native and custom voice filters select only the current project calls
+
+**Goal:** Discover voice-call properties and use their native and custom filters to find exactly the calls belonging to the selected project  
+**Spec:** `flows/observe/catalog-voice-values.spec.ts:86`  
+**Tags:** —
+
+**User steps:**
+
+1. ingest two distinct synthetic calls and scoped non-call/sibling controls
+2. open the project's call table and discover native and custom filter properties
+3. choose call status, identity and numeric filters and read exact matching calls
+4. choose root and child custom suggestions, including multiple and zero matches
+5. clear the filter, inspect the sibling project and refresh the primary call table
+
+**Backend state verified:**
+
+- authoritative conversation roots, child spans and non-call controls retain their exact project and actor scope
+- voice definitions and scoped native/custom values preserve their canonical identities, types and metric eligibility
+- actual voice UI requests and complete call-list pages return exactly the independently expected calls for positive, multiple, zero and refreshed scopes
+
+### OBS-E2E-009 — catalog permissions follow explicit scope and membership removal
+
+**Goal:** Discover only currently authorized catalog properties and choices, including after workspace membership removal  
+**Spec:** `flows/observe/catalog-permission-boundaries.spec.ts:40`  
+**Tags:** —
+
+**User steps:**
+
+1. inspect a genuinely empty workspace
+2. inspect four catalog families in two sibling projects and their datasets
+3. switch to the second workspace and inspect its four families
+4. consume real pages and reject cross-scope cursors and foreign identities
+5. remove workspace membership through the public API and reload
+
+**Backend state verified:**
+
+- actors, memberships and initial empty workspace match the explicit scopes
+- seeded span and native source identities belong to their exact organization/workspace/project or dataset
+- each authorized catalog and UI picker exposes exactly the current source IDs and typed choices with no foreign IDs
+- real property and value cursors reject a different authorized scope without hiding valid first-page results
+- public membership removal denies fresh and cursor requests for the revoked workspace and removes its visible catalog access
+
+### OBS-E2E-010 — historical and live suggestions retain history while filters use current facts
+
+**Goal:** Discover repaired historical and live values, then distinguish a stale suggestion from current trace matches  
+**Spec:** `flows/observe/catalog-history-live-parity.spec.ts:55`  
+**Tags:** @h5-local
+
+**User steps:**
+
+1. ingest bounded historical source-only OTLP facts and preview without writes
+2. resume repair alongside live ingestion and replay stable historical identities
+3. select historical, live and numeric suggestions
+4. update the historical trace through OTLP
+5. select the retained stale suggestion and see zero current matches
+6. select its replacement and refresh to confirm the exact trace
+
+**Backend state verified:**
+
+- SELECT-only source identity, stable full sorting keys and event times with newer converter versions
+- preview has zero writes; bounded apply, resume and overlap converge through the live catalog consumer
+- grouped catalog tuples and typed API suggestions equal an independent input-event oracle
+- consumed-offset barrier precedes zero matches; real UI requests and complete API cursor walks return exact seeded IDs
+
 ### OBS-E2E-020 — duplicate saved-view names are rejected
 
 **Goal:** A user cannot silently overwrite an existing observability view by reusing its name  
@@ -175,3 +762,25 @@
 - first create returns 200 and persists the view
 - second create with the same (project, user, name) returns 400, not a silent upsert
 - renaming another view onto the taken name returns 400
+
+## prompts
+
+### PROMPT-E2E-001 — a mock-run prompt exposes its current evaluation configuration lifecycle
+
+**Goal:** Run a synthetic prompt through the local mock, then discover, edit and remove its current evaluation configuration through supported UI  
+**Spec:** `flows/prompts/catalog-definition-lifecycle.spec.ts:34`  
+**Tags:** —
+
+**User steps:**
+
+1. create and name a prompt from scratch and select the local mock model
+2. Run Prompt and wait for real stored output before opening the Evaluation tab
+3. Add Evaluation mapped to model_output and inspect its current catalog choices
+4. edit mapping to model_input with the same binding ID and name and wait for completion
+5. delete the binding and reload to verify current discovery excludes it
+
+**Backend state verified:**
+
+- real mock output and the prompt evaluation binding retain exact parent, actor scope and model with terminal stored results
+- current prompt catalog identifies the exact binding and its two configured choices
+- mapping edit preserves binding ID/name, completes, and deletion removes it from UI and current discovery

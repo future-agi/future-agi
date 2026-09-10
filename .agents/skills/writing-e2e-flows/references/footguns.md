@@ -45,9 +45,10 @@ the way the design doc implies. Grouped, but each row stands alone: **symptom �
 
 ## ClickHouse and Postgres
 
-13. **A ClickHouse read returns a stale row** → no `FINAL` → add it. `spans`, `traces` and every
-    CDC-fed table are ReplacingMergeTree, and a row updated through a lifecycle lands as several
-    versions.
+13. **A replacing source/CDC read returns a stale row** → no `FINAL` → add it.
+    A lifecycle update can leave several physical versions. This does not apply
+    to observed catalog AggregatingMergeTree indexes: group their logical identity
+    and aggregate `min(first_seen)` / `max(last_seen)` instead of using `FINAL`.
 14. **A `spans` lookup by trace matches nothing** → `spans.trace_id` bound as a UUID → bind
     `{t:String}`; it is the dashed UUID as a string.
 15. **A curated-trace lookup fails on an unknown column** → `traces` has no `trace_id` column → it is
@@ -99,10 +100,12 @@ the way the design doc implies. Grouped, but each row stands alone: **symptom �
     collector or gateway your PR does not touch still runs as the released image — so an `e2e/`-only
     PR exercises your frontend against a released backend. The `docker-compose.dev.yml` overlay is
     not a substitute — it hardcodes `FAST_STARTUP`, which skips migrations.
-27. **Annotation-score or simulate assertions never see a row** → `model_hub_score` and
-    `simulate_agent_definition` mirrors cannot be created on a fresh stack (known drift, allow-listed
-    as a warning in `bin/e2e`) → do not assert on those surfaces, and do not assert on unfiltered
-    eval graphs, which read a dropped table.
+27. **Annotation-score or simulate assertions never see a row** → inspect the active mirror
+    schema and actual CDC state before assuming arrival. `harness/native-cdc.spec.ts` exercises
+    score and simulation-definition create/update/soft-delete on the managed stack. Its mirrors
+    represent absent deletion timestamps as epoch zero, unlike PG NULL. Compare deletion state,
+    not nullable representation. Fresh-bootstrap drift and unfiltered eval graphs remain separate
+    qualification gates; an allow-listed startup warning is not evidence that replication works.
 28. **A harness self-test fails and takes your PR with it** → `harness/**` runs in every
     `bin/e2e test` and in CI alongside the flows → run `bin/e2e test harness/` first after a boot to
     separate "the stack is wrong" from "my flow is wrong".

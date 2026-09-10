@@ -15293,10 +15293,9 @@
                     {
                         "name": "key",
                         "in": "query",
+                        "description": "Nonempty exact attribute key, at most 4096 UTF-8 bytes. Whitespace, controls and case are preserved.",
                         "required": true,
-                        "type": "string",
-                        "maxLength": 512,
-                        "minLength": 1
+                        "type": "string"
                     },
                     {
                         "name": "refresh",
@@ -15387,10 +15386,9 @@
                     {
                         "name": "q",
                         "in": "query",
+                        "description": "Nonempty exact attribute key, at most 4096 UTF-8 bytes. Whitespace, controls and case are preserved.",
                         "required": false,
-                        "type": "string",
-                        "maxLength": 512,
-                        "minLength": 1
+                        "type": "string"
                     },
                     {
                         "name": "page_size",
@@ -15471,10 +15469,9 @@
                     {
                         "name": "key",
                         "in": "query",
+                        "description": "Nonempty exact attribute key, at most 4096 UTF-8 bytes. Whitespace, controls and case are preserved.",
                         "required": true,
-                        "type": "string",
-                        "maxLength": 512,
-                        "minLength": 1
+                        "type": "string"
                     },
                     {
                         "name": "q",
@@ -60067,10 +60064,9 @@
                     {
                         "name": "q",
                         "in": "query",
+                        "description": "Nonempty exact attribute key, at most 4096 UTF-8 bytes. Whitespace, controls and case are preserved.",
                         "required": false,
-                        "type": "string",
-                        "maxLength": 512,
-                        "minLength": 1
+                        "type": "string"
                     }
                 ],
                 "responses": {

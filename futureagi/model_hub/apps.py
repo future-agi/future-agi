@@ -140,6 +140,16 @@ def guarded_management_command(argv: list[str]) -> str | None:
     command = _management_command(argv)
     if command is None or command in STARTUP_SAFE_MANAGEMENT_COMMANDS:
         return None
+    if command == "migrate":
+        # Django 5.1 runs --prune before the --check exit. Permit only this
+        # closed check-only form, not arbitrary options containing --check.
+        options = argv[argv.index(command) + 1 :]
+        if "--check" in options and set(options) <= {
+            "--check",
+            "--noinput",
+            "--no-input",
+        }:
+            return None
     return command
 
 

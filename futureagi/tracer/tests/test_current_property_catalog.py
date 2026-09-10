@@ -687,6 +687,152 @@ def test_current_annotation_api_preserves_configured_option_values(
     assert response.data["result"]["values"] == expected
 
 
+@pytest.mark.parametrize("property_identity", ["stable_id", "legacy_metric"])
+@pytest.mark.parametrize(
+    "source_type,reference,source",
+    [
+        ("trace", "trace_id", "traces"),
+        ("observation_span", "observation_span_id", "spans"),
+        ("trace_session", "trace_session_id", "sessions"),
+    ],
+)
+def test_projectless_annotation_follows_scoped_soft_source_reference(
+    current_tenant, source_type, reference, source, property_identity
+):
+    from django.db import DatabaseError
+
+    from accounts.models import Organization
+    from model_hub.models.develop_annotations import AnnotationsLabels
+    from model_hub.models.score import Score
+    from tracer.models.project import Project
+    from tracer.serializers.dashboard import DashboardFilterValuesQuerySerializer
+    from tracer.views.dashboard import DashboardViewSet
+
+    t = current_tenant
+    t.scope = {**t.scope, "workspace_scope": False}
+    other_organization = Organization.objects.create(name="foreign-catalog-test")
+    sibling = Project(
+        name="sibling",
+        trace_type="observe",
+        model_type="generative_llm",
+        organization=t.organization,
+        workspace=t.workspace,
+    )
+    Project.no_workspace_objects.bulk_create([sibling])
+    label = AnnotationsLabels(
+        name="session-or-span-only",
+        type="categorical",
+        settings={"options": [{"value": "kept", "label": "Kept"}]},
+        organization=t.organization,
+        workspace=t.workspace,
+    )
+    AnnotationsLabels.no_workspace_objects.bulk_create([label])
+    # Trace/span/session references may exist only in CH. Discovery must use
+    # the score's authenticated project binding, not join legacy PG source rows.
+    score = Score(
+        source_type=source_type,
+        **{reference: uuid4()},
+        tracer_project_id=t.project.id,
+        organization=t.organization,
+        workspace=t.workspace,
+        label=label,
+        annotator=t.user,
+        value={"selected": ["kept"]},
+    )
+
+    def visible(project_id, expected, *, unavailable=False):
+        scope = {**t.scope, "project_ids": [str(project_id)]}
+        page = PropertyCatalogReader(catalog_database="unused_for_native").read_page(
+            scope=scope,
+            query={"category": "annotation_metric", "source": source},
+            page_size=10,
+        )
+        assert [row["property_id"] for row in page.metrics] == (
+            [f"annotation:{label.id}"] if expected else []
+        )
+        query = DashboardFilterValuesQuerySerializer(
+            data={
+                **(
+                    {"property_id": f"annotation:{label.id}"}
+                    if property_identity == "stable_id"
+                    else {
+                        "metric_name": str(label.id),
+                        "metric_type": "annotation_metric",
+                    }
+                ),
+                "source": source,
+                "project_ids": str(project_id),
+                "page_size": 10,
+            }
+        )
+        assert query.is_valid(), query.errors
+        request = SimpleNamespace(
+            workspace=t.workspace,
+            organization=t.organization,
+            user=t.user,
+            auth=None,
+            query_params={},
+            validated_query_data=query.validated_data,
+        )
+        response = inspect.unwrap(DashboardViewSet.filter_values)(
+            DashboardViewSet(), request
+        )
+        if unavailable:
+            assert response.status_code == 503, response.data
+            assert response.data["code"] == "service_unavailable"
+            assert "private database diagnostics" not in str(response.data)
+            return
+        assert response.status_code == 200, response.data
+        assert response.data["result"]["values"] == (
+            [{"value": "kept", "label": "Kept"}] if expected else []
+        )
+
+    with patch(
+        "tracer.services.clickhouse.v2.property_catalog.connection.PropertyCatalogReadExecutor",
+        side_effect=AssertionError("configured annotations cannot open observed CH"),
+    ):
+        visible(t.project.id, False)
+        Score.no_workspace_objects.bulk_create([score])
+        visible(t.project.id, True)
+        visible(sibling.id, False)
+        Score.no_workspace_objects.filter(pk=score.pk).update(**{reference: None})
+        visible(t.project.id, False)
+        Score.no_workspace_objects.filter(pk=score.pk).update(
+            **{reference: getattr(score, reference)}
+        )
+        Score.no_workspace_objects.filter(pk=score.pk).update(
+            organization=other_organization
+        )
+        visible(t.project.id, False)
+        with patch(
+            "tracer.views.dashboard.CurrentDefinitionSource.resolve",
+            side_effect=DatabaseError("private database diagnostics"),
+        ):
+            visible(t.project.id, False, unavailable=True)
+        Score.no_workspace_objects.filter(pk=score.pk).update(
+            organization=t.organization
+        )
+        for field, foreign, original in (
+            ("workspace", t.other_workspace, t.workspace),
+            ("organization", other_organization, t.organization),
+        ):
+            AnnotationsLabels.no_workspace_objects.filter(pk=label.pk).update(
+                **{field: foreign}
+            )
+            visible(t.project.id, False)
+            AnnotationsLabels.no_workspace_objects.filter(pk=label.pk).update(
+                **{field: original}
+            )
+        Score.no_workspace_objects.filter(pk=score.pk).update(
+            workspace=t.other_workspace
+        )
+        visible(t.project.id, False)
+        Score.no_workspace_objects.filter(pk=score.pk).update(
+            workspace=t.workspace, deleted=True
+        )
+        visible(t.project.id, False)
+
+
 @pytest.mark.parametrize(
     "output,expected", [("SCORE", ()), ("PASS_FAIL", ("Passed", "Failed"))]
 )

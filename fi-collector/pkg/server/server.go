@@ -612,7 +612,7 @@ func (s *Server) drainNow(ctx context.Context) {
 	// gap. Catalog errors never change canonical writer health or dead-letter.
 	if spanErr == nil && s.propertyCatalog != nil && len(property) > 0 {
 		if err := s.propertyCatalog.EnqueueCanonicalSpans(property); err != nil {
-			s.log.Warn("observed catalog enqueue failed; backfill repair required", "err", err)
+			observedcatalog.LogHandoffGap(s.log, property, err)
 		}
 	}
 

@@ -416,16 +416,12 @@ Ok "Images pulled"
 
 # ---- bring up ----
 Step "Starting the stack"
-$attempt = 0
-while ($true) {
-  Invoke-Compose up -d --build --remove-orphans
-  if ($LASTEXITCODE -eq 0) { break }
-  $attempt++
-  if ($attempt -ge 3) {
-    Die "docker compose up failed after $attempt attempts. Check 'docker compose logs'."
-  }
-  Warn "compose up failed (attempt $attempt) -- retrying in 30s..."
-  Start-Sleep -Seconds 30
+# One attempt, as in bin/e2e: replaying compose up can rerun an exited schema
+# or mirror job after an uncertain write. Inspect retained state before resuming.
+# Preserve services omitted by an upgrade; legacy retirement is an explicit step.
+Invoke-Compose up -d --build --wait --wait-timeout 1200
+if ($LASTEXITCODE -ne 0) {
+  Die "docker compose startup failed or timed out; partial state retained, no automatic retry. Inspect 'docker compose ps -a' and 'docker compose logs' before explicitly resuming."
 }
 Ok "Containers started"
 

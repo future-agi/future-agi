@@ -21,6 +21,7 @@ from django.core.cache import cache, caches
 from django.core.cache.backends.locmem import LocMemCache
 from django.db import DatabaseError, connection, transaction
 
+from tracer.constants.dashboard import TEXT_ANNOTATION_AGGREGATIONS
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.project import Project, ProjectSourceChoices
 from tracer.services.annotation_label_source import AnnotationLabelScoresProjectPG
@@ -286,6 +287,8 @@ def _annotation_label_metric_entry(annotation_label: dict) -> dict:
         "sources": ["datasets", "traces"],
         "output_type": label_type,
     }
+    if (label_type or "").lower() == "text":
+        metric_entry["allowed_aggregations"] = list(TEXT_ANNOTATION_AGGREGATIONS)
     if label_type == "categorical":
         legacy_choices = []
         choice_options = []

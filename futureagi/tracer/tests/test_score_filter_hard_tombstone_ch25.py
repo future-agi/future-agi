@@ -184,6 +184,7 @@ def score_filter_tables(ch_client):
         CREATE TABLE {scores_table} (
             id UUID,
             trace_id Nullable(UUID),
+            trace_session_id Nullable(UUID),
             observation_span_id Nullable(String),
             tracer_project_id UUID,
             label_id UUID,
@@ -334,8 +335,12 @@ def _surface_query(
         params.update(relational_params)
         assert len(predicates) == 1
         sql = f"""
-        WITH resolved_root_sessions AS (
-            SELECT trace_id, trace_session_id AS session_id
+        WITH ts_survivor_map AS (
+            SELECT toUUID('00000000-0000-0000-0000-000000000000') AS any_id,
+                   any_id AS survivor_id
+            WHERE 0
+        ), resolved_root_sessions AS (
+            SELECT project_id, trace_id, trace_session_id AS session_id
             FROM {spans_table}
             WHERE project_id = %(project_id)s
               AND trace_session_id = toUUID('{SESSION_ID}')

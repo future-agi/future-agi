@@ -3486,6 +3486,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "user": "user_id",
                     "user_id": "user_id",
                     "user_id_type": "user_id_type",
+                    "user_id_hash": "user_id_hash",
                 }
 
                 def system_value_options(raw_values):
@@ -4026,12 +4027,12 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     enduser_col = enduser_string_cols[metric_name]
                     try:
                         sql = (
-                            f"SELECT DISTINCT {enduser_col} AS val "
+                            f"SELECT DISTINCT toString({enduser_col}) AS val "
                             f"FROM end_users FINAL "
                             f"WHERE project_id IN %(project_ids)s "
                             f"AND is_deleted = 0 "
                             f"AND {enduser_col} IS NOT NULL "
-                            f"AND {enduser_col} != '' "
+                            f"AND toString({enduser_col}) != '' "
                             f"ORDER BY val "
                             f"LIMIT 500"
                         )
@@ -4405,17 +4406,22 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             label is not None
                             and label.project_id is None
                             and project_scope.mode == "fixed"
-                            and not AnnotationLabelScoresProjectPG().label_has_scores_for_projects(
-                                label.id,
-                                list(project_scope.project_ids),
-                            )
                         ):
-                            # Project-scoped catalog reads deliberately exclude
-                            # workspace defaults unless a Score creates an exact
-                            # project visibility binding.  Apply the same rule
-                            # before publishing configured values so callers
-                            # cannot query an unrelated label by stable id.
-                            return None
+                            # Legacy requests need the same session-aware,
+                            # tenant-bound visibility as stable property IDs.
+                            scope = cursor_scope_for_request(
+                                request, project_ids=list(project_scope.project_ids)
+                            )
+                            scope["workspace_scope"] = False
+                            definition = CurrentDefinitionSource(
+                                filter_value_deadline
+                            ).resolve(
+                                scope=scope,
+                                property_id=f"annotation:{label.id}",
+                                source=source,
+                            )
+                            if definition is None:
+                                return None
                         return label
 
                     label = _run_filter_value_pg_read(
@@ -4424,6 +4430,10 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     )
                 except (TypeError, ValueError, ValidationError):
                     label = None
+                except DatabaseError:
+                    raise AnnotationScoreReadUnavailable(
+                        "Annotation score data is temporarily unavailable"
+                    ) from None
                 if label is None:
                     if page_size is None:
                         return self._gm.success_response({"values": []})
@@ -5380,6 +5390,11 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         import uuid as _uuid
 
         from model_hub.models.develop_dataset import Column
+        from tracer.services.dataset_choice_values import (
+            CHOICE_INTERPRETATION_CTE,
+            InvalidChoiceCell,
+            evaluation_choice_labels,
+        )
 
         # --- Input validation --------------------------------------------
         if not dataset_id or not column_id:
@@ -5423,6 +5438,9 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
 
         analytics = AnalyticsQueryService()
         search = query_params.get("search", "")
+        evaluation_choices = column.data_type == "array" and column.source in (
+            "evaluation", "experiment_evaluation", "optimisation_evaluation"
+        )
         max_values = (
             _FINITE_NATIVE_FILTER_VALUE_MAX
             if query_params.get("page_size") is not None
@@ -5430,15 +5448,26 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         )
         result_limit = max_values + 1
         try:
-            sql = (
-                "SELECT DISTINCT value AS val "
+            # Choice search must run on decoded labels, not escaped storage.
+            # Same-cell metadata disambiguates literal '[west]' from a list.
+            # Read a bounded complete inventory or refuse it; never sample.
+            projection = (
+                "value AS val, groupBitOr(if(literal_choice, 2, 1)) AS choice_modes"
+                if evaluation_choices else "DISTINCT value AS val"
+            )
+            search_clause = "" if evaluation_choices else (
+                "AND (%(search)s = '' OR "
+                "positionCaseInsensitiveUTF8(value, %(search)s) > 0) "
+            )
+            sql = (CHOICE_INTERPRETATION_CTE if evaluation_choices else "") + (
+                f"SELECT {projection} "
                 "FROM model_hub_cell FINAL "
                 "WHERE _peerdb_is_deleted = 0 "
                 "AND dataset_id = toUUID(%(dataset_id)s) "
                 "AND column_id = toUUID(%(column_id)s) "
                 "AND value != '' "
-                "AND (%(search)s = '' OR "
-                "positionCaseInsensitiveUTF8(value, %(search)s) > 0) "
+                f"{search_clause}"
+                f"{'GROUP BY value ' if evaluation_choices else ''}"
                 "ORDER BY val "
                 "LIMIT %(result_limit)s"
             )
@@ -5457,7 +5486,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "result_overflow_mode": "throw",
                 },
             )
-            raw = [row["val"] for row in result.data if row.get("val")]
+            raw = [row for row in result.data if row.get("val")]
         except Exception as exc:
             if is_clickhouse_api_read_unavailable_error(exc):
                 logger.warning(
@@ -5494,7 +5523,14 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         # suggests "English" instead of '["English","French"]'. Fall back
         # to the raw serialized string when parse fails or the structure
         # has nothing enumerable.
-        def _expand(serialized):
+        def _expand(serialized, choice_modes):
+            if evaluation_choices:
+                if type(choice_modes) is not int or choice_modes not in (1, 2, 3):
+                    raise InvalidChoiceCell("Invalid evaluation choice interpretation")
+                labels = evaluation_choice_labels(serialized) if choice_modes & 1 else []
+                if choice_modes & 2:
+                    labels += evaluation_choice_labels(serialized, literal=True)
+                return labels
             if column.data_type not in ("array", "json"):
                 return [serialized]
             try:
@@ -5528,9 +5564,9 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         seen = set()
         values = []
         try:
-            for raw_val in raw:
+            for row in raw:
                 deadline.remaining_ms(_FILTER_VALUES_INTERACTIVE_TIMEOUT_MS)
-                for v in _expand(raw_val):
+                for v in _expand(row["val"], row.get("choice_modes")):
                     if v not in seen:
                         seen.add(v)
                         values.append(v)
@@ -5540,17 +5576,20 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             "Too many values to browse exactly. Enter a more specific search.",
                             code="filter_value_inventory_too_broad",
                         )
-        except ReadDeadlineExceeded:
+        except (ReadDeadlineExceeded, InvalidChoiceCell):
             return self._gm.custom_error_response(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 "Filter values are temporarily unavailable. Please retry.",
                 code="service_unavailable",
             )
         values.sort(key=lambda s: s.lower())
+        options = [{"value": v, "label": v} for v in values]
+        if evaluation_choices:
+            options = _filter_value_options_for_search(options, search)
         return self._finite_native_filter_values_response(
             request,
             query_params=query_params,
-            values=[{"value": v, "label": v} for v in values],
+            values=options,
             query={
                 "source": "dataset_column",
                 "metric_name": str(column_id),

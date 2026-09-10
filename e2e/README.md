@@ -523,8 +523,9 @@ a CDC-sized budget to run out. Confirm by re-running the flow by itself
 not a product regression. That is a reason to run fewer workers locally, never a reason to add a
 retry.
 
-**Everything is strange after a product change.** Wipe and rebuild:
-`bin/e2e down -v && bin/e2e up`. The stack keeps no state worth preserving.
+**Everything is strange after a product change.** Inspect the failing service's
+logs and the source/image versions first. Keep retained fixtures, Kafka offsets
+and failed-bootstrap state for diagnosis; do not wipe volumes as a retry strategy.
 
 ---
 
@@ -535,16 +536,15 @@ E2E setup; each is worked around here so the suite can run, and each needs its o
 list with evidence lives in
 [`../../internal-docs/e2e-testing-setup/05-findings-log.md`](../../internal-docs/e2e-testing-setup/05-findings-log.md).
 
-- **`peerdb-setup-mirrors.sh` is fail-open** — peer and mirror failures are printed and swallowed,
-  then it reports "Done!" and exits 0. `bin/e2e` inspects the log and fails closed instead.
-- **`peerdb-init` races the backend's migrations** — its `depends_on` never includes the backend, so
-  on fresh volumes every `CREATE MIRROR` fails. `bin/e2e up` orders readiness before mirror setup.
-- **ClickHouse mirror DDL is behind the Postgres models** — `model_hub_score` and
-  `simulate_agent_definition` cannot be mirrored on a fresh install, which means **annotation scores
-  never reach ClickHouse on a fresh stack** (annotation columns and graphs stay empty). Warned about,
-  not silenced.
-- **`peerdb-init` is not given `CH25_DROP_LEGACY_CDC_CHAIN`** by the root compose, so it recreates a
-  retired mirror. The E2E overlay passes the flag.
+- The current root startup graph replaces the old shell/log-inspection workaround:
+  PG migrations and native ClickHouse initialization precede PeerDB setup, then
+  CDC readiness gates the backend/workers. The new setup does not create the
+  retired PG span mirror. The harness no longer force-recreates mirror jobs or
+  accepts `model_hub_score`/`simulate_agent_definition` failures as warnings.
+  Source columns are owned by PeerDB and checked against PostgreSQL metadata;
+  existing incompatible destinations stop startup instead of being overwritten.
+  Qualify both fresh and retained installations using the updated images before
+  treating this source/configuration change as a successful runtime release.
 - **Unfiltered eval graphs read a table the drop flag removes** (`eval_metrics_hourly`), so they are
   likely to 500 on any local or OSS stack. **Flows must not assert on unfiltered eval graphs.**
 - **The backend `:latest` image is ~15 GB uncompressed** (CUDA/NVIDIA wheels the OSS backend never

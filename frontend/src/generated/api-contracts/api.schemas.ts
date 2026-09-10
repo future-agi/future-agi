@@ -28092,8 +28092,7 @@ export type AgentccWebhooksList200 = {
 export type ApiTracesSpanAttributeDetailListParams = {
   project_id: string;
   /**
-   * @minLength 1
-   * @maxLength 512
+   * Nonempty exact attribute key, at most 4096 UTF-8 bytes. Whitespace, controls and case are preserved.
    */
   key: string;
   refresh?: boolean;
@@ -28107,8 +28106,7 @@ export type ApiTracesSpanAttributeKeysListParams = {
    */
   discovery_mode?: ApiTracesSpanAttributeKeysListDiscoveryMode;
   /**
-   * @minLength 1
-   * @maxLength 512
+   * Nonempty exact attribute key, at most 4096 UTF-8 bytes. Whitespace, controls and case are preserved.
    */
   q?: string;
   /**
@@ -28134,8 +28132,7 @@ export const ApiTracesSpanAttributeKeysListDiscoveryMode = {
 export type ApiTracesSpanAttributeValuesListParams = {
   project_id: string;
   /**
-   * @minLength 1
-   * @maxLength 512
+   * Nonempty exact attribute key, at most 4096 UTF-8 bytes. Whitespace, controls and case are preserved.
    */
   key: string;
   /**
@@ -30672,8 +30669,7 @@ export type TracerObservationSpanGetSpanAttributesListParams = {
   filters: string;
   row_type?: TracerObservationSpanGetSpanAttributesListRowType;
   /**
-   * @minLength 1
-   * @maxLength 512
+   * Nonempty exact attribute key, at most 4096 UTF-8 bytes. Whitespace, controls and case are preserved.
    */
   q?: string;
 };

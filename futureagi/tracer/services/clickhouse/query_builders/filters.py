@@ -695,6 +695,7 @@ class ClickHouseFilterBuilder:
         strict_enduser_project_correlation: bool = False,
         annotation_label_set_known: bool = False,
         eval_filter_metadata: dict[str, EvalFilterMetadata] | None = None,
+        resolved_candidate_sessions_table: str | None = None,
     ) -> None:
         self.table = table
         self.annotation_label_ids = annotation_label_ids or []
@@ -768,6 +769,19 @@ class ClickHouseFilterBuilder:
         # candidates, including parent_span_id and start_time. It is code-owned,
         # never an HTTP-supplied table or a raw/insert-only candidate index.
         self.resolved_candidate_spans_table = resolved_candidate_spans_table
+        if resolved_candidate_sessions_table is not None and (
+            re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", resolved_candidate_sessions_table)
+            is None
+            or query_mode != self.QUERY_MODE_TRACE
+            or candidate_ids_param is None
+        ):
+            raise ValueError(
+                "resolved_candidate_sessions_table requires a bounded internal trace relation"
+            )
+        # Only session classification supplies this already-live, finite mapping
+        # of (project_id, session_id, trace_id), including remapped session IDs.
+        # Trace/span callers must not inherit annotations from their session.
+        self.resolved_candidate_sessions_table = resolved_candidate_sessions_table
         # Organization trace pages can contain the same textual trace id in
         # more than one project.  Their residual predicates are compiled as
         # finite, per-project branches and opt into this guard so score rows
@@ -1129,6 +1143,27 @@ class ClickHouseFilterBuilder:
         renders in the trace row.
         """
         score_trace_expr = self._score_trace_id_expr()
+        session_join = ""
+        session_scope = ""
+        if self.resolved_candidate_sessions_table is not None:
+            has_session = (
+                "ifNull(s.trace_session_id, "
+                "toUUID('00000000-0000-0000-0000-000000000000')) != "
+                "toUUID('00000000-0000-0000-0000-000000000000')"
+            )
+            session_join = (
+                f"LEFT JOIN {self.resolved_candidate_sessions_table} AS session_sp "
+                "ON session_sp.session_id = s.trace_session_id "
+                "AND session_sp.project_id = s.tracer_project_id "
+            )
+            score_trace_expr = (
+                f"if({has_session}, toString(session_sp.trace_id), {score_trace_expr})"
+            )
+            # A missing join must not turn into a zero/default trace match.
+            session_scope = (
+                f" AND (NOT ({has_session}) "
+                "OR session_sp.session_id = s.trace_session_id)"
+            )
         select_keyword = "SELECT DISTINCT" if distinct else "SELECT"
         extra_clause = f" {extra_where}" if extra_where else ""
         date_clause = self._score_date_filter("s")
@@ -1148,12 +1183,14 @@ class ClickHouseFilterBuilder:
             f"FROM model_hub_score AS s FINAL "
             f"LEFT JOIN {spans_subq} AS sp "
             f"ON sp.id = s.observation_span_id "
+            f"{session_join}"
             f"WHERE {self._score_live_predicate('s')} "
             f"AND isNotNull({score_trace_expr}) "
             f"AND {score_trace_expr} != ''"
             f"{candidate_filter}"
             f"{date_clause}"
             f"{project_clause}"
+            f"{session_scope}"
             f"{extra_clause}"
         )
 
@@ -1873,6 +1910,21 @@ class ClickHouseFilterBuilder:
             f"AND {inner})"
         )
 
+    def _span_attr_key_sql(self, attribute_key: str) -> str:
+        """Render attribute data without relaxing SQL identifier validation."""
+        # Lazy import avoids the latest-predicate compiler's import of this
+        # builder. Share its exact UTF-8/length contract.
+        from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
+            _validate_attribute_key,
+        )
+
+        attribute_key = _validate_attribute_key(attribute_key)
+        # Even ASCII keys can equal a column name rewritten at the V2 schema
+        # boundary. Keep every key out of SQL text, including that rewrite.
+        param = self._next_param("attr_key")
+        self._params[param] = attribute_key
+        return f"%({param})s"
+
     def _build_span_attr_condition(
         self,
         attribute_key: str,
@@ -1884,7 +1936,7 @@ class ClickHouseFilterBuilder:
 
         Negation ops use ``exists AND value NOT …`` so MV-gap rows are excluded.
         """
-        attribute_key = _sanitize_key(attribute_key)
+        attribute_key = self._span_attr_key_sql(attribute_key)
 
         normalized_filter_type, map_column, value_coercer = (
             self._resolve_span_attr_type(filter_type)
@@ -1894,7 +1946,7 @@ class ClickHouseFilterBuilder:
         normalized_value = self._normalize_span_attr_value(
             filter_op, value_coercer, filter_value
         )
-        exists_predicate = f"mapContains({map_column}, '{attribute_key}')"
+        exists_predicate = f"mapContains({map_column}, {attribute_key})"
         if filter_op in NO_VALUE_OPS:
             return self._scope_span_attr_inner(
                 exists_predicate,
@@ -1978,7 +2030,7 @@ class ClickHouseFilterBuilder:
         preserving the ordinary homogeneous filter contract.
         """
 
-        attribute_key = _sanitize_key(attribute_key)
+        attribute_key = self._span_attr_key_sql(attribute_key)
         if filter_op not in LIST_OPS:
             raise ValueError(
                 "attribute_value_types is only supported for in/not_in filters"
@@ -2030,7 +2082,7 @@ class ClickHouseFilterBuilder:
             normalized_values = self._normalize_span_attr_value(
                 "in", value_coercer, values
             )
-            exists_predicate = f"mapContains({map_column}, '{attribute_key}')"
+            exists_predicate = f"mapContains({map_column}, {attribute_key})"
             exists_predicates.append(exists_predicate)
             predicate = self._span_attr_inner(
                 map_column,
@@ -2124,8 +2176,10 @@ class ClickHouseFilterBuilder:
         ``case_insensitive`` is set for text-typed span attributes. Equality
         and membership use Unicode-aware case folding; substring operations
         treat the supplied value as a literal UTF-8 needle.
+        ``attribute_key`` is the literal/placeholder from _span_attr_key_sql,
+        not raw user text (also passed through the v2 override).
         """
-        column_access = f"{map_column}['{attribute_key}']"
+        column_access = f"{map_column}[{attribute_key}]"
         eq_lhs = (
             f"lowerUTF8(toString({column_access}))"
             if case_insensitive

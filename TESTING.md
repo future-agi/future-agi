@@ -37,8 +37,7 @@ Coverage thresholds (global): **70%** for branches, functions, lines, and statem
 
 API journeys require `API_BASE` plus either `FUTURE_AGI_ACCESS_TOKEN` or
 `FUTURE_AGI_EMAIL`/`FUTURE_AGI_PASSWORD`. Mutating annotation coverage is opt-in
-with `API_JOURNEY_MUTATIONS=1`. The full guide lives in
-`../internal-docs/api-ui-e2e-coverage/API_JOURNEY_GUIDE.md`.
+with `API_JOURNEY_MUTATIONS=1`.
 
 ### Backend (Django + pytest, Compose dependencies)
 
@@ -54,15 +53,30 @@ make test-shell          # Interactive test shell
 
 Under the hood, `make test` delegates to `bin/test`, which runs pytest with the local Python environment and starts dependencies in `docker-compose.test.yml` (Postgres, Redis, ClickHouse, and MinIO). See `bin/test --help` for lower-level options. The project name is fixed to `futureagi-test`; coordinate ownership before using it alongside another checkout.
 
-### Collector and deployment contracts (no services)
+### Collector and deployment contracts
+
+Do **not** run the full collector suite on a shared host: it includes fixed-port
+listeners and environment-gated integration writers. Run the Go test command
+below only in a fresh, disposable **network-none network namespace** with its
+own loopback, no host networking or published ports, and an explicit environment
+allowlist excluding ambient `OBS_TEST_*` and `CH_TEST_*` variables. Do not enable
+the `integration` build tag in this unit lane. Prepare dependencies separately;
+do not give test execution external network access.
 
 ```bash
-(cd fi-collector && go test -race ./...)
+# Full suite: inside the isolated namespace described above, never on the host.
+(cd fi-collector && go test -race -count=1 ./...)
 (cd fi-collector && go build ./cmd/fi-collector ./cmd/fi-property-catalog-consumer ./cmd/fi-observed-catalog-backfill)
-python3 -m unittest discover -s deploy/tests -p 'test_observed_catalog_compose.py' -v
+python3 -m unittest discover -s deploy/tests -p 'test_observed_catalog_*.py' -v
 ```
 
-The deployment suite renders root/dev/E2E Compose and exercises bootstrap with a fake ClickHouse client. It does not start containers or create databases. Runtime observation validation uses the existing E2E harness; see [`fi-collector/PROPERTY_CATALOG_OSS.md`](fi-collector/PROPERTY_CATALOG_OSS.md) for source-built images and the bounded backfill command.
+Report environment-gated integration skips separately from executed unit tests;
+they do not qualify real ClickHouse/Kafka/PostgreSQL behavior. A non-race binary
+run is not race qualification. Targeted in-memory/transport-only tests may run
+directly under deny-all networking. Tests using `miniredis` or `httptest` need
+only their own loopback listeners, never borrowed host services.
+
+The deployment suite renders root/dev/E2E/production Compose, checks the startup dependency graph and mutation guards, and exercises index bootstrap with a fake ClickHouse client. It does not start containers or create databases. Passing configuration tests is not a fresh/retained startup proof. Runtime observation validation uses the existing E2E harness; see [`fi-collector/PROPERTY_CATALOG_OSS.md`](fi-collector/PROPERTY_CATALOG_OSS.md) for source-built images and the bounded backfill command.
 
 ### Observed catalog integration (isolated dependencies)
 

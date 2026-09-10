@@ -12,6 +12,32 @@ x-dev-worker: &dev-worker
     CH_DUAL_WRITE: "false"
 
 services:
+  # Developer restarts must not run migrations or modify retained mirrors.
+  # Fresh installations use the root Compose bootstrap before this overlay.
+  postgres-schema-bootstrap:
+    <<: *dev-worker
+    entrypoint: ["python"]
+    command: ["manage.py", "migrate", "--check", "--noinput"]
+
+  clickhouse-native-bootstrap:
+    <<: *dev-worker
+    command: ["--phase", "native"]
+
+  peerdb-init:
+    <<: *dev-worker
+    command: ["--wait-for-mirrors", "--timeout", "900"]
+    environment:
+      FAST_STARTUP: "true"
+      NO_STARTUP_DB_MUTATIONS: "true"
+
+  peerdb-temporal-init:
+    <<: *dev-worker
+    command: []
+
+  clickhouse-cdc-bootstrap:
+    <<: *dev-worker
+    command: ["--phase", "cdc", "--wait-for-mirrors", "--timeout", "900"]
+
   frontend:
     build:
       context: ./frontend
@@ -169,11 +195,6 @@ services:
     profiles: !reset []
   peerdb-ui:
     profiles: !reset []
-  peerdb-temporal-init:
-    profiles: !reset []
-  peerdb-init:
-    profiles: !reset []
-
   pgbouncer:
     image: edoburu/pgbouncer:1.18.0
     ports:

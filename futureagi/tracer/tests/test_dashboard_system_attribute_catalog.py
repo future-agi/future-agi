@@ -1,4 +1,4 @@
-"""Dashboard model suggestions use the current, authorization-bound index."""
+"""Dashboard suggestions use their declared, authorization-bound value reader."""
 
 from __future__ import annotations
 
@@ -200,3 +200,67 @@ def test_workspace_model_cursor_reauthorizes_membership_before_index_read(monkey
     assert resumed.data["code"] == "cursor_mismatch"
     assert len(scope_calls) == 2
     assert len(calls) == 2
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("page_size", [None, 1])
+def test_users_hash_uses_native_end_user_reader_and_preserves_paging(
+    monkeypatch, page_size
+):
+    from tracer.serializers.dashboard import DashboardFilterValuesQuerySerializer
+
+    project_id = _uuid(1)
+    scope_reads, calls = [], []
+
+    def authorize(request, requested, **_kwargs):
+        scope_reads.append((request.workspace.id, requested))
+        return requested
+
+    def execute(sql, params, **_kwargs):
+        calls.append((sql, params))
+        values = ["0", "hash-z"]
+        if params.get("value_after") is not None:
+            values = [value for value in values if value > params["value_after"]]
+        return SimpleNamespace(data=[{"val": value} for value in values])
+
+    monkeypatch.setattr(
+        dashboard_view, "_bounded_authorized_filter_value_projects", authorize
+    )
+    monkeypatch.setattr(
+        dashboard_view,
+        "V2AnalyticsQueryService",
+        lambda: SimpleNamespace(execute_ch_query=execute),
+    )
+    raw = {
+        "source": "sessions",
+        "property_id": "system_attribute:users:user_id_hash",
+        "project_ids": project_id,
+    }
+    if page_size is not None:
+        raw["page_size"] = page_size
+    serializer = DashboardFilterValuesQuerySerializer(data=raw)
+    assert serializer.is_valid(), serializer.errors
+    params = serializer.validated_data
+    first = _invoke(params)
+    assert first.status_code == 200, first.data
+    payload = first.data["result"]
+    assert payload["values"] == [
+        {"value": value, "label": value}
+        for value in (["0", "hash-z"] if page_size is None else ["0"])
+    ]
+    assert "FROM end_users" in calls[0][0]
+    assert "user_id_hash" in calls[0][0]
+    assert scope_reads == [(UUID(int=90_002), (project_id,))]
+    if page_size is not None:
+        assert payload["has_more"] is True
+        assert payload["query_complete"] is True
+        second = _invoke({**params, "cursor": payload["next_cursor"]})
+        assert second.status_code == 200, second.data
+        assert second.data["result"]["values"] == [
+            {"value": "hash-z", "label": "hash-z"}
+        ]
+        assert second.data["result"]["has_more"] is False
+        assert second.data["result"]["next_cursor"] is None
+        assert second.data["result"]["query_complete"] is True
+        assert calls[1][1]["value_after"] == "0"
+        assert len(scope_reads) == 2

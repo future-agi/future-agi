@@ -28,11 +28,11 @@ from typing import Any
 from tracer.services.clickhouse.query_builders.dashboard import (
     AGGREGATIONS,
     DashboardQueryBuilder,
-    _sanitize_attr_key,
 )
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     LatestFilterPredicate,
     UnsupportedFilterShapeError,
+    _validate_attribute_key,
     compile_span_attribute_row_predicate,
     compile_span_filter_plans,
 )
@@ -296,7 +296,7 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
                 if attribute_map is None:
                     continue
                 key = f"dashboard_candidate_breakdown_key_{index}"
-                params[key] = _sanitize_attr_key(breakdown.get("name", ""))
+                params[key] = _validate_attribute_key(breakdown.get("name", ""))
                 presences.append((attribute_map, key))
             for attribute_map, key in presences:
                 column = f"dashboard_candidate_source.{attribute_map}"
@@ -527,7 +527,7 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
             previous = getattr(self, "_exact_metric_presence", None)
             attribute_map = attribute_maps.get(metric.get("attribute_type", "number"))
             self._exact_metric_presence = (
-                (attribute_map, _sanitize_attr_key(metric.get("attribute_key", "")))
+                (attribute_map, _validate_attribute_key(metric.get("attribute_key", "")))
                 if attribute_map is not None
                 else None
             )
@@ -542,7 +542,7 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
             finally:
                 self._exact_metric_presence = previous
 
-        attr_key = _sanitize_attr_key(metric.get("attribute_key", ""))
+        attr_key = _validate_attribute_key(metric.get("attribute_key", ""))
         params = dict(params)
         params["custom_metric_attr_key"] = attr_key
         exact_filters = []
@@ -576,7 +576,7 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
         group_columns = ["time_bucket"]
         live_columns = ["start_time", "metric_value"]
         if breakdown_map is not None:
-            params["_custom_bd_key_0"] = _sanitize_attr_key(scalar_breakdown["name"])
+            params["_custom_bd_key_0"] = _validate_attribute_key(scalar_breakdown["name"])
             breakdown_state = f""",
                             mapContains(custom_metric_source.{breakdown_map}, %(_custom_bd_key_0)s),
                             custom_metric_source.{breakdown_map}[%(_custom_bd_key_0)s]"""

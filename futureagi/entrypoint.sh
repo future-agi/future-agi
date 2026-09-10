@@ -363,7 +363,13 @@ should_register_temporal_schedules() {
 }
 
 if should_register_temporal_schedules; then
-    python manage.py register_temporal_schedules || echo "WARNING: Temporal schedule registration failed (non-fatal), continuing startup..."
+    if ! python manage.py register_temporal_schedules; then
+        if [ "$SERVICE_TYPE" = "bootstrap" ]; then
+            echo "ERROR: Temporal schedule registration failed; bootstrap is incomplete"
+            exit 1
+        fi
+        echo "WARNING: Temporal schedule registration failed (non-fatal), continuing startup..."
+    fi
 else
     echo "Temporal schedule registration disabled for service type: $SERVICE_TYPE"
 fi

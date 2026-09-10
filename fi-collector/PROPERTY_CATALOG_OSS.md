@@ -6,7 +6,7 @@ The root Compose stack runs one Kafka observation topic and one consumer:
 
 The consumer writes `observed_attribute_keys` and `observed_attribute_values`
 in the isolated `property_catalog` ClickHouse database. Definitions and values
-from relational metadata keep their native readers. There is no sequencer,
+from relational metadata keep their native readers. The live pipeline has no sequencer,
 activation, epoch, revision, projection, Python supervisor or catalog schedule.
 
 ## Suggestion semantics
@@ -49,6 +49,52 @@ use the standard E2E harness for a fresh installation test.
 Kafka, topic creation and the two-index bootstrap have explicit startup
 dependencies. The consumer image is built from this checkout and also contains
 `fi-observed-catalog-backfill`. Collector and consumer must use the same image.
+
+The application uses a separate, ordered native-data bootstrap:
+
+```text
+PG migrations/seeds → native ClickHouse tables → PeerDB initial snapshot/CDC
+                                              → CDC schema checks → backend/workers
+```
+
+The collector waits for PG and native tables; the observation consumer needs only
+Kafka and its two isolated indexes. Native relational sources use PeerDB; they
+are not replaced with periodically rescanned catalog snapshots. New mirrors copy
+existing PostgreSQL rows before switching to CDC. The separate span-backfill
+command below handles historical span observations.
+
+All bootstrap jobs use the same backend image as the application. Django's old
+broad ClickHouse migration is skipped; the native initializer creates only its
+explicit native objects, and the CDC initializer owns only derived dependencies.
+Existing peer bindings, destination schemas and source ownership are checked
+before setup. No existing mirror is reset, resynced or silently reconfigured.
+New peers and mirrors use the flow HTTP API, not the PeerDB SQL server. Each new
+mirror explicitly enables nullable source columns and initial snapshotting,
+independent of worker environment defaults. The SQL server and optional UI remain
+available separately; a CREATE acknowledgement is not CDC readiness.
+The new initializer never includes the retired span mirror, regardless of legacy
+drop-flag settings; the collector remains the native span writer.
+Failed jobs retain partial state and block dependants. Inspect their logs before
+explicitly resuming; do not remove volumes or use the legacy bulk-copy helper to
+hide a setup failure.
+
+Development and production overlays run these checks without `--apply` and check
+that PostgreSQL migrations are already current. A compatible, already-running
+initial snapshot gets a bounded read-only wait; missing or incompatible setup
+still fails instead of being created or repaired automatically. They do not inherit local
+fresh-install mutations. Native/source/collector databases must currently be
+co-located; incompatible split routing fails validation. Hosted/replicated
+installation still requires its separately qualified deployment path.
+
+The pinned PeerDB/ClickHouse combination mirrors a whole SQL NULL in
+`simulate_agent_definition.languages` as an empty `Array(String)`. PeerDB's
+[nullable mapping excludes arrays](https://github.com/PeerDB-io/peerdb/blob/v0.36.9/flow/model/qvalue/kind.go#L98-L104),
+and ClickHouse does not support
+[`Nullable(Array(...))`](https://clickhouse.com/docs/reference/data-types/nullable).
+Current catalog readers do not consume this column; agent APIs retain their
+PostgreSQL source. This is a specific raw-mirror fidelity limitation, not a
+general equivalence between NULL and empty values. Scalar nullability, JSON eval
+choices/annotations/tags and observed attribute arrays keep their own contracts.
 
 ## Configuration
 
@@ -95,12 +141,23 @@ local enqueue, a full/lost spool, or expired Kafka history can leave missing
 observations. Repair a bounded source range with `fi-observed-catalog-backfill`;
 ordinary restarts do not launch historical scans.
 
+Alert on the structured `observed_catalog_handoff_gap` log event. Accompanying
+`observed_catalog_repair_scope` events identify verified organization/workspace/
+project IDs and inclusive UTC source-time bounds, without attribute payloads.
+These conservatively cover the failed batch, including any observations already
+persisted. A nonzero `unresolved_spans` count requires ownership/timestamp
+investigation before selecting a repair scope. Logs are not a durable journal:
+an abrupt crash before handoff can still require source-range reconciliation.
+
 For a span backfill, set `PROJECT_ID` to one current project UUID and `SINCE` /
 `UNTIL` to an inclusive/exclusive RFC3339 range. Supply read-only source
 credentials in `FI_PG_DSN` and `FI_OBSERVED_BACKFILL_CH_URL`,
 `FI_OBSERVED_BACKFILL_CH_DATABASE`, `FI_OBSERVED_BACKFILL_CH_USERNAME`,
 `FI_OBSERVED_BACKFILL_CH_PASSWORD`. The PG connection verifies current project
 ownership; it is not the catalog writer.
+
+When using logged bounds, convert them to RFC3339 UTC and choose `UNTIL` strictly
+after `source_last_seen` (at least one microsecond) to include the final span.
 
 Preview first; without `--apply` the command does not publish observations:
 
@@ -144,7 +201,8 @@ a read-only metadata gate checks the actual column names/types, min/max timestam
 aggregates, full sorting/primary identity (including `value_json`), partitioning,
 constraints and absence of TTL. An incompatible pre-existing table fails startup;
 `IF NOT EXISTS` does not silently accept it or rewrite existing data.
-No PostgreSQL bootstrap or source-table grant is required.
+No PostgreSQL bootstrap or source-table grant is required for these two isolated
+indexes; application-native data has the separate startup sequence above.
 
 The local bootstrap creates plain AggregatingMergeTree tables. For replicated
 deployments, render the separate schema through the existing
@@ -157,7 +215,7 @@ SQL files. Existing catalog tables may coexist with the new indexes.
 Service-free deployment checks:
 
 ```sh
-python3 -m unittest discover -s deploy/tests -p test_observed_catalog_compose.py -v
+python3 -m unittest discover -s deploy/tests -p 'test_observed_catalog_*.py' -v
 ```
 
 For bounded ClickHouse/Kafka/PostgreSQL and OTLP HTTP integration without the
@@ -171,6 +229,9 @@ Use the existing `fi-collector` Go suite, backend `futureagi/bin/test`, and
 from source with `bin/e2e build backend` and `bin/e2e build collector`; set
 `FUTURE_AGI_VERSION=e2e-local E2E_FI_COLLECTOR_VERSION=e2e-local` for startup.
 The E2E stack explicitly includes the consumer and maps Kafka to port 29093.
+Native eval/annotation/dataset/prompt/simulation journeys need separate E2E
+validation; passing Observe flows does not qualify all native sources or a
+production deployment.
 
 Check project ownership and ports before starting a harness alongside another
 checkout. `futureagi/bin/test down` deletes its test volumes; do not use it to

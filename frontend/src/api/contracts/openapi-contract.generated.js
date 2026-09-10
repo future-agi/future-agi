@@ -8638,8 +8638,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: true,
             schema: {
               type: "string",
-              minLength: 1,
-              maxLength: 512,
             },
           },
           refresh: {
@@ -8705,8 +8703,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              minLength: 1,
-              maxLength: 512,
             },
           },
           page_size: {
@@ -8766,8 +8762,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: true,
             schema: {
               type: "string",
-              minLength: 1,
-              maxLength: 512,
             },
           },
           q: {
@@ -33609,8 +33603,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              minLength: 1,
-              maxLength: 512,
             },
           },
         },

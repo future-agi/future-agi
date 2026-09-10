@@ -14,6 +14,7 @@ from datetime import datetime
 from unittest import mock
 
 import pytest
+from clickhouse_connect.driver.binding import finalize_query
 
 
 def _patched_empty_eval_metadata():
@@ -1028,7 +1029,8 @@ class TestClickHouseFilterBuilder:
 
         assert "project_id IN %(project_ids)s" in where
         assert "project_id = %(project_id)s" not in where
-        assert params == {"attr_1": "openai"}
+        assert params == {"attr_key_1": "metadata.provider", "attr_2": "openai"}
+        assert "mapContains(span_attr_str, %(attr_key_1)s)" in where
 
     def test_has_eval_org_mode_uses_project_ids(self):
         """has_eval joins spans for project scope and must support org mode."""
@@ -9777,6 +9779,8 @@ def _translate_one(filter_dict, *, query_mode="trace"):
 
     builder = ClickHouseFilterBuilder(query_mode=query_mode)
     where, params = builder.translate([filter_dict])
+    assert params["attr_key_1"] == filter_dict["column_id"]
+    assert "%(attr_key_1)s" in where
     return where, params
 
 
@@ -9798,19 +9802,21 @@ class TestSpanAttrConditionContract:
             )
         )
         assert "span_attr_str" in where
-        assert "mapContains(span_attr_str, 'k')" in where
+        assert "mapContains(span_attr_str, 'k')" in finalize_query(where, params)
         assert "= %(" in where
         assert "v" in params.values()
 
     def test_text_not_equals_uses_exists_and(self):
         """not_equals must require key present (exists AND ...), not the
         legacy NOT exists OR ... shape that leaked rows past the filter."""
-        where, _ = _translate_one(
+        where, params = _translate_one(
             _span_attr_filter(
                 "k", filter_type="text", filter_op="not_equals", filter_value="v"
             )
         )
-        assert "AND lowerUTF8(toString(span_attr_str['k'])) != " in where
+        assert "AND lowerUTF8(toString(span_attr_str['k'])) != " in finalize_query(
+            where, params
+        )
         assert "NOT mapContains" not in where
 
     def test_text_in(self):
@@ -9819,7 +9825,9 @@ class TestSpanAttrConditionContract:
                 "k", filter_type="text", filter_op="in", filter_value=["a", "b"]
             )
         )
-        assert "lowerUTF8(toString(span_attr_str['k'])) IN" in where
+        assert "lowerUTF8(toString(span_attr_str['k'])) IN" in finalize_query(
+            where, params
+        )
         assert ("a", "b") in params.values()
 
     def test_text_not_in_uses_exists_and(self):
@@ -9833,8 +9841,11 @@ class TestSpanAttrConditionContract:
                 filter_value=["voicemail", "assistant-ended-call"],
             )
         )
-        assert "mapContains(span_attr_str, 'ended_reason')" in where
-        assert "AND lowerUTF8(toString(span_attr_str['ended_reason'])) NOT IN" in where
+        rendered = finalize_query(where, params)
+        assert "mapContains(span_attr_str, 'ended_reason')" in rendered
+        assert (
+            "AND lowerUTF8(toString(span_attr_str['ended_reason'])) NOT IN" in rendered
+        )
         assert "NOT mapContains" not in where
         assert ("voicemail", "assistant-ended-call") in params.values()
 
@@ -9878,22 +9889,25 @@ class TestSpanAttrConditionContract:
         assert "abc" in params.values()
 
     def test_text_is_null(self):
-        where, _ = _translate_one(
+        where, params = _translate_one(
             _span_attr_filter("k", filter_type="text", filter_op="is_null")
         )
         assert "trace_id NOT IN (SELECT trace_id FROM (" in where
         assert "argMax(_peerdb_is_deleted, _peerdb_version)" in where
         assert (
-            "argMax(toUInt8(mapContains(span_attr_str, 'k')), _peerdb_version)" in where
+            "argMax(toUInt8(mapContains(span_attr_str, 'k')), _peerdb_version)"
+            in finalize_query(where, params)
         )
         assert "WHERE latest_is_deleted = 0 AND latest_attribute_match = 1" in where
-        assert "NOT mapContains(span_attr_str, 'k')" not in where
+        assert "NOT mapContains(span_attr_str, 'k')" not in finalize_query(
+            where, params
+        )
 
     def test_text_is_not_null(self):
-        where, _ = _translate_one(
+        where, params = _translate_one(
             _span_attr_filter("k", filter_type="text", filter_op="is_not_null")
         )
-        assert "mapContains(span_attr_str, 'k')" in where
+        assert "mapContains(span_attr_str, 'k')" in finalize_query(where, params)
         assert "NOT mapContains" not in where
 
     # ------------------------------------------------------------------
@@ -9937,7 +9951,7 @@ class TestSpanAttrConditionContract:
         assert 50.0 in params.values()
 
     def test_number_not_between_uses_exists_and(self):
-        where, _ = _translate_one(
+        where, params = _translate_one(
             _span_attr_filter(
                 "n",
                 filter_type="number",
@@ -9945,7 +9959,7 @@ class TestSpanAttrConditionContract:
                 filter_value=["10", "50"],
             )
         )
-        assert "AND span_attr_num['n'] NOT BETWEEN" in where
+        assert "AND span_attr_num['n'] NOT BETWEEN" in finalize_query(where, params)
         assert "NOT mapContains" not in where
 
     def test_number_legacy_not_in_between_is_rejected(self):
@@ -10123,17 +10137,20 @@ class TestSpanAttrConditionContract:
                 )
             )
 
-    def test_sql_injection_via_key_raises(self):
-        """Key sanitizer must reject anything outside [a-zA-Z0-9._-]."""
-        with pytest.raises(ValueError):
-            _translate_one(
-                _span_attr_filter(
-                    "k'; DROP TABLE spans; --",
-                    filter_type="text",
-                    filter_op="equals",
-                    filter_value="v",
-                )
+    def test_sql_looking_key_is_bound_as_data(self):
+        """Attribute data may contain SQL syntax; it must not enter SQL text."""
+        key = "k'; DROP TABLE spans; --"
+        where, params = _translate_one(
+            _span_attr_filter(
+                key,
+                filter_type="text",
+                filter_op="equals",
+                filter_value="v",
             )
+        )
+        assert key not in where
+        assert params == {"attr_key_1": key, "attr_2": "v"}
+        assert "'k\\'; DROP TABLE spans; --'" in finalize_query(where, params)
 
     # ------------------------------------------------------------------
     # trace-mode wrap vs span-mode bare

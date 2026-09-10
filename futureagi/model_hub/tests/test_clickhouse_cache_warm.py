@@ -155,6 +155,91 @@ def test_mutation_guard_allows_required_read_only_and_server_commands(argv):
     assert guarded_management_command(argv) is None
 
 
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        ["manage.py"],
+        ["/app/backend/manage.py"],
+        ["django-admin"],
+        ["django-admin.py"],
+        ["/usr/lib/python3/site-packages/django/__main__.py"],
+        ["python", "-m", "django"],
+    ],
+)
+@pytest.mark.parametrize(
+    "options", [["--check"], ["--check", "--noinput"], ["--no-input", "--check"]]
+)
+def test_migrate_check_is_read_only_without_mutation_authority(prefix, options):
+    argv = [*prefix, "migrate", *options]
+
+    assert guarded_management_command(argv) is None
+    assert operator_startup_mutation_authorized(argv) is False
+    assert explicit_management_mutation_authorized(argv) is False
+
+
+@pytest.mark.parametrize("mode", ["guarded", "local-mutations", "hosted-operator"])
+def test_migrate_check_ready_never_authorizes_mutations_or_connects_seed(
+    monkeypatch, mode
+):
+    monkeypatch.setenv("NO_STARTUP_DB_MUTATIONS", "true")
+    if mode == "local-mutations":
+        monkeypatch.setenv("NO_STARTUP_DB_MUTATIONS", "false")
+    elif mode == "hosted-operator":
+        monkeypatch.setenv("ENV_TYPE", "production")
+        monkeypatch.setenv("SERVICE_TYPE", "bootstrap")
+        monkeypatch.setenv("STARTUP_DB_MUTATION_MODE", "operator")
+    monkeypatch.setattr(sys, "argv", ["manage.py", "migrate", "--check", "--noinput"])
+    authorize = Mock(
+        side_effect=AssertionError("check must not seek mutation authority")
+    )
+    connect = Mock()
+    monkeypatch.setattr(
+        "model_hub.apps.explicit_management_mutation_authorized", authorize
+    )
+    monkeypatch.setattr("model_hub.apps.post_migrate.connect", connect)
+
+    ModelHubConfig("model_hub", sys.modules["model_hub"]).ready()
+
+    assert startup_db_mutations_disabled() is True
+    authorize.assert_not_called()
+    connect.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        [],
+        ["--noinput"],
+        ["--check", "--prune", "model_hub"],
+        ["--prune", "model_hub", "--check"],
+        ["--check", "--pr"],
+        ["--check", "--fake"],
+        ["--check", "--fake-initial"],
+        ["--check", "--run-syncdb"],
+        ["--check", "--run-s"],
+        ["--check", "model_hub", "zero"],
+        ["--check", "--database", "default"],
+        ["--check", "--settings=other.settings"],
+        ["--check", "--future-option"],
+        ["--che"],
+        ["--check=true"],
+        ["--", "--check"],
+    ],
+)
+def test_migrate_check_does_not_bypass_guard_for_other_arguments(monkeypatch, options):
+    monkeypatch.setenv("NO_STARTUP_DB_MUTATIONS", "true")
+    argv = ["manage.py", "migrate", *options]
+    monkeypatch.setattr(sys, "argv", argv)
+    connect = Mock()
+    monkeypatch.setattr("model_hub.apps.post_migrate.connect", connect)
+
+    assert guarded_management_command(argv) == "migrate"
+    assert explicit_management_mutation_authorized(argv) is False
+    with pytest.raises(RuntimeError, match="^migrate is disabled"):
+        ModelHubConfig("model_hub", sys.modules["model_hub"]).ready()
+    connect.assert_not_called()
+
+
 def test_ready_rejects_unsafe_management_command_before_pytest_shortcut(monkeypatch):
     monkeypatch.setenv("NO_STARTUP_DB_MUTATIONS", "true")
     monkeypatch.setattr(sys, "argv", ["manage.py", "migrate"])

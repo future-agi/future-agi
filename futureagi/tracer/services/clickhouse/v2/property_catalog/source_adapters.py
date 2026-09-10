@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 from uuid import UUID
 
+from tracer.constants.dashboard import TEXT_ANNOTATION_AGGREGATIONS
 from tracer.services.configured_value_options import configured_value_options
 from tracer.utils.property_registry import canonical_system_attribute_name
 
@@ -617,6 +618,8 @@ def _annotation_definition(row: Mapping[str, Any]) -> PropertyDefinition:
     label_type = str(row.get("type") or "numeric")
     settings = row.get("settings") if isinstance(row.get("settings"), Mapping) else {}
     details: dict[str, Any] = {"data_type": label_type}
+    if label_type == "text":
+        details["allowed_aggregations"] = TEXT_ANNOTATION_AGGREGATIONS
     choice_options = ()
     if label_type == "categorical":
         choice_options = configured_value_options(settings.get("options"))
@@ -984,7 +987,9 @@ class CurrentDefinitionSource:
                 ),
             )
         scores = Score.no_workspace_objects.filter(
-            Q(trace_id__isnull=False) | Q(observation_span_id__isnull=False),
+            Q(trace_id__isnull=False)
+            | Q(observation_span_id__isnull=False)
+            | Q(trace_session_id__isnull=False),
             organization_id=org,
             workspace_id=workspace,
             tracer_project_id__in=projects,
