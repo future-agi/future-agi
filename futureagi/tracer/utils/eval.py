@@ -2761,6 +2761,25 @@ _trace_span_memo: ContextVar[dict[str, list] | None] = ContextVar(
 )
 
 
+def mapping_resolution_coverage(mapping, spans, eval_template_id) -> int:
+    """How many of ``spans`` have every mapped key resolve to a value.
+
+    The same resolver the eval run uses, so a zero here is exactly the zero the
+    run would produce, without spending a model call to find out.
+    """
+    if not mapping:
+        return len(spans)
+    hits = 0
+    for span in spans:
+        try:
+            resolved = _process_mapping(dict(mapping), span, eval_template_id)
+        except Exception:
+            continue
+        if resolved and all(v not in (None, "", "None") for v in resolved.values()):
+            hits += 1
+    return hits
+
+
 def _resolve_span_path(span: ObservationSpan, path: str):
     """Walk a path against a span via the ``span_attributes`` bag.
 

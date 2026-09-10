@@ -4,7 +4,7 @@ import pytest
 
 from ai_tools.registry import registry
 from ai_tools.tests.conftest import run_tool
-from ai_tools.tests.fixtures import make_project, make_trace
+from ai_tools.tests.fixtures import make_eval_template, make_project, make_trace
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -319,3 +319,135 @@ class TestDeleteProjectTool:
         )
 
         assert result.is_error
+
+
+# ---------------------------------------------------------------------------
+# create_eval_task: the mapping has to resolve on the spans the task will read
+# ---------------------------------------------------------------------------
+
+
+class TestEvalTaskMappingGate:
+    """The project attribute list is a union over every span, so a path that
+    only ever appears on one span type passes config creation and then reads
+    empty on the type the task is scoped to."""
+
+    @pytest.fixture
+    def project(self, tool_context):
+        return make_project(tool_context, name="gate-project")
+
+    @pytest.fixture
+    def spans(self, tool_context, project):
+        from tracer.models.observation_span import ObservationSpan
+
+        trace = make_trace(tool_context, project=project)
+        for i in range(3):
+            ObservationSpan.objects.create(
+                id=f"span-agent-{i}-{uuid.uuid4().hex[:6]}",
+                project=project,
+                trace=trace,
+                name="support.conversation",
+                observation_type="agent",
+                input={"value": "where is my booking"},
+                output={"value": "it departs at 09:40"},
+                span_attributes={},
+            )
+            ObservationSpan.objects.create(
+                id=f"span-llm-{i}-{uuid.uuid4().hex[:6]}",
+                project=project,
+                trace=trace,
+                name="ChatCompletion",
+                observation_type="llm",
+                span_attributes={"raw.input": "[...]", "raw.output": "{...}"},
+            )
+        return project
+
+    def _config(self, tool_context, project, name, mapping):
+        from tracer.models.custom_eval_config import CustomEvalConfig
+
+        template = make_eval_template(
+            tool_context,
+            name=f"tmpl-{name}",
+            config={"required_keys": list(mapping), "custom_eval": True},
+        )
+        return CustomEvalConfig.objects.create(
+            eval_template=template,
+            name=name,
+            project=project,
+            model="turing_large",
+            mapping=mapping,
+        )
+
+    def test_a_mapping_that_resolves_is_allowed(self, tool_context, spans):
+        cfg = self._config(
+            tool_context, spans, "body-config", {"input": "input", "output": "output"}
+        )
+        result = run_tool(
+            "create_eval_task",
+            {
+                "project_id": str(spans.id),
+                "name": "good-task",
+                "eval_config_ids": [str(cfg.id)],
+            },
+            tool_context,
+        )
+        assert not result.is_error, result.content
+
+    def test_a_mapping_that_resolves_on_nothing_is_refused(self, tool_context, spans):
+        """`raw.input` is a real key on this project, on the llm spans. It is
+        not on the agent spans, and this task is scoped to those."""
+        cfg = self._config(
+            tool_context,
+            spans,
+            "raw-config",
+            {"input": "raw.input", "output": "raw.output"},
+        )
+        result = run_tool(
+            "create_eval_task",
+            {
+                "project_id": str(spans.id),
+                "name": "blocked-task",
+                "eval_config_ids": [str(cfg.id)],
+                "filters": {"observation_type": ["agent"]},
+            },
+            tool_context,
+        )
+        assert result.is_error
+        assert "raw-config" in result.content
+        assert "raw.input" in result.content
+
+    def test_the_same_mapping_is_fine_when_scoped_to_the_spans_that_carry_it(
+        self, tool_context, spans
+    ):
+        cfg = self._config(
+            tool_context,
+            spans,
+            "raw-config-llm",
+            {"input": "raw.input", "output": "raw.output"},
+        )
+        result = run_tool(
+            "create_eval_task",
+            {
+                "project_id": str(spans.id),
+                "name": "llm-task",
+                "eval_config_ids": [str(cfg.id)],
+                "filters": {"observation_type": ["llm"]},
+            },
+            tool_context,
+        )
+        assert not result.is_error, result.content
+
+    def test_no_spans_to_sample_means_no_opinion(self, tool_context):
+        empty = make_project(tool_context, name="empty-project")
+        cfg = self._config(
+            tool_context, empty, "empty-config", {"input": "anything.at.all"}
+        )
+        result = run_tool(
+            "create_eval_task",
+            {
+                "project_id": str(empty.id),
+                "name": "empty-task",
+                "eval_config_ids": [str(cfg.id)],
+            },
+            tool_context,
+        )
+        assert not result.is_error, result.content
