@@ -4,16 +4,18 @@ echo "🔍 Validating branch name..."
 branch_name=$(git rev-parse --abbrev-ref HEAD)
 
 # Skip validation for protected branches
-if [[ "$branch_name" == "main" || "$branch_name" == "develop" || "$branch_name" == "master" || "$branch_name" == "dev" ]]; then
+case "$branch_name" in
+  main|develop|master|dev)
     echo "✅ Protected branch — skipping validation"
     exit 0
-fi
+    ;;
+esac
 
 # Format: <type>/<ticket-id>-<description> or <type>/<description>
 # Types match Conventional Commits prefixes used in CONTRIBUTING.md.
-branch_regex="^(feat|fix|chore|docs|refactor|test|perf)\/[a-zA-Z0-9]+([a-zA-Z0-9\-]*[a-zA-Z0-9])?$"
+branch_regex="^(feat|fix|chore|docs|refactor|test|perf)/[a-zA-Z0-9]+([a-zA-Z0-9-]*[a-zA-Z0-9])?$"
 
-if [[ ! $branch_name =~ $branch_regex ]]; then
+if ! echo "$branch_name" | grep -Eq "$branch_regex"; then
     echo "❌ Invalid branch name: '$branch_name'"
     echo ""
     echo "Branch name must follow the pattern: <type>/<ticket-id>-<description>"
