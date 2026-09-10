@@ -1,7 +1,7 @@
 """
-Trace Scanner V7.2 — Lightweight AI trace error scanner.
+Trace Scanner — grounded, bounded per-trace error investigation.
 
-Gemini 3.6 Flash (Vertex) via agentcc gateway, 1 trace per LLM call.
+Gemini 3.8 Flash (Vertex) via AgentCC, one trace per investigation.
 Outputs: issues[] + key_moments[] + meta{}
 """
 
@@ -13,8 +13,8 @@ from typing import Any
 import structlog
 
 from agentic_eval.core.utils.model_config import (
-    LiteLlmProvider,
     ModelConfig,
+    ModelConfigs,
 )
 from ee.agenthub.trace_scanner.compress import (
     SCANNER_TRUNCATION_MARK,
@@ -295,17 +295,7 @@ _MAX_BRIEF_CHARS = 110
 SCAN_VERSION = "v7.2"
 INVESTIGATION_SCAN_VERSION = "v2-adaptive-2"
 
-_DEFAULT_SCANNER_MODEL = ModelConfig(
-    provider=LiteLlmProvider.VERTEX_AI.value,
-    model_name="vertex_ai/gemini-3.8-flash",
-    # Required by ModelConfig but intentionally omitted from Gemini 3.8
-    # requests because the provider ignores sampling overrides.
-    temperature=0.2,
-    max_tokens=65_536,
-    supports_audio=True,
-    supports_pdf=True,
-    vertex_location="global",
-)
+_DEFAULT_SCANNER_MODEL = ModelConfigs.VERTEX_GEMINI_3_8_FLASH
 
 
 @dataclass
