@@ -935,7 +935,7 @@ def test_structural_end_user_id_candidate_seed_uses_direct_uuid_predicate(
         slice_end=END,
         limit=26,
     )
-    candidate_sql = sql.split("SELECT trace_id, id AS root_span_id", 1)[0]
+    candidate_sql = sql.split("SELECT trace_id, start_time", 1)[0]
 
     assert builder.supports_filter_candidate_seed_page() is True
     assert builder.filter_seed_proves_result_order() is True
@@ -3369,7 +3369,7 @@ def test_org_trace_builder_keeps_project_in_seed_classifier_and_page_keys() -> N
         in normalized_anchor_sql
     )
     assert "LIMIT 1 BY project_id, trace_id" in normalized_anchor_sql
-    assert "SELECT project_id, trace_id, id AS root_span_id" in ordered_sql
+    assert "SELECT project_id, trace_id, start_time" in ordered_sql
     assert (
         "ORDER BY start_time DESC, trace_id DESC, toString(project_id) DESC"
         in ordered_sql

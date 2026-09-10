@@ -3626,7 +3626,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             """
         query = f"""
         {candidate_cte}
-        SELECT {identity_select}, id AS root_span_id, start_time
+        SELECT {identity_select}, start_time
         FROM {self.TABLE}
         PREWHERE {self.project_filter_sql()}
           AND is_deleted = 0
