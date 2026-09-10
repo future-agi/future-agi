@@ -1,0 +1,120 @@
+eval_id: 203
+name: citation_quality
+description: Evaluates whether inline citations in the response correctly reference the corresponding source documents.
+criteria: "You are evaluating whether the inline citations in the response correctly\
+  \ reference the corresponding source documents provided in the context.\n\n## Criteria\n\
+  \n1. Citation accuracy: Each citation marker (e.g., [1], [Source A], footnotes)\
+  \ must reference the correct source document.\n   - Pass: Response states \"Python\
+  \ 3.12 was released in October 2023 [1]\" and context [1] confirms this fact.\n\
+  \   - Fail: Response states \"Python 3.12 was released in October 2023 [2]\" but\
+  \ context [2] discusses Java, not Python.\n\n2. Citation completeness: Key factual\
+  \ claims derived from the context should have citations attached.\n   - Pass: All\
+  \ major claims sourced from the context include citation markers.\n   - Fail: The\
+  \ response presents specific facts from the context but provides no citations for\
+  \ them.\n\n3. No fabricated citations: The response must not cite sources that do\
+  \ not exist in the provided context.\n   - Pass: All citation markers map to actual\
+  \ documents in the context.\n   - Fail: Response references \"[5]\" but only 3 context\
+  \ documents were provided.\n\n## Anti-bias Rules\n\n- If the response contains no\
+  \ inline citations at all, score based on whether citations were expected. A response\
+  \ to a simple factual question may not need citations — do not penalize. A response\
+  \ synthesizing multiple sources should cite them.\n- Common knowledge statements\
+  \ do not require citations even when context is provided.\n- Paraphrased content\
+  \ with correct citation is just as valid as direct quotes with citation.\n- A single\
+  \ incorrect citation among many correct ones should reduce the score proportionally,\
+  \ not zero it out.\n- Citation format variations ([1], [Source 1], (1), etc.) are\
+  \ all acceptable — evaluate correctness, not format.\n\n## Scoring\n\nScore 0.0\
+  \ if citations are systematically wrong: pointing to incorrect sources, fabricating\
+  \ non-existent references, or entirely absent when clearly needed. Score 0.5 if\
+  \ citations are partially correct: some map to the right sources but others are\
+  \ wrong or missing for key claims. Score 1.0 if all citations accurately reference\
+  \ the correct sources, key claims are properly cited, and no fabricated references\
+  \ exist.\n\n## Inputs\n\n<context>{{context}}</context>\n\n<input>{{input}}</input>\n\
+  \n<output>{{output}}</output>"
+eval_tags:
+- RAG
+- Retrieval Systems
+- Quality
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+output_type_normalized: percentage
+pass_threshold: 0.5
+config:
+  required_keys:
+  - context
+  - input
+  - output
+  output: score
+  eval_type_id: AgentEvaluator
+  config:
+    check_internet:
+      type: boolean
+      default: false
+  config_params_desc:
+    context: The source documents or chunks provided as context (numbered or labeled)
+    input: The user query or question
+    output: The generated response containing inline citations to evaluate
+  param_modalities:
+    context:
+    - TEXT
+    - PDF
+    - KNOWLEDGE_BASE
+    - JSON
+    - LIST
+    - NUMBER
+    - BOOLEAN
+    - INTEGER
+    - FLOAT
+    - ARRAY
+    - DATETIME
+    input:
+    - TEXT
+    - AUDIO
+    - JSON
+    - LIST
+    - NUMBER
+    - BOOLEAN
+    - INTEGER
+    - FLOAT
+    - ARRAY
+    - DATETIME
+    output:
+    - TEXT
+    - JSON
+    - LIST
+    - NUMBER
+    - BOOLEAN
+    - INTEGER
+    - FLOAT
+    - ARRAY
+    - DATETIME
+  rule_prompt: "You are evaluating whether the inline citations in the response correctly\
+    \ reference the corresponding source documents provided in the context.\n\n##\
+    \ Criteria\n\n1. Citation accuracy: Each citation marker (e.g., [1], [Source A],\
+    \ footnotes) must reference the correct source document.\n   - Pass: Response\
+    \ states \"Python 3.12 was released in October 2023 [1]\" and context [1] confirms\
+    \ this fact.\n   - Fail: Response states \"Python 3.12 was released in October\
+    \ 2023 [2]\" but context [2] discusses Java, not Python.\n\n2. Citation completeness:\
+    \ Key factual claims derived from the context should have citations attached.\n\
+    \   - Pass: All major claims sourced from the context include citation markers.\n\
+    \   - Fail: The response presents specific facts from the context but provides\
+    \ no citations for them.\n\n3. No fabricated citations: The response must not cite\
+    \ sources that do not exist in the provided context.\n   - Pass: All citation\
+    \ markers map to actual documents in the context.\n   - Fail: Response references\
+    \ \"[5]\" but only 3 context documents were provided.\n\n## Anti-bias Rules\n\n\
+    - If the response contains no inline citations at all, score based on whether\
+    \ citations were expected. A response to a simple factual question may not need\
+    \ citations — do not penalize. A response synthesizing multiple sources should\
+    \ cite them.\n- Common knowledge statements do not require citations even when\
+    \ context is provided.\n- Paraphrased content with correct citation is just as\
+    \ valid as direct quotes with citation.\n- A single incorrect citation among many\
+    \ correct ones should reduce the score proportionally, not zero it out.\n- Citation\
+    \ format variations ([1], [Source 1], (1), etc.) are all acceptable — evaluate\
+    \ correctness, not format.\n\n## Scoring\n\nScore 0.0 if citations are systematically\
+    \ wrong: pointing to incorrect sources, fabricating non-existent references, or\
+    \ entirely absent when clearly needed. Score 0.5 if citations are partially correct:\
+    \ some map to the right sources but others are wrong or missing for key claims.\
+    \ Score 1.0 if all citations accurately reference the correct sources, key claims\
+    \ are properly cited, and no fabricated references exist.\n\n## Inputs\n\n<context>{{context}}</context>\n\
+    \n<input>{{input}}</input>\n\n<output>{{output}}</output>"
