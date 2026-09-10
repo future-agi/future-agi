@@ -352,6 +352,27 @@ export default function GraphView() {
       }
 
       positionDebounceRef.current[debounceKey] = setTimeout(async () => {
+        const draftResult = await ensureDraft();
+
+        if (draftResult === false) {
+          onNodesChange(
+            nodes.map((n) => ({
+              type: "position",
+              id: n.id,
+              position: dragStartPositionRef.current[n.id],
+            })),
+          );
+          enqueueSnackbar("Failed to save positions", { variant: "error" });
+          delete positionDebounceRef.current[debounceKey];
+          return;
+        }
+
+        // A newly-created draft POST already contains the dragged positions.
+        if (draftResult === "created") {
+          delete positionDebounceRef.current[debounceKey];
+          return;
+        }
+
         const { currentAgent, _isDraftCreating } =
           useAgentPlaygroundStore.getState();
 
@@ -386,7 +407,7 @@ export default function GraphView() {
         delete positionDebounceRef.current[debounceKey];
       }, 500);
     },
-    [onNodesChange],
+    [ensureDraft, onNodesChange],
   );
 
   const onDragOver = useCallback((event) => {

@@ -1,5 +1,8 @@
 /* eslint-disable react/prop-types */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { act, render } from "src/utils/test-utils";
+import GraphView from "../GraphView";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useAgentPlaygroundStore } from "../../store";
 
 // Since GraphView uses ReactFlow internally (which requires a DOM provider),
@@ -10,8 +13,12 @@ import { useAgentPlaygroundStore } from "../../store";
 // Mocks
 // ---------------------------------------------------------------------------
 const mockScreenToFlowPosition = vi.fn((pos) => pos);
+let reactFlowProps;
 vi.mock("@xyflow/react", () => ({
-  ReactFlow: ({ children }) => <div data-testid="react-flow">{children}</div>,
+  ReactFlow: ({ children, ...props }) => {
+    reactFlowProps = props;
+    return <div data-testid="react-flow">{children}</div>;
+  },
   Controls: () => <div data-testid="controls" />,
   ConnectionLineType: { SmoothStep: "smoothstep" },
   useReactFlow: () => ({
@@ -20,9 +27,25 @@ vi.mock("@xyflow/react", () => ({
   ReactFlowProvider: ({ children }) => <div>{children}</div>,
 }));
 
+const mockEnsureDraft = vi.fn();
 const mockSaveDraft = vi.fn();
+const mockUpdateNodeApi = vi.fn();
+const mockEnqueueSnackbar = vi.fn();
+vi.mock("notistack", () => ({
+  enqueueSnackbar: (...args) => mockEnqueueSnackbar(...args),
+}));
+vi.mock("src/utils/logger", () => ({ default: { error: vi.fn() } }));
+vi.mock("src/api/agent-playground/agent-playground", () => ({
+  updateNodeApi: (...args) => mockUpdateNodeApi(...args),
+  createConnectionApi: vi.fn(),
+  deleteConnectionApi: vi.fn(),
+  deleteNodeApi: vi.fn(),
+}));
 vi.mock("../saveDraftContext", () => ({
-  useSaveDraftContext: () => ({ saveDraft: mockSaveDraft }),
+  useSaveDraftContext: () => ({
+    saveDraft: mockSaveDraft,
+    ensureDraft: mockEnsureDraft,
+  }),
 }));
 
 vi.mock("../nodes", () => ({
@@ -56,6 +79,141 @@ describe("GraphView – callback logic", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useAgentPlaygroundStore.getState().reset();
+  });
+
+  it("captures the real ReactFlow drag callbacks", () => {
+    mockEnsureDraft.mockResolvedValue("created");
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <GraphView />
+      </QueryClientProvider>,
+    );
+    expect(reactFlowProps.onNodeDragStart).toBeTypeOf("function");
+    expect(reactFlowProps.onNodeDragStop).toBeTypeOf("function");
+  });
+
+  it("uses ensureDraft and skips PATCH when drag creates a draft", async () => {
+    vi.useFakeTimers();
+    mockEnsureDraft.mockResolvedValue("created");
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <GraphView />
+      </QueryClientProvider>,
+    );
+    const node = { id: "node-1", position: { x: 20, y: 30 } };
+    act(() => reactFlowProps.onNodeDragStart(null, node, [node]));
+    act(() => reactFlowProps.onNodeDragStop(null, node, [node]));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(mockEnsureDraft).toHaveBeenCalled();
+    expect(mockUpdateNodeApi).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("rolls back when ensureDraft blocks a drag", async () => {
+    vi.useFakeTimers();
+    mockEnsureDraft.mockResolvedValue(false);
+    const onNodesChange = vi.fn();
+    useAgentPlaygroundStore.setState({ onNodesChange });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <GraphView />
+      </QueryClientProvider>,
+    );
+    const start = { id: "node-1", position: { x: 1, y: 2 } };
+    const moved = { id: "node-1", position: { x: 9, y: 9 } };
+    act(() => reactFlowProps.onNodeDragStart(null, start, [start]));
+    act(() => reactFlowProps.onNodeDragStop(null, moved, [moved]));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(onNodesChange).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ position: start.position }),
+      ]),
+    );
+    expect(mockEnqueueSnackbar).toHaveBeenCalledWith(
+      "Failed to save positions",
+      { variant: "error" },
+    );
+    vi.useRealTimers();
+  });
+
+  it("PATCHes an existing draft position with current ids", async () => {
+    vi.useFakeTimers();
+    mockEnsureDraft.mockResolvedValue(true);
+    mockUpdateNodeApi.mockResolvedValue({});
+    useAgentPlaygroundStore.setState({
+      currentAgent: { id: "graph", version_id: "draft", is_draft: true },
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <GraphView />
+      </QueryClientProvider>,
+    );
+    const node = { id: "node-1", position: { x: 20, y: 30 } };
+    act(() => reactFlowProps.onNodeDragStart(null, node, [node]));
+    act(() => reactFlowProps.onNodeDragStop(null, node, [node]));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(mockUpdateNodeApi).toHaveBeenCalledWith({
+      graphId: "graph",
+      versionId: "draft",
+      nodeId: "node-1",
+      data: { position: { x: 20, y: 30 } },
+    });
+    vi.useRealTimers();
+  });
+
+  it("rolls back and notifies when a position PATCH rejects", async () => {
+    vi.useFakeTimers();
+    mockEnsureDraft.mockResolvedValue(true);
+    mockUpdateNodeApi.mockRejectedValue(new Error("reject"));
+    const onNodesChange = vi.fn();
+    useAgentPlaygroundStore.setState({
+      currentAgent: { id: "graph", version_id: "draft", is_draft: true },
+      onNodesChange,
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <GraphView />
+      </QueryClientProvider>,
+    );
+    const start = { id: "node-1", position: { x: 1, y: 2 } };
+    const moved = { id: "node-1", position: { x: 9, y: 9 } };
+    act(() => reactFlowProps.onNodeDragStart(null, start, [start]));
+    act(() => reactFlowProps.onNodeDragStop(null, moved, [moved]));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+      await Promise.resolve();
+    });
+    expect(onNodesChange).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ position: start.position }),
+      ]),
+    );
+    expect(mockEnqueueSnackbar).toHaveBeenCalledWith(
+      "Failed to save positions",
+      { variant: "error" },
+    );
+    vi.useRealTimers();
   });
 
   // ---- onBeforeDelete ----
@@ -207,14 +365,6 @@ describe("GraphView – callback logic", () => {
       mockSaveDraft();
 
       expect(storeOnConnect).toHaveBeenCalledWith(connection);
-      expect(mockSaveDraft).toHaveBeenCalled();
-    });
-  });
-
-  // ---- onNodeDragStop ----
-  describe("onNodeDragStop logic", () => {
-    it("calls saveDraft on node drag stop", () => {
-      mockSaveDraft();
       expect(mockSaveDraft).toHaveBeenCalled();
     });
   });
