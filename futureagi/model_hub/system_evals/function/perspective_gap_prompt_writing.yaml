@@ -1,0 +1,238 @@
+eval_id: 203
+name: perspective_gap_prompt_writing
+description: Scores PerspectiveGap free-form prompt-writing outputs for multi-agent orchestration. Checks whether each role-specific prompt includes the required information fragments and excludes irrelevant or distractor fragments.
+criteria: Measures strict prompt-writing accuracy using the PerspectiveGap benchmark scorer over role sections and fragment fingerprints.
+eval_tags:
+- Agents
+- Output Validation
+- Context Engineering
+- Benchmark
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+output_type_normalized: percentage
+pass_threshold: 0.5
+config:
+  required_keys:
+  - output
+  - fragments
+  - reference_need_sets
+  output: score
+  eval_type_id: CustomCodeEval
+  config: {}
+  function_params_schema:
+    include_threshold:
+      type: number
+      default: 0.7
+      minimum: 0
+      maximum: 1
+    exclude_threshold:
+      type: number
+      default: 0.3
+      minimum: 0
+      maximum: 1
+  config_params_desc:
+    output: 'Model prediction with one Markdown section per role, using headings such as # Planner and role-specific prompt text'
+    fragments: 'PerspectiveGap fragments list as JSON, where each item contains an id and text'
+    reference_need_sets: 'Gold role-to-fragment mapping as JSON object, matching the PerspectiveGap reference_need_sets field'
+    distractor_id: Optional fragment ID for the distractor item; leaks are counted separately when present
+    include_threshold: Fraction of a required fragment fingerprint that must appear in the role section to count as included
+    exclude_threshold: Fraction of an irrelevant fragment fingerprint that triggers an extra/leak detection
+  param_modalities:
+    output:
+    - TEXT
+    fragments:
+    - JSON
+    - TEXT
+    reference_need_sets:
+    - JSON
+    - TEXT
+    distractor_id:
+    - TEXT
+  code: |
+    import json
+    import re
+
+    NGRAM_ORDERS = (1, 2, 3)
+
+    def metric_values(strict_pass, tp, fp, fn, distractor_leak):
+        expected = tp + fn
+        predicted = tp + fp
+        return {
+            "strict_pass": float(strict_pass),
+            "net_match_score": max(0.0, (tp - fp - fn) / expected) if expected else 0.0,
+            "required_coverage": tp / expected if expected else 0.0,
+            "boundary_precision": tp / predicted if predicted else 0.0,
+            "distractor_leakage": float(distractor_leak),
+        }
+
+    def token_sequence(text):
+        return re.findall(r"[a-zA-Z0-9]+", str(text).lower())
+
+    def ngrams(tokens, orders=NGRAM_ORDERS):
+        result = set()
+        for order in orders:
+            if order <= 0 or order > len(tokens):
+                continue
+            for index in range(len(tokens) - order + 1):
+                result.add(" ".join(tokens[index:index + order]))
+        return result
+
+    def distinctive_ngrams(items):
+        grams = {
+            fragment_id: ngrams(token_sequence(text))
+            for fragment_id, text in items.items()
+        }
+        result = {}
+        for fragment_id, fragment_grams in grams.items():
+            others = set()
+            for other_id, other_grams in grams.items():
+                if other_id != fragment_id:
+                    others.update(other_grams)
+            result[fragment_id] = fragment_grams - others
+        return result
+
+    def split_role_sections(response):
+        sections = {}
+        pattern = re.compile(r"^# (.+?)\s*$", re.MULTILINE)
+        matches = list(pattern.finditer(response))
+        for index, match in enumerate(matches):
+            role = match.group(1)
+            start = match.end()
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(response)
+            sections[role] = response[start:end].strip()
+        return sections
+
+    def detect_fraction(distinctive, section_grams):
+        if not distinctive:
+            return 0.0
+        return len(distinctive & section_grams) / len(distinctive)
+
+    def score_prompt_writing(
+        response,
+        fragments,
+        reference_need_sets,
+        distractor_id=None,
+        include_threshold=0.7,
+        exclude_threshold=0.3,
+    ):
+        sections = split_role_sections(response or "")
+        info_items = {
+            fragment["id"]: fragment["text"]
+            for fragment in fragments
+            if isinstance(fragment, dict) and "id" in fragment and "text" in fragment
+        }
+        distinctive = distinctive_ngrams(info_items)
+        role_name_tokens = set()
+        for role in reference_need_sets:
+            role_name_tokens.update(token_sequence(role))
+        filtered_distinctive = {}
+        for fragment_id, fragment_grams in distinctive.items():
+            kept = set()
+            for gram in fragment_grams:
+                if not all(token in role_name_tokens for token in gram.split(" ")):
+                    kept.add(gram)
+            filtered_distinctive[fragment_id] = kept
+        per_role = {}
+        overall_pass = True
+        distractor_ids = {distractor_id} if distractor_id else set()
+        for role, expected_list in reference_need_sets.items():
+            expected_ids = set(expected_list)
+            section_grams = ngrams(token_sequence(sections.get(role, "")))
+            fractions = {
+                fragment_id: round(detect_fraction(fragment_grams, section_grams), 3)
+                for fragment_id, fragment_grams in filtered_distinctive.items()
+            }
+            detected = {
+                fragment_id
+                for fragment_id in expected_ids
+                if fractions.get(fragment_id, 0.0) >= include_threshold
+            }
+            extra = {
+                fragment_id
+                for fragment_id, fraction in fractions.items()
+                if fraction >= exclude_threshold
+            } - expected_ids
+            missing = expected_ids - detected
+            role_pass = not missing and not extra
+            overall_pass = overall_pass and role_pass
+            per_role[role] = {
+                "pass": role_pass,
+                "expected": sorted(expected_ids),
+                "detected": sorted(detected),
+                "missing": sorted(missing),
+                "extra": sorted(extra),
+                "distractor_leak": sorted(extra & distractor_ids),
+                "fractions": fractions,
+            }
+        tp = sum(len(role_result["detected"]) for role_result in per_role.values())
+        fp = sum(len(role_result["extra"]) for role_result in per_role.values())
+        fn = sum(len(role_result["missing"]) for role_result in per_role.values())
+        distractor_leak = sum(
+            len(role_result["distractor_leak"])
+            for role_result in per_role.values()
+        )
+        counts = {
+            "tp": tp,
+            "fp": fp,
+            "fn": fn,
+            "distractor_leak": distractor_leak,
+        }
+        return {
+            "pass": overall_pass,
+            "metrics": metric_values(overall_pass, tp, fp, fn, distractor_leak),
+            "counts": counts,
+            "sections_found": sorted(sections),
+            "per_role": per_role,
+        }
+
+    def evaluate(input, output, expected, context, **kwargs):
+        raw = kwargs.get("output", output) or ""
+        text = str(raw)
+        parts = text.rsplit("</think>", 1)
+        response = parts[1].strip() if len(parts) == 2 else text.strip()
+        fragments = kwargs.get("fragments")
+        reference = kwargs.get("reference_need_sets")
+        for name, value in [("fragments", fragments), ("reference_need_sets", reference)]:
+            if value is None:
+                return {"score": 0.0, "reason": f"Missing required field: {name}"}
+        if isinstance(fragments, str):
+            try:
+                fragments = json.loads(fragments)
+            except (json.JSONDecodeError, ValueError) as error:
+                return {"score": 0.0, "reason": f"Cannot parse fragments: {error}"}
+        if isinstance(reference, str):
+            try:
+                reference = json.loads(reference)
+            except (json.JSONDecodeError, ValueError) as error:
+                return {"score": 0.0, "reason": f"Cannot parse reference_need_sets: {error}"}
+        distractor = kwargs.get("distractor_id")
+        try:
+            include_threshold = float(kwargs.get("include_threshold", 0.7))
+            exclude_threshold = float(kwargs.get("exclude_threshold", 0.3))
+        except (TypeError, ValueError):
+            include_threshold = 0.7
+            exclude_threshold = 0.3
+        result = score_prompt_writing(
+            response,
+            fragments,
+            reference,
+            distractor,
+            include_threshold=include_threshold,
+            exclude_threshold=exclude_threshold,
+        )
+        score = float(result.get("metrics", {}).get("strict_pass", 0.0))
+        metrics = result.get("metrics", {})
+        counts = result.get("counts", {})
+        status = "passed" if result.get("pass") else "failed"
+        reason = (
+            f"PerspectiveGap prompt writing {status}: "
+            f"strict_pass={metrics.get('strict_pass', 0.0):.1f}, "
+            f"net_match={metrics.get('net_match_score', 0.0):.3f}, "
+            f"coverage={metrics.get('required_coverage', 0.0):.3f}, "
+            f"precision={metrics.get('boundary_precision', 0.0):.3f}, "
+            f"leakage={metrics.get('distractor_leakage', 0.0):.1f}; "
+            f"counts={counts}"
+        )
+        return {"score": score, "reason": reason}
