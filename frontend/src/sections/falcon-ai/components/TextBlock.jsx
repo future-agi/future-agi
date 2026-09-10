@@ -6,6 +6,8 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
+import { looksLikeReport } from "../helpers/falconReport";
+import FalconReport from "./FalconReport";
 
 function CodeBlockWrapper({ children, className }) {
   const theme = useTheme();
@@ -126,6 +128,7 @@ export default function TextBlock({ content }) {
   const isDark = theme.palette.mode === "dark";
 
   if (!content) return null;
+  if (looksLikeReport(content)) return <FalconReport content={content} />;
 
   return (
     <Box
