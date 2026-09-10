@@ -125,7 +125,9 @@ describe("NodeOutputDetail duration", () => {
       <NodeOutputDetail executionId="execution-1" nodeExecutionId={null} />,
     );
 
-    expect(screen.getByText("Select a node to view details")).toBeInTheDocument();
+    expect(
+      screen.getByText("Select a node to view details"),
+    ).toBeInTheDocument();
     expect(
       screen.queryByTestId("node-execution-duration"),
     ).not.toBeInTheDocument();
