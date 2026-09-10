@@ -5,7 +5,6 @@ Single source of truth — queries, utils, and tasks all import from here.
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
 
 import structlog
 from django.conf import settings
@@ -34,8 +33,9 @@ class SpanData:
     span_name: str
     duration: str
     status_code: str
-    span_attributes: Dict[str, str] = field(default_factory=dict)
+    span_attributes: dict[str, object] = field(default_factory=dict)
     child_spans: list = field(default_factory=list)
+    captured_context: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass
@@ -43,7 +43,7 @@ class TraceData:
     """Trace with nested span tree, ready for scanner input."""
 
     trace_id: str
-    spans: List[SpanData] = field(default_factory=list)
+    spans: list[SpanData] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         """Convert to dict format the scanner expects."""
@@ -55,6 +55,7 @@ class TraceData:
                 "duration": span.duration,
                 "status_code": span.status_code,
                 "span_attributes": span.span_attributes,
+                **span.captured_context,
                 "child_spans": [_span_to_dict(c) for c in span.child_spans],
             }
 
@@ -81,11 +82,11 @@ class ClusterableIssue:
     fix_layer: str
     brief: str
     confidence: str
-    key_moments_text: List[str] = field(default_factory=list)
+    key_moments_text: list[str] = field(default_factory=list)
     # Canonical failure phrase distilled from the brief by a cheap LLM
     # (trace-specific noise stripped). None when distillation is unavailable
     # (OSS) or failed — embedding falls back to the raw brief.
-    distilled: Optional[str] = None
+    distilled: str | None = None
 
     @property
     def embedding_text(self) -> str:
@@ -130,7 +131,9 @@ class TraceInputData:
             from ee.agenthub.trace_scanner.compress import kevinify
         except ImportError:
             if settings.DEBUG:
-                logger.warning("Could not import ee.agenthub.trace_scanner.compress", exc_info=True)
+                logger.warning(
+                    "Could not import ee.agenthub.trace_scanner.compress", exc_info=True
+                )
             return None
 
         return kevinify(self.input_text)
