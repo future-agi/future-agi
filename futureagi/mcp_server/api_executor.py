@@ -9,13 +9,34 @@ from typing import Any
 from urllib.parse import quote, urlencode
 
 from asgiref.sync import async_to_sync, sync_to_async
-from django.urls import Resolver404, resolve
+from django.urls import Resolver404, get_resolver, resolve
+from jsonschema.exceptions import ValidationError
+from rest_framework.exceptions import APIException, PermissionDenied
 from rest_framework.response import Response
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from accounts.authentication import APIKeyAuthentication
 from mcp_server.generated_registry import GeneratedTool
-from tfc.middleware.workspace_context import workspace_context
+from mcp_server.response_limits import ResponseTooLargeError, bounded_response
+from tfc.middleware.workspace_context import (
+    get_current_workspace,
+    workspace_context,
+)
+
+
+def ensure_urlconf_loaded() -> None:
+    """Import the URLconf while no request workspace is in scope.
+
+    The first route resolution in a process imports every view module, and
+    class-level querysets such as ``queryset = Model.objects.all()`` are built
+    during that import. Django's HTTP path clears the workspace context before
+    resolving; the MCP path binds the caller's workspace first, so a cold worker
+    whose first request is an MCP call would pin those querysets to one tenant.
+    """
+    if get_current_workspace() is not None:
+        raise RuntimeError("URLconf must be loaded before a workspace is bound")
+    # Accessing the patterns imports the root URLconf and every included module.
+    _ = get_resolver().url_patterns
 
 
 class APIExecutionError(RuntimeError):
@@ -58,6 +79,12 @@ class DjangoAPIExecutor:
         arguments: dict[str, Any],
         context: MCPRequestContext,
     ) -> Any:
+        try:
+            tool.validator.validate(arguments)
+        except ValidationError as exc:
+            raise APIExecutionError(
+                f"Invalid tool arguments: {exc.message}", status_code=400
+            ) from exc
         method = tool.request["method"].upper()
         parameter_map = tool.request["parameters"]
         path = self._render_path(
@@ -107,12 +134,29 @@ class DjangoAPIExecutor:
 
         # Reuse the existing workspace membership and write-access checks, then
         # inject the already authenticated MCP user for normal DRF permissions.
-        APIKeyAuthentication()._set_workspace_context(request, context.user)
+        try:
+            authentication = APIKeyAuthentication()
+            authentication._set_workspace_context(request, context.user)
+            # Some legacy GET APIs create a workbench draft. Their catalog
+            # write classification must not bypass Django's write-role check.
+            if (
+                method in {"GET", "HEAD", "OPTIONS"}
+                and not tool.annotations["readOnlyHint"]
+                and request.workspace
+                and not authentication._can_write_to_workspace(
+                    context.user, request.workspace
+                )
+            ):
+                raise PermissionDenied("Write access denied to this workspace")
+        except APIException as exc:
+            raise APIExecutionError(
+                str(exc.detail), status_code=exc.status_code, data=exc.detail
+            ) from exc
         force_authenticate(request, user=context.user)
 
         with workspace_context(
-            workspace=context.workspace,
-            organization=context.organization,
+            workspace=request.workspace,
+            organization=request.organization,
             user=context.user,
         ):
             response = match.func(request, *match.args, **match.kwargs)
@@ -123,7 +167,35 @@ class DjangoAPIExecutor:
 
                 response = async_to_sync(await_response)()
 
-        return self._normalize_response(tool, response)
+        result = self._normalize_response(tool, response)
+        try:
+            return bounded_response(result)
+        except ResponseTooLargeError as exc:
+            if not tool.annotations["readOnlyHint"]:
+                # The API has already committed this write. Preserve its receipt
+                # so clients do not retry a successful mutation after a size error.
+                receipt = {
+                    "_mcp": {
+                        "truncated": True,
+                        "message": (
+                            "The operation succeeded. Its response exceeded the MCP size limit; "
+                            "use the API to retrieve the full resource."
+                        ),
+                    }
+                }
+                if isinstance(result, dict):
+                    for key, value in result.items():
+                        if (
+                            (key == "id" or key.endswith("_id") or key == "status")
+                            and (
+                                value is None
+                                or isinstance(value, (str, int, float, bool))
+                            )
+                            and len(str(value)) <= 200
+                        ):
+                            receipt[key] = value
+                return receipt
+            raise APIExecutionError(str(exc), status_code=413) from exc
 
     @staticmethod
     def _render_path(

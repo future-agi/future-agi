@@ -52,12 +52,47 @@ def _parameter_schema(parameter: dict[str, Any]) -> dict[str, Any]:
                 "minLength",
                 "maxLength",
                 "pattern",
+                "x-nullable",
             )
             if key in parameter
         }
     if parameter.get("description") and "description" not in schema:
         schema["description"] = parameter["description"]
     return schema
+
+
+def _json_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Translate Swagger extensions without changing the accepted request values."""
+    result = copy.deepcopy(schema)
+    if result.pop("x-json-value", False):
+        return {
+            key: value
+            for key, value in result.items()
+            if key in {"description", "title", "default"}
+        }
+    for extension, kind in (
+        ("x-string-or-object", "object"),
+        ("x-string-or-array", "array"),
+    ):
+        if result.pop(extension, False):
+            result.pop("type", None)
+            result["anyOf"] = [{"type": "string"}, {"type": kind}]
+    for key in ("properties", "definitions", "patternProperties"):
+        if key in result:
+            result[key] = {
+                name: _json_schema(child) for name, child in result[key].items()
+            }
+    for key in ("items", "additionalProperties", "not"):
+        if isinstance(result.get(key), dict):
+            result[key] = _json_schema(result[key])
+    for key in ("allOf", "anyOf", "oneOf"):
+        if key in result:
+            result[key] = [_json_schema(child) for child in result[key]]
+    if result.pop("x-nullable", False):
+        # A union also handles nullable references and enums: merely appending
+        # null to `type` would still leave their other constraints rejecting it.
+        result = {"anyOf": [result, {"type": "null"}]}
+    return result
 
 
 def _resolve_parameter(
@@ -193,7 +228,10 @@ def _build_input_schema(
     }
     if required:
         input_schema["required"] = required
-    return _schema_with_definitions(input_schema, contract), request_mapping
+    return (
+        _json_schema(_schema_with_definitions(input_schema, contract)),
+        request_mapping,
+    )
 
 
 def _annotations(method: str, access: str) -> dict[str, bool]:
@@ -260,6 +298,11 @@ def generate_tool_manifest(contract_path: Path, catalog_path: Path) -> dict[str,
 
         parameters = _operation_parameters(path_item, operation, contract)
         input_schema, request_mapping = _build_input_schema(parameters, contract)
+        annotations = _annotations(method, access)
+        if "idempotent" in entry:
+            if not isinstance(entry["idempotent"], bool):
+                raise ToolGenerationError(f"Invalid idempotent hint for {name}")
+            annotations["idempotentHint"] = entry["idempotent"]
         path_fields = set(PATH_PARAMETER_PATTERN.findall(path))
         mapped_path_fields = set(request_mapping["path"])
         if path_fields != mapped_path_fields:
@@ -273,7 +316,7 @@ def generate_tool_manifest(contract_path: Path, catalog_path: Path) -> dict[str,
                 "description": description,
                 "group": entry["group"],
                 "inputSchema": input_schema,
-                "annotations": _annotations(method, access),
+                "annotations": annotations,
                 "request": {
                     "method": method.upper(),
                     "path": path,

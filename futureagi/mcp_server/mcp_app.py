@@ -11,7 +11,7 @@ import os
 import time
 
 import structlog
-from asgiref.sync import sync_to_async
+from asgiref.sync import ThreadSensitiveContext, sync_to_async
 from mcp.server import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.server.transport_security import TransportSecuritySettings
@@ -19,8 +19,14 @@ from mcp.types import CallToolResult, TextContent
 from starlette.applications import Starlette
 from starlette.routing import Route
 
-from mcp_server.api_executor import APIExecutionError, MCPRequestContext, executor
+from mcp_server.api_executor import (
+    APIExecutionError,
+    MCPRequestContext,
+    ensure_urlconf_loaded,
+    executor,
+)
 from mcp_server.generated_registry import registry
+from mcp_server.response_limits import ResponseTooLargeError, bounded_response
 from tfc.middleware.workspace_context import (
     get_current_organization,
     get_current_user,
@@ -171,11 +177,16 @@ def _json_safe(value):
 
 
 def _error_result(message: str, *, code: str, data=None) -> CallToolResult:
-    payload = {"error": {"code": code, "message": message}}
+    payload = {"error": {"code": code, "message": message[:2000]}}
     if data is not None:
-        payload["error"]["details"] = _json_safe(data)
+        try:
+            payload["error"]["details"] = bounded_response(_json_safe(data))
+        except ResponseTooLargeError:
+            payload["error"]["details"] = "Error details exceeded the MCP size limit."
     return CallToolResult(
-        content=[TextContent(type="text", text=json.dumps(payload))],
+        content=[
+            TextContent(type="text", text=json.dumps(payload, ensure_ascii=False))
+        ],
         structuredContent=payload,
         isError=True,
     )
@@ -192,7 +203,8 @@ async def list_generated_tools():
     ]
 
 
-@mcp.call_tool()
+# The executor validates with a cached validator on its Django worker thread.
+@mcp.call_tool(validate_input=False)
 async def call_generated_tool(name: str, arguments: dict):
     context = _current_context()
     if context is None:
@@ -229,7 +241,13 @@ async def call_generated_tool(name: str, arguments: dict):
         payload = _json_safe(data if isinstance(data, dict) else {"result": data})
         is_error = False
         error_message = ""
-        result = payload
+        result = CallToolResult(
+            content=[
+                TextContent(type="text", text=json.dumps(payload, ensure_ascii=False))
+            ],
+            structuredContent=payload,
+            isError=False,
+        )
     except APIExecutionError as exc:
         is_error = True
         error_message = str(exc)
@@ -344,6 +362,25 @@ def get_mcp_streamable_app():
 
 
 async def mcp_streamable_with_auth(scope, receive, send):
+    """Keep each MCP request's synchronous work off other clients' executor."""
+    from django.db import close_old_connections
+
+    from tfc.middleware.workspace_context import clear_workspace_context
+
+    async with ThreadSensitiveContext():
+        clear_workspace_context()
+        await sync_to_async(close_old_connections)()
+        # Import view modules before this request's workspace is bound; see
+        # ensure_urlconf_loaded for why the order matters on a cold worker.
+        await sync_to_async(ensure_urlconf_loaded)()
+        try:
+            await _mcp_streamable_with_auth(scope, receive, send)
+        finally:
+            clear_workspace_context()
+            await sync_to_async(close_old_connections)()
+
+
+async def _mcp_streamable_with_auth(scope, receive, send):
     """ASGI middleware that authenticates every request before delegating to MCP.
 
     Unlike SSE (which authenticated once on connect), Streamable HTTP is stateless

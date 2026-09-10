@@ -54,6 +54,13 @@ class JsonArrayQueryParamField(serializers.CharField):
         return data
 
 
+class TestExecutionListQuerySerializer(serializers.Serializer):
+    search = serializers.CharField(required=False, allow_blank=True, default="")
+    status = serializers.CharField(required=False, allow_blank=True, default="")
+    page = serializers.IntegerField(required=False, min_value=1)
+    limit = serializers.IntegerField(required=False, min_value=1, max_value=100)
+
+
 class ExecutionDetailQuerySerializer(StrictInputSerializer):
     search = serializers.CharField(required=False, allow_blank=True, default="")
     filters = filter_list_query_param_field(required=False, default=list)

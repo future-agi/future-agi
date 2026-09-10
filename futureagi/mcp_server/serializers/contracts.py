@@ -73,6 +73,7 @@ class MCPToolDiscoveryItemSerializer(serializers.Serializer):
     category = serializers.CharField(read_only=True)
     description = serializers.CharField(read_only=True, allow_blank=True)
     parameters = MCPToolParameterSerializer(many=True, read_only=True)
+    input_schema = serializers.JSONField(read_only=True)
 
 
 class MCPSessionListResponseSerializer(serializers.Serializer):

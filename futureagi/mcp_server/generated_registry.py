@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass
+from functools import cached_property
 from pathlib import Path
 from typing import Any
 
+from jsonschema import Draft7Validator
 from mcp.types import Tool, ToolAnnotations
 
 DEFAULT_MANIFEST_PATH = Path(__file__).with_name("catalog") / "tools.generated.json"
@@ -27,6 +30,29 @@ class GeneratedTool:
     request: dict[str, Any]
     response: dict[str, Any]
     source: dict[str, Any]
+
+    @cached_property
+    def validator(self) -> Draft7Validator:
+        return Draft7Validator(self.input_schema)
+
+    def is_available(self) -> bool:
+        """Only expose operations mounted in this deployment's URL configuration."""
+        from django.urls import Resolver404, resolve
+
+        def placeholder(match: re.Match) -> str:
+            schema = self.input_schema["properties"][match.group(1)]
+            return (
+                "1"
+                if schema.get("type") == "integer"
+                else "00000000-0000-0000-0000-000000000001"
+            )
+
+        path = re.sub(r"{([^}]+)}", placeholder, self.request["path"])
+        try:
+            resolve(path)
+        except Resolver404:
+            return False
+        return True
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> GeneratedTool:
@@ -70,6 +96,7 @@ class GeneratedTool:
             "name": self.name,
             "description": self.description,
             "category": self.group,
+            "input_schema": self.input_schema,
             "parameters": [
                 {
                     "name": name,

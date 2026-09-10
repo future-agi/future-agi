@@ -10,9 +10,8 @@ from uuid import UUID
 import litellm
 import structlog
 
-from tfc.utils.ssrf_guard import safe_fetch
-
 from tfc.ee_stub import _ee_stub
+from tfc.utils.ssrf_guard import safe_fetch
 
 try:
     from ee.agenthub.prompt_generate_agent.prompt_generate import (
@@ -44,6 +43,15 @@ from rest_framework.views import APIView
 
 from accounts.models import User
 from accounts.models.organization import Organization
+from model_hub.serializers.prompt_requests import (
+    PromptRunRequestSerializer,
+    PromptRunStatusQuerySerializer,
+    PromptRunStatusResponseSerializer,
+    PromptTemplateListQuerySerializer,
+    PromptTemplatePatchSerializer,
+    PromptVersionsQuerySerializer,
+)
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 
 logger = structlog.get_logger(__name__)
 import atexit
@@ -120,13 +128,13 @@ from model_hub.utils.utils import (
     submit_with_retry,
     track_running_eval_count,
 )
+from model_hub.utils.websocket_manager import (
+    get_websocket_manager,
+)
 from model_hub.utils.workspace_scope import (
     request_workspace_filter,
     scoped_column_queryset,
     scoped_dataset_queryset,
-)
-from model_hub.utils.websocket_manager import (
-    get_websocket_manager,
 )
 from model_hub.views.eval_runner import EvaluationRunner
 from tfc.settings.settings import BASE_URL
@@ -173,8 +181,6 @@ def _safe_background_task(func, *args, **kwargs):
 
     return wrapped
 
-
-from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 
 try:
     from ee.usage.utils.usage_entries import (
@@ -696,6 +702,8 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
         return queryset
 
     def get_serializer_class(self):
+        if self.action == "partial_update":
+            return PromptTemplatePatchSerializer
         return self.serializer_class
 
     def perform_create(self, serializer):
@@ -705,6 +713,10 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             workspace=getattr(self.request, "workspace", None),
             created_by=self.request.user,
         )
+
+    @validated_request(query_serializer=PromptTemplateListQuerySerializer)
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
 
     def retrieve(self, request, *args, **kwargs):
         """
@@ -1424,6 +1436,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 "Failed to retrieve evaluation data"
             )
 
+    @validated_request(request_serializer=PromptRunRequestSerializer)
     @action(detail=True, methods=["post"])
     def run_template(self, request, pk=None):
         """
@@ -1699,6 +1712,10 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             logger.exception(f"Error in running template: {str(e)}")
             return self._gm.bad_request(get_error_message("UNABLE_TO_RUN_TEMPLATE"))
 
+    @validated_request(
+        query_serializer=PromptRunStatusQuerySerializer,
+        responses={200: PromptRunStatusResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["get"], url_path="get-run-status")
     def get_run_status(self, request, pk=None):
         """
@@ -1736,7 +1753,9 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                     (e for e in executions if e.template_version == version), None
                 )
             else:
-                execution = executions[0]
+                execution = executions[0] if executions else None
+            if execution is None:
+                return self._gm.not_found("Prompt version not found")
             data = PromptHistoryExecutionSerializer(execution).data
             # error_message = template.error_message if hasattr(template, 'error_message') else None,
             variable_names = template.variable_names or {}
@@ -3238,6 +3257,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
         except Exception as e:
             logger.exception(f"Error in run method: {e}")
 
+    @validated_request(query_serializer=PromptVersionsQuerySerializer)
     @action(detail=True, methods=["get"])
     def versions(self, request, pk=None):
         try:

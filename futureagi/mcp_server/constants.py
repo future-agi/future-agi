@@ -61,6 +61,10 @@ TOOL_GROUPS = {
         "name": "AI Gateway",
         "description": "Gateway configuration, request logs, and analytics",
     },
+    "dashboards": {
+        "name": "Dashboards",
+        "description": "Dashboards, widgets, metric discovery, and chart data queries",
+    },
     "docs": {
         "name": "Docs & Guides",
         "description": "Search and query Future AGI documentation, setup guides, and API references",
@@ -82,6 +86,7 @@ DEFAULT_TOOL_GROUPS = [
     "users",
     "usage",
     "gateway",
+    "dashboards",
     "docs",
 ]
 

@@ -405,7 +405,9 @@ class TestToolListE2E:
 
         returned_count = data["result"]["total"]
         expected = sum(
-            1 for tool in registry.list_all() if tool.group in DEFAULT_TOOL_GROUPS
+            1
+            for tool in registry.list_all()
+            if tool.group in DEFAULT_TOOL_GROUPS and tool.is_available()
         )
         assert returned_count == expected
 

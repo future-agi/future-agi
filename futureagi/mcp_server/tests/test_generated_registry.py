@@ -11,8 +11,9 @@ from mcp_server.generated_registry import (
 def test_committed_generated_registry_loads_all_tools():
     registry = GeneratedToolRegistry.from_manifest()
 
-    assert registry.count() == 60
+    assert registry.count() == 93
     assert registry.get("list_datasets").group == "datasets"
+    assert registry.get("get_dashboard").group == "dashboards"
     assert registry.get("missing") is None
 
 
@@ -41,6 +42,7 @@ def test_registry_filters_tools_by_group():
         "create_prompt_template",
         "update_prompt_template",
         "run_prompt",
+        "get_prompt_run",
     }
 
 

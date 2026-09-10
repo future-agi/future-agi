@@ -714,9 +714,13 @@ def get_user_info(request):
         else:
             return str(RoleMapping.get_workspace_role(org_role))
 
-    # Get current workspace from user config or default workspace
-    current_workspace_id = user.config.get("currentWorkspaceId") or user.config.get(
-        "defaultWorkspaceId"
+    # Explicit authenticated workspace selection also applies to API-key clients.
+    selected_workspace = getattr(request, "workspace", None)
+    current_workspace_id = (
+        selected_workspace.id
+        if selected_workspace is not None
+        else user.config.get("currentWorkspaceId")
+        or user.config.get("defaultWorkspaceId")
     )
 
     if current_workspace_id:
