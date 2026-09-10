@@ -18,6 +18,8 @@ import structlog
 
 from django.db import close_old_connections
 
+from tfc.constants.api_calls import APICallTypeChoices
+
 from ee.agenthub.scenario_graph.services.branch_metadata import (
     create_single_branch_metadata_string,
 )
@@ -103,17 +105,15 @@ def generate_cases_for_intent(
     org_id = agent_context.get("organization_id")
     if org_id:
         try:
-            from ee.usage.models.usage import APICallTypeChoices
-        except ImportError:
-            APICallTypeChoices = None
-        try:
             from ee.usage.services.metering import check_usage
         except ImportError:
+            # Usage metering isn't available (OSS deployment) — skip the pre-check.
             check_usage = None
 
-        usage_check = check_usage(org_id, APICallTypeChoices.SYNTHETIC_DATA_GENERATION.value)
-        if not usage_check.allowed:
-            raise ValueError(usage_check.reason or "Usage limit exceeded")
+        if check_usage is not None:
+            usage_check = check_usage(org_id, APICallTypeChoices.SYNTHETIC_DATA_GENERATION.value)
+            if not usage_check.allowed:
+                raise ValueError(usage_check.reason or "Usage limit exceeded")
 
     # Generate raw data via SDA
     generated_data, actual_cost = _generate_raw_data_from_sda(
@@ -339,14 +339,10 @@ def _log_generation_cost(generated_data, agent_context: Dict[str, Any], actual_c
     """Log token usage and deduct cost for the generation."""
     try:
         try:
-            from ee.usage.models.usage import APICallTypeChoices
-        except ImportError:
-            APICallTypeChoices = None
-        try:
             from ee.usage.utils.usage_entries import count_text_tokens, log_and_deduct_cost_for_api_request
         except ImportError:
-            count_text_tokens = None
-            log_and_deduct_cost_for_api_request = None
+            # Usage metering isn't available (OSS deployment) — nothing to log.
+            return
 
         if not hasattr(generated_data, "columns"):
             return
