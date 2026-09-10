@@ -28,6 +28,7 @@ import {
 } from "../common";
 import {
   ALERT_CONFIG_DEFAULTS,
+  getThresholdValueDefaults,
   transformFilterResponse,
 } from "../components/validation";
 import AlertSettingsForm from "../components/AlertSettingsForm";
@@ -202,7 +203,7 @@ const savedAlert = {
 };
 
 const evaluations = [
-  { id: "eval-1", name: "Groundedness", choices: ["Passed", "Failed"] },
+  { id: "eval-1", name: "Groundedness", choices: ["Passed", "Failed"], output_type: "choices" },
 ];
 
 const labelFor = (options, value) =>
@@ -411,5 +412,105 @@ describe("saved alert reopens in the settings form", () => {
       String(savedAlert.warning_threshold_value),
     );
     expect(checkedRadio("notification.method")).toBe("slack");
+  });
+});
+
+describe("getThresholdValueDefaults", () => {
+  it("uses the fraction scale only for eval metrics under a static threshold", () => {
+    expect(getThresholdValueDefaults("evaluation_metrics", "static")).toEqual({
+      critical: 0.4,
+      warning: 0.3,
+    });
+  });
+
+  it("keeps the config placeholders for every other combination", () => {
+    const configDefaults = {
+      critical: ALERT_CONFIG_DEFAULTS.critical_threshold_value,
+      warning: ALERT_CONFIG_DEFAULTS.warning_threshold_value,
+    };
+    expect(
+      getThresholdValueDefaults("evaluation_metrics", "percentage_change"),
+    ).toEqual(configDefaults);
+    expect(getThresholdValueDefaults("system_metric", "static")).toEqual(
+      configDefaults,
+    );
+  });
+});
+
+describe("threshold value labels follow the metric's scale", () => {
+  beforeEach(() => {
+    useAlertStore.setState({
+      openSheetView: savedAlert.id,
+      selectedProject: savedAlert.project,
+    });
+    useAlertSheetStore.setState({
+      alertRuleDetails: null,
+      gridRef: { current: null },
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    resetAlertStoreState();
+    resetAlertSheetStoreState();
+  });
+
+  const mockEvals = (rows) =>
+    vi.spyOn(axios, "get").mockImplementation((url) =>
+      Promise.resolve({
+        data: {
+          result: url === endpoints.project.getTraceEvals() ? rows : [],
+        },
+      }),
+    );
+
+  it("labels a choices eval's static thresholds as a 0-1 fraction", async () => {
+    mockEvals(evaluations);
+    await openSavedAlertForEditing({ ...savedAlert, threshold_type: "static" });
+    expect(screen.getAllByLabelText("Value (0-1)")).toHaveLength(2);
+  });
+
+  it("labels a score eval's static thresholds as a plain value", async () => {
+    mockEvals([{ id: "eval-1", name: "Latency score", output_type: "score" }]);
+    renderWithRouter(
+      <QueryClientProvider
+        client={
+          new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        }
+      >
+        <SnackbarProvider>
+          <AlertSettingsForm
+            onThresholdTypeChange={vi.fn()}
+            setThresholdOperator={vi.fn()}
+            setWarningValue={vi.fn()}
+            setCriticalValue={vi.fn()}
+            setFormIsDirty={vi.fn()}
+            onPayloadChange={vi.fn()}
+          />
+        </SnackbarProvider>
+      </QueryClientProvider>,
+    );
+    act(() => {
+      useAlertSheetStore.setState({
+        alertRuleDetails: normalizeAlertDetail({
+          ...savedAlert,
+          threshold_type: "static",
+        }),
+      });
+    });
+    await waitFor(() =>
+      expect(screen.getAllByLabelText("Value")).toHaveLength(2),
+    );
+    expect(screen.queryByLabelText("Value (0-1)")).toBeNull();
+  });
+
+  it("labels percentage-change thresholds as a percent", async () => {
+    mockEvals(evaluations);
+    await openSavedAlertForEditing({
+      ...savedAlert,
+      threshold_type: "percentage_change",
+    });
+    expect(screen.getAllByLabelText("Percentage")).toHaveLength(2);
+    expect(screen.queryByLabelText("Value (0-1)")).toBeNull();
   });
 });
