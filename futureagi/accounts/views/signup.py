@@ -862,6 +862,14 @@ def resend_invitation_emails(request):
 
             if user:
                 logger.info(f"Resending invitation email to {user.email}")
+
+                # Refresh the matching OrganizationInvite's expiry too, so
+                # this bulk path behaves the same as the other resend
+                # endpoints (#2437).
+                from accounts.utils import refresh_pending_invite_expiration
+
+                refresh_pending_invite_expiration(organization, user.email)
+
                 # Generate a token
                 token = default_token_generator.make_token(user)
 
