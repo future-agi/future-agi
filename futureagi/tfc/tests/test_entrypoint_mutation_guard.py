@@ -9,7 +9,7 @@ ENTRYPOINT = Path(__file__).resolve().parents[2] / "entrypoint.sh"
 
 def _guard_source() -> str:
     source = ENTRYPOINT.read_text()
-    start = source.index("# Hosted application startup is mutation-free by default.")
+    start = source.index("# Startup runs migrations by default everywhere,")
     end = source.index("# Disable bytecode compilation")
     return source[start:end]
 
@@ -84,37 +84,37 @@ def test_entrypoint_guard_rejects_ambiguous_values(value):
 
 
 @pytest.mark.parametrize("env_type", ["prod", "production", "staging"])
-def test_entrypoint_hosted_startup_defaults_to_mutation_free(env_type):
+def test_entrypoint_hosted_startup_defaults_to_running_migrations(env_type):
     completed = _run_guard(None, env_type=env_type)
 
     assert completed.returncode == 0
-    assert completed.stdout.endswith("true:false:disabled")
+    assert completed.stdout.endswith("false:false:disabled")
 
 
 @pytest.mark.parametrize("cloud_deployment", ["US", "EU", "DEV"])
-def test_entrypoint_cloud_deployment_defaults_to_mutation_free(cloud_deployment):
+def test_entrypoint_cloud_deployment_defaults_to_running_migrations(cloud_deployment):
     completed = _run_guard(None, cloud_deployment=cloud_deployment)
 
     assert completed.returncode == 0
-    assert completed.stdout.endswith("true:false:disabled")
+    assert completed.stdout.endswith("false:false:disabled")
 
 
 @pytest.mark.parametrize(
-    ("service_type", "mutation_mode"),
-    [("backend", "disabled"), ("backend", "operator"), ("bootstrap", "disabled")],
+    ("mutation_mode", "expected"),
+    [(None, "false:false:disabled"), ("disabled", "false:false:disabled")],
 )
-def test_entrypoint_hosted_false_requires_dedicated_operator_job(
-    service_type, mutation_mode
+def test_entrypoint_hosted_backend_mutations_allowed_without_operator_job(
+    mutation_mode, expected
 ):
     completed = _run_guard(
         "false",
         env_type="production",
-        service_type=service_type,
+        service_type="backend",
         mutation_mode=mutation_mode,
     )
 
-    assert completed.returncode == 64
-    assert "hosted database mutations require" in completed.stdout
+    assert completed.returncode == 0
+    assert completed.stdout.endswith(expected)
 
 
 def test_entrypoint_hosted_operator_bootstrap_is_explicitly_allowed():
@@ -232,7 +232,7 @@ def test_entrypoint_guard_defaults_by_environment_without_loose_expansion():
 
     assert "NO_STARTUP_DB_MUTATIONS:-true" not in source
     assert "CLOUD_STARTUP" in _guard_source()
-    assert "NO_STARTUP_DB_MUTATIONS=true" in _guard_source()
+    assert "NO_STARTUP_DB_MUTATIONS=true" not in _guard_source()
     assert "NO_STARTUP_DB_MUTATIONS=false" in _guard_source()
 
 
