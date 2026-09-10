@@ -7,6 +7,7 @@ Provider raw shape:
   VAPI     | inbound   | simulator       | tested agent
   VAPI     | outbound  | tested agent    | simulator
   LiveKit  | both      | tested agent    | simulator
+  Twilio   | both      | tested agent    | simulator
 
 Direction is tested-agent-perspective: inbound = tested agent receives, outbound
 = tested agent dials out. LiveKit rows are pre-normalised at the agent worker.
@@ -101,6 +102,8 @@ class SpeakerRoleResolver:
             return ProviderChoices.VAPI
         if provider_call_data.get(ProviderChoices.BLAND.value):
             return ProviderChoices.BLAND
+        if provider_call_data.get(ProviderChoices.TWILIO.value):
+            return ProviderChoices.TWILIO
         logger.error(
             "speaker_role_resolver_unknown_provider",
             provider_call_data_keys=list(provider_call_data.keys()),
@@ -141,7 +144,7 @@ class SpeakerRoleResolver:
     ) -> dict[str, str]:
         if provider == ProviderChoices.VAPI:
             return cls._VAPI_OUTBOUND if is_outbound else cls._VAPI_INBOUND
-        if provider == ProviderChoices.LIVEKIT:
+        if provider in (ProviderChoices.LIVEKIT, ProviderChoices.TWILIO):
             return cls._LIVEKIT_OUTBOUND if is_outbound else cls._LIVEKIT_INBOUND
         if provider == ProviderChoices.BLAND:
             return cls._BLAND_OUTBOUND if is_outbound else cls._BLAND_INBOUND
