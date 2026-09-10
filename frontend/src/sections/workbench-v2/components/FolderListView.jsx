@@ -199,6 +199,7 @@ export default function FolderListView({ sortConfig }) {
       >
         {/* Scrollable content */}
         <Stack
+          data-testid="prompt-list"
           direction="column"
           sx={{
             flex: 1,
