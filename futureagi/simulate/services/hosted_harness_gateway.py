@@ -36,6 +36,11 @@ from simulate.services.hosted_harness import (
     register_attempt,
     request_cancellation,
 )
+from simulate.services.hosted_runner import (
+    SIMULATOR_DEFAULT_LLM_PROVIDER,
+    SIMULATOR_DEFAULT_STT_PROVIDER,
+    SIMULATOR_DEFAULT_TTS_PROVIDERS,
+)
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import ensure_bucket, get_storage_client
 
@@ -948,18 +953,37 @@ def _validate_resolved_egress_domains(domains: Iterable[str]) -> None:
         _validate_egress_host(domain)
 
 
-def _provider_egress_domains(secrets_map: Mapping[str, Any]) -> set[str]:
-    """Return provider hosts implied by credential aliases and provider selectors."""
+def _provider_egress_domains(
+    secrets_map: Mapping[str, Any], *, simulator: bool = False
+) -> set[str]:
+    """Return provider hosts implied by credential aliases and provider selectors.
+
+    ``simulator`` fills each unset selector with the simulated caller's own default. A provider it
+    falls back to still has to be reachable, and the selectors are independent: reading them as one
+    set meant configuring any single lane dropped every other lane's host, which left the caller
+    unable to reach its speech provider and reported only as an infrastructure failure. The target
+    agent gets no defaults, because its runtime chooses providers we cannot see.
+    """
     aliases = {str(name).upper().removeprefix("SIMULATOR_") for name in secrets_map}
     values = {str(name).upper(): value for name, value in secrets_map.items()}
-    selected_audio_providers = {
-        str(values.get(name) or "").strip().lower()
-        for name in ("SIMULATOR_STT_PROVIDER", "SIMULATOR_TTS_PROVIDER")
-        if str(values.get(name) or "").strip()
-    }
-    selected_llm_provider = (
-        str(values.get("SIMULATOR_LLM_PROVIDER") or "").strip().lower()
+
+    def _lane(name: str, defaults: tuple[str, ...]) -> set[str]:
+        chosen = str(values.get(name) or "").strip().lower()
+        if chosen:
+            return {chosen}
+        return set(defaults) if simulator else set()
+
+    # A provider can serve more than one lane, so a host is justified by any lane selecting it.
+    selected_providers = (
+        _lane("SIMULATOR_STT_PROVIDER", (SIMULATOR_DEFAULT_STT_PROVIDER,))
+        | _lane("SIMULATOR_TTS_PROVIDER", SIMULATOR_DEFAULT_TTS_PROVIDERS)
+        | _lane("SIMULATOR_LLM_PROVIDER", (SIMULATOR_DEFAULT_LLM_PROVIDER,))
     )
+
+    def _uses(*names: str) -> bool:
+        """No selector resolved means nothing is excluded, which is the target agent's case."""
+        return not selected_providers or bool(selected_providers.intersection(names))
+
     domains: set[str] = set()
     if aliases & {
         "GOOGLE_APPLICATION_CREDENTIALS_JSON",
@@ -981,9 +1005,8 @@ def _provider_egress_domains(secrets_map: Mapping[str, Any]) -> set[str]:
             region = str(values.get(name) or "").strip().lower()
             if _GOOGLE_REGION.fullmatch(region):
                 domains.add(f"{region}-aiplatform.googleapis.com")
-    if aliases & {"GEMINI_API_KEY", "GOOGLE_API_KEY"} and (
-        not selected_llm_provider
-        or selected_llm_provider in {"gemini", "google", "google-ai"}
+    if aliases & {"GEMINI_API_KEY", "GOOGLE_API_KEY"} and _uses(
+        "gemini", "google", "google-ai"
     ):
         domains.add("generativelanguage.googleapis.com")
     if "VAPI_API_KEY" in aliases:
@@ -1001,21 +1024,17 @@ def _provider_egress_domains(secrets_map: Mapping[str, Any]) -> set[str]:
                 "*.turn.livekit.cloud",
             }
         )
-    if aliases & {"DEEPGRAM_API_KEY"} and (
-        not selected_audio_providers or "deepgram" in selected_audio_providers
-    ):
+    if aliases & {"DEEPGRAM_API_KEY"} and _uses("deepgram"):
         domains.add("api.deepgram.com")
-    if aliases & {"CARTESIA_API_KEY"} and (
-        not selected_audio_providers or "cartesia" in selected_audio_providers
-    ):
+    if aliases & {"CARTESIA_API_KEY"} and _uses("cartesia"):
         domains.add("api.cartesia.ai")
-    if aliases & {"OPENAI_API_KEY"} and (
-        not selected_llm_provider or selected_llm_provider == "openai"
+    if aliases & {"ELEVENLABS_API_KEY", "ELEVEN_API_KEY"} and _uses(
+        "elevenlabs", "eleven_labs"
     ):
+        domains.add("api.elevenlabs.io")
+    if aliases & {"OPENAI_API_KEY"} and _uses("openai"):
         domains.add("api.openai.com")
-    if aliases & {"ANTHROPIC_API_KEY"} and (
-        not selected_llm_provider or selected_llm_provider == "anthropic"
-    ):
+    if aliases & {"ANTHROPIC_API_KEY"} and _uses("anthropic"):
         domains.add("api.anthropic.com")
     return domains
 
@@ -1040,7 +1059,7 @@ def _resolved_egress_domains(
         callback_host = _hostname_from_url(callback_host)
     values: list[str] = [domain for domain in base_domains if isinstance(domain, str)]
     values.extend(_provider_egress_domains(target_secrets))
-    values.extend(_provider_egress_domains(simulator_env))
+    values.extend(_provider_egress_domains(simulator_env, simulator=True))
     # The simulated caller rides the platform LiveKit server whenever the target connector does
     # not supply its own (Vapi/Retell); its signaling and TURN hosts are platform config, never
     # derivable from customer input. LiveKit targets share the customer's server, so skipping

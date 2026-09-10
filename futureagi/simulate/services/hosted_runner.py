@@ -36,6 +36,17 @@ from simulate.models import AgentDefinition, CallExecution, Scenarios, TestExecu
 
 logger = structlog.get_logger(__name__)
 
+# The simulated caller's own provider defaults. Egress derivation imports these: a provider the
+# simulator falls back to still has to be reachable from the sandbox.
+SIMULATOR_DEFAULT_LLM_PROVIDER = "openai"
+SIMULATOR_DEFAULT_STT_PROVIDER = "deepgram"
+SIMULATOR_DEFAULT_TTS_PROVIDER_ENGLISH = "deepgram"
+SIMULATOR_DEFAULT_TTS_PROVIDER_OTHER = "gemini"
+SIMULATOR_DEFAULT_TTS_PROVIDERS = (
+    SIMULATOR_DEFAULT_TTS_PROVIDER_ENGLISH,
+    SIMULATOR_DEFAULT_TTS_PROVIDER_OTHER,
+)
+
 _SPEC_SCHEMA_VERSION = "futureagi.simulation-spec.v1"
 _JOB_SCHEMA_VERSION = "futureagi.runner-job.v1"
 
@@ -914,7 +925,8 @@ def _voice_simulator_config(
     dataset: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     stt = {
-        "provider": _voice_setting("SIMULATOR_STT_PROVIDER") or "deepgram",
+        "provider": _voice_setting("SIMULATOR_STT_PROVIDER")
+        or SIMULATOR_DEFAULT_STT_PROVIDER,
         "model": _voice_setting("SIMULATOR_STT_MODEL") or "nova-3",
     }
     language = _voice_setting("SIMULATOR_STT_LANGUAGE") or _dataset_language(dataset)
@@ -929,10 +941,13 @@ def _voice_simulator_config(
     # otherwise come out as English gibberish. Env overrides
     # (SIMULATOR_TTS_PROVIDER / SIMULATOR_TTS_MODEL) still win per field.
     if _is_english_language(language):
-        default_tts_provider, default_tts_model = "deepgram", "aura-2-andromeda-en"
+        default_tts_provider, default_tts_model = (
+            SIMULATOR_DEFAULT_TTS_PROVIDER_ENGLISH,
+            "aura-2-andromeda-en",
+        )
     else:
         default_tts_provider, default_tts_model = (
-            "gemini",
+            SIMULATOR_DEFAULT_TTS_PROVIDER_OTHER,
             "gemini-3.1-flash-tts-preview",
         )
     tts = {
@@ -946,7 +961,8 @@ def _voice_simulator_config(
             # hosted worker. The previous Google default selected Vertex from
             # a configured-but-unmounted credentials path, so the simulator
             # never spoke and otherwise-connected calls timed out.
-            "provider": _voice_setting("SIMULATOR_LLM_PROVIDER") or "openai",
+            "provider": _voice_setting("SIMULATOR_LLM_PROVIDER")
+            or SIMULATOR_DEFAULT_LLM_PROVIDER,
             "model": _voice_setting("SIMULATOR_LLM_MODEL") or "gpt-4.1",
         },
         "stt": stt,

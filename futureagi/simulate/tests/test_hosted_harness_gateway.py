@@ -260,6 +260,63 @@ def test_provider_egress_uses_selected_simulator_llm_provider():
     assert domains == {"api.openai.com"}
 
 
+def test_simulator_keeps_its_default_stt_host_when_only_tts_is_configured():
+    """Configuring one lane must not drop another lane's default provider host.
+
+    A deployment that set only ``SIMULATOR_TTS_PROVIDER`` lost ``api.deepgram.com``, so the
+    simulated caller could not transcribe the agent and every call failed as infrastructure.
+    """
+    domains = _provider_egress_domains(
+        {
+            "SIMULATOR_DEEPGRAM_API_KEY": "configured",
+            "SIMULATOR_CARTESIA_API_KEY": "configured",
+            "SIMULATOR_TTS_PROVIDER": "cartesia",
+        },
+        simulator=True,
+    )
+
+    assert domains == {"api.deepgram.com", "api.cartesia.ai"}
+
+
+def test_simulator_with_no_selectors_gets_the_hosts_its_defaults_need():
+    domains = _provider_egress_domains(
+        {
+            "SIMULATOR_DEEPGRAM_API_KEY": "configured",
+            "SIMULATOR_GEMINI_API_KEY": "configured",
+            "SIMULATOR_OPENAI_API_KEY": "configured",
+            "SIMULATOR_ANTHROPIC_API_KEY": "configured",
+        },
+        simulator=True,
+    )
+
+    # Deepgram speech, the Gemini voice a non-English persona falls back to, and the OpenAI chat
+    # model. Anthropic is not a simulator default, so its host would only waste a domain slot.
+    assert domains == {
+        "api.deepgram.com",
+        "generativelanguage.googleapis.com",
+        "api.openai.com",
+    }
+
+
+def test_target_agent_credentials_get_no_simulator_defaults():
+    """The target's runtime picks its own providers, so presence of the credential is the signal."""
+    domains = _provider_egress_domains(
+        {"CARTESIA_API_KEY": "configured", "ANTHROPIC_API_KEY": "configured"}
+    )
+
+    assert domains == {"api.cartesia.ai", "api.anthropic.com"}
+
+
+def test_provider_egress_includes_elevenlabs_when_selected():
+    assert _provider_egress_domains(
+        {
+            "SIMULATOR_ELEVENLABS_API_KEY": "configured",
+            "SIMULATOR_TTS_PROVIDER": "elevenlabs",
+        },
+        simulator=True,
+    ) == {"api.elevenlabs.io"}
+
+
 def test_livekit_cloud_connector_egress_is_wildcard_minimized(settings):
     settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = []
     payload = {
