@@ -75,6 +75,11 @@ const ChartsGenerator = ({
     },
     xaxis: {
       type: "datetime",
+      labels: {
+        // Points are epoch milliseconds; render them in the viewer's timezone
+        // so the axis agrees with the tooltip below.
+        datetimeUTC: false,
+      },
       // title: { text: "Time Period" },
     },
     yaxis: {

@@ -7,8 +7,10 @@ export const convertToISO = (dateArray) => {
 };
 
 export const normalizeTimestamp = (timestamp) => {
-  if (!timestamp) return timestamp;
+  if (timestamp === null || timestamp === undefined || timestamp === "") {
+    return null;
+  }
 
-  // Remove common timezone patterns: +00:00, -05:00, Z, etc.
-  return timestamp.replace(/([+-]\d{2}:\d{2}|Z)$/, "");
+  const epochMs = new Date(timestamp).getTime();
+  return Number.isFinite(epochMs) ? epochMs : null;
 };
