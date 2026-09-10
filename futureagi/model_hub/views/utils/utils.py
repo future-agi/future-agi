@@ -1,9 +1,10 @@
 import re
-from typing import Literal, Union
+from typing import Literal
 
 import structlog
 
 from model_hub.utils.eval_mapping import non_path_mapping_keys
+from model_hub.views.utils.constants import PLACEHOLDER_PATTERN
 from tfc.ee_stub import _ee_stub
 from tfc.utils.ssrf_guard import is_valid_url, safe_fetch
 
@@ -15,7 +16,6 @@ except ImportError:
     EvalRecommender = _ee_stub("EvalRecommender")
 
 logger = structlog.get_logger(__name__)
-from model_hub.views.utils.constants import PLACEHOLDER_PATTERN
 
 # Pattern to match UUID placeholders with optional .property suffix
 # Matches: {{uuid}}, {{uuid.property}}, {{uuid.nested.property}}
@@ -222,7 +222,7 @@ def _url_has_valid_extension(url: str, valid_extensions: tuple) -> bool:
 
 
 def validate_file_url(
-    url: str, file_type: Union[Literal["image"], Literal["document"], Literal["audio"]]
+    url: str, file_type: Literal["image"] | Literal["document"] | Literal["audio"]
 ) -> None:
     """Validate a user-supplied file URL is reachable and of the expected type.
 
@@ -256,7 +256,9 @@ def validate_file_url(
             )
         return
 
-    content_type = response.headers.get("Content-Type", "").lower().split(";")[0].strip()
+    content_type = (
+        response.headers.get("Content-Type", "").lower().split(";")[0].strip()
+    )
     if content_type in config["rejected_content_types"]:
         raise ValueError(
             f"URL content-type '{content_type}' is not an allowed {file_type} type."
@@ -351,6 +353,12 @@ def fetch_required_keys_for_eval_template(eval_templates):
 
 
 def fetch_specific_mapping_for_specific_eval_template(mapping, eval_template):
+    # A cleared/omitted mapping arrives as None from some call paths; the
+    # required-keys loop below would otherwise do ``key not in None`` and
+    # raise TypeError. Return empty rather than crash — mirrors the None
+    # early-return in ``CustomEvalConfigSerializer.validate_mapping``.
+    if mapping is None:
+        return {}
     bad = non_path_mapping_keys(mapping)
     if bad:
         # ValueError, not DRFValidationError: the apply-eval-group view maps

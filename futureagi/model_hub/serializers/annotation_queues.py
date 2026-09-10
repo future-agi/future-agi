@@ -35,6 +35,8 @@ from model_hub.utils.annotation_queue_helpers import (
     resolve_source_preview,
 )
 from tfc.utils.serializer_fields import JsonValueField
+from tracer.models.custom_eval_config import CustomEvalConfig
+from tracer.models.project import Project
 from tracer.serializers.filters import StrictInputSerializer, filter_list_field
 
 _ROLE_LIST_SCHEMA = serializers.ListField(child=serializers.CharField())
@@ -117,6 +119,33 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
     viewer_roles = serializers.SerializerMethodField()
     viewer_role = serializers.SerializerMethodField()
     deleted = serializers.BooleanField(read_only=True)
+    custom_eval_config = serializers.PrimaryKeyRelatedField(
+        queryset=CustomEvalConfig.objects.all(),
+        required=False,
+        allow_null=True,
+    )
+
+    def get_fields(self):
+        """Scope ``custom_eval_config`` to the caller's organization.
+
+        ``PrimaryKeyRelatedField`` resolves submitted PKs against its
+        queryset (anything outside it fails validation with "does not
+        exist"), so narrowing it here already rejects cross-org UUIDs at
+        the field layer. The org/project checks in
+        ``validate_custom_eval_config`` stay as defence-in-depth (and cover
+        the non-request fallback path below), while this filter gives the
+        rejection a clear "does not exist" message and reads as org-scoped
+        at definition time. The ``objects.all()`` default is only used for
+        non-request contexts (e.g. OpenAPI schema generation) where no org
+        is available.
+        """
+        fields = super().get_fields()
+        organization, _workspace = self._request_org_workspace()
+        if organization:
+            fields["custom_eval_config"].queryset = CustomEvalConfig.objects.filter(
+                project__organization=organization
+            )
+        return fields
 
     class Meta:
         model = AnnotationQueue
@@ -135,6 +164,7 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
             "project",
             "dataset",
             "agent_definition",
+            "custom_eval_config",
             "is_default",
             "labels",
             "annotators",
@@ -209,6 +239,21 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
             normalized[str(user_id)] = role_list
         return normalized
 
+    def validate_custom_eval_config(self, value):
+        if value is None:
+            return value
+        organization, _workspace = self._request_org_workspace()
+        if organization and value.project.organization_id != organization.id:
+            raise serializers.ValidationError(
+                "Evaluator does not belong to your organization."
+            )
+        queue_project_id = self._queue_project_id()
+        if queue_project_id and str(value.project_id) != queue_project_id:
+            raise serializers.ValidationError(
+                "Evaluator must belong to the same project as the queue."
+            )
+        return value
+
     def _request_org_workspace(self):
         request = self.context.get("request")
         if not request:
@@ -219,6 +264,24 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
             None,
         )
         return organization, getattr(request, "workspace", None)
+
+    def _queue_project_id(self):
+        resolved = self.context.get("_resolved_project")
+        if resolved is not None:
+            return str(resolved.pk)
+
+        if self.instance and getattr(self.instance, "project_id", None):
+            return str(self.instance.project_id)
+
+        request = self.context.get("request")
+        if not request:
+            return None
+
+        request_data = getattr(request, "data", None) or {}
+        project_id = request_data.get("project_id")
+        if project_id:
+            return str(project_id)
+        return None
 
     def _workspace_visibility_q(self, organization, workspace):
         if not workspace:
@@ -300,7 +363,45 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
                     }
                 )
 
+        self._resolve_and_stash_project(attrs)
+
         return attrs
+
+    def _resolve_and_stash_project(self, attrs):
+        """Resolve ``project_id`` from the request body on create and stash the
+        validated ``Project`` for :meth:`validate_custom_eval_config` and
+        :meth:`create`.
+
+        ``project`` is a read-only serializer field (validated_data never
+        carries it), so without this resolution a fresh queue has no project
+        at validation time and the same-project evaluator guard would silently
+        pass on create. The lookup is org-scoped and rejects unknown ids with
+        a 400 — a bare ``.first()`` would let the queue silently drop its
+        project (or worse, a non-org-scoped one would let a client anchor the
+        queue onto another tenant's project).
+        """
+        if self.instance:
+            return  # update path: the guard reads instance.project_id
+
+        request = self.context.get("request")
+        request_data = getattr(request, "data", None) or {}
+        project_id = request_data.get("project_id")
+        if not project_id:
+            return
+
+        organization, _workspace = self._request_org_workspace()
+        try:
+            project = Project.objects.get(
+                id=project_id,
+                organization=organization,
+                deleted=False,
+            )
+        except (Project.DoesNotExist, ValueError, TypeError) as exc:
+            raise serializers.ValidationError(
+                {"project_id": "Project not found in your organization."}
+            ) from exc
+        self.context["_resolved_project"] = project
+        attrs["project"] = project
 
     def _viewer_membership(self, obj, user):
         if not user:
@@ -412,6 +513,13 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
         label_ids = validated_data.pop("label_ids", [])
         annotator_ids = validated_data.pop("annotator_ids", [])
         annotator_roles = validated_data.pop("annotator_roles", {})
+
+        # ``project`` is read-only on the serializer; on create the org-scoped
+        # resolution happens in ``_resolve_and_stash_project`` (validate phase),
+        # which also stashes the instance so the same-project evaluator guard
+        # and this write use one validated ``Project``.
+        validated_data.setdefault("project", self.context.get("_resolved_project"))
+
         queue = AnnotationQueue(**validated_data)
         queue.save()
 
@@ -1132,10 +1240,28 @@ class QueueAgreementAnnotatorPairSerializer(serializers.Serializer):
     total_comparisons = serializers.IntegerField()
 
 
+class QueueAgreementJudgeVsHumanLabelSerializer(serializers.Serializer):
+    label_name = serializers.CharField()
+    label_type = serializers.CharField()
+    judge_human_agreement = serializers.FloatField(allow_null=True)
+    total_comparisons = serializers.IntegerField()
+    comparable = serializers.BooleanField(default=True)
+
+
+class QueueAgreementJudgeVsHumanSerializer(serializers.Serializer):
+    evaluator_name = serializers.CharField()
+    overall_agreement = serializers.FloatField(allow_null=True)
+    total_comparisons = serializers.IntegerField()
+    labels = serializers.DictField(child=QueueAgreementJudgeVsHumanLabelSerializer())
+
+
 class QueueAgreementResultSerializer(serializers.Serializer):
     overall_agreement = serializers.FloatField(allow_null=True)
     labels = serializers.DictField(child=QueueAgreementLabelSerializer())
     annotator_pairs = QueueAgreementAnnotatorPairSerializer(many=True)
+    judge_vs_human = QueueAgreementJudgeVsHumanSerializer(
+        allow_null=True, required=False
+    )
 
 
 class QueueAgreementResponseSerializer(serializers.Serializer):

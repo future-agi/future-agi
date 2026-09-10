@@ -284,6 +284,9 @@ export const useUpdateAnnotationQueue = () => {
       queryClient.invalidateQueries({
         queryKey: annotationQueueKeys.detail(variables.id),
       });
+      queryClient.invalidateQueries({
+        queryKey: annotationQueueKeys.agreement(variables.id),
+      });
     },
     onError: (error) => {
       const msg = extractErrorMessage(error, "Failed to update queue");
@@ -386,6 +389,11 @@ export const useUpdateAnnotationQueueStatus = () => {
       queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
       queryClient.invalidateQueries({
         queryKey: annotationQueueKeys.detail(variables.id),
+      });
+      // Judge-vs-human agreement only computes for COMPLETED queues — a
+      // status flip must re-fetch it or the tab keeps its stale empty-state.
+      queryClient.invalidateQueries({
+        queryKey: annotationQueueKeys.agreement(variables.id),
       });
     },
     onError: (error) => {
@@ -1969,5 +1977,22 @@ export const useRemoveLabelFromQueue = () => {
         variant: "error",
       });
     },
+  });
+};
+
+// ---------------------------------------------------------------------------
+// Custom Eval Config list — used by QueueSettingsTab to link an evaluator
+// ---------------------------------------------------------------------------
+
+export const useCustomEvalConfigList = ({ projectId, ...options } = {}) => {
+  return useQuery({
+    queryKey: ["custom-eval-configs", projectId],
+    queryFn: () =>
+      axios.get("/tracer/custom-eval-config/list_custom_eval_configs/", {
+        params: projectId ? { project_id: projectId } : undefined,
+      }),
+    select: (d) => d.data?.result ?? d.data?.results ?? d.data ?? [],
+    staleTime: 1000 * 60 * 5,
+    ...options,
   });
 };
