@@ -197,6 +197,7 @@ class TestAgentccGatewayAPI:
                     "max_concurrent": 3,
                     "conn_pool_size": 5,
                     "base_url": "https://api.example.com/v1",
+                    "api_path_prefix": "",
                 },
             },
             format="json",
@@ -216,6 +217,7 @@ class TestAgentccGatewayAPI:
         assert credential.display_name == "Gateway Action Provider"
         assert credential.models_list == ["gpt-4o-mini"]
         assert credential.default_timeout_seconds == 17
+        assert credential.extra_config == {"api_path_prefix": ""}
         assert CredentialManager.decrypt(credential.encrypted_credentials) == {
             "api_key": "sk-gateway-action-secret"
         }
