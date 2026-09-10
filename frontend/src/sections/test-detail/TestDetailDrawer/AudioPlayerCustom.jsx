@@ -12,6 +12,8 @@ import LoadingStateComponent from "src/components/CallLogsDetailDrawer/LoadingSt
 import { getLoadingStateWithRespectiveStatus } from "../common";
 import { normalizeRecordings } from "src/utils/utils";
 import useStereoChannels from "src/hooks/use-stereo-channels";
+import RecordingFailure from "src/components/multi-track-audio-player/RecordingFailure";
+import { UNAVAILABLE } from "src/components/multi-track-audio-player/failureVariants";
 
 const isUpdatedWithinTwoMinutes = (timestamp) => {
   if (!timestamp) return false;
@@ -216,6 +218,30 @@ const AudioPlayerCustom = ({ data, onInstance }) => {
 
     // Normalize recordings to flat format for project module
     const normalizedRecordings = normalizeRecordings(data?.recording);
+    // `recording_available` rides on the list row, so it is already true while
+    // the detail response carrying the URLs is still in flight. Handing the
+    // player an empty set there would have it report a failure for a call that
+    // is only still loading.
+    const hasAnyUrl = Boolean(
+      normalizedRecordings.stereo ||
+        normalizedRecordings.combined ||
+        normalizedRecordings.assistant ||
+        normalizedRecordings.customer,
+    );
+    if (!hasAnyUrl) {
+      return data?.recording_detail_pending ? (
+        <Box sx={{ height: 200 }}>
+          <LoadingStateComponent
+            status="fetching"
+            message="Fetching the recording"
+          />
+        </Box>
+      ) : (
+        <Box sx={{ position: "relative", height: 200 }}>
+          <RecordingFailure variant={UNAVAILABLE} />
+        </Box>
+      );
+    }
     return (
       <StereoMultiTrackPlayer
         recordings={normalizedRecordings}
@@ -247,6 +273,30 @@ const AudioPlayerCustom = ({ data, onInstance }) => {
           status="fetching"
           message={"Fetching the recording"}
         />
+      </Box>
+    );
+  }
+
+  // `hasRecordingData` is satisfied by `audio_url` alone, which the player
+  // never receives — so the gate can pass while every URL the player would
+  // use is still empty. Wait rather than hand it nothing.
+  const hasPlayableUrl = Boolean(
+    recordings?.stereo ||
+      recordings?.combined ||
+      recordings?.assistant ||
+      recordings?.customer,
+  );
+  if (hasRecordingData && !hasPlayableUrl) {
+    return data?.recording_detail_pending ? (
+      <Box sx={{ height: 200 }}>
+        <LoadingStateComponent
+          status="fetching"
+          message="Fetching the recording"
+        />
+      </Box>
+    ) : (
+      <Box sx={{ position: "relative", height: 200 }}>
+        <RecordingFailure variant={UNAVAILABLE} />
       </Box>
     );
   }
@@ -302,7 +352,8 @@ const areRecordingPropsEqual = (prev, next) => {
     p?.recordings === n?.recordings &&
     p?.audio_url === n?.audio_url &&
     p?.id === n?.id &&
-    p?.timestamp === n?.timestamp
+    p?.timestamp === n?.timestamp &&
+    p?.recording_detail_pending === n?.recording_detail_pending
   );
 };
 //Avoid re-rendering while change in other data other than data of this component

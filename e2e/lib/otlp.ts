@@ -9,6 +9,9 @@ export interface SeededTrace { traceId: string; spanIds: string[]; projectName: 
 export interface SendTraceConfig {
   collectorUrl: string; apiKey: string; secretKey: string; projectName: string;
   rootName?: string;
+  /** Extra attributes on the root span — e.g. `fi.span.kind: 'conversation'`
+   *  plus `conversation.recording.*` to seed a voice call. */
+  rootAttributes?: Record<string, string>;
 }
 
 const attr = (key: string, value: string) => ({ key, value: { stringValue: value } });
@@ -35,7 +38,8 @@ export async function sendTrace(req: APIRequestContext, cfg: SendTraceConfig): P
       scopeSpans: [{
         scope: { name: 'e2e-harness' },
         spans: [
-          span(rootId, undefined, rootName),
+          span(rootId, undefined, rootName,
+               Object.entries(cfg.rootAttributes ?? {}).map(([k, v]) => attr(k, v))),
           span(childId, rootId, 'e2e.llm-call', [attr('fi.span.kind', 'llm')]),
         ],
       }],

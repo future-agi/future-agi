@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render } from "src/utils/test-utils";
+import { render, screen } from "src/utils/test-utils";
 
 const captured = { trackUrls: null, singleUrl: null };
 
@@ -123,6 +123,45 @@ describe("StereoMultiTrackPlayer track selection", () => {
 describe("AudioPlayerCustom picks the renderer from the recording shape", () => {
   beforeEach(resetCaptured);
 
+  // The list row already says a recording exists, so `recording_available` is
+  // true before the detail response carrying the URLs has arrived. Handing the
+  // player an empty set there makes it report a failure for a call that is
+  // merely still loading.
+  it("waits instead of rendering a player when the URLs have not arrived", () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AudioPlayerCustom
+          data={{
+            module: "project",
+            recording_available: true,
+            recording_detail_pending: true,
+          }}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByText("Fetching the recording")).toBeInTheDocument();
+    expect(captured.trackUrls).toBeNull();
+    expect(captured.singleUrl).toBeNull();
+  });
+
+  it("shows recording unavailable for the project module once the detail query settles without URLs", () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AudioPlayerCustom
+          data={{ module: "project", recording_available: true }}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByText("Recording unavailable")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Fetching the recording"),
+    ).not.toBeInTheDocument();
+    expect(captured.trackUrls).toBeNull();
+    expect(captured.singleUrl).toBeNull();
+  });
+
   it.each(["retell", "bland"])(
     "sends a single-URL %s call to the same single-track bar",
     (provider) => {
@@ -162,5 +201,44 @@ describe("AudioPlayerCustom picks the renderer from the recording shape", () => 
 
     expect(captured.singleUrl).toBe(COMBINED);
     expect(captured.trackUrls).toBeNull();
+  });
+
+  it("shows the fetching spinner while the detail query is pending", () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AudioPlayerCustom
+          data={{
+            audio_url: "https://example.test/audio.wav",
+            recordings: {},
+            recording_detail_pending: true,
+          }}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByText("Fetching the recording")).toBeInTheDocument();
+    expect(screen.queryByText("Recording unavailable")).not.toBeInTheDocument();
+    expect(captured.trackUrls).toBeNull();
+    expect(captured.singleUrl).toBeNull();
+  });
+
+  it("shows recording unavailable once the detail query settles without URLs", () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AudioPlayerCustom
+          data={{
+            audio_url: "https://example.test/audio.wav",
+            recordings: {},
+          }}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByText("Recording unavailable")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Fetching the recording"),
+    ).not.toBeInTheDocument();
+    expect(captured.trackUrls).toBeNull();
+    expect(captured.singleUrl).toBeNull();
   });
 });
