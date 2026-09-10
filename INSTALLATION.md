@@ -262,6 +262,18 @@ To run two stacks side-by-side, copy `.env` to `.env.stackB`, change every port,
 | `redis`      | Cache, rate limits, Celery/Django cache, WebSocket pub/sub. Also the invalidation bus between backend and fi-collector: the backend (`REDIS_URL`) and fi-collector (`FI_AUTH_REDIS_ADDR`) must point at the **same** Redis. A mismatch is a silent failure — key revocation and project-delete cache invalidation stop working and the collector's auth cache only expires via TTL.                                                                                                                                                                                          |
 | `minio`      | S3-compatible object storage (uploaded files, eval artifacts). In production, swap for real S3 by setting `S3_ENDPOINT_URL` to an AWS endpoint. **Note:** the backend uses `S3_ENDPOINT_URL` (internal Docker hostname) to talk to MinIO, but URLs returned to the browser use `MINIO_URL` (defaults to `http://localhost:9005`). If you access the UI from anywhere other than the host machine — e.g. another machine on your LAN, a remote VM, or a domain name — set `MINIO_URL` in `.env` to a URL the browser can reach (e.g. `http://your-host.example.com:9005`). |
 
+### Using DragonflyDB (Redis Alternative)
+
+Future AGI officially supports [DragonflyDB](https://dragonflydb.io/) as a high-performance, drop-in replacement for Redis. This is beneficial for handling heavy background cache and queue operations.
+
+To switch your instance to DragonflyDB:
+
+1. Open your `.env` file and append these overrides:
+   ```env
+   REDIS_IMAGE=docker.dragonflydb.io/dragonflydb/dragonfly:latest
+   REDIS_COMMAND=dragonfly
+   REDIS_HEALTHCHECK_TEST=nc -z 127.0.0.1 6379
+
 ### Workflow engine
 
 | Service    | Role                                                            |
