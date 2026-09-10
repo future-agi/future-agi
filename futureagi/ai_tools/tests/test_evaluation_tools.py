@@ -5,7 +5,12 @@ import pytest
 
 from ai_tools.registry import registry
 from ai_tools.tests.conftest import run_tool
-from ai_tools.tests.fixtures import make_eval_template, make_evaluation
+from ai_tools.tests.fixtures import (
+    make_dataset_with_rows,
+    make_eval_template,
+    make_evaluation,
+)
+from model_hub.models.evaluation import Evaluation, StatusChoices
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -413,3 +418,32 @@ class TestCreateEvalGroupTool:
 
         assert not result.is_error
         assert result.data["template_count"] == 2
+
+
+class TestRunEvaluationTool:
+    def test_unstartable_workflow_leaves_evaluation_failed(
+        self, tool_context, eval_template
+    ):
+        dataset, _, _ = make_dataset_with_rows(tool_context, name="Run Eval Dataset")
+
+        async def _workflow_unavailable(*args, **kwargs):
+            raise RuntimeError("temporal is unreachable")
+
+        with patch(
+            "tfc.temporal.evaluations.client.start_evaluation_workflow_async",
+            _workflow_unavailable,
+        ):
+            result = run_tool(
+                "run_evaluation",
+                {
+                    "eval_template_id": str(eval_template.id),
+                    "dataset_id": str(dataset.id),
+                },
+                tool_context,
+            )
+
+        assert not result.is_error
+
+        evaluation = Evaluation.objects.get(id=result.data["evaluation_id"])
+        assert evaluation.status == StatusChoices.FAILED
+        assert "Queued" not in result.content
