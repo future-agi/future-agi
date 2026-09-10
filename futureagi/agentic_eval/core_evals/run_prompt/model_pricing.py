@@ -319,6 +319,24 @@ def get_model_info(model_name: str) -> Optional[dict]:
     )
 
 
+def _has_numeric_pricing(pricing: dict) -> bool:
+    """
+    Return True if the pricing dict contains at least one usable numeric price.
+
+    Some catalogue entries carry placeholder pricing that is present but not
+    actually priceable, e.g. azure_ai ``{"details": "Varies by deployment..."}``
+    or together_ai ``{"per_1M_tokens": "pay-per-token"}``. Such dicts have no
+    numeric value and must be treated as "no pricing" so a detectable fallback
+    estimate is used instead of silently costing $0.
+
+    ``bool`` is explicitly excluded because ``isinstance(True, int)`` is True.
+    """
+    return any(
+        isinstance(value, (int, float)) and not isinstance(value, bool)
+        for value in pricing.values()
+    )
+
+
 @lru_cache(maxsize=512)
 def get_model_pricing(model_name: str) -> Optional[dict]:
     """
@@ -339,11 +357,18 @@ def get_model_pricing(model_name: str) -> Optional[dict]:
         For STT (Speech-to-Text) models:
             {"input_per_minute": float}
 
-        Returns None if model not found or pricing not available
+        Returns None if model not found, pricing not available, or pricing is a
+        placeholder with no numeric values (so callers apply fallback pricing).
     """
     model_info = get_model_info(model_name)
     if model_info and "pricing" in model_info:
-        return model_info["pricing"].copy()  # Return a copy to prevent mutations
+        pricing = model_info["pricing"]
+        if isinstance(pricing, dict):
+            # Placeholder / non-numeric pricing (present but not priceable) is
+            # treated as missing so the fallback chain applies a real estimate.
+            if not _has_numeric_pricing(pricing):
+                return None
+            return pricing.copy()  # Return a copy to prevent mutations
     return None
 
 
