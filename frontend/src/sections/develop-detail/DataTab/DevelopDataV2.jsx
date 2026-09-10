@@ -151,6 +151,7 @@ const CustomRowOverlay = ({
   setOpenSummaryDrawer,
   gridApiRef,
   updateProcessingSyntheticData,
+  failureReason,
 }) => {
   const { dataset } = useParams();
   const { data: tableData } = useQuery(
@@ -189,6 +190,7 @@ const CustomRowOverlay = ({
           tableData?.data?.result,
         ),
         updateProcessingSyntheticData,
+        failureReason,
       })}
     </Box>
   );
@@ -199,12 +201,14 @@ CustomRowOverlay.propTypes = {
   setOpenSummaryDrawer: PropTypes.func,
   gridApiRef: PropTypes.object,
   updateProcessingSyntheticData: PropTypes.func,
+  failureReason: PropTypes.string,
 };
 
 const getDataSource = (
   queryClient,
   datasetId,
   setFailedToGenerateData,
+  setFailureReason,
   updateRefreshing,
   updateProcessingSyntheticData,
   overlayTimeoutRef,
@@ -236,12 +240,15 @@ const getDataSource = (
           search,
           { enabled: true, staleTime: 5 * 1000, pageSize: DATASET_ROWS_LIMIT },
         );
+        // If this page is already in the cache and has not been marked
+        // changed, reuse it instantly; otherwise fetch it from the server.
         const cachedState = queryClient.getQueryState(queryOptions.queryKey);
         const servedFromCache =
           cachedState?.data !== undefined && !cachedState.isInvalidated;
         const data = servedFromCache
           ? cachedState.data
           : await queryClient.fetchQuery({ ...queryOptions });
+
         const result = data?.data?.result;
         const processingData = getResultIsProcessingData(result);
 
@@ -263,6 +270,31 @@ const getDataSource = (
           params.api.syntheticDatasetPercentage = syntheticPercentage;
           updateProcessingSyntheticData(syntheticPercentage !== 100);
         }
+
+        // If the backend recorded a failure reason, flip the UI into the
+        // failed state and store the reason so DatasetLoader can display it.
+        if (data?.data?.result?.failure_reason) {
+          setFailedToGenerateData(true);
+          setFailureReason(data.data.result.failure_reason);
+          // The rows themselves are valid (HTTP 200), so the success() below
+          // clears the loading overlay and the failure screen would never be
+          // visible. Re-show it once the load settles so the reason persists —
+          // mirrors the fetch-error path below.
+          if (overlayTimeoutRef.current) {
+            clearTimeout(overlayTimeoutRef.current);
+            overlayTimeoutRef.current = null;
+          }
+          overlayTimeoutRef.current = setTimeout(() => {
+            params.api.showLoadingOverlay();
+          }, 100);
+        } else if (getResultIsSyntheticDataset(result)) {
+          // Dataset is synthetic and the backend has no failure reason —
+          // clear any stale failure state so the overlay shows the correct
+          // status (default-synthetic or regenerating-synthetic).
+          setFailedToGenerateData(false);
+          setFailureReason(null);
+        }
+
         updateRefreshing(
           columnConfig?.some((v) => RefreshStatus.includes(v?.status)) ||
             processingData,
@@ -616,6 +648,8 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
     setOpenSummaryDrawer,
     failedToGenerateData,
     setFailedToGenerateData,
+    failureReason,
+    setFailureReason,
   } = useEditSyntheticDataStore();
 
   // Grid Options
@@ -652,6 +686,7 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
       queryClient,
       dataset,
       setFailedToGenerateData,
+      setFailureReason,
       updateRefreshing,
       updateProcessingSyntheticData,
       overlayTimeoutRef,
@@ -661,6 +696,7 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
     dataset,
     queryClient,
     setFailedToGenerateData,
+    setFailureReason,
     updateRefreshing,
     updateProcessingSyntheticData,
   ]);
@@ -671,6 +707,7 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
         queryClient,
         dataset,
         setFailedToGenerateData,
+        setFailureReason,
         updateRefreshing,
         updateProcessingSyntheticData,
         overlayTimeoutRef,
@@ -683,6 +720,7 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
       dataset,
       queryClient,
       setFailedToGenerateData,
+      setFailureReason,
       updateRefreshing,
       updateProcessingSyntheticData,
     ],
@@ -1359,6 +1397,7 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
                   loadingOverlayComponentParams={{
                     failedToGenerateData,
                     setOpenSummaryDrawer,
+                    failureReason,
                     gridApiRef,
                     updateProcessingSyntheticData,
                   }}

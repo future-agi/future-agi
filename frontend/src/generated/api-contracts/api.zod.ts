@@ -20962,6 +20962,7 @@ export const ModelHubDevelopsGetDatasetTableListResponse = zod.object({
     synthetic_dataset: zod.boolean().optional(),
     synthetic_dataset_percentage: zod.number().optional(),
     synthetic_regenerate: zod.boolean().optional(),
+    failure_reason: zod.string().min(1).optional(),
     is_processing_data: zod.boolean().optional(),
   }),
 });
@@ -21438,6 +21439,7 @@ export const ModelHubDevelopsGetExperimentDatasetTableListResponse = zod.object(
       synthetic_dataset: zod.boolean().optional(),
       synthetic_dataset_percentage: zod.number().optional(),
       synthetic_regenerate: zod.boolean().optional(),
+      failure_reason: zod.string().min(1).optional(),
       is_processing_data: zod.boolean().optional(),
     }),
   },
