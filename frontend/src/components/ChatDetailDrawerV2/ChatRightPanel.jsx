@@ -243,7 +243,10 @@ const ChatRightPanel = ({
         {canCompare && (
           <CustomTooltip
             show={data?.status !== TestRunExecutionStatus.COMPLETED}
-            title={getCompareBaselineTooltipTitle(data?.status)}
+            title={getCompareBaselineTooltipTitle(
+              data?.status,
+              data?.simulation_call_type,
+            )}
             type="black"
             arrow
             placement="bottom"

@@ -6,6 +6,7 @@ import pytest
 
 from model_hub.models.choices import StatusType
 from tracer.utils.replay_session import (
+    _SELECT_ALL_TRACE_LIMIT,
     _build_trace_query,
     _get_transcripts_from_session_query,
     _get_transcripts_from_trace_query,
@@ -18,63 +19,127 @@ from tracer.utils.replay_session import (
 )
 
 
+def _fake_span(
+    trace_id,
+    session_id=None,
+    parent_span_id=None,
+    input_="in",
+    output="out",
+    start_time=None,
+):
+    span = MagicMock()
+    span.trace_id = trace_id
+    span.trace_session_id = session_id
+    span.parent_span_id = parent_span_id
+    span.input = input_
+    span.output = output
+    span.start_time = start_time or datetime(2025, 1, 1)
+    return span
+
+
+def _fake_reader(**methods):
+    reader = MagicMock()
+    reader.__enter__ = lambda s: s
+    reader.__exit__ = MagicMock(return_value=False)
+    for name, value in methods.items():
+        getattr(reader, name).return_value = value
+    return reader
+
+
 @pytest.mark.unit
 class TestBuildTraceQuery:
     """Tests for _build_trace_query function."""
 
-    @patch("tracer.utils.replay_session.Trace")
-    def test_session_type_with_ids(self, mock_trace):
-        """Should filter by session_id when replay_type is session."""
-        mock_queryset = MagicMock()
-        mock_trace.objects.filter.return_value = mock_queryset
+    def test_session_type_with_ids_reads_root_spans_per_session(self):
+        session_id = uuid.uuid4()
+        trace_id = uuid.uuid4()
+        reader = _fake_reader(
+            list_by_session=[
+                _fake_span(trace_id, session_id=session_id),
+                _fake_span(trace_id, session_id=session_id, parent_span_id="child"),
+            ]
+        )
 
+        with patch(
+            "tracer.services.clickhouse.v2.get_reader", return_value=reader
+        ):
+            result = _build_trace_query(
+                str(uuid.uuid4()), "session", [str(session_id)], select_all=False
+            )
+
+        reader.list_by_session.assert_called_once_with(str(session_id))
+        assert result == [
+            {
+                "id": str(trace_id),
+                "session_id": str(session_id),
+                "input": "in",
+                "output": "out",
+                "created_at": datetime(2025, 1, 1),
+            }
+        ]
+
+    def test_session_type_select_all_keeps_only_session_scoped_traces(self):
         project_id = str(uuid.uuid4())
-        session_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+        session_trace = uuid.uuid4()
+        orphan_trace = uuid.uuid4()
+        session_id = uuid.uuid4()
+        reader = _fake_reader(
+            recent_root_trace_ids_by_project=[str(session_trace), str(orphan_trace)],
+            roots_by_trace_ids=[
+                _fake_span(session_trace, session_id=session_id),
+                _fake_span(orphan_trace),
+            ],
+        )
 
-        _build_trace_query(project_id, "session", session_ids, select_all=False)
+        with patch(
+            "tracer.services.clickhouse.v2.get_reader", return_value=reader
+        ):
+            result = _build_trace_query(
+                project_id, "session", ids=None, select_all=True
+            )
 
-        mock_trace.objects.filter.assert_called_once_with(project_id=project_id)
-        mock_queryset.filter.assert_called_once_with(session_id__in=session_ids)
+        reader.recent_root_trace_ids_by_project.assert_called_once_with(
+            project_id, limit=_SELECT_ALL_TRACE_LIMIT
+        )
+        assert [r["id"] for r in result] == [str(session_trace)]
 
-    @patch("tracer.utils.replay_session.Trace")
-    def test_session_type_select_all(self, mock_trace):
-        """Should filter for non-null session_id when select_all is True."""
-        mock_queryset = MagicMock()
-        mock_trace.objects.filter.return_value = mock_queryset
-
-        project_id = str(uuid.uuid4())
-
-        _build_trace_query(project_id, "session", ids=None, select_all=True)
-
-        mock_trace.objects.filter.assert_called_once_with(project_id=project_id)
-        mock_queryset.filter.assert_called_once_with(session_id__isnull=False)
-
-    @patch("tracer.utils.replay_session.Trace")
-    def test_trace_type_with_ids(self, mock_trace):
-        """Should filter by trace IDs when replay_type is trace."""
-        mock_queryset = MagicMock()
-        mock_trace.objects.filter.return_value = mock_queryset
-
+    def test_trace_type_with_ids_queries_those_trace_roots(self):
         project_id = str(uuid.uuid4())
         trace_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+        reader = _fake_reader(
+            roots_by_trace_ids=[_fake_span(uuid.UUID(trace_ids[0]))]
+        )
 
-        _build_trace_query(project_id, "trace", trace_ids, select_all=False)
+        with patch(
+            "tracer.services.clickhouse.v2.get_reader", return_value=reader
+        ):
+            result = _build_trace_query(
+                project_id, "trace", trace_ids, select_all=False
+            )
 
-        mock_trace.objects.filter.assert_called_once_with(project_id=project_id)
-        mock_queryset.filter.assert_called_once_with(id__in=trace_ids)
+        reader.roots_by_trace_ids.assert_called_once_with(
+            trace_ids, project_id=project_id
+        )
+        reader.recent_root_trace_ids_by_project.assert_not_called()
+        assert [r["id"] for r in result] == [trace_ids[0]]
 
-    @patch("tracer.utils.replay_session.Trace")
-    def test_trace_type_select_all(self, mock_trace):
-        """Should return base query when select_all is True for trace type."""
-        mock_queryset = MagicMock()
-        mock_trace.objects.filter.return_value = mock_queryset
-
+    def test_trace_type_select_all_uses_the_recent_trace_ceiling(self):
         project_id = str(uuid.uuid4())
+        trace_id = uuid.uuid4()
+        reader = _fake_reader(
+            recent_root_trace_ids_by_project=[str(trace_id)],
+            roots_by_trace_ids=[_fake_span(trace_id)],
+        )
 
-        result = _build_trace_query(project_id, "trace", ids=None, select_all=True)
+        with patch(
+            "tracer.services.clickhouse.v2.get_reader", return_value=reader
+        ):
+            result = _build_trace_query(project_id, "trace", ids=None, select_all=True)
 
-        mock_trace.objects.filter.assert_called_once_with(project_id=project_id)
-        assert result == mock_queryset
+        reader.recent_root_trace_ids_by_project.assert_called_once_with(
+            project_id, limit=_SELECT_ALL_TRACE_LIMIT
+        )
+        assert [r["id"] for r in result] == [str(trace_id)]
 
     def test_invalid_replay_type_raises_error(self):
         """Should raise ValueError for invalid replay_type."""
@@ -83,17 +148,63 @@ class TestBuildTraceQuery:
 
         assert "Invalid replay type" in str(exc_info.value)
 
-    @patch("tracer.utils.replay_session.Trace")
-    def test_empty_ids_list(self, mock_trace):
-        """Should handle empty ids list."""
-        mock_queryset = MagicMock()
-        mock_trace.objects.filter.return_value = mock_queryset
+    def test_empty_ids_list_returns_no_records(self):
+        reader = _fake_reader(list_by_session=[], roots_by_trace_ids=[])
 
-        project_id = str(uuid.uuid4())
+        with patch(
+            "tracer.services.clickhouse.v2.get_reader", return_value=reader
+        ):
+            assert (
+                _build_trace_query(
+                    str(uuid.uuid4()), "session", ids=[], select_all=False
+                )
+                == []
+            )
+            assert (
+                _build_trace_query(
+                    str(uuid.uuid4()), "trace", ids=[], select_all=False
+                )
+                == []
+            )
 
-        _build_trace_query(project_id, "session", ids=[], select_all=False)
+        reader.roots_by_trace_ids.assert_not_called()
 
-        mock_queryset.filter.assert_called_once_with(session_id__in=[])
+    def test_dedupes_traces_with_several_root_spans(self):
+        trace_id = uuid.uuid4()
+        reader = _fake_reader(
+            roots_by_trace_ids=[
+                _fake_span(trace_id, input_="first"),
+                _fake_span(trace_id, input_="second"),
+            ]
+        )
+
+        with patch(
+            "tracer.services.clickhouse.v2.get_reader", return_value=reader
+        ):
+            result = _build_trace_query(
+                str(uuid.uuid4()), "trace", [str(trace_id)], select_all=False
+            )
+
+        assert len(result) == 1
+        assert result[0]["input"] == "first"
+
+    def test_orders_records_oldest_first(self):
+        early, late = uuid.uuid4(), uuid.uuid4()
+        reader = _fake_reader(
+            roots_by_trace_ids=[
+                _fake_span(late, input_="Late", start_time=datetime(2025, 1, 2)),
+                _fake_span(early, input_="Early", start_time=datetime(2025, 1, 1)),
+            ]
+        )
+
+        with patch(
+            "tracer.services.clickhouse.v2.get_reader", return_value=reader
+        ):
+            result = _build_trace_query(
+                str(uuid.uuid4()), "trace", [str(early), str(late)], select_all=False
+            )
+
+        assert [r["input"] for r in result] == ["Early", "Late"]
 
 
 @pytest.mark.unit
@@ -105,9 +216,7 @@ class TestGetSystemPrompt:
     def test_returns_system_prompt(self, mock_build_query, mock_sql_handler):
         """Should return system prompt when found."""
         trace_id = uuid.uuid4()
-        mock_queryset = MagicMock()
-        mock_queryset.values_list.return_value = [trace_id]
-        mock_build_query.return_value = mock_queryset
+        mock_build_query.return_value = [{"id": str(trace_id)}]
 
         mock_sql_handler.get_system_prompt_from_traces.return_value = (
             "You are a helpful assistant."
@@ -123,9 +232,7 @@ class TestGetSystemPrompt:
     @patch("tracer.utils.replay_session._build_trace_query")
     def test_returns_none_when_no_traces(self, mock_build_query, mock_sql_handler):
         """Should return None when no traces found."""
-        mock_queryset = MagicMock()
-        mock_queryset.values_list.return_value = []
-        mock_build_query.return_value = mock_queryset
+        mock_build_query.return_value = []
 
         project_id = str(uuid.uuid4())
         result = get_system_prompt(project_id, "trace", [], False)
@@ -140,9 +247,7 @@ class TestGetSystemPrompt:
     ):
         """Should return None when SQL query returns no prompt."""
         trace_id = uuid.uuid4()
-        mock_queryset = MagicMock()
-        mock_queryset.values_list.return_value = [trace_id]
-        mock_build_query.return_value = mock_queryset
+        mock_build_query.return_value = [{"id": str(trace_id)}]
 
         mock_sql_handler.get_system_prompt_from_traces.return_value = None
 
@@ -542,57 +647,35 @@ class TestGetTranscriptsFromTraceQuery:
         trace_id_1 = uuid.uuid4()
         trace_id_2 = uuid.uuid4()
 
-        mock_queryset = MagicMock()
-        mock_queryset.values.return_value = [
-            {
-                "id": trace_id_1,
-                "input": "Input 1",
-                "output": "Output 1",
-            },
-            {
-                "id": trace_id_2,
-                "input": "Input 2",
-                "output": "Output 2",
-            },
+        trace_records = [
+            {"id": trace_id_1, "input": "Input 1", "output": "Output 1"},
+            {"id": trace_id_2, "input": "Input 2", "output": "Output 2"},
         ]
 
         with patch(
             "tracer.utils.replay_session.trace_ids_with_simulator_call_execution_id",
             return_value=set(),
         ):
-            result = _get_transcripts_from_trace_query(mock_queryset)
+            result = _get_transcripts_from_trace_query(trace_records)
 
         assert str(trace_id_1) in result
         assert str(trace_id_2) in result
         assert result[str(trace_id_1)] == [{"input": "Input 1", "output": "Output 1"}]
         assert result[str(trace_id_2)] == [{"input": "Input 2", "output": "Output 2"}]
 
-    def test_returns_empty_dict_for_empty_queryset(self):
-        """Should return empty dict when queryset is empty."""
-        mock_queryset = MagicMock()
-        mock_queryset.values.return_value = []
-
-        result = _get_transcripts_from_trace_query(mock_queryset)
-
-        assert result == {}
+    def test_returns_empty_dict_for_empty_records(self):
+        assert _get_transcripts_from_trace_query([]) == {}
 
     def test_each_trace_has_single_turn(self):
         """Should have single turn per trace."""
         trace_id = uuid.uuid4()
-        mock_queryset = MagicMock()
-        mock_queryset.values.return_value = [
-            {
-                "id": trace_id,
-                "input": "Hello",
-                "output": "Hi",
-            }
-        ]
+        trace_records = [{"id": trace_id, "input": "Hello", "output": "Hi"}]
 
         with patch(
             "tracer.utils.replay_session.trace_ids_with_simulator_call_execution_id",
             return_value=set(),
         ):
-            result = _get_transcripts_from_trace_query(mock_queryset)
+            result = _get_transcripts_from_trace_query(trace_records)
 
         assert len(result[str(trace_id)]) == 1
 
@@ -606,7 +689,7 @@ class TestGetTranscriptsFromSessionQuery:
         session_id = uuid.uuid4()
         now = datetime(2025, 1, 1, tzinfo=None)
 
-        trace_rows = [
+        trace_records = [
             {
                 "id": uuid.uuid4(),
                 "session_id": session_id,
@@ -623,22 +706,11 @@ class TestGetTranscriptsFromSessionQuery:
             },
         ]
 
-        mock_queryset = MagicMock()
-        mock_queryset.values.return_value = trace_rows
-
-        mock_reader = MagicMock()
-        mock_reader.per_trace_root_span_start_times.return_value = {}
-        mock_reader.__enter__ = lambda s: s
-        mock_reader.__exit__ = MagicMock(return_value=False)
-
         with patch(
-            "tracer.services.clickhouse.v2.get_reader",
-            return_value=mock_reader,
-        ), patch(
             "tracer.utils.replay_session.trace_ids_with_simulator_call_execution_id",
             return_value=set(),
         ):
-            result = _get_transcripts_from_session_query(mock_queryset)
+            result = _get_transcripts_from_session_query(trace_records)
 
         assert str(session_id) in result
         assert len(result[str(session_id)]) == 2
@@ -649,7 +721,7 @@ class TestGetTranscriptsFromSessionQuery:
         session_id_2 = uuid.uuid4()
         now = datetime(2025, 1, 1, tzinfo=None)
 
-        trace_rows = [
+        trace_records = [
             {
                 "id": uuid.uuid4(),
                 "session_id": session_id_1,
@@ -666,84 +738,74 @@ class TestGetTranscriptsFromSessionQuery:
             },
         ]
 
-        mock_queryset = MagicMock()
-        mock_queryset.values.return_value = trace_rows
-
-        mock_reader = MagicMock()
-        mock_reader.per_trace_root_span_start_times.return_value = {}
-        mock_reader.__enter__ = lambda s: s
-        mock_reader.__exit__ = MagicMock(return_value=False)
-
         with patch(
-            "tracer.services.clickhouse.v2.get_reader",
-            return_value=mock_reader,
-        ), patch(
             "tracer.utils.replay_session.trace_ids_with_simulator_call_execution_id",
             return_value=set(),
         ):
-            result = _get_transcripts_from_session_query(mock_queryset)
+            result = _get_transcripts_from_session_query(trace_records)
 
         assert len(result) == 2
         assert str(session_id_1) in result
         assert str(session_id_2) in result
 
-    def test_returns_empty_dict_for_empty_queryset(self):
-        """Should return empty dict when queryset is empty."""
-        mock_queryset = MagicMock()
-        mock_queryset.values.return_value = []
+    def test_returns_empty_dict_for_empty_records(self):
+        assert _get_transcripts_from_session_query([]) == {}
 
-        result = _get_transcripts_from_session_query(mock_queryset)
-
-        assert result == {}
-
-    def test_orders_by_root_span_start_time(self):
-        """Should order traces by root span start_time from CH, falling back to created_at."""
+    def test_drops_traces_without_a_session(self):
         session_id = uuid.uuid4()
-        trace_id_early = uuid.uuid4()
-        trace_id_late = uuid.uuid4()
-
-        # Intentionally list the late trace first in PG results
-        trace_rows = [
+        trace_records = [
             {
-                "id": trace_id_late,
-                "session_id": session_id,
-                "input": "Late",
-                "output": "Late out",
-                "created_at": datetime(2025, 1, 2, tzinfo=None),
+                "id": uuid.uuid4(),
+                "session_id": None,
+                "input": "Orphan",
+                "output": "Orphan out",
+                "created_at": datetime(2025, 1, 1),
             },
             {
-                "id": trace_id_early,
+                "id": uuid.uuid4(),
                 "session_id": session_id,
-                "input": "Early",
-                "output": "Early out",
-                "created_at": datetime(2025, 1, 1, tzinfo=None),
+                "input": "Kept",
+                "output": "Kept out",
+                "created_at": datetime(2025, 1, 1),
             },
         ]
 
-        mock_queryset = MagicMock()
-        mock_queryset.values.return_value = trace_rows
-
-        # CH returns root-span start_times that should drive sort order
-        mock_reader = MagicMock()
-        mock_reader.per_trace_root_span_start_times.return_value = {
-            str(trace_id_early): datetime(2025, 1, 1, 0, 0, 0),
-            str(trace_id_late): datetime(2025, 1, 2, 0, 0, 0),
-        }
-        mock_reader.__enter__ = lambda s: s
-        mock_reader.__exit__ = MagicMock(return_value=False)
-
         with patch(
-            "tracer.services.clickhouse.v2.get_reader",
-            return_value=mock_reader,
-        ), patch(
             "tracer.utils.replay_session.trace_ids_with_simulator_call_execution_id",
             return_value=set(),
         ):
-            result = _get_transcripts_from_session_query(mock_queryset)
+            result = _get_transcripts_from_session_query(trace_records)
+
+        assert list(result) == [str(session_id)]
+        assert result[str(session_id)] == [{"input": "Kept", "output": "Kept out"}]
+
+    def test_preserves_the_order_records_arrive_in(self):
+        session_id = uuid.uuid4()
+        trace_records = [
+            {
+                "id": uuid.uuid4(),
+                "session_id": session_id,
+                "input": "Early",
+                "output": "Early out",
+                "created_at": datetime(2025, 1, 1),
+            },
+            {
+                "id": uuid.uuid4(),
+                "session_id": session_id,
+                "input": "Late",
+                "output": "Late out",
+                "created_at": datetime(2025, 1, 2),
+            },
+        ]
+
+        with patch(
+            "tracer.utils.replay_session.trace_ids_with_simulator_call_execution_id",
+            return_value=set(),
+        ):
+            result = _get_transcripts_from_session_query(trace_records)
 
         turns = result[str(session_id)]
-        assert turns[0]["input"] == "Early"
-        assert turns[1]["input"] == "Late"
+        assert [t["input"] for t in turns] == ["Early", "Late"]
 
 
 @pytest.mark.unit

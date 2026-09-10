@@ -1,53 +1,16 @@
-import { Box, Grid, Stack, Typography } from "@mui/material";
+import { Box, Stack, Typography } from "@mui/material";
 import PropTypes from "prop-types";
-import React, { lazy, Suspense } from "react";
-import {
-  CompareConversationSkeleton,
-  PerformanceMetricsSkeleton,
-  TestDetailDrawerScenarioTableSkeleton,
-} from "./Skeletons";
+import React, { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import CompareHeaderBar from "src/components/BaselineCompare/CompareHeaderBar";
+import CompareMetrics from "src/components/BaselineCompare/CompareMetrics";
+import CompareScenarioSummary from "src/components/BaselineCompare/CompareScenarioSummary";
+import CompareSectionLabel from "src/components/BaselineCompare/CompareSectionLabel";
+import CompareTranscript from "src/components/BaselineCompare/CompareTranscript";
 import { StereoMultiTrackPlayer } from "../AudioPlayerCustom";
-const PerformanceMetrics = lazy(() => import("./PerformanceMetrics"));
-const CompareConversation = lazy(() => import("./CompareConversation"));
-const TestDetailDrawerScenarioTable = lazy(
-  () =>
-    import(
-      "src/sections/test-detail/TestDetailDrawer/TestDetailDrawerScenarioTable"
-    ),
-);
 import { transformToConversations } from "./common";
 
-const Header = ({ scenarioName, sessionId }) => {
-  return (
-    <Stack gap={0}>
-      <Typography
-        typography={"m3"}
-        fontWeight={"fontWeightSemiBold"}
-        color={"text.primary"}
-      >
-        Base Line vs Replay
-      </Typography>
-      <Typography
-        typography={"s2_1"}
-        fontWeight={"fontWeightRegular"}
-        color={"text.disabled"}
-      >
-        {scenarioName}
-        {sessionId ? ` | Session ID: ${sessionId}` : ""}
-      </Typography>
-    </Stack>
-  );
-};
-Header.propTypes = {
-  scenarioName: PropTypes.string,
-  sessionId: PropTypes.string,
-};
-
-/**
- * Maps API recording format to the shape StereoMultiTrackPlayer expects.
- */
 const toPlayerRecordings = (rec) => {
   if (!rec) return null;
   return {
@@ -62,48 +25,39 @@ const toPlayerRecordings = (rec) => {
 const RecordingPlayer = ({ label, recordings, id }) => {
   const mapped = toPlayerRecordings(recordings);
   const hasAudio = mapped?.stereo || mapped?.combined || mapped?.assistant;
-  if (!hasAudio) {
-    return (
-      <Box
-        sx={{
-          border: "1px solid",
-          borderColor: "divider",
-          borderRadius: 0.5,
-          p: 2,
-        }}
-      >
-        <Typography
-          typography="s1"
-          fontWeight="fontWeightMedium"
-          color="text.primary"
-          sx={{ mb: 1 }}
-        >
-          {label}
-        </Typography>
-        <Typography typography="s2_1" color="text.disabled">
-          No recording available
-        </Typography>
-      </Box>
-    );
-  }
+
   return (
     <Box
       sx={{
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 0.5,
-        p: 2,
+        borderRadius: "4px",
+        bgcolor: "background.paper",
+        p: 1.25,
+        minWidth: 0,
       }}
     >
       <Typography
-        typography="s1"
-        fontWeight="fontWeightMedium"
-        color="text.primary"
-        sx={{ mb: 1 }}
+        sx={{
+          fontSize: 11,
+          fontWeight: 700,
+          color: "text.primary",
+          textTransform: "uppercase",
+          letterSpacing: "0.04em",
+          mb: 1,
+        }}
       >
         {label}
       </Typography>
-      <StereoMultiTrackPlayer recordings={mapped} id={id} height={50} />
+      {hasAudio ? (
+        <Box sx={{ minWidth: 0, overflowX: "auto" }}>
+          <StereoMultiTrackPlayer recordings={mapped} id={id} height={50} />
+        </Box>
+      ) : (
+        <Typography sx={{ fontSize: 12, color: "text.disabled" }}>
+          No recording available
+        </Typography>
+      )}
     </Box>
   );
 };
@@ -114,7 +68,7 @@ RecordingPlayer.propTypes = {
   id: PropTypes.string,
 };
 
-export default function BaseLineVsReplay({ rowData }) {
+export default function BaseLineVsReplay({ rowData, onBack }) {
   const { data: baselineVsReplayData, isLoading: isLoadingBaselineVsReplay } =
     useQuery({
       queryKey: ["baseline-vs-replay", rowData?.id],
@@ -127,82 +81,79 @@ export default function BaseLineVsReplay({ rowData }) {
       enabled: !!rowData?.id,
     });
 
+  const recordings = baselineVsReplayData?.comparison_recordings;
+
+  const transcripts = useMemo(() => {
+    if (!baselineVsReplayData?.comparison_transcripts) return null;
+    return transformToConversations(
+      baselineVsReplayData.comparison_transcripts,
+    );
+  }, [baselineVsReplayData?.comparison_transcripts]);
+
   return (
     <Box
       sx={{
-        minHeight: "80vh",
+        flex: 1,
+        minHeight: 0,
         display: "flex",
         flexDirection: "column",
-        px: 2,
-        gap: 2,
+        width: "100%",
+        overflow: "auto",
       }}
     >
-      <Header
+      <CompareHeaderBar
+        onBack={onBack}
         scenarioName={rowData?.scenario}
         sessionId={rowData?.session_id ?? rowData?.sessionId}
+        backLabel="Back to call"
       />
-      <Suspense fallback={<PerformanceMetricsSkeleton />}>
-        <PerformanceMetrics
+
+      <Stack gap={2} sx={{ p: 1.5 }}>
+        <CompareMetrics
           data={baselineVsReplayData?.comparison_metrics}
           isLoading={isLoadingBaselineVsReplay}
           simulationCallType={rowData?.simulation_call_type}
         />
-      </Suspense>
-      <Suspense fallback={<TestDetailDrawerScenarioTableSkeleton />}>
-        <Box
-          sx={{
-            "& > div": {
-              marginX: 0,
-            },
-          }}
-        >
-          <TestDetailDrawerScenarioTable data={rowData} />
-        </Box>
-      </Suspense>
-      {baselineVsReplayData?.comparisonRecordings && (
-        <Stack gap={1.5}>
-          <Typography
-            typography="m3"
-            fontWeight="fontWeightMedium"
-            color="text.primary"
-          >
-            Call Recordings
-          </Typography>
-          <Grid container spacing={2}>
-            <Grid item xs={12} md={6}>
+
+        <CompareScenarioSummary data={rowData} />
+
+        {recordings && (
+          <Stack gap={0.75}>
+            <CompareSectionLabel>Call recordings</CompareSectionLabel>
+            <Box
+              sx={{
+                display: "grid",
+                gridTemplateColumns: {
+                  xs: "minmax(0, 1fr)",
+                  md: "minmax(0, 1fr) minmax(0, 1fr)",
+                },
+                gap: 1,
+              }}
+            >
               <RecordingPlayer
-                label="Baseline Call"
-                recordings={baselineVsReplayData.comparisonRecordings.baseline}
+                label="Baseline call"
+                recordings={recordings.baseline}
                 id={`baseline-${rowData?.id}`}
               />
-            </Grid>
-            <Grid item xs={12} md={6}>
               <RecordingPlayer
-                label="Simulated Call"
-                recordings={baselineVsReplayData.comparisonRecordings.simulated}
+                label="Simulated call"
+                recordings={recordings.simulated}
                 id={`simulated-${rowData?.id}`}
               />
-            </Grid>
-          </Grid>
-        </Stack>
-      )}
-      <Suspense fallback={<CompareConversationSkeleton />}>
-        <CompareConversation
-          data={
-            isLoadingBaselineVsReplay
-              ? null
-              : transformToConversations(
-                  baselineVsReplayData?.comparisonTranscripts,
-                )
-          }
+            </Box>
+          </Stack>
+        )}
+
+        <CompareTranscript
+          data={transcripts}
           isLoading={isLoadingBaselineVsReplay}
-          simulationCallType={rowData?.simulation_call_type}
         />
-      </Suspense>
+      </Stack>
     </Box>
   );
 }
 
 BaseLineVsReplay.propTypes = {
   rowData: PropTypes.object.isRequired,
+  onBack: PropTypes.func.isRequired,
 };
