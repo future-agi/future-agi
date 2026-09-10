@@ -9,4 +9,5 @@ export const E2E = {
   chUrl: process.env.E2E_CH_URL ?? 'http://localhost:28123',
   chDatabase: process.env.E2E_CH_DB ?? 'default',
   pgUrl: process.env.E2E_PG_URL ?? 'postgresql://futureagi:futureagi@localhost:25432/futureagi',
+  mockLlmUrl: process.env.E2E_MOCK_LLM_URL ?? 'http://localhost:28081',
 } as const;

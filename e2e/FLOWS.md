@@ -239,3 +239,523 @@
 - bulk-delete soft-deletes: the PG row survives with deleted=true
 - the list endpoint no longer returns the deleted prompt but still returns the renamed one
 - the list shows the renamed row and no row for the deleted prompt
+
+### PROMPT-E2E-006 — a prompt authored in the workbench editor runs and is committed with exactly what was written
+
+**Goal:** A user authors a prompt in the workbench editor, runs it against a model, and commits it as a version, and the saved version holds exactly what they wrote and ran  
+**Spec:** `flows/prompts/author-and-commit.spec.ts:85`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a new draft prompt and a custom model that reaches the mock
+2. open the workbench editor for the draft
+3. type a system message into the first card
+4. type a user message into the second card
+5. wait for the editor to auto-save the authored content
+6. select the seeded model and run the prompt
+7. wait for the run output to appear
+8. open the Commit dialog, enter a commit message, and confirm
+9. read the committed version
+
+**Backend state verified:**
+
+- the run returns the mock echo of the authored user message, shown in the output panel
+- commit finalizes the model_hub_promptversion row: is_draft is false and the commit_message is stored
+- prompt_config_snapshot.messages holds exactly the authored system + user messages, in order
+- prompt_config_snapshot.configuration.model is the seeded model
+- the committed version is not marked default (committed without set-default)
+
+### PROMPT-E2E-007 — the template format chosen in the editor is saved on the committed version
+
+**Goal:** A user switches the prompt template format in the workbench editor, runs, and commits, and the saved version records the chosen format and model  
+**Spec:** `flows/prompts/config-commit.spec.ts:52`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a new draft prompt and a custom model that reaches the mock
+2. open the workbench editor for the draft
+3. type a user message
+4. select the seeded model
+5. switch the template format from Mustache to Jinja
+6. run the prompt
+7. open the Commit dialog, enter a commit message, and confirm
+8. read the committed version
+
+**Backend state verified:**
+
+- prompt_config_snapshot.configuration.template_format is "jinja" (the chosen format, not the "mustache" default)
+- prompt_config_snapshot.configuration.model is the seeded model
+- commit finalizes the version: is_draft is false and the commit_message is stored
+
+### PROMPT-E2E-008 — editing a committed prompt and committing again produces a distinct second version
+
+**Goal:** A user commits a prompt, edits it, and commits again, and the workbench keeps both versions with the content each was committed with  
+**Spec:** `flows/prompts/versioning.spec.ts:50`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a new draft prompt and a custom model that reaches the mock
+2. open the editor, type the first user message, select the model, run
+3. commit the first version
+4. edit the user message to new text
+5. run the edited prompt
+6. commit the second version
+7. read both committed versions
+
+**Backend state verified:**
+
+- two committed model_hub_promptversion rows exist for the template, both is_draft=false
+- the first version holds the first message text under its commit message
+- the second version holds the edited message text under its commit message
+- the two versions have different template_version identifiers
+
+### PROMPT-E2E-009 — committing a second version as default moves the default and clears the first
+
+**Goal:** A user marks one prompt version as the default and then makes a later version the default, and only the latest choice stays default  
+**Spec:** `flows/prompts/set-default-version.spec.ts:40`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a new draft prompt and a custom model that reaches the mock
+2. open the editor, type a message, select the model, run
+3. commit the first version and set it as default
+4. edit the message, run
+5. commit the second version and set it as default
+6. read both committed versions
+
+**Backend state verified:**
+
+- the second version is is_default=true
+- the first version is is_default=false (its default was cleared when the second took it)
+- the two versions have different template_version identifiers
+
+### PROMPT-E2E-010 — a variable defined in the editor is saved with the committed version
+
+**Goal:** A user writes a prompt with a variable, defines its value, runs, and commits, and the saved version records the variable and its value  
+**Spec:** `flows/prompts/variables-commit.spec.ts:34`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a new draft prompt and a custom model that reaches the mock
+2. open the editor and type a message containing a {{variable}}
+3. select the model and run, which opens the variables drawer
+4. enter a value for the variable and run
+5. commit the version
+6. read the committed version
+
+**Backend state verified:**
+
+- the committed version variable_names contains the variable with the entered value
+- commit finalizes the version: is_draft is false and the commit_message is stored
+
+### PROMPT-E2E-011 — restoring an older version brings its content back into the editor
+
+**Goal:** A user who has committed two versions restores the older one from history and gets its content back in the editor  
+**Spec:** `flows/prompts/restore-version.spec.ts:33`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a new draft prompt and a custom model that reaches the mock
+2. commit a first version with message A
+3. edit to message B and commit a second version
+4. confirm the editor is showing message B
+5. open version history and restore the first version
+6. confirm the editor now shows message A
+
+**Backend state verified:**
+
+- two committed model_hub_promptversion rows exist for the template
+- after committing v2 the editor shows message B (the latest content)
+- after restoring v1 the editor shows message A (restore is a client-side load; its effect is in the editor)
+
+### PROMPT-E2E-012 — the JSON output format chosen in the editor is saved on the committed version
+
+**Goal:** A user switches the prompt output format to JSON in the editor, runs, and commits, and the saved version records the JSON output format  
+**Spec:** `flows/prompts/output-format-commit.spec.ts:37`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a new draft prompt and a custom model that reaches the mock
+2. open the editor, type a message, select the model
+3. switch the output format from Text output to JSON output
+4. run the prompt
+5. commit the version
+6. read the committed version
+
+**Backend state verified:**
+
+- prompt_config_snapshot.configuration.response_format is a JSON format (not the "text" default)
+- commit finalizes the version: is_draft is false and the commit_message is stored
+
+### PROMPT-E2E-013 — compare mode runs two versions side by side and shows each output
+
+**Goal:** A user compares two prompt versions in the workbench and gets a distinct run output for each side by side  
+**Spec:** `flows/prompts/compare-versions.spec.ts:27`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a new draft prompt and a custom model that reaches the mock
+2. author the first message and select the model
+3. open Compare to add a second panel
+4. give the second panel its own message and select the model
+5. run both panels
+6. read both output panels
+
+**Backend state verified:**
+
+- both compare panels produce a run output (two echoes visible)
+- the first panel output echoes the first message
+- the second panel output echoes the second message
+
+### PROMPT-E2E-014 — an image-generation prompt runs against the model and commits with the image output
+
+**Goal:** A user writes an image prompt, runs it against an image model, sees the generated image, and commits it  
+**Spec:** `flows/prompts/image-generation.spec.ts:33`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a new draft prompt and an OpenAI provider key (routed to the mock)
+2. open the editor and type an image prompt
+3. select the image model
+4. run and wait for the generated image
+5. commit the version
+6. read the committed version
+
+**Backend state verified:**
+
+- the run produces an image in the output panel
+- the committed snapshot records the image model (gpt-image-1, type image_generation)
+- the version metadata carries the model revised_prompt echoing the authored text
+- commit finalizes the version: is_draft is false and the commit_message is stored
+
+### PROMPT-E2E-015 — a TTS prompt runs against the model and commits with the audio output
+
+**Goal:** A user writes a TTS prompt, runs it against a text-to-speech model, hears the generated audio, and commits it  
+**Spec:** `flows/prompts/tts-run.spec.ts:64`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a new draft prompt and an OpenAI provider key (routed to the mock)
+2. open the editor and type the text to speak
+3. select the TTS model (auto-sets the response format to Audio output)
+4. run and wait for the generated audio player
+5. commit the version
+6. read the committed version
+
+**Backend state verified:**
+
+- the run produces a playable audio output in the output panel
+- the committed snapshot records the TTS model and type tts
+- the version metadata carries the mock audio usage token count
+- the output holds the generated audio file URL
+- commit finalizes the version: is_draft is false and the commit_message is stored
+
+### PROMPT-E2E-017 — attaching an image to a draft prompt auto-saves it into the snapshot
+
+**Goal:** A user attaches an image to a draft prompt and it is preserved by the auto-save, without running the prompt  
+**Spec:** `flows/prompts/attach-media-draft.spec.ts:51`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a new draft prompt
+2. open the editor
+3. attach an image to the user card
+4. wait for the editor to auto-save the attachment
+5. read the draft version
+
+**Backend state verified:**
+
+- the upload-file endpoint returns the uploaded image URL
+- the auto-saved draft snapshot holds an image_url content block for the uploaded image in the user message
+- the version remains a draft (is_draft stays true; nothing was committed or run)
+
+### PROMPT-E2E-018 — importing a dataset into variables maps a column to the prompt variable
+
+**Goal:** A user imports a dataset into the Variables drawer, maps a CSV column to the prompt variable, runs the prompt once per row, and commits, and the saved version records the imported column values  
+**Spec:** `flows/prompts/variables-import-dataset.spec.ts:48`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a dataset from a local CSV file and wait for background processing to complete
+2. seed a new draft prompt and a custom model that reaches the mock
+3. open the editor and type a message containing a {{variable}}
+4. select the model and run, which opens the Variables drawer
+5. open Import Dataset, pick the seeded dataset, map the variable to the CSV column, and Apply
+6. save the imported variable data and run
+7. commit the version
+8. read the committed version
+
+**Backend state verified:**
+
+- the dataset-creation-progress endpoint reaches is_completed once the worker processes the file
+- the run produces one output per dataset row (two echoes, one per imported CSV value)
+- the committed version variable_names.topic holds exactly the CSV column values
+- commit finalizes the version: is_draft is false and the commit_message is stored
+
+### PROMPT-E2E-019 — adding a message via Add Message is authored, run and committed as the third message
+
+**Goal:** A user adds a third message to the prompt with Add Message, writes it, runs and commits, and the added message lands in the committed version  
+**Spec:** `flows/prompts/add-message.spec.ts:53`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a new draft prompt and a custom model that reaches the mock
+2. open the editor and author the system and user messages
+3. click Add Message to append a third (user) card
+4. type distinct text into the added card
+5. wait for the editor to auto-save the three-message state
+6. select the seeded model and run the prompt
+7. wait for the run output to echo the added message
+8. commit the version
+9. read the committed version
+
+**Backend state verified:**
+
+- the run returns the mock echo of the added (last user) message
+- commit finalizes the model_hub_promptversion row: is_draft is false
+- prompt_config_snapshot.messages has exactly 3 entries: system, user, user
+- messages[2] carries the text typed into the added card, under role user
+
+### PROMPT-E2E-020 — deleting a message removes it from the run payload and the committed version
+
+**Goal:** A user adds a third message, then deletes it from its card menu, and the run and the committed version reflect only the two remaining messages  
+**Spec:** `flows/prompts/delete-message.spec.ts:48`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a new draft prompt and a custom model that reaches the mock
+2. open the editor and author the system and user messages
+3. click Add Message and author a third (user) card
+4. delete the added card via its top-section menu
+5. select the seeded model and run the prompt
+6. wait for the run output to echo the surviving user message
+7. commit the version
+8. read the committed version
+
+**Backend state verified:**
+
+- the deleted card is removed from the DOM
+- the run payload — and its echo — reflect only the surviving user message
+- commit finalizes the model_hub_promptversion row: is_draft is false
+- prompt_config_snapshot.messages has exactly 2 entries and the deleted text is absent from all of them
+
+### PROMPT-E2E-021 — changing a card role to Assistant is saved and committed as that role
+
+**Goal:** A user changes the role of the second card from User to Assistant via its role control, and the committed version stores that card under the assistant role  
+**Spec:** `flows/prompts/change-role.spec.ts:48`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a new draft prompt and a custom model that reaches the mock
+2. open the editor and author the system message
+3. open the role control on the second card and choose Assistant
+4. type text into the now-assistant card
+5. wait for the editor to auto-save the role change
+6. select the seeded model and run the prompt
+7. commit the version
+8. read the committed version
+
+**Backend state verified:**
+
+- the card wrapper reflects data-prompt-role="assistant" immediately after the role change
+- commit finalizes the model_hub_promptversion row: is_draft is false
+- prompt_config_snapshot.messages[1].role is the lowercase string "assistant"
+- messages[1] carries the text typed after the role change
+
+### PROMPT-E2E-022 — renaming a prompt from the editor header persists the new name
+
+**Goal:** A user renames a prompt from its editor header (distinct from renaming the list row), and the new name is persisted to the template  
+**Spec:** `flows/prompts/rename-in-editor.spec.ts:67`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a new draft prompt
+2. open the workbench editor for the draft
+3. click the pencil next to the prompt name to reveal the rename field
+4. type a new name and press Enter
+5. wait for the rename to save
+6. read the saved template
+
+**Backend state verified:**
+
+- model_hub_prompttemplate.name equals the minted name, scoped by the template id and organization
+
+### PROMPT-E2E-023 — a custom label assigned to a committed version is stored on that version
+
+**Goal:** A user creates a custom label and assigns it to a committed prompt version from the History drawer, and the version is stored carrying that label  
+**Spec:** `flows/prompts/version-label.spec.ts:79`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a new draft prompt and a custom model that reaches the mock
+2. open the editor, author a user message, select the model, run
+3. commit the version
+4. open History
+5. open the tag control on the committed version card
+6. create a new custom label and add it to the selection
+7. save the label assignment
+8. read the committed version and its assigned label
+
+**Backend state verified:**
+
+- the minted label exists as a model_hub_promptlabel row for this organization
+- the label is joined to the committed model_hub_promptversion row through model_hub_promptversion_labels
+
+### PROMPT-E2E-024 — a custom response schema created in the editor is committed as the response format
+
+**Goal:** A user creates a custom response schema from the response-format control and selects it, and the version committed afterward records that schema as the response format  
+**Spec:** `flows/prompts/custom-schema.spec.ts:38`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a new draft prompt and a custom model that reaches the mock
+2. open the editor, author a user message, select the model
+3. open the response-format control and click "Create custom schema"
+4. name the schema and save it, selecting it as the response format
+5. run the prompt, then commit the version
+6. read the committed version
+
+**Backend state verified:**
+
+- a model_hub_userresponseschema row exists with the minted name, scoped to the organization
+- prompt_config_snapshot.configuration.response_format on the committed version equals that schema row's id
+
+### PROMPT-E2E-025 — Add New Prompt from the editor toolbar opens a second, distinct draft
+
+**Goal:** A user editing one prompt clicks the editor toolbar's Add New Prompt control and lands on a brand new, separate draft — not the one they started from  
+**Spec:** `flows/prompts/new-from-editor.spec.ts:33`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a draft prompt and open its editor
+2. click the toolbar's Add New Prompt control
+3. wait for the create-draft response and capture the new root_template id
+4. observe the URL navigate to the new draft
+
+**Backend state verified:**
+
+- the URL now points at the new root_template id, not the original one
+- a new, non-deleted model_hub_prompttemplate row exists for the org under the new id
+- the new id is distinct from the id the flow started from
+
+### PROMPT-E2E-026 — copying a message card from its kebab menu writes the exact card text to the clipboard
+
+**Goal:** A user opens a message card's kebab menu and clicks Copy, and the card's own text lands on the system clipboard, with the card left untouched  
+**Spec:** `flows/prompts/copy-message.spec.ts:33`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a new draft prompt and open its editor
+2. type distinct text into the user card
+3. wait for the editor to auto-save the authored content
+4. open the user card's kebab menu
+5. click Copy
+
+**Backend state verified:**
+
+- the OS clipboard holds exactly the user card's text (Quill trailing-newline normalised)
+- the success snackbar "Prompt copied to clipboard" is shown
+- the card count is unchanged at 2 — Copy does not duplicate the card
+
+### PROMPT-E2E-027 — a committed version shows up under the History drawer's Commit History tab
+
+**Goal:** A user commits a version, opens the History drawer, and switches to the Commit History tab to see that version listed  
+**Spec:** `flows/prompts/commit-history.spec.ts:50`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a new draft prompt and a custom model that reaches the mock
+2. open the editor, author a user message, select the model, run
+3. commit one version with a minted commit message
+4. expand the toolbar and open History
+5. switch to the Commit History tab
+6. wait for the is_commit-filtered list to load
+
+**Backend state verified:**
+
+- GET /model-hub/prompt-history-executions/?template_id=<id>&is_commit=true returns exactly the committed version, carrying the minted commit_message
+- the drawer's Commit History tab renders exactly one row, labelled with that version's template_version
+
+### PROMPT-E2E-028 — multiple variable rows produce a run per row and are all saved on commit
+
+**Goal:** A user fills a second value row for a prompt variable, runs it, and the committed version records both values, in the order they were entered  
+**Spec:** `flows/prompts/multi-row-variables.spec.ts:34`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a new draft prompt and a custom model that reaches the mock
+2. open the editor and type a message containing a {{variable}}
+3. select the model and run, which opens the variables drawer
+4. add a second row via the drawer's Add-rows control
+5. enter a distinct value in each of the two rows and save
+6. run the prompt
+7. commit the version
+8. read the committed version
+
+**Backend state verified:**
+
+- the run produces one output per variable row (two echoes, one per minted value)
+- the committed version variable_names.topic holds both values, in row order
+- commit finalizes the version: is_draft is false and the commit_message is stored
+
+### PROMPT-E2E-030 — generating a prompt from the Generate drawer applies the streamed text and auto-saves it as a draft
+
+**Goal:** A user describes a task in the Generate Prompt drawer and the AI-generated prompt is applied into the editor without running anything  
+**Spec:** `flows/prompts/generate-prompt.spec.ts:44`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a new draft prompt with an empty user card
+2. open the editor
+3. open the user card's Generate Prompt drawer
+4. type a task statement
+5. click Generate and wait for the WS stream to land the full text
+6. click Continue to apply the generated text into the editor
+
+**Backend state verified:**
+
+- the auto-saved draft snapshot (run_template, is_run:false) holds the generated text in the user message
+- the version remains a draft (is_draft stays true; nothing was committed or run)
+
+### PROMPT-E2E-031 — improving a prompt from the Improve drawer applies the streamed text (preserving variables) and auto-saves it as a draft
+
+**Goal:** A user authors a prompt with a variable, describes an improvement in the Improve Prompt drawer, and the AI-improved prompt — with the original variable preserved — is applied into the editor without running anything  
+**Spec:** `flows/prompts/improve-prompt.spec.ts:44`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a new draft prompt with an empty user card
+2. open the editor and author a user message containing a {{variable}}
+3. open the user card's Improve Prompt drawer
+4. type an improvement requirements statement
+5. click Improve and wait for the WS stream to land the full text
+6. click Apply to apply the improved text into the editor
+
+**Backend state verified:**
+
+- the auto-saved draft snapshot (run_template, is_run:false) holds the improved text, with the original variable preserved, in the user message
+- the version remains a draft (is_draft stays true; nothing was committed or run)
