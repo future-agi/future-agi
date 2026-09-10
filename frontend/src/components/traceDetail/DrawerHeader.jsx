@@ -93,6 +93,7 @@ NavButton.propTypes = {
 /* ── DrawerHeader ─────────────────────────────────────── */
 
 const DrawerHeader = ({
+  open = true,
   traceId,
   projectId,
   onClose,
@@ -106,9 +107,15 @@ const DrawerHeader = ({
   onDownload,
   onShare,
 }) => {
-  // Keyboard shortcuts: J = next, K = prev
+  // Keyboard shortcuts belong only to the currently open drawer.
   const handleKeyDown = useCallback(
     (e) => {
+      if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+        return;
+      }
       // Don't trigger if user is typing in an input/textarea
       if (
         e.target.tagName === "INPUT" ||
@@ -125,13 +132,14 @@ const DrawerHeader = ({
         onPrev?.();
       }
     },
-    [onPrev, onNext, hasPrev, hasNext],
+    [onClose, onPrev, onNext, hasPrev, hasNext],
   );
 
   useEffect(() => {
+    if (!open) return undefined;
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [handleKeyDown]);
+  }, [open, handleKeyDown]);
 
   const handleCopy = () => {
     if (!traceId) return;
@@ -265,6 +273,7 @@ const DrawerHeader = ({
         <Tooltip title="Close (Esc)" arrow placement="bottom">
           <Box
             component="button"
+            type="button"
             onClick={onClose}
             sx={{
               display: "inline-flex",
@@ -291,6 +300,7 @@ const DrawerHeader = ({
 };
 
 DrawerHeader.propTypes = {
+  open: PropTypes.bool,
   traceId: PropTypes.string,
   projectId: PropTypes.string,
   onClose: PropTypes.func.isRequired,
