@@ -636,6 +636,47 @@ class TestResultIngest:
         ).get_recordings(call)
         assert recordings["stereo"] == stereo_url
 
+    @pytest.mark.parametrize("direction", ["inbound", "outbound"])
+    def test_ingest_twilio_result_keeps_provider_and_surfaces_call(
+        self, auth_client, run_test, direction
+    ):
+        """A Twilio result PATCH is stored under its own provider key and reads
+        back with its transcript roles and recording in either direction."""
+        from simulate.serializers.test_execution import (
+            CallExecutionDetailSerializer,
+        )
+
+        _, call_ids = _start_and_batch(auth_client, run_test)
+        call_id = call_ids[0]
+        provider_data = {"twilio": {"sid": "CA" + "0" * 32, "status": "completed"}}
+        recording_url = "https://cdn.example.com/twilio-call.wav"
+        transcript = _transcript_payload()
+
+        resp = auth_client.patch(
+            f"{ALK_BASE}/call-executions/{call_id}/result/",
+            {
+                "status": "completed",
+                "transcript": transcript,
+                "recording_url": recording_url,
+                "provider_call_data": provider_data,
+                "call_metadata": {"call_direction": direction},
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.content
+
+        call = CallExecution.objects.get(id=call_id)
+        assert call.status == CallExecution.CallStatus.COMPLETED
+        assert call.provider_call_data == provider_data
+
+        serializer = CallExecutionDetailSerializer(context={"detail_mode": True})
+        assert serializer.get_provider(call) == "twilio"
+        assert serializer.get_recordings(call) == {"combined": recording_url}
+        assert [
+            (row["speaker_role"], row["content"])
+            for row in serializer.get_transcript(call)
+        ] == [(seg["speaker_role"], seg["content"]) for seg in transcript]
+
     def test_voice_ingest_emits_voice_call_billing_once(self, auth_client, run_test):
         """A completed voice call charges once through TestExecutor._deduct_call_cost
         (the same path native voice uses to emit the VOICE_CALL usage event); a
