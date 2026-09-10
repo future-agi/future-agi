@@ -84,9 +84,7 @@ class TestScanAndWriteMarksUnresolved:
         with (
             patch(
                 f"{self._MOD}.get_scan_config",
-                return_value=ScanConfig(
-                    sampling_rate=1.0, scan_version="v7.2", enabled=True
-                ),
+                return_value=ScanConfig(sampling_rate=1.0, scan_version="v7.2", enabled=True),
             ),
             patch(f"{self._MOD}.apply_sampling", side_effect=lambda x, r: x),
             patch(f"{self._MOD}.filter_already_scanned", side_effect=lambda x: x),
@@ -144,7 +142,9 @@ class TestAnUnfinishedScanIsNotPersisted:
             has_issues=False,
             issues=[],
             key_moments=[],
-            meta=SimpleNamespace(tools_called=[], tools_available=[], turn_count=0),
+            meta=SimpleNamespace(
+                tools_called=[], tools_available=[], turn_count=0
+            ),
             error="gateway unreachable",
             retryable=retryable,
         )

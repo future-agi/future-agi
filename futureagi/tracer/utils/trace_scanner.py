@@ -7,6 +7,8 @@ Orchestrates:
 Queries live in tracer/queries/trace_scanner.py and tracer/queries/scan_clustering.py.
 """
 
+from typing import List
+
 import structlog
 
 # Activity-aware stub: used inside Temporal trace-scanner activities.
@@ -49,8 +51,8 @@ _SCAN_WRITE_CHUNK = 1
 
 
 def scan_and_write(
-    trace_ids: list[str], project_id: str, mark_unresolved: bool = False
-) -> list[ScanResult]:
+    trace_ids: List[str], project_id: str, mark_unresolved: bool = False
+) -> List[ScanResult]:
     """
     Full scan pipeline for a batch of traces.
 
@@ -101,7 +103,7 @@ def scan_and_write(
     # exceeded the activity time_limit wrote NOTHING — silent data loss under
     # high sampling/volume.
     scanner = TraceScanner()
-    results: list[ScanResult] = []
+    results: List[ScanResult] = []
     written = 0
     for i in range(0, len(traces_data), _SCAN_WRITE_CHUNK):
         chunk = traces_data[i : i + _SCAN_WRITE_CHUNK]
@@ -142,7 +144,6 @@ def _emit_scanner_billing(
             return
 
         from tracer.models.project import Project
-
         try:
             from ee.usage.schemas.event_types import BillingEventType
         except ImportError:
@@ -162,13 +163,11 @@ def _emit_scanner_billing(
         try:
             from ee.usage.utils.event_properties import token_usage_properties
         except ImportError:
+            token_usage_properties = lambda token_usage: {}
 
-            def token_usage_properties(token_usage):
-                return {}
-
-        project = (
-            Project.objects.select_related("organization").filter(id=project_id).first()
-        )
+        project = Project.objects.select_related("organization").filter(
+            id=project_id
+        ).first()
         if not project or not project.organization:
             return
 
@@ -237,7 +236,7 @@ def cluster_issues(project_id: str) -> ClusteringSummary:
         else:
             summary.new_clusters += 1
 
-    for issue, embedding in zip(issues, embeddings, strict=False):
+    for issue, embedding in zip(issues, embeddings):
         try:
             match = find_nearest_centroid(embedding, project_id, issue.category)
 
@@ -288,7 +287,7 @@ def cluster_issues(project_id: str) -> ClusteringSummary:
     return summary
 
 
-def embed_trace_inputs(trace_ids: list[str], project_id: str) -> int:
+def embed_trace_inputs(trace_ids: List[str], project_id: str) -> int:
     """
     Kevinify + embed root span inputs for a batch of traces, store in ClickHouse.
 
@@ -310,7 +309,9 @@ def embed_trace_inputs(trace_ids: list[str], project_id: str) -> int:
     usable = [(inp, text) for inp, text in pairs if text and text.strip()]
     skipped = len(pairs) - len(usable)
     if not usable:
-        logger.info("no_embeddable_root_inputs", project_id=project_id, skipped=skipped)
+        logger.info(
+            "no_embeddable_root_inputs", project_id=project_id, skipped=skipped
+        )
         return 0
 
     embeddable = [inp for inp, _ in usable]
@@ -329,8 +330,8 @@ def embed_trace_inputs(trace_ids: list[str], project_id: str) -> int:
 
 
 def match_success_traces(
-    project_id: str, cluster_ids: list[str]
-) -> list[SuccessTraceMatch]:
+    project_id: str, cluster_ids: List[str]
+) -> List[SuccessTraceMatch]:
     """
     For each cluster, find the nearest success trace via KNN on root input embeddings.
 

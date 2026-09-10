@@ -1377,7 +1377,6 @@ class TestAvailableModels:
 
         model_names = {model["model_name"] for model in AVAILABLE_MODELS}
 
-        assert "gemini/gemini-3.8-flash" in model_names
         assert "vertex_ai/gemini-3.8-flash" in model_names
 
     def test_openai_models_present(self):

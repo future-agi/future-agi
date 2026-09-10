@@ -9,6 +9,7 @@ Activity 3: cluster_scan_issues_task — cluster unclustered issues + match succ
 import time
 from contextlib import contextmanager
 from datetime import timedelta
+from typing import List
 
 import structlog
 from django.db.models import F
@@ -43,9 +44,7 @@ _SWEEP_COLD_START_SECONDS = 900  # first-sweep window when last_swept_at is NULL
 # individual scan is healthy. Temporal provides the fan-out; keep each activity
 # independently retryable and persistable.
 SCAN_TASK_TRACE_LIMIT = 1
-_SWEEP_MAX_LAG_SECONDS = (
-    86400  # cap how far the watermark lags behind a stuck trace (24h)
-)
+_SWEEP_MAX_LAG_SECONDS = 86400  # cap how far the watermark lags behind a stuck trace (24h)
 
 # Per-query ClickHouse caps for the scanner's spans reads. Every statement uses
 # the shared 36-GiB / 30-second production read policy; big sorts spill to disk
@@ -71,7 +70,7 @@ def scan_ch_guardrails():
 
 
 @temporal_activity(time_limit=600, queue="agent_compass", max_retries=1)
-def scan_traces_task(trace_ids: list[str], project_id: str, from_sweep: bool = False):
+def scan_traces_task(trace_ids: List[str], project_id: str, from_sweep: bool = False):
     """
     Scan completed traces for issues.
 
@@ -112,7 +111,7 @@ def scan_traces_task(trace_ids: list[str], project_id: str, from_sweep: bool = F
 
 @temporal_activity(time_limit=300, queue="agent_compass", max_retries=1)
 def embed_trace_inputs_task(
-    trace_ids: list[str], project_id: str, trigger_clustering: bool
+    trace_ids: List[str], project_id: str, trigger_clustering: bool
 ):
     """
     Kevinify + embed root span inputs for all scanned traces.

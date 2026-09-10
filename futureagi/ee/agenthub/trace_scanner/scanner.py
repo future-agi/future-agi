@@ -8,14 +8,10 @@ Outputs: issues[] + key_moments[] + meta{}
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 import structlog
 
-from agentic_eval.core.utils.model_config import (
-    ModelConfig,
-    ModelConfigs,
-)
 from ee.agenthub.trace_scanner.compress import (
     SCANNER_TRUNCATION_MARK,
     attribute_key_moments,
@@ -33,12 +29,10 @@ from ee.agenthub.trace_scanner.prompt import (
     VALID_SUBCATEGORIES,
     build_prompt_v8,
 )
-
+from agentic_eval.core.utils.model_config import LiteLlmProvider, ModelConfig
 try:
     from ee.usage.services.gateway_llm_client import (
         call_llm as gateway_call_llm,
-    )
-    from ee.usage.services.gateway_llm_client import (
         call_llm_raw,
         get_gateway_client,
     )
@@ -90,7 +84,7 @@ def _trace_has_captured_content(trace) -> bool:
     return False
 
 
-def _named_spans(trace, span_id) -> list[dict[str, Any]]:
+def _named_spans(trace, span_id) -> List[Dict[str, Any]]:
     """Every span carrying this id. Plural because ids are not always unique —
     some producers emit a subtree twice, and picking whichever copy a walk
     reached first would decide an absence claim by traversal order."""
@@ -119,10 +113,7 @@ def _final_response_output(trace, span_id):
     if not spans:
         return None
     return max(
-        (
-            str((s.get("span_attributes") or {}).get("output.value") or "")
-            for s in spans
-        ),
+        (str((s.get("span_attributes") or {}).get("output.value") or "") for s in spans),
         key=len,
     )
 
@@ -264,19 +255,15 @@ def _collapse_same_event(failed: set, dims: dict) -> set:
     """
     ordered = sorted(
         failed,
-        key=lambda d: (
-            _DIMENSION_SPECIFICITY.index(d)
-            if d in _DIMENSION_SPECIFICITY
-            else len(_DIMENSION_SPECIFICITY)
-        ),
+        key=lambda d: _DIMENSION_SPECIFICITY.index(d)
+        if d in _DIMENSION_SPECIFICITY
+        else len(_DIMENSION_SPECIFICITY),
     )
     kept: list = []
     dropped: list = []
     for dim in ordered:
         evidence = (dims.get(dim) or {}).get("evidence")
-        if any(
-            _same_event(evidence, (dims.get(k) or {}).get("evidence")) for k in kept
-        ):
+        if any(_same_event(evidence, (dims.get(k) or {}).get("evidence")) for k in kept):
             dropped.append(dim)
             continue
         kept.append(dim)
@@ -295,7 +282,17 @@ _MAX_BRIEF_CHARS = 110
 SCAN_VERSION = "v7.2"
 INVESTIGATION_SCAN_VERSION = "v2-adaptive-2"
 
-_DEFAULT_SCANNER_MODEL = ModelConfigs.VERTEX_GEMINI_3_8_FLASH
+_DEFAULT_SCANNER_MODEL = ModelConfig(
+    provider=LiteLlmProvider.VERTEX_AI.value,
+    model_name="vertex_ai/gemini-3.8-flash",
+    # ModelConfig requires a default, but the investigation transport does not
+    # send a sampling override because Gemini 3.8 ignores it.
+    temperature=0.2,
+    max_tokens=65_536,
+    supports_audio=True,
+    supports_pdf=True,
+    vertex_location="global",
+)
 
 
 @dataclass
@@ -331,8 +328,8 @@ class KeyMoment:
 class ScanMeta:
     """Programmatic metadata extracted from trace (no LLM needed)."""
 
-    tools_called: list[dict[str, str]] = field(default_factory=list)
-    tools_available: list[str] = field(default_factory=list)
+    tools_called: List[Dict[str, str]] = field(default_factory=list)
+    tools_available: List[str] = field(default_factory=list)
     turn_count: int = 0
 
 
@@ -342,10 +339,10 @@ class ScanResult:
 
     trace_id: str
     has_issues: bool
-    issues: list[ScanIssue] = field(default_factory=list)
-    key_moments: list[KeyMoment] = field(default_factory=list)
+    issues: List[ScanIssue] = field(default_factory=list)
+    key_moments: List[KeyMoment] = field(default_factory=list)
     meta: ScanMeta = field(default_factory=ScanMeta)
-    error: str | None = None
+    error: Optional[str] = None
     # Set when the scan could not be completed for a reason that may not recur,
     # so no row is persisted at all. A FAILED row would not help: the
     # already-scanned anti-join treats any row as terminal, so writing one
@@ -371,7 +368,7 @@ class TraceScanner:
     TEMPERATURE = 0.2
     MAX_TOKENS = 6144
 
-    def __init__(self, model_config: ModelConfig | None = None):
+    def __init__(self, model_config: Optional[ModelConfig] = None):
         from ee.agenthub.trace_scanner.investigation_provider import (
             InvestigationProvider,
         )
@@ -387,7 +384,7 @@ class TraceScanner:
             "total_tokens": 0,
         }
 
-    def scan_batch(self, traces: list[dict[str, Any]]) -> list[ScanResult]:
+    def scan_batch(self, traces: List[Dict[str, Any]]) -> List[ScanResult]:
         """
         Scan a batch of traces (up to BATCH_SIZE per LLM call).
 
@@ -519,7 +516,7 @@ class TraceScanner:
             )
         return records
 
-    def _scan_single_batch(self, traces: list[dict[str, Any]]) -> list[ScanResult]:
+    def _scan_single_batch(self, traces: List[Dict[str, Any]]) -> List[ScanResult]:
         """Scan a single batch (1-3 traces) with one LLM call."""
         # Assign short labels for token efficiency
         payloads = []
@@ -656,7 +653,7 @@ class TraceScanner:
 
         return results
 
-    def _invoke_llm(self, messages: list[dict[str, Any]]) -> str | None:
+    def _invoke_llm(self, messages: List[Dict[str, Any]]) -> Optional[str]:
         """Run one gateway LLM call and accumulate the per-request cost.
 
         Prefers the raw OpenAI-compatible client so the agentcc gateway's
@@ -686,17 +683,19 @@ class TraceScanner:
         response = _result.response
         usage = getattr(response, "usage", None)
         if usage:
-            self.token_usage["prompt_tokens"] += getattr(usage, "prompt_tokens", 0) or 0
-            self.token_usage["completion_tokens"] += (
-                getattr(usage, "completion_tokens", 0) or 0
-            )
+            self.token_usage["prompt_tokens"] += getattr(
+                usage, "prompt_tokens", 0
+            ) or 0
+            self.token_usage["completion_tokens"] += getattr(
+                usage, "completion_tokens", 0
+            ) or 0
             self.token_usage["total_tokens"] += getattr(usage, "total_tokens", 0) or 0
         try:
             return response.choices[0].message.content
         except (AttributeError, IndexError):
             return None
 
-    def _parse_response(self, raw: str) -> dict[str, Any]:
+    def _parse_response(self, raw: str) -> Dict[str, Any]:
         """Extract JSON from LLM response, handling markdown fences."""
         # Strip markdown code fences if present
         cleaned = raw.strip()
@@ -718,11 +717,11 @@ class TraceScanner:
 
     @staticmethod
     def _v8_to_trace_output(
-        parsed: dict[str, Any],
+        parsed: Dict[str, Any],
         seen_text: str = "",
-        trace: dict[str, Any] | None = None,
+        trace: Optional[Dict[str, Any]] = None,
         trace_has_content: bool = True,
-    ) -> dict[str, Any]:
+    ) -> Dict[str, Any]:
         """Translate V8's per-dimension verdicts into the shipped issue shape.
 
         A dimension is only turned into an issue when it FAILED, so a hallucinated
@@ -814,9 +813,7 @@ class TraceScanner:
             # Prefer the model's own subcategory: DIMENSION_TO_SUBCATEGORY alone can only ever
             # emit 5 of 20, which halves category accuracy on TRAIL (36.8% -> 18.8%).
             cat = str(item.get("cat") or "").strip()
-            subcat = (
-                cat if cat in VALID_SUBCATEGORIES else DIMENSION_TO_SUBCATEGORY.get(dim)
-            )
+            subcat = cat if cat in VALID_SUBCATEGORIES else DIMENSION_TO_SUBCATEGORY.get(dim)
             if not subcat:
                 continue
             # NEVER fall back to the evidence quote. `brief` is what _retitle_from_members
@@ -838,13 +835,11 @@ class TraceScanner:
             brief = " ".join(str(item.get("brief") or "").split())
             if not brief or len(brief) > _MAX_BRIEF_CHARS:
                 brief = subcat
-            issues.append(
-                {
-                    "cat": subcat,
-                    "conf": conf if conf in ("H", "M") else "M",
-                    "brief": brief[:_MAX_BRIEF_CHARS],
-                }
-            )
+            issues.append({
+                "cat": subcat,
+                "conf": conf if conf in ("H", "M") else "M",
+                "brief": brief[:_MAX_BRIEF_CHARS],
+            })
         if low_confidence:
             # Suppression has to be visible. Going quiet and being precise look
             # identical from the outside, and only these counters tell them apart.
@@ -855,7 +850,7 @@ class TraceScanner:
             )
         return {"issues": issues, "key_moments": parsed.get("key_moments") or []}
 
-    def _parse_issues(self, raw_issues: list[dict]) -> list[ScanIssue]:
+    def _parse_issues(self, raw_issues: List[Dict]) -> List[ScanIssue]:
         """Validate and normalize issues from LLM output."""
         issues = []
         for item in raw_issues:
@@ -897,10 +892,10 @@ class TraceScanner:
 
     def _parse_key_moments(
         self,
-        raw_moments: list[str],
-        raw_spans_text: dict[str, str],
-        trace_data: dict | None = None,
-    ) -> list[KeyMoment]:
+        raw_moments: List[str],
+        raw_spans_text: Dict[str, str],
+        trace_data: Optional[Dict] = None,
+    ) -> List[KeyMoment]:
         """Parse key_moments — recover verbatim text from kevinified excerpts
         and attribute each to its source span (role/span/status/is_failure)
         deterministically."""

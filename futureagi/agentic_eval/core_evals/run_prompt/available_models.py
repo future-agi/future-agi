@@ -4023,11 +4023,7 @@ OSS_AVAILABLE_MODELS = [
         "providers": "gemini",
         "api_key_name": "GEMINI_API_KEY",
         "mode": "chat",
-        "best_for": [
-            "latest Flash GA",
-            "multimodal understanding",
-            "adaptive thinking",
-        ],
+        "best_for": ["latest Flash GA", "multimodal understanding", "adaptive thinking"],
         "use_case": [
             "fast inference",
             "agentic AI tasks",
@@ -4048,11 +4044,7 @@ OSS_AVAILABLE_MODELS = [
         "providers": "gemini",
         "api_key_name": "GEMINI_API_KEY",
         "mode": "chat",
-        "best_for": [
-            "agentic and coding tasks",
-            "multimodal understanding",
-            "thinking",
-        ],
+        "best_for": ["agentic and coding tasks", "multimodal understanding", "thinking"],
         "use_case": [
             "code generation and repair",
             "agent orchestration",
@@ -4101,22 +4093,6 @@ OSS_AVAILABLE_MODELS = [
         "latency": 35,
         "pricing": {"input_per_1M_tokens": 0.75, "output_per_1M_tokens": 3.75},
         "notes": "Gemini 3.7 Flash; 1M context, 64K max output.",
-    },
-    {
-        "model_name": "gemini/gemini-3.8-flash",
-        "providers": "gemini",
-        "api_key_name": "GEMINI_API_KEY",
-        "mode": "chat",
-        "best_for": ["agentic workflows", "coding", "multi-step reasoning"],
-        "use_case": ["tool-using agents", "code generation", "document analysis"],
-        "cutoff": "08-2026",
-        "rate_limits": {
-            "requests_per_minute": 2000,
-            "tokens_per_minute": 800000,
-        },
-        "latency": 35,
-        "pricing": {"input_per_1M_tokens": 0.75, "output_per_1M_tokens": 3.75},
-        "notes": "Gemini 3.8 Flash; 1M context, 64K max output.",
     },
     {
         "model_name": "gemini/gemini-3.1-pro-preview",
@@ -4215,11 +4191,7 @@ OSS_AVAILABLE_MODELS = [
         "providers": "gemini",
         "api_key_name": "GEMINI_API_KEY",
         "mode": "image_generation",
-        "best_for": [
-            "cost-effective image generation",
-            "text-to-image",
-            "image editing",
-        ],
+        "best_for": ["cost-effective image generation", "text-to-image", "image editing"],
         "use_case": ["batch image generation", "creative iteration"],
         "cutoff": "01-2025",
         "latency": 100,
