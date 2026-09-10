@@ -176,11 +176,12 @@ def _attach_warnings_to_metadata(response, output_metadata, run_warnings):
 GROUND_TRUTH_NOT_APPLIED_WARNING_TYPE = "ground_truth_not_applied"
 
 GROUND_TRUTH_NOT_APPLIED_MESSAGE = (
-    "Ground Truth is enabled on this eval template but is not applied to "
-    "evals run from Observe, so this result is uncalibrated. Ground Truth "
-    "adds few-shot reference examples to the judge prompt and never supplies "
-    "'expected_value'. To provide one here, emit it as a span attribute and "
-    "map 'expected_value' to that attribute name."
+    "Ground Truth is enabled on this eval template but no reference examples "
+    "reached this run, so the result is uncalibrated. Reference examples "
+    "apply to prompt and agent evals; other eval types cannot take them, and "
+    "a retrieval that matched no rows leaves the run uncalibrated too. "
+    "Ground Truth never supplies 'expected_value'. To provide one, emit it "
+    "as a span attribute and map 'expected_value' to that attribute name."
 )
 
 
@@ -189,9 +190,9 @@ def _ground_truth_not_applied_warning(
 ):
     """Warning when GT is embedded and enabled but this run carries none.
 
-    Composite children reach ``inject_context`` through ``run_eval_func``; the
-    simple-eval path does not. Keying off the injected blocks rather than off
-    the config means the warning stops on its own once that path is wired.
+    Keying off the injected blocks rather than off the config leaves the
+    warning on exactly the runs injection could not cover: evaluator types
+    that cannot take the blocks, and retrievals that came back empty.
     Fail-open: a lookup failure returns ``None`` so GT can never block a run.
     """
     if (run_params or {}).get("ground_truth_blocks"):
@@ -232,6 +233,39 @@ def _collect_run_warnings(
     if gt_warning:
         run_warnings.append(gt_warning)
     return run_warnings
+
+
+def _inject_ground_truth(
+    run_params, eval_template, eval_type_id, *, organization_id, workspace_id
+):
+    """Ground Truth few-shot blocks for the Observe simple-eval path.
+
+    Returns a copy so the pristine mapping still reaches ``source_config``.
+    Gated on the evaluators that read the blocks: every other type splats its
+    kwargs into a bare operation and raises on the unexpected key.
+    """
+    params = dict(run_params or {})
+    try:
+        from evaluations.constants import GROUND_TRUTH_AWARE_EVAL_TYPES
+
+        if eval_type_id not in GROUND_TRUTH_AWARE_EVAL_TYPES:
+            return params
+
+        from model_hub.services.ground_truth_service import GroundTruthService
+
+        return GroundTruthService.inject_context(
+            params,
+            eval_template,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+        )
+    except Exception as exc:
+        logger.warning(
+            "ground_truth_injection_skipped",
+            template_id=str(getattr(eval_template, "id", "") or ""),
+            error=str(exc),
+        )
+        return params
 
 
 def _resolve_attr(span_attrs: dict, candidate: str):
@@ -1683,14 +1717,23 @@ def _execute_evaluation(
         else None
     )
 
-    run_warnings = _collect_run_warnings(
-        partial_input_warning,
+    # GT rows are scoped to a real workspace, so both the retrieval and the
+    # warning use the resolved one, as the trace and session paths already do.
+    gt_workspace_id = str(workspace.id) if workspace else None
+    gt_params = _inject_ground_truth(
         run_params,
         eval_model,
+        eval_type_id,
         organization_id=org_id,
-        # GT rows are scoped to a real workspace, so the lookup uses the
-        # resolved one, as the trace and session paths already do.
-        workspace_id=str(workspace.id) if workspace else None,
+        workspace_id=gt_workspace_id,
+    )
+
+    run_warnings = _collect_run_warnings(
+        partial_input_warning,
+        gt_params,
+        eval_model,
+        organization_id=org_id,
+        workspace_id=gt_workspace_id,
     )
 
     # --- Cost tracking (caller-side) ---
@@ -1726,7 +1769,7 @@ def _execute_evaluation(
             raise ValueError("API call not allowed : ", api_call_log_row.status)
 
     # --- Build context for data_injection support ---
-    _eval_inputs = dict(run_params or {})
+    _eval_inputs = dict(gt_params)
     _di = _di_normalize(
         (custom_eval_config.config or {})
         .get("run_config", {})
@@ -3544,9 +3587,17 @@ def _execute_evaluation_for_trace(
         )
     ws_id = str(workspace.id) if workspace else None
 
+    gt_params = _inject_ground_truth(
+        run_params,
+        eval_template,
+        eval_type_id,
+        organization_id=org_id,
+        workspace_id=ws_id,
+    )
+
     run_warnings = _collect_run_warnings(
         partial_input_warning,
-        run_params,
+        gt_params,
         eval_template,
         organization_id=org_id,
         workspace_id=ws_id,
@@ -3605,7 +3656,7 @@ def _execute_evaluation_for_trace(
     #   span_context    → the anchor_span data, same shape as the span-level
     #                     handler. Useful when the eval is conceptually
     #                     trace-scoped but the anchor span has rich detail.
-    _eval_inputs = dict(run_params or {})
+    _eval_inputs = dict(gt_params)
     _di = _di_normalize(
         (custom_eval_config.config or {})
         .get("run_config", {})
@@ -3788,9 +3839,17 @@ def _execute_evaluation_for_session(
         )
     ws_id = str(workspace.id) if workspace else None
 
+    gt_params = _inject_ground_truth(
+        run_params,
+        eval_template,
+        eval_type_id,
+        organization_id=org_id,
+        workspace_id=ws_id,
+    )
+
     run_warnings = _collect_run_warnings(
         partial_input_warning,
-        run_params,
+        gt_params,
         eval_template,
         organization_id=org_id,
         workspace_id=ws_id,
@@ -3853,7 +3912,7 @@ def _execute_evaluation_for_session(
     #                     Agents can drill into individual traces via the
     #                     session_context.traces[] summaries + explore_trace.
     #   span_context    → not applicable at session-level.
-    _eval_inputs = dict(run_params or {})
+    _eval_inputs = dict(gt_params)
     _di = _di_normalize(
         (custom_eval_config.config or {})
         .get("run_config", {})
