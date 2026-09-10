@@ -166,12 +166,19 @@ class SecretKeyAPIViewSet(ViewSet):
             start = page_number * page_size
             paginated_keys = apiKeys[start : start + page_size]
 
+            # The auto-created "system" key is never shown at creation time the
+            # way a user-generated key is (see generate_secret_key), so it has
+            # no other UI path to its real value — masking it here left the
+            # Keys page's quickstart copy buttons handing out material that
+            # doesn't match accounts_orgapikey (see #1304). User-generated
+            # keys keep the mask since they're already fully shown once, at
+            # creation.
             table = [
                 {
                     "id": key.id,
                     "key_name": key.name,
-                    "api_key": mask_key(key.api_key),
-                    "secret_key": mask_key(key.secret_key),
+                    "api_key": key.api_key if key.type == "system" else mask_key(key.api_key),
+                    "secret_key": key.secret_key if key.type == "system" else mask_key(key.secret_key),
                     "created_by": key.user.name if key.user else None,
                     "created_at": key.created_at,
                     "enabled": key.enabled,
