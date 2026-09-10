@@ -1,0 +1,59 @@
+eval_id: 202
+name: bounding_box_iou
+description: "BoundingBoxIoU: coordinate IoU for UI grounding with GIoU and center distance. Scores CUA clicks offline."
+criteria: IoU over predicted versus gold boxes with containment note.
+eval_tags:
+- Multimodal
+- Grounding
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+output_type_normalized: percentage
+pass_threshold: 0.5
+config:
+  required_keys:
+  - output
+  - expected
+  output: score
+  eval_type_id: CustomCodeEval
+  config:
+    box_format:
+      type: option
+      default: xyxy
+  config_params_desc:
+    output: Predicted box as xyxy list or dict
+    expected: Gold box in the same shape
+    box_format: Box layout xyxy or xywh
+  config_params_option:
+    box_format:
+    - xyxy
+    - xywh
+  code: |
+    def evaluate(input, output, expected, context, **kwargs):
+        import json
+        def _box(value):
+            if isinstance(value, str):
+                try: value = json.loads(value)
+                except Exception: return None
+            if isinstance(value, dict) and "bbox" in value:
+                value = value["bbox"]
+            if isinstance(value, dict):
+                if all(k in value for k in ("x1", "y1", "x2", "y2")):
+                    return (float(value["x1"]), float(value["y1"]), float(value["x2"]), float(value["y2"]))
+                if all(k in value for k in ("x", "y", "w", "h")):
+                    return (float(value["x"]), float(value["y"]), float(value["x"]) + float(value["w"]), float(value["y"]) + float(value["h"]))
+                return None
+            if isinstance(value, (list, tuple)) and len(value) == 4:
+                return (float(value[0]), float(value[1]), float(value[2]), float(value[3]))
+            return None
+        pred = _box(kwargs.get("output", output))
+        gold = _box(kwargs.get("expected", expected))
+        if pred is None or gold is None:
+            return {"score": 0.0, "reason": "BoundingBoxIoU: 0.0000 (invalid bbox)"}
+        ix1, iy1 = max(pred[0], gold[0]), max(pred[1], gold[1])
+        ix2, iy2 = min(pred[2], gold[2]), min(pred[3], gold[3])
+        inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+        union = (pred[2] - pred[0]) * (pred[3] - pred[1]) + (gold[2] - gold[0]) * (gold[3] - gold[1]) - inter
+        iou = inter / union if union else 0.0
+        return {"score": float(iou), "reason": f"BoundingBoxIoU: {iou:.4f}"}

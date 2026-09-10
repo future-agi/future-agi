@@ -1,0 +1,59 @@
+eval_id: 203
+name: element_grounding
+description: "ElementGrounding: box overlap plus label match for UI elements. Uses supplied OCR strings, no OCR engine needed."
+criteria: Weighted mix of 0.7 IoU plus 0.3 text Jaccard.
+eval_tags:
+- Multimodal
+- Grounding
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+output_type_normalized: percentage
+pass_threshold: 0.6
+config:
+  required_keys:
+  - output
+  - expected
+  output: score
+  eval_type_id: CustomCodeEval
+  config: {}
+  config_params_desc:
+    output: Predicted element as bbox plus label object
+    expected: Gold element in the same shape
+  code: |
+    def evaluate(input, output, expected, context, **kwargs):
+        import json, re
+        def _split(value):
+            if isinstance(value, str):
+                try: value = json.loads(value)
+                except Exception: return {}, value
+            if isinstance(value, dict):
+                return value, value.get("label", value.get("text", ""))
+            return {}, value
+        def _box(value):
+            if isinstance(value, dict) and "bbox" in value:
+                value = value["bbox"]
+            if isinstance(value, (list, tuple)) and len(value) == 4:
+                return (float(value[0]), float(value[1]), float(value[2]), float(value[3]))
+            return None
+        def _jacc(first, second):
+            import re
+            left = set(re.findall(r"\w+", str(first).lower()))
+            right = set(re.findall(r"\w+", str(second).lower()))
+            if not left and not right: return 1.0
+            if not left or not right: return 0.0
+            return len(left & right) / len(left | right)
+        pred_meta, pred_label = _split(kwargs.get("output", output))
+        gold_meta, gold_label = _split(kwargs.get("expected", expected))
+        pred = _box(pred_meta.get("bbox", kwargs.get("output", output)))
+        gold = _box(gold_meta.get("bbox", kwargs.get("expected", expected)))
+        if pred is None or gold is None:
+            return {"score": 0.0, "reason": "ElementGrounding: 0.0000 (invalid bbox)"}
+        ix1, iy1 = max(pred[0], gold[0]), max(pred[1], gold[1])
+        ix2, iy2 = min(pred[2], gold[2]), min(pred[3], gold[3])
+        inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+        union = (pred[2] - pred[0]) * (pred[3] - pred[1]) + (gold[2] - gold[0]) * (gold[3] - gold[1]) - inter
+        iou = inter / union if union else 0.0
+        score = 0.7 * iou + 0.3 * _jacc(pred_label, gold_label)
+        return {"score": float(score), "reason": f"ElementGrounding: {score:.4f} (IoU={iou:.3f})"}
