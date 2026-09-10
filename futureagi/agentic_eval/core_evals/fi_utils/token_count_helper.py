@@ -197,6 +197,8 @@ def calculate_total_cost(
         model_name: The model identifier (e.g., "gpt-4o", "tts-1", "whisper-1")
         token_usage: Dict with keys depending on model type:
             For LLM: {"prompt_tokens": int, "completion_tokens": int}
+            For multimodal embeddings (e.g. titan-embed-image): additionally
+                {"num_images": int} to bill the per-image input component
             For TTS: {"input_characters": int, "prompt_tokens": int, "completion_tokens": int}
             For STT: {"audio_seconds": float}
         fallback_pricing: Optional custom fallback pricing dict
@@ -248,10 +250,23 @@ def calculate_total_cost(
     prompt_cost = 0.0
     completion_cost = 0.0
 
-    # Token-based pricing (LLM/Chat models)
-    if "input_per_1M_tokens" in pricing and "output_per_1M_tokens" in pricing:
-        input_cost_per_1M = pricing["input_per_1M_tokens"]
-        output_cost_per_1M = pricing["output_per_1M_tokens"]
+    # Token-based pricing (LLM/Chat/embedding models). Embedding models are priced
+    # with only `input_per_1M_tokens` (they produce no output tokens), so accept
+    # either key and treat a missing side as zero. Requiring both keys made every
+    # embedding model fall through to the "unknown pricing structure" branch and be
+    # costed at $0. Multimodal embedding models (e.g. amazon.titan-embed-image-v1)
+    # additionally carry `input_per_image`, so enter this branch for that key too
+    # and add the per-image component below. Some vision models (e.g.
+    # vertex_ai/meta/llama-3.2-90b-vision-instruct-maas) carry the same per-image
+    # component under the key `image_input_per_image`, so accept it as an alias.
+    if (
+        "input_per_1M_tokens" in pricing
+        or "output_per_1M_tokens" in pricing
+        or "input_per_image" in pricing
+        or "image_input_per_image" in pricing
+    ):
+        input_cost_per_1M = pricing.get("input_per_1M_tokens") or 0
+        output_cost_per_1M = pricing.get("output_per_1M_tokens") or 0
 
         # Use `or 0` to handle both missing keys AND explicit None values
         prompt_tokens = token_usage.get("prompt_tokens") or 0
@@ -259,6 +274,28 @@ def calculate_total_cost(
 
         prompt_cost = round((prompt_tokens / 1_000_000) * input_cost_per_1M, 6)
         completion_cost = round((completion_tokens / 1_000_000) * output_cost_per_1M, 6)
+
+        # Per-image input pricing for multimodal embeddings. Titan multimodal
+        # embeddings charge `input_per_image` per input image on top of any token
+        # cost, so image-only requests are non-zero and mixed (text + image)
+        # requests include both components. Text-only requests supply no image
+        # count and are unaffected. `num_images` is the canonical key; fall back to
+        # `images_generated` for callers that already report image counts that way.
+        # `image_input_per_image` is an alias some vision models use for the same
+        # per-image component.
+        if "input_per_image" in pricing or "image_input_per_image" in pricing:
+            cost_per_image = (
+                pricing.get("input_per_image")
+                or pricing.get("image_input_per_image")
+                or 0
+            )
+            num_images = (
+                token_usage.get("num_images")
+                or token_usage.get("images_generated")
+                or 0
+            )
+            image_cost = round(num_images * cost_per_image, 6)
+            prompt_cost = round(prompt_cost + image_cost, 6)
 
     # Character-based pricing (TTS models)
     elif "input_per_1M_characters" in pricing:
