@@ -190,8 +190,15 @@ def calculate_total_cost(
 
     Supports multiple pricing models:
     - LLM/Chat: Token-based pricing (input/output tokens)
+    - Per-1k-character: some Gemini chat/embedding models are priced per 1k
+      characters (input/output). This branch requires REAL character counts
+      (`input_characters`/`output_characters`) in the usage dict; it never
+      approximates characters from token counts. When only token counts are
+      available the model falls through to the unrecognized-pricing fallback
+      (see the per-1k-character branch below).
     - TTS: Character-based pricing (input characters)
-    - STT: Time-based pricing (audio seconds/minutes)
+    - STT: Time-based pricing (audio seconds/minutes); accepts the
+      `input_per_minute` key and its `per_minute_audio` alias.
 
     Args:
         model_name: The model identifier (e.g., "gpt-4o", "tts-1", "whisper-1")
@@ -268,9 +275,49 @@ def calculate_total_cost(
         prompt_cost = round((input_characters / 1_000_000) * input_cost_per_1M_chars, 6)
         completion_cost = 0.0  # TTS doesn't have completion cost
 
+    # Per-1k-character pricing (some Gemini chat/embedding models).
+    #
+    # These entries are declared as mode="chat" in available_models.py yet
+    # priced per *character*, while token usage is normally tracked in *tokens*.
+    # Character pricing therefore requires REAL character counts: this branch is
+    # only taken when the usage dict actually supplies `input_characters` /
+    # `output_characters`. We deliberately do NOT approximate characters from
+    # token counts — a 1-token==1-char guess is systematically wrong
+    # (understated and tokenizer/language dependent), and for a normal Gemini
+    # chat response (which reports only token counts) it would run on every
+    # request and return a precise-looking-but-wrong cost, which is worse than
+    # not pricing here. When only token counts are available this branch is
+    # skipped and the model falls through to the unrecognized-pricing fallback
+    # below (a $0/"unknown pricing" result), rather than fabricating a cost.
+    elif ("input_per_1k_characters" in pricing or "output_per_1k_characters" in pricing) and (
+        token_usage.get("input_characters") is not None
+        or token_usage.get("output_characters") is not None
+    ):
+        input_cost_per_1k_chars = pricing.get("input_per_1k_characters")
+        output_cost_per_1k_chars = pricing.get("output_per_1k_characters")
+
+        # Some entries carry a placeholder price (e.g. "N/A" for an embedding
+        # model with no published per-character rate); coerce anything
+        # non-numeric to 0.0 so the cost is $0 rather than a TypeError.
+        if not isinstance(input_cost_per_1k_chars, (int, float)):
+            input_cost_per_1k_chars = 0.0
+        if not isinstance(output_cost_per_1k_chars, (int, float)):
+            output_cost_per_1k_chars = 0.0
+
+        # Use ONLY real character counts (never token counts).
+        input_characters = token_usage.get("input_characters") or 0
+        output_characters = token_usage.get("output_characters") or 0
+
+        prompt_cost = round((input_characters / 1_000) * input_cost_per_1k_chars, 6)
+        completion_cost = round((output_characters / 1_000) * output_cost_per_1k_chars, 6)
+
     # Minute-based pricing (STT models)
-    elif "input_per_minute" in pricing:
-        cost_per_minute = pricing["input_per_minute"]
+    # Accepts both `input_per_minute` (OpenAI whisper-1) and its
+    # `per_minute_audio` alias (azure/whisper-1) for the identical price.
+    elif "input_per_minute" in pricing or "per_minute_audio" in pricing:
+        cost_per_minute = pricing.get("input_per_minute")
+        if cost_per_minute is None:
+            cost_per_minute = pricing.get("per_minute_audio") or 0.0
         audio_seconds = token_usage.get("audio_seconds") or 0.0
 
         # Convert seconds to minutes
