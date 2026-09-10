@@ -256,3 +256,21 @@ class TestAgentRun:
     async def test_max_iterations_constant(self):
         """MAX_ITERATIONS should be a reasonable limit."""
         assert AgentLoop.MAX_ITERATIONS == 200
+
+
+class TestAgentLoopProviderRouting:
+    def test_env_provider_disables_managed_gateway(self, monkeypatch):
+        """A configured provider must reach the client the agent actually builds."""
+        monkeypatch.setenv("FALCON_AI_PROVIDER", "openai")
+
+        agent = AgentLoop(MagicMock(), MagicMock())
+
+        assert agent.llm_client.use_managed_gateway is False
+        assert agent.llm_client.provider == "openai"
+
+    def test_no_env_provider_keeps_managed_gateway(self, monkeypatch):
+        monkeypatch.delenv("FALCON_AI_PROVIDER", raising=False)
+
+        agent = AgentLoop(MagicMock(), MagicMock())
+
+        assert agent.llm_client.use_managed_gateway is True
