@@ -30,7 +30,7 @@ import CreateOptimizationModal from "./CreateOptimizationModal";
  */
 
 export default function FixMyAgentDrawer({
-  open, onClose, env, envState, patch, addAgentVersion, tasks, stats, runId, onOpenTask, openOptimizationId,
+  open, onClose, env, envState, patch, addAgentVersion, tasks, stats, runId, onOpenTask, onViewIssue, openOptimizationId,
 }) {
   const navigate = useNavigate();
   /* Opening a row in the runs list lands on that run, not on the diagnosis —
@@ -283,6 +283,8 @@ export default function FixMyAgentDrawer({
             measured={measured}
             failing={failing}
             onOpenTask={onOpenTask}
+            onViewIssue={onViewIssue}
+            runId={runId}
             onOptimize={() => setModal(true)}
             onHandOff={rerun}
             onCreateAgentVersion={createAgentVersion}
@@ -335,5 +337,6 @@ FixMyAgentDrawer.propTypes = {
   stats: PropTypes.object,
   runId: PropTypes.string,
   onOpenTask: PropTypes.func,
+  onViewIssue: PropTypes.func,
   openOptimizationId: PropTypes.string,
 };

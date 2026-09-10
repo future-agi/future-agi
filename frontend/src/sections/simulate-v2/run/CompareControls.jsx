@@ -8,6 +8,7 @@ import {
 import Iconify from "src/components/iconify";
 import { SegmentedTabs } from "src/components/tabs/tabs";
 import { FilterPanel } from "src/components/filter-panel";
+import { neutralCheckboxSx } from "../components/primitives";
 import {
   VIEWS, ROW_HEIGHTS, GROUPINGS, QUICK_FILTERS, SORTS,
   filterFields, activeFilterCount,
@@ -624,7 +625,7 @@ function Check({ label, checked, onChange, icon }) {
       onClick={onChange}
       sx={{ cursor: "pointer", borderRadius: 0.75, "&:hover": { bgcolor: "action.hover" } }}
     >
-      <Checkbox size="small" checked={checked} sx={{ p: 0.5, pointerEvents: "none" }} />
+      <Checkbox size="small" checked={checked} sx={{ p: 0.5, pointerEvents: "none", ...neutralCheckboxSx }} />
       {icon && <Iconify icon={icon} width={14} sx={{ color: "text.subtitle" }} />}
       <Typography sx={{ typography: "s2", flex: 1 }}>{label}</Typography>
     </Stack>

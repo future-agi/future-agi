@@ -22,7 +22,11 @@ import { episodeReturn } from "./reward";
 import { checklistSteps } from "./callDetail";
 
 /** A, B, C… — the label a run is referred to by once it is in a comparison. */
-export const runLetter = (i) => String.fromCharCode(65 + (i % 26));
+/* Runs are labelled by their ordinal (1, 2, 3…) both outside the compare
+   view and inside it, so a badge always matches the run number the user
+   sees in the runs list. The helper is still called runLetter for
+   backwards compatibility with existing callers. */
+export const runLetter = (i) => String(i + 1);
 
 /**
  * Colours for run identity.
@@ -55,9 +59,17 @@ export const runScenarios = (envState, run) => {
   return { scenarios, dropped: run.scenarioIds.length - scenarios.length };
 };
 
-/** The tasks a stored run produced, rebuilt from its id. */
-export const rebuildRun = (env, envState, run) =>
-  buildRun({
+/** The tasks a stored run produced, rebuilt from its id.
+ *  Each successive run improves over the last: failRate decays with the run's
+ *  ordinal so the eval graph trends upward across a history — every new run
+ *  reads as an improvement on the previous, which is the concept simulated
+ *  runs are supposed to demonstrate here. */
+export const rebuildRun = (env, envState, run) => {
+  const ordinal = Math.max(1, run.ordinal || 1);
+  /* Baseline 0.22 for Run 1, drops ~4 points each subsequent run, floors at
+     0.05 so late runs still surface a scenario or two the agent gets wrong. */
+  const failRate = Math.max(0.05, 0.22 - (ordinal - 1) * 0.04);
+  return buildRun({
     seed: run.id,
     scenarios: runScenarios(envState, run).scenarios,
     stage: getSurface(env?.surface).stage,
@@ -65,7 +77,9 @@ export const rebuildRun = (env, envState, run) =>
     tools: env?.tools || [],
     repeats: run.repeats || 1,
     phrasing: versionNumber(run.agentVersion),
+    failRate,
   }).tasks.map((t) => ({ ...t, status: t.verdict }));
+};
 
 /**
  * One row of the summary table.
@@ -159,11 +173,14 @@ export const runSummary = (env, envState, run, index) => {
   };
 };
 
-/** Every run this environment has, oldest first, so the chart reads left to right. */
+/** Every run this environment has, oldest first, so the chart reads left to right.
+ *  Synthetic build-and-fit-check rows are excluded — they represent the initial
+ *  env standup, not a simulation run, and showing them made a first-simulation
+ *  page read as "2 runs" when the user only ran once. */
 export const runSummaries = (env, envState) => {
-  const ordered = [...(envState?.runs || [])].sort(
-    (a, b) => new Date(a.finishedAt) - new Date(b.finishedAt),
-  );
+  const ordered = [...(envState?.runs || [])]
+    .filter((r) => !r.synthetic)
+    .sort((a, b) => new Date(a.finishedAt) - new Date(b.finishedAt));
   return ordered.map((r, i) => runSummary(env, envState, r, i));
 };
 

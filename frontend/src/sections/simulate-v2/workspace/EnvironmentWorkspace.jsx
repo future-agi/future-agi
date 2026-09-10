@@ -179,7 +179,9 @@ export default function EnvironmentWorkspace() {
   const counts = {
     scenarios: envState.scenarios.length || null,
     evals: envState.evals.length || null,
-    runs: envState.runs.length || null,
+    /* Match the Runs panel: synthetic build-and-fit-check rows are
+       excluded so the rail badge and the runs list always agree. */
+    runs: envState.runs.filter((r) => !r.synthetic).length || null,
   };
   /*
     Setup gaps are shown as amber dots on the rail items that own them

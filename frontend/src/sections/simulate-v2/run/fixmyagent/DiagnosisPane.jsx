@@ -1,7 +1,7 @@
 import PropTypes from "prop-types";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, Button, Chip, Collapse, IconButton, Tooltip, Checkbox } from "@mui/material";
+import { Box, Stack, Typography, Button, Chip, Collapse, IconButton, Tooltip } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { RunTracePanel, RunTraceLog } from "../../components/RunTrace";
 import TaskLinks from "./TaskLinks";
@@ -40,13 +40,25 @@ const priorityOf = (p, tasks) => {
   return null;
 };
 
+/*
+  Module-level cache of run ids whose diagnosis animation has already
+  played this session. Reopening the drawer for a run in this set
+  skips straight to "done" — no repeat animation.
+*/
+const analyzedRuns = new Set();
+
 export default function DiagnosisPane({
   tasks, report, trace, proposals, checks, verdict,
   applied, setApplied, current, projected, willFix,
-  measured, failing, onOpenTask, onOptimize, onApplyChecks, checksApplied, onClose,
-  env, envState, patch, onHandOff, onCreateAgentVersion, onRunNewVersion,
+  measured, failing, onOpenTask, onViewIssue, onOptimize, onApplyChecks, checksApplied, onClose,
+  env, envState, patch, onHandOff, onCreateAgentVersion, onRunNewVersion, runId,
 }) {
-  const [phase, setPhase] = useState("running");
+  /* First open of this runId: play the analyzer animation. Every
+     subsequent open in this session: skip straight to the results. */
+  const [phase, setPhase] = useState(() => (runId && analyzedRuns.has(runId) ? "done" : "running"));
+  useEffect(() => {
+    if (phase === "done" && runId) analyzedRuns.add(runId);
+  }, [phase, runId]);
   const [handoff, setHandoff] = useState(false);
   /* The new primary path: fork the agent code, apply the accepted changes,
      mint the next agent version. The old "hand off as PR / patch / ticket"
@@ -87,7 +99,7 @@ export default function DiagnosisPane({
           <Iconify icon="solar:magic-stick-3-linear" width={16} />
         </Box>
         <Box flex={1} minWidth={0}>
-          <Typography sx={{ typography: "s1", fontWeight: 700 }}>Self improve my agent</Typography>
+          <Typography sx={{ typography: "s1", fontWeight: 700 }}>Summarize failures</Typography>
           <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
             {failing.length} failing of {measured.length} measured
             {tasks.length - measured.length ? ` · ${tasks.length - measured.length} not measured` : ""}
@@ -270,7 +282,32 @@ export default function DiagnosisPane({
                       />
                       <Typography sx={{ typography: "s2", fontWeight: 700 }}>{c.title}</Typography>
                       <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>{c.why}</Typography>
-                      <TaskLinks ids={c.addresses} tasks={tasks} step={c.step} onOpen={onOpenTask} />
+                      <Stack direction="row" alignItems="center" spacing={1.5} sx={{ mt: 1 }}>
+                        <Stack direction="row" alignItems="center" spacing={0.5}>
+                          <Iconify icon="solar:play-circle-linear" width={13} sx={{ color: "text.subtitle" }} />
+                          <Typography sx={{
+                            typography: "s3", fontWeight: 600, color: "text.secondary",
+                            fontVariantNumeric: "tabular-nums",
+                          }}>
+                            {c.addresses.length} call{c.addresses.length === 1 ? "" : "s"} affected
+                          </Typography>
+                        </Stack>
+                        {onViewIssue && c.addresses.length > 0 && (
+                          <Button
+                            size="small" variant="outlined"
+                            onClick={() => onViewIssue(c.title, c.addresses)}
+                            startIcon={<Iconify icon="solar:eye-linear" width={14} />}
+                            sx={{
+                              typography: "s3", fontWeight: 700,
+                              color: "text.primary", borderColor: "divider",
+                              height: 26, px: 1,
+                              "&:hover": { borderColor: "text.primary", bgcolor: "transparent" },
+                            }}
+                          >
+                            View affected calls
+                          </Button>
+                        )}
+                      </Stack>
                     </Box>
                   ))}
                   <Stack direction="row" alignItems="center" spacing={1.25} sx={{ px: 1.75, py: 1.375 }}>
@@ -348,45 +385,21 @@ export default function DiagnosisPane({
               </Typography>
               <Stack spacing={1}>
                 {sorted.map((p) => {
-                  const on = !!applied[p.id];
                   const pr = priorityOf(p, tasks);
                   return (
                     <Box
                       key={p.id}
-                      onClick={() => setApplied((a) => ({ ...a, [p.id]: !a[p.id] }))}
                       sx={{
-                        /*
-                          Neutral card in every state — the earlier
-                          purple fill + border on selected rows read as
-                          a wash of colour once every proposal was
-                          checked by default. The checkbox alone now
-                          carries the "included" signal.
-                        */
-                        p: 1.75, borderRadius: 1, cursor: "pointer", border: "1px solid",
+                        /* Presentation-only card — every proposal is
+                           included by default; the checkbox was removed
+                           because the Self Improvement run acts on the
+                           whole diagnosis, not a user-picked subset. */
+                        p: 1.75, borderRadius: 1, border: "1px solid",
                         borderColor: "divider",
                         bgcolor: "transparent",
-                        "&:hover": { borderColor: "text.disabled" },
                       }}
                     >
                       <Stack direction="row" alignItems="flex-start" spacing={1.25}>
-                        {/*
-                          Real checkbox instead of an Iconify circle — the
-                          filled-circle icon didn't read as "click me to
-                          include this change". Every proposal is checked
-                          on open (see FixMyAgentDrawer's seed effect) so
-                          the primary CTA is armed by default; users
-                          uncheck what they don't want to bundle.
-                        */}
-                        <Checkbox
-                          size="small" checked={on}
-                          onClick={(e) => e.stopPropagation()}
-                          onChange={(e) => setApplied((a) => ({ ...a, [p.id]: e.target.checked }))}
-                          sx={{
-                            p: 0, mt: "1px", flexShrink: 0,
-                            color: "text.disabled",
-                            "&.Mui-checked": { color: "#7857FC" },
-                          }}
-                        />
                         <Box flex={1} minWidth={0}>
                           <Stack direction="row" alignItems="center" spacing={0.625} flexWrap="wrap" rowGap={0.375} sx={{ mb: 0.375 }}>
                             <Chip
@@ -413,7 +426,42 @@ export default function DiagnosisPane({
                           </Stack>
                           <Typography sx={{ typography: "s2", fontWeight: 700 }}>{p.title}</Typography>
                           <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>{p.why}</Typography>
-                          <TaskLinks ids={p.addresses} tasks={tasks} step={p.step} onOpen={onOpenTask} />
+                          {/*
+                            Impact + action row. Replaces the wall of
+                            per-task chips (TaskLinks) that used to
+                            sit here — a "N calls affected" number
+                            plus a "View affected calls" button reads
+                            faster and pushes the drawer toward
+                            action rather than reading. Clicking
+                            "View" filters the trace table to the
+                            exact task ids this finding addresses.
+                          */}
+                          <Stack direction="row" alignItems="center" spacing={1.5} sx={{ mt: 1 }}>
+                            <Stack direction="row" alignItems="center" spacing={0.5}>
+                              <Iconify icon="solar:play-circle-linear" width={13} sx={{ color: "text.subtitle" }} />
+                              <Typography sx={{
+                                typography: "s3", fontWeight: 600, color: "text.secondary",
+                                fontVariantNumeric: "tabular-nums",
+                              }}>
+                                {p.addresses.length} call{p.addresses.length === 1 ? "" : "s"} affected
+                              </Typography>
+                            </Stack>
+                            {onViewIssue && p.addresses.length > 0 && (
+                              <Button
+                                size="small" variant="outlined"
+                                onClick={() => onViewIssue(p.title, p.addresses)}
+                                startIcon={<Iconify icon="solar:eye-linear" width={14} />}
+                                sx={{
+                                  typography: "s3", fontWeight: 700,
+                                  color: "text.primary", borderColor: "divider",
+                                  height: 26, px: 1,
+                                  "&:hover": { borderColor: "text.primary", bgcolor: "transparent" },
+                                }}
+                              >
+                                View affected calls
+                              </Button>
+                            )}
+                          </Stack>
                           <Stack spacing={0.375} sx={{ mt: 1.125 }}>
                             {p.diff.map((d) => (
                               <Stack
@@ -452,31 +500,6 @@ export default function DiagnosisPane({
             spacing={1.25}
             sx={{ px: 2.5, py: 2, borderTop: "1px solid", borderColor: "divider", flexShrink: 0 }}
           >
-            <Stack direction="row" alignItems="center" spacing={2}>
-              <Box>
-                <Typography sx={{ typography: "s3", color: "text.subtitle" }}>Now</Typography>
-                <Typography sx={{ typography: "s1", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
-                  {current}%
-                </Typography>
-              </Box>
-              <Iconify icon="solar:arrow-right-linear" width={16} sx={{ color: "text.subtitle" }} />
-              <Box>
-                <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                  With {included.length} included
-                </Typography>
-                <Typography
-                  sx={{ typography: "s1", fontWeight: 700, color: "#16A34A", fontVariantNumeric: "tabular-nums" }}
-                >
-                  {projected}%
-                </Typography>
-              </Box>
-              <Box flex={1} />
-              {willFix > 0 && (
-                <Typography sx={{ typography: "s3", color: "text.subtitle", textAlign: "right", maxWidth: 150 }}>
-                  if all {willFix} addressed {willFix === 1 ? "task" : "tasks"} pass
-                </Typography>
-              )}
-            </Stack>
             {/*
               The concept correction: the primary path is the optimizer.
               The diagnosis names the candidate changes; the optimizer
@@ -509,9 +532,7 @@ export default function DiagnosisPane({
                   startIcon={<Iconify icon="solar:magic-stick-3-bold" width={16} />}
                   sx={{ typography: "s2", fontWeight: 700 }}
                 >
-                  {included.length
-                    ? `Self improve my agent with ${included.length} ${included.length === 1 ? "change" : "changes"}`
-                    : "Select changes to self improve my agent"}
+                  Run Self Improvement
                 </Button>
               </Box>
             </Tooltip>
@@ -559,6 +580,8 @@ DiagnosisPane.propTypes = {
   measured: PropTypes.array,
   failing: PropTypes.array,
   onOpenTask: PropTypes.func,
+  onViewIssue: PropTypes.func,
+  runId: PropTypes.string,
   onOptimize: PropTypes.func,
   onApplyChecks: PropTypes.func,
   checksApplied: PropTypes.string,

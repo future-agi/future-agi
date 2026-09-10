@@ -61,6 +61,7 @@ export function seededState() {
   const browser = { ...getEnvironment("env-browser"), adoptedAt: daysAgo(6) };
   const banking = { ...getEnvironment("env-chat-banking"), adoptedAt: daysAgo(1) };
   const travel = { ...getEnvironment("env-chat-travel"), adoptedAt: daysAgo(4) };
+  const voice = { ...getEnvironment("env-voice-support"), adoptedAt: daysAgo(0) };
 
   /*
     Seed each env with the full scenario spread — core tool coverage,
@@ -77,9 +78,10 @@ export function seededState() {
   const travelScenarios = rowsFor(travel, ["core", "rules", "traps", "adversarial", "edge"]);
   /* The first run only probed the entitlement rules — the expensive ones. */
   const travelRuleProbes = rowsFor(travel, ["rules"]).slice(0, 4);
+  const voiceScenarios = rowsFor(voice, ["core", "rules", "traps", "adversarial", "edge"]);
 
   return {
-    myEnvironments: [built, travel, banking, browser],
+    myEnvironments: [voice, built, travel, banking, browser],
     byEnv: {
       // built from an agent, fully set up, run twice
       [built.id]: {
@@ -191,6 +193,31 @@ export function seededState() {
         evals: ["task_success", "policy_adherence"],
         agentVersions: [],
         runs: [],
+      },
+
+      /*
+        Voice support template — adopted today. Full scenario spread
+        (8 tools × 4 variants + 6 rules × 3 variants + traps + adversarial
+        + edge) so the traces table has ~14 use-case groups from the
+        first run and demonstrates the group-header aggregates cleanly.
+      */
+      [voice.id]: {
+        agent: {
+          typeId: "voice_platform",
+          values: { provider: "vapi", agentId: "asst_v1c2f3", callDirection: "inbound" },
+          via: "endpoint",
+          connectedAt: daysAgo(0),
+        },
+        scenarios: voiceScenarios,
+        scenarioSource: "templates",
+        evals: ["task_success", "policy_adherence"],
+        agentVersions: [agentVersion(1, 0, "First version connected today.")],
+        /* Seed with a single completed full-sweep run so a first-time
+           visit lands on a populated summary (chart + traces) rather than
+           an empty "0 runs" state. */
+        runs: [
+          run("run-voice-1", "All scenarios", daysAgo(0), voiceScenarios, voiceScenarios.length - 2, "v1", 7, 1),
+        ],
       },
     },
     activeRun: null,

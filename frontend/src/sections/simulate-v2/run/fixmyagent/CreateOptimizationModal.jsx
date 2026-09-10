@@ -73,7 +73,7 @@ export default function CreateOptimizationModal({ open, envState, included, spli
         </Box>
 
         <Box>
-          <Typography sx={{ typography: "s2", fontWeight: 700, mb: 0.875 }}>Self improver</Typography>
+          <Typography sx={{ typography: "s2", fontWeight: 700, mb: 0.875 }}>Optimizer</Typography>
           <Stack direction="row" spacing={1} flexWrap="wrap" rowGap={1}>
             {OPTIMIZERS.map((o) => {
               const active = o.id === optimizerId;

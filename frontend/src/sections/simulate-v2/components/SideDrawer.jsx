@@ -21,7 +21,7 @@ import { Drawer } from "@mui/material";
  * above the theme rule so the paper itself is `background.paper`, and the
  * theme's side borders and the reference drawer's shadow are kept.
  */
-export default function SideDrawer({ open, onClose, width = 480, children }) {
+export default function SideDrawer({ open, onClose, width = 480, keepMounted = false, children }) {
   return (
     <Drawer
       anchor="right"
@@ -41,6 +41,7 @@ export default function SideDrawer({ open, onClose, width = 480, children }) {
         },
       }}
       ModalProps={{
+        keepMounted,
         BackdropProps: { style: { backgroundColor: "transparent" } },
       }}
     >
@@ -53,5 +54,6 @@ SideDrawer.propTypes = {
   open: PropTypes.bool,
   onClose: PropTypes.func,
   width: PropTypes.oneOfType([PropTypes.number, PropTypes.string, PropTypes.object]),
+  keepMounted: PropTypes.bool,
   children: PropTypes.node,
 };

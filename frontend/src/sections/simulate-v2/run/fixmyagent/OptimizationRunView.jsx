@@ -420,8 +420,8 @@ function Growth({ trials, base, theme, winner }) {
       */}
       <svg
         viewBox={`0 0 ${W} ${H}`}
-        preserveAspectRatio="none"
-        style={{ display: "block", width: "100%", height: H }}
+        preserveAspectRatio="xMidYMid meet"
+        style={{ display: "block", width: "100%", height: "auto" }}
       >
         <defs>
           <linearGradient id="opt-growth" x1="0" y1="0" x2="0" y2="1">

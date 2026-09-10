@@ -85,7 +85,7 @@ export default function ScenarioTable({ rows, groups, env, onEdit, onRemove }) {
   */
   const columns = [
     "select", "#", "Scenario", "Persona", "Situation",
-    "Sub-tasks", "Branch category", "Ideal outcome", "",
+    "Sub-tasks", "Ideal outcome", "",
   ];
   let counter = 0;
 
@@ -259,15 +259,6 @@ export default function ScenarioTable({ rows, groups, env, onEdit, onRemove }) {
                   <SubTasksCell subTasks={subTasks} />
                 </TableCell>
 
-                {/* BRANCH CATEGORY — single-line label. */}
-                <TableCell sx={{ maxWidth: 200, verticalAlign: "top" }}>
-                  <TruncTooltip title={row.branchCategory || ""}>
-                    <Typography noWrap sx={{ typography: "s2", color: "text.secondary" }}>
-                      {row.branchCategory || "—"}
-                    </Typography>
-                  </TruncTooltip>
-                </TableCell>
-
                 {/* IDEAL OUTCOME — clamped to 3 lines, tooltip on
                     hover. Renamed from "Outcome" so it clearly
                     describes the criterion, not what a specific run
@@ -305,7 +296,7 @@ export default function ScenarioTable({ rows, groups, env, onEdit, onRemove }) {
                   </Tooltip>
                   <Tooltip arrow title="Remove from this environment">
                     <IconButton size="small" onClick={() => onRemove(row.id)}>
-                      <Iconify icon="solar:close-circle-linear" width={15} sx={{ color: "text.subtitle" }} />
+                      <Iconify icon="solar:trash-bin-trash-linear" width={15} sx={{ color: "text.subtitle" }} />
                     </IconButton>
                   </Tooltip>
                 </TableCell>

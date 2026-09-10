@@ -16,6 +16,7 @@ import { staleScenarios } from "../_mock/proofs";
 import WinnerDrawer from "./WinnerDrawer";
 import { allMetrics, deltaAgainst } from "../_mock/winner";
 import { useEnvState } from "../store";
+import { neutralCheckboxSx } from "../components/primitives";
 
 /**
  * Every run this environment has had, as one table.
@@ -244,8 +245,8 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
        last one past the card, and a clipped column reads as a broken table
        rather than as more table. */
     const score = evals.length >= 4
-      ? (baseline ? 92 : 74)
-      : (baseline ? 118 : 92);
+      ? (baseline ? 108 : 100)
+      : (baseline ? 132 : 108);
     const columns = [num, num, num, num, num, num, ...evals.map(() => score)];
     return {
       template: `26px minmax(210px, 300px) ${columns.map((c) => `minmax(${c}px, 1fr)`).join(" ")}`,
@@ -366,7 +367,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                     size="small"
                     checked={on}
                     disabled={on && shown.length === 1}
-                    sx={{ p: 0.5, mr: 0.75 }}
+                    sx={{ p: 0.5, mr: 0.75, ...neutralCheckboxSx }}
                   />
                   <Box sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: e.color, mr: 1, flexShrink: 0 }} />
                   <ListItemText primaryTypographyProps={{ typography: "s2" }} primary={e.name} />
@@ -657,7 +658,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                       >
                         <Checkbox
                           size="small" checked={picked} readOnly tabIndex={-1}
-                          sx={{ p: 0.5, pointerEvents: "none" }}
+                          sx={{ p: 0.5, pointerEvents: "none", ...neutralCheckboxSx }}
                         />
                       </Box>
 
@@ -778,7 +779,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                         checked={picked}
                         readOnly
                         tabIndex={-1}
-                        sx={{ p: 0.5, pointerEvents: "none" }}
+                        sx={{ p: 0.5, pointerEvents: "none", ...neutralCheckboxSx }}
                       />
                     </Box>
 
@@ -1111,11 +1112,23 @@ function Head({ children, right, divider, last }) {
   return (
     <Typography
       sx={{
-        typography: "s3", fontWeight: 700, color: "text.subtitle",
-        textTransform: "uppercase", letterSpacing: 0.4, lineHeight: 1.3,
+        /* Sentence case, not shouted uppercase — the ALL-CAPS pass on
+           long labels ("PROFESSION | ALISM") broke mid-word and read
+           heavy alongside the values below. Small-caps weight + a
+           lighter tint gives the same "this is a header" signal
+           without the noise. */
+        typography: "s3", fontWeight: 600, color: "text.subtitle",
+        letterSpacing: 0.2, lineHeight: 1.3,
         textAlign: right ? "right" : "left", minWidth: 0,
         px: right ? 1.25 : 0,
         ...(last && { pr: 2.5 }),
+        /* Only wrap on natural word boundaries — never mid-word.
+           A too-narrow column with a long single word would rather
+           truncate than break the word. */
+        overflow: "hidden",
+        whiteSpace: "normal",
+        overflowWrap: "normal",
+        wordBreak: "normal",
         /* The graders are a different kind of number from the system ones, and
            a single hairline says so more quietly than a second header row. */
         ...(divider && { borderLeft: "1px solid", borderColor: "divider" }),

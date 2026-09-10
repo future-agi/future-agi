@@ -14,7 +14,7 @@ import { paths } from "src/routes/paths";
 import { getEval } from "../_mock/evals";
 import TurnScores from "./TurnScores";
 import {
-  SectionCard, ScorePill, StatusChip, StatusDot, PersonaBadge, EmptyState,
+  SectionCard, ScorePill, StatusChip, StatusDot, PersonaBadge, EmptyState, neutralCheckboxSx,
 } from "../components/primitives";
 import Stage from "./stages";
 import VerifyRun from "./VerifyRun";
@@ -437,7 +437,7 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
             onChange={(_, v) => setTab(v)}
             sx={{ borderBottom: "1px solid", borderColor: "divider", mb: 2, minHeight: 38 }}
           >
-            <Tab value="tasks" label={`Traces (${stats.total})`} sx={{ minHeight: 38 }} />
+            <Tab value="tasks" label={`Test runs (${stats.total})`} sx={{ minHeight: 38 }} />
             <Tab value="analytics" label="Analytics" sx={{ minHeight: 38 }} />
             <Tab value="verify" label="Verify" sx={{ minHeight: 38 }} />
             {trialsFromRun.length > 0 && (
@@ -447,6 +447,13 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
 
           {tab === "tasks" && (
             <SectionCard
+              /*
+                Grow to fill the remaining vertical space so the traces
+                card reaches the bottom of the viewport rather than
+                sizing to its rows. Values tuned so the card starts
+                just below the tab strip and ends at the viewport edge.
+              */
+              sx={{ minHeight: "calc(100vh - 260px)", display: "flex", flexDirection: "column" }}
               /*
                 The title used to be "Task traces" plus a one-liner
                 subtitle. The header is now the two table controls: the
@@ -676,6 +683,16 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
           setFocusStep(step || null);
           setOpenTask(t);
         }}
+        onViewIssue={(label, ids) => {
+          /* Filter the trace table to the exact task ids the
+             finding addresses, then close the drawer and jump the
+             user to the Test runs tab so they land on the filtered
+             evidence. */
+          const idSet = new Set(ids);
+          setBucketFilter({ label, match: (t) => idSet.has(t.id) });
+          setTab("tasks");
+          setFixOpen(false);
+        }}
       />
 
       <SideDrawer
@@ -771,7 +788,7 @@ function TrialsTable({ trials, chips, evals, selected, onToggle, onOpen }) {
                 >
                   <Checkbox
                     size="small" checked={picked} readOnly tabIndex={-1}
-                    sx={{ p: 0.5, pointerEvents: "none" }}
+                    sx={{ p: 0.5, pointerEvents: "none", ...neutralCheckboxSx }}
                   />
                 </Box>
 

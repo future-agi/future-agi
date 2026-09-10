@@ -3,10 +3,11 @@ import { useMemo, useState } from "react";
 import { alpha } from "@mui/material/styles";
 import {
   Box, Stack, Typography, Button, Grid, MenuItem, TextField, Chip, Tooltip,
-  Drawer, IconButton,
+  IconButton,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import AgentsPanel from "./AgentsPanel";
+import SideDrawer from "../components/SideDrawer";
 import { getSurface, getDomain } from "../_mock/surfaces";
 import { twinById, detectedTwinsFor, liveSandboxContentFor } from "../_mock/twins";
 import TwinLogo from "./../components/TwinLogo";
@@ -55,6 +56,15 @@ export default function OverviewPanel({ buildMode, env, envState, patch, onGo, a
     don't have to reimplement version-history / roll-back / add.
   */
   const [agentDrawerOpen, setAgentDrawerOpen] = useState(false);
+  /*
+    AgentsPanel opens its own drawers ("Add new version",
+    "Promote to source"). When one of those is open we hide the
+    outer drawer so the user sees ONE drawer at a time — otherwise
+    two drawers stack side by side and read as broken layering.
+    The outer drawer's state is preserved (still `open`), only its
+    render is suppressed while a nested drawer takes over.
+  */
+  const [nestedAgentDrawer, setNestedAgentDrawer] = useState(false);
 
   const surface = getSurface(env.surface);
   const domain = getDomain(env.domain);
@@ -424,22 +434,21 @@ export default function OverviewPanel({ buildMode, env, envState, patch, onGo, a
       )}
 
       {/*
-        Agent version-management drawer. Overlays Overview so the user
-        never leaves this tab — the full AgentsPanel content (endpoint,
-        active version, version history, add / roll back) is rendered
-        inside. Closing returns them to Overview exactly where they were.
+        Agent version-management drawer. Uses the shared SideDrawer so
+        it matches every other drawer in this feature (FixMyAgent,
+        Replay, CallDrawer, AddEvals) — transparent backdrop,
+        background.paper surface, subtle shadow. Overlays Overview so
+        the user never leaves this tab.
       */}
-      <Drawer
-        anchor="right"
-        open={agentDrawerOpen}
+      <SideDrawer
+        open={agentDrawerOpen && !nestedAgentDrawer}
         onClose={() => setAgentDrawerOpen(false)}
-        PaperProps={{
-          sx: {
-            width: { xs: "100%", sm: 720, md: 880 },
-            maxWidth: "100vw",
-            bgcolor: "background.default",
-          },
-        }}
+        width={{ xs: "100%", sm: 720, md: 880 }}
+        /* keepMounted preserves AgentsPanel state while a nested
+           drawer (Add version, Promote) hides this outer one —
+           without it the inner unmounts on close and the whole
+           flow resets. */
+        keepMounted={agentDrawerOpen}
       >
         <Stack sx={{ height: "100%", minHeight: 0 }}>
           <Stack
@@ -471,10 +480,11 @@ export default function OverviewPanel({ buildMode, env, envState, patch, onGo, a
                 setAgentDrawerOpen(false);
                 onGo?.(step);
               }}
+              onNestedDrawerChange={setNestedAgentDrawer}
             />
           </Box>
         </Stack>
-      </Drawer>
+      </SideDrawer>
 
     </Box>
   );

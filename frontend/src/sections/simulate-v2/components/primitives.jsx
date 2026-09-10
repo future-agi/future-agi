@@ -56,6 +56,20 @@ export const dash = keyframes`
  * count follows the available width, and a card never drops below a width its
  * content actually fits in.
  */
+/*
+  Neutral white-on-selected checkbox — no primary/purple colour.
+  Every environment-flow surface uses the same treatment so the
+  purple check colour doesn't compete with the accents already
+  in use elsewhere. Merge into a Checkbox's own sx to layer
+  layout tokens (p, mt, size) on top:
+    sx={{ p: 0.5, ...neutralCheckboxSx }}
+*/
+export const neutralCheckboxSx = {
+  color: "text.disabled",
+  "&.Mui-checked": { color: "text.primary" },
+  "&.MuiCheckbox-indeterminate": { color: "text.primary" },
+};
+
 export const cardGrid = (min = 360) => ({
   display: "grid",
   gap: 2,

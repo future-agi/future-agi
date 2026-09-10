@@ -10,6 +10,7 @@ import {
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import { getEnvironment } from "../_mock/environments";
+import { neutralCheckboxSx } from "../components/primitives";
 import { protoRunId } from "../_mock/executionAdapter";
 import {
   buildComparison, distributionFor, changedCount, runSummaries, trialSummaries, chipIdentity,
@@ -385,7 +386,7 @@ export default function CompareRuns() {
                 size="small"
                 checked={picked}
                 tabIndex={-1}
-                sx={{ p: 0.5, mr: 0.5, pointerEvents: "none" }}
+                sx={{ p: 0.5, mr: 0.5, pointerEvents: "none", ...neutralCheckboxSx }}
               />
               <Letter letter={r.letter} color={r.color} />
               <Box component="span" sx={{ flex: 1, minWidth: 0, ml: 1 }}>
@@ -691,7 +692,7 @@ function TableView({ groups, view, rowPad, selected, onToggle, onOpen, evals }) 
                   sx={{ display: "flex", alignItems: "flex-start", pt: 0.25 }}
                   onClick={(e) => { e.stopPropagation(); onToggle(row.id); }}
                 >
-                  <Checkbox size="small" checked={selected.includes(row.id)} readOnly tabIndex={-1} sx={{ p: 0.5, pointerEvents: "none" }} />
+                  <Checkbox size="small" checked={selected.includes(row.id)} readOnly tabIndex={-1} sx={{ p: 0.5, pointerEvents: "none", ...neutralCheckboxSx }} />
                 </Box>
 
                 <Box minWidth={0}>

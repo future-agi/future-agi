@@ -17,6 +17,8 @@ import {
   useRef,
 } from "react";
 import { seededState } from "./_mock/seedState";
+import { getEnvironment } from "./_mock/environments";
+import { generatedPool } from "./_mock/scenarios";
 
 /*
   Versioned: the seeded first-run environments only reach anyone whose browser
@@ -98,7 +100,7 @@ const firstRunState = () => ({ ...initialState, ...seededState(), seedVersion: S
   has are left exactly as they are, and an environment someone deliberately
   removed stays removed because the marker moves on regardless.
 */
-const SEED_VERSION = 2;
+const SEED_VERSION = 3;
 
 const topUpSeed = (stored) => {
   if ((stored.seedVersion || 0) >= SEED_VERSION) return { ...stored, seedVersion: SEED_VERSION };
@@ -129,8 +131,68 @@ function reducer(state, action) {
         empty; envs with any real runs are left untouched.
       */
       const payload = action.payload || {};
-      const envs = payload.myEnvironments || [];
+      /*
+        Refresh adopted template-based envs from their template so
+        prototype-time edits to tools/rules land on already-adopted
+        copies (otherwise adding a tool to env-voice-support in
+        environments.js is invisible on a locally-adopted copy until
+        localStorage is cleared). Custom-built envs have no matching
+        template — getEnvironment returns undefined — so we skip them
+        and their world stays exactly as the user built it. User-
+        edited fields on the adopted env (name, description, adopted
+        state) are preserved by merging template shape *under* the
+        stored env.
+      */
+      const rawEnvs = payload.myEnvironments || [];
+      const envs = rawEnvs.map((env) => {
+        const tpl = getEnvironment(env.id);
+        if (!tpl) return env;
+        return {
+          ...tpl,
+          ...env,
+          tools: tpl.tools || env.tools,
+          rules: tpl.rules || env.rules,
+        };
+      });
       const nextByEnv = { ...(payload.byEnv || {}) };
+      /*
+        Refresh envState.scenarios for template-based envs too.
+        Run again reads from envState.scenarios, which was frozen at
+        adoption time — without this step, prototype-time additions
+        to the env's tools/rules never reach a fresh run's task list.
+        Only refreshes when the stored scenario list would be
+        smaller than the template's current generated pool, so a
+        user who deliberately trimmed scenarios keeps their pick.
+      */
+      envs.forEach((env) => {
+        if (!getEnvironment(env.id)) return;
+        const es = nextByEnv[env.id];
+        if (!es) return;
+        /*
+           Prototype demo path: unconditionally refresh from the
+           template. Wrapped in try/catch — if scenario generation
+           throws on a partial env (missing seed.tables, missing
+           rules, unfamiliar shape from an older cache), the whole
+           hydrate must NOT crash: a crash leaves the reducer at
+           initialState, the persist effect then writes that empty
+           state, and the user's environments disappear on next
+           load. Skipping just this env is the safe fallback.
+        */
+        try {
+          const fresh = generatedPool(env);
+          if (!Array.isArray(fresh) || !fresh.length) return;
+          const freshIds = fresh.map((sc) => sc.id);
+          const nextRuns = (es.runs || []).map((r) => {
+            if (r.synthetic) return r;
+            return { ...r, scenarioIds: freshIds, total: fresh.length };
+          });
+          nextByEnv[env.id] = { ...es, scenarios: fresh, runs: nextRuns };
+        } catch (err) {
+          /* Prototype cache mismatch — leave this env alone. */
+          // eslint-disable-next-line no-console
+          console.warn("[store] scenario refresh skipped for", env.id, err);
+        }
+      });
       envs.forEach((env) => {
         const es = nextByEnv[env.id];
         if (!es) return;
@@ -162,7 +224,7 @@ function reducer(state, action) {
           ],
         };
       });
-      return { ...state, ...payload, byEnv: nextByEnv };
+      return { ...state, ...payload, myEnvironments: envs, byEnv: nextByEnv };
     }
 
     case "adoptEnvironment": {

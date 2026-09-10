@@ -169,6 +169,50 @@ export default function TemplateReviewLayout({
   */
   const source = useMemo(() => ({ kind: "template", templateId: env.id }), [env.id]);
 
+  /*
+    Nikhil's ask: users need to be able to refresh the environment
+    (re-read the source, rebuild) — but it's not the centrepiece.
+    A small ghost button in the header replays the same streaming
+    derivation that ran on mount: clear turns/done, kick the
+    stream. Nothing destructive to envState — the derivation
+    writes over the derived fields on completion.
+  */
+  const refreshFromSource = () => {
+    if (running) return;
+    /* Cancel any pending stream timers before restarting so we don't
+       stack two streams on top of each other. */
+    timers.current.forEach(clearTimeout);
+    timers.current = [];
+    setDone([]);
+    setRunning(true);
+    setTurns([{
+      id: `a-refresh-${Date.now()}`,
+      role: "assistant",
+      steps: [{
+        kind: "note",
+        text: `Re-reading the ${env.name} source and rebuilding tools, rules and scenarios.`,
+      }],
+    }]);
+    const play = (stageId, delay = 0) => {
+      const stage = builderRun(stageId, { kind: "template", value: env.name, templateId: env.id });
+      const turnId = `t-${stageId}-${Date.now()}`;
+      timers.current.push(setTimeout(() => {
+        setTurns((prev) => [...prev, { id: turnId, role: "builder", title: stage.title, steps: [] }]);
+      }, delay));
+      stage.steps.forEach((step, i) => {
+        timers.current.push(setTimeout(() => {
+          setTurns((prev) => prev.map((t) => (t.id === turnId ? { ...t, steps: [...t.steps, step] } : t)));
+          if (i !== stage.steps.length - 1) return;
+          setDone((d) => (d.includes(stageId) ? d : [...d, stageId]));
+          const nextId = STAGE_ORDER[STAGE_ORDER.indexOf(stageId) + 1];
+          if (nextId) play(nextId, 500);
+          else setRunning(false);
+        }, delay + 380 * (i + 1)));
+      });
+    };
+    play("understand", 400);
+  };
+
   return (
     <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       <Stack
@@ -221,6 +265,28 @@ export default function TemplateReviewLayout({
           streaming we also disable it so users can't fire before the
           setup finishes.
         */}
+        {/*
+          Refresh — de-emphasized (ghost outline, subtitle-tinted) so
+          it lives next to the primary CTA without competing with it.
+          Nikhil's transcript: refresh exists, but it's not the
+          centrepiece.
+        */}
+        <Tooltip arrow title="Re-read the source and rebuild tools, rules and scenarios.">
+          <Box component="span">
+            <Button
+              variant="outlined" size="small"
+              onClick={refreshFromSource}
+              disabled={running}
+              startIcon={<Iconify icon="solar:refresh-linear" width={14} />}
+              sx={{
+                color: "text.primary", borderColor: "divider",
+                typography: "s2", fontWeight: 600, flexShrink: 0,
+              }}
+            >
+              Refresh
+            </Button>
+          </Box>
+        </Tooltip>
         {(() => {
           const evalsCount = envState?.evals?.length || 0;
           const hasEvals = evalsCount > 0;

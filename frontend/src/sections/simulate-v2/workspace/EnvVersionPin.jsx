@@ -1,9 +1,9 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
 import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, Menu, MenuItem, ListItemIcon, ListItemText, Chip } from "@mui/material";
+import { Box, Stack, Typography, Menu, MenuItem, ListItemIcon, ListItemText, Chip, Divider, Tooltip } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { environmentVersions, currentEnvVersion } from "../_mock/versions";
+import { environmentVersions, currentEnvVersion, nextEnvVersion } from "../_mock/versions";
 import { INVALIDATING } from "../_mock/proofs";
 
 /**
@@ -32,6 +32,32 @@ export default function EnvVersionPin({ env, envState, patch }) {
 
   const switchTo = (label) => {
     patch({ activeEnvVersion: label });
+    setAnchor(null);
+  };
+
+  /*
+    Nikhil's feedback (transcript): the env is the frozen asset;
+    most iteration happens on agents / scenarios / evals while the
+    env stays put. But if the source *did* move, users need a way
+    to re-derive — and that affordance should exist, just not as
+    the centerpiece. It lives here inside the version menu because
+    this is where env-version things live. Mints a new env version
+    tagged "Re-derived from source" and makes it active. World-
+    invalidating (seed + checks + contract) so proofs against
+    prior versions carry the marker.
+  */
+  const refreshFromSource = () => {
+    const list = envState?.envVersions?.length
+      ? envState.envVersions
+      : [...environmentVersions(env, envState)].reverse();
+    const version = nextEnvVersion(env, envState, {
+      changed: ["seed", "checks", "contract"],
+      note: "Re-derived from source",
+    });
+    patch({
+      envVersions: [...list, version],
+      activeEnvVersion: version.label,
+    });
     setAnchor(null);
   };
 
@@ -156,6 +182,38 @@ export default function EnvVersionPin({ env, envState, patch }) {
             </MenuItem>
           );
         })}
+
+        {/*
+          De-emphasized "Refresh from source" action at the bottom of
+          the version menu. Nikhil's ask: not a centerpiece — a quiet
+          affordance for the rare case the source has moved. Reads as
+          "re-derive a fresh version" not "reset the world".
+        */}
+        <Divider sx={{ my: 0.5 }} />
+        <Tooltip
+          arrow placement="left"
+          title="Re-reads the source agent and rebuilds tools, rules and scenarios. Existing versions are kept — a new env version is minted and set active."
+        >
+          <MenuItem onClick={refreshFromSource} sx={{ py: 1, gap: 1 }}>
+            <ListItemIcon sx={{ minWidth: 24 }}>
+              <Iconify icon="solar:refresh-linear" width={14} sx={{ color: "text.subtitle" }} />
+            </ListItemIcon>
+            <ListItemText
+              primary={(
+                <Typography sx={{ typography: "s2", fontWeight: 600, color: "text.primary" }}>
+                  Refresh from source
+                </Typography>
+              )}
+              secondary={(
+                <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                  Re-derive tools, rules and scenarios; mint a new version
+                </Typography>
+              )}
+              primaryTypographyProps={{ component: "div" }}
+              secondaryTypographyProps={{ component: "div" }}
+            />
+          </MenuItem>
+        </Tooltip>
       </Menu>
     </>
   );

@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { alpha } from "@mui/material/styles";
 import {
   Box, Stack, Typography, Button, IconButton, Tooltip, Collapse,
@@ -50,7 +50,7 @@ const ACTIVE_ACCENT = "#16A34A";
  *    is a single "Contract summary" pill row linking to the Contract
  *    tab (where that content already lives).
  */
-export default function AgentsPanel({ env, envState, patch, onGo, buildMode, onBuilderTurn }) {
+export default function AgentsPanel({ env, envState, patch, onGo, buildMode, onBuilderTurn, onNestedDrawerChange }) {
   /*
     Every agent (source + additionals) is normalised so it carries a
     `versions[]` array and an `activeVersionId`. Agents that were
@@ -68,6 +68,17 @@ export default function AgentsPanel({ env, envState, patch, onGo, buildMode, onB
   const [adding, setAdding] = useState(false);
   const [addingVersionFor, setAddingVersionFor] = useState(null);
   const [promoteFor, setPromoteFor] = useState(null);
+
+  /*
+    When this panel is hosted inside another drawer (Overview's
+    "Manage versions" drawer), the parent needs to hide itself while
+    an inner drawer is open — otherwise two drawers stack side by
+    side. Fires whenever any inner drawer opens or closes.
+  */
+  const anyNestedOpen = adding || !!addingVersionFor || !!promoteFor;
+  useEffect(() => {
+    onNestedDrawerChange?.(anyNestedOpen);
+  }, [anyNestedOpen, onNestedDrawerChange]);
 
   const allAgents = useMemo(() => {
     if (!source) return [];
@@ -376,6 +387,7 @@ AgentsPanel.propTypes = {
   onGo: PropTypes.func,
   buildMode: PropTypes.bool,
   onBuilderTurn: PropTypes.func,
+  onNestedDrawerChange: PropTypes.func,
 };
 
 /* ── hero card ────────────────────────────────────────────────────────────── */

@@ -74,15 +74,8 @@ export default function OmegaHandoff({ env, envState, patch, included, projected
       <SectionCard>
         <Stack
           direction="row" alignItems="center" spacing={3}
-          sx={{ px: 2.5, py: 2, bgcolor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.08 : 0.04) }}
+          sx={{ px: 2.5, py: 2 }}
         >
-          <Box>
-            <Typography sx={{ typography: "s3", color: "text.subtitle" }}>Current pass rate</Typography>
-            <Typography sx={{ typography: "m2", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
-              {current}%
-            </Typography>
-          </Box>
-          <Box flex={1} />
           <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
             Include a change below to see what it would do.
           </Typography>
@@ -93,32 +86,6 @@ export default function OmegaHandoff({ env, envState, patch, included, projected
 
   return (
     <SectionCard>
-      <Stack
-        direction="row" alignItems="center" spacing={3} flexWrap="wrap" rowGap={1.5}
-        sx={{ px: 2.5, py: 2, bgcolor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.08 : 0.04) }}
-      >
-        <Box>
-          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>Current pass rate</Typography>
-          <Typography sx={{ typography: "m2", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
-            {current}%
-          </Typography>
-        </Box>
-        <Iconify icon="solar:arrow-right-linear" width={20} sx={{ color: "text.subtitle" }} />
-        <Box>
-          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-            Projected with {included.length} {included.length === 1 ? "change" : "changes"}
-          </Typography>
-          <Typography sx={{ typography: "m2", fontWeight: 700, color: "#16A34A", fontVariantNumeric: "tabular-nums" }}>
-            {projected}%
-          </Typography>
-          {willFix > 0 && (
-            <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-              if all {willFix} addressed {willFix === 1 ? "task" : "tasks"} pass
-            </Typography>
-          )}
-        </Box>
-      </Stack>
-
       {/*
         The sentence that keeps the two paths straight. The primary flow
         (Create agent version, in the optimizer above) forks the agent's
