@@ -37,7 +37,7 @@ def test_long_text_candidate_is_root_window_scoped_not_child_time_scoped(
     sql, params = subject.build_filter_candidate_seed_page(
         slice_start=END - timedelta(days=365), slice_end=END, limit=50
     )
-    cte = sql.split("SELECT trace_id, id AS root_span_id", 1)[0]
+    cte = sql.split("SELECT trace_id, start_time", 1)[0]
     assert "matching_scalar_trace_identities" in cte
     assert "AND trace_id IN (" in cte
     assert "WHERE parent_span_id IS NULL OR parent_span_id = ''" in cte
@@ -245,7 +245,7 @@ def test_numeric_candidate_priority_and_windowed_fallback_are_unchanged():
     sql, _ = subject.build_filter_candidate_seed_page(
         slice_start=END - timedelta(days=365), slice_end=END, limit=50
     )
-    cte = sql.split("SELECT trace_id, id AS root_span_id", 1)[0]
+    cte = sql.split("SELECT trace_id, start_time", 1)[0]
     assert "attrs_number[" in cte
     assert "parent_span_id" not in cte
 
@@ -274,7 +274,7 @@ def test_page_keyset_does_not_limit_the_necessary_child_witness():
         before_start_time=END - timedelta(days=1),
         before_id="previous",
     )
-    cte, roots = sql.split("SELECT trace_id, id AS root_span_id", 1)
+    cte, roots = sql.split("SELECT trace_id, start_time", 1)
     assert "filter_before" not in cte
     assert "filter_before_start_us" in roots
     assert params["filter_before_id"] == "previous"
