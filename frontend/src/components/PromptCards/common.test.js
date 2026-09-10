@@ -68,58 +68,63 @@ describe("getBlocks", () => {
     expect(getBlocks(quill)).toEqual([{ type: "text", text: "Hello world" }]);
   });
 
-  it("returns image block with snake_case inner keys", () => {
+  it("keeps the image blot's snake_case metadata on save", () => {
+    // ImageBlot.value() stores { url, img_name, img_size } in data-image-data,
+    // so imageData carries snake_case keys — there is no imgName/imgSize.
     const quill = mockQuill([
       {
         insert: {
           ImageBlot: {
-            imageData: { url: "https://img.com", imgName: "x", imgSize: 100 },
+            imageData: { url: "https://img.com", img_name: "x", img_size: 100 },
           },
         },
       },
     ]);
-    expect(getBlocks(quill)).toEqual([
-      {
-        type: "image_url",
-        image_url: {
-          url: "https://img.com",
-          imgName: "x",
-          imgSize: 100,
-          img_name: "x",
-          img_size: 100,
-        },
-      },
+    const [block] = getBlocks(quill);
+    expect(block).toEqual({
+      type: "image_url",
+      image_url: { url: "https://img.com", img_name: "x", img_size: 100 },
+    });
+    // After JSON serialization (what the save path sends) the block must still
+    // carry exactly the keys PromptEditor rebuilds the card from on reload.
+    expect(Object.keys(JSON.parse(JSON.stringify(block.image_url)))).toEqual([
+      "url",
+      "img_name",
+      "img_size",
     ]);
   });
 
-  it("returns audio block with snake_case inner keys", () => {
+  it("keeps the audio blot's snake_case metadata on save", () => {
+    // AudioBlot.value() stores snake_case keys in data-audio-data.
     const quill = mockQuill([
       {
         insert: {
           AudioBlot: {
             audioData: {
               url: "https://aud.io",
-              audioName: "a",
-              audioSize: 200,
-              audioType: "mp3",
+              audio_name: "a",
+              audio_size: 200,
+              audio_type: "mp3",
             },
           },
         },
       },
     ]);
-    expect(getBlocks(quill)).toEqual([
-      {
-        type: "audio_url",
-        audio_url: {
-          url: "https://aud.io",
-          audioName: "a",
-          audioSize: 200,
-          audioType: "mp3",
-          audio_name: "a",
-          audio_size: 200,
-          audio_type: "mp3",
-        },
+    const [block] = getBlocks(quill);
+    expect(block).toEqual({
+      type: "audio_url",
+      audio_url: {
+        url: "https://aud.io",
+        audio_name: "a",
+        audio_size: 200,
+        audio_type: "mp3",
       },
+    });
+    expect(Object.keys(JSON.parse(JSON.stringify(block.audio_url)))).toEqual([
+      "url",
+      "audio_name",
+      "audio_size",
+      "audio_type",
     ]);
   });
 
@@ -152,7 +157,7 @@ describe("getBlocks", () => {
       {
         insert: {
           ImageBlot: {
-            imageData: { url: "https://img.com", imgName: "x", imgSize: 100 },
+            imageData: { url: "https://img.com", img_name: "x", img_size: 100 },
           },
         },
       },
@@ -162,13 +167,7 @@ describe("getBlocks", () => {
       { type: "text", text: "before" },
       {
         type: "image_url",
-        image_url: {
-          url: "https://img.com",
-          imgName: "x",
-          imgSize: 100,
-          img_name: "x",
-          img_size: 100,
-        },
+        image_url: { url: "https://img.com", img_name: "x", img_size: 100 },
       },
       { type: "text", text: "after" },
     ]);
