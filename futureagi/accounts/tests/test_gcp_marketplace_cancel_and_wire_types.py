@@ -372,11 +372,20 @@ class TestReconcileCatchesWhatEventsMissed:
         report.assert_not_called()
 
     def test_paid_marketplace_org_with_no_entitlement_is_downgraded(self):
-        from ee.usage.models.usage import BillingMethodChoices, OrganizationSubscription
+        from ee.usage.models.usage import (
+            BillingMethodChoices,
+            OrganizationSubscription,
+            SubscriptionTier,
+            SubscriptionTierChoices,
+        )
 
         org = Organization.objects.create(name="stranded")
+        tier = SubscriptionTier.objects.create(name=SubscriptionTierChoices.FREE)
         OrganizationSubscription.objects.create(
-            organization=org, plan="scale", billing_method=BillingMethodChoices.GCP_MARKETPLACE
+            organization=org,
+            subscription_tier=tier,
+            plan="scale",
+            billing_method=BillingMethodChoices.GCP_MARKETPLACE,
         )
         _entitlement(org, "dead", GCPMarketplaceEntitlementState.CANCELLED)
         counts = {"paid_without_entitlement": 0}
@@ -388,11 +397,20 @@ class TestReconcileCatchesWhatEventsMissed:
         downgrade.assert_called_once_with(org.id)
 
     def test_org_awaiting_activation_is_left_alone(self):
-        from ee.usage.models.usage import BillingMethodChoices, OrganizationSubscription
+        from ee.usage.models.usage import (
+            BillingMethodChoices,
+            OrganizationSubscription,
+            SubscriptionTier,
+            SubscriptionTierChoices,
+        )
 
         org = Organization.objects.create(name="awaiting")
+        tier = SubscriptionTier.objects.create(name=SubscriptionTierChoices.FREE)
         OrganizationSubscription.objects.create(
-            organization=org, plan="free", billing_method=BillingMethodChoices.GCP_MARKETPLACE
+            organization=org,
+            subscription_tier=tier,
+            plan="free",
+            billing_method=BillingMethodChoices.GCP_MARKETPLACE,
         )
         _entitlement(org, "pending", GCPMarketplaceEntitlementState.ACTIVATION_REQUESTED)
         counts = {"paid_without_entitlement": 0}
@@ -415,7 +433,9 @@ class TestDrainActivityHeartbeatsFromPullThread:
     @staticmethod
     def _run(fn, messages=5):
         import asyncio
+
         from temporalio.testing import ActivityEnvironment
+
         import tfc.temporal.marketplace.activities as act
 
         def fake_drain(heartbeat):
@@ -451,7 +471,9 @@ class TestDrainActivityHeartbeatsFromPullThread:
 
     def test_passing_heartbeat_straight_into_the_thread_reproduces_the_outage(self):
         import asyncio
+
         from temporalio import activity
+
         import tfc.temporal.marketplace.activities as act
 
         @activity.defn(name="drain_as_shipped_in_v1_37_1")
