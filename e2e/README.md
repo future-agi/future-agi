@@ -415,6 +415,17 @@ yourself — the `feat`-in-an-uncovered-area signal reads it, and nothing else p
 yarn coverage --base origin/<base> --title "<branch or PR title>" --body <file>
 ```
 
+CI runs the same check on every PR into `dev` and `main`
+(`.github/workflows/e2e-coverage-check.yml`, the **E2E coverage declared** check). It classifies the
+PR's diff, verifies the `E2E:` line against it, and puts the verdict in the job summary. Because the
+fix for a missing line is a body edit, the workflow re-runs on `edited` — correct the body and the
+check goes green without a push. Release-please, dependabot and the `dev`↔`main` sync PRs are
+skipped: they replay commits that were each classified on the way in.
+
+The check is **informational for now** — it goes red, but it is not in the branch ruleset's required
+checks, so it cannot block a merge yet. Ratcheting it to required is a ruleset change, not a change
+to the workflow.
+
 ---
 
 ## Quarantine and the flake policy
