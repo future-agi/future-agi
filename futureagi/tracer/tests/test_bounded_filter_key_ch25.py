@@ -2536,7 +2536,9 @@ def test_trace_pages_keep_older_live_root_when_newer_raw_root_is_tombstoned(
     seed_rows = [dict(zip(seed_names, row, strict=True)) for row in seed_data]
     multi_seed = next(row for row in seed_rows if row["trace_id"] == "trace-multi")
     assert seed_names == ["trace_id", "start_time"]
-    assert multi_seed["start_time"] == window_end - timedelta(minutes=1)
+    assert _unix_microseconds(multi_seed["start_time"]) == _unix_microseconds(
+        window_end - timedelta(minutes=1)
+    )
 
     first = read_bounded_filter_page(
         builder=builder,
