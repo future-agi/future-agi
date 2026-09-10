@@ -9,4 +9,8 @@ export const E2E = {
   chUrl: process.env.E2E_CH_URL ?? 'http://localhost:28123',
   chDatabase: process.env.E2E_CH_DB ?? 'default',
   pgUrl: process.env.E2E_PG_URL ?? 'postgresql://futureagi:futureagi@localhost:25432/futureagi',
+  // peerdb-server's Nexus port (PEERDB_PORT in e2e/stack/e2e.env). Only
+  // reachability is checked — the CDC gate uses it to tell "the mirror is
+  // running" from "the mirror was never started".
+  peerdbUrl: process.env.E2E_PEERDB_URL ?? 'tcp://localhost:29900',
 } as const;

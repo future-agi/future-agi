@@ -1,1 +1,9 @@
-[]
+[
+  {
+    "id": "EVAL-E2E-012",
+    "reason": "Product bug, not a flaky test: submitting feedback saves the row, but the panel never flips Add Feedback -> Edit Feedback. row.feedback comes from the usage read, which is served from the exact-aggregation snapshot cached before the feedback existed; read_or_schedule_exact_snapshot returns that cache hit without rescheduling unless refresh is set. Un-quarantine once the usage read is invalidated or refreshed after a feedback mutation.",
+    "owner": "cdileep23",
+    "added": "2026-09-04",
+    "expires": "2026-12-04"
+  }
+]

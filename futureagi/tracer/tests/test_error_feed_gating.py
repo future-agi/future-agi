@@ -147,22 +147,28 @@ class TestTwoTierGating:
         _configure_oss()
         check_ee_feature(feature, org_id="org_1")  # must not raise
 
-    @pytest.mark.parametrize("feature", ["optimization", "agentic_eval"])
+    @pytest.mark.parametrize("feature", ["optimization", "scim"])
     def test_unlocked_paid_features_open_on_unlicensed_ee(self, feature):
         _configure_ee(_snapshot(LicenseState.EXPIRED, frozenset()))
         check_ee_feature(feature, org_id="org_1")  # must not raise
 
-    @pytest.mark.parametrize("feature", ["turing_models", "falcon_ai", "protect"])
+    @pytest.mark.parametrize(
+        "feature", ["turing_models", "falcon_ai", "protect", "agentic_eval"]
+    )
     def test_locked_features_deny_on_oss(self, feature):
         _configure_oss()
         with pytest.raises(FeatureUnavailable):
             check_ee_feature(feature, org_id="org_1")
 
-    def test_locked_set_is_exactly_the_reserved_four(self):
+    def test_locked_set_is_exactly_the_reserved_features(self):
         from tfc.capabilities.registry import OSS_LOCKED_FEATURES, PAID_FEATURES
 
+        # Deliberately spelled out rather than derived: this is the guard that
+        # makes opening or closing a gate a conscious edit, so a feature cannot
+        # drift in or out of license-gating unnoticed. `agentic_eval` joined
+        # the set when its evaluator was confirmed to be EE code.
         assert OSS_LOCKED_FEATURES == frozenset(
-            {"falcon_ai", "turing_models", "protect", "error_feed"}
+            {"falcon_ai", "turing_models", "protect", "error_feed", "agentic_eval"}
         )
         assert OSS_LOCKED_FEATURES <= PAID_FEATURES
 

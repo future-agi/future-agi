@@ -14,6 +14,7 @@ from tfc.capabilities.registry import (
     FEATURE_REGISTRY,
     MANAGED_SERVICE_FEATURES,
     OSS_BASELINE_FEATURES,
+    OSS_LOCKED_FEATURES,
     PAID_FEATURES,
 )
 from tfc.licensing.types import (
@@ -50,18 +51,13 @@ class TestOSSBaseline:
         assert decision.allowed is True
         assert decision.feature_id == feature_id
 
-    @pytest.mark.parametrize(
-        "feature_id", sorted(MANAGED_SERVICE_FEATURES | {"error_feed"})
-    )
+    @pytest.mark.parametrize("feature_id", sorted(OSS_LOCKED_FEATURES))
     def test_locked_features_denied_on_oss_image(self, feature_id: str):
         decision = service.check(feature_id)
         assert decision.allowed is False
         assert decision.reason_code == DenialReason.EE_CODE_UNAVAILABLE.value
 
-    @pytest.mark.parametrize(
-        "feature_id",
-        sorted(PAID_FEATURES - MANAGED_SERVICE_FEATURES - {"error_feed"}),
-    )
+    @pytest.mark.parametrize("feature_id", sorted(PAID_FEATURES - OSS_LOCKED_FEATURES))
     def test_unlocked_paid_features_allowed_on_oss_image(self, feature_id: str):
         decision = service.check(feature_id)
         assert decision.allowed is True

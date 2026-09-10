@@ -27,6 +27,7 @@ x-backend-env: &backend-env
   # throwaway INTEGRATION_ENCRYPTION_KEY) activate for docker-compose installs.
   ENV_TYPE: ${ENV_TYPE:-local}
   EE_LICENSE_KEY: ${EE_LICENSE_KEY:-}
+  EE_LICENSE_PUBLIC_KEY: ${EE_LICENSE_PUBLIC_KEY:-}
   DJANGO_SETTINGS_MODULE: tfc.settings.settings
   FAST_STARTUP: ${FAST_STARTUP:-false}
   # Exact analytics are isolated from shared tasks_xl so one cold graph cannot
