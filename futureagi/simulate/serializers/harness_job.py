@@ -551,6 +551,20 @@ class HarnessPlatformSerializer(serializers.Serializer):
     url = serializers.CharField(allow_null=True)
 
 
+class HarnessDiagnosticsSerializer(serializers.Serializer):
+    object_key = serializers.CharField(required=False)
+    sha256 = serializers.CharField(required=False)
+    size = serializers.IntegerField()
+    captured_at = serializers.CharField(required=False)
+    final = serializers.BooleanField()
+    error = serializers.CharField(allow_blank=True)
+
+
+class HarnessRuntimeReadSerializer(serializers.Serializer):
+    sandbox_id = serializers.CharField(required=False)
+    diagnostics = HarnessDiagnosticsSerializer(required=False)
+
+
 class HarnessJobReadSerializer(serializers.Serializer):
     """Consolidated public read DTO for list/create/retrieve/cancel/poll."""
 
@@ -561,3 +575,4 @@ class HarnessJobReadSerializer(serializers.Serializer):
     scenarios = HarnessScenarioSerializer(many=True)
     receipts = serializers.ListField(child=serializers.JSONField())
     platform = HarnessPlatformSerializer()
+    runtime = HarnessRuntimeReadSerializer(required=False)

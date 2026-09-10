@@ -208,6 +208,23 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
             else None
         ),
     }
+    runtime = {}
+    if attempt:
+        if attempt.provider_ref:
+            runtime["sandbox_id"] = attempt.provider_ref
+        if attempt.diagnostics_object_key or attempt.diagnostics_error:
+            diagnostics = {
+                "size": attempt.diagnostics_size or 0,
+                "final": bool(attempt.diagnostics_final),
+                "error": attempt.diagnostics_error or "",
+            }
+            if attempt.diagnostics_object_key:
+                diagnostics["object_key"] = attempt.diagnostics_object_key
+            if attempt.diagnostics_sha256:
+                diagnostics["sha256"] = attempt.diagnostics_sha256
+            if attempt.diagnostics_captured_at:
+                diagnostics["captured_at"] = attempt.diagnostics_captured_at.isoformat()
+            runtime["diagnostics"] = diagnostics
     # Surface the resolved transport connector so the environments list can show
     # the agent Type (voice/chat). ``resolve_authored_connector`` pins a concrete
     # connector (e.g. "livekit") on the payload during authoring; before that it
@@ -244,6 +261,7 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
         "stage_outputs": stage_outputs,
         "scenarios": scenarios,
         "receipts": receipts,
+        "runtime": runtime,
         "adjustments": list(
             (job.payload.get("metadata") or {}).get("adjustments") or []
         ),

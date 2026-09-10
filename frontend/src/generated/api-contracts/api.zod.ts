@@ -34959,6 +34959,21 @@ export const SimulateApiHarnessJobsListResponseItem = zod.object({
     test_execution_id: zod.string().uuid(),
     url: zod.string().min(1),
   }),
+  runtime: zod
+    .object({
+      sandbox_id: zod.string().min(1).optional(),
+      diagnostics: zod
+        .object({
+          object_key: zod.string().min(1).optional(),
+          sha256: zod.string().min(1).optional(),
+          size: zod.number(),
+          captured_at: zod.string().min(1).optional(),
+          final: zod.boolean(),
+          error: zod.string(),
+        })
+        .optional(),
+    })
+    .optional(),
 });
 export const SimulateApiHarnessJobsListResponse = zod.array(
   SimulateApiHarnessJobsListResponseItem,
@@ -35711,6 +35726,21 @@ export const SimulateApiHarnessJobsReadResponse = zod.object({
     test_execution_id: zod.string().uuid(),
     url: zod.string().min(1),
   }),
+  runtime: zod
+    .object({
+      sandbox_id: zod.string().min(1).optional(),
+      diagnostics: zod
+        .object({
+          object_key: zod.string().min(1).optional(),
+          sha256: zod.string().min(1).optional(),
+          size: zod.number(),
+          captured_at: zod.string().min(1).optional(),
+          final: zod.boolean(),
+          error: zod.string(),
+        })
+        .optional(),
+    })
+    .optional(),
 });
 
 /**
@@ -35816,6 +35846,21 @@ export const SimulateApiHarnessJobsCancelResponse = zod.object({
     test_execution_id: zod.string().uuid(),
     url: zod.string().min(1),
   }),
+  runtime: zod
+    .object({
+      sandbox_id: zod.string().min(1).optional(),
+      diagnostics: zod
+        .object({
+          object_key: zod.string().min(1).optional(),
+          sha256: zod.string().min(1).optional(),
+          size: zod.number(),
+          captured_at: zod.string().min(1).optional(),
+          final: zod.boolean(),
+          error: zod.string(),
+        })
+        .optional(),
+    })
+    .optional(),
 });
 
 /**

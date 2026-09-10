@@ -59275,6 +59275,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         platform: {
           $ref: "#/definitions/HarnessPlatform",
         },
+        runtime: {
+          $ref: "#/definitions/HarnessRuntimeRead",
+        },
       },
     },
     HarnessManifest: {
@@ -86284,6 +86287,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessRuntimeRead: {
+      type: "object",
+      properties: {
+        sandbox_id: {
+          title: "Sandbox id",
+          type: "string",
+          minLength: 1,
+        },
+        diagnostics: {
+          $ref: "#/definitions/HarnessDiagnostics",
+        },
+      },
+    },
     HarnessScenario: {
       required: ["scenario_key", "scenario_id", "name"],
       type: "object",
@@ -100314,6 +100330,39 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "number",
           maximum: 1,
           minimum: 0,
+        },
+      },
+    },
+    HarnessDiagnostics: {
+      required: ["size", "final", "error"],
+      type: "object",
+      properties: {
+        object_key: {
+          title: "Object key",
+          type: "string",
+          minLength: 1,
+        },
+        sha256: {
+          title: "Sha256",
+          type: "string",
+          minLength: 1,
+        },
+        size: {
+          title: "Size",
+          type: "integer",
+        },
+        captured_at: {
+          title: "Captured at",
+          type: "string",
+          minLength: 1,
+        },
+        final: {
+          title: "Final",
+          type: "boolean",
+        },
+        error: {
+          title: "Error",
+          type: "string",
         },
       },
     },

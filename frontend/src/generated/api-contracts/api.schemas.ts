@@ -16924,6 +16924,24 @@ export interface HarnessPlatformApi {
   url: string;
 }
 
+export interface HarnessDiagnosticsApi {
+  /** @minLength 1 */
+  object_key?: string;
+  /** @minLength 1 */
+  sha256?: string;
+  size: number;
+  /** @minLength 1 */
+  captured_at?: string;
+  final: boolean;
+  error: string;
+}
+
+export interface HarnessRuntimeReadApi {
+  /** @minLength 1 */
+  sandbox_id?: string;
+  diagnostics?: HarnessDiagnosticsApi;
+}
+
 export interface HarnessJobReadApi {
   job: HarnessJobInfoApi;
   status: HarnessJobStatusApi;
@@ -16932,6 +16950,7 @@ export interface HarnessJobReadApi {
   scenarios: HarnessScenarioApi[];
   receipts: HarnessJobReadApiReceiptsItem[];
   platform: HarnessPlatformApi;
+  runtime?: HarnessRuntimeReadApi;
 }
 
 export type HarnessJobCreateApiSchemaVersion =

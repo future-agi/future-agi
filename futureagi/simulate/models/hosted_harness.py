@@ -137,6 +137,12 @@ class HostedHarnessAttempt(BaseModel):
     source_digest = models.CharField(max_length=71, null=True, blank=True)
     bundle_digest = models.CharField(max_length=71, null=True, blank=True)
     heartbeat_at = models.DateTimeField(null=True, blank=True)
+    diagnostics_object_key = models.CharField(max_length=1024, null=True, blank=True)
+    diagnostics_sha256 = models.CharField(max_length=64, null=True, blank=True)
+    diagnostics_size = models.BigIntegerField(null=True, blank=True)
+    diagnostics_captured_at = models.DateTimeField(null=True, blank=True)
+    diagnostics_final = models.BooleanField(null=True, blank=True)
+    diagnostics_error = models.CharField(max_length=500, null=True, blank=True)
     cleanup_verified_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:

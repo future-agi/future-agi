@@ -47,11 +47,25 @@ from simulate.services.hosted_harness_gateway import (
     authoring_stage_outputs_from_archive,
 )
 
-
 _LIVEKIT_REFS = {
-    "LIVEKIT_URL": {"key": "harness-livekit_url", "manager": "platform-vault", "purpose": "target_provider", "version": "1"},
-    "LIVEKIT_API_KEY": {"key": "harness-livekit_api_key", "manager": "platform-vault", "purpose": "target_provider", "version": "1"},
-    "LIVEKIT_API_SECRET": {"key": "harness-livekit_api_secret", "manager": "platform-vault", "purpose": "target_provider", "version": "1"},
+    "LIVEKIT_URL": {
+        "key": "harness-livekit_url",
+        "manager": "platform-vault",
+        "purpose": "target_provider",
+        "version": "1",
+    },
+    "LIVEKIT_API_KEY": {
+        "key": "harness-livekit_api_key",
+        "manager": "platform-vault",
+        "purpose": "target_provider",
+        "version": "1",
+    },
+    "LIVEKIT_API_SECRET": {
+        "key": "harness-livekit_api_secret",
+        "manager": "platform-vault",
+        "purpose": "target_provider",
+        "version": "1",
+    },
 }
 
 
@@ -113,8 +127,8 @@ def _v1_payload(**overrides):
 def test_serialize_job_returns_full_dto_shape(organization):
     job, _ = create_hosted_job(organization, _v1_payload(), idempotency_key="dto-shape")
     result = serialize_job(job)
-    # Top-level keys
-    assert set(result.keys()) == {
+    # Required top-level keys; additive response fields remain backward compatible.
+    assert {
         "job",
         "status",
         "events",
@@ -122,7 +136,8 @@ def test_serialize_job_returns_full_dto_shape(organization):
         "scenarios",
         "receipts",
         "platform",
-    }
+        "runtime",
+    } <= set(result)
     # Job sub-keys
     assert "job_id" in result["job"]
     assert "run_id" in result["job"]
@@ -145,6 +160,7 @@ def test_serialize_job_returns_full_dto_shape(organization):
         "test_execution_id": None,
         "url": None,
     }
+    assert result["runtime"] == {}
 
 
 @pytest.mark.django_db

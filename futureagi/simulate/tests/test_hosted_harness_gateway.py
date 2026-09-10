@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import io
 import json
 import tarfile
@@ -12,6 +13,7 @@ import pytest
 from django.utils import timezone
 
 from simulate.models import HostedHarnessAttempt, HostedHarnessJob
+from simulate.services.harness_provider import serialize_job
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     create_hosted_job,
@@ -811,10 +813,15 @@ class _Process:
     def __init__(self):
         self.exec_calls = []
         self.sessions = []
+        self.command_exit_code = None
+        self.command_status = "running"
+        self.entrypoint_output = ""
+        self.process_output = ""
 
     def exec(self, command, **kwargs):
         self.exec_calls.append(command)
-        return SimpleNamespace(exit_code=0, result="")
+        result = self.process_output if "find /work/authoring" in command else ""
+        return SimpleNamespace(exit_code=0, result=result)
 
     def create_session(self, session_id):
         self.sessions.append(session_id)
@@ -824,7 +831,13 @@ class _Process:
         return SimpleNamespace(cmd_id="command-1")
 
     def get_session_command(self, session_id, command_id, request_timeout=None):
-        return SimpleNamespace(exit_code=None, status="running")
+        return SimpleNamespace(
+            exit_code=self.command_exit_code,
+            status=self.command_status,
+        )
+
+    def get_session_command_logs(self, session_id, command_id, request_timeout=None):
+        return SimpleNamespace(output=self.entrypoint_output)
 
 
 class _Sandbox:
@@ -839,15 +852,21 @@ class _Daytona:
         self.sandbox = _Sandbox()
         self.params = None
         self.deleted = False
+        self.lifecycle = []
 
     def create(self, params, **kwargs):
         self.params = params
         return self.sandbox
 
     def get(self, sandbox_id, request_timeout=None):
+        if self.deleted:
+            from daytona import DaytonaNotFoundError
+
+            raise DaytonaNotFoundError("sandbox not found", 404)
         return self.sandbox
 
     def delete(self, sandbox, **kwargs):
+        self.lifecycle.append("delete")
         self.deleted = True
 
 
@@ -1259,6 +1278,98 @@ def test_daytona_livekit_launch_uses_coturn_domain_allowlist(
         "coturn.turn-eu.futureagi.com",
         "ingest.example.com",
         "platform.example.com",
+    }
+
+
+@pytest.mark.django_db
+def test_gateway_polls_diagnostics_to_s3_and_finalizes_before_cleanup(
+    organization, monkeypatch
+):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="polled-diagnostics"
+    )
+    attempt = register_attempt(
+        job.id,
+        endpoint_base_url="https://platform.example.com",
+        provider_ref="sandbox-1",
+        snapshot_name="alk-hosted-v1",
+    ).attempt
+    client = _Daytona()
+    process = client.sandbox.process
+    process.entrypoint_output = (
+        "\x01\x02\x1b[31mproduction prod true 13 target-secret "
+        "custom-secret-value\x1b[0m\nwaiting"
+    )
+    process.process_output = "worker simulator-secret\nready"
+    uploaded = []
+
+    class _Storage:
+        def put_object(self, **kwargs):
+            client.lifecycle.append("upload")
+            uploaded.append(kwargs["data"].read())
+
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_diagnostics.get_storage_client",
+        lambda: _Storage(),
+    )
+    resolver_calls = []
+
+    def _resolve_target_secrets(_resolver, _job):
+        resolver_calls.append(_job.id)
+        return {
+            "TARGET_API_KEY": "target-secret",
+            "SHORT_API_KEY": "prod",
+            "FEATURE_FLAG": "true",
+            "STRIPE_SK": "custom-secret-value",
+        }
+
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway.PlatformSecretResolver.resolve",
+        _resolve_target_secrets,
+    )
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway.resolve_platform_simulator_secrets",
+        lambda: {"SIMULATOR_API_KEY": "simulator-secret"},
+    )
+    gateway = object.__new__(DaytonaHostedGateway)
+    gateway.client = client
+
+    assert gateway.reconcile_completed(attempt) is None
+    attempt.refresh_from_db()
+    running = json.loads(gzip.decompress(uploaded[-1]))
+    assert running["final"] is False
+    assert running["entrypoint_log"] == (
+        "production prod true 13 [REDACTED] [REDACTED]\nwaiting"
+    )
+    assert running["process_logs"] == "worker [REDACTED]\nready"
+    assert attempt.diagnostics_final is False
+    assert attempt.diagnostics_object_key.endswith(f"/{attempt.id}.json.gz")
+    assert client.deleted is False
+
+    process.command_exit_code = 2
+    process.command_status = "finished"
+    process.entrypoint_output += "\nfatal"
+    gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    final = json.loads(gzip.decompress(uploaded[-1]))
+    assert final["final"] is True
+    assert final["exit_code"] == 2
+    assert final["entrypoint_log"].endswith("fatal")
+    assert attempt.diagnostics_final is True
+    assert attempt.diagnostics_size == len(uploaded[-1])
+    assert client.lifecycle[-2:] == ["upload", "delete"]
+    assert resolver_calls == [job.id]
+    assert serialize_job(job)["runtime"] == {
+        "sandbox_id": "sandbox-1",
+        "diagnostics": {
+            "object_key": attempt.diagnostics_object_key,
+            "sha256": attempt.diagnostics_sha256,
+            "size": attempt.diagnostics_size,
+            "captured_at": attempt.diagnostics_captured_at.isoformat(),
+            "final": True,
+            "error": "",
+        },
     }
 
 
