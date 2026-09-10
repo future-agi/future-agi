@@ -116,9 +116,12 @@ const SessionGrid = React.forwardRef(
     const gridElementRef = useRef(null);
     const {
       beginPageLoad,
+      endUnknown,
+      frontierPage,
+      hasMore,
       page,
-      pageCount,
       pageSize,
+      provenNext,
       changePageSize,
       finishPageLoad,
       goToPage,
@@ -290,6 +293,21 @@ const SessionGrid = React.forwardRef(
     const inFlightPageLoads = useRef(new Map());
     const cursorPagination = useRef(createListCursorPagination());
     const cursorQueryKeyRef = useRef(null);
+    // Mirrors the `sort_params` derived from `request.sortModel` inside
+    // getRows() below, but as component state: a sort click has to reset the
+    // frontier (React state owned by useCursorGridPagination), and the
+    // frontier cannot be reached from inside the datasource closure. Without
+    // this, sorting reset the cursor chain (getRows()'s own queryKey check)
+    // but left a stale, now-unreachable frontier page drawn as the pager's
+    // boundary.
+    const [sortSignature, setSortSignature] = useState("[]");
+    const onSortChanged = useCallback(({ api }) => {
+      const nextSortModel = (api?.getColumnState?.() || [])
+        .filter((column) => column.sort)
+        .sort((left, right) => (left.sortIndex ?? 0) - (right.sortIndex ?? 0))
+        .map(({ colId, sort }) => ({ column_id: colId, direction: sort }));
+      setSortSignature(JSON.stringify(nextSortModel));
+    }, []);
     const paginationRequestKey = useMemo(
       () =>
         JSON.stringify({
@@ -299,8 +317,17 @@ const SessionGrid = React.forwardRef(
           filters: toBackendFilters(filters),
           dateInterval: dateInterval || null,
           pageSize,
+          sortSignature,
         }),
-      [dateInterval, filters, pageSize, projectId, workspaceId, userIdForUserMode],
+      [
+        dateInterval,
+        filters,
+        pageSize,
+        projectId,
+        workspaceId,
+        userIdForUserMode,
+        sortSignature,
+      ],
     );
     const previousPaginationRequestKeyRef = useRef(paginationRequestKey);
     useEffect(() => {
@@ -309,6 +336,16 @@ const SessionGrid = React.forwardRef(
       }
       previousPaginationRequestKeyRef.current = paginationRequestKey;
     }, [paginationRequestKey, resetPagination]);
+    // Gate the boundary on whether its cursor is still remembered — reset(),
+    // an LRU eviction, or a query-key change (sort/filter/page size) can all
+    // make a page that was genuinely visited unreachable again. `frontierPage`
+    // is 1-indexed (matches the UI); `canReachPage` takes the same 0-indexed
+    // convention as `requestParams`.
+    const furthestPage = cursorPagination.current.canReachPage(
+      frontierPage - 1,
+    )
+      ? frontierPage
+      : 0;
 
     const dataSource = useMemo(
       () => {
@@ -548,6 +585,7 @@ const SessionGrid = React.forwardRef(
                 request,
                 rows,
                 isLastPage,
+                metadata: totalMetadata,
               });
 
               params.success({
@@ -758,6 +796,7 @@ const SessionGrid = React.forwardRef(
                 rowStyle={{ cursor: "pointer" }}
                 onRowClicked={onRowClicked}
                 onColumnMoved={onColumnMoved}
+                onSortChanged={onSortChanged}
                 onSelectionChanged={onSelectionChanged}
                 getRowId={({ data }) => data.session_id}
                 onFirstDataRendered={({ api }) => {
@@ -781,8 +820,11 @@ const SessionGrid = React.forwardRef(
               disabled={isPageLoading || Boolean(continuationNotice)}
               loading={isPageLoading}
               page={page}
-              pageCount={pageCount}
               pageSize={pageSize}
+              endUnknown={endUnknown}
+              furthestPage={furthestPage}
+              hasMore={hasMore}
+              provenNext={provenNext}
               onPageChange={goToPage}
               onPageSizeChange={changePageSize}
             />
