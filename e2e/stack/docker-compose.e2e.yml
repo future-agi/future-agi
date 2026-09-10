@@ -5,8 +5,23 @@ services:
     mem_limit: 3g
   backend:
     restart: "no"
+    environment:
+      # Root compose's x-backend-env has no OpenAI base override; the e2e
+      # stack points it at the mock so every provider call stays local.
+      OPENAI_BASE_URL: http://mock-llm:8080/v1
+      OPENAI_API_BASE: http://mock-llm:8080/v1
+      # Prompt Generate/Improve resolve their model from BEDROCK_SONNET_ARN; point
+      # it at a mock-routed catalog name so the generator streams to the mock.
+      BEDROCK_SONNET_ARN: gpt-4o-mini
+      # Backend serves HTTP on :80 here, not :8000 (the default WEBSOCKET_ENDPOINT).
+      WEBSOCKET_ENDPOINT: http://backend/call-websocket/
   worker:
     restart: "no"
+    environment:
+      OPENAI_BASE_URL: http://mock-llm:8080/v1
+      OPENAI_API_BASE: http://mock-llm:8080/v1
+      BEDROCK_SONNET_ARN: gpt-4o-mini
+      WEBSOCKET_ENDPOINT: http://backend/call-websocket/
   fi-collector:
     # Root compose reuses FUTURE_AGI_VERSION for this image; the e2e stack
     # decouples it so CI can retag the backend without inventing a
@@ -24,4 +39,6 @@ services:
       # Compose resolves paths in an override file against the project
       # directory (the first -f file's dir = repo root), not this file's dir.
       - ./e2e/stack/mock-llm/server.mjs:/srv/server.mjs:ro
+    ports:
+      - "127.0.0.1:${MOCK_LLM_PORT:-28081}:8080"
     restart: "no"

@@ -115,7 +115,10 @@ const PromptCard = ({
 
   return (
     <>
-      <PromptCardWrapper>
+      <PromptCardWrapper
+        data-testid={`prompt-card-${index}`}
+        data-prompt-role={role}
+      >
         <PromptTopSection
           role={role}
           onDelete={allowRemove ? onRemove : undefined}

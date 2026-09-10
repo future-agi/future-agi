@@ -1,1 +1,10 @@
-[]
+[
+  {
+    "id": "PROMPT-E2E-015",
+    "reason": "TTS run from the workbench is broken server-side: run_template (model_hub/views/prompt_template.py ~1940) builds RunPrompt from a field whitelist and never passes run_prompt_config, so the UI-selected voice_id never reaches litellm and the run errors with \"'voice' is required to be passed as a string for OpenAI TTS\". Product bug, not a harness/flow issue. The spec asserts the intended behavior and will pass once fixed.",
+    "owner": "nosang.s@futureagi.com",
+    "issue": "TODO-file-ticket",
+    "added": "2026-09-10",
+    "expires": "2026-10-24"
+  }
+]

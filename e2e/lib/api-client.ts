@@ -24,11 +24,13 @@ export class ApiClient {
   }
 
   private async send<T>(method: 'get' | 'post' | 'patch' | 'delete', path: string,
-                        opts: { params?: Record<string, string | number>; data?: unknown } = {}): Promise<T> {
+                        opts: { params?: Record<string, string | number>; data?: unknown;
+                                multipart?: Record<string, string | { name: string; mimeType: string; buffer: Buffer }> } = {}): Promise<T> {
     const res = await this.req[method](`${this.baseURL}${path}`, {
       headers: this.headers,
       params: opts.params,
       data: opts.data,
+      multipart: opts.multipart,
     });
     const raw = await res.text();
     let body: unknown;
@@ -41,4 +43,7 @@ export class ApiClient {
   post<T>(path: string, data?: unknown) { return this.send<T>('post', path, { data }); }
   patch<T>(path: string, data?: unknown) { return this.send<T>('patch', path, { data }); }
   delete(path: string) { return this.send<void>('delete', path); }
+  postMultipart<T>(path: string, fields: Record<string, string | { name: string; mimeType: string; buffer: Buffer }>) {
+    return this.send<T>('post', path, { multipart: fields });
+  }
 }

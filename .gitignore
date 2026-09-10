@@ -182,6 +182,10 @@ logs/
 **celerybeat-schedule**
 staticfiles/
 media/
+# e2e fixtures live under a directory literally named `media/`, which the
+# blanket Django-uploads rule above would otherwise swallow.
+!e2e/fixtures/media/
+!e2e/fixtures/media/**
 
 # Accidental shell redirects (`yarn build > out.out`, `yarn lint > pre.out`, etc.)
 *.out
