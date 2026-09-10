@@ -15,6 +15,13 @@ class Report(BaseModel):
 
 
 class Finding(Report):
+    """Evidence-backed task outcome or conduct assessment.
+
+    Outcome findings measure whether the user's requested result was fulfilled
+    within the observed trace. Process and instruction findings assess conduct;
+    they do not assign the task outcome or fault merely from nonfulfillment.
+    """
+
     id: str
     kind: Literal["outcome", "process", "instruction", "safety"]
     status: Outcome
@@ -24,6 +31,8 @@ class Finding(Report):
 
 
 class Requirement(Report):
+    """A final requested result, not a procedure for handling the request."""
+
     requirement: str
     status: Outcome
     evidence_ids: list[str]

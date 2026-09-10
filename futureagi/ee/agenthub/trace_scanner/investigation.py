@@ -41,7 +41,10 @@ def _tokens(value: object) -> int:
 @dataclass(frozen=True)
 class InvestigationLimits:
     max_calls: int = 9
-    max_input_tokens: int = 400_000
+    # This is a cumulative harness budget, not a per-request context limit. Two
+    # lossless passes (controller + verifier) can each approach Gemini's 1M
+    # context window, so 400k rejected valid traces after paying for pass one.
+    max_input_tokens: int = 2_100_000
     max_output_tokens: int = 16_384
     max_checks: int = 8
     max_children: int = 1
@@ -208,7 +211,7 @@ class Investigation:
         if (
             sum(call["input_tokens_estimate"] for call in self.calls)
             + estimate
-            + (reserved * self._final_estimate() if child else 0)
+            + reserved * self._final_estimate()
             > self.limits.max_input_tokens
         ):
             raise ValueError("Input budget exhausted; evidence was not truncated")

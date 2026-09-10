@@ -6,6 +6,13 @@ from ee.agenthub.trace_scanner.investigation import ModelReply
 from ee.agenthub.trace_scanner.scanner import TraceScanner
 
 
+def test_default_model_identity_matches_investigation_provider():
+    scanner = TraceScanner()
+    assert scanner.model_config.model_name == "vertex_ai/gemini-3.8-flash"
+    assert scanner.model_config.vertex_location == "global"
+    assert scanner._investigation_provider.model == scanner.model_config.model_name
+
+
 @pytest.mark.parametrize(
     "status,has_issues", [("violated", True), ("unknown", False), ("satisfied", False)]
 )
@@ -100,7 +107,7 @@ def test_scanner_preserves_unknown_and_usage_across_batches():
         assert result.outcome == "unknown"
         assert not result.has_issues
         assert not result.retryable
-        assert result.scan_version == "v2-adaptive-1"
+        assert result.scan_version == "v2-adaptive-2"
         assert result.investigation["outcome"]["status"] == "unknown"
     assert scanner.total_cost_usd == 0.04
     assert scanner.token_usage["total_tokens"] == 40

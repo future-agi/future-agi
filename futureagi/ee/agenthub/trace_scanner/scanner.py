@@ -15,7 +15,6 @@ import structlog
 from agentic_eval.core.utils.model_config import (
     LiteLlmProvider,
     ModelConfig,
-    ModelConfigs,
 )
 from ee.agenthub.trace_scanner.compress import (
     SCANNER_TRUNCATION_MARK,
@@ -294,17 +293,18 @@ def _collapse_same_event(failed: set, dims: dict) -> set:
 # that has leaked into the wrong field.
 _MAX_BRIEF_CHARS = 110
 SCAN_VERSION = "v7.2"
+INVESTIGATION_SCAN_VERSION = "v2-adaptive-2"
 
-# Prefer the registry entry; fall back to an inline config so this module
-# keeps working in deployments whose `ModelConfigs` hasn't picked up the
-# new entry yet (e.g. ee landing before the agentic_eval bump).
-_DEFAULT_SCANNER_MODEL: ModelConfig = getattr(
-    ModelConfigs, "VERTEX_GEMINI_3_6_FLASH", None
-) or ModelConfig(
+_DEFAULT_SCANNER_MODEL = ModelConfig(
     provider=LiteLlmProvider.VERTEX_AI.value,
-    model_name="vertex_ai/gemini-3.6-flash",
+    model_name="vertex_ai/gemini-3.8-flash",
+    # Required by ModelConfig but intentionally omitted from Gemini 3.8
+    # requests because the provider ignores sampling overrides.
     temperature=0.2,
-    max_tokens=8100,
+    max_tokens=65_536,
+    supports_audio=True,
+    supports_pdf=True,
+    vertex_location="global",
 )
 
 
@@ -388,7 +388,7 @@ class TraceScanner:
 
         self.model_config = model_config or _DEFAULT_SCANNER_MODEL
         self._investigation_provider = InvestigationProvider(
-            model_config.model_name if model_config else "vertex_ai/gemini-3.8-flash"
+            self.model_config.model_name
         )
         self.total_cost_usd: float = 0.0
         self.token_usage = {
@@ -418,7 +418,7 @@ class TraceScanner:
                 report = Investigation(provider).run(
                     objective=(
                         trace.get("objective")
-                        or "Evaluate the recorded agent against the actual user requests and applicable instructions in this trace. Identify the current request from the conversation, retaining relevant earlier context. Do not treat wrapper spans, intermediate thoughts, or tool outputs as the final user-facing response. An answer may be delivered through a tool. Missing capture is not proof of a missing answer."
+                        or "Determine separately (1) whether each end result the user requested was fulfilled within the recorded trace and (2) whether the agent followed applicable instructions while handling it. Reconstruct the current request from the conversation, retaining relevant earlier context. A compliant retry, refusal, fallback, or escalation does not fulfill the original task unless it achieves that result or the user evidentially revised the request. Do not treat wrapper spans, intermediate thoughts, or tool outputs as the final user-facing response. An answer may be delivered through a tool. Missing capture is not proof of a missing answer."
                     ),
                     scope=str(trace["trace_id"]),
                     records=records,
@@ -490,7 +490,7 @@ class TraceScanner:
                         key_moments=moments,
                         outcome=report["outcome"]["status"],
                         investigation=report,
-                        scan_version="v2-adaptive-1",
+                        scan_version=INVESTIGATION_SCAN_VERSION,
                     )
                 )
             except Exception as exc:
@@ -505,7 +505,7 @@ class TraceScanner:
                         has_issues=False,
                         error=f"investigation_failed:{type(exc).__name__}",
                         retryable=True,
-                        scan_version="v2-adaptive-1",
+                        scan_version=INVESTIGATION_SCAN_VERSION,
                     )
                 )
             finally:

@@ -83,6 +83,8 @@ def test_direct_finish_always_runs_verifier():
     assert all(not tools for _, tools, _ in provider.requests)
     assert all(limit == 16384 for _, _, limit in provider.requests)
     assert "Structured output contract:" in provider.requests[0][0][0]["content"]
+    assert "requested end result" in provider.requests[0][0][0]["content"]
+    assert "compliance with fallback policy" in provider.requests[0][0][0]["content"]
 
 
 @pytest.mark.parametrize("call_id", ["call1", "call1::sig::opaque-signature"])
@@ -195,6 +197,13 @@ def test_input_budget_rejects_without_truncating_or_calling_provider():
     provider = ScriptedProvider()
     with pytest.raises(ValueError, match="not truncated"):
         run(provider, limits=InvestigationLimits(max_input_tokens=1))
+    assert provider.requests == []
+
+
+def test_controller_reserves_budget_for_mandatory_verifier():
+    provider = ScriptedProvider(decision())
+    with pytest.raises(ValueError, match="Input budget exhausted"):
+        run(provider, limits=InvestigationLimits(max_input_tokens=10_000))
     assert provider.requests == []
 
 

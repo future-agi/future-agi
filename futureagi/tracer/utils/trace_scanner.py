@@ -95,7 +95,7 @@ def scan_and_write(
         logger.warning("no_trace_data_found", trace_ids=trace_ids)
         return []
 
-    # Scan + write in small sub-chunks so partial progress is persisted even if
+    # Scan + write in single-trace sub-chunks so partial progress is persisted even if
     # the surrounding activity hits its time limit mid-batch. Writing only after
     # scanning the whole batch (the old behavior) meant a large/slow batch that
     # exceeded the activity time_limit wrote NOTHING — silent data loss under

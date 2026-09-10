@@ -9,7 +9,6 @@ Activity 3: cluster_scan_issues_task — cluster unclustered issues + match succ
 import time
 from contextlib import contextmanager
 from datetime import timedelta
-from typing import List
 
 import structlog
 from django.db.models import F
@@ -17,6 +16,7 @@ from django.db.models import F
 from tfc.temporal.drop_in import temporal_activity
 from tracer.models.trace_error_analysis import TraceErrorGroup
 from tracer.models.trace_scan import TraceScanConfig
+from tracer.queries.scan_clustering import merge_duplicate_clusters
 from tracer.queries.trace_scanner import (
     filter_already_scanned,
     is_trace_sampled,
@@ -26,7 +26,6 @@ from tracer.services.clickhouse.v2 import get_reader
 from tracer.services.clickhouse.v2.query_settings import ch_query_settings
 from tracer.utils.trace_scanner import (
     cluster_issues,
-    merge_duplicate_clusters,
     embed_trace_inputs,
     match_success_traces,
     scan_and_write,
@@ -39,8 +38,14 @@ SCAN_DELAY_SECONDS = 10
 # ─── Periodic sweep policy (scan collector-ingested CH-only traces) ──────────
 _SWEEP_GRACE_SECONDS = 60  # let straggler child spans settle before scanning
 _SWEEP_COLD_START_SECONDS = 900  # first-sweep window when last_swept_at is NULL
-_SWEEP_BATCH_SIZE = 15  # keep each scan task under its time_limit (cf. _trigger_trace_scanner)
-_SWEEP_MAX_LAG_SECONDS = 86400  # cap how far the watermark lags behind a stuck trace (24h)
+# V2 performs at least a controller and verifier call over the full trace. A
+# 15-trace serial activity can exceed its 10-minute deadline even when every
+# individual scan is healthy. Temporal provides the fan-out; keep each activity
+# independently retryable and persistable.
+SCAN_TASK_TRACE_LIMIT = 1
+_SWEEP_MAX_LAG_SECONDS = (
+    86400  # cap how far the watermark lags behind a stuck trace (24h)
+)
 
 # Per-query ClickHouse caps for the scanner's spans reads. Every statement uses
 # the shared 36-GiB / 30-second production read policy; big sorts spill to disk
@@ -66,7 +71,7 @@ def scan_ch_guardrails():
 
 
 @temporal_activity(time_limit=600, queue="agent_compass", max_retries=1)
-def scan_traces_task(trace_ids: List[str], project_id: str, from_sweep: bool = False):
+def scan_traces_task(trace_ids: list[str], project_id: str, from_sweep: bool = False):
     """
     Scan completed traces for issues.
 
@@ -107,7 +112,7 @@ def scan_traces_task(trace_ids: List[str], project_id: str, from_sweep: bool = F
 
 @temporal_activity(time_limit=300, queue="agent_compass", max_retries=1)
 def embed_trace_inputs_task(
-    trace_ids: List[str], project_id: str, trigger_clustering: bool
+    trace_ids: list[str], project_id: str, trigger_clustering: bool
 ):
     """
     Kevinify + embed root span inputs for all scanned traces.
@@ -257,9 +262,9 @@ def sweep_scannable_traces():
                 live = [tid for tid, ca in pending if ca >= new_watermark]
                 lost = [tid for tid, ca in pending if ca < new_watermark]
 
-                for i in range(0, len(live), _SWEEP_BATCH_SIZE):
+                for i in range(0, len(live), SCAN_TASK_TRACE_LIMIT):
                     scan_traces_task.apply_async(
-                        args=(live[i : i + _SWEEP_BATCH_SIZE], project_id, True)
+                        args=(live[i : i + SCAN_TASK_TRACE_LIMIT], project_id, True)
                     )
                     dispatched += 1
 

@@ -1,11 +1,11 @@
-# Error Feed v2 Python port — work in progress
+# Error Feed v2 Python port
 
 Branch: `feat/TH-7781-error-feed-scanner-port`, based on `origin/dev`.
 
-This is a collaboration checkpoint, **not ready to merge or deploy**. The
-production-data inference replay and complete backend end-to-end verification
-have not finished. Existing benchmark scores belong to the Omega implementation,
-not this Python port.
+This branch ports the evaluated Omega investigation graph into the existing
+scanner, gateway, persistence, and ingestion flow. Existing full-benchmark
+scores belong to the Omega implementation; backend-specific live checks are
+listed below.
 
 ## Implemented
 
@@ -24,6 +24,12 @@ not this Python port.
 - Unknown results are excluded from healthy embeddings and passing counts.
 - The trace adapter reads heavy fields and preserves typed attributes, recorded
   metadata/events, timestamps, and parent IDs. No inference-input summarization.
+- Ingestion and sweep dispatch one trace per Temporal activity. V2 performs at
+  least two lossless model passes, so the old serial batch of 15 could exceed
+  the activity deadline before later traces were persisted.
+- The cumulative input budget is 2.1M estimated tokens and reserves the
+  mandatory verifier before making a paid controller call. This is separate
+  from the provider's per-request context limit.
 
 ## Atharva: grouping boundary
 
@@ -39,31 +45,41 @@ Evidence IDs are trace-local `event:N` coordinates, not issue or cluster IDs.
 Breadcrumbs resolve those IDs to captured span content; they do not establish
 the exact originating failure step.
 
-## Verification so far
+## Verification
 
-- Existing scanner tests plus new harness/provider tests pass locally.
-- PostgreSQL tests cover atomic rollback, durable unknown, actual version, and
-  healthy-embedding eligibility.
-- Twelve traces were downloaded privately from the development host. A local
-  adapter check preserved their captured string attributes and metadata.
-  They are simulator-project voice traces, not an accuracy-labelled production
-  benchmark. No raw captures or credentials are committed here.
+- 180 focused scanner, dispatch, PostgreSQL persistence, and project-scoped
+  read tests pass locally.
+- A protected 54-span trace downloaded from the development host completed the
+  continuous `scan_and_write` path through Gemini 3.8 Flash and real local
+  Postgres. It persisted a `v2-adaptive-2` violated outcome, its accepted
+  verifier report, and issue rows. Runtime: 46.4 seconds.
+- A protected 80-span trace that previously exhausted the cumulative budget
+  completed after the reservation/budget fix: 669,094 provider tokens, $0.525,
+  three grounded findings, no retry or operational error.
+- The prompt correction was replayed on the same 54-span trace before and after:
+  it changed a false success into an unmet booking outcome while retaining that
+  the agent's escalation conduct was compliant.
+- A 24-case AppWorld diagnostic produced 4 TP, 0 FP, 12 FN, and 8 TN, with zero
+  verdict changes from the prior prompt. It is deliberately enriched for prior
+  misses and is not comparable to the full 59.9% recall run. Separately, 44 of
+  52 dropped-state cases are byte-identical to their healthy counterpart because
+  the trace excludes post-state observations; no trace-only detector can
+  distinguish those pairs.
+- No development trace, AppWorld input, model call ledger, or credential is
+  committed to this repository.
 
-## Remaining before merge
+## Known boundaries
 
-1. Complete live inference and persistence/readback replay through the backend
-   gateway; verify provider model routing, usage, deadlines, and retries.
-2. Compare Python host behavior against frozen Omega responses. A blank
-   requirement now correctly prevents success; record this deliberate fix.
-3. Finish output integration: metadata population, uncalibrated legacy confidence
-   (`M` is currently a compatibility placeholder), requirement-only violations,
-   typed persisted reports/API serialization, and grouping ownership.
-4. Remove the obsolete scanner decision methods after auditing helper callers.
-   They remain in `scanner.py` for now but `scan_batch` bypasses them.
-5. Finish trace-tree edge cases, large-project read bounds, timeout accounting,
-   source-field completeness, and deployment/rollback configuration.
-6. Review effective prompts and their production-specific revision separately
-   from benchmark parity. Do not restore the old no-evidence-means-PASS rule.
+- `confidence="M"` and blank `category`, `group`, and `fix_layer` are compatibility
+  placeholders. TH-7782 owns issue grouping/taxonomy; do not add a static
+  detector taxonomy here.
+- The old V7 private methods remain in `scanner.py` for helper/test compatibility,
+  but `scan_batch` no longer invokes them. Remove them only in a dedicated
+  caller-audited cleanup.
+- Hidden persisted-state failures require authoritative post-state observations
+  or replay. More deliberation over byte-identical traces cannot recover them.
+- The local E2E proves ingestion-ready service composition through persistence;
+  it does not exercise the downstream TH-7782 clustering activity or frontend.
 
 Run focused tests from `futureagi/` with Python 3.13:
 
