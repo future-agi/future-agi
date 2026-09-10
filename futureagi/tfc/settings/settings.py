@@ -689,8 +689,25 @@ GCP_MARKETPLACE_DIMENSIONS = [
     "voice_sim_minutes",
 ]
 
-# Google accepts these two as floating point. The other four must be integers.
+# Ledger semantics: these two dimensions are fractional, the other four are
+# whole counts and are floored before they are recorded as reported.
 GCP_MARKETPLACE_FLOAT_DIMENSIONS = {"storage", "voice_sim_minutes"}
+# Wire type is a property of the metric, not the dimension, and Service Control
+# rejects a value whose type differs from the service config ("Inconsistent
+# metric value type ... Expecting double, got int64"). Mirrors the config the
+# service is on -- note payg's gateway_request is DOUBLE while scale's and
+# enterprise's are INT64. Verify against:
+#   gcloud endpoints configs describe <id> \
+#     --service=futureagi.endpoints.futureagiprimary.cloud.goog --format="yaml(metrics)"
+GCP_MARKETPLACE_DOUBLE_METRICS = {
+    "gateway_request",
+    "payg_storage",
+    "payg_voice_simulation",
+    "scale_storage",
+    "scale_voice_simulation",
+    "enterprise_storage",
+    "enterprise_voice_simulation",
+}
 
 # EE license key (self-hosted only, JWT RS256)
 EE_LICENSE_KEY = os.environ.get("EE_LICENSE_KEY", "")

@@ -22,6 +22,7 @@ from accounts.models.gcp_marketplace import (
     GCPMarketplaceEntitlement,
     GCPMarketplaceEntitlementState,
     GCPMarketplaceProcessedEvent,
+    GCPMarketplaceUsageCheckpoint,
 )
 from accounts.services.gcp_procurement import gcp_procurement, resolve_plan
 
@@ -154,11 +155,12 @@ SECOND_ENTITLEMENT_REASON = (
 def other_in_service_entitlement(
     row: GCPMarketplaceEntitlement,
 ) -> GCPMarketplaceEntitlement | None:
-    """Another live entitlement on the same organization, if there is one.
+    """Another live entitlement on the same organization, newest first.
 
     Usage is metered per organization, so a second entitlement cannot be
-    billed separately: whichever plan applied last would win and the other
-    would be paid for and ignored. One subscription per organization.
+    billed separately. One subscription per organization; when there are
+    more, the newest purchase is the one the customer is on (see
+    handle_entitlement_active and billable_entitlements).
     """
     if not row.organization_id:
         return None
@@ -167,7 +169,7 @@ def other_in_service_entitlement(
             organization_id=row.organization_id, status__in=IN_SERVICE_STATES
         )
         .exclude(pk=row.pk)
-        .order_by("effective_at", "created_at")
+        .order_by("-effective_at", "-created_at")
         .first()
     )
 
@@ -307,7 +309,38 @@ def handle_entitlement_active(payload: dict) -> None:
     row = sync_entitlement(_subject_id(payload))
     if row is None:
         return
+    _activate(row)
+
+
+def _activate(row: GCPMarketplaceEntitlement) -> None:
+    """Put the organization on the entitlement's plan. Google's state decides.
+
+    Shared by the ENTITLEMENT_ACTIVE event and the hourly pending pass, which
+    catches an activation whose event never arrived. The plan follows the
+    state just fetched from Google, never the message: a row Google still
+    shows awaiting activation gets nothing, and the pending pass revisits it.
+    """
+    if row.status not in IN_SERVICE_STATES:
+        logger.warning(
+            "gcp_marketplace_activation_not_in_service_at_google",
+            entitlement_id=row.entitlement_id,
+            status=row.status,
+        )
+        return
     _apply_plan(row)
+
+    # Under automatic offer approval nothing rejects a second purchase before
+    # it activates. The customer bought this one, so it wins: the plan above
+    # and billable_entitlements both follow it. The older one keeps costing
+    # the customer at Google until it is cancelled, which needs a human.
+    overlap = other_in_service_entitlement(row)
+    if overlap is not None:
+        logger.error(
+            "gcp_marketplace_multiple_in_service_entitlements",
+            entitlement_id=row.entitlement_id,
+            superseded_entitlement_id=overlap.entitlement_id,
+            organization_id=str(row.organization_id),
+        )
 
     if not row.usage_reporting_id:
         # The plan is applied and the customer is consuming, but nothing can
@@ -377,14 +410,50 @@ def _report_final_window_after_commit(row: GCPMarketplaceEntitlement) -> None:
 
 
 def handle_entitlement_cancelled(payload: dict) -> None:
-    row = sync_entitlement(_subject_id(payload))
+    entitlement_id = _subject_id(payload)
+    # What this row was before Google's cancellation overwrote it. Whether the
+    # tail is billed depends on it, and sync_entitlement discards it.
+    was_live = (
+        GCPMarketplaceEntitlement.objects.filter(
+            entitlement_id=entitlement_id, status__in=IN_SERVICE_STATES
+        ).exists()
+    )
+    row = sync_entitlement(entitlement_id)
     if row is None:
         return
+    _settle_left_service(row, was_live=was_live)
 
+
+def _settle_left_service(row: GCPMarketplaceEntitlement, *, was_live: bool) -> None:
+    """The entitlement is no longer in service: hand access back, bill the tail.
+
+    Shared by the cancellation event and the hourly reconcile, which catches
+    the same transition when the event never arrived (lost past retention or
+    dead-lettered) or when there is no event at all, as with a suspension.
+    """
     # Access first: a billing failure must never leave a cancelled customer on
-    # a paid plan.
-    _downgrade_to_free(row)
-    _report_final_window_after_commit(row)
+    # a paid plan. But the organization may already be on another entitlement:
+    # a customer who cancels one plan and buys another, or the two events
+    # arriving in the wrong order since Pub/Sub does not order them. Dropping
+    # to free then would take away a subscription that is live and paid for.
+    survivor = other_in_service_entitlement(row)
+    if survivor is None:
+        _downgrade_to_free(row)
+    else:
+        _apply_plan(survivor)
+        logger.info(
+            "gcp_marketplace_cancelled_org_stays_on_other_entitlement",
+            entitlement_id=row.entitlement_id,
+            surviving_entitlement_id=survivor.entitlement_id,
+        )
+
+    if was_live or GCPMarketplaceUsageCheckpoint.objects.filter(entitlement=row).exists():
+        _report_final_window_after_commit(row)
+    else:
+        logger.info(
+            "gcp_marketplace_final_usage_skipped_never_live",
+            entitlement_id=row.entitlement_id,
+        )
 
 
 def handle_entitlement_renewed(payload: dict) -> None:
@@ -396,13 +465,36 @@ def handle_entitlement_renewed(payload: dict) -> None:
 
 
 def handle_offer_accepted(payload: dict) -> None:
-    """A private offer, so the entitlement resolves to enterprise.
+    """Every purchase goes through an offer, standard or private.
 
-    Negotiated economics stay on the Marketplace offer. Nothing here reads a
-    discount or a committed amount.
+    For a standard offer this arrives with the creation request, while the
+    entitlement is still awaiting approval, so the plan is applied only once
+    Google reports it active. ENTITLEMENT_ACTIVE covers the usual case; this
+    covers a private offer accepted on an entitlement that is already live.
+    Negotiated economics stay on the Marketplace offer.
     """
     row = sync_entitlement(_subject_id(payload))
     if row is None:
+        return
+    if row.status == GCPMarketplaceEntitlementState.ACTIVATION_REQUESTED:
+        # One subscription per organization. With automatic offer approval
+        # there is no creation request to reject, so this is the only moment
+        # a second purchase is still rejectable: it stays awaiting activation
+        # until the offer's start time, and reject is valid in that state.
+        if reject_duplicate_entitlement(row):
+            return
+    if row.status != GCPMarketplaceEntitlementState.ACTIVE:
+        # With automatic offer approval this is the only message that carries
+        # the offer's start time: Google activates at that moment, not on any
+        # approve call, and the entitlement resource never shows it.
+        offer = payload.get("entitlement") or {}
+        logger.info(
+            "gcp_marketplace_offer_accepted_before_active",
+            entitlement_id=row.entitlement_id,
+            status=row.status,
+            new_offer_start_time=offer.get("newOfferStartTime"),
+            new_offer_end_time=offer.get("newOfferEndTime"),
+        )
         return
     _apply_plan(row)
 
@@ -490,7 +582,7 @@ HANDLERS = {
 
 
 def reconcile_entitlement_plans() -> dict:
-    """Hourly repair for in-service entitlements the events could not finish.
+    """Hourly repair for entitlements the events could not finish.
 
     Two gaps, both terminal events Google never redelivers:
 
@@ -508,16 +600,32 @@ def reconcile_entitlement_plans() -> dict:
         "unmapped": 0,
         "consumer_id_recovered": 0,
         "consumer_id_missing": 0,
+        "pending_checked": 0,
+        "pending_resolved": 0,
+        "pending_approved": 0,
+        "left_service": 0,
+        "paid_without_entitlement": 0,
         "failed": 0,
     }
     if OrganizationSubscription is None:
         return counts
 
-    entitlements = GCPMarketplaceEntitlement.objects.filter(
-        status__in=IN_SERVICE_STATES, organization__isnull=False
-    ).iterator(chunk_size=200)
+    entitlements = (
+        GCPMarketplaceEntitlement.objects.filter(
+            status__in=IN_SERVICE_STATES, organization__isnull=False
+        )
+        .order_by("organization_id", "-effective_at", "-created_at")
+        .iterator(chunk_size=200)
+    )
 
+    # Newest per organization, matching handle_entitlement_active and
+    # billable_entitlements; re-applying every row would let an older
+    # entitlement overwrite the plan the customer actually bought.
+    seen_orgs: set = set()
     for row in entitlements:
+        if row.organization_id in seen_orgs:
+            continue
+        seen_orgs.add(row.organization_id)
         counts["checked"] += 1
         try:
             _reconcile_entitlement_plan(row, counts)
@@ -529,6 +637,8 @@ def reconcile_entitlement_plans() -> dict:
                 organization_id=str(row.organization_id),
             )
 
+    _reconcile_pending_entitlements(counts)
+    _reconcile_paid_orgs_without_entitlement(counts)
     if counts["failed"]:
         logger.error(
             "gcp_marketplace_plan_reconcile_incomplete", failed=counts["failed"]
@@ -536,16 +646,112 @@ def reconcile_entitlement_plans() -> dict:
     return counts
 
 
+def _reconcile_paid_orgs_without_entitlement(counts: dict) -> None:
+    """A Marketplace-billed organization on a paid plan must hold an entitlement.
+
+    Everything above works from entitlement rows. An organization whose rows
+    are all terminal, or which has none (a deleted account, a row removed by
+    hand), is invisible to those passes and would stay paid with nothing
+    behind it. Pending activation is left alone: that is the normal state
+    between purchase and Google's start time, and the plan is still free.
+    """
+    backed = GCPMarketplaceEntitlement.objects.filter(
+        status__in=(
+            *IN_SERVICE_STATES,
+            GCPMarketplaceEntitlementState.ACTIVATION_REQUESTED,
+        ),
+        organization__isnull=False,
+    ).values("organization_id")
+    stranded = (
+        OrganizationSubscription.objects.filter(
+            billing_method=BillingMethodChoices.GCP_MARKETPLACE
+        )
+        .exclude(plan=PlanChoices.FREE)
+        .exclude(organization_id__in=backed)
+    )
+    for subscription in stranded.iterator(chunk_size=200):
+        counts["paid_without_entitlement"] += 1
+        logger.error(
+            "gcp_marketplace_paid_plan_without_entitlement_downgraded",
+            organization_id=str(subscription.organization_id),
+            plan=subscription.plan,
+        )
+        _downgrade_org_to_free(subscription.organization_id)
+
+
+def _reconcile_pending_entitlements(counts: dict) -> None:
+    """Re-fetch rows still awaiting approval and finish what sign-up could not.
+
+    A pending row is not in service, so the plan loop above never revisits it.
+    Two things go wrong without this: Google cancels or rejects the order and
+    the row keeps saying awaiting approval, and an approval that the sign-up
+    and the creation event both missed is never attempted again.
+    """
+    from accounts.gcp_marketplace_utils import approve_pending_entitlements
+
+    pending = GCPMarketplaceEntitlement.objects.filter(
+        status=GCPMarketplaceEntitlementState.ACTIVATION_REQUESTED
+    ).select_related("account")
+    accounts_done: set = set()
+    for row in pending.iterator(chunk_size=200):
+        counts["pending_checked"] += 1
+        try:
+            refreshed = sync_entitlement(row.entitlement_id)
+            if refreshed is None:
+                continue
+            if refreshed.status != GCPMarketplaceEntitlementState.ACTIVATION_REQUESTED:
+                counts["pending_resolved"] += 1
+                if refreshed.status in IN_SERVICE_STATES:
+                    # Google activated it and ENTITLEMENT_ACTIVE never reached
+                    # us. The customer has paid; give them the plan now rather
+                    # than never.
+                    logger.warning(
+                        "gcp_marketplace_activated_without_event",
+                        entitlement_id=refreshed.entitlement_id,
+                    )
+                    _activate(refreshed)
+                continue
+            account = refreshed.account
+            if account is None or not account.approved_at:
+                continue
+            if account.pk in accounts_done:
+                continue
+            accounts_done.add(account.pk)
+            counts["pending_approved"] += approve_pending_entitlements(account)
+        except Exception:
+            counts["failed"] += 1
+            logger.exception(
+                "gcp_marketplace_pending_reconcile_failed",
+                entitlement_id=row.entitlement_id,
+            )
+
+
 def _reconcile_entitlement_plan(row: GCPMarketplaceEntitlement, counts: dict) -> None:
-    if not row.usage_reporting_id:
-        refreshed = sync_entitlement(row.entitlement_id)
-        if refreshed is not None:
-            row = refreshed
-        if row.status not in IN_SERVICE_STATES:
-            # The re-fetch just showed it left service. Re-applying the paid
-            # plan now would undo a cancellation the event handler will, or
-            # already did, process.
-            return
+    had_consumer_id = bool(row.usage_reporting_id)
+    # Always re-fetch. Terminal events are delivered at most once and never
+    # replayed after retention or the dead-letter queue, and a suspension has
+    # no event at all; a row that is in service here and not at Google would
+    # otherwise keep its paid plan, and report usage to a consumer Google has
+    # closed, for ever.
+    refreshed = sync_entitlement(row.entitlement_id)
+    if refreshed is not None:
+        row = refreshed
+    if row.status not in IN_SERVICE_STATES:
+        counts["left_service"] += 1
+        logger.warning(
+            "gcp_marketplace_left_service_without_event",
+            entitlement_id=row.entitlement_id,
+            status=row.status,
+            organization_id=str(row.organization_id),
+        )
+        # A row back at awaiting activation was never live at Google, so
+        # there is no consumer to bill a tail to; anything else was.
+        _settle_left_service(
+            row,
+            was_live=row.status != GCPMarketplaceEntitlementState.ACTIVATION_REQUESTED,
+        )
+        return
+    if not had_consumer_id:
         if row.usage_reporting_id:
             counts["consumer_id_recovered"] += 1
             logger.info(
@@ -591,6 +797,16 @@ def _reconcile_entitlement_plan(row: GCPMarketplaceEntitlement, counts: dict) ->
     _apply_plan(row)
 
 
+def ledger_key(event_type: str, event_id: str) -> str:
+    """Google reuses one eventId across every event of a single operation.
+
+    A purchase publishes ACCOUNT_ACTIVE, ENTITLEMENT_CREATION_REQUESTED and
+    ENTITLEMENT_OFFER_ACCEPTED under the same id, so the id alone would let
+    the first one processed swallow the other two.
+    """
+    return f"{event_type}:{event_id}"
+
+
 def process_event(payload: dict) -> bool:
     """Handle one message exactly once. Returns False if already seen.
 
@@ -618,7 +834,7 @@ def process_event(payload: dict) -> bool:
 
     with transaction.atomic():
         _, created = GCPMarketplaceProcessedEvent.objects.get_or_create(
-            event_id=event_id,
+            event_id=ledger_key(event_type, event_id),
             defaults={
                 "event_type": event_type,
                 "subject_id": _subject_id(payload),

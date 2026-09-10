@@ -405,19 +405,25 @@ def _add_window(
         },
     )
     by_operation[operation_id] = checkpoint
-    operations.append(_operation_for(entitlement, checkpoint, metric_id, is_float))
+    operations.append(_operation_for(entitlement, checkpoint, metric_id))
 
 
-def _operation_for(entitlement, checkpoint, metric_id: str, is_float: bool) -> dict:
-    """The Service Control operation for one checkpoint, exactly as stored."""
+def _operation_for(entitlement, checkpoint, metric_id: str) -> dict:
+    """The Service Control operation for one checkpoint, exactly as stored.
+
+    The wire type follows the metric, not the dimension: the same count is an
+    int64 on scale_gateway_request and a double on payg's gateway_request, and
+    Service Control rejects the operation when the two disagree.
+    """
     start = _rfc3339(checkpoint.window_start)
     end = _rfc3339(checkpoint.window_end)
+    as_double = metric_id in settings.GCP_MARKETPLACE_DOUBLE_METRICS
     return gcp_service_control.build_operation(
         consumer_id=entitlement.usage_reporting_id,
         operation_id=checkpoint.operation_id,
         start_time=start,
         end_time=end,
-        metric_values={metric_id: (float(checkpoint.quantity_reported), is_float)},
+        metric_values={metric_id: (float(checkpoint.quantity_reported), as_double)},
         operation_name=(
             f"usage_report_{_org_label(entitlement)}_{checkpoint.metric}_{start}_{end}"
         ),
@@ -549,13 +555,15 @@ def _mark(checkpoints, status, error_detail) -> None:
 
 
 def billable_entitlements(require_consumer_id: bool = True):
-    """One in-service entitlement per organization, oldest first.
+    """One in-service entitlement per organization: the newest.
 
     Usage is metered per organization, so two entitlements on one
     organization would each report the whole delta and Google would bill it
-    twice. Google can send several ENTITLEMENT_ACTIVE events for one account
-    when the listing allows multiple orders. Only the first purchase bills;
-    the rest are logged as an error every run until someone resolves them.
+    twice. With automatic offer approval a second purchase activates without
+    the provider ever getting to reject it, and ENTITLEMENT_ACTIVE puts the
+    organization on that newer plan. Billing follows the plan the customer is
+    on, so the newest purchase bills; older ones are logged as an error every
+    run until someone resolves them.
     """
     active = GCPMarketplaceEntitlement.objects.filter(
         status__in=IN_SERVICE_STATES, organization__isnull=False
@@ -564,15 +572,15 @@ def billable_entitlements(require_consumer_id: bool = True):
         active = active.exclude(usage_reporting_id="")
 
     chosen: dict = {}
-    for entitlement in active.order_by("effective_at", "created_at"):
-        first = chosen.get(entitlement.organization_id)
-        if first is None:
+    for entitlement in active.order_by("-effective_at", "-created_at"):
+        newest = chosen.get(entitlement.organization_id)
+        if newest is None:
             chosen[entitlement.organization_id] = entitlement
             continue
         logger.error(
             "gcp_marketplace_multiple_entitlements_for_org",
             organization_id=str(entitlement.organization_id),
-            billing_entitlement_id=first.entitlement_id,
+            billing_entitlement_id=newest.entitlement_id,
             ignored_entitlement_id=entitlement.entitlement_id,
         )
     return list(chosen.values())
@@ -686,14 +694,7 @@ def _resend_checkpoints(entitlement, checkpoints) -> int:
             ]
         )
         by_operation[checkpoint.operation_id] = checkpoint
-        operations.append(
-            _operation_for(
-                entitlement,
-                checkpoint,
-                metric_id,
-                checkpoint.metric in settings.GCP_MARKETPLACE_FLOAT_DIMENSIONS,
-            )
-        )
+        operations.append(_operation_for(entitlement, checkpoint, metric_id))
 
     if not operations:
         return 0
