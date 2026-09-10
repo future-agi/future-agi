@@ -38,18 +38,43 @@ def _similarity_score(a: str, b: str) -> float:
     return ratio
 
 
-def _find_best_match(key: str, available_attributes: list[str]) -> tuple[str, float]:
-    """Find the best matching attribute for a given eval template key."""
-    best_match = ""
-    best_score = 0.0
+# Leaf segments that never carry the text an eval reads. `input` scores 0.8
+# against `llm.input_messages.4.message.role` on containment alone, and that
+# path resolves to the literal string "assistant".
+_NON_CONTENT_LEAVES = frozenset(
+    {"role", "id", "tool_call_id", "mime_type", "json_schema", "index", "type"}
+)
 
-    for attr in available_attributes:
-        score = _similarity_score(key, attr)
-        if score > best_score:
-            best_score = score
-            best_match = attr
 
-    return best_match, best_score
+def _match_rank(key: str, attr: str) -> tuple:
+    """Rank one candidate attribute for a template key. Larger is better.
+
+    The tier outranks the similarity score so an exact name always wins, and
+    the last two members break ties deterministically: the candidate list comes
+    from an unordered SQL DISTINCT, so ranking on the score alone let the same
+    call map differently from one run to the next.
+    """
+    k, a = key.lower(), attr.lower()
+    leaf = a.rsplit(".", 1)[-1]
+    if a == k:
+        tier = 4
+    elif a == f"{k}.value":
+        tier = 3
+    elif leaf == k:
+        tier = 2
+    elif leaf not in _NON_CONTENT_LEAVES:
+        tier = 1
+    else:
+        tier = 0
+    return (tier, _similarity_score(k, a), -len(a), a)
+
+
+def _find_best_match(key: str, available_attributes: list[str]) -> tuple[str, tuple]:
+    """Best matching attribute for an eval template key, with its rank."""
+    if not available_attributes:
+        return "", (0, 0.0, 0, "")
+    best = max(available_attributes, key=lambda a: _match_rank(key, a))
+    return best, _match_rank(key, best)
 
 
 def _auto_map_keys(
@@ -59,24 +84,17 @@ def _auto_map_keys(
 ) -> dict[str, str]:
     """Auto-map eval template keys to the closest matching span attributes.
 
-    Uses string similarity to find the best match for each required/optional key.
-    Only includes optional keys if a sufficiently good match (>= 0.4) is found.
+    A structural match (tier 2 and up) is taken on its shape. Anything else has
+    to clear a real similarity floor, and a key that clears nothing is left
+    unmapped: the caller fails closed on a missing required key, which the
+    caller can recover from, where a wrong binding is not recoverable.
     """
     mapping = {}
-    min_score_required = 0.3
-    min_score_optional = 0.4
+    min_similarity = 0.6
 
-    for key in required_keys:
-        best_match, score = _find_best_match(key, available_attributes)
-        if score >= min_score_required and best_match:
-            mapping[key] = best_match
-        # Still include with empty value so caller knows it was not matched
-        elif best_match:
-            mapping[key] = best_match
-
-    for key in optional_keys:
-        best_match, score = _find_best_match(key, available_attributes)
-        if score >= min_score_optional and best_match:
+    for key in required_keys + optional_keys:
+        best_match, (tier, score, _, _) = _find_best_match(key, available_attributes)
+        if best_match and (tier >= 2 or (tier == 1 and score >= min_similarity)):
             mapping[key] = best_match
 
     return mapping
@@ -148,6 +166,7 @@ class CreateCustomEvalConfigTool(BaseTool):
         from model_hub.models.evals_metric import EvalTemplate
         from tracer.models.custom_eval_config import CustomEvalConfig
         from tracer.models.project import Project
+        from tracer.utils.eval import with_span_body_fields
         from tracer.utils.sql_queries import SQL_query_handler
 
         # Validate project
@@ -176,9 +195,10 @@ class CreateCustomEvalConfigTool(BaseTool):
                 error_code="VALIDATION_ERROR",
             )
 
-        # Fetch available eval attributes for the project
-        available_attributes = SQL_query_handler.get_span_attributes_for_project(
-            str(params.project_id)
+        # Everything the eval runner can resolve on a span: the project's own
+        # span_attributes keys plus the span body fields (`input`, `output`, …).
+        available_attributes = with_span_body_fields(
+            SQL_query_handler.get_span_attributes_for_project(str(params.project_id))
         )
 
         # Get required and optional keys from the eval template config
@@ -233,6 +253,25 @@ class CreateCustomEvalConfigTool(BaseTool):
                     template_id=str(params.eval_template_id),
                     mapping=final_mapping,
                 )
+                unmapped = [k for k in required_keys if k not in final_mapping]
+                if unmapped:
+                    lines = []
+                    for key in unmapped:
+                        ranked = sorted(
+                            available_attributes,
+                            key=lambda a: _match_rank(key, a),
+                            reverse=True,
+                        )[:5]
+                        lines.append(
+                            f"- `{key}`: closest are "
+                            + ", ".join(f"`{a}`" for a in ranked)
+                        )
+                    return ToolResult.error(
+                        "Could not auto-map every required key for template "
+                        f"'{template.name}'. Call again with an explicit "
+                        "`mapping` for:\n" + "\n".join(lines),
+                        error_code="VALIDATION_ERROR",
+                    )
             else:
                 final_mapping = {}
 
