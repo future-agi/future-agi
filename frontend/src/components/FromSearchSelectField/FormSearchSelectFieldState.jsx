@@ -30,6 +30,10 @@ const FormSearchSelectFieldState = React.forwardRef(
       isFetchingNextPage,
       onSearchChange,
       selectAll,
+      // Optional: told what the user typed, for a caller driving a
+      // server-side search (client-side filtering below still applies to
+      // whatever `options` that search resolves to).
+      onSearchChange,
       // Filter ``shrink`` out of ``rest`` — see rhf-text-field.jsx note.
       // eslint-disable-next-line no-unused-vars
       shrink: _shrink,
@@ -71,6 +75,7 @@ const FormSearchSelectFieldState = React.forwardRef(
       if (rest?.disabled) return;
       setOpenDropdown(true);
       setSearchedValue("");
+      onSearchChange?.("");
 
       const boxRect = containerRef.current.getBoundingClientRect();
       const spaceBelow = window.innerHeight - boxRect.bottom;
@@ -81,7 +86,7 @@ const FormSearchSelectFieldState = React.forwardRef(
       } else {
         setPosition("bottom");
       }
-    }, [rest?.disabled]);
+    }, [rest?.disabled, onSearchChange]);
 
     const handleOnFocus = useCallback(() => {
       setFocus(true);
@@ -338,4 +343,5 @@ FormSearchSelectFieldState.propTypes = {
   onSearchChange: PropTypes.func,
   selectAll: PropTypes.bool,
   shrink: PropTypes.bool,
+  onSearchChange: PropTypes.func,
 };
