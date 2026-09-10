@@ -392,7 +392,9 @@ def test_catalog_reader_returns_signed_keyset_page(settings):
             [_property_row("customer.plan", 1), _property_row("customer.tier", 1)],
         ]
     )
-    reader = PropertyCatalogReader(executor, catalog_database="property_catalog_dev_test")
+    reader = PropertyCatalogReader(
+        executor, catalog_database="property_catalog_dev_test"
+    )
 
     page = reader.read_page(scope=_scope(), query=QUERY, page_size=1, cursor_token=None)
 
@@ -1064,6 +1066,55 @@ def test_catalog_reader_rejects_partial_workspace_activation_coverage(settings):
 
     assert exc_info.value.reason == "activation_scope_incomplete"
     assert len(executor.calls) == 1
+
+
+@pytest.mark.parametrize("project_count", (178, 257))
+@pytest.mark.parametrize("missing_project", (False, True))
+def test_catalog_reader_large_scope_requires_complete_activation_coverage(
+    settings, project_count, missing_project
+):
+    settings.SECRET_KEY = "property-reader-secret"
+    projects = tuple(f"00000000-0000-4000-8000-{i:012x}" for i in range(project_count))
+    covered = projects[:-1] if missing_project else projects
+    executor = FakeExecutor(
+        [
+            [_activation_row(covered_project_ids=covered)],
+            [_conflict_row()],
+            [],
+        ]
+    )
+    reader = PropertyCatalogReader(
+        executor, catalog_database="property_catalog_dev_test"
+    )
+    if missing_project:
+        with pytest.raises(PropertyCatalogUnavailable) as exc_info:
+            reader.read_page(
+                scope=_scope(project_ids=projects, workspace_scope=True),
+                query=QUERY,
+                page_size=50,
+            )
+        assert exc_info.value.reason == "activation_scope_incomplete"
+        assert len(executor.calls) == 1
+        return
+
+    reader.read_page(
+        scope=_scope(project_ids=projects, workspace_scope=True),
+        query=QUERY,
+        page_size=50,
+    )
+    params = executor.calls[-1]["params"]
+    assert params["catalog_project_ids"] == projects
+    assert params["catalog_include_all_projects"] == 0
+    assert params["catalog_organization_id"] == ORG_ID
+    assert params["catalog_workspace_id"] == WORKSPACE_ID
+
+
+def test_catalog_reader_scope_validation_has_no_project_count_cap():
+    projects = tuple(f"00000000-0000-4000-8000-{i:012x}" for i in range(1024))
+    scope = PropertyCatalogReader._validate_scope(
+        _scope(project_ids=projects, workspace_scope=True)
+    )
+    assert scope["project_ids"] == projects
 
 
 def test_catalog_reader_accepts_workspace_scope_with_deleted_project_tombstones(

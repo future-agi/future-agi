@@ -150,7 +150,7 @@ def test_tombstone_restore_stale_duplicate_and_conflict_resolution() -> None:
     assert resolve_source_update(restore_v3, tombstone_v2).status is (
         VersionResolutionStatus.STALE
     )
-    duplicate = replace(restore_v3, catalog_revision=4, producer_sequence=9)
+    duplicate = replace(restore_v3, producer_sequence=9)
     duplicate_result = resolve_source_update(restore_v3, duplicate)
     assert duplicate_result.status is VersionResolutionStatus.DUPLICATE
     assert duplicate_result.current is duplicate
@@ -158,7 +158,7 @@ def test_tombstone_restore_stale_duplicate_and_conflict_resolution() -> None:
     conflict = _row(
         definition=_definition(details={"choices": ["free", "paid"]}),
         source_version=3,
-        revision=4,
+        revision=3,
         sequence=4,
     )
     assert resolve_source_update(restore_v3, conflict).status is (
@@ -171,6 +171,64 @@ def test_tombstone_restore_stale_duplicate_and_conflict_resolution() -> None:
     assert resolved.current is duplicate
     assert resolved.duplicate_count == 1
     assert resolved.stale_count == 2
+
+
+@pytest.mark.parametrize("legacy_version", [1787454205903148937, 1788179167838495941])
+@pytest.mark.parametrize("new_version", [1788596942819481, 4])
+@pytest.mark.parametrize("deleted", [False, True])
+def test_revision_orders_legacy_snapshot_before_lower_live_version(
+    legacy_version: int, new_version: int, deleted: bool
+) -> None:
+    legacy = _row(revision=3, source_version=legacy_version, sequence=99)
+    newer = _row(
+        revision=4,
+        source_version=new_version,
+        sequence=1,
+        is_deleted=deleted,
+        deleted_at=NOW if deleted else None,
+    )
+    applied = resolve_source_update(legacy, newer)
+    assert applied.status is VersionResolutionStatus.APPLIED
+    assert applied.current is newer
+    stale = resolve_source_update(newer, legacy)
+    assert stale.status is VersionResolutionStatus.STALE
+    assert stale.current is newer
+    replay = replace(newer, producer_sequence=100)
+    result = resolve_source_update(newer, replay)
+    assert result.status is VersionResolutionStatus.DUPLICATE
+    assert result.current is replay
+    older = _row(revision=4, source_version=new_version - 1)
+    assert resolve_source_update(newer, older).status is VersionResolutionStatus.STALE
+    conflict = _row(
+        revision=4,
+        source_version=new_version,
+        definition=_definition(details={"choices": ["changed"]}),
+    )
+    assert (
+        resolve_source_update(newer, conflict).status
+        is VersionResolutionStatus.CONFLICT
+    )
+    context = VisibilityContext(ORG, WORKSPACE, frozenset({PROJECT}))
+    for history in ([legacy, newer, replay], [replay, newer, legacy]):
+        resolved = resolve_binding_history(history)
+        assert resolved.current is replay
+        assert (resolved.duplicate_count, resolved.stale_count) == (1, 1)
+        assert resolve_binding_history(history, at_revision=3).current is legacy
+        assert resolve_visible_definitions(history, context=context, at_revision=4) == (
+            () if deleted else (replay,)
+        )
+    other_tenant = "99999999-9999-4999-8999-999999999999"
+    for unauthorized_context in (
+        replace(context, organization_id=other_tenant),
+        replace(context, workspace_id=other_tenant),
+        replace(context, project_ids=frozenset()),
+    ):
+        assert (
+            resolve_visible_definitions(
+                [newer, legacy], context=unauthorized_context, at_revision=4
+            )
+            == ()
+        )
 
 
 def test_visibility_is_tenant_scoped_tombstone_safe_and_deduplicated() -> None:

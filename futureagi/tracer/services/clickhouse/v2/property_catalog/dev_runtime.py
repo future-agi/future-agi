@@ -174,7 +174,6 @@ _MAX_DRAIN_PROOF_BYTES = RUNTIME_LIMITS.drain_proof_max_bytes
 _DRAIN_POLL_INTERVAL_SECONDS = RUNTIME_LIMITS.drain_poll_interval_ms / 1_000
 _DRAIN_POLL_CAP_MS = RUNTIME_LIMITS.drain_poll_cap_ms
 _VISIBILITY_RETRY_CAP_MS = RUNTIME_LIMITS.visibility_retry_cap_ms
-_MAX_PROJECTS = RUNTIME_LIMITS.max_projects
 _MIN_INITIAL_BACKFILL_LEASE_HEADROOM_MS = (
     settings.PROPERTY_CATALOG_INITIAL_BACKFILL_LEASE_HEADROOM_MS
 )
@@ -831,14 +830,9 @@ class ProjectTenantAuthorization:
                 for project_id in self.project_ids
             )
         )
-        if (
-            not projects
-            or len(projects) > _MAX_PROJECTS
-            or len(set(projects)) != len(projects)
-        ):
+        if not projects or len(set(projects)) != len(projects):
             raise PropertyCatalogDevRuntimeError(
-                "project tenant authorization requires 1.."
-                f"{_MAX_PROJECTS} unique project IDs"
+                "project tenant authorization requires nonempty unique project IDs"
             )
         object.__setattr__(self, "project_ids", projects)
         if (
@@ -961,14 +955,9 @@ class DevRuntimeConfig:
                 }
             )
         )
-        if (
-            not projects
-            or len(projects) > _MAX_PROJECTS
-            or len(projects) != len(self.project_ids)
-        ):
+        if not projects or len(projects) != len(self.project_ids):
             raise PropertyCatalogDevRuntimeError(
-                "project allowlist must contain 1.."
-                f"{_MAX_PROJECTS} unique canonical UUIDs"
+                "project allowlist must contain nonempty unique canonical UUIDs"
             )
         object.__setattr__(self, "project_ids", projects)
         object.__setattr__(
@@ -1489,13 +1478,9 @@ def _postgres_project_tenant_bindings(
             canonical_uuid(project_id, field="project_id") for project_id in project_ids
         )
     )
-    if (
-        not projects
-        or len(projects) > _MAX_PROJECTS
-        or len(set(projects)) != len(projects)
-    ):
+    if not projects or len(set(projects)) != len(projects):
         raise PropertyCatalogDevRuntimeError(
-            f"project ownership probe requires 1..{_MAX_PROJECTS} unique project IDs"
+            "project ownership probe requires nonempty unique project IDs"
         )
     if not isinstance(expected_postgres_identity, PostgresDevIdentity):
         raise TypeError("expected_postgres_identity must be PostgresDevIdentity")
@@ -1555,13 +1540,9 @@ def _postgres_project_tenant_bindings_in_current_snapshot(
             canonical_uuid(project_id, field="project_id") for project_id in project_ids
         )
     )
-    if (
-        not projects
-        or len(projects) > _MAX_PROJECTS
-        or len(set(projects)) != len(projects)
-    ):
+    if not projects or len(set(projects)) != len(projects):
         raise PropertyCatalogDevRuntimeError(
-            f"project ownership probe requires 1..{_MAX_PROJECTS} unique project IDs"
+            "project ownership probe requires nonempty unique project IDs"
         )
     if not isinstance(expected_postgres_identity, PostgresDevIdentity):
         raise TypeError("expected_postgres_identity must be PostgresDevIdentity")
@@ -1645,14 +1626,9 @@ def _authorize_project_tenant_bindings(
             for project_id in config.project_ids
         )
     )
-    if (
-        not expected
-        or len(expected) > _MAX_PROJECTS
-        or len(set(expected)) != len(expected)
-    ):
+    if not expected or len(set(expected)) != len(expected):
         raise PropertyCatalogDevRuntimeError(
-            "project tenant authorization requires 1.."
-            f"{_MAX_PROJECTS} unique project IDs"
+            "project tenant authorization requires nonempty unique project IDs"
         )
     if any(
         not isinstance(binding, PostgresProjectTenantBinding) for binding in bindings
@@ -3068,6 +3044,52 @@ class CheckedInPropertyCatalogDevRuntime:
         if prepared.reservation_status is ReservationStatus.FENCED:
             self._restore_fenced_execution(self._execution)
         return self._execution
+
+    def verified_active_control_target(self):
+        """Read the completed target after validating durable proof and tenancy.
+
+        This does not build, fence, retire, or select a revision. A changed
+        project set needs reconciliation before it can be published to readers.
+        """
+        from .activation_control import ActivationControlTarget
+
+        self._refresh_project_tenant_authorization()
+        scope = WorkspaceCatalogScope(
+            organization_id=self.bound_request.organization_id,
+            workspace_id=self.bound_request.workspace_id,
+            catalog_epoch=self.config.catalog_epoch,
+            projection_version=self.config.projection_version,
+            project_ids=self.config.project_ids,
+        )
+        if self.lifecycle_state is None:
+            raise PropertyCatalogDevRuntimeError(
+                "runtime has no conflict-visible active-state reader"
+            )
+        active = self.lifecycle_state.load_latest_active(scope)
+        if active is None:
+            return None
+        plan = active.build_plan
+        if (
+            plan.organization_id != scope.organization_id
+            or plan.workspace_id != scope.workspace_id
+            or plan.catalog_epoch != scope.catalog_epoch
+            or plan.projection_version != scope.projection_version
+        ):
+            raise PropertyCatalogDevRuntimeError(
+                "completed activation changed its authorized workspace scope"
+            )
+        if plan.source_scope.project_ids != scope.project_ids:
+            return None
+        self._refresh_project_tenant_authorization()
+        return ActivationControlTarget(
+            scope.organization_id,
+            scope.workspace_id,
+            scope.catalog_epoch,
+            scope.projection_version,
+            active.catalog_revision,
+            active.build_token,
+            active.activation_sha256,
+        )
 
     def _load_latest_active_retirement(
         self,

@@ -1145,7 +1145,7 @@ describe("list cursor pagination", () => {
   it("does not write a stale response cursor into a reset query generation", async () => {
     const pagination = createListCursorPagination();
     const requestGeneration = pagination.generation();
-    const page = await loadExactListPage({
+    const page = loadExactListPage({
       pagination,
       pageNumber: 0,
       targetRowCount: 1,
@@ -1162,8 +1162,7 @@ describe("list cursor pagination", () => {
       isCurrent: () => pagination.isCurrent(requestGeneration),
     });
 
-    expect(page.stale).toBe(true);
-    expect(page.rows).toEqual([]);
+    await expect(page).rejects.toMatchObject({ name: "AbortError" });
     expect(pagination.mode()).toBe(LIST_CURSOR_MODES.UNKNOWN);
     expect(pagination.requestParams(0, { page_size: 1 })).toEqual({
       page_size: 1,
@@ -1466,6 +1465,132 @@ describe("list cursor pagination", () => {
     );
   });
 
+  describe.each(["grid", "preview"])(
+    "%s request cancellation settlement",
+    (kind) => {
+      const read = (request, signal) => {
+        const options = {
+          targetRowCount: 1,
+          cancellationSignal: signal,
+          maxElapsedMs: 1000,
+          nextResponse: (_cursor, requestSignal) => request(requestSignal),
+          rowsFromResponse: (response) => response.rows,
+          metadataFromResponse: (response) => response.metadata,
+          rowIdentity: (row) => row.id,
+        };
+        return kind === "grid"
+          ? loadExactListPage({
+              ...options,
+              pagination: createListCursorPagination(),
+              pageNumber: 0,
+              loadResponse: request,
+            })
+          : collectExactListRows({
+              ...options,
+              initialResponse: exactResponse([], true, "unconsumed"),
+            });
+      };
+
+      it.each(["already aborted", "pending transport"])(
+        "settles %s without waiting for a non-cooperative transport",
+        async (phase) => {
+          vi.useFakeTimers();
+          const upstream = new AbortController();
+          const removeListener = vi.spyOn(
+            upstream.signal,
+            "removeEventListener",
+          );
+          let resolveTransport;
+          const request = vi.fn(
+            () =>
+              new Promise((resolve) => {
+                resolveTransport = resolve;
+              }),
+          );
+          const resolved = vi.fn();
+          const rejected = vi.fn();
+          try {
+            if (phase === "already aborted") upstream.abort();
+            const result = read(request, upstream.signal).then(
+              resolved,
+              rejected,
+            );
+            await vi.advanceTimersByTimeAsync(0);
+            if (phase === "pending transport") upstream.abort();
+            await vi.advanceTimersByTimeAsync(0);
+
+            expect(rejected).toHaveBeenCalledExactlyOnceWith(
+              expect.objectContaining({ name: "AbortError" }),
+            );
+            expect(resolved).not.toHaveBeenCalled();
+            if (phase === "already aborted") {
+              expect(request).not.toHaveBeenCalled();
+            } else {
+              expect(request.mock.calls[0][0].aborted).toBe(true);
+              expect(removeListener).toHaveBeenCalledWith(
+                "abort",
+                expect.any(Function),
+              );
+            }
+            expect(vi.getTimerCount()).toBe(0);
+
+            // A late success must not turn cancellation into rows or an empty page.
+            resolveTransport?.(exactResponse([{ id: "late" }], false, null));
+            await result;
+            await vi.advanceTimersByTimeAsync(0);
+            expect(resolved).not.toHaveBeenCalled();
+            expect(rejected).toHaveBeenCalledTimes(1);
+          } finally {
+            resolveTransport?.(exactResponse([], false, null));
+            await vi.advanceTimersByTimeAsync(1000);
+            removeListener.mockRestore();
+            vi.useRealTimers();
+          }
+        },
+      );
+
+      it.each(["success", "error"])(
+        "cleans up after current-request %s without changing its outcome",
+        async (outcome) => {
+          vi.useFakeTimers();
+          const upstream = new AbortController();
+          const removeListener = vi.spyOn(
+            upstream.signal,
+            "removeEventListener",
+          );
+          const error = new Error("transport failed");
+          const request = vi.fn(() =>
+            outcome === "success"
+              ? Promise.resolve(exactResponse([{ id: "current" }], false, null))
+              : Promise.reject(error),
+          );
+          try {
+            const result = read(request, upstream.signal);
+            if (outcome === "success") {
+              await expect(result).resolves.toMatchObject({
+                rows: [{ id: "current" }],
+                pending: false,
+                stale: false,
+              });
+            } else {
+              await expect(result).rejects.toBe(error);
+            }
+            expect(vi.getTimerCount()).toBe(0);
+            expect(removeListener).toHaveBeenCalledWith(
+              "abort",
+              expect.any(Function),
+            );
+            upstream.abort();
+            expect(request.mock.calls[0][0].aborted).toBe(false);
+          } finally {
+            removeListener.mockRestore();
+            vi.useRealTimers();
+          }
+        },
+      );
+    },
+  );
+
   it("aborts a hung initial exact-page request at the shared deadline", async () => {
     const pagination = createListCursorPagination();
     let requestSignal;
@@ -1526,7 +1651,7 @@ describe("list cursor pagination", () => {
     pagination.reset();
 
     expect(requestSignal.aborted).toBe(true);
-    await expect(page).rejects.toMatchObject({ code: "ERR_CANCELED" });
+    await expect(page).rejects.toMatchObject({ name: "AbortError" });
   });
 
   it("fails closed when a non-empty continuation repeats its cursor", async () => {

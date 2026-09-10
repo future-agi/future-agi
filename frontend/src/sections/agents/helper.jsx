@@ -10,7 +10,7 @@ import TalkRatioCell from "./CallLogs/TalkRatioCell";
 import EvalCellRenderer from "../test-detail/CellRenderers/EvalCellRenderer";
 import CallLogsHeaderCellRenderer from "./CallLogs/CallLogsHeaderCellRenderer";
 import { useQuery } from "@tanstack/react-query";
-import axios, { endpoints } from "src/utils/axios";
+import axios, { readQuery, endpoints } from "src/utils/axios";
 import { Box, Skeleton } from "@mui/material";
 import EvaluationCell from "src/sections/projects/LLMTracing/Renderers/EvaluationCell";
 import { AGENT_TYPES, isLiveKitProvider, VOICE_TRANSPORT } from "./constants";
@@ -996,7 +996,7 @@ export const useCallLogs = ({
           targetRowCount: pageLimit,
           cancellationSignal: signal,
           loadResponse: (requestSignal) =>
-            axios.get(getEndpoint(), {
+            readQuery(getEndpoint(), {
               params: cursorPagination.requestParams(
                 page - 1,
                 cursorBaseParams,
@@ -1004,7 +1004,7 @@ export const useCallLogs = ({
               signal: requestSignal,
             }),
           nextResponse: (cursor, requestSignal) =>
-            axios.get(getEndpoint(), {
+            readQuery(getEndpoint(), {
               params: listContinuationParams(cursorBaseParams, cursor),
               signal: requestSignal,
             }),
@@ -1043,7 +1043,7 @@ export const useCallLogs = ({
             : mergedResult,
         };
       }
-      return axios.get(getEndpoint(), {
+      return readQuery(getEndpoint(), {
         params: paginationParams
           ? { ...params, ...paginationParams }
           : baseParams,
@@ -1112,7 +1112,7 @@ export const prefetchCallLogs = (
           targetRowCount: pageLimit,
           cancellationSignal: signal,
           loadResponse: (requestSignal) =>
-            axios.get(endpoint, {
+            readQuery(endpoint, {
               params: cursorPagination.requestParams(
                 page - 1,
                 cursorBaseParams,
@@ -1120,7 +1120,7 @@ export const prefetchCallLogs = (
               signal: requestSignal,
             }),
           nextResponse: (cursor, requestSignal) =>
-            axios.get(endpoint, {
+            readQuery(endpoint, {
               params: listContinuationParams(cursorBaseParams, cursor),
               signal: requestSignal,
             }),
@@ -1159,7 +1159,7 @@ export const prefetchCallLogs = (
             : mergedResult,
         };
       }
-      return axios.get(endpoint, {
+      return readQuery(endpoint, {
         params: paginationParams
           ? { ...params, ...paginationParams }
           : baseParams,

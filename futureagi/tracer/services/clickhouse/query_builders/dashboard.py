@@ -2925,17 +2925,15 @@ class DashboardQueryBuilder:
             if not series_data:
                 series_data["total"] = {}
 
-            # Keep the highest-volume series first; the frontend still limits
-            # the initially visible chart series.
-            MAX_SERIES = 100
+            # Rank all returned series; presentation limits belong to the UI.
+            # The executor's throwing row/byte caps bound this result. Dropping
+            # series here would publish a truncated payload as an exact result.
             if "total" not in series_data:
                 ranked = sorted(
                     series_data.items(),
                     key=lambda kv: sum(v for v in kv[1].values() if v is not None),
                     reverse=True,
                 )
-                if len(ranked) > MAX_SERIES:
-                    ranked = ranked[:MAX_SERIES]
                 series_data = dict(ranked)
 
             # Preserve volume order from ``series_data``.

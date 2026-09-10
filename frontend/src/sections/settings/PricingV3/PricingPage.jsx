@@ -17,6 +17,7 @@ import {
   PLANS_QUERY_KEY,
 } from "src/hooks/use-plans-and-addons";
 import {
+  Alert,
   Box,
   Typography,
   Stack,
@@ -716,6 +717,10 @@ export default function PricingPage() {
   const currentPlan = data?.current_plan || "free";
   const isCustomPricing =
     data?.isCustomPricing ?? data?.is_custom_pricing ?? false;
+  const planChangeLocked =
+    data?.planChangeLocked ?? data?.plan_change_locked ?? false;
+  const planChangeLockedReason =
+    data?.planChangeLockedReason ?? data?.plan_change_locked_reason ?? "";
   const customDetails = data?.customDetails ?? data?.custom_details ?? null;
   const tiers = data?.tiers || [];
   const addons = data?.addons || [];
@@ -738,6 +743,12 @@ export default function PricingPage() {
         Start free or pay as you go. Add Boost, Scale, or Enterprise for
         advanced features and higher limits.
       </Typography>
+
+      {planChangeLocked && (
+        <Alert severity="info" sx={{ mb: 3 }}>
+          {planChangeLockedReason}
+        </Alert>
+      )}
 
       {/* Custom pricing banner + details */}
       {isCustomPricing && (
@@ -924,7 +935,7 @@ export default function PricingPage() {
       )}
 
       {/* Current plan status */}
-      {currentPlan !== "free" && !isCustomPricing && (
+      {currentPlan !== "free" && !isCustomPricing && !planChangeLocked && (
         <Paper
           variant="outlined"
           sx={(theme) => ({
@@ -970,7 +981,7 @@ export default function PricingPage() {
       )}
 
       {/* Tiers: Free / PAYG (hidden for custom pricing) */}
-      {!isCustomPricing && (
+      {!isCustomPricing && !planChangeLocked && (
         <>
           <Typography variant="subtitle1" fontWeight={600} mb={1.5}>
             Choose your tier
@@ -996,7 +1007,7 @@ export default function PricingPage() {
       )}
 
       {/* Add-ons: Boost / Scale / Enterprise (hidden for custom pricing) */}
-      {!isCustomPricing && (
+      {!isCustomPricing && !planChangeLocked && (
         <Stack direction="column" mb={1.5}>
           <Stack
             direction="row"
@@ -1068,7 +1079,7 @@ export default function PricingPage() {
       )}
 
       {/* Feature comparison (hidden for custom pricing) */}
-      {!isCustomPricing && (
+      {!isCustomPricing && !planChangeLocked && (
         <>
           <Divider sx={{ my: 3 }} />
           <Typography variant="subtitle1" fontWeight={600} mb={2}>

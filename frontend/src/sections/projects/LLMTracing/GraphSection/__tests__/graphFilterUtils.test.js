@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { FILTER_CONTRACT, COLUMN_TYPE_ALIASES } from "src/api/contracts/filter-contract.generated";
 import {
   CREATED_AT,
   buildDefaultDateEntry,
@@ -17,6 +18,11 @@ import {
 const dateFilter = {
   dateFilter: ["2026-07-01T00:00:00.000Z", "2026-07-08T00:00:00.000Z"],
 };
+
+const nonNativeTypes = [
+  ...FILTER_CONTRACT.columnTypes.allowed.filter((type) => !["NORMAL", "SYSTEM_METRIC"].includes(type)),
+  ...Object.keys(COLUMN_TYPE_ALIASES).filter((alias) => COLUMN_TYPE_ALIASES[alias] !== "SYSTEM_METRIC"),
+];
 
 const statusFilter = {
   id: "fe-key-1",
@@ -73,6 +79,34 @@ const propertyFilter = {
 };
 
 describe("combineGraphFilters", () => {
+  it.each(nonNativeTypes)("does not borrow native time from explicit %s", (col_type) => {
+    const typed = { column_id: "created_at", filter_config: { col_type, filter_type: "datetime", filter_op: "between", filter_value: dateFilter.dateFilter } };
+    expect(isCreatedAtFilter(typed)).toBe(false);
+    expect(combineGraphFilters({ filters: [typed], dateFilter })).toEqual([typed, ...buildDefaultDateEntry([], dateFilter)]);
+    expect(combineGraphFilters({ filters: [createdAtFilter, typed], dateFilter })).toEqual([typed, createdAtFilter]);
+  });
+
+  it.each([undefined, "NORMAL", "SYSTEM_METRIC", "system"])("keeps native date scope for %s", (col_type) => {
+    const native = { ...createdAtFilter, filter_config: { ...createdAtFilter.filter_config, ...(col_type && { col_type }) } };
+    expect(isCreatedAtFilter(native)).toBe(true);
+    expect(combineGraphFilters({ filters: [native], dateFilter })).toEqual([native]);
+  });
+
+  it("prefers nested source identity over conflicting legacy root date metadata", () => {
+    const typed = { ...createdAtFilter, col_type: "SYSTEM_METRIC", filter_config: { ...createdAtFilter.filter_config, col_type: "SPAN_ATTRIBUTE" } };
+    expect(isCreatedAtFilter(typed)).toBe(false);
+  });
+
+  it("source audit: raw created_at must not replace the selected graph time window", () => {
+    const raw = { column_id: "created_at", filter_config: { col_type: "SPAN_ATTRIBUTE", filter_type: "text", filter_op: "equals", filter_value: "customer-value" } };
+    expect(combineGraphFilters({ filters: [raw], dateFilter })).toEqual([raw, ...buildDefaultDateEntry([], dateFilter)]);
+  });
+
+  it("source audit: raw created_at must not be deduplicated against a native date", () => {
+    const raw = { column_id: "created_at", filter_config: { col_type: "SPAN_ATTRIBUTE", filter_type: "text", filter_op: "not_equals", filter_value: "customer-value" } };
+    expect(combineGraphFilters({ filters: [createdAtFilter, raw], dateFilter })).toEqual([raw, createdAtFilter]);
+  });
+
   it("users/sessions mode (extraFilters omitted): non-date filters survive", () => {
     const result = combineGraphFilters({
       filters: [statusFilter, createdAtFilter],
@@ -233,6 +267,24 @@ describe("selectPanelGraphFilters", () => {
 });
 
 describe("singleProjectIdFromFilters", () => {
+  it.each(nonNativeTypes)("does not borrow project scope from explicit %s", (col_type) => {
+    const typed = { column_id: "project_id", filter_config: { col_type, filter_type: "text", filter_op: "in", filter_value: ["raw-project"] } };
+    const native = { column_id: "project_id", filter_config: { col_type: "SYSTEM_METRIC", filter_type: "text", filter_op: "equals", filter_value: "native-project" } };
+    expect(singleProjectIdFromFilters([typed])).toBeNull();
+    expect(singleProjectIdFromFilters([typed, native])).toBe("native-project");
+    expect(resolveAgentGraphProjectScopes({ primaryFilters: [typed], compareFilters: [native] })).toEqual({ primaryProjectId: null, compareProjectId: "native-project" });
+  });
+
+  it.each([undefined, "NORMAL", "SYSTEM_METRIC", "system"])("keeps positive native project scope for %s", (col_type) => {
+    const native = { column_id: "project_id", filter_config: { filter_type: "text", filter_op: "in", filter_value: ["native-project"], ...(col_type && { col_type }) } };
+    expect(singleProjectIdFromFilters([native])).toBe("native-project");
+    expect(singleProjectIdFromFilters([{ ...native, filter_config: { ...native.filter_config, filter_op: "not_in" } }])).toBeNull();
+  });
+
+  it("prefers nested source identity over conflicting legacy root project metadata", () => {
+    expect(singleProjectIdFromFilters([{ column_id: "project_id", col_type: "SYSTEM_METRIC", filter_config: { col_type: "SPAN_ATTRIBUTE", filter_type: "text", filter_op: "equals", filter_value: "raw-project" } }])).toBeNull();
+  });
+
   it.each([
     ["equals", "project-1"],
     ["is", "project-1"],

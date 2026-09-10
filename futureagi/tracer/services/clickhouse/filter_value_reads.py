@@ -78,6 +78,7 @@ _SYSTEM_VALUE_SOURCE_COLUMNS = {
     "span_kind": "observation_type",
     "service_name": "service_name",
     "name": "name",
+    "trace_name": "name",
     "span_name": "name",
     "session": "trace_session_id",
     "user": "end_user_id",
@@ -325,7 +326,7 @@ def read_span_system_filter_values(
             "AND (latest_parent_span_id IS NULL OR latest_parent_span_id = '') "
             "AND latest_observation_type = 'conversation'"
         )
-    elif metric_name == "name":
+    elif metric_name in {"name", "trace_name"}:
         root_clause = (
             "AND (latest_parent_span_id IS NULL OR latest_parent_span_id = '')"
         )
@@ -698,7 +699,7 @@ def read_span_system_filter_value_cursor_page(
             "AND (latest_parent_span_id IS NULL OR latest_parent_span_id = '') "
             "AND latest_observation_type = 'conversation'"
         )
-    elif metric_name == "name":
+    elif metric_name in {"name", "trace_name"}:
         root_clause = (
             "AND (latest_parent_span_id IS NULL OR latest_parent_span_id = '')"
         )

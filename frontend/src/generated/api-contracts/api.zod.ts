@@ -520,6 +520,24 @@ export const AccountsFirstChecksListResponse = zod.object({
   }),
 });
 
+/**
+ * Complete sign-up for a GCP Marketplace customer.
+ */
+
+export const AccountsGcpMarketplaceSignupCreateBody = zod.object({
+  onboarding_token: zod.string().min(1),
+  email: zod.string().email().min(1),
+  full_name: zod.string().min(1),
+});
+
+export const AccountsGcpMarketplaceSignupCreateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    message: zod.string().min(1),
+    user_email: zod.string().email().min(1),
+  }),
+});
+
 export const AccountsGetUserProfileDetailsListResponse = zod.object({
   name: zod.string(),
   email: zod.string().email().min(1),
@@ -30570,6 +30588,7 @@ export const Saml2AuthAcsCreateBody = zod.object({
 
 export const Saml2AuthAuthCallbackListQueryParams = zod.object({
   code: zod.string().optional(),
+  state: zod.string().optional(),
 });
 
 export const Saml2AuthAuthReadParams = zod.object({
@@ -30578,10 +30597,12 @@ export const Saml2AuthAuthReadParams = zod.object({
 
 export const Saml2AuthAuthReadQueryParams = zod.object({
   code: zod.string().optional(),
+  state: zod.string().optional(),
 });
 
 export const Saml2AuthGithubCallbackListQueryParams = zod.object({
   code: zod.string().optional(),
+  state: zod.string().optional(),
 });
 
 export const Saml2AuthGithubReadParams = zod.object({
@@ -30590,6 +30611,7 @@ export const Saml2AuthGithubReadParams = zod.object({
 
 export const Saml2AuthGithubReadQueryParams = zod.object({
   code: zod.string().optional(),
+  state: zod.string().optional(),
 });
 
 export const Saml2AuthIdpLoginListQueryParams = zod.object({
@@ -30701,6 +30723,7 @@ export const Saml2AuthIdpUploadsDeleteResponse = zod.object({
 
 export const Saml2AuthLoginListQueryParams = zod.object({
   provider: zod.enum(["google", "github", "microsoft"]),
+  onboarding_token: zod.string().optional(),
 });
 
 export const Saml2AuthLoginListResponse = zod.object({
@@ -30716,6 +30739,7 @@ export const Saml2AuthReadParams = zod.object({
 
 export const Saml2AuthReadQueryParams = zod.object({
   provider: zod.enum(["google", "github", "microsoft"]),
+  onboarding_token: zod.string().optional(),
 });
 
 export const Saml2AuthReadResponse = zod.object({
@@ -30727,6 +30751,7 @@ export const Saml2AuthReadResponse = zod.object({
 
 export const Saml2AuthMicrosoftCallbackListQueryParams = zod.object({
   code: zod.string().optional(),
+  state: zod.string().optional(),
 });
 
 export const Saml2AuthMicrosoftReadParams = zod.object({
@@ -30735,6 +30760,7 @@ export const Saml2AuthMicrosoftReadParams = zod.object({
 
 export const Saml2AuthMicrosoftReadQueryParams = zod.object({
   code: zod.string().optional(),
+  state: zod.string().optional(),
 });
 
 export const sdkApiV1ConfigureEvaluationsCreateBodyEvalConfigConfigDefault = {};
@@ -51388,169 +51414,37 @@ export const TracerObservationSpanGetTraceIdByIndexSpansAsBaseQueryParams =
       ),
   });
 
-export const tracerObservationSpanGetTraceIdByIndexSpansAsBaseResponseResultsItemParentSpanIdMax = 255;
-
-export const tracerObservationSpanGetTraceIdByIndexSpansAsBaseResponseResultsItemNameMax = 2000;
-
-export const tracerObservationSpanGetTraceIdByIndexSpansAsBaseResponseResultsItemModelMax = 255;
-
-export const tracerObservationSpanGetTraceIdByIndexSpansAsBaseResponseResultsItemLatencyMsMin =
-  -2147483648;
-export const tracerObservationSpanGetTraceIdByIndexSpansAsBaseResponseResultsItemLatencyMsMax = 2147483647;
-
-export const tracerObservationSpanGetTraceIdByIndexSpansAsBaseResponseResultsItemPromptTokensMin =
-  -2147483648;
-export const tracerObservationSpanGetTraceIdByIndexSpansAsBaseResponseResultsItemPromptTokensMax = 2147483647;
-
-export const tracerObservationSpanGetTraceIdByIndexSpansAsBaseResponseResultsItemCompletionTokensMin =
-  -2147483648;
-export const tracerObservationSpanGetTraceIdByIndexSpansAsBaseResponseResultsItemCompletionTokensMax = 2147483647;
-
-export const tracerObservationSpanGetTraceIdByIndexSpansAsBaseResponseResultsItemTotalTokensMin =
-  -2147483648;
-export const tracerObservationSpanGetTraceIdByIndexSpansAsBaseResponseResultsItemTotalTokensMax = 2147483647;
-
-export const tracerObservationSpanGetTraceIdByIndexSpansAsBaseResponseResultsItemEvalIdMax = 255;
-
-export const tracerObservationSpanGetTraceIdByIndexSpansAsBaseResponseResultsItemProviderMax = 255;
-
 export const TracerObservationSpanGetTraceIdByIndexSpansAsBaseResponse =
   zod.object({
-    count: zod.number(),
-    next: zod.string().url().optional(),
-    previous: zod.string().url().optional(),
-    results: zod.array(
-      zod.object({
-        id: zod.string().min(1).optional(),
-        project: zod.string().uuid(),
-        project_version: zod.string().uuid().optional(),
-        trace: zod.string().uuid(),
-        parent_span_id: zod
-          .string()
-          .max(
-            tracerObservationSpanGetTraceIdByIndexSpansAsBaseResponseResultsItemParentSpanIdMax,
-          )
-          .optional(),
-        name: zod
-          .string()
-          .min(1)
-          .max(
-            tracerObservationSpanGetTraceIdByIndexSpansAsBaseResponseResultsItemNameMax,
-          ),
-        observation_type: zod.enum([
-          "tool",
-          "chain",
-          "llm",
-          "retriever",
-          "embedding",
-          "agent",
-          "reranker",
-          "unknown",
-          "guardrail",
-          "evaluator",
-          "conversation",
-        ]),
-        start_time: zod.string().datetime({ offset: true }).optional(),
-        end_time: zod.string().datetime({ offset: true }).optional(),
-        input: zod.object({}).passthrough().optional(),
-        output: zod.object({}).passthrough().optional(),
-        model: zod
-          .string()
-          .max(
-            tracerObservationSpanGetTraceIdByIndexSpansAsBaseResponseResultsItemModelMax,
-          )
-          .optional(),
-        model_parameters: zod.object({}).passthrough().optional(),
-        latency_ms: zod
-          .number()
-          .min(
-            tracerObservationSpanGetTraceIdByIndexSpansAsBaseResponseResultsItemLatencyMsMin,
-          )
-          .max(
-            tracerObservationSpanGetTraceIdByIndexSpansAsBaseResponseResultsItemLatencyMsMax,
-          )
-          .optional(),
-        org_id: zod.string().uuid().optional(),
-        org_user_id: zod.string().uuid().optional(),
-        prompt_tokens: zod
-          .number()
-          .min(
-            tracerObservationSpanGetTraceIdByIndexSpansAsBaseResponseResultsItemPromptTokensMin,
-          )
-          .max(
-            tracerObservationSpanGetTraceIdByIndexSpansAsBaseResponseResultsItemPromptTokensMax,
-          )
-          .optional(),
-        completion_tokens: zod
-          .number()
-          .min(
-            tracerObservationSpanGetTraceIdByIndexSpansAsBaseResponseResultsItemCompletionTokensMin,
-          )
-          .max(
-            tracerObservationSpanGetTraceIdByIndexSpansAsBaseResponseResultsItemCompletionTokensMax,
-          )
-          .optional(),
-        total_tokens: zod
-          .number()
-          .min(
-            tracerObservationSpanGetTraceIdByIndexSpansAsBaseResponseResultsItemTotalTokensMin,
-          )
-          .max(
-            tracerObservationSpanGetTraceIdByIndexSpansAsBaseResponseResultsItemTotalTokensMax,
-          )
-          .optional(),
-        response_time: zod.number().optional(),
-        eval_id: zod
-          .string()
-          .max(
-            tracerObservationSpanGetTraceIdByIndexSpansAsBaseResponseResultsItemEvalIdMax,
-          )
-          .optional(),
-        cost: zod.number().optional(),
-        status: zod.enum(["UNSET", "OK", "ERROR"]).optional(),
-        status_message: zod.string().optional(),
-        tags: zod.object({}).passthrough().optional(),
-        metadata: zod.object({}).passthrough().optional(),
-        span_events: zod.object({}).passthrough().optional(),
-        provider: zod
-          .string()
-          .max(
-            tracerObservationSpanGetTraceIdByIndexSpansAsBaseResponseResultsItemProviderMax,
-          )
-          .optional(),
-        provider_logo: zod.string().optional(),
-        span_attributes: zod.string().optional(),
-        custom_eval_config: zod.string().uuid().optional(),
-        eval_status: zod
-          .enum([
-            "NotStarted",
-            "Queued",
-            "Running",
-            "Completed",
-            "Editing",
-            "Inactive",
-            "Failed",
-            "PartialRun",
-            "ExperimentEvaluation",
-            "Uploading",
-            "PartialExtracted",
-            "Processing",
-            "Deleting",
-            "PartialCompleted",
-            "OptimizationEvaluation",
-            "Error",
-            "Cancelled",
-          ])
-          .optional(),
-        prompt_version: zod.string().uuid().optional(),
-      }),
-    ),
+    status: zod.boolean(),
+    result: zod.object({
+      next_trace_id: zod.string().min(1),
+      previous_trace_id: zod.string().min(1),
+    }),
   });
 
 /**
- * Get the previous and next trace id by index for observe projects.
-Mirrors the query/filter logic of list_spans_as_observe.
+ * Get the previous and next span id by index for non-observe projects.
+Mirrors the query/filter logic of list_spans.
  */
+
+export const tracerObservationSpanGetTraceIdByIndexSpansAsBaseCreateBodyFiltersDefault = `[]`;
+
+export const TracerObservationSpanGetTraceIdByIndexSpansAsBaseCreateBody =
+  zod.object({
+    span_id: zod.string().min(1),
+    project_version_id: zod.string().uuid(),
+    filters: zod
+      .string()
+      .min(1)
+      .default(
+        tracerObservationSpanGetTraceIdByIndexSpansAsBaseCreateBodyFiltersDefault,
+      )
+      .describe("JSON-encoded canonical filter list."),
+  });
+
+export const TracerObservationSpanGetTraceIdByIndexSpansAsBaseCreateResponse =
+  TracerObservationSpanGetTraceIdByIndexSpansAsBaseResponse;
 
 export const tracerObservationSpanGetTraceIdByIndexSpansAsObserveQueryFiltersDefault = `[]`;
 
@@ -51575,168 +51469,39 @@ export const TracerObservationSpanGetTraceIdByIndexSpansAsObserveQueryParams =
       ),
   });
 
-export const tracerObservationSpanGetTraceIdByIndexSpansAsObserveResponseResultsItemParentSpanIdMax = 255;
-
-export const tracerObservationSpanGetTraceIdByIndexSpansAsObserveResponseResultsItemNameMax = 2000;
-
-export const tracerObservationSpanGetTraceIdByIndexSpansAsObserveResponseResultsItemModelMax = 255;
-
-export const tracerObservationSpanGetTraceIdByIndexSpansAsObserveResponseResultsItemLatencyMsMin =
-  -2147483648;
-export const tracerObservationSpanGetTraceIdByIndexSpansAsObserveResponseResultsItemLatencyMsMax = 2147483647;
-
-export const tracerObservationSpanGetTraceIdByIndexSpansAsObserveResponseResultsItemPromptTokensMin =
-  -2147483648;
-export const tracerObservationSpanGetTraceIdByIndexSpansAsObserveResponseResultsItemPromptTokensMax = 2147483647;
-
-export const tracerObservationSpanGetTraceIdByIndexSpansAsObserveResponseResultsItemCompletionTokensMin =
-  -2147483648;
-export const tracerObservationSpanGetTraceIdByIndexSpansAsObserveResponseResultsItemCompletionTokensMax = 2147483647;
-
-export const tracerObservationSpanGetTraceIdByIndexSpansAsObserveResponseResultsItemTotalTokensMin =
-  -2147483648;
-export const tracerObservationSpanGetTraceIdByIndexSpansAsObserveResponseResultsItemTotalTokensMax = 2147483647;
-
-export const tracerObservationSpanGetTraceIdByIndexSpansAsObserveResponseResultsItemEvalIdMax = 255;
-
-export const tracerObservationSpanGetTraceIdByIndexSpansAsObserveResponseResultsItemProviderMax = 255;
-
 export const TracerObservationSpanGetTraceIdByIndexSpansAsObserveResponse =
   zod.object({
-    count: zod.number(),
-    next: zod.string().url().optional(),
-    previous: zod.string().url().optional(),
-    results: zod.array(
-      zod.object({
-        id: zod.string().min(1).optional(),
-        project: zod.string().uuid(),
-        project_version: zod.string().uuid().optional(),
-        trace: zod.string().uuid(),
-        parent_span_id: zod
-          .string()
-          .max(
-            tracerObservationSpanGetTraceIdByIndexSpansAsObserveResponseResultsItemParentSpanIdMax,
-          )
-          .optional(),
-        name: zod
-          .string()
-          .min(1)
-          .max(
-            tracerObservationSpanGetTraceIdByIndexSpansAsObserveResponseResultsItemNameMax,
-          ),
-        observation_type: zod.enum([
-          "tool",
-          "chain",
-          "llm",
-          "retriever",
-          "embedding",
-          "agent",
-          "reranker",
-          "unknown",
-          "guardrail",
-          "evaluator",
-          "conversation",
-        ]),
-        start_time: zod.string().datetime({ offset: true }).optional(),
-        end_time: zod.string().datetime({ offset: true }).optional(),
-        input: zod.object({}).passthrough().optional(),
-        output: zod.object({}).passthrough().optional(),
-        model: zod
-          .string()
-          .max(
-            tracerObservationSpanGetTraceIdByIndexSpansAsObserveResponseResultsItemModelMax,
-          )
-          .optional(),
-        model_parameters: zod.object({}).passthrough().optional(),
-        latency_ms: zod
-          .number()
-          .min(
-            tracerObservationSpanGetTraceIdByIndexSpansAsObserveResponseResultsItemLatencyMsMin,
-          )
-          .max(
-            tracerObservationSpanGetTraceIdByIndexSpansAsObserveResponseResultsItemLatencyMsMax,
-          )
-          .optional(),
-        org_id: zod.string().uuid().optional(),
-        org_user_id: zod.string().uuid().optional(),
-        prompt_tokens: zod
-          .number()
-          .min(
-            tracerObservationSpanGetTraceIdByIndexSpansAsObserveResponseResultsItemPromptTokensMin,
-          )
-          .max(
-            tracerObservationSpanGetTraceIdByIndexSpansAsObserveResponseResultsItemPromptTokensMax,
-          )
-          .optional(),
-        completion_tokens: zod
-          .number()
-          .min(
-            tracerObservationSpanGetTraceIdByIndexSpansAsObserveResponseResultsItemCompletionTokensMin,
-          )
-          .max(
-            tracerObservationSpanGetTraceIdByIndexSpansAsObserveResponseResultsItemCompletionTokensMax,
-          )
-          .optional(),
-        total_tokens: zod
-          .number()
-          .min(
-            tracerObservationSpanGetTraceIdByIndexSpansAsObserveResponseResultsItemTotalTokensMin,
-          )
-          .max(
-            tracerObservationSpanGetTraceIdByIndexSpansAsObserveResponseResultsItemTotalTokensMax,
-          )
-          .optional(),
-        response_time: zod.number().optional(),
-        eval_id: zod
-          .string()
-          .max(
-            tracerObservationSpanGetTraceIdByIndexSpansAsObserveResponseResultsItemEvalIdMax,
-          )
-          .optional(),
-        cost: zod.number().optional(),
-        status: zod.enum(["UNSET", "OK", "ERROR"]).optional(),
-        status_message: zod.string().optional(),
-        tags: zod.object({}).passthrough().optional(),
-        metadata: zod.object({}).passthrough().optional(),
-        span_events: zod.object({}).passthrough().optional(),
-        provider: zod
-          .string()
-          .max(
-            tracerObservationSpanGetTraceIdByIndexSpansAsObserveResponseResultsItemProviderMax,
-          )
-          .optional(),
-        provider_logo: zod.string().optional(),
-        span_attributes: zod.string().optional(),
-        custom_eval_config: zod.string().uuid().optional(),
-        eval_status: zod
-          .enum([
-            "NotStarted",
-            "Queued",
-            "Running",
-            "Completed",
-            "Editing",
-            "Inactive",
-            "Failed",
-            "PartialRun",
-            "ExperimentEvaluation",
-            "Uploading",
-            "PartialExtracted",
-            "Processing",
-            "Deleting",
-            "PartialCompleted",
-            "OptimizationEvaluation",
-            "Error",
-            "Cancelled",
-          ])
-          .optional(),
-        prompt_version: zod.string().uuid().optional(),
-      }),
-    ),
+    status: zod.boolean(),
+    result: zod.object({
+      next_trace_id: zod.string().min(1),
+      previous_trace_id: zod.string().min(1),
+    }),
   });
 
 /**
- * List spans filtered by project ID and project version ID with optimized queries.
+ * Get the previous and next trace id by index for observe projects.
+Mirrors the query/filter logic of list_spans_as_observe.
  */
+
+export const tracerObservationSpanGetTraceIdByIndexSpansAsObserveCreateBodyFiltersDefault = `[]`;
+
+export const TracerObservationSpanGetTraceIdByIndexSpansAsObserveCreateBody =
+  zod.object({
+    span_id: zod.string().min(1),
+    project_id: zod.string().uuid(),
+    user_id: zod.string().optional(),
+    filters: zod
+      .string()
+      .min(1)
+      .default(
+        tracerObservationSpanGetTraceIdByIndexSpansAsObserveCreateBodyFiltersDefault,
+      )
+      .describe("JSON-encoded canonical filter list."),
+  });
+
+export const TracerObservationSpanGetTraceIdByIndexSpansAsObserveCreateResponse =
+  TracerObservationSpanGetTraceIdByIndexSpansAsObserveResponse;
+
 export const tracerObservationSpanListSpansQueryFiltersDefault = `[]`;
 
 export const tracerObservationSpanListSpansQueryPageNumberDefault = 0;
@@ -51896,6 +51661,68 @@ export const TracerObservationSpanListSpansResponse = zod.object({
     ),
   }),
 });
+
+/**
+ * List spans filtered by project ID and project version ID with optimized queries.
+ */
+export const tracerObservationSpanListSpansCreateBodyFiltersDefault = `[]`;
+
+export const tracerObservationSpanListSpansCreateBodyPageNumberDefault = 0;
+export const tracerObservationSpanListSpansCreateBodyPageNumberMin = 0;
+
+export const tracerObservationSpanListSpansCreateBodyPageSizeDefault = 30;
+export const tracerObservationSpanListSpansCreateBodyPageSizeMax = 500;
+
+export const TracerObservationSpanListSpansCreateBody = zod.object({
+  project_version_id: zod.string().uuid(),
+  filters: zod
+    .string()
+    .min(1)
+    .default(tracerObservationSpanListSpansCreateBodyFiltersDefault)
+    .describe(
+      "JSON-encoded canonical filter list. On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result.",
+    ),
+  page_number: zod
+    .number()
+    .min(tracerObservationSpanListSpansCreateBodyPageNumberMin)
+    .default(tracerObservationSpanListSpansCreateBodyPageNumberDefault)
+    .describe(
+      "Zero-based numbered page. Pages whose required ordered work exceeds the finite read contract return HTTP 422 with code page_depth_exceeded; request an earlier page or narrow the time range.",
+    ),
+  page_size: zod
+    .number()
+    .min(1)
+    .max(tracerObservationSpanListSpansCreateBodyPageSizeMax)
+    .default(tracerObservationSpanListSpansCreateBodyPageSizeDefault),
+  allow_sampled: zod
+    .boolean()
+    .optional()
+    .describe(
+      "Omit for backward-compatible complete bounded pages, which may label total_rows as a lower bound. Send false to require an exact total, or true to opt in explicitly to lower-bound totals.",
+    ),
+});
+
+export const tracerObservationSpanListSpansCreateResponseResultMetadataTotalRowsMin = 0;
+
+export const tracerObservationSpanListSpansCreateResponseResultMetadataTotalRowsExactMin = 0;
+
+export const tracerObservationSpanListSpansCreateResponseResultMetadataNextCursorFingerprintRegExp =
+  new RegExp("^[0-9a-f]{64}$");
+
+export const tracerObservationSpanListSpansCreateResponseResultMetadataQueryElapsedMsMin = 0;
+
+export const tracerObservationSpanListSpansCreateResponseResultMetadataQueryCountMin = 0;
+
+export const tracerObservationSpanListSpansCreateResponseResultMetadataQueryRowsReturnedMin = 0;
+
+export const tracerObservationSpanListSpansCreateResponseResultMetadataQueryResultPayloadBytesMin = 0;
+
+export const tracerObservationSpanListSpansCreateResponseResultMetadataQueryAppliedFilterSha256RegExp =
+  new RegExp("^[0-9a-f]{64}$");
+export const tracerObservationSpanListSpansCreateResponseResultMetadataQueryAppliedFilterCountMin = 0;
+
+export const TracerObservationSpanListSpansCreateResponse =
+  TracerObservationSpanListSpansResponse;
 
 export const tracerObservationSpanListSpansObserveQueryFiltersDefault = `[]`;
 
@@ -52077,6 +51904,82 @@ export const TracerObservationSpanListSpansObserveResponse = zod.object({
     ),
   }),
 });
+
+export const tracerObservationSpanListSpansObserveCreateBodyFiltersDefault = `[]`;
+
+export const tracerObservationSpanListSpansObserveCreateBodyPageNumberDefault = 0;
+export const tracerObservationSpanListSpansObserveCreateBodyPageNumberMin = 0;
+
+export const tracerObservationSpanListSpansObserveCreateBodyPageSizeDefault = 30;
+export const tracerObservationSpanListSpansObserveCreateBodyPageSizeMax = 500;
+
+export const tracerObservationSpanListSpansObserveCreateBodyCursorMax = 4096;
+
+export const tracerObservationSpanListSpansObserveCreateBodyCursorModeDefault =
+  false;
+
+export const TracerObservationSpanListSpansObserveCreateBody = zod.object({
+  project_id: zod.string().uuid().optional(),
+  user_id: zod.string().optional(),
+  filters: zod
+    .string()
+    .min(1)
+    .default(tracerObservationSpanListSpansObserveCreateBodyFiltersDefault)
+    .describe(
+      "JSON-encoded canonical filter list. On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result.",
+    ),
+  page_number: zod
+    .number()
+    .min(tracerObservationSpanListSpansObserveCreateBodyPageNumberMin)
+    .default(tracerObservationSpanListSpansObserveCreateBodyPageNumberDefault)
+    .describe(
+      "Zero-based numbered page. Pages whose required ordered work exceeds the finite read contract return HTTP 422 with code page_depth_exceeded; request an earlier page or narrow the time range.",
+    ),
+  page_size: zod
+    .number()
+    .min(1)
+    .max(tracerObservationSpanListSpansObserveCreateBodyPageSizeMax)
+    .default(tracerObservationSpanListSpansObserveCreateBodyPageSizeDefault),
+  cursor: zod
+    .string()
+    .min(1)
+    .max(tracerObservationSpanListSpansObserveCreateBodyCursorMax)
+    .optional()
+    .describe(
+      "Opaque continuation token returned by the previous page. When supplied, do not also send the numbered-page parameter.",
+    ),
+  cursor_mode: zod
+    .boolean()
+    .default(tracerObservationSpanListSpansObserveCreateBodyCursorModeDefault),
+  allow_sampled: zod
+    .boolean()
+    .optional()
+    .describe(
+      "Omit for backward-compatible complete bounded pages, which may label total_rows as a lower bound. Send false to require an exact total, or true to opt in explicitly to lower-bound totals.",
+    ),
+});
+
+export const tracerObservationSpanListSpansObserveCreateResponseResultMetadataTotalRowsMin = 0;
+
+export const tracerObservationSpanListSpansObserveCreateResponseResultMetadataTotalRowsExactMin = 0;
+
+export const tracerObservationSpanListSpansObserveCreateResponseResultMetadataNextCursorFingerprintRegExp =
+  new RegExp("^[0-9a-f]{64}$");
+
+export const tracerObservationSpanListSpansObserveCreateResponseResultMetadataQueryElapsedMsMin = 0;
+
+export const tracerObservationSpanListSpansObserveCreateResponseResultMetadataQueryCountMin = 0;
+
+export const tracerObservationSpanListSpansObserveCreateResponseResultMetadataQueryRowsReturnedMin = 0;
+
+export const tracerObservationSpanListSpansObserveCreateResponseResultMetadataQueryResultPayloadBytesMin = 0;
+
+export const tracerObservationSpanListSpansObserveCreateResponseResultMetadataQueryAppliedFilterSha256RegExp =
+  new RegExp("^[0-9a-f]{64}$");
+export const tracerObservationSpanListSpansObserveCreateResponseResultMetadataQueryAppliedFilterCountMin = 0;
+
+export const TracerObservationSpanListSpansObserveCreateResponse =
+  TracerObservationSpanListSpansObserveResponse;
 
 export const TracerObservationSpanRetrieveLoadingQueryParams = zod.object({
   page: zod
@@ -52633,119 +52536,34 @@ export const TracerObservationSpanReadParams = zod.object({
   id: zod.string(),
 });
 
-export const tracerObservationSpanReadResponseParentSpanIdMax = 255;
-
-export const tracerObservationSpanReadResponseNameMax = 2000;
-
-export const tracerObservationSpanReadResponseModelMax = 255;
-
-export const tracerObservationSpanReadResponseLatencyMsMin = -2147483648;
-export const tracerObservationSpanReadResponseLatencyMsMax = 2147483647;
-
-export const tracerObservationSpanReadResponsePromptTokensMin = -2147483648;
-export const tracerObservationSpanReadResponsePromptTokensMax = 2147483647;
-
-export const tracerObservationSpanReadResponseCompletionTokensMin = -2147483648;
-export const tracerObservationSpanReadResponseCompletionTokensMax = 2147483647;
-
-export const tracerObservationSpanReadResponseTotalTokensMin = -2147483648;
-export const tracerObservationSpanReadResponseTotalTokensMax = 2147483647;
-
-export const tracerObservationSpanReadResponseEvalIdMax = 255;
-
-export const tracerObservationSpanReadResponseProviderMax = 255;
+export const TracerObservationSpanReadQueryParams = zod.object({
+  project_id: zod.string().uuid().optional(),
+  trace_id: zod.string().min(1).optional(),
+  start_hour: zod.string().datetime({ offset: true }).optional(),
+  observation_type: zod.string().optional(),
+  service_name: zod.string().optional(),
+  expected_start_time: zod.string().datetime({ offset: true }).optional(),
+  expected_version: zod.string().min(1).optional(),
+});
 
 export const TracerObservationSpanReadResponse = zod.object({
-  id: zod.string().min(1).optional(),
-  project: zod.string().uuid(),
-  project_version: zod.string().uuid().optional(),
-  trace: zod.string().uuid(),
-  parent_span_id: zod
-    .string()
-    .max(tracerObservationSpanReadResponseParentSpanIdMax)
-    .optional(),
-  name: zod.string().min(1).max(tracerObservationSpanReadResponseNameMax),
-  observation_type: zod.enum([
-    "tool",
-    "chain",
-    "llm",
-    "retriever",
-    "embedding",
-    "agent",
-    "reranker",
-    "unknown",
-    "guardrail",
-    "evaluator",
-    "conversation",
-  ]),
-  start_time: zod.string().datetime({ offset: true }).optional(),
-  end_time: zod.string().datetime({ offset: true }).optional(),
-  input: zod.object({}).passthrough().optional(),
-  output: zod.object({}).passthrough().optional(),
-  model: zod.string().max(tracerObservationSpanReadResponseModelMax).optional(),
-  model_parameters: zod.object({}).passthrough().optional(),
-  latency_ms: zod
-    .number()
-    .min(tracerObservationSpanReadResponseLatencyMsMin)
-    .max(tracerObservationSpanReadResponseLatencyMsMax)
-    .optional(),
-  org_id: zod.string().uuid().optional(),
-  org_user_id: zod.string().uuid().optional(),
-  prompt_tokens: zod
-    .number()
-    .min(tracerObservationSpanReadResponsePromptTokensMin)
-    .max(tracerObservationSpanReadResponsePromptTokensMax)
-    .optional(),
-  completion_tokens: zod
-    .number()
-    .min(tracerObservationSpanReadResponseCompletionTokensMin)
-    .max(tracerObservationSpanReadResponseCompletionTokensMax)
-    .optional(),
-  total_tokens: zod
-    .number()
-    .min(tracerObservationSpanReadResponseTotalTokensMin)
-    .max(tracerObservationSpanReadResponseTotalTokensMax)
-    .optional(),
-  response_time: zod.number().optional(),
-  eval_id: zod
-    .string()
-    .max(tracerObservationSpanReadResponseEvalIdMax)
-    .optional(),
-  cost: zod.number().optional(),
-  status: zod.enum(["UNSET", "OK", "ERROR"]).optional(),
-  status_message: zod.string().optional(),
-  tags: zod.object({}).passthrough().optional(),
-  metadata: zod.object({}).passthrough().optional(),
-  span_events: zod.object({}).passthrough().optional(),
-  provider: zod
-    .string()
-    .max(tracerObservationSpanReadResponseProviderMax)
-    .optional(),
-  provider_logo: zod.string().optional(),
-  span_attributes: zod.string().optional(),
-  custom_eval_config: zod.string().uuid().optional(),
-  eval_status: zod
-    .enum([
-      "NotStarted",
-      "Queued",
-      "Running",
-      "Completed",
-      "Editing",
-      "Inactive",
-      "Failed",
-      "PartialRun",
-      "ExperimentEvaluation",
-      "Uploading",
-      "PartialExtracted",
-      "Processing",
-      "Deleting",
-      "PartialCompleted",
-      "OptimizationEvaluation",
-      "Error",
-      "Cancelled",
-    ])
-    .optional(),
-  prompt_version: zod.string().uuid().optional(),
+  status: zod.boolean(),
+  result: zod.object({
+    observation_span: zod.record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    ),
+    evals_metrics: zod.record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    ),
+    enrichment: zod
+      .record(
+        zod.string(),
+        zod.object({}).passthrough().describe("Any valid JSON value."),
+      )
+      .optional(),
+  }),
 });
 
 export const TracerObservationSpanUpdateParams = zod.object({
@@ -56766,6 +56584,87 @@ export const TracerTraceSessionListSessionsResponse = zod.object({
   }),
 });
 
+/**
+ * List traces filtered by project ID and project version ID with optimized queries.
+ */
+export const tracerTraceSessionListSessionsCreateBodyFiltersDefault = `[]`;
+
+export const tracerTraceSessionListSessionsCreateBodySortParamsDefault = `[]`;
+
+export const tracerTraceSessionListSessionsCreateBodyPageNumberDefault = 0;
+export const tracerTraceSessionListSessionsCreateBodyPageNumberMin = 0;
+
+export const tracerTraceSessionListSessionsCreateBodyPageSizeDefault = 30;
+export const tracerTraceSessionListSessionsCreateBodyPageSizeMax = 500;
+
+export const tracerTraceSessionListSessionsCreateBodyCursorMax = 4096;
+
+export const tracerTraceSessionListSessionsCreateBodyCursorModeDefault = false;
+
+export const TracerTraceSessionListSessionsCreateBody = zod.object({
+  project_id: zod.string().uuid().optional(),
+  user_id: zod.string().optional(),
+  bookmarked: zod.boolean().optional(),
+  filters: zod
+    .string()
+    .min(1)
+    .default(tracerTraceSessionListSessionsCreateBodyFiltersDefault)
+    .describe(
+      "JSON-encoded canonical filter list. On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result.",
+    ),
+  sort_params: zod
+    .string()
+    .min(1)
+    .default(tracerTraceSessionListSessionsCreateBodySortParamsDefault)
+    .describe("JSON-encoded list of sort params."),
+  page_number: zod
+    .number()
+    .min(tracerTraceSessionListSessionsCreateBodyPageNumberMin)
+    .default(tracerTraceSessionListSessionsCreateBodyPageNumberDefault)
+    .describe(
+      "Zero-based numbered page. Pages whose required ordered work exceeds the finite read contract return HTTP 422 with code page_depth_exceeded; request an earlier page or narrow the time range.",
+    ),
+  page_size: zod
+    .number()
+    .min(1)
+    .max(tracerTraceSessionListSessionsCreateBodyPageSizeMax)
+    .default(tracerTraceSessionListSessionsCreateBodyPageSizeDefault),
+  cursor: zod
+    .string()
+    .min(1)
+    .max(tracerTraceSessionListSessionsCreateBodyCursorMax)
+    .optional()
+    .describe(
+      "Opaque continuation token returned by the previous page. When supplied, do not also send the numbered-page parameter.",
+    ),
+  cursor_mode: zod
+    .boolean()
+    .default(tracerTraceSessionListSessionsCreateBodyCursorModeDefault),
+  interval: zod.string().optional(),
+  allow_sampled: zod
+    .boolean()
+    .optional()
+    .describe(
+      "Omit for backward-compatible complete bounded pages, which may label total_rows as a lower bound. Send false to require an exact total, or true to opt in explicitly to lower-bound totals.",
+    ),
+});
+
+export const tracerTraceSessionListSessionsCreateResponseResultMetadataNextCursorFingerprintRegExp =
+  new RegExp("^[0-9a-f]{64}$");
+
+export const tracerTraceSessionListSessionsCreateResponseResultMetadataQueryCountMin = 0;
+
+export const tracerTraceSessionListSessionsCreateResponseResultMetadataQueryRowsReturnedMin = 0;
+
+export const tracerTraceSessionListSessionsCreateResponseResultMetadataQueryResultPayloadBytesMin = 0;
+
+export const tracerTraceSessionListSessionsCreateResponseResultMetadataQueryAppliedFilterSha256RegExp =
+  new RegExp("^[0-9a-f]{64}$");
+export const tracerTraceSessionListSessionsCreateResponseResultMetadataQueryAppliedFilterCountMin = 0;
+
+export const TracerTraceSessionListSessionsCreateResponse =
+  TracerTraceSessionListSessionsResponse;
+
 export const TracerTraceSessionReadParams = zod.object({
   id: zod.string(),
 });
@@ -56854,6 +56753,98 @@ export const TracerTraceSessionEvalLogsResponse = zod.object({
   name: zod.string().max(tracerTraceSessionEvalLogsResponseNameMax).optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
 });
+
+/**
+ * Read the same authorized detail without putting filters in the URL.
+ */
+export const TracerTraceSessionQueryParams = zod.object({
+  id: zod.string(),
+});
+
+export const tracerTraceSessionQueryQueryFiltersDefault = `[]`;
+
+export const tracerTraceSessionQueryQuerySortParamsDefault = `[]`;
+
+export const tracerTraceSessionQueryQueryPageNumberDefault = 0;
+export const tracerTraceSessionQueryQueryPageNumberMin = 0;
+
+export const tracerTraceSessionQueryQueryPageSizeDefault = 30;
+export const tracerTraceSessionQueryQueryPageSizeMax = 500;
+
+export const TracerTraceSessionQueryQueryParams = zod.object({
+  navigation_context: zod.string().optional(),
+  user_id: zod.string().optional(),
+  filters: zod
+    .string()
+    .min(1)
+    .default(tracerTraceSessionQueryQueryFiltersDefault),
+  sort_params: zod
+    .string()
+    .min(1)
+    .default(tracerTraceSessionQueryQuerySortParamsDefault),
+  page_number: zod
+    .number()
+    .min(tracerTraceSessionQueryQueryPageNumberMin)
+    .default(tracerTraceSessionQueryQueryPageNumberDefault),
+  page_size: zod
+    .number()
+    .min(1)
+    .max(tracerTraceSessionQueryQueryPageSizeMax)
+    .default(tracerTraceSessionQueryQueryPageSizeDefault),
+});
+
+export const TracerTraceSessionQueryResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    session_metadata: zod.record(zod.string(), zod.unknown()),
+    response: zod.array(zod.record(zod.string(), zod.unknown())),
+    next: zod.boolean(),
+  }),
+});
+
+/**
+ * Read the same authorized detail without putting filters in the URL.
+ */
+export const TracerTraceSessionQueryCreateParams = zod.object({
+  id: zod.string(),
+});
+
+export const tracerTraceSessionQueryCreateBodyFiltersDefault = `[]`;
+
+export const tracerTraceSessionQueryCreateBodySortParamsDefault = `[]`;
+
+export const tracerTraceSessionQueryCreateBodyPageNumberDefault = 0;
+export const tracerTraceSessionQueryCreateBodyPageNumberMin = 0;
+
+export const tracerTraceSessionQueryCreateBodyPageSizeDefault = 30;
+export const tracerTraceSessionQueryCreateBodyPageSizeMax = 500;
+
+export const TracerTraceSessionQueryCreateBody = zod.object({
+  navigation_context: zod.string().optional().describe("JSON-encoded object."),
+  user_id: zod.string().optional(),
+  filters: zod
+    .string()
+    .min(1)
+    .default(tracerTraceSessionQueryCreateBodyFiltersDefault)
+    .describe("JSON-encoded canonical filter list."),
+  sort_params: zod
+    .string()
+    .min(1)
+    .default(tracerTraceSessionQueryCreateBodySortParamsDefault)
+    .describe("JSON-encoded list of sort params."),
+  page_number: zod
+    .number()
+    .min(tracerTraceSessionQueryCreateBodyPageNumberMin)
+    .default(tracerTraceSessionQueryCreateBodyPageNumberDefault),
+  page_size: zod
+    .number()
+    .min(1)
+    .max(tracerTraceSessionQueryCreateBodyPageSizeMax)
+    .default(tracerTraceSessionQueryCreateBodyPageSizeDefault),
+});
+
+export const TracerTraceSessionQueryCreateResponse =
+  TracerTraceSessionQueryResponse;
 
 export const TracerTraceListQueryParams = zod.object({
   page: zod
@@ -57111,6 +57102,79 @@ export const TracerTraceAgentGraphResponse = zod.object({
     query_refreshing: zod.boolean().optional(),
   }),
 });
+
+/**
+ * ``path_edges`` remains an empty compatibility field until telemetry
+records authoritative chronological execution transitions.
+ * @summary Return one cached exact Agent Graph.
+ */
+export const tracerTraceAgentGraphCreateBodyFiltersDefault = `[]`;
+
+export const tracerTraceAgentGraphCreateBodyRefreshDefault = false;
+
+export const TracerTraceAgentGraphCreateBody = zod.object({
+  project_id: zod.string().uuid(),
+  filters: zod
+    .string()
+    .min(1)
+    .default(tracerTraceAgentGraphCreateBodyFiltersDefault)
+    .describe("JSON-encoded canonical filter list."),
+  refresh: zod
+    .boolean()
+    .default(tracerTraceAgentGraphCreateBodyRefreshDefault)
+    .describe(
+      "Recompute and atomically replace the last exact graph snapshot.",
+    ),
+});
+
+export const tracerTraceAgentGraphCreateResponseResultNodesItemSpanCountMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultNodesItemAvgLatencyMsMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultNodesItemTotalTokensMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultNodesItemTotalCostMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultNodesItemErrorCountMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultNodesItemTraceCountMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultNodesItemMemberCountMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultEdgesItemTransitionCountMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultEdgesItemAvgLatencyMsMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultEdgesItemTotalTokensMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultEdgesItemTotalCostMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultEdgesItemErrorCountMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultEdgesItemTraceCountMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultPathEdgesItemTransitionCountMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultPathEdgesItemAvgLatencyMsMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultPathEdgesItemTotalTokensMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultPathEdgesItemTotalCostMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultPathEdgesItemErrorCountMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultPathEdgesItemTraceCountMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultOmittedNodeCountMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultQueryCountMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultQueryRowsReturnedMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultQueryElapsedMsMin = 0;
+
+export const TracerTraceAgentGraphCreateResponse =
+  TracerTraceAgentGraphResponse;
 
 export const tracerTraceBulkCreateBodyNameMax = 2000;
 
@@ -57492,40 +57556,32 @@ export const TracerTraceGetTraceIdByIndexQueryParams = zod.object({
     .default(tracerTraceGetTraceIdByIndexQueryFiltersDefault),
 });
 
-export const tracerTraceGetTraceIdByIndexResponseResultsItemNameMax = 2000;
-
-export const tracerTraceGetTraceIdByIndexResponseResultsItemExternalIdMax = 255;
-
 export const TracerTraceGetTraceIdByIndexResponse = zod.object({
-  count: zod.number(),
-  next: zod.string().url().optional(),
-  previous: zod.string().url().optional(),
-  results: zod.array(
-    zod.object({
-      id: zod.string().uuid().optional(),
-      project: zod.string().uuid(),
-      project_version: zod.string().uuid().optional(),
-      name: zod
-        .string()
-        .max(tracerTraceGetTraceIdByIndexResponseResultsItemNameMax)
-        .optional(),
-      metadata: zod.object({}).passthrough().optional(),
-      input: zod.object({}).passthrough().optional(),
-      output: zod.object({}).passthrough().optional(),
-      error: zod.object({}).passthrough().optional(),
-      session: zod.string().uuid().optional(),
-      external_id: zod
-        .string()
-        .max(tracerTraceGetTraceIdByIndexResponseResultsItemExternalIdMax)
-        .optional(),
-      tags: zod.object({}).passthrough().optional(),
-    }),
-  ),
+  status: zod.boolean(),
+  result: zod.object({
+    next_trace_id: zod.string().min(1),
+    previous_trace_id: zod.string().min(1),
+  }),
 });
 
 /**
- * Get the previous and next trace id by index.
+ * Get the previous and next trace id by index using efficient database queries.
  */
+export const tracerTraceGetTraceIdByIndexCreateBodyFiltersDefault = `[]`;
+
+export const TracerTraceGetTraceIdByIndexCreateBody = zod.object({
+  trace_id: zod.string().uuid(),
+  project_version_id: zod.string().uuid(),
+  filters: zod
+    .string()
+    .min(1)
+    .default(tracerTraceGetTraceIdByIndexCreateBodyFiltersDefault)
+    .describe("JSON-encoded canonical filter list."),
+});
+
+export const TracerTraceGetTraceIdByIndexCreateResponse =
+  TracerTraceGetTraceIdByIndexResponse;
+
 export const tracerTraceGetTraceIdByIndexObserveQueryFiltersDefault = `[]`;
 
 export const TracerTraceGetTraceIdByIndexObserveQueryParams = zod.object({
@@ -57545,42 +57601,32 @@ export const TracerTraceGetTraceIdByIndexObserveQueryParams = zod.object({
     .default(tracerTraceGetTraceIdByIndexObserveQueryFiltersDefault),
 });
 
-export const tracerTraceGetTraceIdByIndexObserveResponseResultsItemNameMax = 2000;
-
-export const tracerTraceGetTraceIdByIndexObserveResponseResultsItemExternalIdMax = 255;
-
 export const TracerTraceGetTraceIdByIndexObserveResponse = zod.object({
-  count: zod.number(),
-  next: zod.string().url().optional(),
-  previous: zod.string().url().optional(),
-  results: zod.array(
-    zod.object({
-      id: zod.string().uuid().optional(),
-      project: zod.string().uuid(),
-      project_version: zod.string().uuid().optional(),
-      name: zod
-        .string()
-        .max(tracerTraceGetTraceIdByIndexObserveResponseResultsItemNameMax)
-        .optional(),
-      metadata: zod.object({}).passthrough().optional(),
-      input: zod.object({}).passthrough().optional(),
-      output: zod.object({}).passthrough().optional(),
-      error: zod.object({}).passthrough().optional(),
-      session: zod.string().uuid().optional(),
-      external_id: zod
-        .string()
-        .max(
-          tracerTraceGetTraceIdByIndexObserveResponseResultsItemExternalIdMax,
-        )
-        .optional(),
-      tags: zod.object({}).passthrough().optional(),
-    }),
-  ),
+  status: zod.boolean(),
+  result: zod.object({
+    next_trace_id: zod.string().min(1),
+    previous_trace_id: zod.string().min(1),
+  }),
 });
 
 /**
- * List traces filtered by project ID and project version ID with optimized queries.
+ * Get the previous and next trace id by index.
  */
+export const tracerTraceGetTraceIdByIndexObserveCreateBodyFiltersDefault = `[]`;
+
+export const TracerTraceGetTraceIdByIndexObserveCreateBody = zod.object({
+  trace_id: zod.string().uuid(),
+  project_id: zod.string().uuid(),
+  filters: zod
+    .string()
+    .min(1)
+    .default(tracerTraceGetTraceIdByIndexObserveCreateBodyFiltersDefault)
+    .describe("JSON-encoded canonical filter list."),
+});
+
+export const TracerTraceGetTraceIdByIndexObserveCreateResponse =
+  TracerTraceGetTraceIdByIndexObserveResponse;
+
 export const tracerTraceListTracesQueryTraceIdsDefault = [];
 export const tracerTraceListTracesQueryFiltersDefault = `[]`;
 
@@ -57730,8 +57776,72 @@ export const TracerTraceListTracesResponse = zod.object({
 });
 
 /**
- * List traces filtered by project ID with optimized queries.
+ * List traces filtered by project ID and project version ID with optimized queries.
  */
+export const tracerTraceListTracesCreateBodyTraceIdsDefault = [];
+export const tracerTraceListTracesCreateBodyFiltersDefault = `[]`;
+
+export const tracerTraceListTracesCreateBodySortParamsDefault = `[]`;
+
+export const tracerTraceListTracesCreateBodyPageNumberDefault = 0;
+export const tracerTraceListTracesCreateBodyPageNumberMin = 0;
+
+export const tracerTraceListTracesCreateBodyPageSizeDefault = 30;
+export const tracerTraceListTracesCreateBodyPageSizeMax = 500;
+
+export const TracerTraceListTracesCreateBody = zod.object({
+  project_version_id: zod.string().uuid(),
+  trace_ids: zod
+    .string()
+    .default(tracerTraceListTracesCreateBodyTraceIdsDefault),
+  filters: zod
+    .string()
+    .min(1)
+    .default(tracerTraceListTracesCreateBodyFiltersDefault)
+    .describe(
+      "JSON-encoded canonical filter list. On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result.",
+    ),
+  sort_params: zod
+    .string()
+    .min(1)
+    .default(tracerTraceListTracesCreateBodySortParamsDefault)
+    .describe("JSON-encoded list of sort params."),
+  page_number: zod
+    .number()
+    .min(tracerTraceListTracesCreateBodyPageNumberMin)
+    .default(tracerTraceListTracesCreateBodyPageNumberDefault)
+    .describe(
+      "Zero-based numbered page. Pages whose required ordered work exceeds the finite read contract return HTTP 422 with code page_depth_exceeded; request an earlier page or narrow the time range.",
+    ),
+  page_size: zod
+    .number()
+    .min(1)
+    .max(tracerTraceListTracesCreateBodyPageSizeMax)
+    .default(tracerTraceListTracesCreateBodyPageSizeDefault),
+  allow_sampled: zod
+    .boolean()
+    .optional()
+    .describe(
+      "Omit for backward-compatible complete bounded pages, which may label total_rows as a lower bound. Send false to require an exact total, or true to opt in explicitly to lower-bound totals.",
+    ),
+});
+
+export const tracerTraceListTracesCreateResponseResultMetadataNextCursorFingerprintRegExp =
+  new RegExp("^[0-9a-f]{64}$");
+
+export const tracerTraceListTracesCreateResponseResultMetadataQueryCountMin = 0;
+
+export const tracerTraceListTracesCreateResponseResultMetadataQueryRowsReturnedMin = 0;
+
+export const tracerTraceListTracesCreateResponseResultMetadataQueryResultPayloadBytesMin = 0;
+
+export const tracerTraceListTracesCreateResponseResultMetadataQueryAppliedFilterSha256RegExp =
+  new RegExp("^[0-9a-f]{64}$");
+export const tracerTraceListTracesCreateResponseResultMetadataQueryAppliedFilterCountMin = 0;
+
+export const TracerTraceListTracesCreateResponse =
+  TracerTraceListTracesResponse;
+
 export const tracerTraceListTracesOfSessionQueryFiltersDefault = `[]`;
 
 export const tracerTraceListTracesOfSessionQueryPageNumberDefault = 0;
@@ -57899,14 +58009,85 @@ export const TracerTraceListTracesOfSessionResponse = zod.object({
 });
 
 /**
- * List voice/conversation traces for a project in an optimized way and
-return a response similar to the provided call object schema.
-
-Query params:
-- project_id (required)
-- page (1-based, optional, default 1)
-- page_size (optional, default 30)
+ * List traces filtered by project ID with optimized queries.
  */
+export const tracerTraceListTracesOfSessionCreateBodyFiltersDefault = `[]`;
+
+export const tracerTraceListTracesOfSessionCreateBodyPageNumberDefault = 0;
+export const tracerTraceListTracesOfSessionCreateBodyPageNumberMin = 0;
+
+export const tracerTraceListTracesOfSessionCreateBodyPageSizeDefault = 30;
+export const tracerTraceListTracesOfSessionCreateBodyPageSizeMax = 500;
+
+export const tracerTraceListTracesOfSessionCreateBodyCursorMax = 4096;
+
+export const tracerTraceListTracesOfSessionCreateBodyCursorModeDefault = false;
+
+export const TracerTraceListTracesOfSessionCreateBody = zod.object({
+  project_id: zod.string().uuid().optional(),
+  project_version_id: zod.string().uuid().optional(),
+  session_id: zod.string().uuid().optional(),
+  filters: zod
+    .string()
+    .min(1)
+    .default(tracerTraceListTracesOfSessionCreateBodyFiltersDefault)
+    .describe(
+      "JSON-encoded canonical filter list. On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result.",
+    ),
+  page_number: zod
+    .number()
+    .min(tracerTraceListTracesOfSessionCreateBodyPageNumberMin)
+    .default(tracerTraceListTracesOfSessionCreateBodyPageNumberDefault)
+    .describe(
+      "Zero-based numbered page. Pages whose required ordered work exceeds the finite read contract return HTTP 422 with code page_depth_exceeded; request an earlier page or narrow the time range.",
+    ),
+  page_size: zod
+    .number()
+    .min(1)
+    .max(tracerTraceListTracesOfSessionCreateBodyPageSizeMax)
+    .default(tracerTraceListTracesOfSessionCreateBodyPageSizeDefault),
+  cursor: zod
+    .string()
+    .min(1)
+    .max(tracerTraceListTracesOfSessionCreateBodyCursorMax)
+    .optional()
+    .describe(
+      "Opaque continuation token returned by the previous page. When supplied, do not also send the numbered-page parameter.",
+    ),
+  cursor_mode: zod
+    .boolean()
+    .default(tracerTraceListTracesOfSessionCreateBodyCursorModeDefault),
+  attribute_keys: zod
+    .string()
+    .optional()
+    .describe(
+      "JSON-encoded list of custom attribute keys to hydrate; only requested keys are returned. Each key resolves to its latest live span value by (start_time, span_id). Comma-separated simple keys remain supported.",
+    ),
+  allow_sampled: zod
+    .boolean()
+    .optional()
+    .describe(
+      "Omit for backward-compatible complete bounded pages, which may label total_rows as a lower bound. Send false to require an exact total. Send true to opt in explicitly to lower-bound totals and, on the first page, a clearly labelled bounded partial result when the full ordered prefix cannot be proven inside the read budget.",
+    ),
+  interval: zod.string().optional(),
+});
+
+export const tracerTraceListTracesOfSessionCreateResponseResultMetadataNextCursorFingerprintRegExp =
+  new RegExp("^[0-9a-f]{64}$");
+
+export const tracerTraceListTracesOfSessionCreateResponseResultMetadataQueryCountMin = 0;
+
+export const tracerTraceListTracesOfSessionCreateResponseResultMetadataQueryRowsReturnedMin = 0;
+
+export const tracerTraceListTracesOfSessionCreateResponseResultMetadataQueryResultPayloadBytesMin = 0;
+
+export const tracerTraceListTracesOfSessionCreateResponseResultMetadataQueryAppliedFilterSha256RegExp =
+  new RegExp("^[0-9a-f]{64}$");
+export const tracerTraceListTracesOfSessionCreateResponseResultMetadataQueryAppliedFilterCountMin = 0;
+
+export const TracerTraceListTracesOfSessionCreateResponse =
+  TracerTraceListTracesOfSessionResponse;
+
 export const tracerTraceListVoiceCallsQueryFiltersDefault = `[]`;
 
 export const tracerTraceListVoiceCallsQueryPageDefault = 1;
@@ -58032,10 +58213,88 @@ export const TracerTraceListVoiceCallsResponse = zod.object({
 });
 
 /**
- * Query params:
-- trace_id or legacy traceId (required) — UUID of the voice call trace.
- * @summary Return the heavy / detail-only fields for a single voice call.
+ * List voice/conversation traces for a project in an optimized way and
+return a response similar to the provided call object schema.
+
+Query params:
+- project_id (required)
+- page (1-based, optional, default 1)
+- page_size (optional, default 30)
  */
+export const tracerTraceListVoiceCallsCreateBodyFiltersDefault = `[]`;
+
+export const tracerTraceListVoiceCallsCreateBodyPageDefault = 1;
+
+export const tracerTraceListVoiceCallsCreateBodyPageSizeDefault = 30;
+export const tracerTraceListVoiceCallsCreateBodyPageSizeMax = 500;
+
+export const tracerTraceListVoiceCallsCreateBodyRemoveSimulationCallsDefault =
+  false;
+export const tracerTraceListVoiceCallsCreateBodyCursorMax = 4096;
+
+export const tracerTraceListVoiceCallsCreateBodyCursorModeDefault = false;
+
+export const TracerTraceListVoiceCallsCreateBody = zod.object({
+  project_id: zod.string().uuid(),
+  filters: zod
+    .string()
+    .min(1)
+    .default(tracerTraceListVoiceCallsCreateBodyFiltersDefault)
+    .describe("JSON-encoded canonical filter list."),
+  attribute_keys: zod
+    .string()
+    .optional()
+    .describe(
+      "JSON-encoded list of custom attribute keys to include as CSV columns. Comma-separated simple keys remain supported.",
+    ),
+  page: zod
+    .number()
+    .min(1)
+    .default(tracerTraceListVoiceCallsCreateBodyPageDefault)
+    .describe(
+      "One-based numbered page. Pages whose required ordered work exceeds the finite read contract return HTTP 422 with code page_depth_exceeded; request an earlier page, use the additive continuation cursor, or narrow the time range.",
+    ),
+  page_size: zod
+    .number()
+    .min(1)
+    .max(tracerTraceListVoiceCallsCreateBodyPageSizeMax)
+    .default(tracerTraceListVoiceCallsCreateBodyPageSizeDefault),
+  remove_simulation_calls: zod
+    .boolean()
+    .default(tracerTraceListVoiceCallsCreateBodyRemoveSimulationCallsDefault),
+  cursor: zod
+    .string()
+    .min(1)
+    .max(tracerTraceListVoiceCallsCreateBodyCursorMax)
+    .optional()
+    .describe(
+      "Opaque continuation token returned by the previous page. When supplied, do not also send the numbered-page parameter.",
+    ),
+  cursor_mode: zod
+    .boolean()
+    .default(tracerTraceListVoiceCallsCreateBodyCursorModeDefault),
+  allow_sampled: zod
+    .boolean()
+    .optional()
+    .describe(
+      "Omit for backward-compatible complete bounded pages, which may label count as a lower bound. Send false to require an exact total. Send true to opt in explicitly to lower-bound totals and, on the first page, a clearly labelled bounded partial result when the full ordered prefix cannot be proven inside the read budget.",
+    ),
+});
+
+export const tracerTraceListVoiceCallsCreateResponseCountMin = 0;
+
+export const tracerTraceListVoiceCallsCreateResponseTotalPagesMin = 0;
+
+export const tracerTraceListVoiceCallsCreateResponseNextCursorFingerprintRegExp =
+  new RegExp("^[0-9a-f]{64}$");
+
+export const tracerTraceListVoiceCallsCreateResponseQueryAppliedFilterSha256RegExp =
+  new RegExp("^[0-9a-f]{64}$");
+export const tracerTraceListVoiceCallsCreateResponseQueryAppliedFilterCountMin = 0;
+
+export const TracerTraceListVoiceCallsCreateResponse =
+  TracerTraceListVoiceCallsResponse;
+
 export const TracerTraceVoiceCallDetailQueryParams = zod.object({
   trace_id: zod
     .string()
@@ -60410,12 +60669,83 @@ export const TracerUsersListResponse = zod.object({
     query_status: zod.enum(["complete", "degraded"]).optional(),
     query_exact: zod.boolean().optional(),
     query_provenance: zod
-      .enum(["span_user_rollup_end_users_candidate"])
+      .enum(["span_user_rollup_end_users_candidate", "physical_latest_users"])
       .optional(),
     ordering_exact: zod.boolean().optional(),
     approximate_fields: zod.array(zod.enum(["num_sessions"])).optional(),
   }),
 });
+
+/**
+ * List traces filtered by project ID with optimized queries.
+ */
+export const tracerUsersCreateBodyPageSizeMax = 500;
+
+export const tracerUsersCreateBodyCurrentPageIndexMin = 0;
+
+export const tracerUsersCreateBodySortParamsDefault = `[]`;
+
+export const tracerUsersCreateBodyFiltersDefault = `[]`;
+
+export const tracerUsersCreateBodyExportDefault = false;
+export const tracerUsersCreateBodyCursorMax = 4096;
+
+export const tracerUsersCreateBodyCursorModeDefault = false;
+export const tracerUsersCreateBodyRequestedColumnsDefault = [];
+export const tracerUsersCreateBodyAttributeKeysDefault = [];
+
+export const TracerUsersCreateBody = zod.object({
+  project_id: zod.string().uuid().optional(),
+  search: zod.string().optional(),
+  page_size: zod
+    .number()
+    .min(1)
+    .max(tracerUsersCreateBodyPageSizeMax)
+    .optional(),
+  current_page_index: zod
+    .number()
+    .min(tracerUsersCreateBodyCurrentPageIndexMin)
+    .optional(),
+  sort_params: zod
+    .string()
+    .min(1)
+    .default(tracerUsersCreateBodySortParamsDefault)
+    .describe("JSON-encoded list of sort params."),
+  filters: zod
+    .string()
+    .min(1)
+    .default(tracerUsersCreateBodyFiltersDefault)
+    .describe("JSON-encoded canonical filter list."),
+  export: zod.boolean().default(tracerUsersCreateBodyExportDefault),
+  cursor: zod
+    .string()
+    .min(1)
+    .max(tracerUsersCreateBodyCursorMax)
+    .optional()
+    .describe(
+      "Opaque continuation token returned by the previous page. When supplied, do not also send the numbered-page parameter.",
+    ),
+  cursor_mode: zod.boolean().default(tracerUsersCreateBodyCursorModeDefault),
+  requested_columns: zod
+    .string()
+    .default(tracerUsersCreateBodyRequestedColumnsDefault)
+    .describe(
+      "JSON-encoded list of visible Users-table fields. Raw-derived metrics are hydrated only when explicitly requested.",
+    ),
+  attribute_keys: zod
+    .string()
+    .default(tracerUsersCreateBodyAttributeKeysDefault)
+    .describe(
+      "JSON-encoded list of visible custom user attribute keys. Only these keys (plus keys required by filters) are hydrated.",
+    ),
+});
+
+export const tracerUsersCreateResponseStatusDefault = true;
+
+export const tracerUsersCreateResponseResultNextCursorFingerprintRegExp =
+  new RegExp("^[0-9a-f]{64}$");
+
+export const TracerUsersCreateResponse = TracerUsersListResponse;
 
 export const tracerUsersGetCodeExampleListResponseStatusDefault = true;
 
@@ -60433,17 +60763,6 @@ export const TracerUsersGetCodeExampleListResponse = zod.object({
 export const TracerV1HealthListResponse = zod.object({
   status: zod.enum(["healthy"]),
   service: zod.string().min(1),
-});
-
-export const TracerWebhookCreateBody = zod.object({
-  call: zod.object({}).passthrough(),
-});
-
-export const tracerWebhookCreateResponseStatusDefault = true;
-
-export const TracerWebhookCreateResponse = zod.object({
-  status: zod.boolean().default(tracerWebhookCreateResponseStatusDefault),
-  result: zod.string().min(1),
 });
 
 /**
@@ -62995,6 +63314,8 @@ export const UsageV2PlansAndAddonsListResponse = zod.object({
         pricing: zod.record(zod.string(), zod.object({}).passthrough()),
       })
       .optional(),
+    plan_change_locked: zod.boolean().optional(),
+    plan_change_locked_reason: zod.string().optional(),
     pending_cancel: zod.boolean(),
     cancel_at: zod.string().min(1).optional(),
   }),

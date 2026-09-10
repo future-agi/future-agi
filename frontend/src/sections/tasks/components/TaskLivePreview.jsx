@@ -22,7 +22,7 @@ import {
 import { alpha } from "@mui/material/styles";
 import { useWatch } from "react-hook-form";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import axios, { endpoints } from "src/utils/axios";
+import axios, { readQuery, endpoints } from "src/utils/axios";
 import { canonicalEntries } from "src/utils/utils";
 import { ROW_TYPE_LABELS } from "src/utils/constants";
 import { executeEvalForRow } from "src/sections/evals/utils/evalExecution";
@@ -51,7 +51,15 @@ import {
   isRecordingObjectKey,
 } from "src/components/inline-audio/audio-detection";
 import { ID_ONLY_FIELDS } from "src/sections/projects/LLMTracing/idFields";
+import {
+  getSpanReadCacheKey,
+  getSpanReadIdentityKey,
+  SPAN_REFERENCE_ERROR,
+  spanReadRequest,
+  verifySpanReadResponse,
+} from "src/sections/projects/LLMTracing/spanReadReference";
 import { serializeFilterForApi } from "src/api/contracts/filter-contract";
+import { ANALYTICS_REQUEST_TIMEOUT_MS } from "src/config/runtime_limits";
 import { useGetProjectDetails } from "src/api/project/project-detail";
 import { isTaskPreviewProjectKindReady } from "../taskProjectKind";
 import {
@@ -66,6 +74,7 @@ import {
 import {
   serializeTaskFilterRowsForApi,
   taskFilterColumnId,
+  taskFilterColumnType,
 } from "src/sections/common/EvalsTasks/task_filter_serialization";
 import { QUERY_FAILED_RETRY_MESSAGE } from "src/utils/queryReadState";
 import {
@@ -86,7 +95,9 @@ export function buildApiFilterArray(oldFormatFilters, startDate, endDate) {
   const userFilters = serializeTaskFilterRowsForApi(
     oldFormatFilters,
     (row) => ({
-      omitColumnType: ID_ONLY_FIELDS.has(taskFilterColumnId(row)),
+      omitColumnType:
+        ID_ONLY_FIELDS.has(taskFilterColumnId(row)) &&
+        taskFilterColumnType(row, taskFilterColumnId(row)) === "SYSTEM_METRIC",
     }),
   );
 
@@ -144,8 +155,7 @@ const taskPreviewRowIdentity = (rowType, row) => {
   if (rowType === "traces") {
     return row?.trace_id || row?.id || null;
   }
-  const id = row?.span_id || row?.id;
-  return id ? `${row?.trace_id || ""}:${id}:${row?.start_time || ""}` : null;
+  return getSpanReadIdentityKey(row);
 };
 
 // Deep search: check if a value (including nested JSON) matches query
@@ -174,20 +184,6 @@ function sortEntries(entries) {
     if (bi !== -1) return 1;
     return 0;
   });
-}
-
-// Find span by id recursively in the observation spans tree.
-function findSpanInTree(spans, spanId) {
-  if (!spans) return null;
-  for (const item of spans) {
-    const span = item.observation_span;
-    if (span?.id === spanId) return span;
-    if (item.children?.length) {
-      const found = findSpanInTree(item.children, spanId);
-      if (found) return found;
-    }
-  }
-  return null;
 }
 
 // Flatten span tree into an ordered list with smart indexing.
@@ -334,6 +330,9 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
     ],
     queryFn: async ({ signal }) => {
       if (!projectId) return { rows: [], total: 0, columns: [] };
+      const startedAt = Date.now();
+      const remainingMs = () =>
+        Math.max(1, ANALYTICS_REQUEST_TIMEOUT_MS - (Date.now() - startedAt));
 
       // A lazy continuation can traverse several empty bounded chunks before
       // its transport fails. Retry from the last unconsumed signed checkpoint
@@ -347,23 +346,30 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
         failedListContinuation || activeListContinuation;
       const attemptCursor = attemptListContinuation?.cursor || null;
 
-      // Cursors are opaque and query-bound. Keep every cursor already
-      // requested for this exact project/filter scope so a repeated or cyclic
+      // Cursors are opaque and query-bound. Keep every cursor successfully
+      // consumed for this exact project/filter scope so a repeated or cyclic
       // backend chain fails closed instead of spinning forever. The pending
       // continuation itself is deliberately not in this set until this
-      // request consumes it.
+      // request successfully consumes it.
       const requestedCursorIdentities = new Set(
         attemptListContinuation?.requestedCursorIdentities || [],
       );
       const cursorIdentityByToken = new Map();
+      const assertUnconsumedCursor = (identity) => {
+        if (
+          typeof identity !== "string" ||
+          requestedCursorIdentities.has(identity)
+        ) {
+          throw createListCursorProtocolError(
+            "List API returned a repeated continuation cursor",
+          );
+        }
+      };
       if (attemptCursor) {
         const attemptCursorIdentity =
           attemptListContinuation?.cursorIdentity ||
           listCursorBoundaryIdentity({ next_cursor: attemptCursor });
-        rememberBoundedListCursorIdentity(
-          requestedCursorIdentities,
-          attemptCursorIdentity,
-        );
+        assertUnconsumedCursor(attemptCursorIdentity);
         cursorIdentityByToken.set(attemptCursor, attemptCursorIdentity);
       }
 
@@ -375,10 +381,9 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
             "List API returned a repeated continuation cursor",
           );
         }
-        rememberBoundedListCursorIdentity(
-          requestedCursorIdentities,
-          nextCursorIdentity,
-        );
+        // A dispatched cursor is not consumed until its response succeeds.
+        // The follower returns this same cursor when its wall expires.
+        assertUnconsumedCursor(nextCursorIdentity);
         cursorIdentityByToken.set(nextCursor, nextCursorIdentity);
       };
 
@@ -417,16 +422,25 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
         try {
           const response = await requestListWithLegacyCursorFallback({
             request: (nextParams) =>
-              axios.get(url, { params: nextParams, signal: requestSignal }),
+              readQuery(url, { params: nextParams, signal: requestSignal }),
             params,
             pageParam: voice ? "page" : "page_number",
             firstPage: voice ? 1 : 0,
           });
-          return parseAxiosResult(response, parser);
+          const parsed = parseAxiosResult(response, parser);
+          if (params.cursor && !requestSignal.aborted && !signal.aborted) {
+            rememberBoundedListCursorIdentity(
+              requestedCursorIdentities,
+              cursorIdentityByToken.get(params.cursor) ||
+                listCursorBoundaryIdentity({ next_cursor: params.cursor }),
+            );
+          }
+          return parsed;
         } catch (error) {
           const failedCursor = params?.cursor;
           if (
             !signal.aborted &&
+            !requestSignal.aborted &&
             typeof failedCursor === "string" &&
             failedCursor.length > 0 &&
             !isListCursorProtocolError(error)
@@ -470,6 +484,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
           { voice: true, parser: parseVoiceCallListResponse },
         );
         const exactRows = await collectExactListRows({
+          maxElapsedMs: remainingMs(),
           initialResponse: resp,
           initialRows: attemptListContinuation?.rows || [],
           targetRowCount:
@@ -556,6 +571,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
         { parser: responseParser },
       );
       const exactRows = await collectExactListRows({
+        maxElapsedMs: remainingMs(),
         initialResponse: resp,
         initialRows: attemptListContinuation?.rows || [],
         targetRowCount:
@@ -604,6 +620,8 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
     },
     enabled: !!projectId && previewProjectKindReady,
     refetchOnWindowFocus: false,
+    // Let the user resume the retained checkpoint explicitly after a pause.
+    retry: false,
     staleTime: 10000,
     // Each continuation result contains the current accumulated preview rows.
     // Drop the superseded cursor-keyed query as soon as it becomes inactive so
@@ -687,10 +705,10 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
       currentRow?.trace_id,
       currentRow?.span_id,
       currentRow?.session_id,
+      rowType === "spans" ? getSpanReadCacheKey(currentRow) : null,
     ],
     queryFn: async ({ signal }) => {
       if (!currentRow) return null;
-      const spanId = currentRow.span_id;
       const traceId = currentRow.trace_id;
 
       let detailData = null;
@@ -708,23 +726,29 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
         } catch {
           detailData = { ...currentRow };
         }
-      } else if ((rowType === "spans" || rowType === "traces") && traceId) {
+      } else if (rowType === "spans") {
+        const { spanId, params } = spanReadRequest(currentRow);
+        if (params.project_id !== projectId)
+          throw new Error(SPAN_REFERENCE_ERROR);
+        const { data } = await axios.get(
+          endpoints.project.getObservationSpan(spanId),
+          { params, signal },
+        );
+        if (data?.status !== true) throw new Error(SPAN_REFERENCE_ERROR);
+        detailData = verifySpanReadResponse(
+          currentRow,
+          data?.result?.observation_span,
+        );
+      } else if (rowType === "traces" && traceId) {
         const { data } = await axios.get(endpoints.project.getTrace(traceId), {
           signal,
         });
         const traceResult = data?.result;
 
         const spans = traceResult?.observation_spans;
-        if (rowType === "spans" && spanId && spans) {
-          detailData = findSpanInTree(spans, spanId);
-          if (!detailData) {
-            detailData = spans?.[0]?.observation_span || traceResult?.trace;
-          }
-        } else {
-          const traceInfo = traceResult?.trace || {};
-          const allSpans = sortSpansForMapping(flattenSpanTree(spans));
-          detailData = { ...traceInfo, spans: allSpans };
-        }
+        const traceInfo = traceResult?.trace || {};
+        const allSpans = sortSpansForMapping(flattenSpanTree(spans));
+        detailData = { ...traceInfo, spans: allSpans };
       } else if (rowType === "sessions" && currentRow?.session_id) {
         // Sessions need a layered fetch: list_sessions returns flat
         // session-summary rows (id, total_cost, traces_count, etc.) but
@@ -1172,7 +1196,9 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
                 color="error"
                 sx={{ fontSize: "12px", textAlign: "center", py: 3 }}
               >
-                {QUERY_FAILED_RETRY_MESSAGE}
+                {rowType === "spans"
+                  ? SPAN_REFERENCE_ERROR
+                  : QUERY_FAILED_RETRY_MESSAGE}
               </Typography>
             ) : spanDetail ? (
               <RowDetailTable

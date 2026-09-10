@@ -3,114 +3,38 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager
 from functools import wraps
 from typing import Any
 
 import structlog
-from django.db import OperationalError, connection, transaction
+from django.db import DatabaseError, connection, transaction
 from rest_framework import status
 
 from tracer.services.clickhouse.read_budget import (
     ReadDeadline,
     ReadDeadlineExceeded,
 )
+from tracer.services.postgres_read_policy import (
+    ApplicationPostgresReadError,
+    application_postgres_reads,
+)
 
 logger = structlog.get_logger(__name__)
 
 
-def _mark_transaction_for_rollback() -> None:
-    """Keep an action-owned atomic block from committing after a read failure."""
-
-    if connection.in_atomic_block:
-        transaction.set_rollback(True)
-
-
-def _execute_list_postgres_query_with_deadline(
-    deadline: ReadDeadline,
-    execute,
-    sql,
-    params,
-    many,
-    context,
-):
-    """Give one PostgreSQL statement only the request wall that remains."""
-
-    timeout_ms = deadline.remaining_ms(floor_ms=1)
-    try:
-        # Use the driver's cursor so the timeout statement does not recursively
-        # enter this Django execute wrapper. ``is_local=true`` prevents the
-        # setting from escaping the request-owned transaction.
-        context["cursor"].cursor.execute(
-            "SELECT set_config('statement_timeout', %s, true)",
-            (str(timeout_ms),),
-        )
-    except Exception as exc:
-        # This is constant SQL whose only runtime input is an integer derived
-        # from the deadline. A failure here means the read cannot be bounded.
-        _mark_transaction_for_rollback()
-        raise ReadDeadlineExceeded(
-            "List PostgreSQL timeout could not be installed"
-        ) from exc
-
-    try:
-        result = execute(sql, params, many, context)
-    except ReadDeadlineExceeded:
-        raise
-    except OperationalError as exc:
-        # PostgreSQL reports statement_timeout through Django's database error
-        # boundary. Keep the public response typed and free of driver/SQL text.
-        _mark_transaction_for_rollback()
-        raise ReadDeadlineExceeded(
-            "List PostgreSQL read exceeded its request deadline"
-        ) from exc
-
-    deadline.remaining_ms(floor_ms=1)
-    return result
-
-
 @contextmanager
 def bounded_list_postgres_reads(deadline: ReadDeadline):
-    """Bound every PostgreSQL statement in one list action by one wall clock."""
-
-    if connection.vendor != "postgresql":
-        yield
-        deadline.remaining_ms(floor_ms=1)
-        return
-
-    transaction_started = False
-    with ExitStack() as stack:
-
-        def execute_with_remaining_timeout(execute, sql, params, many, context):
-            nonlocal transaction_started
-            # Installing an execute wrapper is connection-lazy. Open the
-            # transaction only when a real ORM statement arrives, preserving
-            # mock-only/unit early exits while keeping set_config transaction
-            # local in production.
-            if not connection.in_atomic_block and not transaction_started:
-                transaction_started = True
-                try:
-                    stack.enter_context(transaction.atomic())
-                except OperationalError as exc:
-                    transaction_started = False
-                    raise ReadDeadlineExceeded(
-                        "List PostgreSQL transaction could not start"
-                    ) from exc
-                except Exception:
-                    transaction_started = False
-                    raise
-            return _execute_list_postgres_query_with_deadline(
-                deadline,
-                execute,
-                sql,
-                params,
-                many,
-                context,
-            )
-
-        stack.enter_context(connection.execute_wrapper(execute_with_remaining_timeout))
-        yield
-        deadline.remaining_ms(floor_ms=1)
+    """Keep request checks separate from uncapped PostgreSQL execution."""
+    try:
+        with application_postgres_reads(
+            connection=connection,
+            atomic=transaction.atomic,
+            check_request=lambda: deadline.remaining_ms(floor_ms=1),
+        ):
+            yield
+    except DatabaseError as exc:
+        raise ApplicationPostgresReadError("List PostgreSQL read unavailable") from exc
 
 
 def bounded_list_request(
@@ -136,15 +60,10 @@ def bounded_list_request(
 
             try:
                 with bounded_list_postgres_reads(deadline):
-                    response = view_method(view, request, *args, **kwargs)
-                # Check after the PostgreSQL transaction closes too: a slow
-                # commit/rollback may not extend a nominal response past the
-                # request wall.
-                deadline.remaining_ms(floor_ms=1)
-                return response
-            except (ReadDeadlineExceeded, OperationalError) as exc:
+                    return view_method(view, request, *args, **kwargs)
+            except (ReadDeadlineExceeded, DatabaseError) as exc:
                 logger.warning(
-                    "observe_list_request_deadline_exceeded",
+                    "observe_list_request_read_unavailable",
                     resource=resource,
                     error_type=type(exc).__name__,
                 )

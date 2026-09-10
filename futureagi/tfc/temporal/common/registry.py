@@ -426,6 +426,25 @@ def _ensure_workflows_registered() -> None:
     # UsageConsumerWorkflow (long-running singleton) + MonthlyResetWorkflow
     _register_usage_temporal_workflows()
 
+    # Cloud Marketplace lifecycle consumer (long-running singleton)
+    try:
+        from tfc.temporal.marketplace.activities import (
+            drain_gcp_marketplace_events_activity,
+        )
+        from tfc.temporal.marketplace.workflows import GCPMarketplaceConsumerWorkflow
+
+        register_for_queues(
+            queues=["default"],
+            workflows=[GCPMarketplaceConsumerWorkflow],
+            activities=[drain_gcp_marketplace_events_activity],
+        )
+    except ImportError as e:
+        from tfc.logging.temporal import get_logger
+
+        get_logger(__name__).warning(
+            "could_not_load_gcp_marketplace_workflow", error=str(e)
+        )
+
     try:
         from tfc.temporal.billing.workflows import MonthlyClosingWorkflow
 

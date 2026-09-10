@@ -17,7 +17,7 @@ import RightSection from "src/components/CallLogsDetailDrawer/RightSection";
 import LeftSection from "src/components/CallLogsDetailDrawer/LeftSection";
 import AudioPlayerCustom from "./AudioPlayerCustom";
 import { useQueryClient } from "@tanstack/react-query";
-import axios, { endpoints } from "src/utils/axios";
+import axios, { readQuery, endpoints } from "src/utils/axios";
 import { transformMetricDetails } from "src/sections/agents/CallLogs/utils";
 import { enqueueSnackbar } from "notistack";
 import { deepEqual } from "src/utils/utils";
@@ -375,12 +375,10 @@ const TestDetailSideDrawerChild = ({
         baseParams: projectVoiceNavigatorParams,
         pageSize: standardPageLimit,
         request: (requestParams, requestOptions) =>
-          axios
-            .get(endpoints.project.getCallLogs, {
-              params: requestParams,
-              ...(requestOptions || {}),
-            })
-            .then((response) => response.data),
+          readQuery(endpoints.project.getCallLogs, {
+            params: requestParams,
+            ...(requestOptions || {}),
+          }).then((response) => response.data),
       });
     }
     return projectVoiceNavigatorRef.current;

@@ -97,6 +97,7 @@ Object.keys(swagger.paths || {})
 
       methods[method] = {
         operationId: operation.operationId || null,
+        ...(operation["x-read-query-post"] && { readQueryPost: true }),
         runtimeRequestValidation: Boolean(
           operation["x-runtime-request-validation"],
         ),

@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 
+from tracer.serializers.filters import FilterListField
 from tracer.services.filter_attestation import (
     FILTER_ATTESTATION_VERSION,
     applied_filter_attestation,
@@ -8,11 +9,13 @@ from tracer.services.filter_attestation import (
 )
 
 
-def _leaf(column_id, value, *, filter_type="number", op="equals"):
+def _leaf(
+    column_id, value, *, filter_type="number", op="equals", family="SPAN_ATTRIBUTE"
+):
     return {
         "column_id": column_id,
         "filter_config": {
-            "col_type": "SPAN_ATTRIBUTE",
+            "col_type": family,
             "filter_type": filter_type,
             "filter_op": op,
             "filter_value": value,
@@ -61,7 +64,11 @@ def test_positive_window_is_published_separately_while_complement_is_attested():
         "2026-01-15T00:00:00Z",
         filter_type="datetime",
         op="not_equals",
+        family="SYSTEM_METRIC",
     )
+    # This test is about a native window complement. Explicit raw attributes
+    # do not support datetime on the public wire and must never be promoted.
+    FilterListField().run_validation([complement])
 
     evidence = graph_query_evidence(
         project_id="project-1",

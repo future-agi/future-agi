@@ -3,13 +3,15 @@ from __future__ import annotations
 import json
 import math
 import time
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any, NoReturn
 
+from tracer.services.clickhouse.application_read_policy import (
+    application_read_context,
+    application_read_settings,
+)
 from tracer.services.clickhouse.client import get_clickhouse_client
 from tracer.services.clickhouse.read_budget import (
     is_clickhouse_query_error,
@@ -20,7 +22,6 @@ from tracer.services.clickhouse.trace_project_scope import (
 )
 
 READ_TIMEOUT_MS = 9_500
-QUERY_TIMEOUT_MS = 9_500
 MAX_PAGE_SIZE = 100
 _USAGE_TABLE = "usage_apicalllog"
 _MAX_PAGE_SELECTION_ROWS = 10_000
@@ -411,14 +412,14 @@ def read_eval_usage(
 
     deadline_at = time.monotonic() + (READ_TIMEOUT_MS / 1000.0)
 
-    def remaining_ms(operation: str, *, cap_ms: int = QUERY_TIMEOUT_MS) -> int:
+    def remaining_ms(operation: str) -> int:
         remaining = int((deadline_at - time.monotonic()) * 1000)
         if remaining <= 0:
             raise EvalUsageReadError(
                 EvalUsageReadErrorCode.DEADLINE_EXCEEDED,
                 operations=(operation,),
             )
-        return min(cap_ms, remaining)
+        return remaining
 
     def raise_typed(operation: str, exc: Exception) -> NoReturn:
         if isinstance(exc, EvalUsageReadError):
@@ -435,36 +436,22 @@ def read_eval_usage(
             ) from exc
         raise exc
 
-    worker_pool = ThreadPoolExecutor(
-        max_workers=1,
-        thread_name_prefix="eval-usage-exact-ch",
-    )
-
     def execute_read(
         operation: str,
         query: str,
         query_params: dict[str, Any],
         query_settings: dict[str, Any],
     ) -> list[tuple]:
-        def read():
-            client = get_clickhouse_client()
+        client = get_clickhouse_client()
+        remaining_ms(operation)
+        with application_read_context():
             rows, _columns, _elapsed = client.execute_read(
                 query,
                 query_params,
-                timeout_ms=remaining_ms(operation),
-                settings=query_settings,
+                timeout_ms=None,
+                settings=application_read_settings(query_settings),
             )
-            return rows
-
-        future = worker_pool.submit(read)
-        try:
-            return future.result(timeout=max(deadline_at - time.monotonic(), 0))
-        except FutureTimeoutError as exc:
-            future.cancel()
-            raise EvalUsageReadError(
-                EvalUsageReadErrorCode.DEADLINE_EXCEEDED,
-                operations=(operation,),
-            ) from exc
+        return rows
 
     def execute_typed(
         operation: str,
@@ -819,8 +806,6 @@ def read_eval_usage(
         if isinstance(exc, EvalUsageReadError):
             raise
         raise_typed("eval_usage", exc)
-    finally:
-        worker_pool.shutdown(wait=False, cancel_futures=True)
 
 
 __all__ = [

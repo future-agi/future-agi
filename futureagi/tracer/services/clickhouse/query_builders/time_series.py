@@ -392,6 +392,41 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         """
         return query, self.params
 
+    def _exact_span_candidate_plan(self) -> Any | None:
+        """One necessary typed-Map leaf; never replace graph membership truth."""
+        if not (
+            self.exact_snapshot and self.observe_type == "span"
+            and self.resolve_span_versions
+        ):
+            return None
+        from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
+            partition_span_filter_plans,
+        )
+
+        try:
+            attributes = []
+            for item in self.filters:
+                config = item.get("filter_config") or item.get("filterConfig") or {}
+                if str(config.get("col_type") or config.get("colType") or "").upper() == "SPAN_ATTRIBUTE":
+                    attributes.append(item)
+            plans, _ = partition_span_filter_plans(attributes)
+        except (TypeError, ValueError):
+            return None  # A graph-only shape retains its existing exact route.
+        candidates = [
+            plan for plan in plans
+            if plan.raw_graph_value_witness_predicate
+            and plan.scope == "span" and not plan.exclude_group_matches
+            and plan.aggregates and all(
+                any(column in aggregate for column in ("span_attr_num", "span_attr_str", "span_attr_bool"))
+                for aggregate in plan.aggregates
+            )
+        ]
+        # Cost order only: numeric value proofs before wider string maps.
+        return min(candidates, key=lambda plan: (
+            "span_attr_num[" not in plan.raw_graph_value_witness_predicate,
+            plan.raw_witness_rank if plan.raw_witness_rank is not None else 100,
+        ), default=None)
+
     def _exact_latest_scalar_source(
         self,
         *,
@@ -400,6 +435,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         scan_start_param: str,
         scan_end_param: str,
         candidate_trace_ids_param: str | None = None,
+        candidate_span_predicate: str = "",
     ) -> str:
         """Collapse physical versions to one narrow current-row tuple.
 
@@ -453,6 +489,20 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             if candidate_trace_ids_param
             else ""
         )
+        candidate_span_fragment = ""
+        if candidate_span_predicate:
+            # Only the immutable full key crosses this boundary. Replay every
+            # version, including clears/tombstones, before exact graph truth.
+            identity = "project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id"
+            candidate_span_fragment = f"""
+                  AND ({identity}) IN (
+                      SELECT {identity}
+                      FROM {self.RAW_TABLE}
+                      PREWHERE {self.project_filter_sql()}
+                        AND start_time >= %({scan_start_param})s
+                        AND start_time < %({scan_end_param})s
+                      WHERE ({candidate_span_predicate})
+                  )"""
         return f"""(
             SELECT
                 trace_id,
@@ -469,7 +519,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                 FROM {self.RAW_TABLE}
                 PREWHERE {self.project_filter_sql()}
                   AND start_time >= %({scan_start_param})s
-                  AND start_time < %({scan_end_param})s{candidate_trace_fragment}
+                  AND start_time < %({scan_end_param})s{candidate_trace_fragment}{candidate_span_fragment}
                 GROUP BY
                     project_id,
                     observation_type,
@@ -793,11 +843,27 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             filters.append(row_filter)
         exact_row_filter = " AND ".join(f"({item})" for item in filters)
 
+        candidate_predicate = ""
+        candidate_plan = self._exact_span_candidate_plan()
+        if candidate_plan is not None:
+            from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
+                _namespace_params,
+            )
+            from tracer.services.clickhouse.v2.query_builders.filters import (
+                rewrite_v1_sql_to_v2,
+            )
+
+            candidate_predicate, candidate_params = _namespace_params(
+                rewrite_v1_sql_to_v2(candidate_plan.raw_graph_value_witness_predicate),
+                candidate_plan.params, filter_index="span_seed",
+            )
+            self.params.update(candidate_params)
         latest_source = self._exact_latest_scalar_source(
             row_predicates=exact_filter_plan.predicates,
             contribution_predicates=exact_filter_plan.contribution_predicates,
             scan_start_param="graph_partition_start",
             scan_end_param="graph_partition_end",
+            candidate_span_predicate=candidate_predicate,
         )
         bucket_fn = self.time_bucket_expr(self.interval)
         query = f"""

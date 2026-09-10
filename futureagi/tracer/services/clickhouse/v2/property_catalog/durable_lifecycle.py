@@ -193,8 +193,10 @@ class WorkspaceCatalogScope:
                 }
             )
         )
-        if not 1 <= len(projects) <= 256 or len(projects) != len(self.project_ids):
-            raise ValueError("project_ids must contain 1..256 unique canonical UUIDs")
+        if not projects or len(projects) != len(self.project_ids):
+            raise ValueError(
+                "project_ids must contain non-empty unique canonical UUIDs"
+            )
         object.__setattr__(self, "project_ids", projects)
 
 

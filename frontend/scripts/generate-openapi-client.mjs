@@ -1183,6 +1183,32 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
       "MessageItem → .passthrough() (additionalProperties: true)",
     );
 
+    // Read aliases share the existing GET validator, including its JSON/nullable fixes.
+    const responseName = (id) =>
+      id
+        .split(/[-_]/)
+        .map((part) => part[0].toUpperCase() + part.slice(1))
+        .join("") + "Response";
+    for (const operation of Object.values(swagger.paths)) {
+      if (!operation.post?.["x-read-query-post"]) continue;
+      if (
+        JSON.stringify(operation.get.responses) !==
+        JSON.stringify(operation.post.responses)
+      ) {
+        throw new Error("Read POST and GET response contracts differ.");
+      }
+      const getName = responseName(operation.get.operationId);
+      const postName = responseName(operation.post.operationId);
+      if (!zod.includes(`export const ${getName} =`))
+        throw new Error(`Missing read response ${getName}`);
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        `export const ${postName} =`,
+        / =[\s\S]*/,
+        ` = ${getName};\n\n`,
+        postName,
+      );
+    }
     fs.writeFileSync(zodOutputPath, zod);
   }
   await formatGeneratedFiles();

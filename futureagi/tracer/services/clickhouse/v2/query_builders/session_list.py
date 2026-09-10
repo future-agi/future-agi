@@ -29,6 +29,26 @@ class SessionListQueryBuilderV2(V2RewriteMixin, SessionListQueryBuilder):
 
     _FILTER_BUILDER_CLS = ClickHouseFilterBuilderV2
 
+    def _physical_identity_fields(self) -> tuple[tuple[str, str], ...]:
+        # CH25 replaces by storage hour, not the mutable microsecond timestamp.
+        return (
+            ("project_id", "project_id"),
+            ("observation_type", "observation_type"),
+            ("service_name", "service_name"),
+            ("toStartOfHour(start_time)", "start_hour"),
+            ("trace_id", "trace_id"),
+            ("id", "id"),
+        )
+
+    def _physical_time_bounds_sql(self) -> tuple[str, str]:
+        lower, _upper = super()._physical_time_bounds_sql()
+        # end is exclusive; use its preceding microsecond to avoid reading an
+        # extra hour when the request already ends on an hour boundary.
+        return (
+            f"toStartOfHour({lower})",
+            "toStartOfHour(fromUnixTimestamp64Micro(%(end_date_us)s - 1, 'UTC')) + INTERVAL 1 HOUR",
+        )
+
     # This method already emits native CH25 SQL. The generic rewrite would
     # reinterpret the compatibility alias `span_attributes_raw`.
     _v2_rewrite_exclude = frozenset({"build_span_attributes_query"})
@@ -44,7 +64,7 @@ class SessionListQueryBuilderV2(V2RewriteMixin, SessionListQueryBuilder):
 
         # The bounded endpoint does not call ``build`` before page hydration.
         # Bind its exact request window here and apply it to both candidate
-        # acquisition and the authoritative four-field latest-state replay.
+        # acquisition and the authoritative storage-key latest-state replay.
         attr_start_date, attr_end_date = self.parse_time_range(self.filters)
         params = {
             **self.params,
@@ -52,14 +72,9 @@ class SessionListQueryBuilderV2(V2RewriteMixin, SessionListQueryBuilder):
             "attr_start_date": attr_start_date,
             "attr_end_date": attr_end_date,
         }
-        attr_exclusion, attr_exclusion_params = self.bounded_datetime_exclusion_sql(
-            self.filters,
-            column="start_time",
-            param_prefix="session_attr_v2_time_exclusion",
-        )
-        params.update(attr_exclusion_params)
-        attr_exclusion_fragment = (
-            f"\n              AND {attr_exclusion}" if attr_exclusion else ""
+        physical_time_scope = self._physical_time_scope_sql()
+        latest_time_scope = self._latest_time_scope_sql(
+            params, param_prefix="session_attr_latest_time"
         )
         ts_map_ctes = self._candidate_survivor_map_ctes(params, ids)
         resolved_ts = resolved_id_expr("latest_trace_session_id", "ts_remap")
@@ -67,14 +82,9 @@ class SessionListQueryBuilderV2(V2RewriteMixin, SessionListQueryBuilder):
         WITH
         {ts_map_ctes},
         candidate_root_identities AS (
-            SELECT DISTINCT project_id, trace_id, id, start_time
+            SELECT DISTINCT {self._physical_identity_select_sql()}
             FROM {self.TABLE}
-            PREWHERE {self.project_filter_sql()}
-              AND toDate(start_time) BETWEEN
-                  toDate(fromUnixTimestamp64Micro(%(start_date_us)s, 'UTC')) AND
-                  toDate(fromUnixTimestamp64Micro(%(end_date_us)s, 'UTC'))
-              AND start_time >= fromUnixTimestamp64Micro(%(start_date_us)s, 'UTC')
-              AND start_time < fromUnixTimestamp64Micro(%(end_date_us)s, 'UTC'){attr_exclusion_fragment}
+            PREWHERE {self.project_filter_sql()}{physical_time_scope}
               AND (
                   trace_session_id IN %(attr_session_ids)s
                   OR trace_session_id IN (
@@ -90,7 +100,7 @@ class SessionListQueryBuilderV2(V2RewriteMixin, SessionListQueryBuilder):
                 project_id,
                 trace_id,
                 id,
-                start_time,
+                argMax(start_time, _version) AS latest_start_time,
                 argMax(tuple(parent_span_id), _version).1 AS latest_parent_span_id,
                 argMax(tuple(trace_session_id), _version).1 AS latest_trace_session_id,
                 argMax(tuple(attributes_extra), _version).1 AS latest_attributes_extra,
@@ -99,17 +109,12 @@ class SessionListQueryBuilderV2(V2RewriteMixin, SessionListQueryBuilder):
                 argMax(attrs_bool, _version) AS latest_attrs_bool,
                 argMax(is_deleted, _version) AS latest_is_deleted
             FROM {self.TABLE}
-            PREWHERE {self.project_filter_sql()}
-              AND toDate(start_time) BETWEEN
-                  toDate(fromUnixTimestamp64Micro(%(start_date_us)s, 'UTC')) AND
-                  toDate(fromUnixTimestamp64Micro(%(end_date_us)s, 'UTC'))
-              AND start_time >= fromUnixTimestamp64Micro(%(start_date_us)s, 'UTC')
-              AND start_time < fromUnixTimestamp64Micro(%(end_date_us)s, 'UTC'){attr_exclusion_fragment}
-              AND (project_id, trace_id, id, start_time) IN (
-                  SELECT project_id, trace_id, id, start_time
+            PREWHERE {self.project_filter_sql()}{physical_time_scope}
+              AND ({self._physical_group_by_sql()}) IN (
+                  SELECT {self._physical_identity_names_sql()}
                   FROM candidate_root_identities
               )
-            GROUP BY project_id, trace_id, id, start_time
+            GROUP BY {self._physical_group_by_sql()}
         )
         SELECT
             {resolved_ts} AS session_id,
@@ -120,7 +125,7 @@ class SessionListQueryBuilderV2(V2RewriteMixin, SessionListQueryBuilder):
         FROM latest_roots
         LEFT JOIN ts_survivor_map AS ts_remap
             ON latest_trace_session_id = ts_remap.any_id
-        WHERE latest_is_deleted = 0
+        WHERE latest_is_deleted = 0{latest_time_scope}
           AND (latest_parent_span_id IS NULL OR latest_parent_span_id = '')
           AND (
             (latest_attributes_extra != '{{}}' AND latest_attributes_extra != '')
@@ -129,7 +134,6 @@ class SessionListQueryBuilderV2(V2RewriteMixin, SessionListQueryBuilder):
             OR length(mapKeys(latest_attrs_bool)) > 0
           )
           AND {resolved_ts} IN %(attr_session_ids)s
-        LIMIT 500
         """
         return _append_v2_settings(sql), params
 

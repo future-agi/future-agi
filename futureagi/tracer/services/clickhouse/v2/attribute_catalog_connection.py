@@ -18,6 +18,10 @@ from typing import Any
 
 from django.conf import settings as django_settings
 
+from tracer.services.clickhouse.application_read_policy import (
+    application_read_context,
+    application_read_settings,
+)
 from tracer.services.clickhouse.client import ClickHouseClient
 from tracer.services.clickhouse.server_readonly import ensure_read_statement
 
@@ -411,7 +415,7 @@ def reset_attribute_catalog_read_client() -> None:
 
 
 class AttributeCatalogReadExecutor:
-    """Execute allowlisted catalog reads inside one shared two-second wall."""
+    """Allowlisted reads; public mode does not install statement abort caps."""
 
     def __init__(
         self,
@@ -421,10 +425,12 @@ class AttributeCatalogReadExecutor:
             [AttributeCatalogConnectionConfig], ClickHouseClient
         ] = get_attribute_catalog_read_client,
         clock: Callable[[], float] = monotonic,
+        application_read: bool = False,
     ) -> None:
         self._config = config or AttributeCatalogConnectionConfig.from_settings()
         self._client_factory = client_factory
         self._clock = clock
+        self._application_read = application_read
         self._deadline = clock() + CATALOG_READ_MAX_WALL_MS / 1_000
         self._client: ClickHouseClient | None = None
 
@@ -448,6 +454,9 @@ class AttributeCatalogReadExecutor:
         query_settings = _bounded_query_settings(
             settings, timeout_ms=bounded_timeout_ms
         )
+        if self._application_read:
+            bounded_timeout_ms = None
+            query_settings = application_read_settings(query_settings)
         if self._client is None:
             self._client = self._client_factory(self._config)
         started_at = self._clock()
@@ -455,23 +464,24 @@ class AttributeCatalogReadExecutor:
             progress_execute = getattr(
                 type(self._client), "execute_read_with_progress", None
             )
-            if callable(progress_execute):
-                rows, columns, _, read_rows, read_bytes = progress_execute(
-                    self._client,
-                    query,
-                    params,
-                    timeout_ms=bounded_timeout_ms,
-                    settings=query_settings,
-                )
-            else:
-                rows, columns, _ = self._client.execute_read(
-                    query,
-                    params,
-                    timeout_ms=bounded_timeout_ms,
-                    settings=query_settings,
-                )
-                read_rows = None
-                read_bytes = None
+            with application_read_context(self._application_read):
+                if callable(progress_execute):
+                    rows, columns, _, read_rows, read_bytes = progress_execute(
+                        self._client,
+                        query,
+                        params,
+                        timeout_ms=bounded_timeout_ms,
+                        settings=query_settings,
+                    )
+                else:
+                    rows, columns, _ = self._client.execute_read(
+                        query,
+                        params,
+                        timeout_ms=bounded_timeout_ms,
+                        settings=query_settings,
+                    )
+                    read_rows = None
+                    read_bytes = None
         except Exception:
             # A deadline/error may leave a native socket unusable. The global
             # provider will construct a fresh isolated pool on the next read.

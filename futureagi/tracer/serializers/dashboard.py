@@ -84,7 +84,6 @@ _DASHBOARD_CATALOG_MAX_PAGE_SIZE = settings.DASHBOARD_METRICS_CATALOG_MAX_PAGE_S
 _DASHBOARD_CATALOG_SEARCH_MAX_CHARS = (
     settings.DASHBOARD_METRICS_CATALOG_SEARCH_MAX_CHARS
 )
-_PROPERTY_CATALOG_MAX_PROJECTS = settings.PROPERTY_CATALOG_MAX_PROJECTS
 _PROPERTY_CATALOG_MAX_PAGE_SIZE = settings.PROPERTY_CATALOG_MAX_PAGE_SIZE
 _PROPERTY_CATALOG_MAX_SEARCH_BYTES = settings.PROPERTY_CATALOG_MAX_SEARCH_BYTES
 _PROPERTY_CATALOG_CURSOR_MAX_BYTES = settings.PROPERTY_CATALOG_CURSOR_MAX_BYTES
@@ -96,11 +95,6 @@ _FILTER_VALUE_MAX_PAGE_SIZE = min(
 
 
 def _validate_property_catalog_project_ids(value):
-    if len(value) > _PROPERTY_CATALOG_MAX_PROJECTS:
-        raise serializers.ValidationError(
-            "At most "
-            f"{_PROPERTY_CATALOG_MAX_PROJECTS} project_ids may be searched at once"
-        )
     uuid_field = serializers.UUIDField()
     validated = []
     seen = set()

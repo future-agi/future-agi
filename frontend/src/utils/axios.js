@@ -16,6 +16,7 @@ import { apiPath } from "src/api/contracts/api-surface";
 import {
   assertContractedRequestConfig,
   assertContractedResponse,
+  findOpenApiEndpoint,
 } from "src/api/contracts/openapi-contract";
 import { resetUser } from "./Mixpanel";
 import logger from "./logger";
@@ -25,6 +26,21 @@ import { SS_KEY_ORG_ID, SS_KEY_WORKSPACE_ID } from "./sessionKeys";
 // ----------------------------------------------------------------------
 //
 const axiosInstance = axios.create({ baseURL: HOST_API });
+
+// Only source-declared read aliases use POST; unrelated reads remain GET.
+export const readQuery = (url, { params = {}, ...config } = {}) => {
+  if (!findOpenApiEndpoint(url, "post")?.contract.readQueryPost) {
+    return axiosInstance.get(url, { params, ...config });
+  }
+  if (config.data !== undefined) throw new Error("Read query body is owned by params.");
+  const [path, search = ""] = url.split("?");
+  const data = Object.fromEntries(Object.entries(params).filter(([, value]) => value != null));
+  for (const [key, value] of new URLSearchParams(search)) {
+    if (Object.hasOwn(data, key)) throw new Error("Duplicate read query parameter.");
+    data[key] = value;
+  }
+  return axiosInstance.post(path, data, config);
+};
 
 const avoidRedirect = [
   "/auth/jwt/register",
@@ -283,14 +299,18 @@ export const endpoints = {
         uidb64,
         token,
       }),
-    service: (provider) =>
-      withQuery(apiPath("/saml2_auth/login/"), { provider }),
+    service: (provider, onboardingToken) =>
+      withQuery(apiPath("/saml2_auth/login/"), {
+        provider,
+        onboarding_token: onboardingToken || undefined,
+      }),
     create_org: apiPath("/accounts/team/users/"),
     ssoLogin: (email) =>
       withQuery(apiPath("/saml2_auth/idp-login/"), { email }),
     logout: apiPath("/accounts/logout/"),
     refreshToken: apiPath("/accounts/token/refresh/"),
     awsSignUp: apiPath("/accounts/aws-marketplace/signup/"),
+    gcpSignUp: apiPath("/accounts/gcp-marketplace/signup/"),
     config: apiPath("/accounts/config/"),
     createOrganization: apiPath("/accounts/organizations/create/"),
   },
@@ -1268,6 +1288,7 @@ export const endpoints = {
     updateSessionListColumnVisibility: () =>
       apiPath("/tracer/project/update_project_session_config/"),
     traceSession: apiPath("/tracer/trace-session/"),
+    traceSessionQuery: (id) => apiPath("/tracer/trace-session/{id}/query/", { id }),
     projectExperimentDetail: (projectId) =>
       apiPath("/tracer/project/{id}/", { id: projectId }),
     deleteObservePrototype: apiPath("/tracer/project/"),

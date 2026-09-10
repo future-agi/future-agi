@@ -601,6 +601,99 @@ BILLING_CONFIG_PATH = os.environ.get(
     os.path.join(BASE_DIR, "..", "ee", "cloud", "billing.yaml"),
 )
 
+# ── GCP Marketplace ─────────────────────────────────
+# Cloud-only. Absent everywhere else, and the integration no-ops without them.
+GCP_MARKETPLACE_PROJECT_ID = os.environ.get("GCP_MARKETPLACE_PROJECT_ID", "")
+GCP_MARKETPLACE_PROVIDER_ID = os.environ.get("GCP_MARKETPLACE_PROVIDER_ID", "")
+GCP_MARKETPLACE_SERVICE_NAME = os.environ.get("GCP_MARKETPLACE_SERVICE_NAME", "")
+GCP_MARKETPLACE_PUBSUB_SUBSCRIPTION = os.environ.get(
+    "GCP_MARKETPLACE_PUBSUB_SUBSCRIPTION", ""
+)
+
+# Accepted `aud` values on the sign-up token, comma separated. Google documents
+# the claim as PARTNER_DOMAIN_NAME, so it is a domain, not the Service Control
+# service name. No default, because the service name is the one value the
+# documentation rules out. Confirm against a real token.
+GCP_MARKETPLACE_TOKEN_AUDIENCES = [
+    value.strip()
+    for value in os.environ.get("GCP_MARKETPLACE_TOKEN_AUDIENCES", "").split(",")
+    if value.strip()
+]
+# Service account JSON for local dev. On GKE leave unset and use Workload Identity.
+GCP_MARKETPLACE_SA_JSON = os.environ.get("GCP_MARKETPLACE_SA_JSON", "")
+
+# Marketplace plan id -> (internal plan, billing interval). Read the live plan
+# ids from Producer Portal; adding or removing a plan there changes them.
+GCP_MARKETPLACE_PLAN_MAP = {
+    # PAYG is monthly only: a $0 platform fee leaves nothing to prepay annually.
+    "payg": ("payg", "monthly"),
+    "scale": ("scale", "monthly"),
+    "scale-P1Y": ("scale", "annual"),
+    # Enterprise is annual only on the portal.
+    "enterprise-P1Y": ("enterprise", "annual"),
+}
+
+# Metric ids are unique per product, so the same dimension has a different id on
+# every plan. Report against the id belonging to the plan on the entitlement.
+# Note payg gateway carries no plan prefix: the naming is not a pattern.
+# Tracing is absent throughout: excluded from Marketplace billing by decision.
+GCP_MARKETPLACE_METRIC_MAP = {
+    "payg": {
+        "ai_credits": "payg_credits",
+        "storage": "payg_storage",
+        "gateway_requests": "gateway_request",
+        "gateway_cache_hits": "payg_cache_hits",
+        "text_sim_tokens": "payg_text_simulation",
+        "voice_sim_minutes": "payg_voice_simulation",
+    },
+    "scale": {
+        "ai_credits": "scale_credits",
+        "storage": "scale_storage",
+        "gateway_requests": "scale_gateway_request",
+        "gateway_cache_hits": "scale_cache_hits",
+        "text_sim_tokens": "scale_text_simulation",
+        "voice_sim_minutes": "scale_voice_simulation",
+    },
+    "enterprise": {
+        "ai_credits": "enterprise_credits",
+        "storage": "enterprise_storage",
+        "gateway_requests": "enterprise_gateway_request",
+        "gateway_cache_hits": "enterprise_cache_hits",
+        "text_sim_tokens": "enterprise_text_simulation",
+        "voice_sim_minutes": "enterprise_voice_simulation",
+    },
+}
+
+# The six dimensions reported to Marketplace, in our ledger's vocabulary.
+GCP_MARKETPLACE_DIMENSIONS = [
+    "ai_credits",
+    "storage",
+    "gateway_requests",
+    "gateway_cache_hits",
+    "text_sim_tokens",
+    "voice_sim_minutes",
+]
+
+# Ledger semantics: these two dimensions are fractional, the other four are
+# whole counts and are floored before they are recorded as reported.
+GCP_MARKETPLACE_FLOAT_DIMENSIONS = {"storage", "voice_sim_minutes"}
+# Wire type is a property of the metric, not the dimension, and Service Control
+# rejects a value whose type differs from the service config ("Inconsistent
+# metric value type ... Expecting double, got int64"). Mirrors the config the
+# service is on -- note payg's gateway_request is DOUBLE while scale's and
+# enterprise's are INT64. Verify against:
+#   gcloud endpoints configs describe <id> \
+#     --service=futureagi.endpoints.futureagiprimary.cloud.goog --format="yaml(metrics)"
+GCP_MARKETPLACE_DOUBLE_METRICS = {
+    "gateway_request",
+    "payg_storage",
+    "payg_voice_simulation",
+    "scale_storage",
+    "scale_voice_simulation",
+    "enterprise_storage",
+    "enterprise_voice_simulation",
+}
+
 # EE license key (self-hosted only, JWT RS256)
 EE_LICENSE_KEY = os.environ.get("EE_LICENSE_KEY", "")
 EE_LICENSE_PUBLIC_KEY = os.environ.get("EE_LICENSE_PUBLIC_KEY", "").replace("\\n", "\n")

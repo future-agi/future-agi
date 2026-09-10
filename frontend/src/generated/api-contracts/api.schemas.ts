@@ -433,6 +433,27 @@ export interface UserChecksResponseApi {
   result: UserChecksResultApi;
 }
 
+export interface GCPMarketplaceSignupRequestApi {
+  /** @minLength 1 */
+  onboarding_token: string;
+  /** @minLength 1 */
+  email: string;
+  /** @minLength 1 */
+  full_name: string;
+}
+
+export interface GCPMarketplaceSignupResultApi {
+  /** @minLength 1 */
+  message: string;
+  /** @minLength 1 */
+  user_email: string;
+}
+
+export interface GCPMarketplaceSignupResponseApi {
+  status: boolean;
+  result: GCPMarketplaceSignupResultApi;
+}
+
 export interface AccountsUserProfileResponseApi {
   name: string;
   /** @minLength 1 */
@@ -22594,6 +22615,41 @@ export interface ObserveGraphDataResponseApi {
   result: ObserveGraphDataResultApi;
 }
 
+export interface TraceNavigationResultApi {
+  /** @minLength 1 */
+  next_trace_id: string;
+  /** @minLength 1 */
+  previous_trace_id: string;
+}
+
+export interface TraceNavigationResponseApi {
+  status: boolean;
+  result: TraceNavigationResultApi;
+}
+
+export interface SpanIndexQueryApi {
+  /** @minLength 1 */
+  span_id: string;
+  project_version_id: string;
+  /**
+   * JSON-encoded canonical filter list.
+   * @minLength 1
+   */
+  filters?: string;
+}
+
+export interface SpanObserveIndexQueryApi {
+  /** @minLength 1 */
+  span_id: string;
+  project_id: string;
+  user_id?: string;
+  /**
+   * JSON-encoded canonical filter list.
+   * @minLength 1
+   */
+  filters?: string;
+}
+
 /**
  * Any valid JSON value.
  */
@@ -22749,6 +22805,27 @@ export interface PageDepthExceededErrorApi {
   details?: PageDepthExceededErrorApiDetails;
 }
 
+export interface SpanListQueryApi {
+  project_version_id: string;
+  /**
+   * JSON-encoded canonical filter list. On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result.
+   * @minLength 1
+   */
+  filters?: string;
+  /**
+   * Zero-based numbered page. Pages whose required ordered work exceeds the finite read contract return HTTP 422 with code page_depth_exceeded; request an earlier page or narrow the time range.
+   * @minimum 0
+   */
+  page_number?: number;
+  /**
+   * @minimum 1
+   * @maximum 500
+   */
+  page_size?: number;
+  /** Omit for backward-compatible complete bounded pages, which may label total_rows as a lower bound. Send false to require an exact total, or true to opt in explicitly to lower-bound totals. */
+  allow_sampled?: boolean;
+}
+
 export type SpanObserveListResultApiTableItem = { [key: string]: JsonValueApi };
 
 export interface SpanObserveListResultApi {
@@ -22762,11 +22839,63 @@ export interface SpanObserveListResponseApi {
   result: SpanObserveListResultApi;
 }
 
+export interface SpanObserveListQueryApi {
+  project_id?: string;
+  user_id?: string;
+  /**
+   * JSON-encoded canonical filter list. On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result.
+   * @minLength 1
+   */
+  filters?: string;
+  /**
+   * Zero-based numbered page. Pages whose required ordered work exceeds the finite read contract return HTTP 422 with code page_depth_exceeded; request an earlier page or narrow the time range.
+   * @minimum 0
+   */
+  page_number?: number;
+  /**
+   * @minimum 1
+   * @maximum 500
+   */
+  page_size?: number;
+  /**
+   * Opaque continuation token returned by the previous page. When supplied, do not also send the numbered-page parameter.
+   * @minLength 1
+   * @maxLength 4096
+   */
+  cursor?: string;
+  cursor_mode?: boolean;
+  /** Omit for backward-compatible complete bounded pages, which may label total_rows as a lower bound. Send false to require an exact total, or true to opt in explicitly to lower-bound totals. */
+  allow_sampled?: boolean;
+}
+
 export type RootSpansResponseApiResult = { [key: string]: string };
 
 export interface RootSpansResponseApi {
   status?: boolean;
   result: RootSpansResponseApiResult;
+}
+
+export type ObservationSpanDetailResultApiObservationSpan = {
+  [key: string]: { [key: string]: unknown };
+};
+
+export type ObservationSpanDetailResultApiEvalsMetrics = {
+  [key: string]: { [key: string]: unknown };
+};
+
+export type ObservationSpanDetailResultApiEnrichment = {
+  [key: string]: { [key: string]: unknown };
+};
+
+export interface ObservationSpanDetailResultApi {
+  observation_span: ObservationSpanDetailResultApiObservationSpan;
+  evals_metrics: ObservationSpanDetailResultApiEvalsMetrics;
+  enrichment?: ObservationSpanDetailResultApiEnrichment;
+}
+
+export interface ObservationSpanDetailResponseApi {
+  status: boolean;
+  result: ObservationSpanDetailResultApi;
 }
 
 export type ProjectVersionApiMetadata = { [key: string]: unknown };
@@ -24356,6 +24485,84 @@ export interface TraceSessionListResponseApi {
   result: TraceSessionListResultApi;
 }
 
+export interface TraceSessionListQueryApi {
+  project_id?: string;
+  user_id?: string;
+  bookmarked?: boolean;
+  /**
+   * JSON-encoded canonical filter list. On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result.
+   * @minLength 1
+   */
+  filters?: string;
+  /**
+   * JSON-encoded list of sort params.
+   * @minLength 1
+   */
+  sort_params?: string;
+  /**
+   * Zero-based numbered page. Pages whose required ordered work exceeds the finite read contract return HTTP 422 with code page_depth_exceeded; request an earlier page or narrow the time range.
+   * @minimum 0
+   */
+  page_number?: number;
+  /**
+   * @minimum 1
+   * @maximum 500
+   */
+  page_size?: number;
+  /**
+   * Opaque continuation token returned by the previous page. When supplied, do not also send the numbered-page parameter.
+   * @minLength 1
+   * @maxLength 4096
+   */
+  cursor?: string;
+  cursor_mode?: boolean;
+  interval?: string;
+  /** Omit for backward-compatible complete bounded pages, which may label total_rows as a lower bound. Send false to require an exact total, or true to opt in explicitly to lower-bound totals. */
+  allow_sampled?: boolean;
+}
+
+export type TraceSessionDetailResultApiSessionMetadata = {
+  [key: string]: unknown;
+};
+
+export type TraceSessionDetailResultApiResponseItem = {
+  [key: string]: unknown;
+};
+
+export interface TraceSessionDetailResultApi {
+  session_metadata: TraceSessionDetailResultApiSessionMetadata;
+  response: TraceSessionDetailResultApiResponseItem[];
+  next: boolean;
+}
+
+export interface TraceSessionDetailResponseApi {
+  status: boolean;
+  result: TraceSessionDetailResultApi;
+}
+
+export interface TraceSessionRetrieveQueryApi {
+  /** JSON-encoded object. */
+  navigation_context?: string;
+  user_id?: string;
+  /**
+   * JSON-encoded canonical filter list.
+   * @minLength 1
+   */
+  filters?: string;
+  /**
+   * JSON-encoded list of sort params.
+   * @minLength 1
+   */
+  sort_params?: string;
+  /** @minimum 0 */
+  page_number?: number;
+  /**
+   * @minimum 1
+   * @maximum 500
+   */
+  page_size?: number;
+}
+
 export type TraceApiMetadata = { [key: string]: unknown };
 
 export type TraceApiInput = { [key: string]: unknown };
@@ -24466,9 +24673,40 @@ export interface TraceAgentGraphResponseApi {
   result: TraceAgentGraphResultApi;
 }
 
+export interface TraceAgentGraphQueryApi {
+  project_id: string;
+  /**
+   * JSON-encoded canonical filter list.
+   * @minLength 1
+   */
+  filters?: string;
+  /** Recompute and atomically replace the last exact graph snapshot. */
+  refresh?: boolean;
+}
+
 export interface TracePropertiesResponseApi {
   status?: boolean;
   result: string[];
+}
+
+export interface TraceIndexQueryApi {
+  trace_id: string;
+  project_version_id: string;
+  /**
+   * JSON-encoded canonical filter list.
+   * @minLength 1
+   */
+  filters?: string;
+}
+
+export interface TraceObserveIndexQueryApi {
+  trace_id: string;
+  project_id: string;
+  /**
+   * JSON-encoded canonical filter list.
+   * @minLength 1
+   */
+  filters?: string;
 }
 
 export type TraceObserveListMetadataApiQueryStatus =
@@ -24534,6 +24772,33 @@ export interface TracePrototypeListResponseApi {
   result: TracePrototypeListResultApi;
 }
 
+export interface TraceListQueryApi {
+  project_version_id: string;
+  trace_ids?: string;
+  /**
+   * JSON-encoded canonical filter list. On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result.
+   * @minLength 1
+   */
+  filters?: string;
+  /**
+   * JSON-encoded list of sort params.
+   * @minLength 1
+   */
+  sort_params?: string;
+  /**
+   * Zero-based numbered page. Pages whose required ordered work exceeds the finite read contract return HTTP 422 with code page_depth_exceeded; request an earlier page or narrow the time range.
+   * @minimum 0
+   */
+  page_number?: number;
+  /**
+   * @minimum 1
+   * @maximum 500
+   */
+  page_size?: number;
+  /** Omit for backward-compatible complete bounded pages, which may label total_rows as a lower bound. Send false to require an exact total, or true to opt in explicitly to lower-bound totals. */
+  allow_sampled?: boolean;
+}
+
 export type TraceObserveListResultApiTableItem = {
   [key: string]: JsonValueApi;
 };
@@ -24547,6 +24812,39 @@ export interface TraceObserveListResultApi {
 export interface TraceObserveListResponseApi {
   status: boolean;
   result: TraceObserveListResultApi;
+}
+
+export interface TraceObserveListQueryApi {
+  project_id?: string;
+  project_version_id?: string;
+  session_id?: string;
+  /**
+   * JSON-encoded canonical filter list. On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result.
+   * @minLength 1
+   */
+  filters?: string;
+  /**
+   * Zero-based numbered page. Pages whose required ordered work exceeds the finite read contract return HTTP 422 with code page_depth_exceeded; request an earlier page or narrow the time range.
+   * @minimum 0
+   */
+  page_number?: number;
+  /**
+   * @minimum 1
+   * @maximum 500
+   */
+  page_size?: number;
+  /**
+   * Opaque continuation token returned by the previous page. When supplied, do not also send the numbered-page parameter.
+   * @minLength 1
+   * @maxLength 4096
+   */
+  cursor?: string;
+  cursor_mode?: boolean;
+  /** JSON-encoded list of custom attribute keys to hydrate; only requested keys are returned. Each key resolves to its latest live span value by (start_time, span_id). Comma-separated simple keys remain supported. */
+  attribute_keys?: string;
+  /** Omit for backward-compatible complete bounded pages, which may label total_rows as a lower bound. Send false to require an exact total. Send true to opt in explicitly to lower-bound totals and, on the first page, a clearly labelled bounded partial result when the full ordered prefix cannot be proven inside the read budget. */
+  allow_sampled?: boolean;
+  interval?: string;
 }
 
 export type TraceVoiceCallListResponseApiResultsItem = {
@@ -24602,6 +24900,37 @@ export interface TraceVoiceCallListResponseApi {
   query_applied_filter_sha256?: string;
   /** @minimum 0 */
   query_applied_filter_count?: number;
+}
+
+export interface TraceVoiceCallListQueryApi {
+  project_id: string;
+  /**
+   * JSON-encoded canonical filter list.
+   * @minLength 1
+   */
+  filters?: string;
+  /** JSON-encoded list of custom attribute keys to include as CSV columns. Comma-separated simple keys remain supported. */
+  attribute_keys?: string;
+  /**
+   * One-based numbered page. Pages whose required ordered work exceeds the finite read contract return HTTP 422 with code page_depth_exceeded; request an earlier page, use the additive continuation cursor, or narrow the time range.
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 500
+   */
+  page_size?: number;
+  remove_simulation_calls?: boolean;
+  /**
+   * Opaque continuation token returned by the previous page. When supplied, do not also send the numbered-page parameter.
+   * @minLength 1
+   * @maxLength 4096
+   */
+  cursor?: string;
+  cursor_mode?: boolean;
+  /** Omit for backward-compatible complete bounded pages, which may label count as a lower bound. Send false to require an exact total. Send true to opt in explicitly to lower-bound totals and, on the first page, a clearly labelled bounded partial result when the full ordered prefix cannot be proven inside the read budget. */
+  allow_sampled?: boolean;
 }
 
 export type TraceVoiceCallDetailResultApiCostBreakdown = {
@@ -25135,6 +25464,7 @@ export type UsersResultApiQueryProvenance =
 
 export const UsersResultApiQueryProvenance = {
   span_user_rollup_end_users_candidate: "span_user_rollup_end_users_candidate",
+  physical_latest_users: "physical_latest_users",
 } as const;
 
 export type UsersResultApiApproximateFieldsItem =
@@ -25170,6 +25500,40 @@ export interface UsersResponseApi {
   result: UsersResultApi;
 }
 
+export interface UsersQueryApi {
+  project_id?: string;
+  search?: string;
+  /**
+   * @minimum 1
+   * @maximum 500
+   */
+  page_size?: number;
+  /** @minimum 0 */
+  current_page_index?: number;
+  /**
+   * JSON-encoded list of sort params.
+   * @minLength 1
+   */
+  sort_params?: string;
+  /**
+   * JSON-encoded canonical filter list.
+   * @minLength 1
+   */
+  filters?: string;
+  export?: boolean;
+  /**
+   * Opaque continuation token returned by the previous page. When supplied, do not also send the numbered-page parameter.
+   * @minLength 1
+   * @maxLength 4096
+   */
+  cursor?: string;
+  cursor_mode?: boolean;
+  /** JSON-encoded list of visible Users-table fields. Raw-derived metrics are hydrated only when explicitly requested. */
+  requested_columns?: string;
+  /** JSON-encoded list of visible custom user attribute keys. Only these keys (plus keys required by filters) are hydrated. */
+  attribute_keys?: string;
+}
+
 export interface UserCodeExampleResponseApi {
   status?: boolean;
   /** @minLength 1 */
@@ -25187,18 +25551,6 @@ export interface OTLPHealthResponseApi {
   status: OTLPHealthResponseApiStatus;
   /** @minLength 1 */
   service: string;
-}
-
-export type WebhookRequestApiCall = { [key: string]: unknown };
-
-export interface WebhookRequestApi {
-  call: WebhookRequestApiCall;
-}
-
-export interface WebhookResponseApi {
-  status?: boolean;
-  /** @minLength 1 */
-  result: string;
 }
 
 export type AdminCustomPlanResponseApiResult = { [key: string]: string };
@@ -26412,6 +26764,8 @@ export interface UsagePlansAndAddonsResultApi {
   pricing: UsagePlansAndAddonsResultApiPricing;
   isCustomPricing: boolean;
   customDetails?: UsageCustomPlanDetailsApi;
+  plan_change_locked?: boolean;
+  plan_change_locked_reason?: string;
   pending_cancel: boolean;
   /** @minLength 1 */
   cancel_at?: string;
@@ -26790,6 +27144,10 @@ export type AccountsAwsMarketplaceVerifyTokenCreateBody = {
   "x-amzn-marketplace-token": string;
   "x-amzn-marketplace-product-id"?: string;
   "x-amzn-marketplace-agreement-id"?: string;
+};
+
+export type AccountsGcpMarketplaceVerifyTokenCreateBody = {
+  "x-gcp-marketplace-token": string;
 };
 
 export type AccountsOrganizationMembersListParams = {
@@ -28975,18 +29333,22 @@ export type Saml2AuthAcsCreateBodyTwo = {
 
 export type Saml2AuthAuthCallbackListParams = {
   code?: string;
+  state?: string;
 };
 
 export type Saml2AuthAuthReadParams = {
   code?: string;
+  state?: string;
 };
 
 export type Saml2AuthGithubCallbackListParams = {
   code?: string;
+  state?: string;
 };
 
 export type Saml2AuthGithubReadParams = {
   code?: string;
+  state?: string;
 };
 
 export type Saml2AuthIdpLoginListParams = {
@@ -29054,6 +29416,7 @@ export type Saml2AuthIdpUploadsUpdateBodyTwo = {
 
 export type Saml2AuthLoginListParams = {
   provider: Saml2AuthLoginListProvider;
+  onboarding_token?: string;
 };
 
 export type Saml2AuthLoginListProvider =
@@ -29067,6 +29430,7 @@ export const Saml2AuthLoginListProvider = {
 
 export type Saml2AuthReadParams = {
   provider: Saml2AuthReadProvider;
+  onboarding_token?: string;
 };
 
 export type Saml2AuthReadProvider =
@@ -29080,10 +29444,12 @@ export const Saml2AuthReadProvider = {
 
 export type Saml2AuthMicrosoftCallbackListParams = {
   code?: string;
+  state?: string;
 };
 
 export type Saml2AuthMicrosoftReadParams = {
   code?: string;
+  state?: string;
 };
 
 export type SdkApiV1EvaluatePipelineListParams = {
@@ -30252,13 +30618,6 @@ export type TracerObservationSpanGetTraceIdByIndexSpansAsBaseParams = {
   filters?: string;
 };
 
-export type TracerObservationSpanGetTraceIdByIndexSpansAsBase200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: ObservationSpanApi[];
-};
-
 export type TracerObservationSpanGetTraceIdByIndexSpansAsObserveParams = {
   /**
    * A page number within the paginated result set.
@@ -30278,13 +30637,6 @@ export type TracerObservationSpanGetTraceIdByIndexSpansAsObserveParams = {
    * @minLength 1
    */
   filters?: string;
-};
-
-export type TracerObservationSpanGetTraceIdByIndexSpansAsObserve200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: ObservationSpanApi[];
 };
 
 export type TracerObservationSpanListSpansParams = {
@@ -30384,6 +30736,22 @@ export type TracerObservationSpanRootSpansParams = {
   limit?: number;
   trace_ids: string[];
   project_ids?: string[];
+};
+
+export type TracerObservationSpanReadParams = {
+  project_id?: string;
+  /**
+   * @minLength 1
+   */
+  trace_id?: string;
+  start_hour?: string;
+  observation_type?: string;
+  service_name?: string;
+  expected_start_time?: string;
+  /**
+   * @minLength 1
+   */
+  expected_version?: string;
 };
 
 export type TracerProjectVersionListParams = {
@@ -30786,6 +31154,28 @@ export type TracerTraceSessionListSessionsParams = {
   allow_sampled?: boolean;
 };
 
+export type TracerTraceSessionQueryParams = {
+  navigation_context?: string;
+  user_id?: string;
+  /**
+   * @minLength 1
+   */
+  filters?: string;
+  /**
+   * @minLength 1
+   */
+  sort_params?: string;
+  /**
+   * @minimum 0
+   */
+  page_number?: number;
+  /**
+   * @minimum 1
+   * @maximum 500
+   */
+  page_size?: number;
+};
+
 export type TracerTraceListParams = {
   /**
    * A page number within the paginated result set.
@@ -30890,13 +31280,6 @@ export type TracerTraceGetTraceIdByIndexParams = {
   filters?: string;
 };
 
-export type TracerTraceGetTraceIdByIndex200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: TraceApi[];
-};
-
 export type TracerTraceGetTraceIdByIndexObserveParams = {
   /**
    * A page number within the paginated result set.
@@ -30912,13 +31295,6 @@ export type TracerTraceGetTraceIdByIndexObserveParams = {
    * @minLength 1
    */
   filters?: string;
-};
-
-export type TracerTraceGetTraceIdByIndexObserve200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: TraceApi[];
 };
 
 export type TracerTraceListTracesParams = {

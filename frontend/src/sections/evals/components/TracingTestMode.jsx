@@ -27,10 +27,18 @@ import { useQuery } from "@tanstack/react-query";
 import DraggableColResizer from "src/components/draggable-col-resizer";
 import Iconify from "src/components/iconify";
 import { useMapToVariable } from "./useMapToVariable";
-import axios, { endpoints } from "src/utils/axios";
+import axios, { readQuery, endpoints } from "src/utils/axios";
 import { PROJECT_SOURCE } from "src/utils/constants";
+import { ANALYTICS_REQUEST_TIMEOUT_MS } from "src/config/runtime_limits";
 import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 import { canonicalEntries } from "src/utils/utils";
+import {
+  getSpanReadCacheKey,
+  getSpanReadIdentityKey,
+  SPAN_REFERENCE_ERROR,
+  spanReadRequest,
+  verifySpanReadResponse,
+} from "src/sections/projects/LLMTracing/spanReadReference";
 import {
   collectExactListRows,
   createListCursorProtocolError,
@@ -55,11 +63,18 @@ import { useForm, useWatch } from "react-hook-form";
 import CustomTooltip from "src/components/tooltip";
 import TaskFilterBar from "src/sections/tasks/components/TaskFilterBar";
 import { buildApiFilterArray } from "src/sections/tasks/components/TaskLivePreview";
+import DateRangePill, {
+  dateFilterForOption,
+} from "src/sections/projects/LLMTracing/DateRangePill";
 import { JsonValueTree } from "./DatasetTestMode";
 import EvalResultDisplay from "./EvalResultDisplay";
 import SpanRowList from "./SpanRowList";
 import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
-import { resolveMappingFromRow } from "../utils/evalExecution";
+import {
+  buildAutoCtx,
+  buildCompositeCtx,
+  resolveMappingFromRow,
+} from "../utils/evalExecution";
 import {
   walkPaths,
   expandPaths,
@@ -139,20 +154,6 @@ function sortEntries(entries) {
     if (bi !== -1) return 1;
     return 0;
   });
-}
-
-// Recursively find a span by ID in the observation spans tree.
-function findSpanInTree(spans, spanId) {
-  if (!spans) return null;
-  for (const item of spans) {
-    const span = item.observation_span;
-    if (span?.id === spanId) return span;
-    if (item.children?.length) {
-      const found = findSpanInTree(item.children, spanId);
-      if (found) return found;
-    }
-  }
-  return null;
 }
 
 // Flatten span tree into an ordered list (depth-first, like the graph)
@@ -270,8 +271,7 @@ const tracingPreviewRowIdentity = (rowType, row) => {
   if (rowType === "Trace") {
     return row?.trace_id || row?.id || null;
   }
-  const id = row?.span_id || row?.id;
-  return id ? `${row?.trace_id || ""}:${id}:${row?.start_time || ""}` : null;
+  return getSpanReadIdentityKey(row);
 };
 
 const TracingTestMode = React.forwardRef(
@@ -338,9 +338,20 @@ const TracingTestMode = React.forwardRef(
       control: internalFilterForm.control,
       name: "filters",
     });
+    // Keep the existing 30-day preview default visible and editable. Property
+    // discovery includes older values; choosing one must not hide the range
+    // that determines whether its rows appear in this preview.
+    const [previewDateFilter, setPreviewDateFilter] = useState(() => ({
+      dateOption: "30D",
+      dateFilter: dateFilterForOption("30D"),
+    }));
     const internalApiFilters = useMemo(
-      () => buildApiFilterArray(internalFormFilters),
-      [internalFormFilters],
+      () =>
+        buildApiFilterArray(
+          internalFormFilters,
+          ...previewDateFilter.dateFilter,
+        ),
+      [internalFormFilters, previewDateFilter],
     );
     const effectiveFilters = hostsFilter ? internalApiFilters : localFilters;
 
@@ -438,11 +449,13 @@ const TracingTestMode = React.forwardRef(
     }, [keyColWidth]);
 
     // Span/trace detail (full attributes)
-    const [spanDetail, setSpanDetail] = useState(null);
+    const [loadedSpanDetail, setSpanDetail] = useState(null);
     const [loadingDetail, setLoadingDetail] = useState(false);
+    const [detailError, setDetailError] = useState(null);
 
     // Per-row cache so toggling rows doesn't refetch the trace or re-walk
-    // the response. Keyed by `${rowType}:${traceId}[:${spanId}]`. Each entry
+    // the response. Span keys contain project + physical identity + winner.
+    // Other keys retain the selected project scope. Each entry
     // is `{ detail, fieldNames? }` — fieldNames is filled lazily on first
     // walk and reused on subsequent row toggles.
     const detailCacheRef = useRef(new Map());
@@ -575,6 +588,9 @@ const TracingTestMode = React.forwardRef(
       setListContinuationPending(false);
       let cancelled = false;
       const requestController = new AbortController();
+      const startedAt = Date.now();
+      const remainingMs = () =>
+        Math.max(1, ANALYTICS_REQUEST_TIMEOUT_MS - (Date.now() - startedAt));
       const fetchKey = `${selectedProjectId}:${rowType}:${effectiveFilterKey}`;
       if (listContinuationRef.current.signature !== fetchKey) {
         listContinuationRef.current = {
@@ -603,6 +619,17 @@ const TracingTestMode = React.forwardRef(
       const requestedCursorIdentities = new Set(
         listContinuationRef.current.requestedCursorIdentities || [],
       );
+      const cursorIdentityByToken = new Map();
+      const assertUnconsumedCursor = (identity) => {
+        if (
+          typeof identity !== "string" ||
+          requestedCursorIdentities.has(identity)
+        ) {
+          throw createListCursorProtocolError(
+            "List API returned a repeated continuation cursor",
+          );
+        }
+      };
       const fetchData = async () => {
         if (!startingCursor) setRows([]);
         try {
@@ -610,10 +637,8 @@ const TracingTestMode = React.forwardRef(
             const startingCursorIdentity =
               listContinuationRef.current.cursorIdentity ||
               listCursorBoundaryIdentity({ next_cursor: startingCursor });
-            rememberBoundedListCursorIdentity(
-              requestedCursorIdentities,
-              startingCursorIdentity,
-            );
+            assertUnconsumedCursor(startingCursorIdentity);
+            cursorIdentityByToken.set(startingCursor, startingCursorIdentity);
           }
           const recordContinuation = (metadata) => {
             const nextCursor = metadata?.next_cursor;
@@ -623,10 +648,10 @@ const TracingTestMode = React.forwardRef(
                 "List API returned a repeated continuation cursor",
               );
             }
-            rememberBoundedListCursorIdentity(
-              requestedCursorIdentities,
-              nextCursorIdentity,
-            );
+            // A deadline can return this cursor as pending. Only successful
+            // responses may mark it consumed, otherwise Continue rejects it.
+            assertUnconsumedCursor(nextCursorIdentity);
+            cursorIdentityByToken.set(nextCursor, nextCursorIdentity);
           };
           const requestList = (
             endpoint,
@@ -635,11 +660,21 @@ const TracingTestMode = React.forwardRef(
           ) =>
             requestListWithLegacyCursorFallback({
               request: (nextParams) =>
-                axios.get(endpoint, { params: nextParams, signal }),
+                readQuery(endpoint, { params: nextParams, signal }),
               params,
               pageParam: voice ? "page" : "page_number",
               firstPage: voice ? 1 : 0,
-            }).then((response) => parseAxiosResult(response, parser));
+            }).then((response) => {
+              const parsed = parseAxiosResult(response, parser);
+              if (params.cursor && !signal.aborted && !cancelled) {
+                rememberBoundedListCursorIdentity(
+                  requestedCursorIdentities,
+                  cursorIdentityByToken.get(params.cursor) ||
+                    listCursorBoundaryIdentity({ next_cursor: params.cursor }),
+                );
+              }
+              return parsed;
+            });
           if (rowType === "VoiceCall") {
             const requestParams = buildTracingVoicePreviewListParams({
               selectedProjectId,
@@ -654,6 +689,7 @@ const TracingTestMode = React.forwardRef(
               { voice: true, parser: parseVoiceCallListResponse },
             );
             const exactRows = await collectExactListRows({
+              maxElapsedMs: remainingMs(),
               initialResponse: response,
               initialRows: startingRows,
               targetRowCount: requestParams.page_size,
@@ -741,6 +777,7 @@ const TracingTestMode = React.forwardRef(
             parser: responseParser,
           });
           const exactRows = await collectExactListRows({
+            maxElapsedMs: remainingMs(),
             initialResponse: response,
             initialRows: startingRows,
             targetRowCount: params.page_size,
@@ -807,7 +844,7 @@ const TracingTestMode = React.forwardRef(
             // A transport failure does not invalidate rows and a checkpoint
             // already proven by earlier bounded reads. Restore the exact
             // pre-attempt snapshot (including the requested-cursor set before
-            // `startingCursor` was added) so an explicit retry can safely
+            // `startingCursor` was consumed) so an explicit retry can safely
             // request the same saved checkpoint once more.
             listContinuationRef.current = continuationSnapshot;
             setListReadState("error");
@@ -856,6 +893,17 @@ const TracingTestMode = React.forwardRef(
 
     // ── Current row ──
     const currentRow = rows[currentRowIndex] || null;
+    // Effects clean up after render. Never expose the previous span even for
+    // the render between selection and cancellation of its in-flight request.
+    const selectedSpanKey = getSpanReadCacheKey(currentRow);
+    const spanDetail =
+      rowType === "Span"
+        ? selectedSpanKey &&
+          currentRow?.project_id === selectedProjectId &&
+          selectedSpanKey === getSpanReadCacheKey(loadedSpanDetail)
+          ? loadedSpanDetail
+          : null
+        : loadedSpanDetail;
 
     // ── Session drill-down queries (rowType=Session only) ──
     // These queries assemble the previewed session so the mapping dropdown
@@ -902,8 +950,10 @@ const TracingTestMode = React.forwardRef(
 
     // ── Fetch full span/trace detail when row changes ──
     useEffect(() => {
+      setDetailError(null);
       if (!currentRow) {
         setSpanDetail(null);
+        setLoadingDetail(false);
         return;
       }
 
@@ -911,8 +961,16 @@ const TracingTestMode = React.forwardRef(
       const traceId = currentRow.trace_id;
       const cacheKey =
         rowType === "Span"
-          ? `Span:${traceId || ""}:${spanId || ""}`
-          : `${rowType}:${traceId || spanId || ""}`;
+          ? JSON.stringify([
+              selectedProjectId,
+              "Span",
+              getSpanReadCacheKey(currentRow),
+            ])
+          : JSON.stringify([
+              selectedProjectId,
+              rowType,
+              traceId || spanId || "",
+            ]);
 
       // Cache hit: reuse the exact same detailData reference so the
       // downstream fieldNames memo short-circuits too.
@@ -923,6 +981,9 @@ const TracingTestMode = React.forwardRef(
         return;
       }
 
+      const controller = new AbortController();
+      let cancelled = false;
+      setSpanDetail(null);
       const fetchDetail = async () => {
         setLoadingDetail(true);
         try {
@@ -934,7 +995,7 @@ const TracingTestMode = React.forwardRef(
             try {
               const { data } = await axios.get(
                 endpoints.project.getVoiceCallDetail,
-                { params: { trace_id: traceId } },
+                { params: { trace_id: traceId }, signal: controller.signal },
               );
               const voiceResult = parseVoiceCallDetailResponse(data);
               // Spread row-list fields first as a fallback so we never
@@ -943,29 +1004,33 @@ const TracingTestMode = React.forwardRef(
             } catch {
               detailData = { ...currentRow };
             }
-          } else if ((rowType === "Span" || rowType === "Trace") && traceId) {
+          } else if (rowType === "Span") {
+            const { spanId: selectedSpanId, params } =
+              spanReadRequest(currentRow);
+            if (params.project_id !== selectedProjectId)
+              throw new Error(SPAN_REFERENCE_ERROR);
+            const { data } = await axios.get(
+              endpoints.project.getObservationSpan(selectedSpanId),
+              { params, signal: controller.signal },
+            );
+            if (data?.status !== true) throw new Error(SPAN_REFERENCE_ERROR);
+            detailData = verifySpanReadResponse(
+              currentRow,
+              data?.result?.observation_span,
+            );
+          } else if (rowType === "Trace" && traceId) {
             // Fetch the TRACE detail — same API as the drawer uses.
             // This returns all observation spans with full attributes (including spanAttributes).
             const { data } = await axios.get(
               endpoints.project.getTrace(traceId),
+              { signal: controller.signal },
             );
             const traceResult = data?.result;
 
             const spans = traceResult?.observation_spans;
-            if (rowType === "Span" && spanId && spans) {
-              detailData = findSpanInTree(spans, spanId);
-              if (!detailData) {
-                const firstSpan = spans?.[0];
-                detailData = firstSpan?.observation_span || traceResult?.trace;
-              }
-            } else {
-              const traceInfo = traceResult?.trace || {};
-              const allSpans = sortSpansForMapping(flattenSpanTree(spans));
-              detailData = {
-                ...traceInfo,
-                spans: allSpans,
-              };
-            }
+            const traceInfo = traceResult?.trace || {};
+            const allSpans = sortSpansForMapping(flattenSpanTree(spans));
+            detailData = { ...traceInfo, spans: allSpans };
           } else if (rowType === "Session") {
             // Sessions are assembled via React Query at the top of the
             // component (sessionDetailQuery + sessionFirstTraceSpansQuery)
@@ -980,17 +1045,28 @@ const TracingTestMode = React.forwardRef(
             detailData = { ...currentRow };
           }
 
+          if (cancelled) return;
           detailCacheRef.current.set(cacheKey, { detail: detailData });
           setSpanDetail(detailData);
         } catch {
+          if (cancelled) return;
           setSpanDetail(null);
+          setDetailError(
+            rowType === "Span"
+              ? SPAN_REFERENCE_ERROR
+              : "Could not load this preview. Refresh the list and try again.",
+          );
         } finally {
-          setLoadingDetail(false);
+          if (!cancelled) setLoadingDetail(false);
         }
       };
 
       fetchDetail();
-    }, [currentRow, currentRowIndex, rowType, columns]);
+      return () => {
+        cancelled = true;
+        controller.abort();
+      };
+    }, [currentRow, currentRowIndex, rowType, selectedProjectId]);
 
     // ── Session detail watcher ──
     // Compose `spanDetail` from the React Query results when in Session
@@ -1267,29 +1343,12 @@ const TracingTestMode = React.forwardRef(
           rowFields,
         );
 
-        // Single-eval playground resolves {{span}} / {{trace}} /
-        // {{session}} server-side from IDs. Composite execution expects
-        // the concrete context objects directly.
-        const autoCtx = {};
-        const _spanId = currentRow?.span_id || currentRow?.spanId;
-        const _traceId = currentRow?.trace_id || currentRow?.traceId;
-        const _sessionId = currentRow?.session_id || currentRow?.sessionId;
-        if (rowType === "Span" && _spanId) autoCtx.span_id = _spanId;
-        if ((rowType === "Span" || rowType === "Trace") && _traceId)
-          autoCtx.trace_id = _traceId;
-        if (rowType === "Session" && _sessionId)
-          autoCtx.session_id = _sessionId;
-        if (rowType === "VoiceCall" && _traceId) autoCtx.trace_id = _traceId;
-
-        const compositeCtx = {};
-        if (rowType === "Span" && spanDetail)
-          compositeCtx.span_context = spanDetail;
-        if (rowType === "Trace" && currentRow)
-          compositeCtx.trace_context = currentRow;
-        if (rowType === "Session" && currentRow)
-          compositeCtx.session_context = currentRow;
-        if (rowType === "VoiceCall" && currentRow)
-          compositeCtx.trace_context = currentRow;
+        const autoCtx = buildAutoCtx({ rowType, currentRow, spanDetail });
+        const compositeCtx = buildCompositeCtx({
+          rowType,
+          currentRow,
+          spanDetail,
+        });
 
         const compositeConfig = buildCompositeRuntimeConfig({
           codeParams,
@@ -1585,6 +1644,13 @@ const TracingTestMode = React.forwardRef(
               projectId={selectedProjectId}
               isSimulator={isVoiceProject}
               rowType={rowType}
+              toolbarStart={
+                <DateRangePill
+                  dateFilter={previewDateFilter}
+                  setDateFilter={setPreviewDateFilter}
+                  sx={{ height: 30, fontSize: 12 }}
+                />
+              }
             />
           </Box>
         )}
@@ -1667,6 +1733,7 @@ const TracingTestMode = React.forwardRef(
                 <IconButton
                   size="small"
                   disabled={currentRowIndex === 0}
+                  aria-label="Previous row"
                   onClick={() => {
                     setCurrentRowIndex((i) => Math.max(0, i - 1));
                     setResult(null);
@@ -1680,6 +1747,7 @@ const TracingTestMode = React.forwardRef(
                 <IconButton
                   size="small"
                   disabled={currentRowIndex >= (rows?.length ?? 0) - 1}
+                  aria-label="Next row"
                   onClick={() => {
                     setCurrentRowIndex((i) =>
                       Math.min((rows?.length ?? 0) - 1, i + 1),
@@ -1701,6 +1769,12 @@ const TracingTestMode = React.forwardRef(
           <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
             <CircularProgress size={18} />
           </Box>
+        )}
+
+        {detailError && !loadingDetail && (
+          <Typography role="alert" variant="body2" color="error" sx={{ py: 2 }}>
+            {detailError}
+          </Typography>
         )}
 
         {spanDetail && !loadingDetail && (
@@ -2030,11 +2104,14 @@ const TracingTestMode = React.forwardRef(
                 fontWeight={600}
                 color="text.secondary"
               >
-                No {rowType.toLowerCase()} data found
+                No matching{" "}
+                {rowType === "VoiceCall"
+                  ? "voice calls"
+                  : `${rowType.toLowerCase()}s`}{" "}
+                found
               </Typography>
               <Typography variant="caption" color="text.disabled">
-                Add {rowType.toLowerCase()} to this project before running a
-                test
+                Try changing the filters or date range.
               </Typography>
             </Box>
           )}

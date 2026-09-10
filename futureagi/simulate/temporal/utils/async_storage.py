@@ -191,7 +191,7 @@ async def download_audio_from_url_async(
                     await asyncio.sleep(2**attempt)
                 continue
 
-    raise last_error or httpx.HTTPError(f"Failed to download {audio_url}")
+    raise last_error or httpx.HTTPError("Failed to download recording")
 
 
 async def _convert_audio_url_to_s3_async_with_size(
@@ -293,7 +293,6 @@ async def _convert_audio_url_to_s3_async_with_size(
             "recording_rehost_failed",
             artifact_type=url_type,
             error_type=type(e).__name__,
-            exc_info=True,
         )
         # Return original URL on failure
         return audio_url, 0
@@ -449,6 +448,5 @@ def convert_audio_url_to_s3_sync(
             "recording_rehost_failed",
             artifact_type=url_type,
             error_type=type(e).__name__,
-            exc_info=True,
         )
         return audio_url, 0

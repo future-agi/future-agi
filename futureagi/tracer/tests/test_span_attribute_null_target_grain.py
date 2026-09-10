@@ -178,8 +178,9 @@ def test_bounded_surfaces_apply_attribute_nullness_at_target_grain(
     assert expected in query
     assert forbidden not in query
     if surface == "session":
-        assert "GROUP BY project_id, session_id, trace_id" in query
-        assert "FROM matching_scalar_traces" in query
+        assert "GROUP BY project_id, session_id" in query
+        assert "FROM resolved_candidate_scalar_spans" in query
+        assert "FROM matching_scalar_traces" not in query
 
 
 def _local_ch25_client():
@@ -310,3 +311,28 @@ def test_trace_attribute_nullness_replays_versions_and_tombstones():
     finally:
         client.execute("USE default")
         client.execute(f"DROP DATABASE IF EXISTS {database}")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("surface,operation,expected", [
+    ("sessions", "is_null", 1), ("sessions", "is_not_null", 1),
+    ("traces", "is_null", 2), ("traces", "is_not_null", 1),
+])
+def test_independent_null_oracle_groups_at_displayed_entity(surface, operation, expected):
+    from types import SimpleNamespace
+
+    from tracer.tests.integration.test_list_endpoints_filter_count import (
+        _expected_count,
+    )
+
+    rows = [
+        SimpleNamespace(trace_id="a", session_id="one", has_key=True),
+        SimpleNamespace(trace_id="b", session_id="one", has_key=False),
+        SimpleNamespace(trace_id="c", session_id="two", has_key=False),
+    ]
+    case = SimpleNamespace(
+        meta_kind=None, aggregate_predicate=None, col_type="SPAN_ATTRIBUTE",
+        filter_op=operation, target_type=surface,
+        expected_predicate=lambda row: row.has_key if operation == "is_not_null" else not row.has_key,
+    )
+    assert _expected_count(case, rows) == expected

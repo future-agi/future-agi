@@ -25,7 +25,7 @@ from typing import Any
 
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.filters import (
-    build_literal_text_predicate,
+    build_annotation_value_predicate,
     normalize_filter_op,
 )
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
@@ -234,188 +234,15 @@ def _annotation_value_condition(
 ) -> str:
     """Compile the value portion of one annotation relation filter."""
 
-    normalized_type = str(filter_type or "").strip().lower()
-    normalized_op = normalize_filter_op(filter_op)
-    value_expr = "s.value"
-
-    if normalized_type == "number":
-        number_expr = (
-            "if(JSONHas(s.value, 'rating'), "
-            "JSONExtractFloat(s.value, 'rating'), "
-            "JSONExtractFloat(s.value, 'value'))"
+    try:
+        return build_annotation_value_predicate(
+            filter_type,
+            filter_op,
+            filter_value,
+            bind=lambda prefix, value: _local_param(params, prefix, value),
         )
-        if normalized_op in {"between", "not_between"}:
-            if not isinstance(filter_value, (list, tuple)) or len(filter_value) != 2:
-                raise UnsupportedFilterShapeError(
-                    f"annotation {normalized_op} requires two values"
-                )
-            try:
-                lower = float(filter_value[0])
-                upper = float(filter_value[1])
-            except (TypeError, ValueError) as exc:
-                raise UnsupportedFilterShapeError(
-                    "annotation number filter requires numeric values"
-                ) from exc
-            lower_param = _local_param(params, "annotation_lower", lower)
-            upper_param = _local_param(params, "annotation_upper", upper)
-            sql_op = "NOT BETWEEN" if normalized_op == "not_between" else "BETWEEN"
-            return f"{number_expr} {sql_op} %({lower_param})s AND %({upper_param})s"
-        if normalized_op in {"in", "not_in"}:
-            raw_values = (
-                filter_value
-                if isinstance(filter_value, (list, tuple))
-                else [filter_value]
-            )
-            try:
-                values = tuple(float(value) for value in raw_values)
-            except (TypeError, ValueError) as exc:
-                raise UnsupportedFilterShapeError(
-                    "annotation number filter requires numeric values"
-                ) from exc
-            if not values:
-                return "1 = 1" if normalized_op == "not_in" else "0 = 1"
-            param = _local_param(params, "annotation_numbers", values)
-            sql_op = "NOT IN" if normalized_op == "not_in" else "IN"
-            return f"{number_expr} {sql_op} %({param})s"
-        comparison = {
-            "equals": "=",
-            "not_equals": "!=",
-            "greater_than": ">",
-            "greater_than_or_equal": ">=",
-            "less_than": "<",
-            "less_than_or_equal": "<=",
-        }.get(normalized_op)
-        if comparison is None:
-            raise UnsupportedFilterShapeError(
-                f"unsupported annotation number operation: {normalized_op!r}"
-            )
-        try:
-            value = float(filter_value)
-        except (TypeError, ValueError) as exc:
-            raise UnsupportedFilterShapeError(
-                "annotation number filter requires a numeric value"
-            ) from exc
-        param = _local_param(params, "annotation_number", value)
-        return f"{number_expr} {comparison} %({param})s"
-
-    if normalized_type in {"boolean", "thumbs"}:
-        raw_values = (
-            filter_value if isinstance(filter_value, (list, tuple)) else [filter_value]
-        )
-        token_map = {
-            "true": "up",
-            "false": "down",
-            "thumbs up": "up",
-            "thumbs down": "down",
-            "thumbs_up": "up",
-            "thumbs_down": "down",
-            "up": "up",
-            "down": "down",
-        }
-        tokens: list[str] = []
-        for value in raw_values:
-            if isinstance(value, bool):
-                token = "up" if value else "down"
-            else:
-                token = token_map.get(str(value).strip().lower())
-            if token is not None and token not in tokens:
-                tokens.append(token)
-        if not tokens:
-            raise UnsupportedFilterShapeError("annotation thumbs value is invalid")
-        param = _local_param(params, "annotation_thumbs", tuple(tokens))
-        sql_op = "NOT IN" if normalized_op in {"not_equals", "not_in"} else "IN"
-        if normalized_op not in {"equals", "not_equals", "in", "not_in"}:
-            raise UnsupportedFilterShapeError(
-                f"unsupported annotation thumbs operation: {normalized_op!r}"
-            )
-        return f"JSONExtractString({value_expr}, 'value') {sql_op} %({param})s"
-
-    if normalized_type == "text":
-        text_expr = f"JSONExtractString({value_expr}, 'text')"
-        if normalized_op in {"contains", "not_contains", "starts_with", "ends_with"}:
-            param = _local_param(params, "annotation_text", str(filter_value))
-            literal = build_literal_text_predicate(
-                text_expr,
-                param,
-                normalized_op,
-                case_insensitive=True,
-            )
-            return f"{text_expr} != '' AND {literal}"
-        if normalized_op in {"equals", "not_equals"}:
-            param = _local_param(params, "annotation_text", str(filter_value).lower())
-            comparison = "!=" if normalized_op == "not_equals" else "="
-            return (
-                f"{text_expr} != '' AND lowerUTF8(toString({text_expr})) "
-                f"{comparison} %({param})s"
-            )
-        if normalized_op in {"in", "not_in"}:
-            raw_values = (
-                filter_value
-                if isinstance(filter_value, (list, tuple))
-                else [filter_value]
-            )
-            values = tuple(
-                str(value).lower() for value in raw_values if value not in (None, "")
-            )
-            if not values:
-                return "1 = 1" if normalized_op == "not_in" else "0 = 1"
-            param = _local_param(params, "annotation_texts", values)
-            sql_op = "NOT IN" if normalized_op == "not_in" else "IN"
-            return (
-                f"{text_expr} != '' AND lowerUTF8(toString({text_expr})) "
-                f"{sql_op} %({param})s"
-            )
-        raise UnsupportedFilterShapeError(
-            f"unsupported annotation text operation: {normalized_op!r}"
-        )
-
-    if normalized_type in {"array", "categorical"}:
-        values = (
-            list(filter_value)
-            if isinstance(filter_value, (list, tuple))
-            else [filter_value]
-        )
-        if not values:
-            return (
-                "1 = 1"
-                if normalized_op in {"not_equals", "not_in", "not_contains"}
-                else "0 = 1"
-            )
-        selected_expr = "JSONExtract(s.value, 'selected', 'Array(String)')"
-        conditions: list[str] = []
-        legacy_thumbs = {
-            "thumbs up": "up",
-            "thumbs down": "down",
-            "thumbs_up": "up",
-            "thumbs_down": "down",
-        }
-        for value in values:
-            param = _local_param(params, "annotation_choice", value)
-            condition = f"has({selected_expr}, %({param})s)"
-            thumb = (
-                legacy_thumbs.get(value.strip().lower())
-                if isinstance(value, str)
-                else None
-            )
-            if thumb is not None:
-                thumb_param = _local_param(params, "annotation_thumb", thumb)
-                condition = (
-                    f"({condition} OR JSONExtractString(s.value, 'value') "
-                    f"= %({thumb_param})s)"
-                )
-            conditions.append(condition)
-        combined = "(" + " OR ".join(conditions) + ")"
-        if normalized_op in {"not_equals", "not_in", "not_contains"}:
-            return f"NOT {combined}"
-        if normalized_op not in {"equals", "in", "contains"}:
-            raise UnsupportedFilterShapeError(
-                f"unsupported annotation categorical operation: {normalized_op!r}"
-            )
-        return combined
-
-    raise UnsupportedFilterShapeError(
-        f"unsupported annotation filter type: {normalized_type!r}"
-    )
+    except ValueError as exc:
+        raise UnsupportedFilterShapeError(str(exc)) from exc
 
 
 def _compile_annotation_filter(
@@ -820,7 +647,7 @@ def compile_exact_graph_row_predicates(
     for filter_index, original_item in enumerate(filters or []):
         column_id, config_key, config = _filter_parts(original_item)
         filter_type = str(config.get("filter_type") or config.get("filterType") or "")
-        if column_id in {"created_at", "start_time"} and filter_type in {
+        if BaseQueryBuilder.is_datetime_filter(original_item) and filter_type in {
             "datetime",
             "date",
             "timestamp",
@@ -833,14 +660,17 @@ def compile_exact_graph_row_predicates(
         structured_attribute = False
         relation_requirements: list[tuple[str, bool, dict[str, Any]]] | None = None
         normalized_col_type = str(col_type or "").strip().upper()
-        if column_id == "has_eval":
+        # Explicit property provenance wins over legacy name aliases here,
+        # before the native relation adapters bypass the shared compiler.
+        is_raw_attribute = normalized_col_type == "SPAN_ATTRIBUTE"
+        if not is_raw_attribute and column_id == "has_eval":
             relation_predicate, required, relation_params = _compile_has_eval_filter(
                 config=config,
                 project_id=project_id,
                 observe_type=normalized_observe_type,
             )
             relation_requirements = [(relation_predicate, required, relation_params)]
-        elif (
+        elif not is_raw_attribute and (
             column_id in {"has_annotation", "my_annotations", "annotator"}
             or normalized_col_type == "ANNOTATION"
         ):
@@ -855,7 +685,7 @@ def compile_exact_graph_row_predicates(
                     else tuple(annotation_label_ids)
                 ),
             )
-        elif column_id in {"user", "user_id", "user_id_type"}:
+        elif not is_raw_attribute and column_id in {"user", "user_id", "user_id_type"}:
             relation_predicate, required, relation_params = _compile_end_user_filter(
                 column_id=column_id,
                 config=config,

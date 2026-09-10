@@ -14,7 +14,6 @@ from concurrent.futures import (
 from concurrent.futures import (
     TimeoutError as FutureTimeoutError,
 )
-from contextlib import nullcontext
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -28,8 +27,8 @@ from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.project import Project, ProjectSourceChoices
 from tracer.services.annotation_label_source import AnnotationLabelScoresProjectPG
 from tracer.services.clickhouse.read_budget import ReadDeadline, ReadDeadlineExceeded
-from tracer.services.clickhouse.v2.property_catalog.runtime_limits import RUNTIME_LIMITS
 from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
+from tracer.services.postgres_read_policy import application_postgres_reads
 
 logger = structlog.get_logger(__name__)
 
@@ -65,75 +64,21 @@ class _CatalogPageFamily:
     read_rows: Callable[[int, int], list[dict]]
 
 
-def _execute_metrics_catalog_pg_query_with_deadline(
-    deadline: ReadDeadline,
-    execute,
-    sql,
-    params,
-    many,
-    context,
-):
-    """Shrink PostgreSQL's timeout before every catalog SQL statement."""
-
-    remaining_ms = deadline.remaining_ms(floor_ms=1)
-    # Bypass Django's wrapper stack for the control statement so this helper
-    # does not recursively wrap its own timeout-control query.
-    context["cursor"].cursor.execute(
-        "SELECT set_config('statement_timeout', %s, true)",
-        (str(remaining_ms),),
-    )
-    result = execute(sql, params, many, context)
-    deadline.remaining_ms(floor_ms=1)
-    return result
-
-
 def _run_metrics_catalog_pg_read(deadline: ReadDeadline, family: str, read):
-    """Materialize one PostgreSQL phase inside the request-owned deadline."""
-
-    deadline.remaining_ms(METRICS_CATALOG_TIMEOUT_MS)
-    if connection.vendor != "postgresql":
-        try:
-            result = read()
-            deadline.remaining_ms(floor_ms=1)
-            return result
-        except ReadDeadlineExceeded:
-            raise
-        except MetricsCatalogUnavailable:
-            raise
-        except Exception as exc:
-            raise MetricsCatalogUnavailable(family) from exc
-
-    already_in_atomic_block = connection.in_atomic_block
-    transaction_context = (
-        nullcontext() if already_in_atomic_block else transaction.atomic()
-    )
-
-    def execute_with_remaining_timeout(execute, sql, params, many, context):
-        return _execute_metrics_catalog_pg_query_with_deadline(
-            deadline,
-            execute,
-            sql,
-            params,
-            many,
-            context,
-        )
-
+    """Materialize a family without imposing a PostgreSQL statement timeout."""
     try:
-        with transaction_context:
-            with connection.execute_wrapper(execute_with_remaining_timeout):
-                if not already_in_atomic_block:
-                    with connection.cursor() as cursor:
-                        cursor.execute("SET TRANSACTION READ ONLY")
-                result = read()
-                deadline.remaining_ms(floor_ms=1)
-        deadline.remaining_ms(floor_ms=1)
+        with application_postgres_reads(
+            connection=connection,
+            atomic=transaction.atomic,
+            check_request=lambda: deadline.remaining_ms(floor_ms=1),
+            read_only=True,
+        ):
+            result = read()
         return result
     except ReadDeadlineExceeded:
         raise
     except MetricsCatalogUnavailable:
         raise
-    except DatabaseError as exc:
-        raise MetricsCatalogUnavailable(family) from exc
     except Exception as exc:
         raise MetricsCatalogUnavailable(family) from exc
 
@@ -141,23 +86,15 @@ def _run_metrics_catalog_pg_read(deadline: ReadDeadline, family: str, read):
 def _run_metrics_catalog_pg_snapshot(deadline: ReadDeadline, read):
     """Keep definition-family counts and slices on one stable PG snapshot."""
 
-    deadline.remaining_ms(METRICS_CATALOG_TIMEOUT_MS)
-    if connection.vendor != "postgresql" or connection.in_atomic_block:
-        result = read()
-        deadline.remaining_ms(floor_ms=1)
-        return result
-
     try:
-        with transaction.atomic():
-            # This must be the transaction's first statement. Individual
-            # family reads subsequently install the shrinking statement wall.
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
-                )
+        with application_postgres_reads(
+            connection=connection,
+            atomic=transaction.atomic,
+            check_request=lambda: deadline.remaining_ms(floor_ms=1),
+            read_only=True,
+            repeatable_read=True,
+        ):
             result = read()
-            deadline.remaining_ms(floor_ms=1)
-        deadline.remaining_ms(floor_ms=1)
         return result
     except (MetricsCatalogUnavailable, ReadDeadlineExceeded):
         raise
@@ -567,17 +504,13 @@ def resolve_property_catalog_project_scope(
     The ClickHouse definition reader owns no authorization logic. Every UUID
     carried into its visibility predicate must first be proven to belong to
     the already-authorized workspace. Unlike the legacy catalog builder,
-    malformed, oversized, and mixed valid/foreign scopes are rejected instead
+    malformed and mixed valid/foreign scopes are rejected instead
     of silently narrowed. This rollout is qualified for Observe projects;
     workspace reads materialize that complete eligible PG set so the
     activation can prove full coverage.
     """
 
     raw_project_ids = list(project_ids)
-    if len(raw_project_ids) > RUNTIME_LIMITS.max_projects:
-        raise ValueError(
-            f"At most {RUNTIME_LIMITS.max_projects} project_ids may be searched at once"
-        )
     try:
         requested = list(
             dict.fromkeys(str(UUID(str(project_id))) for project_id in raw_project_ids)
@@ -1717,7 +1650,6 @@ def build_metrics_catalog(
         if _metric_matches_scope(metric, category=category, source=source)
     ]
     metrics.sort(key=_metric_catalog_sort_key)
-    deadline.remaining_ms(floor_ms=1)
 
     return metrics
 
@@ -1863,7 +1795,6 @@ def _paginate_catalog_families(
     page_start = (page - 1) * page_size
     page_end = min(page_start + page_size, total)
     if page_start >= total:
-        deadline.remaining_ms(floor_ms=1)
         return [], total, False
 
     page_rows: list[dict] = []
@@ -1889,7 +1820,6 @@ def _paginate_catalog_families(
             page_rows.extend(rows)
         family_start = family_end
 
-    deadline.remaining_ms(floor_ms=1)
     return page_rows, total, page_end < total
 
 
@@ -2239,7 +2169,6 @@ def build_metrics_catalog_page(
     # this page with Python ``casefold`` can disagree with PostgreSQL
     # ``Lower``/collation (for example, ``ss`` versus ``ß``), making the
     # concatenated result depend on page size.
-    deadline.remaining_ms(floor_ms=1)
     return metrics, total, has_more
 
 
@@ -2279,8 +2208,8 @@ def get_cached_metrics_catalog(
             metrics = cache.get(cache_key)
         except Exception:
             logger.warning("metrics_catalog_cache_get_failed", exc_info=True)
-    deadline.remaining_ms(floor_ms=1)
     if metrics is None:
+        deadline.remaining_ms(floor_ms=1)
         metrics = build_metrics_catalog(
             workspace,
             project_ids_param=project_ids_param,
@@ -2292,12 +2221,10 @@ def get_cached_metrics_catalog(
             deadline=deadline,
         )
         # ``build_metrics_catalog`` has no partial-success return path. Only a
-        # complete, deadline-proven catalog reaches this best-effort cache set.
-        deadline.remaining_ms(floor_ms=1)
+        # complete catalog reaches this best-effort cache set.
         if use_cache:
             try:
                 cache.set(cache_key, metrics, timeout=ttl)
             except Exception:
                 logger.warning("metrics_catalog_cache_set_failed", exc_info=True)
-    deadline.remaining_ms(floor_ms=1)
     return metrics

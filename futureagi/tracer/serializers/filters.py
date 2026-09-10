@@ -24,6 +24,7 @@ from tracer.utils.filter_operators import (
     SPAN_ATTR_ALLOWED_OPS,
     STRUCTURED_SPAN_ATTR_ALLOWED_OPS,
     filter_op_is_allowed,
+    load_filter_contract,
     normalize_filter_type,
     normalize_span_attribute_filter_type,
     validate_json_map_filter_value,
@@ -108,12 +109,16 @@ FILTER_LIST_QUERY_PARAM_SCHEMA = {
 # exact aggregates, persisted in background-work identities.  Bound the shape
 # before either operation so one authenticated request cannot create an
 # unbounded AST, driver parameter set, or cache/work-queue cardinality.
-FILTER_LIST_MAX_ITEMS = 32
-FILTER_LIST_MAX_VALUES = 64
-FILTER_VALUE_MAX_DEPTH = 8
-FILTER_STRING_MAX_UTF8_BYTES = 4_096
-FILTER_LIST_MAX_TOTAL_STRING_UTF8_BYTES = 65_536
-FILTER_CONFIG_MAX_UTF8_BYTES = 128 * 1_024
+_FILTER_LIMITS = load_filter_contract()["limits"]
+FILTER_LIST_MAX_ITEMS = _FILTER_LIMITS["maxItems"]
+FILTER_LIST_MAX_VALUES = _FILTER_LIMITS["maxValues"]
+FILTER_VALUE_MAX_DEPTH = _FILTER_LIMITS["maxDepth"]
+FILTER_STRING_MAX_UTF8_BYTES = _FILTER_LIMITS["stringMaxUtf8Bytes"]
+# Ten retained 16KiB strings plus the previous 64KiB metadata/sibling budget.
+FILTER_LIST_MAX_TOTAL_STRING_UTF8_BYTES = _FILTER_LIMITS["totalStringMaxUtf8Bytes"]
+# Sixfold JSON escaping plus 64KiB framing; not an HTTP/ingress body limit.
+FILTER_LIST_MAX_SERIALIZED_UTF8_BYTES = _FILTER_LIMITS["serializedMaxUtf8Bytes"]
+FILTER_CONFIG_MAX_UTF8_BYTES = _FILTER_LIMITS["configMaxUtf8Bytes"]
 BOUNDED_LIST_DATETIME_FILTER_OPS = frozenset(
     {
         "equals",
@@ -344,12 +349,24 @@ class ObserveGraphMetricConfigField(serializers.JSONField):
         return value
 
 
+def _check_filter_json_size(data: str) -> None:
+    if (
+        len(data) > FILTER_LIST_MAX_SERIALIZED_UTF8_BYTES
+        or len(data.encode("utf-8")) > FILTER_LIST_MAX_SERIALIZED_UTF8_BYTES
+    ):
+        raise serializers.ValidationError(
+            "Serialized filters exceed the "
+            f"{FILTER_LIST_MAX_SERIALIZED_UTF8_BYTES} UTF-8 byte request limit."
+        )
+
+
 def parse_filter_list_payload(data):
     """Decode the canonical filter-list payload from body or query params."""
     if data in (None, ""):
         return []
     if isinstance(data, str):
         try:
+            _check_filter_json_size(data)
             data = json.loads(data)
         except (ValueError, RecursionError) as exc:
             raise serializers.ValidationError("Filters must be valid JSON.") from exc
@@ -520,6 +537,22 @@ def validate_filter_list_complexity(filters: list[Any]) -> None:
                 check_value(
                     filter_value,
                     field=f"Filter {index + 1} value",
+                    max_string_utf8_bytes=(
+                        TYPED_STRING_SUGGESTION_MAX_UTF8_BYTES
+                        if config.get("col_type") == "SPAN_ATTRIBUTE"
+                        and isinstance(filter_value, str)
+                        and normalize_span_attribute_filter_type(
+                            config.get("filter_type"), filter_value
+                        )
+                        == "text"
+                        and config.get("filter_op")
+                        in (
+                            SPAN_ATTR_ALLOWED_OPS["text"]
+                            - LIST_FILTER_OPS
+                            - NO_VALUE_FILTER_OPS
+                        )
+                        else FILTER_STRING_MAX_UTF8_BYTES
+                    ),
                 )
         if "attribute_value_types" in config:
             check_value(
@@ -899,7 +932,11 @@ class FilterListField(serializers.ListField):
     def to_internal_value(self, data):
         parsed = parse_filter_list_payload(data)
         validate_filter_list_complexity(parsed)
-        return super().to_internal_value(parsed)
+        validated = super().to_internal_value(parsed)
+        _check_filter_json_size(
+            json.dumps(validated, ensure_ascii=False, separators=(",", ":"))
+        )
+        return validated
 
 
 class SessionFilterListField(FilterListField):

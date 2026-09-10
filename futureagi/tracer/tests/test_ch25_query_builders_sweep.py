@@ -141,7 +141,12 @@ def test_trace_list_v2_count_no_legacy():
 
 
 def test_trace_list_v2_content_no_legacy():
-    sql, _ = _trace_list_builder().build_content_query(trace_ids=["t1"])
+    builder = _trace_list_builder()
+    sql, _ = builder.build_content_query(
+        trace_ids=["t1"],
+        root_identities=[(str(builder.project_id), "t1", "sp1", 1785542400123456,
+                          "span", "fixture", 1785542400000000, 1)],
+    )
     _assert_no_legacy(sql, "TraceList.build_content_query")
 
 
@@ -204,7 +209,21 @@ def test_voice_call_list_v2_count_no_legacy():
 
 
 def test_voice_call_list_v2_content_no_legacy():
-    sql, _ = _voice_call_builder().build_content_query(span_ids=["sp1"])
+    root_identity = (
+        PROJECT_ID,
+        "trace-1",
+        "sp1",
+        1_785_369_600_123_456,
+        "conversation",
+        "svc",
+        1_785_369_600_000_000,
+        2,
+    )
+    sql, params = _voice_call_builder().build_content_query(
+        span_ids=["sp1"], root_identities=[root_identity]
+    )
+    assert "FROM spans" in sql
+    assert params["content_root_identities"] == (root_identity,)
     _assert_no_legacy(sql, "VoiceCallList.build_content_query")
 
 

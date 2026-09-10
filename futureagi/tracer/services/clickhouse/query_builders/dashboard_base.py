@@ -151,7 +151,9 @@ class DashboardQueryBuilderBase:
                 key=lambda kv: sum(v for v in kv[1].values() if v is not None),
                 reverse=True,
             )
-            if len(ranked) > MAX_SERIES:
+            if len(ranked) > MAX_SERIES and not self.config.get(
+                "require_complete_series", False
+            ):
                 ranked = ranked[:MAX_SERIES]
             series_data = dict(ranked)
 

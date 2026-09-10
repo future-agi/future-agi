@@ -182,13 +182,28 @@ class BaseQueryBuilder(ABC):
         return mapping.get(interval, "toStartOfHour")
 
     @staticmethod
-    def is_datetime_complement_filter(item: dict[str, Any]) -> bool:
-        """Return whether a time leaf must survive base-window replacement."""
+    def is_datetime_filter(item: dict[str, Any]) -> bool:
+        """Identify native window leaves without consuming non-native sources.
+
+        Keep legacy omitted-family dates subject to strict window validation;
+        a malformed native type must not turn into a scope-validation bypass.
+        """
 
         column_id = item.get("column_id") or item.get("columnId")
         config = item.get("filter_config") or item.get("filterConfig") or {}
+        col_type = str(config.get("col_type") or config.get("colType") or "").upper()
+        return (
+            column_id in {"created_at", "start_time"}
+            and col_type not in {"SPAN_ATTRIBUTE", "EVAL_METRIC", "ANNOTATION"}
+        )
+
+    @staticmethod
+    def is_datetime_complement_filter(item: dict[str, Any]) -> bool:
+        """Return whether a time leaf must survive base-window replacement."""
+
+        config = item.get("filter_config") or item.get("filterConfig") or {}
         operator = config.get("filter_op") or config.get("filterOp")
-        return column_id in {"created_at", "start_time"} and operator in {
+        return BaseQueryBuilder.is_datetime_filter(item) and operator in {
             "not_equals",
             "not_between",
             "is_null",
@@ -300,7 +315,7 @@ class BaseQueryBuilder(ABC):
         for f in filters:
             col_id = f.get("column_id") or f.get("columnId")
             config = f.get("filter_config") or f.get("filterConfig") or {}
-            if col_id not in ("created_at", "start_time"):
+            if not BaseQueryBuilder.is_datetime_filter(f):
                 continue
 
             op = config.get("filter_op") or config.get("filterOp")
