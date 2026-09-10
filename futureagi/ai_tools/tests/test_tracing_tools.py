@@ -319,3 +319,81 @@ class TestDeleteProjectTool:
         )
 
         assert result.is_error
+
+
+class TestGetEvalTaskLogsTool:
+    ENGINE_FAILURE = (
+        "Error during evaluation: No input received for any of "
+        "'input', 'output'. Please check your inputs."
+    )
+    INLINE_FAILURE = "Response contradicts the provided context."
+
+    def _errored_entry(self, tool_context, project, **fields):
+        import uuid as _uuid
+
+        from tracer.models.observation_span import (
+            EvalEntryStatus,
+            ObservationSpan,
+        )
+        from tracer.tests.eval_task_factories import make_config, make_row
+        from tracer.tests.eval_task_factories import make_task, make_template
+
+        trace = make_trace(tool_context, project=project)
+        span = ObservationSpan.objects.create(
+            id=f"span-{_uuid.uuid4().hex[:8]}",
+            project=project,
+            trace=trace,
+            name="llm-call",
+            observation_type="llm",
+        )
+        template = make_template(
+            organization=tool_context.organization,
+            workspace=tool_context.workspace,
+        )
+        config = make_config(project=project, template=template, name="Eval")
+        task = make_task(project=project)
+        make_row(
+            span=span,
+            cfg=config,
+            task=task,
+            status=EvalEntryStatus.ERRORED,
+            error=True,
+            **fields,
+        )
+        return task
+
+    def test_engine_failure_text_reaches_the_caller(self, tool_context, project):
+        task = self._errored_entry(
+            tool_context,
+            project,
+            eval_explanation="",
+            error_message=self.ENGINE_FAILURE,
+        )
+
+        result = run_tool(
+            "get_eval_task_logs", {"eval_task_id": str(task.id)}, tool_context
+        )
+
+        assert not result.is_error
+        assert result.data["errors_count"] == 1
+        assert result.data["errors_message"] == [self.ENGINE_FAILURE]
+        assert "### Error Messages" in result.content
+        assert self.ENGINE_FAILURE in result.content
+
+    def test_inline_eval_reason_is_not_displaced_by_a_null_error_message(
+        self, tool_context, project
+    ):
+        task = self._errored_entry(
+            tool_context,
+            project,
+            eval_explanation=self.INLINE_FAILURE,
+            error_message=None,
+        )
+
+        result = run_tool(
+            "get_eval_task_logs", {"eval_task_id": str(task.id)}, tool_context
+        )
+
+        assert not result.is_error
+        assert result.data["errors_message"] == [self.INLINE_FAILURE]
+        assert self.INLINE_FAILURE in result.content
