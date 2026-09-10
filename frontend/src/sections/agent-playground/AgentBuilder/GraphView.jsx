@@ -117,7 +117,7 @@ export default function GraphView() {
 
   const onBeforeDelete = useCallback(
     ({ nodes: deletingNodes, edges: deletingEdges }) => {
-      if (isLocked) return Promise.resolve(false);
+      if (isRunning) return Promise.resolve(false);
       if (deletingNodes.length === 0 && deletingEdges.length === 0)
         return Promise.resolve(true);
 
