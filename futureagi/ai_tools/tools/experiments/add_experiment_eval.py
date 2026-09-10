@@ -83,10 +83,7 @@ class AddExperimentEvalTool(BaseTool):
         if err:
             return ToolResult.error(err, error_code="NOT_FOUND")
 
-        try:
-            template = EvalTemplate.objects.get(id=template_obj.id)
-        except EvalTemplate.DoesNotExist:
-            return ToolResult.not_found("EvalTemplate", str(template_obj.id))
+        template = template_obj
 
         # Check for duplicate
         if UserEvalMetric.objects.filter(

@@ -287,21 +287,46 @@ class TestResolveProject:
 
 
 class TestResolveEvalTemplate:
+    """The resolver reads through `no_workspace_objects`, filtered to this org or no org.
+
+    That is deliberate and these tests pin it: a system template carries no organization
+    and no workspace, so the default manager cannot see one, and every id
+    `list_eval_templates` hands out would be unresolvable.
+    """
+
+    @staticmethod
+    def _visible(MockTemplate):
+        """Stand in for `EvalTemplate.no_workspace_objects.filter(org-or-null)`."""
+        qs = MagicMock()
+        MockTemplate.no_workspace_objects.filter.return_value = qs
+        return qs
+
     @patch("ai_tools.resolvers.EvalTemplate")
     def test_resolve_by_uuid_found(self, MockTemplate):
         org = _make_mock_org()
         tmpl = _make_mock_obj("Faithfulness", obj_id=VALID_UUID)
-        MockTemplate.objects.get.return_value = tmpl
+        self._visible(MockTemplate).get.return_value = tmpl
 
         result, err = resolve_eval_template(VALID_UUID, org)
         assert result is tmpl
         assert err is None
 
     @patch("ai_tools.resolvers.EvalTemplate")
+    def test_reads_the_unscoped_manager(self, MockTemplate):
+        """The whole bug in one assertion: `objects` cannot see a system template."""
+        org = _make_mock_org()
+        self._visible(MockTemplate).get.return_value = _make_mock_obj("Faithfulness")
+
+        resolve_eval_template(VALID_UUID, org)
+        assert MockTemplate.no_workspace_objects.filter.called
+        assert not MockTemplate.objects.filter.called
+        assert not MockTemplate.objects.get.called
+
+    @patch("ai_tools.resolvers.EvalTemplate")
     def test_resolve_by_uuid_not_found(self, MockTemplate):
         org = _make_mock_org()
         MockTemplate.DoesNotExist = type("DoesNotExist", (Exception,), {})
-        MockTemplate.objects.get.side_effect = MockTemplate.DoesNotExist
+        self._visible(MockTemplate).get.side_effect = MockTemplate.DoesNotExist
 
         result, err = resolve_eval_template(VALID_UUID, org)
         assert result is None
@@ -315,7 +340,7 @@ class TestResolveEvalTemplate:
         qs = MagicMock()
         qs.count.return_value = 1
         qs.first.return_value = tmpl
-        MockTemplate.objects.filter.return_value = qs
+        self._visible(MockTemplate).filter.return_value = qs
 
         result, err = resolve_eval_template("Hallucination", org)
         assert result is tmpl
@@ -330,7 +355,7 @@ class TestResolveEvalTemplate:
         qs = MagicMock()
         qs.count.return_value = 2
         qs.__getitem__ = MagicMock(return_value=[t1, t2])
-        MockTemplate.objects.filter.return_value = qs
+        self._visible(MockTemplate).filter.return_value = qs
 
         result, err = resolve_eval_template("Custom Eval", org)
         assert result is None
@@ -343,14 +368,14 @@ class TestResolveEvalTemplate:
 
         exact_qs = MagicMock()
         exact_qs.count.return_value = 0
-        # Resolver does `EvalTemplate.objects.filter(...)[:5]` — make __getitem__
-        # return the same mock so configured exists/__iter__ stay applied.
+        # The resolver slices the fuzzy queryset, so __getitem__ returns the same mock
+        # and the configured exists/__iter__ stay applied.
         fuzzy_qs = MagicMock()
         fuzzy_qs.exists.return_value = True
         fuzzy_qs.__iter__ = MagicMock(return_value=iter([tmpl]))
         fuzzy_qs.__getitem__ = MagicMock(return_value=fuzzy_qs)
 
-        MockTemplate.objects.filter.side_effect = [exact_qs, fuzzy_qs]
+        self._visible(MockTemplate).filter.side_effect = [exact_qs, fuzzy_qs]
 
         result, err = resolve_eval_template("hallucination", org)
         assert result is None
@@ -367,7 +392,7 @@ class TestResolveEvalTemplate:
         fuzzy_qs.exists.return_value = False
         fuzzy_qs.__getitem__ = MagicMock(return_value=fuzzy_qs)
 
-        MockTemplate.objects.filter.side_effect = [exact_qs, fuzzy_qs]
+        self._visible(MockTemplate).filter.side_effect = [exact_qs, fuzzy_qs]
 
         result, err = resolve_eval_template("nonexistent", org)
         assert result is None
