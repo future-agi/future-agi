@@ -13,6 +13,8 @@ import { AgGridReact } from "ag-grid-react";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { useGetNodeExecutionDetail } from "src/api/agent-playground/agent-playground";
 import CustomJsonViewer from "src/components/custom-json-viewer/CustomJsonViewer";
+import { formatDuration } from "src/utils/format-time";
+import SvgColor from "src/components/svg-color";
 
 const tryParseJson = (str) => {
   if (typeof str !== "string") return null;
@@ -226,6 +228,17 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
 
   const nodeStatus = nodeDetail?.status?.toLowerCase();
   const isNodeRunning = nodeStatus === "running" || nodeStatus === "pending";
+  const durationSeconds = Number(nodeDetail?.duration_seconds);
+  const shouldShowDuration =
+    !isNodeRunning &&
+    nodeStatus !== "idle" &&
+    nodeStatus !== "skipped" &&
+    nodeDetail?.duration_seconds != null &&
+    Number.isFinite(durationSeconds) &&
+    durationSeconds >= 0;
+  const formattedDuration = shouldShowDuration
+    ? formatDuration(durationSeconds)
+    : null;
   const nodeExecutionIdentifier =
     nodeDetail?.nodeExecutionId ||
     nodeDetail?.node_execution_id ||
@@ -511,7 +524,7 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
           mb: 2,
         }}
       >
-        <Box>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           <Typography
             typography="m3"
             fontWeight="fontWeightMedium"
@@ -519,6 +532,31 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
           >
             Agent flow results
           </Typography>
+          {formattedDuration && (
+            <Box
+              component="span"
+              data-testid="node-execution-duration"
+              aria-label={`Duration: ${formattedDuration}`}
+              sx={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 0.5,
+              }}
+            >
+              <SvgColor
+                src="/assets/icons/navbar/ic_new_clock.svg"
+                sx={{ width: 14, height: 14, bgcolor: "text.disabled" }}
+              />
+              <Typography
+                component="span"
+                typography="s2"
+                color="text.secondary"
+                fontWeight="fontWeightRegular"
+              >
+                {formattedDuration}
+              </Typography>
+            </Box>
+          )}
         </Box>
 
         <FormControlLabel
