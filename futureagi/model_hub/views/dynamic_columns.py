@@ -1305,45 +1305,35 @@ class ExecutePythonCodeView(APIView):
             # Create kwargs from cell data
             kwargs = {cell.column.name: cell.value for cell in cells}
 
-            # Restricted globals - only safe builtins
-            safe_builtins = {
-                "abs": abs,
-                "all": all,
-                "any": any,
-                "bool": bool,
-                "dict": dict,
-                "enumerate": enumerate,
-                "filter": filter,
-                "float": float,
-                "int": int,
-                "len": len,
-                "list": list,
-                "map": map,
-                "max": max,
-                "min": min,
-                "range": range,
-                "round": round,
-                "set": set,
-                "sorted": sorted,
-                "str": str,
-                "sum": sum,
-                "tuple": tuple,
-                "zip": zip,
-            }
-            _global_namespace = {"__builtins__": safe_builtins}
-            local_namespace = {}
+            # Execute the provided code inside the hardened sandbox
+            # (nsjail executor with a RestrictedPython subprocess fallback)
+            # instead of the removed in-process exec(). The sandbox restricts
+            # builtins/imports itself, so the previous local safe_builtins /
+            # exec scaffolding is no longer needed. User code must define a
+            # top-level `main(input_data)` (or `evaluate(input_data)`) entry
+            # point that receives the row's column values as a dict.
+            from agentic_eval.core_evals.fi_utils.sandbox import (
+                execute_sandboxed_python,
+            )
 
-            # Execute the provided code with restricted globals
-            # WARNING: This still has security implications and should be properly sandboxed
-            # exec(
-            #     code, global_namespace, local_namespace
-            # )  # nosec B102 - sandboxed execution
+            sandbox_result = execute_sandboxed_python(
+                code=code,
+                input_data=kwargs,
+                timeout=30,
+            )
 
-            # Validate presence of `main()` function
-            if "main" not in local_namespace or not callable(local_namespace["main"]):
-                raise ValueError("Code must define a callable 'main' function.")
+            if (
+                not isinstance(sandbox_result, dict)
+                or sandbox_result.get("status") != "success"
+            ):
+                reason = (
+                    sandbox_result.get("data")
+                    if isinstance(sandbox_result, dict)
+                    else "Sandboxed execution failed."
+                )
+                return str(reason), {"reason": str(reason)}
 
-            result = local_namespace["main"](**kwargs)
+            result = sandbox_result.get("data")
 
             return str(result), None
 
