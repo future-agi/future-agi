@@ -1,7 +1,56 @@
 import json
 
+import pytest
+
 from ee.agenthub.trace_scanner.investigation import ModelReply
 from ee.agenthub.trace_scanner.scanner import TraceScanner
+
+
+@pytest.mark.parametrize(
+    "status,has_issues", [("violated", True), ("unknown", False), ("satisfied", False)]
+)
+def test_requirement_only_outcome_reaches_feed(monkeypatch, status, has_issues):
+    from ee.agenthub.trace_scanner.investigation import Investigation
+
+    report = {
+        "outcome": {
+            "status": status,
+            "requirements": [
+                {
+                    "requirement": "Delivery must reach the requested recipient",
+                    "status": status,
+                    "evidence_ids": ["event:0"],
+                }
+            ],
+        },
+        "findings": [],
+    }
+    monkeypatch.setattr(Investigation, "run", lambda self, **kwargs: report)
+    result = TraceScanner().scan_batch(
+        [
+            {
+                "trace_id": "trace",
+                "spans": [
+                    {
+                        "span_id": "send",
+                        "span_attributes": {"output.value": "Sent to Bob"},
+                    }
+                ],
+            }
+        ]
+    )[0]
+    assert result.error is None
+    assert result.outcome == status
+    assert result.has_issues is has_issues
+    assert result.investigation is report
+    if has_issues:
+        assert (
+            result.issues[0].brief
+            == report["outcome"]["requirements"][0]["requirement"]
+        )
+        assert result.key_moments[0].span == "send"
+    else:
+        assert not result.issues
 
 
 def test_scanner_preserves_unknown_and_usage_across_batches():

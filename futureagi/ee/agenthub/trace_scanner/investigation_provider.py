@@ -25,9 +25,10 @@ class InvestigationProvider:
         kwargs = {
             "model": self.model,
             "messages": messages,
-            "temperature": 0,
             "max_completion_tokens": max_tokens,
         }
+        # Gemini 3.8 ignores sampling overrides. Leave provider sampling at its
+        # default rather than presenting temperature=0 as deterministic replay.
         if tools:
             kwargs.update(tools=tools, tool_choice="auto")
         else:

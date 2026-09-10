@@ -425,6 +425,22 @@ class TraceScanner:
                 )
                 # No fixed taxonomy: preserve the verified description. Legacy
                 # classification fields stay empty until the grouping layer owns them.
+                findings = list(report["findings"])
+                if not any(
+                    finding.get("kind") == "outcome" and finding["status"] == "violated"
+                    for finding in findings
+                ):
+                    # Requirement checks are independently normalized and grounded
+                    # by the harness. Do not lose them at the legacy issue boundary.
+                    findings.extend(
+                        {
+                            "status": "violated",
+                            "summary": check["requirement"],
+                            "evidence_ids": check["evidence_ids"],
+                        }
+                        for check in report["outcome"].get("requirements", [])
+                        if check["status"] == "violated"
+                    )
                 issues = [
                     ScanIssue(
                         category="",
@@ -433,13 +449,13 @@ class TraceScanner:
                         confidence="M",
                         brief=finding["summary"],
                     )
-                    for finding in report["findings"]
+                    for finding in findings
                     if finding["status"] == "violated"
                 ]
                 sources = {record["id"]: record["value"] for record in records}
                 moments = []
                 cited = set()
-                for finding in report["findings"]:
+                for finding in findings:
                     if finding["status"] != "violated":
                         continue
                     for source_id in finding["evidence_ids"]:

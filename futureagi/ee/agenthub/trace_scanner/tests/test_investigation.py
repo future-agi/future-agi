@@ -85,9 +85,10 @@ def test_direct_finish_always_runs_verifier():
     assert "Structured output contract:" in provider.requests[0][0][0]["content"]
 
 
-def test_child_tool_returns_to_controller_before_verifier():
+@pytest.mark.parametrize("call_id", ["call1", "call1::sig::opaque-signature"])
+def test_child_tool_returns_to_controller_before_verifier(call_id):
     tool = {
-        "id": "call1",
+        "id": call_id,
         "type": "function",
         "function": {
             "name": "check_evidence",
@@ -119,6 +120,9 @@ def test_child_tool_returns_to_controller_before_verifier():
     ]
     assert provider.requests[1][1][0]["function"]["name"] == "check_evidence"
     assert not provider.requests[2][1]
+    continuation = provider.requests[2][0]
+    assert continuation[2]["tool_calls"][0]["id"] == call_id
+    assert continuation[3]["tool_call_id"] == call_id
     assert result["evidence_receipts"][0]["value"] == 1
     returned = json.loads(provider.requests[3][0][1]["content"])
     assert returned["children"][0]["report"]["status"] == "completed"

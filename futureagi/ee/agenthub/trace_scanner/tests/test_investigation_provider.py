@@ -24,6 +24,9 @@ def test_gateway_metering_and_reasoning_configuration(monkeypatch):
     assert call.call_args.kwargs["max_completion_tokens"] == 16384
     assert "tool_choice" not in call.call_args.kwargs
     assert "extra_body" not in call.call_args.kwargs
+    assert "temperature" not in call.call_args.kwargs
+    assert "top_p" not in call.call_args.kwargs
+    assert "top_k" not in call.call_args.kwargs
 
 
 def test_missing_gateway_is_not_a_content_only_fallback(monkeypatch):
