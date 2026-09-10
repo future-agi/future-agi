@@ -102,12 +102,20 @@ Today, CI covers the frontend and the end-to-end suite; backend unit CI is on th
 
 | Workflow                           | Trigger                                                                          | Purpose                                                                                            |
 | ---------------------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `backend-ci.yml`                   | PR/push to `dev`, `main`; merge groups                                           | 10-way sharded pytest run (Docker Compose stack) gated by the required `backend-tests` check       |
 | `frontend-feature.yml`             | push to `feat/*`, `fix/*`, `chore/*`, `docs/*`, `refactor/*`, `test/*`, `perf/*` | Branch-name validation, type check, unit tests, build verification                                 |
 | `frontend-develop.yml`             | push to `develop`/`dev` + PRs into `main`/`develop`/`dev`                        | Quality gates, integration tests, build check, Lighthouse (PRs only)                               |
 | `frontend-main.yml`                | push to `main`                                                                   | Full suite with coverage + production build                                                        |
 | `frontend-deploy-*.yaml`           | manual or on main                                                                | Environment-specific deploys (EU, GCP, prod, dev CDN)                                              |
 | `frontend-auto-approve-hotfix.yml` | hotfix PRs                                                                       | Auto-approval routing for verified hotfix branches                                                 |
 | `e2e-ci.yml`                       | PRs into and pushes on `dev`/`main`, merge queue                                 | Builds the changed images from PR code, boots the `futureagi-e2e` stack, runs the Playwright flows |
+
+The backend CI splits the pytest suite across 10 shards using historical
+`.test_durations` timings (`--splitting-algorithm least_duration`) and only
+marks the run green when every shard succeeds or is legitimately skipped — the
+single required status check is `backend-tests`. Integration tests run inside
+those shards (not as a separate gate), so a backend change is fully exercised
+before it lands on `dev`/`main`.
 
 A push to a feature branch runs only `frontend-feature.yml`, not the main or develop pipelines. This keeps GitHub Actions minutes targeted — no overlapping workflows.
 
@@ -165,7 +173,6 @@ pytest discovers them automatically. Use `make test-shell` to drop into the test
 
 ## What we're still missing
 
-- Backend CI (pytest in Actions, parallel to the frontend workflows)
 - Broader E2E flow coverage — the harness and CI job ship today; [`e2e/FLOWS.md`](e2e/FLOWS.md) is the current list
 - Visual regression testing (Chromatic or Percy)
 - Accessibility testing (axe-core in CI)
