@@ -109,7 +109,12 @@ def _extract_model_name(
                 invocation_params = kwargs.get("invocation_params") or {}
                 model = invocation_params.get("model")
                 if model:
-                    return model + "-" + llm.serialized["kwargs"]["model_version"]
+                    llm_serialized = getattr(llm, "serialized", None)
+                    ser_kwargs = llm_serialized.get("kwargs", {}) if isinstance(llm_serialized, dict) else {}
+                    model_version = getattr(llm, "model_version", None) or ser_kwargs.get("model_version")
+                    if model_version:
+                        return f"{model}-{model_version}"
+                    return model
 
             if isinstance(llm, ChatBaichuan):
                 return llm.model
@@ -256,23 +261,40 @@ def _extract_model_name(
     if model:
         return model
 
-    if serialized.get("id")[-1] == "AzureChatOpenAI":
+    ser_id = serialized.get("id") if isinstance(serialized, dict) else None
+    last_id = ser_id[-1] if isinstance(ser_id, (list, tuple)) and len(ser_id) > 0 else None
+
+    if last_id == "AzureChatOpenAI":
         invocation_params = kwargs.get("invocation_params") or {}
         if invocation_params.get("model"):
             return invocation_params.get("model")
 
-    if serialized.get("id")[-1] == "AzureOpenAI":
+    if last_id == "AzureOpenAI":
         invocation_params = kwargs.get("invocation_params") or {}
         if invocation_params.get("model_name"):
             return invocation_params.get("model_name")
+        if invocation_params.get("model"):
+            return invocation_params.get("model")
 
-        deployment_name = None
-        if serialized.get("kwargs").get("openai_api_version"):
-            deployment_name = serialized.get("kwargs").get("deployment_version")
-        deployment_version = None
-        if serialized.get("kwargs").get("deployment_name"):
-            deployment_name = serialized.get("kwargs").get("deployment_name")
-        return deployment_name + "-" + deployment_version
+        ser_kwargs = (serialized.get("kwargs") or {}) if isinstance(serialized, dict) else {}
+        deployment_name = (
+            ser_kwargs.get("deployment_name")
+            or ser_kwargs.get("model_name")
+            or ser_kwargs.get("model")
+        )
+        deployment_version = (
+            ser_kwargs.get("deployment_version")
+            or ser_kwargs.get("openai_api_version")
+            or ser_kwargs.get("model_version")
+        )
+
+        if deployment_name and deployment_version:
+            return f"{deployment_name}-{deployment_version}"
+        if deployment_name:
+            return str(deployment_name)
+        if deployment_version:
+            return str(deployment_version)
+        return None
 
     # anthropic
     model = _extract_model_by_pattern("Anthropic", serialized, "model", "anthropic")
