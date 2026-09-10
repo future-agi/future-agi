@@ -10,6 +10,7 @@ import PropTypes from "prop-types";
 import { defineDataType, JsonViewer } from "@textea/json-viewer";
 import { Box, Button, Stack, TextField, useTheme } from "@mui/material";
 import { Icon } from "@iconify/react";
+import EditJson from "./EditJson";
 
 const MiniImageRender = ({ value }) => (
   <img
@@ -81,11 +82,12 @@ const JsonCellEditor = forwardRef((props, ref) => {
   const [addPath, setAddPath] = useState([]);
   const [newKey, setNewKey] = useState("");
   const [newValue, setNewValue] = useState("");
+  const [rawMode, setRawMode] = useState(false);
   const originalValueRef = useRef(JSON.stringify(initialValue));
   const [keyExistsError, setKeyExistsError] = useState(false);
 
-  const triggerValueChange = () => {
-    const jsonString = JSON.stringify(value);
+  const triggerValueChange = (nextValue = value) => {
+    const jsonString = JSON.stringify(nextValue);
 
     if (
       jsonString !== originalValueRef.current &&
@@ -116,6 +118,10 @@ const JsonCellEditor = forwardRef((props, ref) => {
 
   useEffect(() => {
     const handleKeyDown = (e) => {
+      if (rawMode) {
+        return;
+      }
+
       if (e.key === "Enter" && !e.shiftKey) {
         props.api.stopEditing();
       }
@@ -129,7 +135,7 @@ const JsonCellEditor = forwardRef((props, ref) => {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [props?.api, showAddField]); // Add showAddField to dependencies
+  }, [props?.api, showAddField, rawMode]); // Add showAddField to dependencies
 
   useImperativeHandle(ref, () => ({
     getValue: () => {
@@ -224,6 +230,11 @@ const JsonCellEditor = forwardRef((props, ref) => {
     });
   };
 
+  const handleRawJsonSave = ({ newValue }) => {
+    setValue(newValue);
+    triggerValueChange(newValue);
+  };
+
   return (
     <div
       style={{
@@ -295,46 +306,54 @@ const JsonCellEditor = forwardRef((props, ref) => {
         </div>
       )}
 
-      <Box
-        sx={{
-          resize: "both",
-          overflow: "auto",
-          minHeight: "180px",
-          maxHeight: "500px",
-          width: "412px",
-          scrollbarWidth: "none",
-          msOverflowStyle: "none",
-          "&::-webkit-scrollbar": {
-            display: "none",
-          },
-        }}
-      >
-        <JsonViewer
-          value={value}
-          theme={theme.palette.mode}
-          displayDataTypes={false}
-          displaySize={false}
-          indentWidth={2}
-          rootName={false}
-          editable={true}
-          enableAdd={(path, currentValue) =>
-            typeof currentValue === "object" && currentValue !== null
-          }
-          enableDelete={() => true}
-          onDelete={handleRemoveElement}
-          onAdd={handleInlineAdd}
-          onChange={handleValueChange}
-          valueTypes={[imageType]}
+      {rawMode ? (
+        <EditJson
+          params={{ ...props, value: JSON.stringify(value, null, 2) }}
+          onClose={() => setRawMode(false)}
+          onCellValueChanged={handleRawJsonSave}
+        />
+      ) : (
+        <Box
           sx={{
-            fontSize: "14px",
-            "& .jv-edit-input": {
-              border: "1px solid var(--border-default)",
-              borderRadius: "4px",
-              padding: "2px 4px",
+            resize: "both",
+            overflow: "auto",
+            minHeight: "180px",
+            maxHeight: "500px",
+            width: "412px",
+            scrollbarWidth: "none",
+            msOverflowStyle: "none",
+            "&::-webkit-scrollbar": {
+              display: "none",
             },
           }}
-        />
-      </Box>
+        >
+          <JsonViewer
+            value={value}
+            theme={theme.palette.mode}
+            displayDataTypes={false}
+            displaySize={false}
+            indentWidth={2}
+            rootName={false}
+            editable={true}
+            enableAdd={(path, currentValue) =>
+              typeof currentValue === "object" && currentValue !== null
+            }
+            enableDelete={() => true}
+            onDelete={handleRemoveElement}
+            onAdd={handleInlineAdd}
+            onChange={handleValueChange}
+            valueTypes={[imageType]}
+            sx={{
+              fontSize: "14px",
+              "& .jv-edit-input": {
+                border: "1px solid var(--border-default)",
+                borderRadius: "4px",
+                padding: "2px 4px",
+              },
+            }}
+          />
+        </Box>
+      )}
 
       <div style={{ marginTop: "12px", textAlign: "right" }}>
         <Stack
@@ -343,13 +362,39 @@ const JsonCellEditor = forwardRef((props, ref) => {
           justifyContent="flex-start"
           sx={{ mt: 1.5 }}
         >
+          {!rawMode && (
+            <Button
+              variant="outlined"
+              size="small"
+              color="primary"
+              startIcon={
+                <Icon
+                  icon="mdi:check-bold"
+                  style={{
+                    width: 16,
+                    height: 16,
+                    color: "inherit",
+                  }}
+                />
+              }
+              onClick={() => triggerValueChange()}
+              sx={{
+                fontSize: "12px",
+                fontWeight: 500,
+                p: theme.spacing(2),
+                whiteSpace: "nowrap",
+              }}
+            >
+              Apply Changes
+            </Button>
+          )}
           <Button
             variant="outlined"
             size="small"
             color="primary"
             startIcon={
               <Icon
-                icon="mdi:check-bold"
+                icon={rawMode ? "mdi:file-tree" : "mdi:code-json"}
                 style={{
                   width: 16,
                   height: 16,
@@ -357,7 +402,7 @@ const JsonCellEditor = forwardRef((props, ref) => {
                 }}
               />
             }
-            onClick={triggerValueChange}
+            onClick={() => setRawMode((current) => !current)}
             sx={{
               fontSize: "12px",
               fontWeight: 500,
@@ -365,7 +410,7 @@ const JsonCellEditor = forwardRef((props, ref) => {
               whiteSpace: "nowrap",
             }}
           >
-            Apply Changes
+            {rawMode ? "View JSON Tree" : "Edit Raw JSON"}
           </Button>
         </Stack>
       </div>
