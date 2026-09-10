@@ -14,6 +14,7 @@ from ai_tools.formatting import (
 )
 from ai_tools.registry import register_tool
 from model_hub.utils.eval_mapping import non_path_mapping_keys
+from model_hub.utils.eval_validators import validate_required_key_mapping
 
 logger = structlog.get_logger(__name__)
 
@@ -69,9 +70,6 @@ def _auto_map_keys(
     for key in required_keys:
         best_match, score = _find_best_match(key, available_attributes)
         if score >= min_score_required and best_match:
-            mapping[key] = best_match
-        # Still include with empty value so caller knows it was not matched
-        elif best_match:
             mapping[key] = best_match
 
     for key in optional_keys:
@@ -132,9 +130,10 @@ class CreateCustomEvalConfigTool(BaseTool):
         "Creates an evaluation config on a tracing project. "
         "This configures an eval template to run on spans in the project. "
         "Once created, use create_eval_task to run the eval on historical or incoming spans. "
-        "If mapping is not provided, it auto-maps template keys to the closest matching "
-        "span attributes in the project. If mapping is provided, it validates that all "
-        "attribute values exist in the project's spans."
+        "Always pass an explicit mapping: values must be attribute keys that exist "
+        "on the spans this eval will run against. Without one the tool falls back to "
+        "name-similarity guessing and refuses to create the config if any required "
+        "key cannot be matched confidently."
     )
     category = "tracing"
     input_model = CreateCustomEvalConfigInput
@@ -235,6 +234,26 @@ class CreateCustomEvalConfigTool(BaseTool):
                 )
             else:
                 final_mapping = {}
+
+        # Required keys must all be mapped, whether the caller supplied the
+        # mapping or it was auto-mapped. Same shared validator and same
+        # user-custom-eval carve-out as add_dataset_eval.
+        is_user_custom_eval = bool(template_config.get("custom_eval", False))
+        if not is_user_custom_eval:
+            missing_keys = validate_required_key_mapping(final_mapping, required_keys)
+            if missing_keys:
+                missing_list = ", ".join(f"`{k}`" for k in missing_keys)
+                required_list = ", ".join(f"`{k}`" for k in required_keys)
+                available_list = ", ".join(f"`{a}`" for a in sorted(available_attributes))
+                return ToolResult.error(
+                    f"Missing required mapping keys: {missing_list}. "
+                    f"Required: {required_list}.\n\n"
+                    f"Available attributes: {available_list}\n\n"
+                    "Pass an explicit `mapping` naming a real span attribute for "
+                    "every required key. Use `get_project_eval_attributes` to see "
+                    "the keys this project carries.",
+                    error_code="VALIDATION_ERROR",
+                )
 
         # Clean up optional keys with empty values from mapping
         if optional_keys:
