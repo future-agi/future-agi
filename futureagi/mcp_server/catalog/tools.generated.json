@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "581326d942ff5a000b3df2b9a5ff936a15bb14d33c0b772ae75b2cb26078f40f",
+  "source_contract_sha256": "e2a811c496568a1e3cbb22a0a3219f56a8b8f4ce0321fd533287ad00845e845a",
   "tool_count": 93,
   "tools": [
     {
@@ -6843,7 +6843,7 @@
               {
                 "title": "Livekit max concurrency",
                 "type": "integer",
-                "maximum": 5,
+                "maximum": 25,
                 "minimum": 1
               },
               {
@@ -7159,7 +7159,7 @@
               {
                 "title": "Livekit max concurrency",
                 "type": "integer",
-                "maximum": 5,
+                "maximum": 25,
                 "minimum": 1
               },
               {
@@ -7422,7 +7422,7 @@
           "livekit_max_concurrency": {
             "title": "Livekit max concurrency",
             "type": "integer",
-            "maximum": 5,
+            "maximum": 25,
             "minimum": 1
           },
           "commit_message": {
