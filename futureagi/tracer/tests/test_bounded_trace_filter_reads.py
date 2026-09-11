@@ -2696,7 +2696,9 @@ def test_time_only_span_cursor_exposes_tightly_bounded_sparse_probe() -> None:
     sql, params = builder.build_filter_anchor_probe(limit=26)
     normalized_sql = " ".join(sql.split())
     # V2 resolves complete boundary hours before its outer time-only probe.
-    assert "FROM spans FINAL" in normalized_sql
+    assert "argMax(tuple(" in normalized_sql
+    assert ") AS latest_seed_spans" in normalized_sql
+    assert "FINAL" not in normalized_sql
     assert "AND 1 = 1" in normalized_sql
     assert "ORDER BY" not in normalized_sql
     assert "LIMIT 1 BY" not in normalized_sql

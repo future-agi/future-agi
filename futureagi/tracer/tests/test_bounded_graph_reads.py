@@ -421,12 +421,13 @@ def test_filtered_graph_candidates_are_finite_latest_state_samples(
         # V2 span replay resolves one physical row before the compiler's
         # aggregates. Only immutable six-part keys may restrict that source;
         # producer-time and deletion predicates belong after replacement.
-        source = classify_query.split("FROM spans FINAL", 1)[1].split(
+        assert "FINAL" not in classify_query
+        source = classify_query.split("PREWHERE", 1)[1].split(
             ") AS latest_candidate_spans", 1
         )[0]
         assert "IN %(candidate_span_identities)s" in source
         assert "candidate_start_date" not in source
-        assert "is_deleted" not in source
+        assert "is_deleted = 0" not in source
         assert len(classify_params["candidate_span_identities"][0]) == 6
         assert "latest_is_deleted = 0" in classify_query
     assert classify_params[candidate_param] in {("trace-1",), ("span-1",)}
