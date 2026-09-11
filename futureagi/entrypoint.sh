@@ -185,9 +185,6 @@ export ENV_PROJECT_ROOT
 # Change to the backend directory
 cd /app/backend
 
-# Install any missing dependencies (2FA/WebAuthn added after Docker image build)
-pip install --quiet "pyotp>=2.9.0" "qrcode[pil]>=7.4" "webauthn>=2.2.0" 2>/dev/null || true
-
 # Create logs directory if it doesn't exist
 mkdir -p logs media static
 

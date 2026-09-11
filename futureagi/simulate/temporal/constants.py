@@ -66,13 +66,22 @@ DISPATCHER_CONTINUE_AS_NEW_THRESHOLD = 2000
 # Temporal recommends max ~1000 child workflows per parent
 MAX_CALLS_PER_ORCHESTRATOR = 500
 
-# Hosted SDK jobs execute dataset rows sequentially inside one child process.
-# Ten voice cases can legitimately consume almost an hour when each reaches its
-# readiness/conversation ceiling, so the supervising activity must not inherit
-# the single-call deadline.
-HOSTED_RUNNER_MAX_DURATION_SECONDS = int(
-    os.getenv("HOSTED_RUNNER_MAX_DURATION_SECONDS", str(65 * 60))
+# D15: the run budget belongs to the child (its own summed deadline, mirrored
+# in child_run_seconds); this only covers spawn/lease/upload around it, so a
+# parent timeout never becomes the binding limit on a job's own row budget.
+HOSTED_RUNNER_PARENT_SLACK_SECONDS = int(
+    os.getenv("HOSTED_RUNNER_PARENT_SLACK_SECONDS", "600")
 )
+
+# Chat jobs carry no voice params, so there's no child deadline to derive
+# from (D15); kept as its own constant, not env-driven (C9 forbids a second
+# hosted-runner timeout env var), so it can't silently re-widen via env.
+HOSTED_RUNNER_CHAT_TIMEOUT_SECONDS = 65 * 60
+
+# Mirrors services.hosted_runner._CHAT_MODE. Duplicated here (rather than
+# imported) because the workflow sandbox must not import the Django-backed
+# services module; this module has no such import, so it's safe there.
+HOSTED_RUNNER_CHAT_MODE = "chat"
 
 
 # =============================================================================

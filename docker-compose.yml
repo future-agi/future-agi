@@ -56,6 +56,30 @@ x-backend-env: &backend-env
   FUTURE_AGI_TELEMETRY_TIMEOUT_SECONDS: ${FUTURE_AGI_TELEMETRY_TIMEOUT_SECONDS:-5}
   ALK_RUNNER_API_URL: ${ALK_RUNNER_API_URL:-http://backend}
 
+  # Hosted harness provider. These values must reach both the API process that
+  # authors/registers jobs and the simulation-runner worker that launches the
+  # attempt. Keeping them in the shared backend environment prevents a job
+  # accepted as hosted from silently falling back to the local sandbox path.
+  HARNESS_PUBLIC_BASE_URL: ${HARNESS_PUBLIC_BASE_URL:-}
+  HARNESS_PROVIDER: ${HARNESS_PROVIDER:-daytona}
+  ALK_HOSTED_BASE_EGRESS_DOMAINS: ${ALK_HOSTED_BASE_EGRESS_DOMAINS:-}
+  ALK_HOSTED_EGRESS_UNRESTRICTED: ${ALK_HOSTED_EGRESS_UNRESTRICTED:-false}
+  ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS: ${ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS:-3600}
+  ALK_HOSTED_SANDBOX_TTL_SECONDS: ${ALK_HOSTED_SANDBOX_TTL_SECONDS:-7200}
+  ALK_HOSTED_WEBRTC_EGRESS_CIDRS: ${ALK_HOSTED_WEBRTC_EGRESS_CIDRS:-}
+  ALK_HOSTED_BUNDLE_DIR: ${ALK_HOSTED_BUNDLE_DIR:-}
+  # Environment authoring is independent from the simulated caller. Hosted
+  # jobs may use Claude to understand/build the target while keeping the
+  # platform-owned caller on Vertex Gemini.
+  ALK_HARNESS: ${ALK_HARNESS:-}
+  ALK_HARNESS_MODEL: ${ALK_HARNESS_MODEL:-}
+  DAYTONA_API_KEY: ${DAYTONA_API_KEY:-}
+  DAYTONA_API_URL: ${DAYTONA_API_URL:-}
+  DAYTONA_TARGET: ${DAYTONA_TARGET:-}
+  DAYTONA_ORGANIZATION_ID: ${DAYTONA_ORGANIZATION_ID:-}
+  ALK_DAYTONA_SNAPSHOT: ${ALK_DAYTONA_SNAPSHOT:-}
+  ALK_DAYTONA_SNAPSHOT_DIGEST: ${ALK_DAYTONA_SNAPSHOT_DIGEST:-}
+
   # LLM gateway + code sandbox + embedding service
   AGENTCC_INTERNAL_URL: ${AGENTCC_INTERNAL_URL:-http://agentcc-gateway:8080}
   AGENTCC_GATEWAY_INTERNAL_URL: ${AGENTCC_GATEWAY_INTERNAL_URL:-http://agentcc-gateway:8080}
@@ -349,16 +373,24 @@ services:
       ALK_SIM_SLOT_LEASE_SCRIPT: ${ALK_SIM_SLOT_LEASE_SCRIPT:-}
       TEMPORAL_MAX_CONCURRENT_ACTIVITIES: ${ALK_RUNNER_MAX_CONCURRENCY:-4}
       TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS: ${TEMPORAL_SIMRUNNER_MAX_WORKFLOWS:-8}
+      # A stop must let a phone call in flight finish: the worker drains for
+      # this long, and stop_grace_period below must exceed it, or Docker
+      # force-kills the child mid-call and the leased number stays taken until
+      # its TTL. Raise both together for long phone runs (the prod chart: 4200).
+      TEMPORAL_GRACEFUL_SHUTDOWN_TIMEOUT: ${SIMULATION_RUNNER_GRACEFUL_SHUTDOWN_TIMEOUT:-300}
       # Absolute so the SDK child (runs from a mkdtemp cwd) resolves the key.
       GOOGLE_APPLICATION_CREDENTIALS: /app/backend/Vertex_AI_Creds.json
       # gemini-3.1 is 404 in regional endpoints; only served on `global`.
       GOOGLE_CLOUD_LOCATION: global
       SIMULATOR_LLM_PROVIDER: vertex
-      SIMULATOR_LLM_MODEL: gemini-3.1-flash-lite
+      # A flash-lite model returns no completion for the simulator's full persona prompt, so the
+      # caller falls silent and the call is discarded on the deadline. Use a full flash.
+      SIMULATOR_LLM_MODEL: gemini-3.7-flash
       # TTS is chosen per persona language by the hosted runner
       # (_voice_simulator_config): English -> Deepgram aura-2-andromeda-en,
       # other/unknown -> streaming Gemini (multilingual). Set
       # SIMULATOR_TTS_PROVIDER / SIMULATOR_TTS_MODEL here to force one engine.
+    stop_grace_period: ${SIMULATION_RUNNER_STOP_GRACE_PERIOD:-330s}
     volumes:
       # Runner image lacks the key (only the backend image has it); mount it.
       - ${GOOGLE_APPLICATION_CREDENTIALS:-/dev/null}:/app/backend/Vertex_AI_Creds.json:ro
@@ -426,6 +458,7 @@ services:
       -c wal_level=logical
       -c max_wal_senders=25
       -c max_replication_slots=25
+      -c max_connections=300
     environment:
       POSTGRES_USER: ${PG_USER:-futureagi}
       POSTGRES_PASSWORD: ${PG_PASSWORD:-futureagi}

@@ -100,6 +100,8 @@ from .views.agent_version import (
     RestoreAgentVersionView,
 )
 from .views.alk_simulate_ingestion import ALKSimulateIngestionViewSet
+from .views.harness_job import HarnessJobViewSet
+from .views.hosted_harness import HostedHarnessAttemptViewSet
 from .views.livekit_api import (
     CallConfigView,
     CallExecutionUpdateView,
@@ -126,6 +128,12 @@ router.register(
 router.register(r"agent-prompt-optimiser", AgentPromptOptimiserRunViewSet)
 router.register(
     r"alk-simulate", ALKSimulateIngestionViewSet, basename="alk-simulate-ingestion"
+)
+router.register(r"harness-jobs", HarnessJobViewSet, basename="harness-job")
+router.register(
+    r"harness/attempts",
+    HostedHarnessAttemptViewSet,
+    basename="hosted-harness-attempt",
 )
 
 urlpatterns = [

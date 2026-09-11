@@ -92,6 +92,27 @@ def get_object_url(bucket_name: str, object_key: str) -> str:
     return f"https://{bucket_name}.s3.{region}.amazonaws.com/{object_key}"
 
 
+def server_reachable_url(file_url: str) -> str:
+    """The same object, addressed the way a process inside the deployment can reach it.
+
+    A stored MinIO URL names the browser host, which is not resolvable server side; S3 and GCS
+    URLs already are, so they come back unchanged.
+    """
+    if STORAGE_BACKEND != "minio":
+        return file_url
+    browser_host, _ = _parse_endpoint(os.getenv("MINIO_URL", "http://localhost:9005"))
+    internal_host, internal_secure = _parse_endpoint(
+        os.getenv("S3_ENDPOINT_URL", "http://minio:9000")
+    )
+    if not browser_host or not internal_host or browser_host == internal_host:
+        return file_url
+    parsed = urlparse(file_url)
+    if parsed.netloc != browser_host:
+        return file_url
+    scheme = "https" if internal_secure else "http"
+    return parsed._replace(scheme=scheme, netloc=internal_host).geturl()
+
+
 def extract_object_key(file_url: str, bucket_name: str) -> str:
     """Extract the object key from a storage URL (S3, GCS, or MinIO)."""
     if "storage.googleapis.com" in file_url:

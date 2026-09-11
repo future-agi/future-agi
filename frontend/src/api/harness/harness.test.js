@@ -1,0 +1,77 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("src/utils/axios", () => ({
+  default: { post: vi.fn(() => Promise.resolve({ data: { ok: true } })) },
+}));
+
+import axios from "src/utils/axios";
+import {
+  cancelHarnessJob,
+  createHarnessJob,
+  harnessIdempotencyKey,
+} from "./harness";
+
+const JOB_ID = "d1fd7560-0143-4cb8-88ed-36518b848cbf";
+const URL = `/simulate/api/harness-jobs/${JOB_ID}/cancel/`;
+
+describe("cancelHarnessJob", () => {
+  beforeEach(() => {
+    axios.post.mockClear();
+  });
+
+  // The endpoint is runtimeRequestValidation: true against HarnessJobAction. Sending no
+  // body makes the validator parse `undefined` and reject before the request is sent,
+  // which is indistinguishable in the UI from a dead button.
+  it("always sends an object body", async () => {
+    await cancelHarnessJob(JOB_ID);
+    expect(axios.post).toHaveBeenCalledWith(URL, {});
+  });
+
+  it("includes a reason when one is given", async () => {
+    await cancelHarnessJob(JOB_ID, "took too long");
+    expect(axios.post).toHaveBeenCalledWith(URL, { reason: "took too long" });
+  });
+
+  it("omits an empty or whitespace reason rather than sending it", async () => {
+    await cancelHarnessJob(JOB_ID, "   ");
+    expect(axios.post).toHaveBeenCalledWith(URL, {});
+  });
+
+  it("keeps reason within the contract's 500 character limit", async () => {
+    await cancelHarnessJob(JOB_ID, "x".repeat(600));
+    const [, body] = axios.post.mock.calls[0];
+    expect(body.reason).toHaveLength(500);
+  });
+});
+
+describe("createHarnessJob", () => {
+  beforeEach(() => {
+    axios.post.mockClear();
+  });
+
+  it("sends the create request with an explicit idempotency key", async () => {
+    const payload = { schema_version: "futureagi.harness-job.v1" };
+    await createHarnessJob(payload, "test-create-key");
+    expect(axios.post).toHaveBeenCalledWith(
+      "/simulate/api/harness-jobs/",
+      payload,
+      { headers: { "Idempotency-Key": "test-create-key" } },
+    );
+  });
+
+  it("can create a key when randomUUID is unavailable", () => {
+    const originalCrypto = globalThis.crypto;
+    Object.defineProperty(globalThis, "crypto", {
+      configurable: true,
+      value: {},
+    });
+    try {
+      expect(harnessIdempotencyKey()).toMatch(/^harness-[a-z0-9]+-[a-z0-9]+$/);
+    } finally {
+      Object.defineProperty(globalThis, "crypto", {
+        configurable: true,
+        value: originalCrypto,
+      });
+    }
+  });
+});

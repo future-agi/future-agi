@@ -79,7 +79,10 @@ export const readTime = (obj, keys) => {
  *   silenceBefore → seconds (null if < 0.3s or indeterminate)
  *   overlapsPrev  → true when this turn started before the previous ended
  */
-export const enrichTurns = (transcript) => {
+export const enrichTurns = (
+  transcript,
+  { enableTemporalFeatures = true } = {},
+) => {
   if (!Array.isArray(transcript) || transcript.length === 0) return [];
 
   // Step 1: raw extract
@@ -118,6 +121,20 @@ export const enrichTurns = (transcript) => {
       _originalIndex: i,
     };
   });
+
+  // Text-chat transcripts can reuse the transcript presentation without
+  // pretending that message weights are audio durations. Preserve source
+  // order and the duration-like weight used by the speaker legend, but make
+  // all voice-only timing semantics explicitly unavailable.
+  if (!enableTemporalFeatures) {
+    return raw.map((turn) => ({
+      ...turn,
+      start: null,
+      end: null,
+      silenceBefore: null,
+      overlapsPrev: false,
+    }));
+  }
 
   // Step 2: absolute-epoch → offset-seconds normalization. Transcripts
   // arrive with times in one of three units depending on the backend:

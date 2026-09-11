@@ -1,8 +1,8 @@
 {
   "generated_from": "api_contracts/openapi/swagger.json",
   "summary": {
-    "paths": 988,
-    "operations": 1346,
+    "paths": 1004,
+    "operations": 1363,
     "mutation_endpoints_without_body_schema": 0,
     "operations_without_response_schema": 0,
     "broad_success_response_schemas": 0,
@@ -128,8 +128,8 @@
       "broad_error_response_schemas": 0
     },
     "simulate": {
-      "paths": 114,
-      "operations": 134,
+      "paths": 130,
+      "operations": 151,
       "mutation_endpoints_without_body_schema": 0,
       "operations_without_response_schema": 0,
       "broad_success_response_schemas": 0,

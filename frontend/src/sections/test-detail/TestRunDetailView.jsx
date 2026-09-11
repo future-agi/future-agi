@@ -1,5 +1,13 @@
-import { Box, Paper, useTheme } from "@mui/material";
-import React, { lazy, Suspense, useCallback, useEffect, useMemo } from "react";
+import { Alert, Box, Button, Paper, useTheme } from "@mui/material";
+import { useQuery } from "@tanstack/react-query";
+import React, {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import TestRunDetailHeader from "./TestRunDetailHeader";
 import { resetState, useTestDetailStore } from "./states";
 import TestDetailContextProvider from "./TestDetailContextProvider";
@@ -9,6 +17,8 @@ import { getTabsBasedOnAgentType } from "./common";
 import useTestRunDetails from "src/hooks/useTestRunDetails";
 import { AGENT_TYPES } from "../agents/constants";
 import { SourceType } from "../scenarios/common";
+import { useSimulationSocket } from "src/hooks/use-simulation-socket";
+import axios, { endpoints } from "src/utils/axios";
 
 const FixMyAgentDrawer = lazy(
   () => import("./FixMyAgentDrawer/FixMyAgentDrawer"),
@@ -19,6 +29,40 @@ const TestRunDetailView = () => {
   const navigate = useNavigate();
   const { executionId, testId } = useParams();
   const { pathname } = useLocation();
+  const [newExecutionId, setNewExecutionId] = useState(null);
+
+  const { data: latestExecutionId, refetch: refetchLatestExecution } = useQuery(
+    {
+      queryKey: ["test-runs-latest-execution", testId],
+      queryFn: () =>
+        axios.get(endpoints.runTests.detailExecutions(testId), {
+          params: { page: 1, limit: 1 },
+        }),
+      select: (response) => response.data?.results?.[0]?.id ?? null,
+      enabled: !!testId,
+    },
+  );
+
+  useEffect(() => {
+    if (latestExecutionId && latestExecutionId !== executionId) {
+      setNewExecutionId(latestExecutionId);
+    } else if (latestExecutionId === executionId) {
+      setNewExecutionId(null);
+    }
+  }, [executionId, latestExecutionId]);
+
+  const handleSimulationUpdate = useCallback(
+    (update) => {
+      const updatedExecutionId = update?.test_execution_id;
+      if (updatedExecutionId && updatedExecutionId !== executionId) {
+        setNewExecutionId(updatedExecutionId);
+      }
+      refetchLatestExecution();
+    },
+    [executionId, refetchLatestExecution],
+  );
+
+  useSimulationSocket(testId, handleSimulationUpdate);
 
   const { reset } = useTestDetailStore();
 
@@ -97,6 +141,27 @@ const TestRunDetailView = () => {
         >
           <TestRunDetailHeader />
         </Paper>
+        {newExecutionId && (
+          <Alert
+            severity="info"
+            sx={{ mx: 2, mt: 1, flexShrink: 0 }}
+            action={
+              <Button
+                color="inherit"
+                size="small"
+                onClick={() =>
+                  navigate(
+                    `/dashboard/simulate/test/${testId}/${newExecutionId}/call-details`,
+                  )
+                }
+              >
+                Open rerun
+              </Button>
+            }
+          >
+            A newer simulation execution is available.
+          </Alert>
+        )}
         <TestExecutionDetailTabs
           tabs={tabs}
           currentTab={currentTab}

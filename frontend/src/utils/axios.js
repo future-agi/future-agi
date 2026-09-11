@@ -224,7 +224,10 @@ axiosInstance.interceptors.response.use(
     }
 
     const errData = (error.response && error.response.data) || {
-      message: "Something went wrong",
+      // Request interceptors (including the development OpenAPI guard) fail
+      // before Axios has a response. Preserve their actual explanation rather
+      // than replacing it with a generic error that cannot be diagnosed.
+      message: error?.message || "Something went wrong",
     };
 
     const customError = {

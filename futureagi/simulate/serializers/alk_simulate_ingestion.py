@@ -56,6 +56,10 @@ class ALKSimulateResultSerializer(serializers.Serializer):
     )
     error_message = serializers.CharField(required=False, allow_blank=True)
     call_summary = serializers.CharField(required=False, allow_blank=True)
+    result_digest = serializers.RegexField(r"^sha256:[0-9a-f]{64}$", required=False)
+    artifact_manifest_digest = serializers.RegexField(
+        r"^sha256:[0-9a-f]{64}$", required=False
+    )
 
     transcript = ALKSimulateTranscriptSegmentSerializer(many=True, required=False)
 
@@ -134,7 +138,16 @@ class ALKSimulateStartTestExecutionRequestSerializer(serializers.Serializer):
     scenario_ids = serializers.ListField(
         child=serializers.UUIDField(), required=False, allow_empty=True
     )
+    scenario_selectors = serializers.ListField(
+        child=serializers.DictField(
+            child=serializers.CharField(max_length=255, allow_blank=True)
+        ),
+        required=False,
+        allow_empty=True,
+        max_length=100,
+    )
     simulator_agent_id = serializers.UUIDField(required=False, allow_null=True)
+    harness_job_id = serializers.UUIDField(required=False, allow_null=True)
 
 
 class ALKSimulateStartTestExecutionResultSerializer(serializers.Serializer):
@@ -159,6 +172,11 @@ class ALKSimulateRecordingUploadRequestSerializer(serializers.Serializer):
 
     file = serializers.FileField()
     filename = serializers.CharField(required=False, allow_blank=True, max_length=200)
+    sha256 = serializers.RegexField(r"^(?:sha256:)?[0-9a-fA-F]{64}$", required=False)
+    kind = serializers.ChoiceField(
+        choices=("combined", "stereo", "customer", "assistant"),
+        default="combined",
+    )
 
 
 class ALKSimulateRecordingUploadResultSerializer(serializers.Serializer):
@@ -173,6 +191,9 @@ class ALKSimulateRecordingUploadResponseSerializer(serializers.Serializer):
 
 class ALKSimulateProvisionPersonaSerializer(serializers.Serializer):
     name = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    scenario_name = serializers.CharField(
+        required=False, allow_blank=True, max_length=255
+    )
     role = serializers.CharField(required=False, allow_blank=True, max_length=255)
     situation = serializers.CharField(required=False, allow_blank=True)
     outcome = serializers.CharField(required=False, allow_blank=True)
@@ -188,15 +209,18 @@ class ALKSimulateProvisionRunTestRequestSerializer(serializers.Serializer):
     * ``scenario_ids`` — attach existing (natively generated) scenarios to a new
       RunTest. Nothing is fabricated or mutated; the scenarios render with their
       real datasets. Preferred.
-    * ``personas`` — a hand-built fallback: one COMPLETED persona-dataset scenario
-      per persona (see ``_build_persona_scenario_dataset``). Kept for the offline
-      self-contained path; the resulting dataset lacks the generated
+    * ``personas`` — a hand-built fallback: one COMPLETED scenario dataset with
+      one row per persona (see ``_build_persona_scenario_dataset``). Kept for the
+      offline self-contained path; the resulting dataset lacks the generated
       ``column_config`` the UI reads, so prefer ``scenario_ids``.
 
     Exactly one of the two must be supplied.
     """
 
     name = serializers.CharField(max_length=255)
+    modality = serializers.ChoiceField(
+        choices=("text", "chat", "voice"), required=False, default="text"
+    )
     description = serializers.CharField(required=False, allow_blank=True)
     personas = ALKSimulateProvisionPersonaSerializer(many=True, required=False)
     scenario_ids = serializers.ListField(
@@ -206,12 +230,17 @@ class ALKSimulateProvisionRunTestRequestSerializer(serializers.Serializer):
     agent_name = serializers.CharField(required=False, allow_blank=True, max_length=255)
 
     def validate(self, attrs):
+        # ALK contracts call conversational text agents "chat" while the
+        # platform's persisted AgentDefinition vocabulary calls them "text".
+        # Accept both at this boundary and keep one canonical stored value.
+        if attrs.get("modality") == "chat":
+            attrs["modality"] = "text"
         has_personas = bool(attrs.get("personas"))
         has_scenarios = bool(attrs.get("scenario_ids"))
         if has_personas == has_scenarios:
             raise serializers.ValidationError(
                 "provide exactly one of 'scenario_ids' (reuse existing scenarios) "
-                "or 'personas' (fabricate a scenario per persona)"
+                "or 'personas' (fabricate one scenario dataset with a row per persona)"
             )
         return attrs
 

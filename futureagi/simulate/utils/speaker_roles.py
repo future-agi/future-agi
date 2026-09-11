@@ -7,6 +7,8 @@ Provider raw shape:
   VAPI     | inbound   | simulator       | tested agent
   VAPI     | outbound  | tested agent    | simulator
   LiveKit  | both      | tested agent    | simulator
+  Bland    | outbound  | tested agent    | simulator
+  Retell   | outbound  | tested agent    | simulator
 
 Direction is tested-agent-perspective: inbound = tested agent receives, outbound
 = tested agent dials out. LiveKit rows are pre-normalised at the agent worker.
@@ -83,6 +85,24 @@ class SpeakerRoleResolver:
         "customer": "simulator",
     }
 
+    # Retell is a customer-only outbound provider (inbound Retell flows through
+    # VAPI). Its own maps — same values as VAPI today, but independent so a
+    # Retell payload change is edited here directly, not through a shared alias.
+    _RETELL_INBOUND: dict[str, str] = {
+        "bot": "simulator",
+        "assistant": "simulator",
+        "agent": "simulator",
+        "user": "tested_agent",
+        "customer": "tested_agent",
+    }
+    _RETELL_OUTBOUND: dict[str, str] = {
+        "bot": "tested_agent",
+        "assistant": "tested_agent",
+        "agent": "tested_agent",
+        "user": "simulator",
+        "customer": "simulator",
+    }
+
     @staticmethod
     def detect_provider(
         provider_call_data: dict[str, Any] | None,
@@ -101,6 +121,8 @@ class SpeakerRoleResolver:
             return ProviderChoices.VAPI
         if provider_call_data.get(ProviderChoices.BLAND.value):
             return ProviderChoices.BLAND
+        if provider_call_data.get(ProviderChoices.RETELL.value):
+            return ProviderChoices.RETELL
         logger.error(
             "speaker_role_resolver_unknown_provider",
             provider_call_data_keys=list(provider_call_data.keys()),
@@ -145,6 +167,8 @@ class SpeakerRoleResolver:
             return cls._LIVEKIT_OUTBOUND if is_outbound else cls._LIVEKIT_INBOUND
         if provider == ProviderChoices.BLAND:
             return cls._BLAND_OUTBOUND if is_outbound else cls._BLAND_INBOUND
+        if provider == ProviderChoices.RETELL:
+            return cls._RETELL_OUTBOUND if is_outbound else cls._RETELL_INBOUND
         logger.error(
             "speaker_role_resolver_unsupported_provider",
             provider=str(provider),

@@ -117,3 +117,88 @@ def test_strip_handles_empty_and_missing_model_key():
         assert ee_gates.strip_turing_from_config_options(None) == {}
         passthrough = {"temperature": [0.0, 1.0]}
         assert ee_gates.strip_turing_from_config_options(passthrough) is passthrough
+
+
+# ── voice_sim_oss_gate_response() ─────────────────────────────────────────
+# The gate must be dependency-aware, not just code-aware: on the slim OSS
+# image the ee.voice module tree ships (has_ee is True) but the `voice`
+# extra's packages (livekit) are stripped, so a code-presence probe alone
+# would accept a run the worker can never execute (silent hang). Probing
+# livekit importability up front turns that into the clean 402.
+
+
+def test_voice_gate_402s_when_voice_extra_missing():
+    with patch("tfc.utils.lazy_extras.extra_available", return_value=False) as probe:
+        resp = ee_gates.voice_sim_oss_gate_response()
+    probe.assert_called_once_with("livekit")
+    assert resp is not None
+    assert resp.status_code == 402
+    assert resp.data["feature"] == "voice_sim"
+    assert resp.data["upgrade_required"] is True
+    assert resp.data["code"] == "ENTITLEMENT_DENIED"
+
+
+def test_voice_gate_defers_to_entitlement_layer_when_deps_present():
+    """With livekit installed and the capability service reporting anything
+    other than EE_CODE_UNAVAILABLE, the gate passes — license/plan concerns
+    belong to the caller's entitlement layer."""
+    with (
+        patch("tfc.utils.lazy_extras.extra_available", return_value=True),
+        patch("tfc.capabilities.service.is_configured", return_value=True),
+        patch(
+            "tfc.capabilities.service.check",
+            return_value=SimpleNamespace(reason_code=None),
+        ),
+    ):
+        assert ee_gates.voice_sim_oss_gate_response() is None
+
+
+def test_voice_gate_402s_when_deps_present_but_code_stripped():
+    """Deps installed but ee.voice absent (unusual, but the inverse gap):
+    the early-startup fallback probes the module tree and denies."""
+    with (
+        patch("tfc.utils.lazy_extras.extra_available", return_value=True),
+        patch("tfc.capabilities.service.is_configured", return_value=False),
+        patch("tfc.ee_loader.has_ee", return_value=False),
+    ):
+        resp = ee_gates.voice_sim_oss_gate_response()
+    assert resp is not None
+    assert resp.status_code == 402
+    assert resp.data["feature"] == "voice_sim"
+
+
+def test_complete_voice_gate_enforces_cloud_plan_entitlement():
+    organization = SimpleNamespace(id="org-1")
+    feature_check = SimpleNamespace(
+        allowed=False,
+        reason="Voice simulation requires a higher plan",
+    )
+    with (
+        patch("tfc.ee_gates.voice_sim_oss_gate_response", return_value=None),
+        patch("ee.usage.deployment.DeploymentMode.is_cloud", return_value=True),
+        patch(
+            "ee.usage.services.entitlements.Entitlements.check_feature",
+            return_value=feature_check,
+        ) as check_feature,
+    ):
+        resp = ee_gates.voice_sim_gate_response(organization)
+
+    check_feature.assert_called_once_with("org-1", "has_voice_sim")
+    assert resp is not None
+    assert resp.status_code == 403
+    assert resp.data["code"] == "permission_denied"
+    assert resp.data["feature"] == "voice_sim"
+
+
+def test_complete_voice_gate_allows_self_hosted_without_plan_check():
+    organization = SimpleNamespace(id="org-1")
+    with (
+        patch("tfc.ee_gates.voice_sim_oss_gate_response", return_value=None),
+        patch("ee.usage.deployment.DeploymentMode.is_cloud", return_value=False),
+        patch(
+            "ee.usage.services.entitlements.Entitlements.check_feature"
+        ) as check_feature,
+    ):
+        assert ee_gates.voice_sim_gate_response(organization) is None
+
+    check_feature.assert_not_called()

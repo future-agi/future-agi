@@ -47,6 +47,12 @@ class BuildRunnerJobOutput:
     run_id: str
     mode: str
     job_json: str
+    # The child's own deadline (D15); the parent derives its timeout from
+    # this instead of imposing a separate cap. Optional with a None
+    # default so a payload recorded by an older (pre-field) worker still
+    # decodes during replay; the loud-failure guard moved to the
+    # workflow/activity call sites instead of living in the shape itself.
+    run_seconds: int | None = None
 
 
 @dataclass
@@ -55,6 +61,8 @@ class RunHostedJobInput:
     run_id: str
     mode: str
     job_json: str
+    # See BuildRunnerJobOutput.run_seconds — same replay-decode reason.
+    run_seconds: int | None = None
 
 
 @dataclass

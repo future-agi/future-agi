@@ -1836,7 +1836,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                 </Box>
               )}
 
-              <Box sx={{ flex: 1, overflow: "auto", pb: 2 }}>
+              <Box sx={{ flex: 1, minHeight: 0, overflow: "auto", pb: 2 }}>
                 {(source === "dataset" ||
                   source === "experiment" ||
                   source === "workbench" ||

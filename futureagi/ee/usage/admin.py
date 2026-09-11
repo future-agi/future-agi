@@ -600,12 +600,24 @@ def _build_org_choices(orgs_qs):
     return [{"id": str(o["id"]), "label": o["display_name"] or o["name"]} for o in orgs]
 
 
+def _custom_tools_read_only(request) -> bool | None:
+    """Staff get the Custom Tools pages read-only; superusers get full access.
+
+    Returns None when the user may not open the page at all.
+    """
+    user = request.user
+    if not (user.is_active and user.is_staff):
+        return None
+    return not user.is_superuser
+
+
 def custom_pricing_view(request):
-    """Custom pricing admin page — superuser only."""
-    if not request.user.is_superuser:
+    """Custom pricing admin page — staff read-only, superuser read/write."""
+    read_only = _custom_tools_read_only(request)
+    if read_only is None:
         from django.http import HttpResponseForbidden
 
-        return HttpResponseForbidden("Superuser access required")
+        return HttpResponseForbidden("Staff access required")
 
     from accounts.models.organization import Organization
 
@@ -622,6 +634,7 @@ def custom_pricing_view(request):
         **admin.site.each_context(request),
         "title": "Custom Pricing Manager",
         "subtitle": "",
+        "read_only": read_only,
         "org_choices_json": json.dumps(org_choices),
         "feature_keys_json": json.dumps(feature_keys),
     }
@@ -629,11 +642,12 @@ def custom_pricing_view(request):
 
 
 def generate_invoice_view(request):
-    """Generate invoice admin page — superuser only."""
-    if not request.user.is_superuser:
+    """Generate invoice admin page — staff may preview, superuser may generate."""
+    read_only = _custom_tools_read_only(request)
+    if read_only is None:
         from django.http import HttpResponseForbidden
 
-        return HttpResponseForbidden("Superuser access required")
+        return HttpResponseForbidden("Staff access required")
 
     import json
 
@@ -645,6 +659,7 @@ def generate_invoice_view(request):
         **admin.site.each_context(request),
         "title": "Generate Invoice",
         "subtitle": "",
+        "read_only": read_only,
         "org_choices_json": json.dumps(org_choices),
     }
     return TemplateResponse(request, "admin/usage/generate_invoice.html", context)
