@@ -1016,3 +1016,104 @@ def test_native_relation_seed_keeps_priority_over_numeric_anchor():
     )
     assert "tracer_eval_logger_v2" in sql
     assert "matching_scalar_trace_identities" not in sql
+
+
+def test_the_numeric_lane_is_byte_identical_while_its_slack_setting_is_zero():
+    """The default keeps the unbounded, full-width statement this lane ships."""
+
+    builder = subject()
+    start, end = builder._bounded_request_window
+    assert builder._uses_wide_candidate_seed()
+    assert builder.filter_seed_width_policy() is None
+    assert not builder.supports_filter_seed_density_probe()
+    # ``None``, not zero: a cursor minted here must stay byte-identical to one
+    # minted before any of these lanes could carry a slack.
+    assert builder.filter_seed_witness_slack_hours() is None
+    assert builder.recommended_filter_initial_slice_width() == end - start
+    assert builder._scalar_candidate_witness_envelope(
+        root_start=start, root_end=end
+    ) == ("", {})
+    sql, params = builder.build_filter_candidate_seed_page(
+        slice_start=start, slice_end=end, limit=26
+    )
+    assert "filter_witness_start_us" not in sql
+    assert "filter_witness_start" not in params
+    with pytest.raises(ValueError, match="density probe is unavailable"):
+        builder.build_filter_seed_density_probe_query(slice_start=start, slice_end=end)
+
+
+@override_settings(FILTER_SELECTOR_NUMERIC_LONG_TEXT_SEED_WITNESS_SLACK_HOURS=2)
+def test_the_numeric_lane_takes_the_bounded_schedule_once_its_slack_is_set():
+    """One setting brings the row budget, the probe and the envelope together."""
+
+    builder = subject()
+    start, end = builder._bounded_request_window
+    policy = builder.filter_seed_width_policy()
+    assert policy is not None
+    # The bounded floor, never the short lane's unbounded four hours: this
+    # lane's own width today is the whole request, so a four-hour floor would
+    # be a narrowing no setting asked for.
+    assert policy.min_width == timedelta(hours=1)
+    assert policy.initial_width == timedelta(hours=1)
+    assert builder.supports_filter_seed_density_probe()
+    assert builder.filter_seed_witness_slack_hours() == 2
+    assert builder.recommended_filter_initial_slice_width() == timedelta(hours=1)
+    slice_start = end - timedelta(hours=1)
+    sql, params = builder.build_filter_candidate_seed_page(
+        slice_start=slice_start, slice_end=end, limit=26
+    )
+    cte, _ = sql.split("SELECT trace_id, id AS root_span_id", 1)
+    assert "filter_witness_start_us" in cte
+    assert "filter_witness_end_us" in cte
+    assert params["filter_witness_start"] == slice_start - timedelta(hours=2)
+    assert params["filter_witness_end"] == end + timedelta(hours=2)
+    # Candidacy only: the exact latest-state classifier keeps no time bound.
+    exact, _ = builder.build_filter_identity_match_query_from_seed_rows(
+        [{"trace_id": "one", "root_span_id": "not-authoritative"}]
+    )
+    assert "filter_witness_start_us" not in exact
+    probe, _ = builder.build_filter_seed_density_probe_query(
+        slice_start=slice_start, slice_end=end
+    )
+    assert probe.strip().startswith("EXPLAIN ESTIMATE")
+
+
+@override_settings(FILTER_SELECTOR_NUMERIC_LONG_TEXT_SEED_WITNESS_SLACK_HOURS=0)
+def test_a_numeric_continuation_keeps_the_slack_its_cursor_was_minted_with():
+    """A mid-flight setting change must not move candidacy under a page."""
+
+    builder = subject()
+    start, end = builder._bounded_request_window
+    builder.pin_filter_seed_witness_slack_hours(3)
+    assert builder.filter_seed_witness_slack_hours() == 3
+    sql, params = builder.build_filter_candidate_seed_page(
+        slice_start=end - timedelta(hours=1), slice_end=end, limit=26
+    )
+    assert "filter_witness_start_us" in sql
+    assert params["filter_witness_end"] == end + timedelta(hours=3)
+    # A legacy token carries no slack, which returns the lane to the setting.
+    builder.pin_filter_seed_witness_slack_hours(None)
+    assert builder.filter_seed_witness_slack_hours() is None
+    sql, _ = builder.build_filter_candidate_seed_page(
+        slice_start=start, slice_end=end, limit=26
+    )
+    assert "filter_witness_start_us" not in sql
+
+
+@override_settings(FILTER_SELECTOR_NUMERIC_LONG_TEXT_SEED_WITNESS_SLACK_HOURS=2)
+def test_the_slack_setting_reaches_no_lane_that_has_not_declared_it():
+    """Sort, search and the ordered walk keep their existing acquisition."""
+
+    for builder in (
+        subject(search="query"),
+        subject(sort_params=[("model", "asc")]),
+        subject(leaves=[number_filter("less_than", 1)]),
+    ):
+        start, end = builder._bounded_request_window
+        assert not builder._uses_wide_candidate_seed()
+        assert builder.filter_seed_width_policy() is None
+        assert not builder.supports_filter_seed_density_probe()
+        assert builder.filter_seed_witness_slack_hours() is None
+        assert builder._scalar_candidate_witness_envelope(
+            root_start=start, root_end=end
+        ) == ("", {})

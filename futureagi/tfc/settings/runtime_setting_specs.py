@@ -442,6 +442,34 @@ INTERACTIVE_READ_SETTING_SPECS = {
             # arrive). A per-project override belongs here, so the escape hatch
             # does not have to be pulled for the whole install.
             ("FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS", 1, 0, 168),
+            # The same envelope, row budget and density probe on the OTHER two
+            # trace candidate seed lanes - numeric (``span_attr_num`` value
+            # bloom) and long text (schema 023's concatenated-lowercase LIKE
+            # index). Both open at the FULL request window in one statement
+            # today, which is the 12M-shaped hazard the short lane's row budget
+            # already removed; the numeric lane's witness CTE additionally
+            # carries no time restriction at all, so one statement scans the
+            # project's whole retained history.
+            #
+            # ZERO - the default - is today's contract exactly: no envelope, no
+            # width policy, no probe, and SQL, parameters and cursor payload
+            # byte-identical to what ships without this setting. Above zero the
+            # lane adopts the short lane's bounded schedule: the witness must
+            # start inside
+            #     [hour_floor(slice_start) - slack, hour_ceil(slice_end) + slack)
+            # the seed opens at one hour under the row budget, and a width above
+            # the unprobed cap must first be costed by ``EXPLAIN ESTIMATE``.
+            #
+            # It is a SEPARATE setting because it is a SEPARATE contract. The
+            # approved 1 h slack was argued from a measured cohort of the short
+            # exact-string lane (largest child-witness lag 468 s; the root
+            # itself carried the value in 165 of 165 matching traces); nothing
+            # was measured about how long after its root a trace's spans may
+            # still carry a matching NUMBER or a matching long literal, and a
+            # numeric attribute written on a closing span is the concrete
+            # failure. Off until an owner approves the contract for these lanes
+            # on their own evidence; the trace-list approval does not transfer.
+            ("FILTER_SELECTOR_NUMERIC_LONG_TEXT_SEED_WITNESS_SLACK_HOURS", 0, 0, 168),
             # Broad key-only span population proofs read thin raw columns;
             # their CPU budget is separate from the normal seed/classifier.
             ("FILTER_SELECTOR_POPULATION_MAX_THREADS", 2, 1, 4),
