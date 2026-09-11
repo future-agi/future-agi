@@ -1,16 +1,10 @@
 # Multi-stage build — distroless for a < 20 MB final image, no shell,
-# no package manager. The build stage uses the official golang image so
-# we get the toolchain + git for module fetch; the runtime stage strips
+# no package manager. The build stage uses the fi-collector-base image
+# (golang + `go mod download` already baked in, see Dockerfile.base) so
+# source edits don't re-trigger module downloads; the runtime stage strips
 # everything except the static binary.
 
-FROM golang:1.24-alpine AS build
-WORKDIR /src
-
-# Cache module downloads in a separate layer so source edits don't
-# re-trigger `go mod download`.
-COPY go.mod ./
-COPY go.sum* ./
-RUN go mod download
+FROM futureagi/fi-collector-base:v1.0.0 AS build
 
 COPY . .
 

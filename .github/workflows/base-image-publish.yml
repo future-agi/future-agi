@@ -1,7 +1,10 @@
-# Manually-dispatched publisher for the three dependency base images:
-#   future-agi-base    <- Dockerfile.base (repo root context; installs futureagi/requirements.txt)
-#   serving-base       <- futureagi/model_serving/Dockerfile.base
-#   code-executor-base <- futureagi/code-executor/Dockerfile.base
+# Manually-dispatched publisher for the dependency base images:
+#   future-agi-base     <- Dockerfile.base (repo root context; installs futureagi/requirements.txt)
+#   serving-base        <- futureagi/model_serving/Dockerfile.base
+#   code-executor-base  <- futureagi/code-executor/Dockerfile.base
+#   frontend-base       <- frontend/Dockerfile.base
+#   agentcc-gateway-base <- agentcc-gateway/Dockerfile.base
+#   fi-collector-base   <- fi-collector/Dockerfile.base
 #
 # Each arch builds on its own native runner (no QEMU: an emulated arm64 leg of a
 # torch install runs for hours), pushes by digest, and a final job stitches the
@@ -25,6 +28,9 @@ on:
           - future-agi-base
           - serving-base
           - code-executor-base
+          - frontend-base
+          - agentcc-gateway-base
+          - fi-collector-base
       version:
         description: "New version tag (e.g. v1.1.0) — existing tags are never overwritten"
         required: true
@@ -71,6 +77,18 @@ jobs:
             code-executor-base)
               dockerfile=futureagi/code-executor/Dockerfile.base
               context=futureagi/code-executor
+              ;;
+            frontend-base)
+              dockerfile=frontend/Dockerfile.base
+              context=frontend
+              ;;
+            agentcc-gateway-base)
+              dockerfile=agentcc-gateway/Dockerfile.base
+              context=agentcc-gateway
+              ;;
+            fi-collector-base)
+              dockerfile=fi-collector/Dockerfile.base
+              context=fi-collector
               ;;
             *)
               echo "::error::unknown image ${IMAGE}"
