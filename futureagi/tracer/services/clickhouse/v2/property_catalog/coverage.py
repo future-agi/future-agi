@@ -16,6 +16,7 @@ anything.
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -24,6 +25,26 @@ from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
 from .reader import ObservedRead, observed_table
 
 logger = logging.getLogger(__name__)
+
+_client_lock = threading.Lock()
+_client = None
+
+
+def _source_client():
+    """One pooled, concurrency-safe handle for the source spans table.
+
+    Constructing a client per request cost ~700 ms of the measured latency
+    below; the pooled wrapper is the same one the catalog reader already shares
+    across concurrent dashboard requests.
+    """
+    global _client
+    if _client is None:
+        with _client_lock:
+            if _client is None:
+                from tracer.services.clickhouse.client import ClickHouseClient
+
+                _client = ClickHouseClient(server_enforced_readonly=True)
+    return _client
 
 # `LIMIT 1` does not short-circuit under ClickHouse's default parallelism: the
 # reader fills many granules concurrently and the limit only applies once they
@@ -158,15 +179,52 @@ def _has_span_below(client, settings, project_id: str, floor) -> bool:
     )
 
 
-def _has_any_span(client, settings, project_id: str) -> bool:
-    """Does this project have any span at all? A primary-key point lookup."""
+def _any_project_with_spans(client, settings, project_ids) -> bool:
+    """Do any of these (index-less) projects actually have spans?
+
+    One query for the whole set: ``project_id`` is the sorting-key prefix, so
+    the IN-set is an index lookup and ``LIMIT 1`` stops at the first hit.
+    """
+    if not project_ids:
+        return False
     return bool(
         client.execute(
-            "SELECT 1 FROM spans WHERE project_id = %(project_id)s LIMIT 1",
-            {"project_id": project_id},
+            "SELECT 1 FROM spans WHERE project_id IN %(project_ids)s LIMIT 1",
+            {"project_ids": list(project_ids)},
             settings=settings,
         )
     )
+
+
+def _any_project_predating_its_floor(client, settings, floors) -> str | None:
+    """Is any project holding spans materially older than its own floor?
+
+    One query for every project in scope rather than one per project. The
+    previous per-project loop was linear in scope size -- measured at 765 ms for
+    one project, 2.0 s for five and 5.3 s for fifteen -- which is exactly the
+    interactive cost this feature exists to remove.
+
+    Parallel arrays keep the comparison per-project: ``indexOf`` locates each
+    row's own floor. ``project_id IN`` still prunes on the sorting-key prefix,
+    so only the scope's granules are touched.
+    """
+    if not floors:
+        return None
+    ids = list(floors)
+    rows = client.execute(
+        "SELECT toString(project_id) FROM spans "
+        "WHERE project_id IN %(project_ids)s "
+        "AND start_time < arrayElement(%(floors)s, "
+        "    indexOf(%(project_ids)s, toString(project_id))) "
+        f"    - {_COVERAGE_MARGIN} "
+        "LIMIT 1",
+        {
+            "project_ids": ids,
+            "floors": [_ch_timestamp(floors[pid]) for pid in ids],
+        },
+        settings=settings,
+    )
+    return str(rows[0][0]) if rows else None
 
 
 def observed_scope_coverage(*, scope, deadline, observed=None, client=None) -> Coverage:
@@ -198,27 +256,23 @@ def observed_scope_coverage(*, scope, deadline, observed=None, client=None) -> C
             # concurrent requests sharing it raise "Attempt to execute
             # concurrent queries within the same session". The probe runs on
             # every catalog read, so it is concurrent by definition.
-            from tracer.services.clickhouse.client import ClickHouseClient
-
-            client = ClickHouseClient(server_enforced_readonly=True)
+            client = _source_client()
         probe_settings = {
             **_PROBE_SETTINGS,
             "max_execution_time": max(_PROBE_WALL_MS, 1) / 1000.0,
         }
-        for project_id in project_ids:
-            floor = floors.get(project_id)
-            if floor is None:
-                # No index rows for this project. That is only a gap if the
-                # project actually has spans -- an empty project has nothing to
-                # index, and treating it as suspicious dragged every scope
-                # containing one to "partial".
-                if _has_any_span(client, probe_settings, project_id):
-                    return Coverage(False, "project_unindexed")
-                continue
-            if _has_span_below(client, probe_settings, project_id, floor):
-                return Coverage(
-                    False, "source_predates_index", _ch_timestamp(floor)
-                )
+        # A project with no index rows is only a gap if it actually has spans;
+        # an empty project has nothing to index, and treating it as suspicious
+        # dragged every scope containing one to "partial".
+        unindexed = [pid for pid in project_ids if pid not in floors]
+        if _any_project_with_spans(client, probe_settings, unindexed):
+            return Coverage(False, "project_unindexed")
+
+        uncovered = _any_project_predating_its_floor(client, probe_settings, floors)
+        if uncovered is not None:
+            return Coverage(
+                False, "source_predates_index", _ch_timestamp(floors[uncovered])
+            )
     except Exception:
         # Failing closed is correct, but silence here is not: a broken probe and
         # a genuinely un-backfilled index produce the same response, so without

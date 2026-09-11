@@ -58,10 +58,12 @@ class _Client:
         self.calls.append({"sql": sql, "parameters": params, "settings": settings})
         if self.raises:
             raise self.raises
-        pid = (params or {}).get("project_id")
-        # The floor-less probe asks only "does this project have any span".
-        hit = pid in (self.any_span if "start_time" not in sql else self.below)
-        return [(1,)] if hit else []
+        ids = list((params or {}).get("project_ids") or ())
+        if "start_time" not in sql:
+            # The index-less probe asks only "do any of these have spans".
+            return [(1,)] if any(p in self.any_span for p in ids) else []
+        hit = next((p for p in ids if p in self.below), None)
+        return [(hit,)] if hit else []
 
 
 def _coverage(*, rows=None, below=(), scope=SCOPE, observed=None, client=None):
@@ -188,7 +190,7 @@ def test_probe_is_pinned_to_bounded_read_settings():
     _coverage(rows=[{"project_id": "p1", "floor": "2026-01-01 00:00:00"}], client=client)
 
     assert client.calls, "the source probe never ran"
-    settings = client.calls[0]["settings"]
+    settings = client.calls[-1]["settings"]
     for key, value in _PROBE_SETTINGS.items():
         assert settings[key] == value, f"{key} must stay pinned to {value}"
     assert _PROBE_SETTINGS == {"max_threads": 1, "max_block_size": 1024}
@@ -200,15 +202,13 @@ def test_probe_is_scoped_and_bounded_by_construction():
     client = _Client(below=())
     _coverage(rows=[{"project_id": "p1", "floor": "2026-01-01 00:00:00"}], client=client)
 
-    call = client.calls[0]
+    call = client.calls[-1]
     assert "LIMIT 1" in call["sql"]
-    assert "project_id = %(project_id)s" in call["sql"]
-    assert (
-        "start_time < toDateTime64(%(floor)s, 6, 'UTC') - INTERVAL 1 HOUR"
-        in call["sql"]
-    )
+    assert "project_id IN %(project_ids)s" in call["sql"]
+    assert "INTERVAL 1 HOUR" in call["sql"]
     # Values are bound, never interpolated into SQL text.
-    assert call["parameters"] == {"project_id": "p1", "floor": "2026-01-01 00:00:00"}
+    assert call["parameters"]["project_ids"] == ["p1"]
+    assert call["parameters"]["floors"] == ["2026-01-01 00:00:00"]
     assert "p1" not in call["sql"]
 
 
@@ -231,7 +231,7 @@ def test_tz_aware_floor_is_rendered_without_an_offset():
     )
     result = _coverage(observed=observed, client=client)
 
-    floor = client.calls[0]["parameters"]["floor"]
+    floor = client.calls[-1]["parameters"]["floors"][0]
     assert floor == "2026-01-01 12:30:45.123456"
     assert "+00:00" not in floor and "T" not in floor and not floor.endswith("Z")
     # The surfaced floor is rendered the same way, so callers see one format.
@@ -262,7 +262,32 @@ def test_probe_ignores_sub_floor_jitter_but_not_real_absence():
     # The margin is applied in SQL, so a span a microsecond below the floor can
     # no longer match; only data older than the margin can.
     assert _COVERAGE_MARGIN == "INTERVAL 1 HOUR"
-    assert f"- {_COVERAGE_MARGIN}" in client.calls[0]["sql"]
+    assert f"- {_COVERAGE_MARGIN}" in client.calls[-1]["sql"]
+
+
+@pytest.mark.unit
+def test_probe_cost_is_flat_in_scope_size():
+    """Coverage must not cost one round trip per project.
+
+    The first implementation looped per project: measured at 765 ms for one
+    project, 2.0 s for five and 5.3 s for fifteen -- linear, on the interactive
+    path this feature exists to make fast. Both probes are now set-based, so a
+    scope of any size costs at most two queries.
+    """
+    many = tuple(f"p{i}" for i in range(40))
+    client = _Client(below=())
+    observed = _Observed(
+        [{"project_id": p, "floor": "2026-01-01 00:00:00"} for p in many]
+    )
+    observed_scope_coverage(
+        scope={**SCOPE, "project_ids": many},
+        deadline=SimpleNamespace(remaining_ms=lambda floor_ms=1: 10_000),
+        observed=observed,
+        client=client,
+    )
+
+    assert len(client.calls) <= 2, f"{len(client.calls)} queries for 40 projects"
+    assert len(client.calls[-1]["parameters"]["project_ids"]) == 40
 
 
 @pytest.mark.unit
