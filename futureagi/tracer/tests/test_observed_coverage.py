@@ -172,10 +172,36 @@ def test_probe_is_scoped_and_bounded_by_construction():
     call = client.calls[0]
     assert "LIMIT 1" in call["sql"]
     assert "project_id = %(project_id)s" in call["sql"]
-    assert "start_time < %(floor)s" in call["sql"]
+    assert "start_time < toDateTime64(%(floor)s, 6, 'UTC')" in call["sql"]
     # Values are bound, never interpolated into SQL text.
     assert call["parameters"] == {"project_id": "p1", "floor": "2026-01-01 00:00:00"}
     assert "p1" not in call["sql"]
+
+
+@pytest.mark.unit
+def test_tz_aware_floor_is_rendered_without_an_offset():
+    """Regression: a tz-aware floor must not reach ClickHouse as "...+00:00".
+
+    The catalog driver returns tz-aware datetimes, and their default string form
+    carries a "+00:00" offset that DateTime64 refuses:
+    ``Cannot convert string '2026-09-11 06:52:48.031961+00:00' to type
+    DateTime64(6, 'UTC')``. That failure was invisible in unit tests, which fed
+    plain strings, and invisible in production too, because coverage fails
+    closed -- so a broken probe and an un-backfilled index looked identical.
+    """
+    from datetime import UTC, datetime
+
+    client = _Client(below=())
+    observed = _Observed(
+        [{"project_id": "p1", "floor": datetime(2026, 1, 1, 12, 30, 45, 123456, tzinfo=UTC)}]
+    )
+    result = _coverage(observed=observed, client=client)
+
+    floor = client.calls[0]["parameters"]["floor"]
+    assert floor == "2026-01-01 12:30:45.123456"
+    assert "+00:00" not in floor and "T" not in floor and not floor.endswith("Z")
+    # The surfaced floor is rendered the same way, so callers see one format.
+    assert result.floor == "2026-01-01 12:30:45.123456"
 
 
 @pytest.mark.unit

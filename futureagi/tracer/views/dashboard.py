@@ -203,7 +203,11 @@ def _read_property_catalog_value_page(request, query_params, *, deadline):
     scope.update(
         agent_definition_id="", dataset_id="", workspace_scope=not raw_projects
     )
-    return PropertyCatalogValueReader(
+    # Coverage is derived here rather than by the caller because this is where
+    # the authorized scope is resolved; recomputing it there would repeat the
+    # project-scope lookup.
+    coverage = observed_scope_coverage(scope=scope, deadline=deadline)
+    return coverage, PropertyCatalogValueReader(
         catalog_database=settings.PROPERTY_CATALOG_DATABASE,
         deadline=deadline,
     ).read_page(
@@ -3029,7 +3033,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 )
 
         try:
-            catalog_page = _read_property_catalog_value_page(
+            coverage, catalog_page = _read_property_catalog_value_page(
                 request,
                 query_params,
                 deadline=filter_value_deadline,
@@ -3087,9 +3091,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 }
                 for row in catalog_page.values
             ]
-            # Same derivation as the keys endpoint above: an empty or partial
-            # index must not be reported as a complete answer.
-            coverage = observed_scope_coverage(scope=scope, deadline=filter_value_deadline)
+            # `coverage` comes from _read_property_catalog_value_page, which is
+            # where the authorized scope is resolved.
             return self._gm.success_response(
                 {
                     "values": values,

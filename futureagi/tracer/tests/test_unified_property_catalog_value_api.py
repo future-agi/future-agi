@@ -166,3 +166,40 @@ def test_authorization_and_all_scope_binding_precede_observed_query(settings):
     assert authorize.call_args.kwargs["include_workspace_projects"]
     scope = reader.return_value.read_page.call_args.kwargs["scope"]
     assert scope["workspace_scope"] and scope["project_ids"] == [PROJECT_ID]
+
+
+def test_value_page_returns_coverage_derived_from_the_authorized_scope():
+    """The helper owns coverage because it owns the resolved scope.
+
+    Regression: coverage was first computed at the response site in
+    ``filter_values``, where ``scope`` is not bound -- it is a local of this
+    helper. Every unit test passed because they exercised
+    ``observed_scope_coverage`` directly, and the view wiring only broke against
+    a live request, with ``UnboundLocalError: cannot access local variable
+    'scope'`` surfacing as a 500 on every custom-attribute value lookup.
+
+    Asserting the helper returns the pair keeps the two bound together.
+    """
+    req = request(project_ids=[])
+    with (
+        patch(
+            "tracer.views.dashboard.resolve_property_catalog_project_scope",
+            return_value=[PROJECT_ID],
+        ),
+        patch("tracer.views.dashboard.PropertyCatalogValueReader") as reader,
+        patch("tracer.views.dashboard.observed_scope_coverage") as coverage,
+    ):
+        result = _read_property_catalog_value_page(
+            req, req.validated_query_data, deadline=ReadDeadline.start(1000)
+        )
+
+    assert isinstance(result, tuple) and len(result) == 2
+    returned_coverage, page = result
+    assert returned_coverage is coverage.return_value
+    assert page is reader.return_value.read_page.return_value
+    # Coverage must be judged against the same authorized scope the page used,
+    # never a differently-built one.
+    assert (
+        coverage.call_args.kwargs["scope"]
+        is reader.return_value.read_page.call_args.kwargs["scope"]
+    )

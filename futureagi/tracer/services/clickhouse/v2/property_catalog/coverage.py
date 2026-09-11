@@ -15,11 +15,15 @@ anything.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
 
 from .reader import ObservedRead, observed_table
+
+logger = logging.getLogger(__name__)
 
 # `LIMIT 1` does not short-circuit under ClickHouse's default parallelism: the
 # reader fills many granules concurrently and the limit only applies once they
@@ -83,14 +87,33 @@ PREWHERE k.organization_id = %(organization_id)s
 GROUP BY k.project_id
 """
     rows = observed.execute(sql, params, max(len(scope["project_ids"]), 1))
+    # Keep the driver's native datetime. str() on a tz-aware value yields
+    # "... +00:00", which ClickHouse refuses to parse back into DateTime64
+    # ("Cannot convert string ... to type DateTime64(6, 'UTC')"), and the
+    # resulting probe failure is invisible because coverage fails closed.
     return {
-        str(row["project_id"]): str(row["floor"])
+        str(row["project_id"]): row["floor"]
         for row in rows
-        if row.get("project_id") and row.get("floor")
+        if row.get("project_id") and row.get("floor") is not None
     }
 
 
-def _has_span_below(client, settings, project_id: str, floor: str) -> bool:
+def _ch_timestamp(value) -> str:
+    """Render a floor as a literal ClickHouse parses as DateTime64(6, 'UTC').
+
+    The driver returns tz-aware datetimes whose default string form carries a
+    "+00:00" offset that DateTime64 rejects.
+    """
+    if isinstance(value, datetime):
+        return value.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")
+    text = str(value).strip()
+    for suffix in ("+00:00", "Z"):
+        if text.endswith(suffix):
+            text = text[: -len(suffix)]
+    return text.replace("T", " ")
+
+
+def _has_span_below(client, settings, project_id: str, floor) -> bool:
     """Does the source retain any span for this project older than the floor?
 
     Partition pruning on ``toDate(start_time)`` means a covered project touches
@@ -99,9 +122,10 @@ def _has_span_below(client, settings, project_id: str, floor: str) -> bool:
     """
     result = client.query(
         "SELECT 1 FROM spans "
-        "WHERE project_id = %(project_id)s AND start_time < %(floor)s "
+        "WHERE project_id = %(project_id)s "
+        "AND start_time < toDateTime64(%(floor)s, 6, 'UTC') "
         "LIMIT 1",
-        parameters={"project_id": project_id, "floor": floor},
+        parameters={"project_id": project_id, "floor": _ch_timestamp(floor)},
         settings=settings,
     )
     return bool(result.result_rows)
@@ -125,6 +149,7 @@ def observed_scope_coverage(*, scope, deadline, observed=None, client=None) -> C
             )
         floors = _floors(observed, scope)
     except (ReadDeadlineExceeded, Exception):
+        logger.warning("observed_catalog_coverage_floor_failed", exc_info=True)
         return Coverage(False, "floor_unavailable")
 
     # A project the index has never observed cannot be vouched for: either it
@@ -147,8 +172,15 @@ def observed_scope_coverage(*, scope, deadline, observed=None, client=None) -> C
         }
         for project_id in project_ids:
             if _has_span_below(client, probe_settings, project_id, floors[project_id]):
-                return Coverage(False, "source_predates_index", floors[project_id])
+                return Coverage(
+                    False, "source_predates_index", _ch_timestamp(floors[project_id])
+                )
     except Exception:
+        # Failing closed is correct, but silence here is not: a broken probe and
+        # a genuinely un-backfilled index produce the same response, so without
+        # this the difference is undiagnosable from outside.
+        logger.warning("observed_catalog_coverage_probe_failed", exc_info=True)
         return Coverage(False, "probe_unavailable")
 
-    return Coverage(True, "covered", min(floors.values()) if floors else None)
+    floor = min(floors.values()) if floors else None
+    return Coverage(True, "covered", _ch_timestamp(floor) if floor else None)
