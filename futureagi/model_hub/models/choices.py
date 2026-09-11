@@ -1529,3 +1529,23 @@ class EvalTemplateType(Enum):
     @classmethod
     def get_choices(cls):
         return [(tag.value, tag.name.replace("_", " ").title()) for tag in cls]
+
+
+class AnnotationExportJobStatus(Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+    @classmethod
+    def get_choices(cls):
+        return [(tag.value, tag.name.replace("_", " ").title()) for tag in cls]
+
+
+class AnnotationExportFormat(Enum):
+    JSON = "json"
+    CSV = "csv"
+
+    @classmethod
+    def get_choices(cls):
+        return [(tag.value, tag.name.replace("_", " ").title()) for tag in cls]
