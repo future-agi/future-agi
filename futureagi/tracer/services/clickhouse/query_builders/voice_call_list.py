@@ -401,7 +401,18 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         return min(self.recommended_filter_seed_batch_size(), requested)
 
     def recommended_filter_query_timeout_ms(self) -> int | None:
-        """Share the public endpoint's 9.5-second wall across required reads."""
+        """Give each required read the public endpoint's whole wall.
+
+        ``INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS`` is the deadline of the entire
+        voice-list request, so one slow statement can consume it and return 503
+        with nothing published and no continuation minted - the selector halves
+        a slice that overruns its per-statement timeout, and that recovery is
+        unreachable when the two budgets are the same number. The trace list
+        gives one statement a 9.5 s share instead. This docstring claimed that
+        share for voice as well and did not implement it; lowering the value is
+        a behaviour change on every voice filtered read and is left to be
+        measured and shipped on its own.
+        """
 
         if not self._bounded_internal_scan and not self._bounded_identity_only:
             return settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
