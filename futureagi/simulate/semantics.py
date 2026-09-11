@@ -30,6 +30,7 @@ SupportedProviders = {
     ProviderChoices.LIVEKIT.value,
     ProviderChoices.BLAND.value,
     ProviderChoices.OTHERS.value,
+    ProviderChoices.TWILIO.value,  # ADDED — fixes #2662
 }
 
 RecordingTypes = {"stereo", "assistant", "customer", "combined"}
