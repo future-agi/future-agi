@@ -21,7 +21,11 @@ from typing import Any
 
 from django.conf import settings
 
-from tracer.selectors.filter_seed_width import FilterSeedWidthPolicy
+from tracer.selectors.filter_seed_width import (
+    EMPTY_DENSITY_ESTIMATE,
+    EmptyDensityEstimate,
+    FilterSeedWidthPolicy,
+)
 from tracer.services.clickhouse.query_builders.trace_list import (
     _LONG_WINDOW_ORDERED_ROOT_INITIAL_SLICE,
     _SELECTIVE_EXACT_TEXT_MIN_LENGTH,
@@ -66,6 +70,13 @@ _MAX_WITNESS_SLACK_HOURS = 168
 # opening width and the granularity the ``toStartOfHour`` primary-key prefix
 # prunes on.
 _SHORT_TEXT_SEED_BOUNDED_WITNESS_FLOOR = timedelta(hours=1)
+
+# The column names ClickHouse 25.3 returns for ``EXPLAIN ESTIMATE``. They are
+# the discriminator the density probe's reducer uses to tell an empty estimate
+# (the answer "no part matched", i.e. zero rows) from a result it cannot read.
+_SEED_DENSITY_ESTIMATE_COLUMNS = frozenset(
+    {"database", "table", "parts", "rows", "marks"}
+)
 
 
 def _floor_hour(moment: datetime) -> datetime:
@@ -1248,8 +1259,9 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
            The width of the slice is chosen from the rows the previous
            statement read (``filter_seed_width_policy``), and any width above
            the unprobed cap must first be costed by a density probe
-           (``build_filter_seed_density_probe_query``). A sparse tail is
-           therefore crossed at probe cost, ~1-2 MB a hop, not at slice cost.
+           (``build_filter_seed_density_probe_query``), which answers from the
+           primary index and reads no column data at all. A sparse tail is
+           therefore crossed at index cost, not at slice cost.
            Narrowing never skips: slices are contiguous and half-open, so a
            shrunk slice defers its older part to the next adjacent one.
         3. THE WITNESS ENVELOPE IS THE ONE PLACE CANDIDACY IS NARROWED, and it
@@ -1293,7 +1305,7 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
     def build_filter_seed_density_probe_query(
         self, *, slice_start: datetime, slice_end: datetime
     ) -> tuple[str, dict[str, Any]]:
-        """Count the live rows a candidate seed slice would put under the seed.
+        """Estimate, from the primary index alone, how dense a candidate is.
 
         This is the density proof ``FilterSeedWidthPolicy`` requires before the
         row budget may issue a slice wider than its unprobed cap. The reactive
@@ -1304,26 +1316,80 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
         one statement. This probe is what makes that impossible: the widened
         slice is costed before it is issued, and shrunk to fit the budget.
 
+        IT READS NO COLUMN DATA. ``EXPLAIN ESTIMATE`` answers from the primary
+        index: for every part the key condition selects it reports the parts,
+        granules (``marks``) and ``rows`` that a real statement WOULD read.
+        That is exactly the question the width policy asks, and it is a
+        different order of cost from asking it with ``count()``: the counting
+        form reads the smallest column of every row in the slice, which on the
+        measured 128 h proposal was 20.5M rows / 492 MB / 2.1 s at one worker.
+        The index form reads marks.
+
         Deliberately the cheapest statement that answers the question:
 
-        * a PK-range count over ``[hour_floor(start), hour_ceil(end))`` clamped
-          to the request window, which is exactly the ``toStartOfHour`` primary
-          key prefix - so the server prunes to granule boundaries and reads
-          marks, not rows. Rounding OUT rather than in keeps the count an upper
-          bound on the slice it is approving, so the estimate can only make the
-          issued slice narrower, never wider;
+        * the key condition is ``project_id`` plus a half-open ``start_time``
+          range over ``[hour_floor(start), hour_ceil(end))`` clamped to the
+          request window. Both ends are whole hours, so the range is expressed
+          exactly by the ``toStartOfHour(start_time)`` primary-key component
+          the server prunes on - the same shape, and the same reasoning, as
+          this lane's own witness envelope. Rounding OUT rather than in keeps
+          the estimate an upper bound on the slice it is approving, so it can
+          only make the issued slice narrower, never wider;
         * no attribute predicate, no typed-Map access, no child witness, no
-          ``FINAL``, no ordering, no per-trace sets. Attribute selectivity is
-          irrelevant to the question asked: the seed's cost tracks the rows the
-          bounded witness envelope must scan, not the rows that match;
-        * every row, roots and children alike, and ``is_deleted = 0`` for the
-          live population the seed itself reads.
+          ``FINAL``, no ordering, no per-trace sets, and in particular NO
+          ``IN`` subquery: ``EXPLAIN`` executes a scalar/``IN`` subquery to
+          plan around it, which would put a real read back inside a statement
+          whose whole purpose is not to have one;
+        * no ``is_deleted`` predicate either. It is not part of the primary
+          key, so it could not narrow an index estimate; leaving it out keeps
+          the statement honest about what it measures - every physical row in
+          the granules the slice touches, tombstones and stale versions
+          included, which is what the seed would have to walk past.
+
+        The estimate is an UPPER BOUND, twice over: whole granules, and every
+        physical version inside them. Both errors point the same way, at a
+        narrower issued slice.
+
+        DO NOT "IMPROVE" THE TIME PREDICATE INTO ``toStartOfHour(start_time)``.
+        It looks like the tighter spelling of the primary-key component, and
+        it would silently break this statement in the one direction that is
+        not safe. ``spans`` carries aggregate PROJECTIONs keyed on
+        ``(project_id, toStartOfHour(start_time) AS hour, ...)`` (schema 002
+        and 007). They do not store ``start_time``, so a predicate on the raw
+        column cannot be answered from them and the estimate describes the
+        base table - which is what the production measurement of the counting
+        form showed, at 492 MB of base-table reads. Spelled as ``hour``, the
+        optimizer could route the statement to a projection instead, and
+        ``rows`` would then be that projection's AGGREGATE rows: orders of
+        magnitude smaller than the slice, an estimate far below the budget,
+        and the widest possible slice APPROVED. Raw ``start_time`` bounds are
+        also what this lane's own seed and witness emit, and the hour-aligned
+        range prunes identically through the key expression's monotonicity -
+        plus the table's ``PARTITION BY toDate(start_time)``, which bounds the
+        parts the estimate can even consider.
+
+        One consequence of the ``EXPLAIN`` prefix worth stating: the v2
+        rewrite boundary appends its required ``SETTINGS`` only to statements
+        beginning ``SELECT``/``WITH``, so this one carries none. Both settings
+        it would add are inert here - there is no ``FINAL`` for
+        ``use_skip_indexes_if_final`` to protect, and ``optimize_use_projections``
+        already defaults to on while the paragraph above keeps projections out
+        of reach.
 
         It answers a COST question only. It never decides membership, never
         prunes candidates and never reaches the published page: shrinking a
         slice defers its older part to the next contiguous slice, so the scan
-        stays exact whatever the probe says, and a probe that fails or times
-        out simply pins the width at the unprobed cap.
+        stays exact whatever the probe says, and a probe that fails or returns
+        an unreadable shape simply pins the width at the unprobed cap.
+
+        ON THE CAPS THIS STATEMENT CARRIES. The selector clamps the probe to
+        one worker and one gibibyte of memory, and asks for a one-second
+        deadline and a one-gibibyte byte cap. Measured in production, only the
+        first two reach the server: ``application_read_settings`` zeroes the
+        byte caps and ``timeout_ms`` is not a statement deadline on the
+        application read path. That gap mattered while the probe was a count;
+        for an index estimate it is close to moot, because there is no data
+        read for a byte cap to bound.
         """
 
         request_start, request_end = self.parse_time_range(self.filters)
@@ -1340,15 +1406,69 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
         }
         return (
             f"""
-            SELECT count() AS seed_density_rows
+            EXPLAIN ESTIMATE
+            SELECT count()
             FROM {self.TABLE}
-            PREWHERE {self.project_filter_sql()}
+            WHERE {self.project_filter_sql()}
               AND start_time >= fromUnixTimestamp64Micro(%(seed_density_start_us)s)
               AND start_time < fromUnixTimestamp64Micro(%(seed_density_end_us)s)
-            WHERE is_deleted = 0
             """,
             params,
         )
+
+    def filter_seed_density_probe_estimate(
+        self,
+        rows: Iterable[Mapping[str, Any]],
+        columns: Iterable[str] | None = None,
+    ) -> int | EmptyDensityEstimate | None:
+        """Reduce one ``EXPLAIN ESTIMATE`` result to the policy's row bound.
+
+        The statement above returns the estimate table, one row per part it
+        would read: ``database``, ``table``, ``parts``, ``rows``, ``marks``.
+        The policy consumes a single integer, so the lane that emitted the
+        statement is also the one that says how to read it back, and several
+        part rows for this table SUM.
+
+        Three shapes have to be told apart, and the ``columns`` the transport
+        reports are what separate the last one - not the row count:
+
+        * the estimate table with part rows is their summed ``rows``;
+        * the estimate table with NO rows is ``EMPTY_DENSITY_ESTIMATE``, which
+          is explicitly NOT the integer zero. A key condition selecting no part
+          and a plan that carried no readable step produce the identical
+          answer here, and they call for opposite decisions, so this method
+          refuses to pick one: the selector decides, and accepts the zero
+          reading only when a completed statement in the same request has
+          already shown the newer region next door to be empty. The repo's
+          other production ``EXPLAIN ESTIMATE`` consumer
+          (``clickhouse/graph_dispatch``) treats the same signal as unusable
+          and falls back; this lane may believe it, but only with that
+          corroboration;
+        * anything else - a transport that answered something other than this
+          statement, or a server whose estimate table changed shape - is
+          ``None``, meaning unknown, and the caller keeps the unprobed cap.
+
+        Only this builder's own table counts toward the estimate. A statement
+        naming one table can only answer for one table; a row naming another
+        would mean the result is not the one this method is documented to read.
+        """
+
+        names = {str(name) for name in (columns or ())}
+        if not _SEED_DENSITY_ESTIMATE_COLUMNS.issubset(names):
+            return None
+        counted_any = False
+        estimate = 0
+        for row in rows or ():
+            counted_any = True
+            if not isinstance(row, Mapping):
+                return None
+            if str(row.get("table") or "") != self.TABLE:
+                return None
+            counted = row.get("rows")
+            if isinstance(counted, bool) or not isinstance(counted, (int, float)):
+                return None
+            estimate += max(0, int(counted))
+        return estimate if counted_any else EMPTY_DENSITY_ESTIMATE
 
     def supports_filter_windowed_candidate_seed_page(self) -> bool:
         return bool(

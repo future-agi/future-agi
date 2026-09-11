@@ -22,6 +22,41 @@ from datetime import timedelta
 _HOUR = timedelta(hours=1)
 
 
+class EmptyDensityEstimate:
+    """The answer a density probe gives when it selected nothing at all.
+
+    An index estimate that names no part is AMBIGUOUS and the ambiguity runs
+    in the two opposite directions that matter here:
+
+    * the key condition selected no part, so the candidate slice holds no rows
+      - the sparse tail's answer, and reading it as unknown would pin the tail
+      at the unprobed cap, which is the regression the row budget exists to
+      remove;
+    * the plan carried no readable step at all - a statement the server
+      answered some other way, or a plan shape this lane cannot read - in
+      which case the slice's population is simply UNKNOWN, and approving the
+      widest proposal on it reinstates the very defect the probe was added to
+      prevent.
+
+    Nothing inside one result can tell those apart, so the reducer refuses to
+    choose: it returns this marker and the caller decides, from what the rest
+    of the request has already proven, whether a zero may be believed. This is
+    deliberately the same conservative default the repo's other production
+    ``EXPLAIN ESTIMATE`` consumer takes (``graph_dispatch`` treats an empty
+    estimate as unusable and falls back); the difference is that this lane may
+    ACCEPT the zero reading when a completed statement in the same request has
+    independently shown the neighbouring, newer region to be empty.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid only
+        return "EMPTY_DENSITY_ESTIMATE"
+
+
+EMPTY_DENSITY_ESTIMATE = EmptyDensityEstimate()
+
+
 def _snap_whole_hour_power_of_two(width: timedelta, *, round_up: bool) -> timedelta:
     """Snap a width of an hour or more onto the whole-hour power-of-two lattice.
 
@@ -68,7 +103,10 @@ class FilterSeedWidthPolicy:
 
     The resulting contract is the one worth stating plainly: *a seed statement
     never reads more than ~``target_read_rows`` knowingly, and a sparse tail is
-    crossed at probe cost (~1-2 MB and ~70 ms each), not at slice cost.*
+    crossed at probe cost, not at slice cost.* The probe reads the primary
+    index and no column data at all, so its cost tracks the number of granules
+    the slice spans rather than the rows inside them: a candidate reaching into
+    dense history is refused for the price of reading its marks.
 
     ``min_width`` is the width this lane refuses to narrow below. It is a
     declaration, not a derived quantity: a seed whose child witness is
@@ -177,8 +215,10 @@ class FilterSeedWidthPolicy:
         directions on a slice whose density is not uniform, which is precisely
         the shape that produced the defect — but it is wrong by the ratio of
         the densest part to the mean, not by the two orders of magnitude that
-        separate a sparse week from a dense hour, and the next statement's own
-        read rows correct it through the ordinary halving rule.
+        separate a sparse week from a dense hour. A caller whose probe is cheap
+        enough to spend twice may cost the fitted sub-slice itself through
+        ``refined_width``; either way the next statement's own read rows
+        correct what remains through the ordinary halving rule.
         """
 
         if slice_rows < 0:
@@ -188,6 +228,35 @@ class FilterSeedWidthPolicy:
         fitted = width * (self.target_read_rows / slice_rows)
         return max(
             min(_snap_whole_hour_power_of_two(fitted, round_up=False), width),
+            self.min_width,
+        )
+
+    def refined_width(self, width: timedelta, slice_rows: int) -> timedelta:
+        """Fit a slice the proportional fit already produced, once.
+
+        ``probed_width`` divides one count by one width, so it can only be as
+        good as its uniformity assumption: on the shape that produced the
+        defect the rows of a candidate are concentrated at its newer end, so
+        the sub-slice the fit proposes is denser than the candidate's mean and
+        still over budget. When a density estimate is cheap enough to spend
+        twice, the honest repair is to ask about the sub-slice itself rather
+        than to trust the average that produced it.
+
+        This is the second and LAST question of one seed statement, so it does
+        not re-fit proportionally - that would invite a third. A sub-slice
+        still over budget is halved once, on the lane's whole-hour lattice and
+        never below the floor, and the next statement's own read rows correct
+        whatever remains through the ordinary halving rule.
+        """
+
+        if slice_rows < 0:
+            raise ValueError("a density probe cannot count negative rows")
+        if slice_rows <= self.target_read_rows:
+            return width
+        if width <= self.min_width:
+            return width
+        return max(
+            _snap_whole_hour_power_of_two(width / 2, round_up=False),
             self.min_width,
         )
 
