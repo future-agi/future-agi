@@ -3287,10 +3287,13 @@ class _ClassifyRecordingTransport(_PopulationLaneTransport):
     def __init__(self, population, **kwargs):
         super().__init__(population, **kwargs)
         self.classify_batches: list[int] = []
+        self.seed_limits: list[int] = []
 
     def execute_ch_query(self, query, params, *, timeout_ms, settings):
         if "candidate_trace_ids" in params:
             self.classify_batches.append(len(params["candidate_trace_ids"]))
+        if "filter_seed_limit" in params:
+            self.seed_limits.append(params["filter_seed_limit"])
         return super().execute_ch_query(
             query, params, timeout_ms=timeout_ms, settings=settings
         )
@@ -3382,6 +3385,82 @@ def test_the_prefix_chunk_publishes_the_identical_page_for_a_third_of_the_candid
     rows_per_candidate = 213_000
     assert classified_before * rows_per_candidate > 1_400_000_000
     assert classified_after * rows_per_candidate < 500_000_000
+
+
+def _numbered_lane_read(population, *, page_size, chunk_override=None):
+    """Page zero on the legacy NUMBERED lane, which has no cursor to resume.
+
+    ``bounded_continuation=False`` is the one path where the selector does not
+    consult ``recommended_filter_cursor_seed_batch_size`` at all: it takes
+    ``recommended_filter_seed_batch_size`` instead, and the branch BELOW that
+    one would seed from the CLASSIFY recommendation if no builder offered a
+    seed recommendation. Every trace builder offers one, so the seed limit is
+    structurally decoupled from this change - and this driver is what pins it,
+    because the cursor simulations above cannot reach the branch.
+    """
+
+    builder = picker_leaves(1, page_size=page_size)
+    transport = _ClassifyRecordingTransport(population)
+    original = TraceListQueryBuilderV2.recommended_filter_classify_batch_size
+    if chunk_override is not None:
+        TraceListQueryBuilderV2.recommended_filter_classify_batch_size = (
+            lambda self, size=chunk_override: size
+        )
+    try:
+        page = read_bounded_filter_page(
+            builder=builder,
+            analytics=transport,
+            filters=builder.filters,
+            key_field="trace_id",
+            page_number=0,
+            page_size=page_size,
+            deadline_ms=9_500,
+            query_timeout_ms=2_500,
+            max_query_count=64,
+            max_seed_attempts=24,
+            root_time_discovery=False,
+        )
+    finally:
+        TraceListQueryBuilderV2.recommended_filter_classify_batch_size = original
+    return transport, page
+
+
+def test_a_smaller_chunk_never_shrinks_the_seed_statement_that_feeds_it():
+    """The saving must come out of the classifier, never out of the seed.
+
+    A seed statement costs its envelope's attribute materialization whatever
+    its LIMIT, so a narrower seed buys nothing and a re-seed costs everything.
+    Both lanes are pinned: the numbered lane reads its own seed recommendation,
+    the cursor lane its cursor seed recommendation, and neither moves when the
+    classifier chunk falls from the seed limit to the page's prefix.
+    """
+
+    population = _root_population(_FROZEN_END_DENSE)
+
+    before, before_page = _numbered_lane_read(
+        population, page_size=50, chunk_override=200
+    )
+    after, after_page = _numbered_lane_read(population, page_size=50)
+
+    assert after.seed_limits == before.seed_limits == [512]
+    assert before.classify_batches == [200]
+    assert after.classify_batches == [64]
+    # The numbered page itself is unchanged, rows and order alike.
+    assert [row["trace_id"] for row in after_page.rows] == [
+        row["trace_id"] for row in before_page.rows
+    ]
+    assert len(after_page.rows) == 50
+    assert after_page.complete is before_page.complete is True
+    assert after_page.error_code is before_page.error_code is None
+
+    # And on the cursor lane, where the seed limit is the 200 the study says
+    # must not move.
+    cursor_transport = _ClassifyRecordingTransport(population)
+    _picker_lane_read(
+        population, page_size=50, transport_factory=lambda: cursor_transport
+    )
+    assert cursor_transport.seed_limits == [200]
+    assert cursor_transport.classify_batches == [64]
 
 
 @pytest.mark.parametrize("page_size", [10, 25, 50])
