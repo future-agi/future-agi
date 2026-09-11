@@ -59,6 +59,32 @@ MAX_USER_PHYSICAL_IDENTITIES_PER_PAGE = 4_096
 # locates an optimum below it.
 _SHORT_TEXT_SEED_PROVISIONAL_FLOOR = timedelta(hours=4)
 
+# How the short exact-string lane sizes its latest-state classifier chunk.
+#
+# Each candidate costs a fixed ~0.2M bloom false-positive rows in the unbounded
+# ``trace_id IN`` harvest, so the statement's cost is linear in how many
+# candidates it carries and a chunk sized to the page - rather than to the
+# 200-row seed limit - is the whole saving.
+#
+# The chunk is the selector's own ``prefix_needed`` plus a quarter, because a
+# chunk sized to the prefix EXACTLY has zero precision headroom: one candidate
+# the latest-state oracle rejects (a churned version, a tombstoned root) leaves
+# the prefix one row short and forces a second classifier statement that the
+# old flat 200 absorbed. A quarter buys back the slack the flat batch gave
+# without carrying its surplus - at a 50-row page the 51-row prefix asks for 64
+# and takes the floor, at 100 it asks for 127, at 150 for 189.
+#
+# The floor is that same quarter evaluated at the page size the grid actually
+# offers (ceil(51 * 1.25) == 64), kept as a constant so pages below it - the
+# grid's 10 and 25 - are not classified in chunks too small to prove a prefix
+# that a few stale roots can defeat. The ceiling is the 200 this lane's sibling
+# coordinate-replay shapes already issue, so no page can ever cost more
+# classifier statements than it did before this rule existed.
+_SHORT_TEXT_PREFIX_CLASSIFY_FLOOR = 64
+_SHORT_TEXT_PREFIX_CLASSIFY_CEILING = 200
+_SHORT_TEXT_PREFIX_CLASSIFY_HEADROOM_NUMERATOR = 5
+_SHORT_TEXT_PREFIX_CLASSIFY_HEADROOM_DENOMINATOR = 4
+
 # One week, the same ceiling ``FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS``
 # declares: beyond it the envelope stops bounding this lane's own windows.
 _MAX_WITNESS_SLACK_HOURS = 168
@@ -77,6 +103,27 @@ _SHORT_TEXT_SEED_BOUNDED_WITNESS_FLOOR = timedelta(hours=1)
 _SEED_DENSITY_ESTIMATE_COLUMNS = frozenset(
     {"database", "table", "parts", "rows", "marks"}
 )
+
+
+def _short_text_prefix_classify_batch_size(prefix_needed: int) -> int:
+    """The short exact-string lane's classifier chunk for a requested prefix.
+
+    ``ceil(prefix_needed * 5 / 4)`` - the prefix plus a quarter of precision
+    headroom - clamped to ``[64, 200]``. Monotonic in ``prefix_needed`` and
+    never above the flat 200 this lane issued before, so no page's classifier
+    statement count can rise; and never below ``prefix_needed`` for any prefix
+    the ceiling admits, so no page loses a chunk it could prove in one.
+    """
+
+    with_headroom = -(
+        -prefix_needed
+        * _SHORT_TEXT_PREFIX_CLASSIFY_HEADROOM_NUMERATOR
+        // _SHORT_TEXT_PREFIX_CLASSIFY_HEADROOM_DENOMINATOR
+    )
+    return min(
+        _SHORT_TEXT_PREFIX_CLASSIFY_CEILING,
+        max(_SHORT_TEXT_PREFIX_CLASSIFY_FLOOR, with_headroom),
+    )
 
 
 def _floor_hour(moment: datetime) -> datetime:
@@ -838,6 +885,43 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
         }
 
     def recommended_filter_classify_batch_size(self) -> int | None:
+        if self._uses_short_text_candidate_seed():
+            # Classify the ordered prefix this page can publish, plus a quarter.
+            #
+            # The seed keeps its 200-row limit: one seed statement pays the
+            # envelope's attribute materialization whatever its LIMIT, so
+            # re-seeding is the expensive mistake, not an extra classifier
+            # chunk. The classifier is the opposite shape - its unbounded
+            # ``trace_id IN`` harvest reads a fixed bloom false-positive cost
+            # per candidate across every partition of the project, so its rows
+            # scale with the number of candidates it carries and with nothing
+            # else. A seed that fills to 200 therefore made the classifier
+            # confirm 200 roots to publish a page of 50, and the surplus was
+            # discarded: the next page re-seeds from the published order key
+            # and never reuses them.
+            #
+            # ``read_bounded_filter_page`` already returns from the first chunk
+            # that proves the ordered prefix and checkpoints the continuation
+            # after every chunk, so a chunk sized to that prefix changes only
+            # how many candidates are classified before publication: same
+            # unbounded any-span oracle, same candidate order, same hydration,
+            # same cursor, and a classifier statement whose only textual
+            # difference is its own trailing ``LIMIT``, which tracks the
+            # candidate count and cannot truncate a match (the query groups by
+            # grouped trace id and emits at most one row per candidate).
+            #
+            # The chunk follows ``prefix_needed`` rather than ``page_size``
+            # alone because a numbered page must prove its whole requested
+            # prefix - ``(page_number + 1) * page_size + 1`` - in the chunks it
+            # is given; sizing to the page alone would make a deep numbered
+            # page issue a chunk per page of depth. The quarter above it is
+            # precision headroom: at exactly ``prefix_needed`` a single
+            # candidate the oracle rejects costs a second statement, which is
+            # how a smaller chunk could have been a net loss against the flat
+            # 200 it replaces.
+            return _short_text_prefix_classify_batch_size(
+                (self.page_number + 1) * self.page_size + 1
+            )
         if self._uses_attribute_coordinate_replay():
             return 200
         return super().recommended_filter_classify_batch_size()

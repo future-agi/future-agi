@@ -58,6 +58,7 @@ def subject(
     end: datetime = END,
     extra_leaves: list[dict[str, Any]] | None = None,
     cls: type = TraceListQueryBuilderV2,
+    page_size: int = 25,
     **kwargs: Any,
 ):
     leaves = []
@@ -75,7 +76,7 @@ def subject(
             *leaves,
             *(extra_leaves or []),
         ],
-        page_size=25,
+        page_size=page_size,
         **kwargs,
     )
 
@@ -1752,7 +1753,12 @@ def _picker_lane_read(
     budget - and therefore the one worth driving end to end.
     """
 
-    builder = picker_leaves(1, window=window)
+    # The builder is constructed with the SAME page size the selector is asked
+    # for, exactly as ``views/trace.py`` does - the builder's own page size is
+    # what ``recommended_filter_classify_batch_size`` reads, so a driver that
+    # left it at the module default would never drive this lane's chunk rule
+    # above a twenty-five-row page.
+    builder = picker_leaves(1, window=window, page_size=page_size)
     assert builder.supports_filter_empty_seed_root_time_discovery() is True
     transport = (
         _PopulationLaneTransport(population)
@@ -3155,3 +3161,508 @@ def test_the_seed_plan_cache_key_covers_every_input_the_plans_read():
     assert attributes - covered == set(), (
         f"uncovered seed plan inputs: {sorted(attributes - covered)}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Classify only the ordered prefix a page can publish
+#
+# The seed and the classifier have opposite cost shapes. One seed statement
+# pays its envelope's attribute materialization whatever its LIMIT, so the
+# expensive mistake is to re-seed; the classifier's unbounded ``trace_id IN``
+# harvest pays a fixed bloom false-positive scan PER CANDIDATE across every
+# partition of the project, so its cost is linear in how many candidates the
+# statement carries and in nothing else. A seed that fills to its 200-row limit
+# therefore made the classifier confirm 200 roots so a 50-row page could
+# publish 51 - and the surplus 149 were discarded, because the next hop
+# re-seeds from the published order key and never reuses them.
+#
+# ``read_bounded_filter_page`` already returns from the first chunk that proves
+# the ordered prefix and checkpoints the continuation after every chunk, so
+# sizing the chunk to that prefix changes only how many candidates are
+# classified before publication - never the oracle, the order, the hydration or
+# the cursor. The classifier statement is NOT byte-identical: its trailing
+# ``LIMIT`` is the candidate count, so it tracks the chunk. It cannot truncate a
+# match - the query groups by grouped trace id and emits at most one row per
+# candidate - but any receipt pinning the classifier sha sees a new one.
+#
+# The chunk is the prefix PLUS A QUARTER. Sized to the prefix exactly it has no
+# precision headroom, so one candidate the latest-state oracle rejects costs a
+# second statement the old flat 200 absorbed; that is the shape these tests pin.
+# The seed limit stays 200.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "page_size,expected",
+    [
+        # The rule is ceil(prefix_needed * 5 / 4) clamped to [64, 200]: the
+        # ordered prefix the page must prove, plus a quarter of precision
+        # headroom, so a cohort with a few stale or tombstoned roots still
+        # proves its page in ONE statement instead of paying a second chunk.
+        #
+        # Below the floor the floor wins. The floor is that same quarter
+        # evaluated at the largest page size the grid offers - ceil(51 * 1.25)
+        # is 64 - so the grid's 10, 25 and 50 all land on it.
+        (1, 64),
+        (10, 64),
+        (25, 64),
+        (30, 64),
+        (50, 64),
+        # Above it the quarter is real headroom, never a bare prefix: at 64 the
+        # page needs 65 and gets 82, at 100 it needs 101 and gets 127, at 150 it
+        # needs 151 and gets 189. Sizing to the prefix exactly was the cost
+        # regression - one rejected candidate would force a second statement.
+        (63, 80),
+        (64, 82),
+        (100, 127),
+        (150, 189),
+        # And it never exceeds the 200 this lane's sibling shapes already use,
+        # so no page can cost MORE classifier statements than it does today.
+        (199, 200),
+        (200, 200),
+        (500, 200),
+    ],
+)
+def test_the_classify_chunk_is_the_ordered_prefix_plus_a_quarter(page_size, expected):
+    builder = picker_leaves(1, page_size=page_size)
+    assert builder._uses_short_text_candidate_seed() is True
+    assert builder.recommended_filter_classify_batch_size() == expected
+    # The seed is untouched: re-seeding is the cost this change refuses to pay.
+    assert builder.recommended_filter_cursor_seed_batch_size() == 200
+
+
+@pytest.mark.parametrize("page_size", [1, 10, 25, 50, 64, 100, 150, 199, 200, 500])
+def test_the_chunk_covers_its_prefix_and_never_costs_more_than_the_flat_batch(
+    page_size,
+):
+    """The two properties the rule exists to hold, at every offered page size.
+
+    Upwards: the chunk never exceeds the flat 200 this lane issued before, so
+    ``ceil(prefix / chunk)`` - the statements a page is charged - can only fall,
+    and the chunk is never smaller than what the old flat batch would have
+    proven for the same prefix.
+    Downwards: wherever the quarter of headroom fits under the ceiling, the
+    chunk is strictly GREATER than the prefix - the headroom the zero-headroom
+    rule lacked, so one candidate the oracle rejects cannot cost a second
+    statement. At the very top (a prefix of 200 or more) the ceiling is binding
+    and there is no headroom left to give, which is exactly the flat 200's own
+    position and therefore no regression against it.
+    """
+
+    builder = picker_leaves(1, page_size=page_size)
+    prefix_needed = page_size + 1
+    chunk = builder.recommended_filter_classify_batch_size()
+    with_headroom = -(-prefix_needed * 5 // 4)
+
+    assert chunk == min(200, max(64, with_headroom))
+    assert chunk <= 200
+    assert chunk >= min(200, prefix_needed)
+    if with_headroom <= 200:
+        assert chunk > prefix_needed
+        assert chunk >= prefix_needed + max(1, prefix_needed // 4)
+
+
+@pytest.mark.parametrize(
+    "page_number,expected",
+    [(0, 64), (1, 127), (2, 189), (3, 200), (10, 200)],
+)
+def test_a_numbered_page_chunks_its_whole_requested_prefix(page_number, expected):
+    """A numbered page must prove ``(N + 1) * page_size + 1``, not ``page_size``.
+
+    The selector's ``prefix_needed`` counts from page zero: a numbered page has
+    no cursor to resume from, so page three of a fifty-row grid has to order 201
+    roots before it can publish rows 151-200. Sizing the chunk to ``page_size``
+    alone would make that page issue a classifier statement per page of depth,
+    which is the statement count this change exists to lower. The chunk follows
+    the selector's own expression and is clamped to the 200 the lane already
+    issued, so the charge can only fall.
+
+    (The depth gate this lane is actually subject to is
+    ``numbered_page_depth_exceeded`` - ``views/trace.py`` passes it page number
+    and page size and no classify batch at all. The sibling
+    ``bounded_numbered_page_depth_exceeded``, which does divide by the classify
+    batch, is the voice-call and observation-span gate, not this one; an earlier
+    revision of this branch cited it here and was wrong. The clamp stands on the
+    statement count alone.)
+    """
+
+    builder = picker_leaves(1, page_size=50, page_number=page_number)
+    assert builder.recommended_filter_classify_batch_size() == expected
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"sort_params": [{"field": "start_time", "order": "desc"}]},
+        {"search": "acct"},
+    ],
+    ids=["sort", "search"],
+)
+def test_sorted_and_searched_reads_keep_their_structured_batch(kwargs):
+    """Neither shape is this lane at all, and both keep the ten-trace envelope."""
+
+    builder = picker_leaves(1, page_size=50, **kwargs)
+    assert builder._uses_short_text_candidate_seed() is False
+    assert builder._uses_attribute_coordinate_replay() is False
+    assert builder.recommended_filter_classify_batch_size() == 10
+
+
+@pytest.mark.parametrize(
+    "make",
+    [
+        lambda: subject(kind="number", operation="greater_than", value=0.01),
+        lambda: subject(kind="boolean", operation="equals", value=False),
+        lambda: subject(value=LONG_TEXT, operation="contains"),
+        lambda: subject(operation="not_equals", value="absent"),
+    ],
+    ids=["numeric", "boolean", "long_text", "negated_text"],
+)
+def test_the_other_coordinate_replay_lanes_keep_their_two_hundred(make):
+    builder = make()
+    assert builder._uses_short_text_candidate_seed() is False
+    assert builder._uses_attribute_coordinate_replay() is True
+    assert builder.recommended_filter_classify_batch_size() == 200
+
+
+def test_the_legacy_builder_never_sees_this_recommendation():
+    builder = subject(cls=TraceListQueryBuilder)
+    assert builder.recommended_filter_classify_batch_size() == 10
+
+
+# A frozen-END population dense enough that every seed statement fills to its
+# 200-row limit at this lane's one-hour floor - the shape the boundary slice
+# had when one classifier confirmed 200 roots to publish 50.
+_FROZEN_END_DENSE = [(hours, 300) for hours in range(1, 7)]
+
+
+class _ClassifyRecordingTransport(_PopulationLaneTransport):
+    """The same population transport, counting each classifier's candidates.
+
+    The latest-state classifier is the only statement that binds
+    ``candidate_trace_ids``; page hydration binds
+    ``page_hydration_trace_ids`` and the seed binds neither, so this counts
+    classifier chunks and nothing else.
+    """
+
+    def __init__(self, population, **kwargs):
+        super().__init__(population, **kwargs)
+        self.classify_batches: list[int] = []
+        self.seed_limits: list[int] = []
+
+    def execute_ch_query(self, query, params, *, timeout_ms, settings):
+        if "candidate_trace_ids" in params:
+            self.classify_batches.append(len(params["candidate_trace_ids"]))
+        if "filter_seed_limit" in params:
+            self.seed_limits.append(params["filter_seed_limit"])
+        return super().execute_ch_query(
+            query, params, timeout_ms=timeout_ms, settings=settings
+        )
+
+
+def _recording_hop_chain(population, *, page_size, chunk_override=None):
+    """Walk the real cursor chain, recording the classifier chunks per hop.
+
+    ``chunk_override`` restores the value this hook returned before the change
+    (200, the seed limit) so the two arms differ in exactly one number and
+    nothing else - same builder, same transport, same population, same cursor.
+    """
+
+    per_hop: list[list[int]] = []
+
+    def factory():
+        transport = _ClassifyRecordingTransport(population)
+        per_hop.append(transport.classify_batches)
+        return transport
+
+    original = TraceListQueryBuilderV2.recommended_filter_classify_batch_size
+    if chunk_override is not None:
+        TraceListQueryBuilderV2.recommended_filter_classify_batch_size = (
+            lambda self, size=chunk_override: size
+        )
+    try:
+        published = _picker_lane_hop_chain(
+            population,
+            page_size=page_size,
+            max_seed_attempts=24,
+            transport_factory=factory,
+        )
+    finally:
+        TraceListQueryBuilderV2.recommended_filter_classify_batch_size = original
+    return published, per_hop
+
+
+def test_the_prefix_chunk_publishes_the_identical_page_for_a_third_of_the_candidates():
+    """The whole claim, driven through the real selector on the dense shape.
+
+    Both arms walk the same cursor chain over the same population through the
+    same transport; only the classifier chunk differs. The published sequence
+    must be byte-for-byte the ground truth in both - same rows, same order, no
+    duplicate, nothing stranded across ~36 hops of checkpoint-and-resume - while
+    the number of candidates each hop classifies falls from the seed limit to
+    the page's own prefix.
+    """
+
+    population = _root_population(_FROZEN_END_DENSE)
+    ground_truth = [
+        row["trace_id"]
+        for row in sorted(
+            population,
+            key=lambda row: (row["start_time"], row["trace_id"]),
+            reverse=True,
+        )
+    ]
+
+    before, before_hops = _recording_hop_chain(
+        population, page_size=50, chunk_override=200
+    )
+    after, after_hops = _recording_hop_chain(population, page_size=50)
+
+    # Exactness first: the page is the property the saving is not allowed to
+    # cost, and it is identical in both arms.
+    assert before == ground_truth
+    assert after == before
+    assert len(after) == len(set(after)) == len(population)
+    # The cursor resumed the same number of times, so nothing was folded into a
+    # shorter chain or stranded into a longer one.
+    assert len(after_hops) == len(before_hops) == len(population) // 50
+
+    # Every hop proved its 51-row prefix in ONE classifier statement, before and
+    # after. The saving is not a statement the change removed - it is the
+    # surplus the one statement stopped carrying.
+    assert [len(hop) for hop in before_hops] == [1] * len(before_hops)
+    assert [len(hop) for hop in after_hops] == [1] * len(after_hops)
+    assert max(hop[0] for hop in before_hops) == 200  # the seed's own limit
+    assert max(hop[0] for hop in after_hops) == 64  # the page's own prefix
+
+    classified_before = sum(sum(hop) for hop in before_hops)
+    classified_after = sum(sum(hop) for hop in after_hops)
+    assert classified_after * 3 < classified_before
+
+    # The classifier reads a fixed bloom false-positive cost per candidate -
+    # ~213k rows, flat in the batch size across every receipt - so its rows
+    # scale with candidates and with nothing else. Across this chain that is
+    # ~1.47G rows of classifier reads before and ~0.49G after.
+    rows_per_candidate = 213_000
+    assert classified_before * rows_per_candidate > 1_400_000_000
+    assert classified_after * rows_per_candidate < 500_000_000
+
+
+def _numbered_lane_read(population, *, page_size, chunk_override=None):
+    """Page zero on the legacy NUMBERED lane, which has no cursor to resume.
+
+    ``bounded_continuation=False`` is the one path where the selector does not
+    consult ``recommended_filter_cursor_seed_batch_size`` at all: it takes
+    ``recommended_filter_seed_batch_size`` instead, and the branch BELOW that
+    one would seed from the CLASSIFY recommendation if no builder offered a
+    seed recommendation. Every trace builder offers one, so the seed limit is
+    structurally decoupled from this change - and this driver is what pins it,
+    because the cursor simulations above cannot reach the branch.
+    """
+
+    builder = picker_leaves(1, page_size=page_size)
+    transport = _ClassifyRecordingTransport(population)
+    original = TraceListQueryBuilderV2.recommended_filter_classify_batch_size
+    if chunk_override is not None:
+        TraceListQueryBuilderV2.recommended_filter_classify_batch_size = (
+            lambda self, size=chunk_override: size
+        )
+    try:
+        page = read_bounded_filter_page(
+            builder=builder,
+            analytics=transport,
+            filters=builder.filters,
+            key_field="trace_id",
+            page_number=0,
+            page_size=page_size,
+            deadline_ms=9_500,
+            query_timeout_ms=2_500,
+            max_query_count=64,
+            max_seed_attempts=24,
+            root_time_discovery=False,
+        )
+    finally:
+        TraceListQueryBuilderV2.recommended_filter_classify_batch_size = original
+    return transport, page
+
+
+def test_a_smaller_chunk_never_shrinks_the_seed_statement_that_feeds_it():
+    """The saving must come out of the classifier, never out of the seed.
+
+    A seed statement costs its envelope's attribute materialization whatever
+    its LIMIT, so a narrower seed buys nothing and a re-seed costs everything.
+    Both lanes are pinned: the numbered lane reads its own seed recommendation,
+    the cursor lane its cursor seed recommendation, and neither moves when the
+    classifier chunk falls from the seed limit to the page's prefix.
+    """
+
+    population = _root_population(_FROZEN_END_DENSE)
+
+    before, before_page = _numbered_lane_read(
+        population, page_size=50, chunk_override=200
+    )
+    after, after_page = _numbered_lane_read(population, page_size=50)
+
+    assert after.seed_limits == before.seed_limits == [512]
+    assert before.classify_batches == [200]
+    assert after.classify_batches == [64]
+    # The numbered page itself is unchanged, rows and order alike.
+    assert [row["trace_id"] for row in after_page.rows] == [
+        row["trace_id"] for row in before_page.rows
+    ]
+    assert len(after_page.rows) == 50
+    assert after_page.complete is before_page.complete is True
+    assert after_page.error_code is before_page.error_code is None
+
+    # And on the cursor lane, where the seed limit is the 200 the study says
+    # must not move.
+    cursor_transport = _ClassifyRecordingTransport(population)
+    _picker_lane_read(
+        population, page_size=50, transport_factory=lambda: cursor_transport
+    )
+    assert cursor_transport.seed_limits == [200]
+    assert cursor_transport.classify_batches == [64]
+
+
+@pytest.mark.parametrize("page_size", [10, 25, 50])
+def test_a_page_smaller_than_the_floor_still_publishes_every_root_once(page_size):
+    """A page well under the 64-row floor must not strand or repeat a root.
+
+    The chunk cannot shrink below the floor, so these pages classify more roots
+    than they publish - exactly as before, just far fewer - and the surplus is
+    still discarded at the checkpoint the next hop resumes from. One dense hour
+    keeps the chain inside the walker's hop limit at a ten-row page while still
+    filling every seed statement to its 200-row limit.
+    """
+
+    population = _root_population([(1, 300)])
+    ground_truth = [
+        row["trace_id"]
+        for row in sorted(
+            population,
+            key=lambda row: (row["start_time"], row["trace_id"]),
+            reverse=True,
+        )
+    ]
+
+    published, per_hop = _recording_hop_chain(population, page_size=page_size)
+
+    assert published == ground_truth
+    assert len(published) == len(set(published)) == len(population)
+    assert max(max(hop, default=0) for hop in per_hop) == 64
+
+
+class _StaleRootLaneTransport(_ClassifyRecordingTransport):
+    """A population in which some roots no longer pass the latest-state oracle.
+
+    The seed reads an index and cannot see versions, so a churned or tombstoned
+    root is seeded like any other and is rejected only by the classifier. That
+    is the one shape a chunk sized to the prefix EXACTLY cannot absorb: the
+    chunk comes back one row short of the prefix and the selector must pay a
+    second classifier statement.
+    """
+
+    def __init__(self, population, *, stale, **kwargs):
+        super().__init__(population, **kwargs)
+        self._stale = frozenset(stale)
+        self._live = [row for row in population if row["trace_id"] not in self._stale]
+
+    def execute_ch_query(self, query, params, *, timeout_ms, settings):
+        if "candidate_trace_ids" not in params:
+            return super().execute_ch_query(
+                query, params, timeout_ms=timeout_ms, settings=settings
+            )
+        seeded, self.population = self.population, self._live
+        try:
+            return super().execute_ch_query(
+                query, params, timeout_ms=timeout_ms, settings=settings
+            )
+        finally:
+            self.population = seeded
+
+
+def test_one_stale_candidate_in_the_prefix_does_not_cost_a_second_classify():
+    """The regression the zero-headroom rule would have shipped, at page 100.
+
+    A hundred-row page needs an ordered prefix of 101. Sized to the prefix
+    exactly the chunk carries 101 candidates, so ONE root the latest-state
+    oracle rejects leaves 100 proven rows - one short - and the selector issues
+    a second classifier statement that the old flat 200 absorbed. At page sizes
+    of 100 and above the flat batch also carried no surplus to save, so that
+    variant was a pure statement-count loss for any API caller above the grid's
+    own page sizes.
+
+    The quarter of headroom closes it: the chunk is 127, the single stale root
+    leaves 126 proven, and the page publishes from one statement. Both arms
+    publish exactly the same rows - this is cost, never correctness.
+    """
+
+    population = _root_population(_FROZEN_END_DENSE)
+    newest = max(population, key=lambda row: (row["start_time"], row["trace_id"]))
+    stale = {newest["trace_id"]}
+    ground_truth = [
+        row["trace_id"]
+        for row in sorted(
+            (row for row in population if row["trace_id"] not in stale),
+            key=lambda row: (row["start_time"], row["trace_id"]),
+            reverse=True,
+        )
+    ][:100]
+
+    shipped = _StaleRootLaneTransport(population, stale=stale)
+    _, shipped_page = _picker_lane_read(
+        population, page_size=100, transport_factory=lambda: shipped
+    )
+
+    # The shipped rule proves the prefix in ONE statement despite the stale
+    # root, and the chunk it carried is the prefix plus a quarter.
+    assert shipped.classify_batches == [127]
+    assert [str(row["trace_id"]) for row in shipped_page.rows] == ground_truth
+    assert shipped_page.error_code is None
+
+    # The zero-headroom variant, restored as an override so the two arms differ
+    # in exactly one number: same page, two statements.
+    bare = _StaleRootLaneTransport(population, stale=stale)
+    original = TraceListQueryBuilderV2.recommended_filter_classify_batch_size
+    TraceListQueryBuilderV2.recommended_filter_classify_batch_size = (
+        lambda self, size=101: size
+    )
+    try:
+        _, bare_page = _picker_lane_read(
+            population, page_size=100, transport_factory=lambda: bare
+        )
+    finally:
+        TraceListQueryBuilderV2.recommended_filter_classify_batch_size = original
+
+    assert len(bare.classify_batches) == 2
+    assert bare.classify_batches[0] == 101
+    assert [str(row["trace_id"]) for row in bare_page.rows] == ground_truth
+    assert sum(shipped.classify_batches) <= sum(bare.classify_batches)
+
+
+@pytest.mark.parametrize("page_size", [64, 100, 150])
+def test_a_page_above_the_floor_publishes_exactly_the_flat_batch_page(page_size):
+    """Above the floor the chunk is a real number, and the page is unchanged.
+
+    The end-to-end driver builds its builder with the SAME page size it asks
+    the selector for, so these are the first cases that drive the chunk rule
+    above the grid's own page sizes at all - the gap that hid the zero-headroom
+    cost from the branch's own simulations.
+    """
+
+    population = _root_population(_FROZEN_END_DENSE)
+    ground_truth = [
+        row["trace_id"]
+        for row in sorted(
+            population,
+            key=lambda row: (row["start_time"], row["trace_id"]),
+            reverse=True,
+        )
+    ][:page_size]
+
+    shipped = _ClassifyRecordingTransport(population)
+    _, page = _picker_lane_read(
+        population, page_size=page_size, transport_factory=lambda: shipped
+    )
+    assert [str(row["trace_id"]) for row in page.rows] == ground_truth
+    assert len(shipped.classify_batches) == 1
+    assert shipped.classify_batches[0] == min(200, -(-(page_size + 1) * 5 // 4))
