@@ -27,6 +27,7 @@ import VoiceInput from "../assistant/VoiceInput";
 import DerivedPanels from "./DerivedPanels";
 import AddEvalsDrawer from "../workspace/evals/AddEvalsDrawer";
 import DynamicField from "../workspace/connect/DynamicField";
+import AgentReadReceipt from "./AgentReadReceipt";
 
 /**
  * Stage 1 — connect an agent source.
@@ -83,6 +84,14 @@ export default function BuildFromAgent() {
     the left to make room for the derivation panels.
   */
   const [intake, setIntake] = useState(null);
+  /*
+    True after the "understand" stage finishes streaming, until the
+    user acknowledges the AgentReadReceipt (audit of tools/rules/
+    data/behavior + open questions). While true, the chain does not
+    auto-advance to "build".
+  */
+  const [awaitReadAck, setAwaitReadAck] = useState(false);
+  const [readAnswers, setReadAnswers] = useState(null);
 
   const env = useMemo(() => (source ? derivedEnvironment(source) : null), [source]);
   /* Depth is a property of generation, so changing it regenerates the pool
@@ -201,6 +210,14 @@ export default function BuildFromAgent() {
     if (answers?.difficulty) setDifficulty(answers.difficulty);
     setIntake({ ...answers, at: new Date().toISOString() });
     setTurns([]);
+    /* Receipt-first: don't stream `understand` yet. Show the audit
+       + open questions, and only after the user hits Build the world
+       do we fire the full derivation chain. */
+    setAwaitReadAck(true);
+  };
+
+  const startDerivationAfterAck = () => {
+    setAwaitReadAck(false);
     const stage = builderRun("understand", source);
     play(stage.title, stage.steps, stage.chips, "understand");
   };
@@ -497,6 +514,24 @@ export default function BuildFromAgent() {
             source={source}
             onSubmit={beginBuild}
           />
+        ) : awaitReadAck ? (
+          /*
+            Receipt-first: right after intake, before any streaming,
+            the user audits what the reader extracted from the agent
+            and resolves any open ambiguities. Clicking Build the
+            world starts the full derivation chain (understand →
+            build → scenarios).
+          */
+          <AgentReadReceipt
+            agentRef={agentRefLabel(source, env)}
+            reading={buildReading(env)}
+            questions={buildQuestions(env)}
+            onBack={() => setIntake(null)}
+            onBuild={(answers) => {
+              setReadAnswers(answers);
+              startDerivationAfterAck();
+            }}
+          />
         ) : (
           <Deriving
             turns={turns} running={running} chips={chips}
@@ -520,6 +555,85 @@ export default function BuildFromAgent() {
       />
     </Box>
   );
+}
+
+/* ── read-receipt payload builders ────────────────────────────────────────
+   These shape env + source into the { agentRef, reading, questions } the
+   AgentReadReceipt renders. Kept out of the component so it stays a pure
+   presentation surface. */
+
+function agentRefLabel(source, env) {
+  if (source?.kind === "repo") {
+    const ref = source.ref?.value ? `@${source.ref.value}` : "";
+    return `${source.value || env?.id}${ref}`;
+  }
+  if (source?.kind === "endpoint") return source.value || env?.id;
+  if (source?.kind === "platform") return `${source.provider || "platform"} · ${source.value || env?.id}`;
+  return env?.id || "agent";
+}
+
+function buildReading(env) {
+  if (!env) return { tools: [], rules: [], data: [], behavior: [] };
+  const tools = (env.tools || []).map((t, i) => ({
+    name: t.name,
+    origin: i < 4 ? "config" : "callGraph",
+  }));
+  const rules = (env.rules || []).map((r) => ({
+    name: r.length > 42 ? `${r.slice(0, 42)}…` : r,
+    origin: "policy",
+  }));
+  const data = (env.seed?.tables || []).slice(0, 4).map((t) => ({
+    name: `${t.name}.csv`,
+    note: `${t.rows.toLocaleString()} rows`,
+    origin: "fixture",
+  }));
+  /* Behavior — a small hand-picked set of prompt/inferred facts to
+     illustrate the source distinction. */
+  const behavior = [
+    { name: "routing prompt", note: `${Math.max(3, (env.tools || []).length - 1)} branches`, origin: "prompt" },
+    { name: "transfer → front desk", origin: "prompt" },
+    { name: "escalate on 2× refusal", origin: "inferred" },
+  ];
+  return { tools, rules, data, behavior };
+}
+
+function buildQuestions(env) {
+  if (!env) return [];
+  const lastTool = (env.tools || [])[Math.max(0, (env.tools || []).length - 1)];
+  const questions = [];
+  if (lastTool) {
+    questions.push({
+      id: "tool-side-effects",
+      title: `Does ${lastTool.name} change data?`,
+      why: "It's called from your code but never described in the prompt. Your answer decides whether a scenario may trigger real side-effects.",
+      kind: "choice",
+      options: [
+        { id: "read", label: "Read-only" },
+        { id: "write", label: "Writes to state" },
+        { id: "escalate", label: "Escalates externally" },
+      ],
+    });
+  }
+  questions.push({
+    id: "policy-enforcement",
+    title: "Are the policy values enforced in your backend, or only stated in the prompt?",
+    why: "We can see the values, not where they're enforced. A rule we only infer is graded more softly than a hard one.",
+    kind: "boolean",
+  });
+  questions.push({
+    id: "refusal-escalation",
+    title: "On a third refusal, does the agent transfer or end the call?",
+    why: "The prompt covers the first two refusals, not beyond. Escalation scenarios need the real branch.",
+    kind: "choice",
+    options: [
+      { id: "transfer", label: "Transfer to human" },
+      { id: "end", label: "End the call" },
+      { id: "loop", label: "Keep trying" },
+    ],
+  });
+  /* Cap at 2 — the receipt is an audit, not an intake form. Two is
+     the smallest count where distinct ambiguities are still named. */
+  return questions.slice(0, 2);
 }
 
 /* ── header ──────────────────────────────────────────────────────────────── */

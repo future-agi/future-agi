@@ -113,7 +113,7 @@ export default function ActorsPanel({ env, envState, patch, onGo }) {
                 action={
                   <Tooltip arrow title="Remove from this environment">
                     <IconButton size="small" onClick={() => drop(a.id)}>
-                      <Iconify icon="solar:close-circle-linear" width={16} sx={{ color: "text.subtitle" }} />
+                      <Iconify icon="solar:trash-bin-trash-linear" width={16} sx={{ color: "text.subtitle" }} />
                     </IconButton>
                   </Tooltip>
                 }

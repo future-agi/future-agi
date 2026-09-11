@@ -211,7 +211,6 @@ function HeroCard({ tasks }) {
   }, [tasks]);
 
   const trend = useMemo(() => fakeTrend(stats.passRate, "hero"), [stats.passRate]);
-  const delta = -12;
 
   const subStats = [
     { label: "Critical", value: stats.critical, color: FAIL, sub: "release blockers" },
@@ -246,12 +245,6 @@ function HeroCard({ tasks }) {
             }}>
               %
             </Typography>
-            <Stack direction="row" alignItems="center" spacing={0.25} sx={{ color: delta < 0 ? FAIL : PASS, ml: 1 }}>
-              <Iconify icon={delta > 0 ? "solar:arrow-up-linear" : "solar:arrow-down-linear"} width={16} />
-              <Typography sx={{ typography: "s1", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
-                {Math.abs(delta)}pt
-              </Typography>
-            </Stack>
           </Stack>
           <Typography sx={{ typography: "s2", color: "text.subtitle", mt: 1.5 }}>
             {stats.passed} of {stats.measured} tasks passed

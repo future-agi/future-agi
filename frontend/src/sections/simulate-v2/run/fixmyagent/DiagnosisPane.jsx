@@ -35,9 +35,9 @@ const SEV_TONE = {
 /* A change that unblocks a release outranks one that lifts the average. */
 const priorityOf = (p, tasks) => {
   const blockers = p.addresses.filter((id) => tasks.find((t) => t.id === id)?.critical).length;
-  if (blockers) return { label: "Release blocker", color: "#DC2626" };
-  if (p.addresses.length > 1) return { label: "High", color: "#CA8A04" };
-  return null;
+  if (blockers) return { label: "Critical", color: "#DC2626", level: 0 };
+  if (p.addresses.length > 2) return { label: "High", color: "#CA8A04", level: 1 };
+  return { label: "Medium", color: "#6B7280", level: 2 };
 };
 
 /*
@@ -75,13 +75,48 @@ export default function DiagnosisPane({
      that would have burned episodes to re-confirm the score it started from. */
   const nothingToFix = !failing.length && !checks.length;
 
-  const sorted = useMemo(() => {
-    const rank = (p) => {
-      const pr = priorityOf(p, tasks);
-      return pr?.label === "Release blocker" ? 0 : pr ? 1 : 2;
-    };
-    return [...proposals].sort((a, b) => rank(a) - rank(b) || b.addresses.length - a.addresses.length);
-  }, [proposals, tasks]);
+  const sorted = useMemo(() => (
+    [...proposals].sort((a, b) =>
+      priorityOf(a, tasks).level - priorityOf(b, tasks).level
+      || b.addresses.length - a.addresses.length)
+  ), [proposals, tasks]);
+
+  /* Overall run summary — the failures collapse into a handful of causes, and
+     fixing the top-ranked one frees a concrete number of scenarios. Kept to
+     data this pane already has so it can never disagree with the list below. */
+  const causeCount = proposals.length;
+  const topFrees = sorted[0]?.addresses.length || 0;
+  const alreadyPass = Math.max(0, measured.length - failing.length);
+
+  /* Export the diagnosis as a plain-text report. Defensive: restricted
+     sandboxes block programmatic downloads, so a failure is swallowed. */
+  const exportReport = () => {
+    try {
+      const lines = [
+        `Run report${runId ? ` — ${runId}` : ""}`,
+        `${failing.length} failing of ${measured.length} measured`,
+        "",
+        `Summary: ${verdict}`,
+        "",
+        "Fix in this order:",
+        ...sorted.map((p, i) => {
+          const pr = priorityOf(p, tasks);
+          return `  ${i + 1}. [${pr.label}] ${p.title} — +${p.lift}%, ${p.addresses.length} call${p.addresses.length === 1 ? "" : "s"}${p.why ? `\n     ${p.why}` : ""}`;
+        }),
+      ];
+      const blob = new Blob([lines.join("\n")], { type: "text/plain" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${runId || "run"}-report.txt`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      /* download blocked (sandbox / private mode) — no-op */
+    }
+  };
 
   return (
     <Stack sx={{ height: "100%", minHeight: 0 }}>
@@ -105,6 +140,20 @@ export default function DiagnosisPane({
             {tasks.length - measured.length ? ` · ${tasks.length - measured.length} not measured` : ""}
           </Typography>
         </Box>
+        {phase === "done" && !nothingToFix && (
+          <Button
+            size="small"
+            onClick={exportReport}
+            startIcon={<Iconify icon="solar:upload-minimalistic-linear" width={14} />}
+            sx={{
+              typography: "s3", fontWeight: 700, color: "text.secondary",
+              textTransform: "none", height: 28, px: 1,
+              "&:hover": { bgcolor: "transparent", color: "text.primary" },
+            }}
+          >
+            Export report
+          </Button>
+        )}
         {phase === "done" && (
           <Tooltip arrow title="Read the run again">
             <IconButton size="small" onClick={() => setPhase("running")}>
@@ -151,18 +200,6 @@ export default function DiagnosisPane({
       {phase === "done" && !nothingToFix && (
         <>
           <Box sx={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
-            {/* ── the one sentence ── */}
-            <Stack
-              direction="row" alignItems="flex-start" spacing={1.25}
-              sx={{
-                mx: 2.5, mt: 2, px: 1.75, py: 1.5, borderRadius: 1,
-                bgcolor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.1 : 0.05),
-              }}
-            >
-              <Iconify icon="solar:lightbulb-bolt-linear" width={15} sx={{ color: "#7857FC", flexShrink: 0, mt: "2px" }} />
-              <Typography sx={{ typography: "s2", fontWeight: 600 }}>{verdict}</Typography>
-            </Stack>
-
             {/* ── diagnosis ── */}
             <Box sx={{ px: 2.5, pt: 2.5 }}>
               <Stack
@@ -256,6 +293,35 @@ export default function DiagnosisPane({
                   <RunTraceLog label={`Read ${tasks.length} episodes`} steps={trace} />
                 </Box>
               </Collapse>
+            </Box>
+
+            {/* ── overall run summary — sits after the diagnosis so it reads as
+                 the takeaway from the analyzers above, not a claim ahead of them ── */}
+            <Box
+              sx={{
+                mx: 2.5, mt: 2.5, px: 1.75, py: 1.5, borderRadius: 1,
+                border: "1px solid",
+                borderColor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.35 : 0.25),
+                bgcolor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.1 : 0.05),
+              }}
+            >
+              <Stack direction="row" alignItems="flex-start" spacing={1.25}>
+                <Iconify icon="solar:lightbulb-bolt-linear" width={15} sx={{ color: "#7857FC", flexShrink: 0, mt: "2px" }} />
+                <Typography sx={{ typography: "s2", fontWeight: 700 }}>{verdict}</Typography>
+              </Stack>
+              {causeCount > 0 && topFrees > 0 && (
+                <Typography sx={{ typography: "s2", color: "text.secondary", mt: 1, pl: 3.375 }}>
+                  These <b>{failing.length} failures</b> collapse into{" "}
+                  <b>{causeCount} {causeCount === 1 ? "cause" : "causes"}</b>. Fix the top one and{" "}
+                  <b>{topFrees} {topFrees === 1 ? "scenario flips" : "scenarios flip"}</b> green.
+                </Typography>
+              )}
+              {alreadyPass > 0 && (
+                <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.75, pl: 3.375 }}>
+                  {alreadyPass} of {measured.length} measured scenarios already pass — the gaps are
+                  concentrated, not scattered.
+                </Typography>
+              )}
             </Box>
 
             {/* ── not fixable by a prompt: the measurement ── */}
@@ -377,14 +443,16 @@ export default function DiagnosisPane({
               </Box>
             )}
 
-            {/* ── fixable: change the agent ── */}
+            {/* ── fixable: change the agent, in priority order ── */}
             <Box sx={{ px: 2.5, pt: 2.5, pb: 2.5 }}>
-              <Typography sx={{ typography: "s2", fontWeight: 700 }}>Change the agent</Typography>
-              <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 1 }}>
-                Include the ones to act on — they seed the optimizer and travel into the hand-off.
-              </Typography>
+              <Stack direction="row" alignItems="baseline" spacing={1} sx={{ mb: 1 }}>
+                <Typography sx={{ typography: "s2", fontWeight: 700 }}>Fix in this order</Typography>
+                <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                  ranked by severity, then how many scenarios each one frees
+                </Typography>
+              </Stack>
               <Stack spacing={1}>
-                {sorted.map((p) => {
+                {sorted.map((p, i) => {
                   const pr = priorityOf(p, tasks);
                   return (
                     <Box
@@ -399,7 +467,15 @@ export default function DiagnosisPane({
                         bgcolor: "transparent",
                       }}
                     >
-                      <Stack direction="row" alignItems="flex-start" spacing={1.25}>
+                      <Stack direction="row" alignItems="flex-start" spacing={1.5}>
+                        {/* Rank — the order to work through them. */}
+                        <Typography sx={{
+                          typography: "s1", fontWeight: 800, color: "text.disabled",
+                          width: 18, textAlign: "center", flexShrink: 0, lineHeight: 1.35,
+                          fontVariantNumeric: "tabular-nums",
+                        }}>
+                          {i + 1}
+                        </Typography>
                         <Box flex={1} minWidth={0}>
                           <Stack direction="row" alignItems="center" spacing={0.625} flexWrap="wrap" rowGap={0.375} sx={{ mb: 0.375 }}>
                             <Chip

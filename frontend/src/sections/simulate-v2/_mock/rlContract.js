@@ -177,7 +177,11 @@ export const transitionDynamics = (env, envState) => {
             (the historical behaviour) and surface an "upgrade" hint
             that points to the Twins tab.
       */
-      const twins = envState?.twins || [];
+      /* Twin state lives on envState.twinBacking.services — `envState.twins`
+         was never written anywhere, so this always fell through to "Mocked
+         integrations" and told a twin-backed env to go attach the twins it
+         already has (while Overview showed the sandbox serving live). */
+      const twins = envState?.twinBacking?.services || [];
       if (twins.length > 0) {
         return {
           id: "integrations",
@@ -272,7 +276,11 @@ export const episodeContract = (env, envState) => {
 export const contractParts = (env, envState) => [
   { id: "adapter", label: "Modality adapter", done: true },
   { id: "spaces", label: "Observation + action", done: true },
-  { id: "dynamics", label: "Transition dynamics", done: (envState?.personas || []).length > 0 || true },
+  /* Always derived from the env by the adapter (like adapter/spaces/episode
+     above). The old `(personas).length > 0 || true` was dead — `|| true` forced
+     it true anyway, and `envState.personas` is never populated (actors live on
+     envState.actors). */
+  { id: "dynamics", label: "Transition dynamics", done: true },
   { id: "reward", label: "Reward spec", done: (envState?.evals || []).length > 0 },
   { id: "episode", label: "Episode contract", done: true },
 ];

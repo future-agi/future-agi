@@ -10,7 +10,7 @@ import { SegmentedTabs } from "src/components/tabs/tabs";
 import { paths } from "src/routes/paths";
 import { getEnvironment } from "../_mock/environments";
 import { getSurface } from "../_mock/surfaces";
-import { getRows } from "../_mock/scenarios";
+import { generatedPool } from "../_mock/scenarios";
 import {
   seedScenariosForClone, resolveSeedPromptToJson,
 } from "../_mock/twins";
@@ -22,7 +22,7 @@ import { SectionCard, EmptyState, cardGrid, CopyField } from "../components/prim
 import { BootSequence } from "../components/loading";
 import DynamicField from "../workspace/connect/DynamicField";
 import TwinProvisioningModal from "./TwinProvisioningModal";
-import FitCheckDialog from "./FitCheckDialog";
+import ConnectReadPanel from "./ConnectReadPanel";
 import TemplateReviewLayout from "./TemplateReviewLayout";
 
 /**
@@ -131,10 +131,11 @@ export default function UseTemplate() {
     const modality = MODALITY_FOR[env.surface] || "chat";
     const t = runtimeTypeFor(modality, null, runtimeTypeId);
     const fit = checkCompatibility(env);
-    const templateScenarios = [
-      ...getRows(`${env.id}::core`, env),
-      ...getRows(`${env.id}::rules`, env),
-    ];
+    /* The full suite the world ships with — core, rules, data traps, edge
+       cases and adversarial. Seeding only core+rules left an adopted env with
+       just two scenario kinds (and only two category chips), out of step with
+       the seeded demo envs, which carry all five. */
+    const templateScenarios = generatedPool(env);
     const blockedIds = new Set((fit?.blocked || []).map((b) => b.id));
     const keptScenarios = dropBlocked
       ? templateScenarios.filter((s) => !blockedIds.has(s.id))
@@ -155,11 +156,16 @@ export default function UseTemplate() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, env?.id]);
   /*
-    Fit check is a popup now — it runs the scripted probe, then on
-    completion commits the env and navigates the user straight to the
-    workspace. No inline "does it fit" step in the page body anymore.
+    Fit check + read-audit now happen inline in the right column instead
+    of a popup and a separate screen. Clicking "Check it fits" flips
+    `checkStarted`, which swaps the "What this template gives you" panel
+    for ConnectReadPanel — it streams the probe, shows what we read, and
+    collects the open-question answers, all without leaving this page.
+    Building hands the answers to the review layout (which then skips its
+    own receipt).
   */
-  const [fitCheckOpen, setFitCheckOpen] = useState(false);
+  const [checkStarted, setCheckStarted] = useState(false);
+  const [readAnswers, setReadAnswers] = useState(null);
 
   if (!env) {
     return (
@@ -178,11 +184,9 @@ export default function UseTemplate() {
   const missing = required.filter((f) => !values[f.key]);
   const fit = checkCompatibility(env);
 
-  /* The template's own packs — the suite this world ships with. */
-  const scenarios = [
-    ...getRows(`${env.id}::core`, env),
-    ...getRows(`${env.id}::rules`, env),
-  ];
+  /* The template's own packs — the full suite this world ships with (core,
+     rules, data traps, edge cases, adversarial). */
+  const scenarios = generatedPool(env);
   const blockedIds = new Set((fit?.blocked || []).map((b) => b.id));
   const kept = dropBlocked ? scenarios.filter((s) => !blockedIds.has(s.id)) : scenarios;
 
@@ -265,6 +269,7 @@ export default function UseTemplate() {
         <TemplateReviewLayout
           env={env}
           isTwin={!!env.twinBacking}
+          externalReadAnswers={readAnswers}
           onBack={() => setStep(0)}
           onFinish={finish}
         />
@@ -278,6 +283,10 @@ export default function UseTemplate() {
       </>
     );
   }
+
+  /* While the inline check/read is running we're conceptually on the
+     "Check it fits" step even though `step` stays 0 until Build. */
+  const stepShown = step === 0 && checkStarted ? 1 : step;
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
@@ -304,16 +313,16 @@ export default function UseTemplate() {
               <Stack key={label} direction="row" alignItems="flex-start" sx={{ flex: i === STEPS.length - 1 ? "0 0 auto" : 1 }}>
                 <Box sx={{ width: 116, textAlign: "center", flexShrink: 0 }}>
                   <Iconify
-                    icon={i < step ? "solar:check-circle-bold" : "solar:circle-linear"}
+                    icon={i < stepShown ? "solar:check-circle-bold" : "solar:circle-linear"}
                     width={15}
-                    sx={{ color: i < step ? "#16A34A" : i === step ? "primary.main" : "text.disabled", display: "block", mx: "auto" }}
+                    sx={{ color: i < stepShown ? "#16A34A" : i === stepShown ? "primary.main" : "text.disabled", display: "block", mx: "auto" }}
                   />
-                  <Typography sx={{ typography: "s3", fontWeight: 700, color: i <= step ? "text.primary" : "text.subtitle", mt: 0.25 }}>
+                  <Typography sx={{ typography: "s3", fontWeight: 700, color: i <= stepShown ? "text.primary" : "text.subtitle", mt: 0.25 }}>
                     {label}
                   </Typography>
                 </Box>
                 {i < STEPS.length - 1 && (
-                  <Box sx={{ flex: 1, height: "1px", mt: "7px", bgcolor: i < step ? "#16A34A" : "divider" }} />
+                  <Box sx={{ flex: 1, height: "1px", mt: "7px", bgcolor: i < stepShown ? "#16A34A" : "divider" }} />
                 )}
               </Stack>
             ))}
@@ -322,7 +331,7 @@ export default function UseTemplate() {
       </Stack>
 
       <Box sx={{ flex: 1, minHeight: 0, overflow: "auto", p: 2 }}>
-        <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "1fr", lg: "minmax(0, 1.55fr) minmax(300px, 1fr)" } }}>
+        <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "1fr", lg: "minmax(0, 1fr) minmax(0, 1fr)" } }}>
           <Stack spacing={2}>
             <SegmentedTabs
               value={mode}
@@ -470,12 +479,12 @@ export default function UseTemplate() {
                 <Stack direction="row" alignItems="center" spacing={1.5} sx={{ px: 2.5, py: 2, borderTop: "1px solid", borderColor: "divider" }}>
                   <Button
                     variant="contained" color="primary"
-                    disabled={missing.length > 0}
-                    onClick={() => setFitCheckOpen(true)}
+                    disabled={missing.length > 0 || checkStarted}
+                    onClick={() => setCheckStarted(true)}
                     endIcon={<Iconify icon="solar:arrow-right-linear" width={15} />}
                     sx={{ typography: "s2", fontWeight: 700 }}
                   >
-                    Check it fits
+                    {checkStarted ? "Checking…" : "Check it fits"}
                   </Button>
                   {missing.length > 0 && (
                     <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
@@ -488,52 +497,45 @@ export default function UseTemplate() {
 
           </Stack>
 
-          {/* ── what you are about to get ── */}
-          <Stack spacing={2}>
-            <SectionCard title="What this template gives you" subtitle="Already built — you are not deriving it">
-              <Stack sx={{ px: 2.5, py: 2 }} spacing={1.25}>
-                <Line label="World" value={`${(env.seed?.tables || []).reduce((a, t) => a + t.rows, 0).toLocaleString()} seeded rows`} />
-                <Line label="Tools" value={`${env.tools?.length || 0} the world answers`} />
-                <Line label="Hard rules" value={`${env.rules?.length || 0} graded on every run`} />
-                <Line label="Scenarios" value={`${kept.length} ready to run`} />
-                <Line label="Evals" value={`${(env.evalPreset || []).length} applied`} />
-              </Stack>
-            </SectionCard>
+          {/* ── right column — template summary until "Check it fits", then
+                the inline fit-check + read-audit + open questions ── */}
+          {mode === "cloud" && checkStarted ? (
+            <ConnectReadPanel
+              env={env}
+              probeSteps={fit.probe}
+              onBuild={(answers) => { setReadAnswers(answers); setStep(2); }}
+            />
+          ) : (
+            <Stack spacing={2}>
+              <SectionCard title="What this template gives you" subtitle="Already built — you are not deriving it">
+                <Stack sx={{ px: 2.5, py: 2 }} spacing={1.25}>
+                  <Line label="World" value={`${(env.seed?.tables || []).reduce((a, t) => a + t.rows, 0).toLocaleString()} seeded rows`} />
+                  <Line label="Tools" value={`${env.tools?.length || 0} the world answers`} />
+                  <Line label="Hard rules" value={`${env.rules?.length || 0} graded on every run`} />
+                  <Line label="Scenarios" value={`${kept.length} ready to run`} />
+                  <Line label="Evals" value={`${(env.evalPreset || []).length} applied`} />
+                </Stack>
+              </SectionCard>
 
-            <Box
-              sx={{
-                p: 2, borderRadius: 1.25, border: "1px solid",
-                borderColor: alpha("#16A34A", 0.3),
-                bgcolor: (t) => alpha("#16A34A", t.palette.mode === "dark" ? 0.08 : 0.04),
-              }}
-            >
-              <Stack direction="row" spacing={1.25} alignItems="flex-start">
-                <Iconify icon="solar:shield-keyhole-linear" width={16} sx={{ color: "#16A34A", flexShrink: 0, mt: "1px" }} />
-                <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                  <Box component="span" sx={{ fontWeight: 700, color: "text.primary" }}>Nothing touches production.</Box>{" "}
-                  Seeded data and test credentials in an isolated sandbox — your deployed agent is never called.
-                </Typography>
-              </Stack>
-            </Box>
-
-          </Stack>
+              <Box
+                sx={{
+                  p: 2, borderRadius: 1.25, border: "1px solid",
+                  borderColor: alpha("#16A34A", 0.3),
+                  bgcolor: (t) => alpha("#16A34A", t.palette.mode === "dark" ? 0.08 : 0.04),
+                }}
+              >
+                <Stack direction="row" spacing={1.25} alignItems="flex-start">
+                  <Iconify icon="solar:shield-keyhole-linear" width={16} sx={{ color: "#16A34A", flexShrink: 0, mt: "1px" }} />
+                  <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+                    <Box component="span" sx={{ fontWeight: 700, color: "text.primary" }}>Nothing touches production.</Box>{" "}
+                    Seeded data and test credentials in an isolated sandbox — your deployed agent is never called.
+                  </Typography>
+                </Stack>
+              </Box>
+            </Stack>
+          )}
         </Box>
       </Box>
-
-      <FitCheckDialog
-        open={fitCheckOpen}
-        probeSteps={fit.probe}
-        onDone={() => {
-          setFitCheckOpen(false);
-          /* Straight to the review layout — TemplateReviewLayout owns
-             the "Setup being built" state itself (AssistantConsole
-             streams the builder turns, DerivedPanels lights up the
-             capability tabs as each stage settles, pipeline strip
-             tracks progress). Any intermediate splash here would
-             short-circuit that richer view. */
-          setStep(2);
-        }}
-      />
 
       {env.twinBacking && (
         <TwinProvisioningModal

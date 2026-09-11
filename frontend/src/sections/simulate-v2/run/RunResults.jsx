@@ -1,7 +1,7 @@
 import PropTypes from "prop-types";
 import { useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { alpha } from "@mui/material/styles";
+import { alpha, useTheme } from "@mui/material/styles";
 import {
   Box, Stack, Typography, Button, IconButton, Tab, Checkbox, Tooltip,
 } from "@mui/material";
@@ -103,6 +103,28 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
     regardless. Lifted so the picker sits in the header action slot.
   */
   const [visibleColumns, setVisibleColumns] = useState(() => defaultTraceColumns());
+  /*
+    Quick status filter chips sitting beside the Columns picker. A fast
+    one-click narrowing by outcome (All / Failing / Mixed / Inconclusive /
+    Passing), separate from the attribute FilterPanel — the two AND together.
+  */
+  const [statusChip, setStatusChip] = useState("all");
+  /* "Failure sub-goal" and "Failure pattern" are failure-only views — passed
+     and inconclusive tasks have no failure bucket, so grouping by them drops
+     those tasks entirely. Selecting one of those groupings while the status
+     chip asks for Passing/Inconclusive is contradictory (it empties the
+     table), so the two controls are reconciled: incompatible chips are
+     disabled, and switching to a failure grouping resets an incompatible
+     chip back to All. */
+  const failureGrouping = groupBy === "subGoal" || groupBy === "pattern";
+  const incompatibleChips = failureGrouping ? ["passing", "inconclusive"] : [];
+  const setGroupByReconciled = (g) => {
+    setGroupBy(g);
+    const failView = g === "subGoal" || g === "pattern";
+    if (failView && (statusChip === "passing" || statusChip === "inconclusive")) {
+      setStatusChip("all");
+    }
+  };
   /*
     Attribute filters (Goal, Sub-goal, Status, Failure pattern, Critical).
     Uses the platform's shared FilterPanel component so the popover
@@ -274,6 +296,8 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
        chart. Independent of the header filters; they AND together. */
     if (bucketFilter?.match && !bucketFilter.match(t)) return false;
 
+    if (statusChip !== "all" && statusBucket(t) !== statusChip) return false;
+
     const d = taskDerivations.get(t.id);
     if (filters.goal?.length     && !filters.goal.includes(d.goal))         return false;
     if (filters.status?.length   && !filters.status.includes(d.statusLabel)) return false;
@@ -282,6 +306,21 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
     if (filters.subGoal?.length && !filters.subGoal.some((g) => d.subGoalLabels.has(g))) return false;
     return true;
   });
+
+  /* What will actually render as groups. Failure groupings (sub-goal / pattern)
+     have no bucket for passed/unmeasured tasks, so they drop out — used to
+     decide between the table and an explanatory empty state. */
+  const groupableShown = failureGrouping
+    ? shown.filter((t) => t.status !== "passed" && t.status !== "unmeasured")
+    : shown;
+
+  /* Counts for the status chips — from the full run so the numbers read as a
+     fixed reference the chip filter narrows against, not a moving total. */
+  const statusCounts = tasks.reduce((c, t) => {
+    c.all += 1;
+    c[statusBucket(t)] += 1;
+    return c;
+  }, { all: 0, failing: 0, mixed: 0, inconclusive: 0, passing: 0 });
 
   const applyFilters = (result) => {
     if (!result) { setFilters({}); return; }
@@ -301,6 +340,10 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
   };
 
   const failedCritical = tasks.filter((t) => t.critical && t.status === "failed").length;
+  /* When this run finished, as a relative label ("finished 2m ago"). Falls
+     back across timestamp fields and yields null on a missing/bad date so the
+     header shows nothing rather than "Invalid Date". */
+  const finishedLabel = runFinishedLabel(identity);
 
   /* The scenarios a comparison handed over, if it did. */
   const sentIds = params.get("only")?.split(",").filter(Boolean) || [];
@@ -358,7 +401,7 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
           </Stack>
           <Typography noWrap sx={{ typography: "s2", color: "text.subtitle" }}>
             {env.name} · {stats.total} tasks
-            {identity ? ` · ${new Date(identity.finishedAt).toLocaleString()}` : ""}
+            {finishedLabel ? ` · ${finishedLabel}` : ""}
           </Typography>
         </Box>
         <Button
@@ -422,7 +465,7 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
                 </Typography>
                 <Button
                   size="small"
-                  onClick={() => { setGroupBy("pattern"); setTab("tasks"); }}
+                  onClick={() => { setGroupByReconciled("pattern"); setTab("tasks"); }}
                   sx={{ typography: "s2", fontWeight: 700, color: "#DC2626" }}
                 >
                   Review
@@ -430,6 +473,9 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
               </Stack>
             </Box>
           )}
+
+          {/* ── compact summary strip ── */}
+          <RunSummaryStrip tasks={tasks} evals={shownEvals} />
 
           {/* ── tabs ── */}
           <CustomTabs
@@ -471,7 +517,7 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
                   </Typography>
                 ) : (
                   <Stack direction="row" alignItems="center" spacing={1.25}>
-                    <TraceGroupByPicker value={groupBy} onChange={setGroupBy} />
+                    <TraceGroupByPicker value={groupBy} onChange={setGroupByReconciled} />
                     {/*
                       Filter button — same shape as Group by / Columns
                       so the three read as a single control row. Opens
@@ -552,12 +598,27 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
                     </Button>
                   </Stack>
                 ) : (
-                  <TraceColumnsPicker value={visibleColumns} onChange={setVisibleColumns} />
+                  <Stack direction="row" alignItems="center" spacing={1.5}>
+                    <StatusFilterChips value={statusChip} counts={statusCounts} onChange={setStatusChip} blocked={incompatibleChips} />
+                    <TraceColumnsPicker value={visibleColumns} onChange={setVisibleColumns} />
+                  </Stack>
                 )
               }
             >
-              {shown.length === 0 ? (
-                <EmptyState icon="solar:filter-linear" title="No tasks match that filter" />
+              {/* A failure grouping (sub-goal / pattern) drops passed and
+                  unmeasured tasks — with those filtered in and nothing failing,
+                  `shown` is non-empty but zero groups render. Detect that and
+                  show a real empty state instead of a blank table. */}
+              {groupableShown.length === 0 ? (
+                <EmptyState
+                  icon="solar:filter-linear"
+                  title={failureGrouping && shown.length > 0
+                    ? "Nothing to group here"
+                    : "No tasks match that filter"}
+                  body={failureGrouping && shown.length > 0
+                    ? "This grouping only shows failing runs — none of the matching runs failed. Switch the status filter or group by Goal."
+                    : undefined}
+                />
               ) : (
                 <TraceTable
                   tasks={shown}
@@ -728,6 +789,346 @@ RunResults.propTypes = {
   stats: PropTypes.object, evals: PropTypes.array, stage: PropTypes.string,
   seed: PropTypes.number,
 };
+
+/* Map a task's raw status to one of the chip buckets. An errored episode is a
+   measured failure (it reached a "this went wrong" verdict) — grouped with
+   Failing, not Inconclusive, so the chips agree with the summary strip, the
+   Analytics tab, and the failure groupings (which do bucket errored rows).
+   Only genuinely unmeasured episodes are inconclusive. */
+function statusBucket(t) {
+  if (t.status === "passed") return "passing";
+  if (t.status === "flaky") return "mixed";
+  if (t.status === "unmeasured") return "inconclusive";
+  return "failing";
+}
+
+const STATUS_CHIPS = [
+  { id: "all", label: "All", color: null },
+  { id: "failing", label: "Failing", color: "#DC2626" },
+  { id: "mixed", label: "Mixed", color: "#CA8A04" },
+  { id: "inconclusive", label: "Inconclusive", color: null },
+  { id: "passing", label: "Passing", color: "#16A34A" },
+];
+
+/* Outcome quick-filter — one chip per status bucket plus All. The active chip
+   is filled in its status colour; the rest are quiet outlines. Each carries
+   its count so the distribution is legible before you click. */
+function StatusFilterChips({ value, counts, onChange, blocked = [] }) {
+  return (
+    <Stack direction="row" alignItems="center" spacing={0.75} sx={{ flexWrap: "wrap", rowGap: 0.75 }}>
+      {STATUS_CHIPS.map((chip) => {
+        const active = value === chip.id;
+        const dot = chip.color || "text.disabled";
+        const count = counts[chip.id] ?? 0;
+        /* Disabled when empty, or when the current failure-only grouping has
+           no bucket for this outcome (passing / inconclusive). */
+        const blockedByGrouping = blocked.includes(chip.id);
+        const disabled = (chip.id !== "all" && count === 0) || blockedByGrouping;
+        return (
+          <Tooltip
+            key={chip.id}
+            arrow
+            title={blockedByGrouping ? "Not available while grouping by a failure view — passing runs have no failure bucket" : ""}
+          >
+          <Box
+            role="button"
+            tabIndex={disabled ? -1 : 0}
+            onClick={() => !disabled && onChange(chip.id)}
+            onKeyDown={(e) => { if (!disabled && (e.key === "Enter" || e.key === " ")) onChange(chip.id); }}
+            sx={{
+              display: "inline-flex", alignItems: "center", gap: 0.625,
+              height: 28, px: 1.125, borderRadius: 1,
+              border: "1px solid",
+              borderColor: active ? (chip.color || "text.primary") : "divider",
+              bgcolor: active
+                ? (t) => alpha(chip.color || t.palette.text.primary, t.palette.mode === "dark" ? 0.16 : 0.1)
+                : "transparent",
+              color: disabled ? "text.disabled" : "text.primary",
+              cursor: disabled ? "default" : "pointer",
+              opacity: disabled ? 0.5 : 1,
+              transition: "border-color 120ms, background-color 120ms",
+              "&:hover": disabled ? {} : { borderColor: active ? (chip.color || "text.primary") : "text.disabled" },
+            }}
+          >
+            {chip.id !== "all" && (
+              <Box sx={{ width: 6, height: 6, borderRadius: "50%", bgcolor: dot, flexShrink: 0 }} />
+            )}
+            <Typography sx={{ typography: "s2", fontWeight: 700, whiteSpace: "nowrap" }}>
+              {chip.label}
+            </Typography>
+            <Typography sx={{
+              typography: "s3", fontWeight: 700, fontVariantNumeric: "tabular-nums",
+              color: active ? "inherit" : "text.subtitle",
+            }}>
+              {count}
+            </Typography>
+          </Box>
+          </Tooltip>
+        );
+      })}
+    </Stack>
+  );
+}
+StatusFilterChips.propTypes = {
+  value: PropTypes.string, counts: PropTypes.object, onChange: PropTypes.func, blocked: PropTypes.array,
+};
+
+/* "finished 2m ago" — relative for anything recent, an absolute date once it's
+   more than a week old. Tries the timestamp fields a run might carry and
+   returns null on a missing/unparseable date so the caller can omit it. */
+function runFinishedLabel(run) {
+  const raw = run?.finishedAt || run?.completedAt || run?.createdAt;
+  if (!raw) return null;
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return null;
+  const s = Math.max(0, Math.floor((Date.now() - d.getTime()) / 1000));
+  if (s < 45) return "finished just now";
+  if (s < 90) return "finished a minute ago";
+  if (s < 3600) return `finished ${Math.round(s / 60)}m ago`;
+  if (s < 86400) return `finished ${Math.round(s / 3600)}h ago`;
+  if (s < 604800) return `finished ${Math.round(s / 86400)}d ago`;
+  return `finished ${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+}
+
+/* ── Compact run summary strip ────────────────────────────────────────────
+ *
+ * A single-row card that lands above the tabs. Left side is the headline
+ * (pass %, absolute count, four-segment stacked bar with an inline legend).
+ * Right side is a per-eval breakdown — one mini stacked bar per eval, with
+ * the weakest one flagged. Height is capped low enough that it doesn't
+ * push the traces table below the fold.
+ * ─────────────────────────────────────────────────────────────────────── */
+function RunSummaryStrip({ tasks, evals }) {
+  const buckets = { passed: 0, failed: 0, flaky: 0, unmeasured: 0 };
+  tasks.forEach((t) => {
+    /* An errored episode is a measured failure — the run reached a verdict of
+       "this went wrong", same as Analytics and the run-overview treat it. Only
+       genuinely unmeasured episodes are "inconclusive"; folding errors in there
+       (as before) made this strip report a higher pass rate than the same run's
+       Analytics tab on the same screen. */
+    if (t.status === "error") buckets.failed += 1;
+    else if (buckets[t.status] != null) buckets[t.status] += 1;
+    else buckets.unmeasured += 1;
+  });
+  const measured = buckets.passed + buckets.failed + buckets.flaky;
+  const total = tasks.length;
+  const passPct = measured ? Math.round((buckets.passed / measured) * 100) : 0;
+
+  const evalStats = (evals || []).map((e) => {
+    let pass = 0, fail = 0, run = 0;
+    tasks.forEach((t) => {
+      const r = (t.evalResults || []).find((x) => x.id === e.id || x.name === e.name);
+      if (!r) return;
+      run += 1;
+      if (r.passed) pass += 1; else fail += 1;
+    });
+    return { id: e.id, name: e.name, pass, fail, run, pct: run ? Math.round((pass / run) * 100) : 0 };
+  }).filter((e) => e.run > 0);
+
+  const weakest = evalStats.length
+    ? evalStats.reduce((min, e) => (e.pct < min.pct ? e : min), evalStats[0])
+    : null;
+
+  /* One-liner insight. Lead half depends on overall level, tail half calls
+     out the weakest eval with real numbers so the reader can see what
+     dragged the run down. */
+  const lead = passPct >= 80
+    ? "The agent can do the work — it just won't hold up on the hardest calls."
+    : passPct >= 50
+      ? "The agent covers the basics but stumbles on the hardest calls."
+      : "The agent misses the mark on most calls it was given.";
+  const adversarialish = weakest ? Math.max(1, Math.floor(weakest.fail * 0.6)) : 0;
+
+  /* Objectives = the evals the user added, one ring each, in the order they
+     appear on the run. Each ring is that eval's pass rate; the lowest-scoring
+     eval is flagged WEAKEST. This is the same evalStats the insight line uses,
+     so the ring and the sentence never disagree. */
+  const objectives = evalStats.map((e) => ({
+    label: e.name, pct: e.pct, passed: e.pass, measured: e.run,
+  }));
+  if (objectives.length > 1) {
+    const min = Math.min(...objectives.map((o) => o.pct));
+    const weakestObj = objectives.find((o) => o.pct === min);
+    if (weakestObj && weakestObj.pct < 100) weakestObj.weakest = true;
+  }
+
+  if (!total) return null;
+
+  return (
+    <Box
+      sx={{
+        mb: 2, borderRadius: 1.25,
+        border: "1px solid", borderColor: "divider",
+        bgcolor: "background.paper",
+      }}
+    >
+      <Stack
+        direction={{ xs: "column", md: "row" }}
+        divider={<Box sx={{
+          borderBottom: { xs: "1px solid", md: "none" },
+          borderRight: { md: "1px solid" },
+          /* Dimmer than the `divider` token: a line flanked by the paper bg on
+             both sides reads brighter than the container's edge border, so we
+             drop the opacity to make the two strokes look equal. */
+          borderColor: (t) => `${alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.07 : 0.06)} !important`,
+        }} />}
+      >
+        {/* ── Left: overall headline ── */}
+        <Box sx={{ flex: "1 1 0", minWidth: 0, px: 2.5, py: 2, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+          <Stack direction="row" alignItems="center" spacing={3}>
+            {/* Pass rate + caption, stacked */}
+            <Box sx={{ flexShrink: 0 }}>
+              <Stack direction="row" alignItems="baseline" spacing={0.5}>
+                <Typography sx={{ typography: "h2", fontWeight: 800, lineHeight: 1 }}>
+                  {passPct}
+                </Typography>
+                <Typography sx={{ typography: "h5", fontWeight: 700, color: "text.subtitle" }}>
+                  %
+                </Typography>
+              </Stack>
+              <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.5, fontWeight: 600, whiteSpace: "nowrap" }}>
+                passed · {buckets.passed}/{measured} measured
+              </Typography>
+            </Box>
+
+            {/* Stacked bar + inline legend */}
+            <Box sx={{ flex: 1, minWidth: 160 }}>
+              <Box sx={{
+                display: "flex", height: 7, borderRadius: 0.75, overflow: "hidden",
+                bgcolor: (t) => alpha(t.palette.text.primary, 0.06),
+              }}>
+                <SegBar count={buckets.passed} color="#16A34A" />
+                <SegBar count={buckets.flaky} color="#CA8A04" />
+                <SegBar count={buckets.failed} color="#DC2626" />
+                <SegBar count={buckets.unmeasured} hatched />
+              </Box>
+              <Stack direction="row" spacing={2} sx={{ mt: 1, flexWrap: "wrap" }}>
+                <LegendDot color="#16A34A" label={`${buckets.passed} pass`} />
+                <LegendDot color="#CA8A04" label={`${buckets.flaky} mixed`} />
+                <LegendDot color="#DC2626" label={`${buckets.failed} fail`} />
+                <LegendDot hatched label={`${buckets.unmeasured} inconclusive`} />
+              </Stack>
+            </Box>
+          </Stack>
+
+          {/* One-liner insight — the reason to look at this run. */}
+          {weakest && (
+            <Typography sx={{ typography: "s2", mt: 1.75, color: "text.primary" }}>
+              {lead}{" "}
+              <Box component="span" sx={{ fontWeight: 700 }}>{weakest.name}</Box>{" "}
+              passed only {weakest.pass} of {weakest.run}
+              {weakest.fail > 0 && `, and ${adversarialish} of those failures are adversarial callers`}.
+            </Typography>
+          )}
+        </Box>
+
+        {/* ── Right: by-objective breakdown ── */}
+        {objectives.length > 0 && (
+          <Box sx={{ flex: "1 1 0", minWidth: 0, px: 2.5, py: 2, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+            <Stack direction="row" alignItems="baseline" spacing={1} sx={{ mb: 1.5 }}>
+              <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                By eval
+              </Typography>
+              <Typography sx={{ typography: "s3", color: "text.disabled" }}>
+                pass rate for each eval you added
+              </Typography>
+            </Stack>
+            <Stack direction="row" spacing={2.5} sx={{ flexWrap: "wrap", rowGap: 2 }}>
+              {objectives.map((o) => (
+                <ObjectiveRing key={o.label} obj={o} />
+              ))}
+            </Stack>
+          </Box>
+        )}
+      </Stack>
+    </Box>
+  );
+}
+RunSummaryStrip.propTypes = { tasks: PropTypes.array, evals: PropTypes.array };
+
+/* A circular gauge per objective. The ring fill and the centre % say the same
+   thing, health-coloured, so it's legible at a glance without a legend. The
+   objective name and pass/total sit under it, and the weakest one is flagged. */
+function ObjectiveRing({ obj }) {
+  const theme = useTheme();
+  const health = obj.pct >= 80 ? "#16A34A" : obj.pct >= 50 ? "#CA8A04" : "#DC2626";
+  const size = 62, sw = 6, r = (size - sw) / 2, c = 2 * Math.PI * r;
+  const track = alpha(theme.palette.text.primary, theme.palette.mode === "dark" ? 0.1 : 0.08);
+
+  return (
+    <Stack alignItems="center" spacing={0.875} sx={{ width: 132, flexShrink: 0 }}>
+      <Box sx={{ position: "relative", width: size, height: size }}>
+        <Box component="svg" width={size} height={size} viewBox={`0 0 ${size} ${size}`} sx={{ display: "block", transform: "rotate(-90deg)" }}>
+          <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={track} strokeWidth={sw} />
+          <circle
+            cx={size / 2} cy={size / 2} r={r} fill="none"
+            stroke={health} strokeWidth={sw} strokeLinecap="round"
+            strokeDasharray={c} strokeDashoffset={c * (1 - obj.pct / 100)}
+          />
+        </Box>
+        <Box sx={{ position: "absolute", inset: 0, display: "grid", placeItems: "center" }}>
+          <Typography sx={{ typography: "s1", fontWeight: 800, color: health, fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>
+            {obj.pct}
+            <Box component="span" sx={{ fontSize: "0.7em", fontWeight: 700 }}>%</Box>
+          </Typography>
+        </Box>
+      </Box>
+
+      <Stack alignItems="center" spacing={0.5} sx={{ textAlign: "center", maxWidth: "100%" }}>
+        <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.primary", lineHeight: 1.3 }}>
+          {obj.label}
+        </Typography>
+        {obj.weakest && (
+          <Box sx={{
+            px: 0.5, py: 0.125, borderRadius: 0.5,
+            fontWeight: 800, letterSpacing: 0.3, fontSize: "8px", lineHeight: 1.5,
+            color: "#DC2626",
+            bgcolor: (t) => alpha("#DC2626", t.palette.mode === "dark" ? 0.18 : 0.1),
+          }}>
+            WEAKEST
+          </Box>
+        )}
+        <Typography sx={{ typography: "s3", color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
+          {obj.passed}/{obj.measured} passed
+        </Typography>
+      </Stack>
+    </Stack>
+  );
+}
+ObjectiveRing.propTypes = { obj: PropTypes.object };
+
+function SegBar({ count, color, hatched }) {
+  if (!count) return null;
+  if (hatched) {
+    return (
+      <Box
+        sx={{
+          flex: count,
+          backgroundImage: (t) => {
+            const line = alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.28 : 0.22);
+            const base = alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.06);
+            return `repeating-linear-gradient(-45deg, ${line} 0, ${line} 1px, ${base} 1px, ${base} 5px)`;
+          },
+        }}
+      />
+    );
+  }
+  return <Box sx={{ flex: count, bgcolor: color }} />;
+}
+SegBar.propTypes = { count: PropTypes.number, color: PropTypes.string, hatched: PropTypes.bool };
+
+function LegendDot({ color, label, hatched }) {
+  return (
+    <Stack direction="row" alignItems="center" spacing={0.5}>
+      <Box sx={{
+        width: 8, height: 8, borderRadius: "50%",
+        bgcolor: hatched ? "text.disabled" : color,
+      }} />
+      <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{label}</Typography>
+    </Stack>
+  );
+}
+LegendDot.propTypes = { color: PropTypes.string, label: PropTypes.string, hatched: PropTypes.bool };
 
 /**
  * Trials table.

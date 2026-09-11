@@ -14,7 +14,6 @@ import {
   useReducer,
   useEffect,
   useCallback,
-  useRef,
 } from "react";
 import { seededState } from "./_mock/seedState";
 import { getEnvironment } from "./_mock/environments";
@@ -165,9 +164,21 @@ function reducer(state, action) {
         user who deliberately trimmed scenarios keeps their pick.
       */
       envs.forEach((env) => {
-        if (!getEnvironment(env.id)) return;
         const es = nextByEnv[env.id];
         if (!es) return;
+        /*
+           Refresh scenarios from the derivation pool for template-sourced
+           envs — both the seeded demo templates (getEnvironment matches an
+           exact template id) AND instances adopted from a template
+           (scenarioSource "templates", e.g. "env-voice-support-4zx5uf").
+           Without the second case, an adopted env kept whatever reduced set
+           it was seeded with at adopt time and never picked up the full
+           suite (core + rules + traps + edge + adversarial). Custom-built
+           envs (built from agent code) carry their own scenarios and are
+           left untouched.
+        */
+        const fromTemplate = !!getEnvironment(env.id) || es.scenarioSource === "templates";
+        if (!fromTemplate) return;
         /*
            Prototype demo path: unconditionally refresh from the
            template. Wrapped in try/catch — if scenario generation
@@ -224,7 +235,11 @@ function reducer(state, action) {
           ],
         };
       });
-      return { ...state, ...payload, myEnvironments: envs, byEnv: nextByEnv };
+      /* `hydrated` marks that the store has loaded from the cache (or the
+         seed). Screens that would otherwise render "Environment not found"
+         while myEnvironments is still the empty initialState wait on this,
+         so a custom-built env deep-link doesn't 404 for a frame on load. */
+      return { ...state, ...payload, myEnvironments: envs, byEnv: nextByEnv, hydrated: true };
     }
 
     case "adoptEnvironment": {
@@ -374,9 +389,9 @@ const SimStoreContext = createContext(null);
 
 export function SimStoreProvider({ children }) {
   const [state, dispatch] = useReducer(reducer, initialState);
-  const hydrated = useRef(false);
 
-  // Hydrate once on mount.
+  // Hydrate once on mount. The `hydrated: true` marker the reducer stamps is
+  // what gates persistence below — set on committed state, so it can't race.
   useEffect(() => {
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -385,26 +400,36 @@ export function SimStoreProvider({ children }) {
         payload: raw ? topUpSeed(JSON.parse(raw)) : firstRunState(),
       });
     } catch {
-      /* a corrupt prototype cache should never block the screen */
-    } finally {
-      hydrated.current = true;
+      /* a corrupt prototype cache should never block the screen — fall back
+         to the seed so the app still renders rather than staying blank */
+      dispatch({ type: "hydrate", payload: firstRunState() });
     }
   }, []);
 
   /*
-    Persist on every change — but never before hydration has run. The effects
-    both fire on mount, and this one sees the pre-hydration `initialState`, so
-    without the guard a first visit writes an EMPTY state. If the page is then
-    torn down before the hydrated write lands, that empty state is what is
-    stored — and because it is no longer null, the seed never runs again and
-    the app is permanently blank.
+    Persist on every change — but only once the store is genuinely hydrated.
+
+    The bug this guards against: two effects fire on mount, and the previous
+    guard (a `hydrated` ref flipped inside the hydrate effect) turned true
+    *before* the hydrated state committed. So on that first pass this effect
+    ran with `state` still the empty `initialState` and wrote it over a cache
+    holding real environments. Vite HMR remounts this provider on every edit,
+    so the race fired constantly — which is why environments "randomly"
+    vanished mid-edit. A hydrate reducer that throws leaves state at
+    initialState and hits the same path.
+
+    `state.hydrated` is set to true only by the hydrate reducer, on committed
+    state — never on the pre-hydration initialState and never on a crashed
+    hydrate. Gating on it means we never persist an un-hydrated empty state,
+    while a legitimately-empty state after hydration (the user deleted their
+    last environment) still has the flag and persists correctly.
   */
   useEffect(() => {
-    if (!hydrated.current) return;
+    if (!state.hydrated) return;
     try {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     } catch {
-      /* quota / private mode — the prototype still works in-memory */
+      /* quota / private mode / corrupt cache — the prototype still works in-memory */
     }
   }, [state]);
 

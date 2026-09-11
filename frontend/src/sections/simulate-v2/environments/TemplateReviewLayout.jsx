@@ -9,6 +9,7 @@ import { useEnvState } from "../store";
 import { builderRun } from "../_mock/builder";
 import AssistantConsole from "../assistant/AssistantConsole";
 import DerivedPanels from "./DerivedPanels";
+import AgentReadReceipt from "./AgentReadReceipt";
 
 const STAGE_ORDER = ["understand", "build", "scenarios"];
 
@@ -64,7 +65,7 @@ const CHIPS_BY_TAB = {
   ],
 };
 export default function TemplateReviewLayout({
-  env, onFinish, onBack, isTwin, initialTurns,
+  env, onFinish, onBack, isTwin, initialTurns, externalReadAnswers,
 }) {
   const { envState, patch } = useEnvState(env.id);
   const scenarioCount = envState?.scenarios?.length || 0;
@@ -84,10 +85,24 @@ export default function TemplateReviewLayout({
      the user watches the build unfold before landing on the review. */
   const seeded = Array.isArray(initialTurns) && initialTurns.length > 0;
   const [turns, setTurns] = useState(() => (seeded ? initialTurns : []));
-  const [running, setRunning] = useState(!seeded);
+  const [running, setRunning] = useState(false);
   const [activeTab, setActiveTab] = useState("overview");
   const [done, setDone] = useState(() => (seeded ? STAGE_ORDER.slice() : []));
   const timers = useRef([]);
+  /*
+    Show the AgentReadReceipt FIRST — the read-audit is the entry
+    point, not a checkpoint mid-derivation. The receipt reads the
+    template statically (no streaming needed — the template already
+    declares its tools/rules/data), the user confirms, and only then
+    do the derivation stages start streaming. Seeded flows carry
+    prior state and skip the receipt entirely.
+  */
+  /* The read-audit can be completed two ways: on this screen (the receipt
+     below), or upstream on the Connect page (ConnectReadPanel), which passes
+     its answers in as `externalReadAnswers`. In the upstream case we skip the
+     receipt here and stream the derivation straight away. */
+  const [awaitReadAck, setAwaitReadAck] = useState(!seeded && !externalReadAnswers);
+  const [readAnswers, setReadAnswers] = useState(externalReadAnswers || null);
 
   /*
     Stream the derivation stages on mount — same shape BuildFromAgent
@@ -96,8 +111,12 @@ export default function TemplateReviewLayout({
     stages chain automatically, and once every stage is done the panel
     on the right unfreezes and Finish setup goes live.
   */
-  useEffect(() => {
-    if (seeded) return undefined;
+  /*
+    Kick off the streaming derivation. Not called on mount any more —
+    the AgentReadReceipt gates it. When the user clicks Build the
+    world, we call this to stream every stage in sequence.
+  */
+  const startDerivation = () => {
     const source = { kind: "template", value: env.name, templateId: env.id };
     const play = (stageId, delay = 0) => {
       const stage = builderRun(stageId, source);
@@ -111,28 +130,35 @@ export default function TemplateReviewLayout({
           if (i !== stage.steps.length - 1) return;
           setDone((d) => (d.includes(stageId) ? d : [...d, stageId]));
           const nextId = STAGE_ORDER[STAGE_ORDER.indexOf(stageId) + 1];
-          if (nextId) {
-            play(nextId, 500);
-          } else {
-            setRunning(false);
-          }
+          if (nextId) play(nextId, 500);
+          else setRunning(false);
         }, delay + 380 * (i + 1)));
       });
     };
-    /* Kick off with a short greeting so the log doesn't start empty. */
+    setRunning(true);
     setTurns([{
       id: "a-init",
       role: "assistant",
       steps: [{
         kind: "note",
-        text: `Setting up the ${env.name} template — ${scenarioCount} scenarios, ${(env.tools || []).length} tools, ${(env.rules || []).length} rules. Building the world now.`,
+        text: `Building the ${env.name} template — ${scenarioCount} scenarios, ${(env.tools || []).length} tools, ${(env.rules || []).length} rules.`,
       }],
     }]);
     play("understand", 600);
+  };
+
+  useEffect(() => {
     return () => {
       timers.current.forEach(clearTimeout);
       timers.current = [];
     };
+  }, []);
+
+  /* When the read-audit was completed upstream (ConnectReadPanel), the
+     receipt is skipped, so kick off the derivation streaming on mount —
+     the normal path does this from the receipt's Build handler. */
+  useEffect(() => {
+    if (externalReadAnswers && !seeded) startDerivation();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -212,6 +238,28 @@ export default function TemplateReviewLayout({
     };
     play("understand", 400);
   };
+
+  /*
+    While the read-receipt is up, the review layout underneath is
+    still mid-derivation — we render only the receipt so the user
+    focuses on the audit + questions before the world builds.
+    Clicking Build (or Back) exits the receipt and resumes streaming.
+  */
+  if (awaitReadAck) {
+    return (
+      <AgentReadReceipt
+        agentRef={env?.id || "template"}
+        reading={buildTemplateReading(env)}
+        questions={buildTemplateQuestions(env)}
+        onBack={onBack}
+        onBuild={(answers) => {
+          setReadAnswers(answers);
+          setAwaitReadAck(false);
+          startDerivation();
+        }}
+      />
+    );
+  }
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
@@ -353,7 +401,69 @@ TemplateReviewLayout.propTypes = {
   onBack: PropTypes.func,
   isTwin: PropTypes.bool,
   initialTurns: PropTypes.array,
+  externalReadAnswers: PropTypes.object,
 };
+
+/*
+  Shape env into the payload the AgentReadReceipt renders. Template
+  builds don't have real per-fact provenance (the template is just a
+  fixture); we assign plausible origins so the receipt reads as a
+  real audit — config for the first few tools, call-graph for the
+  rest, policy.yaml for rules, fixture for the seed tables, prompt
+  for behavior, one inferred item to demonstrate the ambiguity path.
+*/
+export function buildTemplateReading(env) {
+  if (!env) return { tools: [], rules: [], data: [], behavior: [] };
+  const tools = (env.tools || []).map((t, i) => ({
+    name: t.name,
+    origin: i < 4 ? "config" : "callGraph",
+  }));
+  const rules = (env.rules || []).map((r) => ({
+    name: r.length > 42 ? `${r.slice(0, 42)}…` : r,
+    origin: "policy",
+  }));
+  const data = (env.seed?.tables || []).slice(0, 4).map((t) => ({
+    name: `${t.name}.csv`,
+    note: `${t.rows.toLocaleString()} rows`,
+    origin: "fixture",
+  }));
+  const branchCount = Math.max(3, (env.tools || []).length - 1);
+  const behavior = [
+    { name: "routing prompt", note: `${branchCount} branches`, origin: "prompt" },
+    { name: "transfer → front desk", origin: "prompt" },
+    { name: "escalate on 2× refusal", origin: "inferred" },
+  ];
+  return { tools, rules, data, behavior };
+}
+
+export function buildTemplateQuestions(env) {
+  if (!env) return [];
+  const lastTool = (env.tools || [])[Math.max(0, (env.tools || []).length - 1)];
+  const questions = [];
+  if (lastTool) {
+    questions.push({
+      id: "tool-side-effects",
+      title: `Does ${lastTool.name} change data?`,
+      why: "It's called from your code but never described in the prompt. Your answer decides whether a scenario may trigger real side-effects.",
+      kind: "choice",
+      options: [
+        { id: "read", label: "Read-only" },
+        { id: "write", label: "Writes to state" },
+        { id: "escalate", label: "Escalates externally" },
+      ],
+    });
+  }
+  questions.push({
+    id: "policy-enforcement",
+    title: "Are the policy values enforced in your backend, or only stated in the prompt?",
+    why: "We can see the values, not where they're enforced. A rule we only infer is graded more softly than a hard one.",
+    kind: "boolean",
+  });
+  /* Cap at 2 — three questions was starting to feel like a form. Two is
+     the smallest number where the audit still names distinct ambiguities
+     and the user is out the other side quickly. */
+  return questions.slice(0, 2);
+}
 
 function mockAssistantReply(userText, scenarioCount) {
   const t = userText.toLowerCase();

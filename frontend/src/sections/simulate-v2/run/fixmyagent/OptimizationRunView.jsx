@@ -109,7 +109,13 @@ export default function OptimizationRunView({ record, env, envState, patch, task
               sub={`trial ${result.winner.n} of ${result.trials.length} · from ${result.base}%`} />
             <Metric
               label="Held out" value={`${result.heldScore}%`}
-              tone={result.heldScore < result.heldBase ? "#DC2626" : result.heldBase >= 100 ? "#CA8A04" : "#16A34A"}
+              /* Green only when the winner actually lifted the held-out score.
+                 Equal (the common "didn't generalise" case) is neutral, not a
+                 win — otherwise the number reads green while the verdict below
+                 says "no improvement on held-out scenarios". */
+              tone={result.heldScore < result.heldBase ? "#DC2626"
+                : result.heldScore > result.heldBase ? "#16A34A"
+                  : undefined}
               sub={result.heldBase >= 100
                 ? `${result.heldMeasured} scenarios · all passing already`
                 : `${result.heldMeasured} scenarios · from ${result.heldBase}%`}
@@ -169,6 +175,9 @@ export default function OptimizationRunView({ record, env, envState, patch, task
             winner={result.winner}
             onRun={() => onRerun?.(result.winner.proposals || [])}
           />
+
+          {/* ── what the winner actually changed ── */}
+          <WinnerChange env={env} winner={result.winner} />
 
           {/* ── graph ── */}
           <Box sx={{ px: 2.5, pt: 2.5 }}>
@@ -305,6 +314,9 @@ export default function OptimizationRunView({ record, env, envState, patch, task
             </Box>
           </Box>
 
+          {/* ── scenario outcomes, before → after the winner ── */}
+          <WinnerScenarioDiff scenarios={result.trainMeasuredTasks || []} winner={result.winner} />
+
           {/* ── the winner still has to reach the agent ── */}
           <Box sx={{ px: 2.5, py: 2.5 }}>
             <Typography sx={{ typography: "s2", fontWeight: 700 }}>Hand the winner over</Typography>
@@ -319,6 +331,25 @@ export default function OptimizationRunView({ record, env, envState, patch, task
               This search optimised the pass rate. The release gate also weighs mean return, latency and cost —
               so the winner is a candidate for release, and the gate still has to be run against it.
             </Typography>
+            {/* Draft-state reassurance — the winner is not shipped on its own;
+                exporting opens a PR / patch the user reviews and merges. */}
+            <Stack
+              direction="row" alignItems="flex-start" spacing={1.5}
+              sx={{
+                mb: 1.5, px: 2, py: 1.5, borderRadius: 1, border: "1px solid",
+                borderColor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.3 : 0.2),
+                bgcolor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.08 : 0.04),
+              }}
+            >
+              <Iconify icon="solar:lock-keyhole-minimalistic-linear" width={16} sx={{ color: "#7857FC", flexShrink: 0, mt: "1px" }} />
+              <Box flex={1} minWidth={0}>
+                <Typography sx={{ typography: "s2", fontWeight: 700 }}>Nothing has been applied yet</Typography>
+                <Typography sx={{ typography: "s2", color: "text.secondary", mt: 0.25 }}>
+                  The winner is a draft. It stays in your source — exporting opens a pull request or patch you
+                  review and merge. The change belongs to your agent, so the delta stays yours.
+                </Typography>
+              </Box>
+            </Stack>
             <OmegaHandoff
               env={env}
               envState={envState}
@@ -396,7 +427,10 @@ function Growth({ trials, base, theme, winner }) {
   */
   const running = trials.reduce((acc, t, i) => {
     const prev = i === 0 ? base : acc[i - 1];
-    acc.push(Math.max(prev, t.score));
+    /* A trial that broke a release blocker is rejected — it can't raise the
+       best-so-far line, otherwise the peak (and the winner's on-chart value)
+       would show a score no shippable candidate actually reached. */
+    acc.push(t.brokeBlocker ? prev : Math.max(prev, t.score));
     return acc;
   }, []);
   const top = Math.min(100, Math.max(base, ...running) + 6);
@@ -409,19 +443,22 @@ function Growth({ trials, base, theme, winner }) {
   const ticks = [bottom, Math.round((bottom + top) / 2), top];
   const winIndex = trials.findIndex((t) => t.n === winner?.n);
 
+  /* Geometry stretches to fill the box (preserveAspectRatio="none"), but text
+     and dots are HTML overlays positioned in percentage of the same viewBox
+     coordinates — so labels stay crisp and dots stay round at any width, with
+     none of the horizontal stretch a full-SVG chart shows on a wide drawer. */
+  const pctX = (xv) => (xv / W) * 100;
+  const pctY = (yv) => (yv / H) * 100;
+  const CHART_H = 190;
+  const mono = "ui-monospace, Menlo, monospace";
+  const showX = (i) => i === 0 || i === trials.length - 1 || (i + 1) % Math.ceil(trials.length / 6) === 0;
+
   return (
-    <Box sx={{ width: "100%" }}>
-      {/*
-        SVG stretches to fill the card width without changing height.
-        vector-effect="non-scaling-stroke" keeps strokes 1–2px thick
-        regardless of the horizontal scale factor. Text runs are short
-        enough that the horizontal stretch is not visually noticeable at
-        the widths this chart renders at.
-      */}
+    <Box sx={{ position: "relative", width: "100%", height: CHART_H }}>
       <svg
         viewBox={`0 0 ${W} ${H}`}
-        preserveAspectRatio="xMidYMid meet"
-        style={{ display: "block", width: "100%", height: "auto" }}
+        preserveAspectRatio="none"
+        style={{ display: "block", position: "absolute", inset: 0, width: "100%", height: "100%" }}
       >
         <defs>
           <linearGradient id="opt-growth" x1="0" y1="0" x2="0" y2="1">
@@ -431,19 +468,12 @@ function Growth({ trials, base, theme, winner }) {
         </defs>
 
         {ticks.map((v) => (
-          <g key={v}>
-            <line
-              x1={L} x2={W - 12} y1={y(v)} y2={y(v)}
-              stroke={theme.palette.divider} strokeWidth={1}
-              vectorEffect="non-scaling-stroke"
-            />
-            <text
-              x={L - 7} y={y(v) + 3} textAnchor="end"
-              style={{ font: "500 9.5px ui-monospace, Menlo, monospace", fill: theme.palette.text.disabled }}
-            >
-              {v}%
-            </text>
-          </g>
+          <line
+            key={v}
+            x1={L} x2={W - 12} y1={y(v)} y2={y(v)}
+            stroke={theme.palette.divider} strokeWidth={1}
+            vectorEffect="non-scaling-stroke"
+          />
         ))}
 
         <line
@@ -451,51 +481,89 @@ function Growth({ trials, base, theme, winner }) {
           stroke={theme.palette.text.disabled} strokeWidth={1} strokeDasharray="3 3"
           vectorEffect="non-scaling-stroke"
         />
-        <text
-          x={W - 12} y={y(base) - 5} textAnchor="end"
-          style={{ font: "500 9.5px ui-monospace, Menlo, monospace", fill: theme.palette.text.disabled }}
-        >
-          starting prompt
-        </text>
 
         <path d={area} fill="url(#opt-growth)" />
         <path
           d={line} fill="none" stroke="#16A34A" strokeWidth={1.75}
           strokeLinejoin="round" vectorEffect="non-scaling-stroke"
         />
-
-        {trials.map((t, i) => (
-          <g key={t.n}>
-            <circle
-              cx={x(i)} cy={y(running[i])} r={i === winIndex ? 4 : 2.75}
-              fill={i === winIndex ? "#16A34A" : theme.palette.background.paper}
-              stroke="#16A34A"
-              strokeWidth={1.5}
-              vectorEffect="non-scaling-stroke"
-            />
-            {i === winIndex && (
-              <text
-                x={i === 0 ? x(i) + 7 : x(i)} y={y(running[i]) - 9}
-                textAnchor={i === 0 ? "start" : "middle"}
-                style={{ font: "700 9.5px ui-monospace, Menlo, monospace", fill: "#16A34A" }}
-              >
-                {running[i]}%
-              </text>
-            )}
-          </g>
-        ))}
-
-        {trials.map((t, i) => (
-          (i === 0 || i === trials.length - 1 || (i + 1) % Math.ceil(trials.length / 6) === 0) ? (
-            <text
-              key={`x${t.n}`} x={x(i)} y={H - 5} textAnchor="middle"
-              style={{ font: "500 9.5px ui-monospace, Menlo, monospace", fill: theme.palette.text.disabled }}
-            >
-              {t.n}
-            </text>
-          ) : null
-        ))}
       </svg>
+
+      {/* ── crisp HTML overlays ── */}
+      {/* y-axis % ticks */}
+      {ticks.map((v) => (
+        <Box
+          key={v}
+          sx={{
+            position: "absolute", left: 0, top: `${pctY(y(v))}%`,
+            width: `${pctX(L)}%`, transform: "translateY(-50%)",
+            pr: 0.75, textAlign: "right",
+            fontFamily: mono, fontSize: 10, fontWeight: 500,
+            color: "text.disabled", lineHeight: 1, whiteSpace: "nowrap",
+          }}
+        >
+          {v}%
+        </Box>
+      ))}
+
+      {/* starting-prompt marker */}
+      <Box
+        sx={{
+          position: "absolute", right: `${pctX(12)}%`, top: `${pctY(y(base))}%`,
+          transform: "translateY(-125%)",
+          fontFamily: mono, fontSize: 10, fontWeight: 500,
+          color: "text.disabled", lineHeight: 1, whiteSpace: "nowrap",
+        }}
+      >
+        starting prompt
+      </Box>
+
+      {/* trial dots */}
+      {trials.map((t, i) => {
+        const win = i === winIndex;
+        const d = win ? 9 : 6;
+        return (
+          <Box
+            key={t.n}
+            sx={{
+              position: "absolute", left: `${pctX(x(i))}%`, top: `${pctY(y(running[i]))}%`,
+              width: d, height: d, transform: "translate(-50%, -50%)",
+              borderRadius: "50%", border: "1.5px solid #16A34A",
+              bgcolor: win ? "#16A34A" : "background.paper", boxSizing: "border-box",
+            }}
+          />
+        );
+      })}
+
+      {/* winner value label */}
+      {winIndex >= 0 && (
+        <Box
+          sx={{
+            position: "absolute",
+            left: `${pctX(x(winIndex))}%`, top: `${pctY(y(running[winIndex]))}%`,
+            transform: `translate(${winIndex === 0 ? "0" : "-50%"}, calc(-100% - 8px))`,
+            fontFamily: mono, fontSize: 11, fontWeight: 700, color: "#16A34A",
+            lineHeight: 1, whiteSpace: "nowrap",
+          }}
+        >
+          {winner?.score ?? running[winIndex]}%
+        </Box>
+      )}
+
+      {/* x-axis trial numbers */}
+      {trials.map((t, i) => (showX(i) ? (
+        <Box
+          key={`x${t.n}`}
+          sx={{
+            position: "absolute", left: `${pctX(x(i))}%`, bottom: 0,
+            transform: "translateX(-50%)",
+            fontFamily: mono, fontSize: 10, fontWeight: 500,
+            color: "text.disabled", lineHeight: 1, whiteSpace: "nowrap",
+          }}
+        >
+          {t.n}
+        </Box>
+      ) : null))}
     </Box>
   );
 }
@@ -737,6 +805,257 @@ FileTrialDiff.propTypes = {
  * copy, GitHub PR). Both are one click from here so a user doesn't have
  * to scroll past the trial history to make either.
  */
+/* Verified, both ways — the winner re-scored two ways: the failing cluster it
+ * targeted (how many now pass, how many still fail) and every scenario that
+ * was already passing (did any regress). The cards summarise; the table below
+ * lists each scenario's before → after verdict.
+ *
+ * Reads the winner trial's per-scenario verdict: "fixed" (fail → pass),
+ * "still-failing" (fail → fail), "broke" (pass → fail — a regression),
+ * "same" (unchanged). */
+function WinnerScenarioDiff({ scenarios, winner }) {
+  const rows = useMemo(() => {
+    const RANK = { broke: 0, fixed: 1, "still-failing": 2 };
+    return scenarios
+      .map((s) => ({ ...s, st: winner?.perScenario?.[s.id] }))
+      .filter((r) => ["fixed", "still-failing", "broke"].includes(r.st))
+      .sort((a, b) =>
+        (b.critical ? 1 : 0) - (a.critical ? 1 : 0)
+        || (RANK[a.st] ?? 9) - (RANK[b.st] ?? 9));
+  }, [scenarios, winner]);
+
+  if (!rows.length) return null;
+
+  const st = (s) => winner?.perScenario?.[s.id];
+  const nowPass = scenarios.filter((s) => st(s) === "fixed").length;
+  const stillFails = scenarios.filter((s) => st(s) === "still-failing").length;
+  const broke = scenarios.filter((s) => st(s) === "broke").length;
+  const cluster = nowPass + stillFails;                       // the failing set it targeted
+  const prevPassing = scenarios.filter((s) => ["same", "broke"].includes(st(s))).length;
+  const total = scenarios.length;
+  const passBefore = prevPassing;
+  const passAfter = prevPassing - broke + nowPass;
+  const pct = (n) => (total ? Math.round((n / total) * 100) : 0);
+  const pctBefore = pct(passBefore);
+  const pctAfter = pct(passAfter);
+
+  /* from/to pass state for each verdict. */
+  const beforeAfter = (v) =>
+    v === "fixed" ? [false, true]
+      : v === "broke" ? [true, false]
+        : [false, false];
+
+  return (
+    <Box sx={{ px: 2.5, pt: 2.5 }}>
+      <Stack direction="row" alignItems="baseline" spacing={1} sx={{ mb: 1.25 }}>
+        <Typography sx={{ typography: "s2", fontWeight: 700 }}>Verified, both ways</Typography>
+        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+          re-ran the failing cluster, then re-ran every scenario that was passing
+        </Typography>
+      </Stack>
+
+      {/* ── outcome cards ── */}
+      <Stack direction="row" spacing={1.5} flexWrap="wrap" rowGap={1.5} sx={{ mb: 2 }}>
+        <VCard value={`+${nowPass}`} tone="#16A34A" label="now pass" sub={`of ${cluster} in the cluster`} />
+        <VCard value={`${stillFails}`} tone={stillFails ? "#DC2626" : undefined} label="still fails" sub={stillFails ? "needs a deeper change" : "cluster fully cleared"} />
+        <VCard value={`${broke}`} tone={broke ? "#DC2626" : undefined} label={broke === 1 ? "regression" : "regressions"} sub={`across ${prevPassing} that were passing`} />
+        <VCard
+          value={<>{pctBefore}<Box component="span" sx={{ px: 0.5, color: "text.disabled" }}>→</Box>{pctAfter}<Box component="span" sx={{ typography: "s1" }}>%</Box></>}
+          label="run score"
+          sub={`${passBefore} → ${passAfter} of ${total}`}
+        />
+      </Stack>
+
+      {/* ── before → after table ── */}
+      <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, overflow: "hidden" }}>
+        <Stack
+          direction="row" alignItems="center"
+          sx={{
+            px: 1.75, py: 1, borderBottom: "1px solid", borderColor: "divider",
+            bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.03 : 0.02),
+          }}
+        >
+          <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", flex: 1 }}>Scenario</Typography>
+          <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", flexShrink: 0 }}>
+            before → after (with the fix)
+          </Typography>
+        </Stack>
+        <Box sx={{ maxHeight: 320, overflowY: "auto" }}>
+          {rows.map((r, i) => {
+            const [from, to] = beforeAfter(r.st);
+            return (
+              <Stack
+                key={r.id}
+                direction="row" alignItems="flex-start" spacing={2}
+                sx={{
+                  px: 1.75, py: 1.25,
+                  borderTop: i === 0 ? "none" : "1px solid", borderColor: "divider",
+                }}
+              >
+                <Box flex={1} minWidth={0}>
+                  <Stack direction="row" alignItems="center" spacing={0.75}>
+                    <Typography sx={{ typography: "s2", fontWeight: 600 }}>{r.title}</Typography>
+                    {r.critical && (
+                      <Tooltip arrow title="Critical — a failure here is a release blocker">
+                        <Box sx={{ display: "flex" }}>
+                          <Iconify icon="solar:danger-triangle-bold" width={12} sx={{ color: "#DC2626" }} />
+                        </Box>
+                      </Tooltip>
+                    )}
+                  </Stack>
+                  {r.st === "broke" && (
+                    <Typography sx={{ typography: "s3", color: "#DC2626", mt: 0.25 }}>
+                      Regressed — this scenario was passing before the change.
+                    </Typography>
+                  )}
+                  {r.st === "still-failing" && (
+                    <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>
+                      Still fails — needs a deeper change than this prompt edit.
+                    </Typography>
+                  )}
+                </Box>
+                <Stack direction="row" alignItems="center" spacing={1} sx={{ flexShrink: 0, mt: "1px" }}>
+                  <Outcome pass={from} />
+                  <Iconify icon="solar:arrow-right-linear" width={14} sx={{ color: "text.disabled" }} />
+                  <Outcome pass={to} strong />
+                </Stack>
+              </Stack>
+            );
+          })}
+        </Box>
+      </Box>
+      {/* regression guard */}
+      <Stack direction="row" alignItems="center" spacing={0.875} sx={{ mt: 1.25 }}>
+        <Iconify
+          icon={broke ? "solar:shield-warning-linear" : "solar:shield-check-linear"}
+          width={15} sx={{ color: broke ? "#DC2626" : "#16A34A", flexShrink: 0 }}
+        />
+        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+          Regression guard: all {prevPassing} previously-passing scenarios were re-run —{" "}
+          <Box component="span" sx={{ color: broke ? "#DC2626" : "#16A34A", fontWeight: 700 }}>
+            {broke ? `${broke} broke` : "none broke"}
+          </Box>.
+        </Typography>
+      </Stack>
+    </Box>
+  );
+}
+WinnerScenarioDiff.propTypes = { scenarios: PropTypes.array, winner: PropTypes.object };
+
+function VCard({ value, label, sub, tone }) {
+  return (
+    <Box
+      sx={{
+        flex: "1 1 0", minWidth: 150,
+        px: 1.75, py: 1.25, borderRadius: 1.25,
+        border: "1px solid", borderColor: "divider", bgcolor: "background.paper",
+      }}
+    >
+      <Typography sx={{ typography: "m2", fontWeight: 800, color: tone || "text.primary", fontVariantNumeric: "tabular-nums", lineHeight: 1.2 }}>
+        {value}
+      </Typography>
+      <Typography sx={{ typography: "s2", fontWeight: 700, mt: 0.5 }}>{label}</Typography>
+      <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{sub}</Typography>
+    </Box>
+  );
+}
+VCard.propTypes = {
+  value: PropTypes.node, label: PropTypes.string, sub: PropTypes.string, tone: PropTypes.string,
+};
+
+function Outcome({ pass, strong }) {
+  const color = pass ? "#16A34A" : "#DC2626";
+  return (
+    <Stack direction="row" alignItems="center" spacing={0.5}>
+      <Iconify icon={pass ? "solar:check-circle-bold" : "solar:close-circle-bold"} width={15} sx={{ color }} />
+      <Typography sx={{ typography: "s2", fontWeight: strong ? 700 : 500, color }}>
+        {pass ? "pass" : "fail"}
+      </Typography>
+    </Stack>
+  );
+}
+Outcome.propTypes = { pass: PropTypes.bool, strong: PropTypes.bool };
+
+/* "The change" — a compact preview of the winner's actual diff, shown inline
+   so the reader sees what shipped without opening the Code tab. One boxed
+   hunk per file: a header with the path and the added-line count, then the
+   +/− lines the optimizer wrote. */
+function WinnerChange({ env, winner }) {
+  const proposals = winner?.proposals || [];
+  const filed = proposals
+    .map((p) => ({ p, file: changeFileFor(env, p) }))
+    .filter((row) => row.file);
+  if (!filed.length) return null;
+
+  const groups = new Map();
+  filed.forEach(({ p, file }) => {
+    if (!groups.has(file.path)) groups.set(file.path, { file, changes: [] });
+    groups.get(file.path).changes.push(p);
+  });
+
+  return (
+    <Box sx={{ px: 2.5, pt: 2.5 }}>
+      <Typography sx={{ typography: "s2", fontWeight: 700, mb: 1 }}>The change</Typography>
+      <Stack spacing={1.25}>
+        {[...groups.values()].map(({ file, changes }) => {
+          const added = changes.reduce((n, p) => n + p.diff.filter((d) => d.type === "add").length, 0);
+          return (
+            <Box
+              key={file.path}
+              sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, overflow: "hidden" }}
+            >
+              <Stack
+                direction="row" alignItems="center" spacing={1}
+                sx={{
+                  px: 1.5, py: 1, borderBottom: "1px solid", borderColor: "divider",
+                  bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.03 : 0.02),
+                }}
+              >
+                <Iconify icon="solar:document-text-linear" width={14} sx={{ color: "text.subtitle", flexShrink: 0 }} />
+                <Typography sx={{ typography: "s3", fontWeight: 700, fontFamily: "ui-monospace, Menlo, monospace", flex: 1, minWidth: 0 }} noWrap>
+                  {file.path}
+                </Typography>
+                {added > 0 && (
+                  <Typography sx={{ typography: "s3", color: "#16A34A", fontWeight: 700, flexShrink: 0 }}>
+                    +{added} line{added === 1 ? "" : "s"}
+                  </Typography>
+                )}
+              </Stack>
+              <Box sx={{ py: 0.5 }}>
+                {changes.flatMap((p) => p.diff.map((d, i) => (
+                  <Stack
+                    key={`${p.id}-${i}`}
+                    direction="row" spacing={1}
+                    sx={{
+                      px: 1.5, py: 0.375,
+                      bgcolor: (t) => alpha(d.type === "add" ? "#16A34A" : "#DC2626", t.palette.mode === "dark" ? 0.1 : 0.06),
+                    }}
+                  >
+                    <Typography sx={{
+                      typography: "s3", fontWeight: 700, flexShrink: 0,
+                      color: d.type === "add" ? "#16A34A" : "#DC2626",
+                      fontFamily: "ui-monospace, Menlo, monospace",
+                    }}>
+                      {d.type === "add" ? "+" : "−"}
+                    </Typography>
+                    <Typography sx={{
+                      typography: "s3", fontFamily: "ui-monospace, Menlo, monospace",
+                      color: "text.primary", minWidth: 0,
+                    }}>
+                      {d.text}
+                    </Typography>
+                  </Stack>
+                )))}
+              </Box>
+            </Box>
+          );
+        })}
+      </Stack>
+    </Box>
+  );
+}
+WinnerChange.propTypes = { env: PropTypes.object, winner: PropTypes.object };
+
 function WinnerActions({ env, envState, winner, onRun }) {
   const [exportAnchor, setExportAnchor] = useState(null);
   const [feedback, setFeedback] = useState(null);

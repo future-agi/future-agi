@@ -114,6 +114,12 @@ export default function EnvironmentWorkspace() {
   }, [env, state.myEnvironments, dispatch]);
 
   if (!env) {
+    /* Still loading the store — a custom-built env lives only in
+       myEnvironments, which is empty until hydrate runs. Showing
+       "not found" here would flash on every cold load / HMR reload. */
+    if (!state.hydrated) {
+      return <Box sx={{ p: 2, height: "100%", minHeight: 420, display: "grid", placeItems: "center" }} />;
+    }
     return (
       <Box sx={{ p: 2 }}>
         <EmptyState
@@ -179,9 +185,11 @@ export default function EnvironmentWorkspace() {
   const counts = {
     scenarios: envState.scenarios.length || null,
     evals: envState.evals.length || null,
-    /* Match the Runs panel: synthetic build-and-fit-check rows are
-       excluded so the rail badge and the runs list always agree. */
-    runs: envState.runs.filter((r) => !r.synthetic).length || null,
+    /* The synthetic build-and-fit-check row IS run #1 (the store seeds it on
+       adopt, and both the environments list and the Runs tab count it), so the
+       rail badge counts it too — filtering it out here made the rail disagree
+       with every other surface for a freshly-built env (list showed 1, rail 0). */
+    runs: envState.runs.length || null,
   };
   /*
     Setup gaps are shown as amber dots on the rail items that own them

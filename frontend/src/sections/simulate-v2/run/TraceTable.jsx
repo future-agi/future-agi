@@ -320,8 +320,9 @@ export default function TraceTable({
       const evalAgg = {};
       rows.forEach((r) => {
         (r.evalResults || []).forEach((er) => {
-          if (!evalAgg[er.id]) evalAgg[er.id] = { passed: 0, total: 0 };
+          if (!evalAgg[er.id]) evalAgg[er.id] = { passed: 0, total: 0, scoreSum: 0 };
           evalAgg[er.id].total += 1;
+          evalAgg[er.id].scoreSum += (er.score ?? 0);
           if (er.passed) evalAgg[er.id].passed += 1;
         });
       });
@@ -422,19 +423,41 @@ export default function TraceTable({
         />
       </TableCell>
 
-      {show("callDetails") && (
-        <TableCell sx={bodyCell} onClick={() => onOpen(t)}>
-          <Typography sx={{ typography: "s2", fontWeight: 500 }}>
-            {t.status === "failed" ? "Failed" : t.status === "error" ? "Errored" : "Completed"}
-          </Typography>
-          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-            Duration : {((t.durationMs || 0) / 1000).toFixed(1)}s
-          </Typography>
-          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-            {t.id}
-          </Typography>
-        </TableCell>
-      )}
+      {show("callDetails") && (() => {
+        const outcome = runOutcome(t.status);
+        return (
+          <TableCell sx={bodyCell} onClick={() => onOpen(t)}>
+            <Box minWidth={0}>
+              <Stack direction="row" alignItems="center" spacing={0.75} sx={{ mb: 0.125 }}>
+                <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>
+                  {variantLabel(t.id)}
+                </Typography>
+                {t.critical && (
+                  <Tooltip arrow title="Critical — a failure here is a release blocker">
+                    <Box sx={{ display: "flex" }}>
+                      <Iconify icon="solar:danger-triangle-bold" width={12} sx={{ color: "#DC2626" }} />
+                    </Box>
+                  </Tooltip>
+                )}
+              </Stack>
+              {t.summary && (
+                <Typography sx={{ typography: "s3", color: "text.secondary", mb: 0.375, maxWidth: 340 }}>
+                  {t.summary}
+                </Typography>
+              )}
+              <Stack direction="row" alignItems="center" spacing={0.75}>
+                <Typography sx={{ typography: "s3", fontWeight: 600, color: outcome.color }}>
+                  {outcome.label}
+                </Typography>
+                <Box sx={{ width: "3px", height: "3px", borderRadius: "50%", bgcolor: "text.disabled" }} />
+                <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                  {((t.durationMs || 0) / 1000).toFixed(1)}s
+                </Typography>
+              </Stack>
+            </Box>
+          </TableCell>
+        );
+      })()}
 
       {show("persona") && (
         <TableCell sx={bodyCell} onClick={() => onOpen(t)}>
@@ -802,11 +825,14 @@ function GroupHeaderRow({ group, collapsed, onToggle, show, showEvals, evals, se
             </TableCell>
           );
         }
-        const rate = Math.round((ea.passed / ea.total) * 100);
-        /* Tinted background matches the Score cell used on data
-           rows — the eval column reads as a heatmap band across
-           both group headers and expanded rows. */
-        const bg = interpolateColorBasedOnScore(rate / 100, 1);
+        /* Mean SCORE across the group's tasks — the same quantity the data-row
+           Score cells show (they render `result.score`), so the tint truly is
+           one heatmap band down the column. Tinting the header by pass-rate
+           instead put a green 100% header above amber 65% cells whenever a
+           group's tasks all passed but scored middlingly. */
+        const meanScore = ea.scoreSum / ea.total;
+        const rate = Math.round(meanScore * 100);
+        const bg = interpolateColorBasedOnScore(meanScore, 1);
         return (
           <TableCell
             key={`eval-${e.id}`}
@@ -853,6 +879,33 @@ const humanize = (s = "") => s
   .replace(/[_-]/g, " ")
   .replace(/\b\w/g, (c) => c.toUpperCase())
   .trim();
+
+/* The useful half of a task id is the trailing variant — everything after the
+   last numeric segment ("…-core-0-routine" → "Routine", "…-0-off-topic" →
+   "Off Topic"). That's the one thing that differs row-to-row inside a group,
+   so it becomes the run's title instead of the repeated raw id. */
+function variantLabel(id) {
+  const parts = String(id || "").split("-").filter(Boolean);
+  let lastNum = -1;
+  parts.forEach((p, i) => { if (/^\d+$/.test(p)) lastNum = i; });
+  const tail = lastNum >= 0 ? parts.slice(lastNum + 1) : [];
+  if (tail.length) return humanize(tail.join(" "));
+  /* No trailing variant — fall back to the test-kind token before the number. */
+  if (lastNum > 0) return humanize(parts[lastNum - 1]);
+  return humanize(parts.slice(-1)[0] || "Run");
+}
+
+/* Outcome as colour + label, so a failure is scannable at the row level
+   instead of reading identical "Completed" text down the whole column. */
+function runOutcome(status) {
+  switch (status) {
+    case "passed": return { label: "Passed", color: "#16A34A" };
+    case "failed": return { label: "Failed", color: "#DC2626" };
+    case "flaky": return { label: "Mixed", color: "#CA8A04" };
+    case "error": return { label: "Errored", color: "#DC2626" };
+    default: return { label: "Not measured", color: "#94A3B8" };
+  }
+}
 
 export function deriveUseCaseLabel(t) {
   if (t?.useCase) return t.useCase;

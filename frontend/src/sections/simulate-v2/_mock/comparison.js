@@ -21,13 +21,6 @@ import { attribute, domainTally, isMeasured, faultReason } from "./failures";
 import { episodeReturn } from "./reward";
 import { checklistSteps } from "./callDetail";
 
-/** A, B, C… — the label a run is referred to by once it is in a comparison. */
-/* Runs are labelled by their ordinal (1, 2, 3…) both outside the compare
-   view and inside it, so a badge always matches the run number the user
-   sees in the runs list. The helper is still called runLetter for
-   backwards compatibility with existing callers. */
-export const runLetter = (i) => String(i + 1);
-
 /**
  * Colours for run identity.
  *
@@ -114,10 +107,15 @@ export const runSummary = (env, envState, run, index) => {
   return {
     ...run,
     index,
-    /* Its number, as stamped when it ran. */
+    /* Its number, as stamped when it ran. The chip letter and colour are keyed
+       off this ordinal — not the list position — so the badge always matches
+       the "Run N" label and stays the same on the list, the detail header and
+       Compare. (Previously letter used the index and colour was reassigned by a
+       hash in chipIdentity, so the same run showed different numbers/colours
+       depending on which screen you reached it from.) */
     ordinal: run.ordinal || index + 1,
-    letter: runLetter(index),
-    color: RUN_COLORS[index % RUN_COLORS.length],
+    letter: String(run.ordinal || index + 1),
+    color: RUN_COLORS[((run.ordinal || index + 1) - 1) % RUN_COLORS.length],
     /* Pinned when the run started, not inferred from its place in the list.
        Two runs of one unchanged agent are a real thing to want — it is how you
        find out a scenario is flaky rather than the agent worse. */
@@ -177,10 +175,18 @@ export const runSummary = (env, envState, run, index) => {
  *  Synthetic build-and-fit-check rows are excluded — they represent the initial
  *  env standup, not a simulation run, and showing them made a first-simulation
  *  page read as "2 runs" when the user only ran once. */
+/* Sort key that tolerates an in-progress run (no finishedAt yet) by falling
+   back to startedAt, so a running run doesn't produce NaN comparisons that
+   scramble ordinals/chip numbers. */
+const runTime = (r) => {
+  const t = Date.parse(r?.finishedAt || r?.startedAt || "");
+  return Number.isNaN(t) ? 0 : t;
+};
+
 export const runSummaries = (env, envState) => {
   const ordered = [...(envState?.runs || [])]
     .filter((r) => !r.synthetic)
-    .sort((a, b) => new Date(a.finishedAt) - new Date(b.finishedAt));
+    .sort((a, b) => runTime(a) - runTime(b));
   return ordered.map((r, i) => runSummary(env, envState, r, i));
 };
 
@@ -221,22 +227,16 @@ export const trialSummaries = (env, envState) => {
       || 0;
 
     /*
-      Displayed pass rate is the running max across trials in order —
-      self improvement, in the way the reader reads it, only goes up.
-      The raw candidate scores (which include losing tries) are still
-      available on the trial detail; the summary row plays the
-      monotonic story so the table matches the ascending chart above.
+      Each trial row reports the trial's OWN score — not a running max.
+      A per-row monotone value attributed a score to a trial that wasn't
+      that trial's, so the same trial read one number here and a different
+      number in the optimizer view / when opened. The "self improvement
+      only goes up" story lives on the best-so-far chart, which is the
+      right place for a running max; a per-trial row has to be honest
+      about that trial.
     */
-    const orderedTrials = [...opt.result.trials].sort((a, b) => a.n - b.n);
-    const monotoneByN = new Map();
-    let runningMax = opt.result.base ?? 0;
-    orderedTrials.forEach((tr) => {
-      runningMax = Math.max(runningMax, tr.score);
-      monotoneByN.set(tr.n, runningMax);
-    });
-
     opt.result.trials.forEach((trial, tIdx) => {
-      const passRate = Math.round(monotoneByN.get(trial.n) ?? trial.score);
+      const passRate = Math.round(trial.score);
       /* Trials do not carry token / duration numbers of their own — the
          mock runs the search analytically. The row still needs numbers,
          because a hyphen in every system column reads as "broken row"
@@ -412,33 +412,23 @@ const pct = (now, before) => {
 /*
   Unified chip identity across manual runs and trials.
 
-  A single scheme for both kinds of row: chip label = the row's ordinal in
-  the combined chronological list, chip colour = deterministic hash of the
-  row's id. Both the runs list and the compare page consume this so a run
-  always renders in the same colour with the same label everywhere.
+  Each row already carries its own identity (runs: their ordinal number and
+  ordinal-keyed colour from runSummary; trials: `T{n}` and their group colour
+  from trialSummaries). This just collects them into a lookup so the runs list
+  and the compare page render a run with the same label and colour it has in
+  the detail header — one identity, assigned once at the source.
 */
-const CHIP_PALETTE = [
-  "#7857FC", "#2563EB", "#16A34A", "#CA8A04",
-  "#EA580C", "#DB2777", "#0D9488", "#4F46E5",
-  "#9333EA", "#0891B2", "#65A30D", "#B45309",
-  "#BE185D", "#7C3AED", "#059669", "#C2410C",
-];
-
 export const chipIdentity = (env, envState) => {
+  /* One identity per row, taken from the row's own stamped letter/colour
+     (runs: their ordinal; trials: `T{n}`). Reusing them — rather than
+     renumbering by the combined runs+trials timeline — is what keeps the
+     list, the detail header and Compare showing the same badge for a run,
+     and stops the list chip counting trials that aren't even shown in it. */
   const runs = runSummaries(env, envState);
   const trials = trialSummaries(env, envState);
-  const combined = [...runs, ...trials]
-    .sort((a, b) => new Date(a.finishedAt) - new Date(b.finishedAt));
   const map = new Map();
-  combined.forEach((r, i) => {
-    let h = 0;
-    for (let ch = 0; ch < r.id.length; ch += 1) {
-      h = (h * 31 + r.id.charCodeAt(ch)) >>> 0;
-    }
-    map.set(r.id, {
-      letter: String(i + 1),
-      color: CHIP_PALETTE[h % CHIP_PALETTE.length],
-    });
+  [...runs, ...trials].forEach((r) => {
+    map.set(r.id, { letter: r.letter, color: r.color });
   });
   return map;
 };

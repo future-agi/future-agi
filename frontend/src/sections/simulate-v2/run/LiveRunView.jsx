@@ -2,8 +2,7 @@ import PropTypes from "prop-types";
 import { useEffect, useMemo, useRef } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import {
-  Box, Stack, Typography, Button, IconButton, Tooltip, ToggleButton,
-  ToggleButtonGroup, LinearProgress,
+  Box, Stack, Typography, Button, IconButton, Tooltip, LinearProgress,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
@@ -80,7 +79,7 @@ export default function LiveRunView() {
   });
 
   const {
-    phase, start, tasks, focus, focusId, setFocusId, stats, elapsed, speed, setSpeed,
+    phase, start, tasks, focus, focusId, setFocusId, stats, elapsed,
     sinceLastEvent, stalled,
   } = player;
 
@@ -282,6 +281,12 @@ export default function LiveRunView() {
   }, [phase, readOnly, navigate, envId]);
 
   if (!env) {
+    /* Wait for hydration before declaring the env missing — a custom env
+       exists only in the cached myEnvironments, which is empty until the
+       store loads (and reloads on every HMR patch while editing). */
+    if (!state.hydrated) {
+      return <Box sx={{ p: 2, height: "100%", minHeight: 420, display: "grid", placeItems: "center" }} />;
+    }
     return (
       <Box sx={{ p: 2 }}>
         <EmptyState
@@ -421,22 +426,6 @@ export default function LiveRunView() {
           <LiveCounter label="Passed" value={stats.passed} color="#16A34A" />
           <LiveCounter label="Failed" value={stats.failed} color="#DC2626" />
           <LiveCounter label="Running" value={stats.active} color="#2563EB" />
-
-          <ToggleButtonGroup
-            exclusive size="small" value={speed}
-            onChange={(_, v) => v && setSpeed(v)}
-            sx={{
-              "& .MuiToggleButton-root": {
-                px: 1, py: 0.375, typography: "s3", fontWeight: 700,
-                border: "1px solid !important", borderColor: "divider !important",
-                borderRadius: "6px !important", mx: 0.25, color: "text.secondary",
-              },
-            }}
-          >
-            {[1, 2, 4].map((s) => (
-              <ToggleButton key={s} value={s}>{s}×</ToggleButton>
-            ))}
-          </ToggleButtonGroup>
 
           <Tooltip title="Stop run" arrow>
             <IconButton

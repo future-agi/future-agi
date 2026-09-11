@@ -448,6 +448,10 @@ export function buildRun({
       callLog,
       title: sc.title,
       task: sc.task,
+      /* One-line human summary of what this scenario puts the agent through
+         ("Caller is in a hurry, pushes to skip steps") — the context the
+         Run details cell leads with. */
+      summary: sc.summary,
       persona: sc.persona,
       expected: sc.expected,
       critical: sc.critical,

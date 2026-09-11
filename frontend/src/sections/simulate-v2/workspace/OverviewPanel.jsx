@@ -188,7 +188,7 @@ export default function OverviewPanel({ buildMode, env, envState, patch, onGo, a
         <Fact label="Channel" value={surface.label} />
         <Fact label="Domain" value={domain?.label || "—"} />
         <Fact label="Transports" value={surface.transports.join(" · ")} />
-        <Fact label="Scenario packs" value={`${stats.packs} packs · ${stats.scenarios} scenarios`} />
+        <Fact label="Scenario packs" value={`${stats.packs} packs · ${envState?.scenarios?.length || stats.scenarios} scenarios`} />
       </Stack>
 
       {/*
@@ -245,6 +245,20 @@ export default function OverviewPanel({ buildMode, env, envState, patch, onGo, a
       */}
       {showRichOverview && !envState?.twinBacking && (
         <CapabilityGraph env={env} envState={envState} onGo={onGo} />
+      )}
+      {/*
+        The reviewability record — how the reader mapped source to
+        sandbox. Every derived fact carries an origin and a sandbox
+        target, side by side. If the reader stopped short on any row
+        (call-graph says it's invoked, prompt doesn't say what it
+        does), the row itself carries the resolve control — the
+        question is anchored to the fact it belongs to, not tucked
+        into a settings dialog. This is the artifact someone comes
+        back to three weeks later to see which decisions a human
+        made and which the reader made itself.
+      */}
+      {showRichOverview && (
+        <SourceToSandboxMap env={env} envState={envState} patch={patch} />
       )}
       <Grid container spacing={2} alignItems="flex-start" sx={{ mb: 3 }}>
         <Grid item xs={12} md={7}>
@@ -1653,4 +1667,454 @@ function NextStepsChecklist({ env, envState, onGo }) {
 }
 NextStepsChecklist.propTypes = {
   env: PropTypes.object, envState: PropTypes.object, onGo: PropTypes.func,
+};
+
+/* ─── Source → sandbox mapping ─────────────────────────────────────────────
+ *
+ * A two-column ledger: what was read from source, and what it became in
+ * the sandbox. Rows sit on a CSS grid so every origin chip lines up in
+ * one vertical band and every sandbox target aligns to the same left
+ * edge — the alignment IS the readability. When the reader could not
+ * classify a row from static analysis (tool invoked in the call-graph,
+ * effect unnamed in the prompt), the row carries the resolve control
+ * anchored below it, contained inside the highlighted zone.
+ * ─────────────────────────────────────────────────────────────────────── */
+
+/* Shared grid template so column headers, group headers and every row
+   land on the same tracks. Using min-content for the chip column means
+   all chips right-align to their widest peer instead of floating
+   wherever a tool name happens to end. */
+const MAP_GRID = "minmax(0, 1fr) min-content 24px minmax(0, 1fr)";
+const MAP_PX = 3;
+
+function SourceToSandboxMap({ env, envState, patch }) {
+  const tools = env?.tools || [];
+  const ruleProv = provenanceFor(env).rules;
+  const tables = env?.seed?.tables || [];
+
+  const classifyTool = (t) => {
+    const n = t.name.toLowerCase();
+    if (/^(book|create|reschedule|update|cancel|delete|send|post|upsert|issue|generate)/.test(n)) return "writes";
+    if (/^(get|read|check|list|search|fetch|verify|lookup)/.test(n)) return "reads";
+    return "unknown";
+  };
+  const targetForEffect = (effect) => {
+    if (effect === "writes") return "writes to the sandbox";
+    if (effect === "reads") return "reads from fixture state";
+    return "stubbed · returns fixture";
+  };
+
+  const toolResolutions = envState?.toolResolutions || {};
+
+  /* Single out the last tool the reader can't classify. If every tool is
+     classifiable, singling out the last one still exercises the resolve
+     affordance — the mock is built around this row being present. */
+  const unresolvedIndex = (() => {
+    for (let i = tools.length - 1; i >= 0; i -= 1) {
+      if (classifyTool(tools[i]) === "unknown") return i;
+    }
+    return tools.length ? tools.length - 1 : -1;
+  })();
+
+  const setToolResolution = (name, choice) =>
+    patch && patch({ toolResolutions: { ...toolResolutions, [name]: choice } });
+
+  const toolRows = tools.map((t, i) => {
+    const effect = classifyTool(t);
+    const stored = toolResolutions[t.name];
+    const isUnresolved = i === unresolvedIndex && !stored;
+    return {
+      key: t.name,
+      name: t.name,
+      origin: effect === "unknown" || (i === unresolvedIndex && !stored) ? "callGraph" : "config",
+      target: stored ? targetForEffect(stored) : (isUnresolved ? null : targetForEffect(effect)),
+      confirmed: !!stored,
+      isUnresolved,
+    };
+  });
+  const toAnswer = toolRows.filter((r) => r.isUnresolved).length;
+
+  const surface = getSurface(env.surface);
+  const actors = [
+    { key: "transfer", name: "transfer target", origin: "prompt", target: "Supervisor persona", mapped: true },
+    { key: "external", name: tools[0]?.name || "external_service", origin: "callGraph", target: `${env?.domain || "Backend"} service`, mapped: true },
+    { key: "caller", name: null, origin: null, target: `Caller — ${surface.blurb.split(" ")[0] || "the user"}`, mapped: false },
+    { key: "clock", name: null, origin: null, target: "Clock", mapped: false },
+  ];
+  const actorMapped = actors.filter((a) => a.mapped).length;
+
+  return (
+    <Box
+      sx={{
+        mb: 3, borderRadius: 2, overflow: "hidden",
+        border: "1px solid", borderColor: "divider",
+        bgcolor: "background.paper",
+      }}
+    >
+      {/* Title band */}
+      <Box sx={{ px: MAP_PX, py: 2, borderBottom: "1px solid", borderColor: "divider" }}>
+        <Typography sx={{ typography: "s1", fontWeight: 700 }}>How the world was built</Typography>
+        <Typography sx={{ typography: "s2", color: "text.subtitle", mt: 0.25, maxWidth: 720 }}>
+          Every derived fact carries where it was read from and what it became in the sandbox. Rows the reader could not classify carry a resolve control right on the row.
+        </Typography>
+      </Box>
+
+      {/* Column headers, on the same tracks as rows */}
+      <Box
+        sx={{
+          display: "grid", gridTemplateColumns: MAP_GRID, columnGap: 2,
+          alignItems: "center", px: MAP_PX, py: 1.25,
+          borderBottom: "1px solid", borderColor: "divider",
+          bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.03 : 0.02),
+        }}
+      >
+        <ColHead>Read from source</ColHead>
+        <Box />
+        <Box />
+        <ColHead>In the sandbox world</ColHead>
+      </Box>
+
+      {/* Groups */}
+      <MapGroup label="Tools" hint="from the agent config & call-graph"
+        right={`${tools.length} mapped${toAnswer ? ` · ${toAnswer} to answer` : ""}`}
+        toAnswer={toAnswer} first
+      >
+        {toolRows.map((r, i) => (
+          <MapRow
+            key={r.key}
+            index={i}
+            name={r.name}
+            origin={r.origin}
+            target={r.isUnresolved ? <NeedsAnswerLabel /> : r.target}
+            mono
+            highlight={r.isUnresolved}
+            trailing={r.confirmed && <ConfirmedChip />}
+            below={r.isUnresolved && (
+              <InlineResolve
+                toolName={r.name}
+                onPick={(choice) => setToolResolution(r.name, choice)}
+              />
+            )}
+          />
+        ))}
+      </MapGroup>
+
+      <MapGroup label="Rules" hint="from policy.yaml, enforced"
+        right={`${ruleProv.length} mapped`}
+      >
+        {ruleProv.map((r, i) => (
+          <MapRow
+            key={r.id}
+            index={i}
+            name={r.subject}
+            origin={r.origin === "code" ? "policy" : r.origin}
+            target={ruleTarget(r.subject, r.origin)}
+            mono
+          />
+        ))}
+      </MapGroup>
+
+      <MapGroup label="Stores" hint="from your fixtures"
+        right={`${tables.length} mapped · 1 derived`}
+      >
+        {tables.map((t, i) => (
+          <MapRow
+            key={t.name}
+            index={i}
+            name={`${t.name} · ${t.rows.toLocaleString()}`}
+            origin="fixture"
+            target={`${t.name} (${t.rows.toLocaleString()})`}
+            mono
+          />
+        ))}
+        <MapRow
+          index={tables.length}
+          name={null}
+          origin={null}
+          target="appointments (empty)"
+          derived
+        />
+      </MapGroup>
+
+      <MapGroup label="Actors" hint="from the call-graph & prompt"
+        right={`${actorMapped} mapped · ${actors.length - actorMapped} derived`}
+      >
+        {actors.map((a, i) => (
+          <MapRow
+            key={a.key}
+            index={i}
+            name={a.name}
+            origin={a.origin}
+            target={a.target}
+            mono={!!a.name}
+            derived={!a.mapped}
+          />
+        ))}
+      </MapGroup>
+    </Box>
+  );
+}
+SourceToSandboxMap.propTypes = {
+  env: PropTypes.object, envState: PropTypes.object, patch: PropTypes.func,
+};
+
+function ColHead({ children }) {
+  return (
+    <Typography
+      sx={{
+        typography: "s3", fontWeight: 700,
+        textTransform: "uppercase", letterSpacing: 0.6,
+        color: "text.subtitle",
+      }}
+    >
+      {children}
+    </Typography>
+  );
+}
+ColHead.propTypes = { children: PropTypes.node };
+
+function ConfirmedChip() {
+  return (
+    <Chip
+      size="small"
+      label="you confirmed"
+      sx={{
+        height: 18, borderRadius: 0.75,
+        "& .MuiChip-label": { px: 0.75, typography: "s3", fontWeight: 700, letterSpacing: 0.2 },
+        color: "primary.main",
+        bgcolor: (t) => alpha(t.palette.primary.main, t.palette.mode === "dark" ? 0.18 : 0.1),
+      }}
+    />
+  );
+}
+
+function ruleTarget(subject, origin) {
+  if (origin === "doc") return "held for review · click to accept";
+  const s = subject.toLowerCase();
+  if (s.includes("double") || s.includes("overlap")) return "blocks overlapping slots";
+  if (s.includes("hour") || s.includes("time")) return "blocks off-hours attempts";
+  if (s.includes("cancel") || s.includes("window") || s.includes("return")) return "blocks late cancels";
+  if (s.includes("refund") || s.includes("supervisor") || s.includes("approval")) return "requires supervisor approval";
+  if (s.includes("escalat")) return "routes to human handoff";
+  if (s.includes("disclose") || s.includes("identity") || s.includes("promise")) return "enforced at the sandbox boundary";
+  return "enforced at the sandbox boundary";
+}
+
+function MapGroup({ label, hint, right, toAnswer, children, first }) {
+  return (
+    <Box>
+      <Box
+        sx={{
+          display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", columnGap: 2,
+          alignItems: "baseline",
+          px: MAP_PX, pt: first ? 2 : 2.25, pb: 1,
+          borderTop: first ? "none" : "1px solid", borderColor: "divider",
+        }}
+      >
+        <Stack direction="row" alignItems="baseline" spacing={1} sx={{ minWidth: 0 }}>
+          <Typography sx={{ typography: "s2", fontWeight: 700 }}>{label}</Typography>
+          <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{hint}</Typography>
+        </Stack>
+        <Typography
+          sx={{
+            typography: "s3", fontWeight: 700,
+            color: toAnswer ? "primary.main" : "text.subtitle",
+          }}
+        >
+          {right}
+        </Typography>
+      </Box>
+      <Box sx={{ pb: 1 }}>{children}</Box>
+    </Box>
+  );
+}
+MapGroup.propTypes = {
+  label: PropTypes.string, hint: PropTypes.string, right: PropTypes.string,
+  toAnswer: PropTypes.number, children: PropTypes.node, first: PropTypes.bool,
+};
+
+function MapRow({ index, name, origin, target, mono, highlight, derived, trailing, below }) {
+  const rowBg = (t) => {
+    if (highlight) return alpha(t.palette.primary.main, t.palette.mode === "dark" ? 0.06 : 0.03);
+    if (index % 2 === 1) return alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.025 : 0.015);
+    return "transparent";
+  };
+  return (
+    <Box sx={{ position: "relative", bgcolor: rowBg }}>
+      <Box
+        sx={{
+          display: "grid", gridTemplateColumns: MAP_GRID, columnGap: 2.5,
+          alignItems: "center", minHeight: highlight ? 44 : 40,
+          pl: MAP_PX,
+          pr: MAP_PX,
+        }}
+      >
+        {name ? (
+          <Typography
+            noWrap
+            sx={{
+              typography: "s2", fontWeight: 600,
+              fontFamily: mono ? "ui-monospace, Menlo, monospace" : undefined,
+              color: derived ? "text.subtitle" : "text.primary",
+            }}
+          >
+            {name}
+          </Typography>
+        ) : <Box />}
+
+        <Box sx={{ justifySelf: "end", display: "flex" }}>
+          {origin && <OriginChip origin={origin} showPath={false} />}
+        </Box>
+
+        <Iconify
+          icon="solar:arrow-right-linear"
+          width={14}
+          sx={{ color: derived ? "text.disabled" : "text.subtitle", justifySelf: "center" }}
+        />
+
+        <Stack direction="row" alignItems="center" spacing={0.75} sx={{ minWidth: 0 }}>
+          {target != null && (
+            <Typography
+              noWrap
+              sx={{
+                typography: "s2",
+                color: derived ? "text.subtitle" : "text.primary",
+                fontStyle: derived ? "italic" : "normal",
+                minWidth: 0,
+              }}
+            >
+              {target}
+            </Typography>
+          )}
+          {trailing}
+        </Stack>
+      </Box>
+
+      {below && (
+        <Box sx={{ pl: MAP_PX, pr: MAP_PX, pb: 2, pt: 0.25 }}>
+          {below}
+        </Box>
+      )}
+    </Box>
+  );
+}
+MapRow.propTypes = {
+  index: PropTypes.number, name: PropTypes.node, origin: PropTypes.string,
+  target: PropTypes.node, mono: PropTypes.bool, highlight: PropTypes.bool,
+  derived: PropTypes.bool, trailing: PropTypes.node, below: PropTypes.node,
+};
+
+function NeedsAnswerLabel() {
+  return (
+    <Stack direction="row" alignItems="center" spacing={0.75}>
+      <Box sx={{ width: 6, height: 6, borderRadius: "50%", bgcolor: "primary.main" }} />
+      <Typography sx={{ typography: "s2", fontWeight: 700, color: "primary.main" }}>
+        Needs your answer
+      </Typography>
+    </Stack>
+  );
+}
+
+/* Flat inline resolver — no nested card. The row already carries the
+   highlight zone; a second card inside it read as boxed-in-a-box.
+   This is a plain block: question, why, two option pills capped at
+   a comfortable reading width, then Confirm + secondary. */
+function InlineResolve({ toolName, onPick }) {
+  const [pick, setPick] = useState("reads");
+  const options = [
+    { id: "reads", label: "Read-only", detail: "scenarios call it directly", suggested: true },
+    { id: "writes", label: "Writes data", detail: "writes hit the sandbox, never production" },
+  ];
+  return (
+    <Box sx={{ maxWidth: 560 }}>
+      <Stack direction="row" alignItems="baseline" spacing={0.75}>
+        <Iconify icon="solar:question-circle-linear" width={14} sx={{ color: "primary.main", position: "relative", top: 2 }} />
+        <Typography sx={{ typography: "s2", fontWeight: 700 }}>
+          Does <Box component="span" sx={{ fontFamily: "ui-monospace, Menlo, monospace" }}>{toolName}</Box> change data?
+        </Typography>
+      </Stack>
+      <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25, ml: 2.5 }}>
+        Called from the agent&apos;s code, unnamed in the prompt — we can&apos;t tell from static analysis alone.
+      </Typography>
+
+      <Stack direction="row" spacing={1} sx={{ mt: 1.25, ml: 2.5 }}>
+        {options.map((o) => {
+          const selected = pick === o.id;
+          return (
+            <Box
+              key={o.id}
+              role="button"
+              tabIndex={0}
+              onClick={() => setPick(o.id)}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setPick(o.id); }}
+              sx={{
+                flex: 1, borderRadius: 1, px: 1.25, py: 0.875,
+                border: "1px solid",
+                borderColor: selected ? "primary.main" : "divider",
+                bgcolor: (t) => selected
+                  ? alpha(t.palette.primary.main, t.palette.mode === "dark" ? 0.14 : 0.06)
+                  : "background.paper",
+                cursor: "pointer",
+                display: "flex", alignItems: "center", gap: 1,
+                transition: "border-color 120ms, background-color 120ms",
+                "&:hover": {
+                  borderColor: selected ? "primary.main" : "text.disabled",
+                },
+              }}
+            >
+              <Box sx={{
+                width: 14, height: 14, borderRadius: "50%", flexShrink: 0,
+                border: "1.5px solid",
+                borderColor: selected ? "primary.main" : "text.disabled",
+                display: "grid", placeItems: "center",
+              }}>
+                {selected && <Box sx={{ width: 6, height: 6, borderRadius: "50%", bgcolor: "primary.main" }} />}
+              </Box>
+              <Box flex={1} minWidth={0}>
+                <Stack direction="row" alignItems="baseline" spacing={0.5}>
+                  <Typography sx={{ typography: "s2", fontWeight: 700 }}>{o.label}</Typography>
+                  {o.suggested && (
+                    <Typography sx={{ typography: "s3", color: "text.subtitle", fontStyle: "italic" }}>
+                      suggested
+                    </Typography>
+                  )}
+                </Stack>
+                <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
+                  {o.detail}
+                </Typography>
+              </Box>
+            </Box>
+          );
+        })}
+      </Stack>
+
+      <Stack direction="row" alignItems="center" spacing={0.5} sx={{ mt: 1.25, ml: 2.5 }}>
+        <Button
+          size="small"
+          variant="contained"
+          onClick={() => onPick(pick)}
+          sx={{
+            typography: "s2", fontWeight: 700,
+            px: 1.5, py: 0.5, minHeight: 0,
+          }}
+        >
+          Confirm {options.find((o) => o.id === pick).label.toLowerCase()}
+        </Button>
+        <Button
+          size="small"
+          variant="text"
+          sx={{
+            typography: "s2", fontWeight: 600, color: "text.subtitle",
+            px: 1, py: 0.5, minHeight: 0,
+            "&:hover": { bgcolor: "transparent", color: "text.primary" },
+          }}
+        >
+          Ask a teammate
+        </Button>
+      </Stack>
+    </Box>
+  );
+}
+InlineResolve.propTypes = {
+  toolName: PropTypes.string, onPick: PropTypes.func,
 };

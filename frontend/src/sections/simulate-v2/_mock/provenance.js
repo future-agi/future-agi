@@ -45,6 +45,40 @@ export const ORIGIN_KINDS = {
     color: "#DC2626",
     note: "Read out of a comment or a README. Anything in the repo can write prose — a vendored dependency, a stale note, someone who wanted a softer grader — so a rule found here is recorded and held back until you confirm it.",
   },
+  /*
+    Extra provenance kinds surfaced on the AgentReadReceipt screen
+    (the read-audit between fit-check and build). They classify where
+    each fact was found so the user can trust or challenge it before
+    the world is built.
+  */
+  callGraph: {
+    id: "callGraph",
+    label: "read from the call-graph",
+    short: "CALL-GRAPH",
+    color: "#0EA5E9",
+    note: "The tool is invoked by name from the agent's own code. Not just declared — actually reached at runtime.",
+  },
+  policy: {
+    id: "policy",
+    label: "read from policy.yaml",
+    short: "POLICY.YAML",
+    color: "#2563EB",
+    note: "Declared in a policy manifest the agent loads at startup. Data, not judgement — the rule is what the file says.",
+  },
+  fixture: {
+    id: "fixture",
+    label: "seeded from a fixture",
+    short: "FIXTURE",
+    color: "#7857FC",
+    note: "The world starts with these rows every run. Change the fixture, change the seeded state.",
+  },
+  inferred: {
+    id: "inferred",
+    label: "inferred",
+    short: "INFERRED",
+    color: "#CA8A04",
+    note: "Nothing in the agent's code or policy stated this — the reader guessed based on prompt phrasing or call patterns. Confirm before you rely on it.",
+  },
 };
 
 /** A rule from prose is never graded against until a person says so. */

@@ -18,6 +18,17 @@ import { allMetrics, deltaAgainst } from "../_mock/winner";
 import { useEnvState } from "../store";
 import { neutralCheckboxSx } from "../components/primitives";
 
+/* Timestamp for a run row. Falls back to startedAt and never prints
+   "Invalid Date" for an in-progress run that has no finishedAt yet. */
+const runTimeLabel = (r) => {
+  const raw = r?.finishedAt || r?.startedAt;
+  const d = raw ? new Date(raw) : null;
+  if (!d || Number.isNaN(d.getTime())) return "in progress";
+  return d.toLocaleString(undefined, {
+    day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit",
+  });
+};
+
 /**
  * Every run this environment has had, as one table.
  *
@@ -695,9 +706,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                             </Box>
                           </Typography>
                           <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0 }}>
-                            {new Date(r.finishedAt).toLocaleString(undefined, {
-                              day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit",
-                            })}
+                            {runTimeLabel(r)}
                           </Typography>
                           {r.id === baselineId && (
                             <Typography
@@ -839,9 +848,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                               squeezed the timestamp to zero width and the run
                               silently lost its date. */}
                           <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0 }}>
-                            {new Date(r.finishedAt).toLocaleString(undefined, {
-                              day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit",
-                            })}
+                            {runTimeLabel(r)}
                           </Typography>
                           {/*
                             "X of N", "N flaky" and the measured fraction

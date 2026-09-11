@@ -1,6 +1,7 @@
 import PropTypes from "prop-types";
 import { useMemo, useState } from "react";
 import { Box, Stack, Typography, Button, IconButton, Tooltip } from "@mui/material";
+import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import { SectionCard, EmptyState } from "../components/primitives";
 import { getEval, EVAL_CATALOG } from "../_mock/evals";
@@ -132,8 +133,14 @@ export default function EvalsStep({ env, envState, patch, onGo, buildMode }) {
           action={
             <Button
               size="small"
+              variant="outlined"
               onClick={() => add(suggested)}
-              sx={{ typography: "s2", fontWeight: 700, color: "primary.main" }}
+              startIcon={<Iconify icon="solar:add-circle-linear" width={14} />}
+              sx={{
+                typography: "s2", fontWeight: 700, textTransform: "none",
+                color: "primary.main", borderColor: (t) => alpha(t.palette.primary.main, 0.4),
+                "&:hover": { borderColor: "primary.main", bgcolor: (t) => alpha(t.palette.primary.main, t.palette.mode === "dark" ? 0.08 : 0.04) },
+              }}
             >
               Add all {suggested.length}
             </Button>
