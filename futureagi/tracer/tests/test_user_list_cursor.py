@@ -262,9 +262,11 @@ def test_numbered_page_reuses_full_identity_post_collapse_window():
 
     sql, params = builder.build_candidate_page_query()
     assert "FROM spans AS sp FINAL" not in sql
-    assert "candidate_span_identities" in sql
+    # Date-only numbered reads carry no seed, so the identity superset CTE is
+    # replaced by a direct replay of the intersecting immutable hours.
+    assert "candidate_span_identities" not in sql
     assert "count() OVER()" in sql
-    assert_window_replay(sql, params)
+    assert_window_replay(sql, params, unseeded=True)
 
 
 def test_user_attribute_enrichment_projects_requested_direct_write_keys_only():
