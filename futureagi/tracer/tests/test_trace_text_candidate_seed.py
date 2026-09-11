@@ -2513,3 +2513,76 @@ def test_a_pinned_slack_changes_the_seed_sql_the_next_hop_emits():
     assert "filter_witness_start_us" in bounded_params
     assert bounded != unbounded
     _render_driver_sql(bounded, bounded_params)
+
+
+def test_the_seed_plan_cache_key_covers_every_input_the_plans_read():
+    """The cache is only correct by construction if this list is complete.
+
+    A memo keyed on a subset of its inputs is a stale answer waiting for the
+    first caller who changes an uncovered one. The claim "nothing outside
+    _SEED_PLAN_CACHE_INPUTS can change a plan" is a claim about a call graph,
+    so walk it: start at the three plan computations, follow every ``self.``
+    method call into the V1 base and this class, and collect every instance
+    ATTRIBUTE read along the way. Every data attribute found must be in the
+    key. Methods and properties are not inputs themselves - their own reads
+    are collected instead, which is what the walk is for.
+
+    If this fails, something now decides a seed plan that the cache cannot
+    see. Add it to _SEED_PLAN_CACHE_INPUTS; do not relax the test.
+    """
+
+    import ast
+    import functools
+    import inspect
+
+    from tracer.services.clickhouse.query_builders import (
+        trace_list as v1_trace_list,
+    )
+    from tracer.services.clickhouse.v2.query_builders import (
+        trace_list as v2_trace_list,
+    )
+
+    sources = {}
+    for module in (v1_trace_list, v2_trace_list):
+        for node in ast.walk(ast.parse(inspect.getsource(module))):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                sources.setdefault(node.name, []).append(node)
+
+    builder = picker_leaves(2)
+    seen: set[str] = set()
+    attributes: set[str] = set()
+    frontier = [
+        "_compute_long_text_candidate_seed_plan",
+        "_compute_short_text_candidate_seed_plan",
+        "_compute_short_text_seed_lane",
+    ]
+    while frontier:
+        name = frontier.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        for node in sources.get(name, []):
+            for child in ast.walk(node):
+                if not (
+                    isinstance(child, ast.Attribute)
+                    and isinstance(child.value, ast.Name)
+                    and child.value.id == "self"
+                ):
+                    continue
+                if child.attr in {"_SEED_PLAN_CACHE_INPUTS", "_seed_plan_memo"}:
+                    continue  # the cache's own machinery, not a plan input
+                member = getattr(type(builder), child.attr, None)
+                if callable(member) or isinstance(
+                    member, (property, functools.cached_property)
+                ):
+                    frontier.append(child.attr)
+                else:
+                    attributes.add(child.attr)
+    # `super()` reaches the V1 sibling of a name this class also defines.
+    assert "_compute_short_text_candidate_seed_plan" in seen
+    assert len(seen) > 5, "the walk found no helpers; the source scan is broken"
+
+    covered = set(type(builder)._SEED_PLAN_CACHE_INPUTS)
+    assert attributes - covered == set(), (
+        f"uncovered seed plan inputs: {sorted(attributes - covered)}"
+    )
