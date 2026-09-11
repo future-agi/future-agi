@@ -78219,7 +78219,10 @@ export const getUsageAdminInvoicePreviewCreateUrl = () => {
 };
 
 /**
- * Preview invoice for an org+period (no side effects).
+ * Creates no invoice and deducts no credits, but does backfill missing
+``UsageSummary`` rows for the usage period. Open to staff so the admin's
+read-only Generate Invoice page can show what would be billed.
+ * @summary Preview invoice for an org+period.
  */
 export const usageAdminInvoicePreviewCreate = async (
   adminInvoiceRequestApi: AdminInvoiceRequestApi,
