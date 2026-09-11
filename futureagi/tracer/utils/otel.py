@@ -22,6 +22,7 @@ from model_hub.models.choices import StatusType
 from model_hub.models.custom_models import CustomAIModel
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.utils.eval_mapping import require_mapping_paths
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 from tfc.utils.storage import upload_audio_to_s3, upload_image_to_s3, upload_video_to_s3
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.observation_span import ObservationSpan, UserIdType
@@ -36,7 +37,7 @@ from tracer.utils.semantic_conventions import (
     detect_semconv,
     get_attribute,
 )
-from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_resource_request
 except ImportError:
@@ -1798,11 +1799,14 @@ def calculate_cost_from_tokens(
                 if custom_pricing.get("not_found"):
                     cost = 0
                 else:
+                    # input_cost/output_cost are entered in the UI as price per
+                    # million tokens ("Input/Output Token Cost Per Million
+                    # Tokens"); scale by 1_000_000 to match that unit.
                     prompt_tokens_cost_usd_dollar = prompt_tokens * (
-                        custom_pricing["input_cost"] / 1000
+                        custom_pricing["input_cost"] / 1_000_000
                     )
                     completion_tokens_cost_usd_dollar = completion_tokens * (
-                        custom_pricing["output_cost"] / 1000
+                        custom_pricing["output_cost"] / 1_000_000
                     )
                     cost = (
                         prompt_tokens_cost_usd_dollar
