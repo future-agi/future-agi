@@ -8,11 +8,15 @@ Tests cover:
 - Agent run with mocked LLM
 """
 
+import asyncio
+import time
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from ai_tools.base import BaseTool, EmptyInput, ToolResult
+from ee.falcon_ai import agent as agent_module
 from ee.falcon_ai.agent import AgentLoop
 from ee.falcon_ai.modes import CORE_TOOLS
 
@@ -256,3 +260,122 @@ class TestAgentRun:
     async def test_max_iterations_constant(self):
         """MAX_ITERATIONS should be a reasonable limit."""
         assert AgentLoop.MAX_ITERATIONS == 200
+
+
+SLOW_TOOL_WORK_SECONDS = 0.3
+SLOW_TOOL_RESULT = "finished the slow work"
+
+
+class _SlowBuiltinTool(BaseTool):
+    name = "slow_builtin"
+    description = "Sleeps, then reports."
+    category = "tracing"
+    input_model = EmptyInput
+
+    def execute(self, params, context):
+        time.sleep(SLOW_TOOL_WORK_SECONDS)
+        return ToolResult(content=SLOW_TOOL_RESULT)
+
+
+class _ImpatientBuiltinTool(_SlowBuiltinTool):
+    name = "impatient_builtin"
+    timeout_seconds = 0.05
+
+
+class _PatientBuiltinTool(_SlowBuiltinTool):
+    name = "patient_builtin"
+    timeout_seconds = 10
+
+
+class _ImpatientMcpTool:
+    name = "impatient_mcp"
+    description = "Sleeps over the wire, then reports."
+    category = "tracing"
+    input_model = EmptyInput
+    input_schema = EmptyInput.model_json_schema()
+    timeout_seconds = 0.1
+
+    async def async_execute(self, params, context):
+        await asyncio.sleep(SLOW_TOOL_WORK_SECONDS)
+        return ToolResult(content=SLOW_TOOL_RESULT)
+
+
+def _stream_calling(tool_name):
+    """One turn that calls `tool_name`, then a plain turn so the loop ends."""
+    called = {"yet": False}
+
+    async def mock_stream(messages, tools=None):
+        if called["yet"]:
+            yield {
+                "choices": [{"delta": {"content": "Done"}, "finish_reason": "stop"}],
+                "model": "gpt-4o-mini",
+            }
+            return
+
+        called["yet"] = True
+        yield {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_1",
+                                "function": {"name": tool_name, "arguments": "{}"},
+                            }
+                        ]
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+            "model": "gpt-4o-mini",
+        }
+
+    return mock_stream
+
+
+@pytest.mark.django_db
+class TestToolTimeoutBudget:
+    """A model-backed tool needs longer than a read, so it declares its own
+    wall clock. The timeout message names the budget that was enforced: an MCP
+    tool cut off at its own budget still reported the built-in 30s."""
+
+    async def _call(self, falcon_context, conversation, tool):
+        agent = AgentLoop(falcon_context, conversation)
+        agent.llm_client.stream_completion = _stream_calling(tool.name)
+
+        result = await agent.run("run it", [], AsyncMock(), tools_override=[tool])
+        return result["tool_calls"][0]
+
+    @pytest.mark.asyncio
+    async def test_a_builtin_tool_is_held_to_the_budget_it_declares(
+        self, falcon_context, conversation
+    ):
+        call = await self._call(falcon_context, conversation, _ImpatientBuiltinTool())
+
+        assert call["status"] == "error"
+        assert "timed out after 0.05s" in call["result_full"]
+
+    @pytest.mark.asyncio
+    async def test_an_mcp_tool_reports_its_own_budget_not_the_builtin_one(
+        self, falcon_context, conversation
+    ):
+        call = await self._call(falcon_context, conversation, _ImpatientMcpTool())
+
+        assert call["status"] == "error"
+        assert "timed out after 0.1s" in call["result_full"]
+        assert "30s" not in call["result_full"]
+
+    @pytest.mark.asyncio
+    async def test_a_tool_without_a_declared_budget_takes_the_callers_default(
+        self, falcon_context, conversation, monkeypatch
+    ):
+        monkeypatch.setattr(agent_module, "BUILTIN_TOOL_TIMEOUT_SECONDS", 0.05)
+
+        undeclared = await self._call(falcon_context, conversation, _SlowBuiltinTool())
+        assert undeclared["status"] == "error"
+        assert "timed out after 0.05s" in undeclared["result_full"]
+
+        declared = await self._call(falcon_context, conversation, _PatientBuiltinTool())
+        assert declared["status"] == "completed"
+        assert SLOW_TOOL_RESULT in declared["result_full"]

@@ -122,6 +122,8 @@ class BaseTool(ABC):
     description: ClassVar[str]
     category: ClassVar[str]
     input_model: ClassVar[Type[PydanticBaseModel]] = EmptyInput
+    # Wall clock an agent gives this tool; None takes the caller's default.
+    timeout_seconds: ClassVar[float | None] = None
 
     @abstractmethod
     def execute(self, params: PydanticBaseModel, context: ToolContext) -> ToolResult:

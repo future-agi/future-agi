@@ -34,6 +34,8 @@ class TestEvalTemplateTool(BaseTool):
     )
     category = "evaluations"
     input_model = TestEvalTemplateInput
+    # Runs a real model-backed evaluation, so it needs more than a read's budget.
+    timeout_seconds = 120
 
     def execute(
         self, params: TestEvalTemplateInput, context: ToolContext
