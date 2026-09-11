@@ -1073,23 +1073,44 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
         seeds — keeps the existing acquisition path unchanged. This is the same
         flat scalar typed-map AND envelope the numeric lane requires: at most
         ten leaves, each its own typed Map plan, and no residual filter.
+
+        THE ONE EXEMPTION, and why it does not weaken the shape. A caller may
+        delegate to this builder with an internal root invariant of its own
+        — the voice list injects ``observation_type = 'conversation'`` carrying
+        the unforgeable ``_eval_task_trace_root`` marker, the same marker the
+        latest-state compiler already demands before it will read that column
+        as a root predicate at all. That leaf is structural, not a user filter:
+        it cannot arrive from a request (the filter serializer rejects both the
+        unknown item key and the ``INTERNAL_ROOT_METRIC`` column type), it is
+        re-applied by the seed's own root predicate, and it is applied a third
+        time by the unbounded latest-state classifier that decides membership.
+        So it is excluded from the counted shape here, exactly as
+        ``_positive_relational_seed_filter`` and the seed batch size already
+        exclude it, and the check it is excluded from stays as strict as it was
+        for every public leaf: every one of them must still be its own
+        any-scope typed Map plan, and every non-``any`` plan must be one of
+        these markers.
         """
         leaves = self._active_non_time_filters()
+        public_leaves = [
+            item for item in leaves if not item.get("_eval_task_trace_root")
+        ]
         if (
             self.project_version_id is not None
-            or not 1 <= len(leaves) <= 10
+            or not 1 <= len(public_leaves) <= 10
             or not self._uses_scalar_coordinate_replay()
             or self._positive_exact_end_user_seed_filter() is not None
             or self._positive_relational_seed_filter() is not None
         ):
             return None
         plans, residual = self._partition_trace_filter_plans(self._bounded_filters())
+        public_plans = [plan for plan in plans if plan.scope == "any"]
         if (
             residual
             or len(plans) != len(leaves)
+            or len(public_plans) != len(public_leaves)
             or not all(
-                plan.scope == "any"
-                and plan.aggregates
+                plan.aggregates
                 and all(
                     any(
                         column in sql
@@ -1101,7 +1122,7 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
                     )
                     for sql in plan.aggregates
                 )
-                for plan in plans
+                for plan in public_plans
             )
         ):
             return None

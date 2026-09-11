@@ -1140,7 +1140,20 @@ def test_raw_annotator_span_attribute_never_uses_score_candidate_seed() -> None:
         ],
     )
 
-    assert builder.supports_filter_candidate_seed_page() is False
+    # An annotator-named raw attribute is an ordinary typed string leaf: it may
+    # seed through the exact-string candidate lane, but never through the
+    # eval/annotation relation, which is what this test exists to pin.
+    assert builder._bounded_delegate()._positive_relational_seed_filter() is None
+    candidate_sql, params = builder.build_filter_candidate_seed_page(
+        slice_start=START,
+        slice_end=END,
+        limit=26,
+    )
+    assert "matching_scalar_trace_identities" in candidate_sql
+    assert "mapValues(attrs_string)" in candidate_sql
+    assert "model_hub_score" not in candidate_sql
+    assert "annotator_id" not in candidate_sql
+    assert "uid_1" not in params
 
 
 @pytest.mark.parametrize("column_id", ["end_user_id", "user", "user_id"])
