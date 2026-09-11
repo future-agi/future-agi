@@ -385,12 +385,14 @@ INTERACTIVE_READ_SETTING_SPECS = {
                 50_000_000,
             ),
             # Hours of slack the same seed's child-witness scan is allowed
-            # around the roots one statement can publish. ZERO - the default -
-            # is the shipped contract, under which that scan carries no time
-            # bound at all: a trace is a candidate when ANY raw span of it
-            # carries the value, whenever that span started. At zero the
-            # generated SQL and its parameters are byte-identical to what
-            # shipped, so this setting is inert until an operator raises it.
+            # around the roots one statement can publish. The default is 1 h,
+            # the approved bounded-witness contract. ZERO is the legacy
+            # any-span escape hatch: that scan then carries no time bound at
+            # all - a trace is a candidate when ANY raw span of it carries the
+            # value, whenever that span started - and the generated SQL and its
+            # parameters are byte-identical to what shipped before this
+            # setting, so an operator can restore the old contract without a
+            # deploy.
             #
             # Above zero the seed statement additionally requires a witness to
             # start inside the envelope
@@ -418,8 +420,9 @@ INTERACTIVE_READ_SETTING_SPECS = {
             # matching traces, the largest child-witness lag was 468 s, and 0
             # of 1,000 sampled traces held a span more than two days from their
             # root. That is one project over one burst - bounds, not
-            # guarantees - which is why narrowing the contract stays an owner
-            # decision and the default is off. The 168 h ceiling is one week;
+            # guarantees - which is why narrowing the contract was an owner
+            # decision, taken as the 1 h default; a per-project override is a
+            # follow-up. The 168 h ceiling is one week;
             # beyond that the envelope stops bounding this lane's own windows.
             # See ``filter_seed_width_policy`` for the width schedule each mode
             # uses, which differs because only the bounded shape's cost tracks

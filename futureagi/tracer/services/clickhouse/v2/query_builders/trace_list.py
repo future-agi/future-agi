@@ -614,10 +614,10 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
         The lane has two width schedules because it has two cost shapes, and
         ``FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS`` selects between them:
 
-        * slack zero (the default, and the shipped contract): the witness is
-          time-unbounded, its flat term dominates, and the floor and initial
-          width are both the four hours of the fixed ceiling this budget
-          replaced - ``_SHORT_TEXT_SEED_PROVISIONAL_FLOOR``. Narrowing below
+        * slack zero (the legacy any-span escape hatch; the default is 1 h):
+          the witness is time-unbounded, its flat term dominates, and the
+          floor and initial width are both the four hours of the fixed ceiling
+          this budget replaced - ``_SHORT_TEXT_SEED_PROVISIONAL_FLOOR``. Narrowing below
           that would pay the same flat cost for a fraction of the coverage,
           which is why the row budget can only widen this mode.
         * slack above zero: the witness scan is confined to the roots'
@@ -780,8 +780,9 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
     ) -> tuple[str, dict[str, Any]]:
         """Bound the short exact-string seed's witness scan, when switched on.
 
-        Off (slack zero, the default) this emits nothing and the statement is
-        byte-identical to the unbounded contract. On, the witness must start
+        Off (slack zero, the legacy escape hatch - the default is 1 h) this
+        emits nothing and the statement is byte-identical to the unbounded
+        contract. On, the witness must start
         inside ``[hour_floor(root_start) - slack, hour_ceil(root_end) + slack)``
         where ``[root_start, root_end]`` is the interval of roots the calling
         statement can publish. Every root it publishes therefore keeps any
