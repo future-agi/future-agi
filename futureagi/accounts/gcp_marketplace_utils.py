@@ -381,6 +381,7 @@ def _link_orphan_entitlements(gcp_account: GCPMarketplaceAccount) -> int:
     entitlement is waiting, and no approval path can see it.
     """
     linked = 0
+    linked_rows: list[GCPMarketplaceEntitlement] = []
     orphans = GCPMarketplaceEntitlement.objects.filter(account__isnull=True)
     for entitlement in orphans:
         account_ref = (entitlement.raw_payload or {}).get("account", "")
@@ -389,7 +390,21 @@ def _link_orphan_entitlements(gcp_account: GCPMarketplaceAccount) -> int:
         entitlement.account = gcp_account
         entitlement.organization = gcp_account.organization
         entitlement.save(update_fields=["account", "organization", "updated_at"])
+        linked_rows.append(entitlement)
         linked += 1
+
+    # With automatic offer approval Google can activate before sign-up ends,
+    # and ENTITLEMENT_ACTIVE on an orphan row had no organization to put on
+    # the plan. Now it does: apply it here, or the customer who just paid
+    # sits on free until the hourly reconcile. Newest wins, as everywhere.
+    from accounts.models.gcp_marketplace import IN_SERVICE_STATES
+
+    live = [row for row in linked_rows if row.status in IN_SERVICE_STATES]
+    if live and gcp_account.organization_id:
+        from accounts.gcp_marketplace_events import _apply_plan
+
+        newest = max(live, key=lambda row: (row.effective_at or row.created_at, row.created_at))
+        _apply_plan(newest)
 
     if linked:
         logger.info(
@@ -400,6 +415,44 @@ def _link_orphan_entitlements(gcp_account: GCPMarketplaceAccount) -> int:
     return linked
 
 
+def _sync_pending_entitlements_from_google(gcp_account: GCPMarketplaceAccount) -> int:
+    """Mirror the account's unapproved entitlements straight from Google.
+
+    Approval must not depend on ENTITLEMENT_CREATION_REQUESTED having been
+    consumed: Pub/Sub is unordered and the events of one purchase share an
+    eventId, so the message can be delayed or lost. The Procurement API is the
+    source of truth; a failed listing falls back to whatever is held locally.
+    """
+    from accounts.gcp_marketplace_events import sync_entitlement
+
+    synced = 0
+    try:
+        for remote in gcp_procurement.iter_entitlements(
+            account_id=gcp_account.procurement_account_id
+        ):
+            if (
+                remote.get("state")
+                != GCPMarketplaceEntitlementState.ACTIVATION_REQUESTED
+            ):
+                continue
+            if sync_entitlement(gcp_procurement.bare_id(remote.get("name", ""))):
+                synced += 1
+    except Exception:
+        logger.exception(
+            "gcp_marketplace_entitlement_listing_failed",
+            account_id=gcp_account.procurement_account_id,
+        )
+        return synced
+
+    if synced:
+        logger.info(
+            "gcp_marketplace_pending_entitlements_synced",
+            account_id=gcp_account.procurement_account_id,
+            count=synced,
+        )
+    return synced
+
+
 def approve_pending_entitlements(gcp_account: GCPMarketplaceAccount) -> int:
     """Approve entitlements that arrived before sign-up completed.
 
@@ -408,6 +461,7 @@ def approve_pending_entitlements(gcp_account: GCPMarketplaceAccount) -> int:
     account is approved, anything waiting is approved here.
     """
     _link_orphan_entitlements(gcp_account)
+    _sync_pending_entitlements_from_google(gcp_account)
 
     from accounts.gcp_marketplace_events import reject_duplicate_entitlement
 
