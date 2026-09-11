@@ -15,7 +15,10 @@ import pytest
 from django.conf import settings
 from django.test import override_settings
 
-from tracer.selectors.filter_seed_width import FilterSeedWidthPolicy
+from tracer.selectors.filter_seed_width import (
+    EMPTY_DENSITY_ESTIMATE,
+    FilterSeedWidthPolicy,
+)
 from tracer.selectors.trace_filter_reads import read_bounded_filter_page
 from tracer.services.clickhouse.query_builders.trace_list import (
     TraceListQueryBuilder,
@@ -1206,24 +1209,82 @@ def test_a_lane_that_cannot_probe_keeps_the_unprobed_cap():
     assert max(executor.seed_widths) == timedelta(hours=4)
 
 
-def test_a_density_probe_spends_the_request_query_budget():
-    """Probes are statements. They must be counted, or they are free lunch."""
+def test_a_density_probe_is_paid_for_outside_the_acquisition_budget():
+    """R-A: a cost question must not displace the statement it is sizing.
+
+    ``max_query_count`` is the budget for statements that ACQUIRE and classify
+    rows. A density probe acquires nothing - it exists so that an acquisition
+    statement can be sized - so charging it to that budget makes a page which
+    was already budget-bound publish fewer rows than the same page published
+    before the guard shipped. Measured on the adversarial populations: 11 rows
+    against 13, 21 against 25, and 57 against 59 over three hops.
+
+    Probes are therefore given their own bounded allowance. They are still
+    statements: recorded in ``attempts``, reported in ``query_count``, bound by
+    the request deadline and by every per-statement cap - and bounded in number
+    at two per seed statement. What they no longer do is take an acquisition
+    slot away from a seed.
+    """
 
     executor, page = _budget_read(
         window=timedelta(days=30),
         seed_read_rows=5_000,
         density_rows=0,
         max_query_count=8,
+        max_seed_attempts=12,
     )
 
     probes = [
         attempt for attempt in page.attempts if attempt.kind == "seed_density_probe"
     ]
+    acquisitions = [
+        attempt for attempt in page.attempts if attempt.kind != "seed_density_probe"
+    ]
     assert probes
+    # Probes are still counted and still visible - nothing is issued off the
+    # books, and the receipt's query count is every statement.
     assert len(probes) == len(executor.density_intervals)
-    assert len(page.attempts) <= 8
+    assert page.query_count == len(page.attempts) == len(probes) + len(acquisitions)
+    # The acquisition budget buys acquisition statements only, and all of it
+    # is available to them: the read walks until the seeds have spent it.
+    assert len(acquisitions) == 8
+    assert len(executor.seed_intervals) == 8
+    # THE DOCUMENTED BOUND. A request issues at most
+    # ``max_query_count + 2 * max_seed_attempts`` statements - here 8 + 24 = 32
+    # - and the allowance is additionally clipped to the read contract's own
+    # ceiling, so the hard contract still binds.
+    assert len(probes) <= 2 * 12
+    assert len(page.attempts) <= 8 + 2 * 12
     assert page.complete is False
     assert page.error_code == "query_budget_exceeded"
+
+
+def test_the_probe_allowance_is_clipped_to_the_hard_read_contract():
+    """N is a bound, not a hope: the absolute ceiling survives both budgets.
+
+    The allowance is ``2 * max_seed_attempts`` capped by whatever headroom the
+    read contract's absolute ceiling leaves above ``max_query_count``. A caller
+    that sets the acquisition budget at the ceiling therefore buys NO probe
+    allowance at all - the lane keeps the unprobed cap rather than issuing a
+    statement the contract does not admit.
+    """
+
+    executor, page = _budget_read(
+        window=timedelta(days=365),
+        seed_read_rows=5_000,
+        density_rows=0,
+        max_query_count=128,
+        max_seed_attempts=24,
+    )
+
+    assert executor.density_intervals == []
+    assert not [
+        attempt for attempt in page.attempts if attempt.kind == "seed_density_probe"
+    ]
+    assert len(page.attempts) <= 128
+    # No probe means no proof, and no proof means the unprobed cap - never a
+    # widening the contract could not pay for.
+    assert max(executor.seed_widths) <= timedelta(hours=4)
 
 
 def test_a_lane_without_a_declared_budget_keeps_its_doubling_schedule():
@@ -1256,7 +1317,7 @@ def _is_density_probe(query: str) -> bool:
     return "EXPLAIN ESTIMATE" in query
 
 
-def _estimate_result(rows: int) -> QueryResult:
+def _estimate_result(rows: int, columns: list[str] | None = None) -> QueryResult:
     """The shape ClickHouse answers ``EXPLAIN ESTIMATE`` with.
 
     One row per table the statement would read - and, when the key condition
@@ -1288,7 +1349,7 @@ def _estimate_result(rows: int) -> QueryResult:
         row_count=len(data),
         backend_used="clickhouse",
         query_time_ms=1.0,
-        columns=list(_ESTIMATE_COLUMNS),
+        columns=list(_ESTIMATE_COLUMNS if columns is None else columns),
         read_rows=0,
     )
 
@@ -1308,6 +1369,9 @@ class _LaneTransport:
     def __init__(self, read_rows: int | None, density_rows: Any = 0):
         self._read_rows = read_rows
         self._density_rows = density_rows
+        # The columns the transport reports back. Overridden by the test that
+        # pins what an answer this lane cannot read is worth.
+        self.estimate_columns: list[str] | None = None
         self.seed_intervals: list[tuple[datetime, datetime]] = []
         self.density_intervals: list[tuple[datetime, datetime]] = []
         self.other_statements = 0
@@ -1319,7 +1383,7 @@ class _LaneTransport:
         rows = self._density_rows
         if callable(rows):
             rows = rows(start, end)
-        return _estimate_result(rows)
+        return _estimate_result(rows, self.estimate_columns)
 
     def execute_ch_query(self, query, params, *, timeout_ms, settings):
         if _is_density_probe(query):
@@ -1352,6 +1416,7 @@ def _lane_read(
     read_rows: int | None,
     cursor: bool,
     max_seed_attempts: int = 24,
+    density_rows: Any = None,
 ):
     """Drive the real ``TraceListQueryBuilderV2`` short-text lane end to end.
 
@@ -1364,7 +1429,16 @@ def _lane_read(
 
     builder = picker_leaves(2, window=window)
     assert builder.filter_seed_width_policy() is not None
-    transport = _LaneTransport(read_rows)
+    # A transport whose seed statements read ``read_rows`` rows must answer the
+    # density probe with the same population: an EMPTY estimate table means no
+    # part was selected at all, and a fixture that reports both would be
+    # describing two different databases. The number is far below the lane's
+    # row budget, so every probed proposal is approved and the schedule below
+    # is the doubling schedule itself.
+    transport = _LaneTransport(
+        read_rows,
+        density_rows=(read_rows or 0) if density_rows is None else density_rows,
+    )
     page = read_bounded_filter_page(
         builder=builder,
         analytics=transport,
@@ -1569,7 +1643,7 @@ class _PopulationLaneTransport(_LaneTransport):
             else sum(1 for row in self.population if start <= row["start_time"] < end)
             * self._rows_per_root
         )
-        return _estimate_result(counted)
+        return _estimate_result(counted, self.estimate_columns)
 
     def execute_ch_query(self, query, params, *, timeout_ms, settings):
         if _is_density_probe(query):
@@ -2739,9 +2813,13 @@ def test_the_density_probe_reads_its_own_estimate_table_back():
     """The lane that emits the statement is the one that reduces its result.
 
     ``EXPLAIN ESTIMATE`` answers with a table, not a labelled scalar, and the
-    empty case is load-bearing: a key condition that selects no part at all is
-    the sparse tail, and reading that as "unknown" would pin the tail at the
-    unprobed cap - the regression the row budget exists to remove.
+    empty case is load-bearing in BOTH directions: a key condition that
+    selects no part at all is the sparse tail, and reading that as "unknown"
+    would pin the tail at the unprobed cap - but a plan that carried no
+    readable step answers identically, and reading THAT as zero approves the
+    widest proposal, which is the defect the probe exists to prevent. Nothing
+    in one result separates them, so the reducer reports the ambiguity instead
+    of resolving it and the selector decides from the request's own evidence.
     """
 
     builder = picker_leaves(2)
@@ -2758,10 +2836,13 @@ def test_the_density_probe_reads_its_own_estimate_table_back():
         }
 
     assert estimate([row()], _ESTIMATE_COLUMNS) == 8_000
-    # No part selected: zero, not unknown.
-    assert estimate([], _ESTIMATE_COLUMNS) == 0
-    # Rows are summed across the estimate table's entries.
+    # No part selected: ambiguous, and reported as such. NOT the integer zero,
+    # and not "unknown" either - those are the caller's two readings of it.
+    assert estimate([], _ESTIMATE_COLUMNS) is EMPTY_DENSITY_ESTIMATE
+    assert estimate([], _ESTIMATE_COLUMNS) != 0
+    # Rows are summed across the estimate table's entries, one per part.
     assert estimate([row(), row(rows=1_000)], _ESTIMATE_COLUMNS) == 9_000
+    assert estimate([row(rows=1), row(rows=2), row(rows=3)], _ESTIMATE_COLUMNS) == 6
     # Anything that is not this statement's answer is unknown, and the caller
     # keeps the unprobed cap.
     assert estimate([{"seed_density_rows": 5}], ["seed_density_rows"]) is None
@@ -2769,6 +2850,139 @@ def test_the_density_probe_reads_its_own_estimate_table_back():
     assert estimate([row(table="other_table")], _ESTIMATE_COLUMNS) is None
     assert estimate([row(rows=None)], _ESTIMATE_COLUMNS) is None
     assert estimate([row(rows=True)], _ESTIMATE_COLUMNS) is None
+
+
+def test_an_empty_estimate_widens_only_where_this_read_proved_the_tail_empty():
+    """R-B, on the real lane: what makes a zero believable.
+
+    The transport answers every probe with the estimate table and NO part row
+    - the shape a server returns both when the key condition selected nothing
+    and when the plan carried no readable step. Here the seed statements
+    themselves read zero rows, so this request has independently established
+    that history next door has run out, and the empty estimate is believed:
+    the tail is crossed by doubling, each width above the cap approved by its
+    own probe, exactly as it was when the reducer answered a bare zero.
+    """
+
+    transport, page = _lane_read(
+        window=timedelta(days=365), read_rows=0, cursor=True, density_rows=0
+    )
+
+    assert page.complete is True
+    assert page.error_code is None
+    assert transport.density_intervals
+    assert max(transport.seed_widths) > timedelta(hours=4)
+    approved = set(transport.density_intervals)
+    assert all(
+        (start, end) in approved
+        for start, end in transport.seed_intervals
+        if end - start > timedelta(hours=4)
+    )
+    assert _is_contiguous(transport.seed_intervals)
+    assert transport.seed_intervals[-1][0] == END - timedelta(days=365)
+    # A believed zero is recorded as the zero the width was chosen from.
+    probes = [
+        attempt for attempt in page.attempts if attempt.kind == "seed_density_probe"
+    ]
+    assert probes
+    assert all(attempt.probe_rows == 0 for attempt in probes)
+
+
+def test_an_uncorroborated_empty_estimate_keeps_the_unprobed_cap():
+    """The other reading of the same answer, and the one that must not widen.
+
+    Same empty estimate table, but the seed statements report five thousand
+    read rows: this request has proven nothing about whether history has run
+    out, so "no part selected" is indistinguishable from "the plan carried no
+    readable step" and the population is UNKNOWN. The lane keeps the unprobed
+    cap - the same conservative reading ``clickhouse/graph_dispatch`` takes of
+    the identical signal - instead of approving the widest proposal, which is
+    the one failure direction that reinstates the defect the probe exists to
+    prevent.
+    """
+
+    transport, page = _lane_read(
+        window=timedelta(days=365), read_rows=5_000, cursor=True, density_rows=0
+    )
+
+    assert transport.density_intervals
+    assert max(transport.seed_widths) == timedelta(hours=4)
+    assert _is_contiguous(transport.seed_intervals)
+    # An unknown estimate is recorded as unknown, never as the zero it might
+    # have been: the receipt must not claim a number the width did not use.
+    probes = [
+        attempt for attempt in page.attempts if attempt.kind == "seed_density_probe"
+    ]
+    assert probes
+    assert all(attempt.probe_rows is None for attempt in probes)
+    assert all(attempt.error_code is None for attempt in probes)
+
+
+def test_an_estimate_shape_this_lane_cannot_read_keeps_the_unprobed_cap():
+    """An unreadable answer is unknown however many rows it has.
+
+    A transport answering something other than this statement's estimate table
+    is not a zero and not a count. The reducer reports unknown and the lane
+    keeps the cap, with the seeds' own zero read rows deliberately present to
+    show that the corroboration cannot rescue an answer that was never this
+    statement's.
+    """
+
+    builder = picker_leaves(2, window=timedelta(days=365))
+    transport = _LaneTransport(0, density_rows=0)
+    transport.estimate_columns = ["something", "else"]
+    page = read_bounded_filter_page(
+        builder=builder,
+        analytics=transport,
+        filters=builder.filters,
+        key_field="trace_id",
+        page_number=0,
+        page_size=25,
+        deadline_ms=9_500,
+        query_timeout_ms=2_500,
+        max_query_count=64,
+        max_seed_attempts=24,
+        include_incomplete_rows=True,
+        bounded_continuation=True,
+        carry_continuation_slice_width=True,
+        root_time_discovery=False,
+    )
+
+    assert transport.density_intervals
+    assert max(transport.seed_widths) == timedelta(hours=4)
+    assert all(
+        attempt.probe_rows is None
+        for attempt in page.attempts
+        if attempt.kind == "seed_density_probe"
+    )
+
+
+def test_an_approved_proposal_is_never_asked_a_second_question():
+    """One statement per decision: a fit that changed nothing costs nothing.
+
+    A refinement can only NARROW a width, so a proposal the first estimate
+    already approved - zero rows, or any count inside the budget - has nothing
+    left to refine. The first cut of this guard asked anyway and spent two
+    index reads per refused proposal on the sparse tail without changing a
+    single width.
+    """
+
+    executor, _ = _budget_read(
+        window=timedelta(days=30),
+        seed_read_rows=5_000,
+        density_rows=BUDGET.target_read_rows,
+    )
+
+    wide_proposals = [
+        (start, end)
+        for start, end in executor.seed_intervals
+        if end - start > timedelta(hours=4)
+    ]
+    assert wide_proposals
+    # Exactly one probe per proposal above the cap, and the probe interval is
+    # the proposal itself: no second question anywhere.
+    assert len(executor.density_intervals) == len(set(executor.density_intervals))
+    assert set(executor.density_intervals) == set(wide_proposals)
 
 
 def test_the_density_probe_stays_inside_the_request_window():

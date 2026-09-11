@@ -21,7 +21,11 @@ from typing import Any
 
 from django.conf import settings
 
-from tracer.selectors.filter_seed_width import FilterSeedWidthPolicy
+from tracer.selectors.filter_seed_width import (
+    EMPTY_DENSITY_ESTIMATE,
+    EmptyDensityEstimate,
+    FilterSeedWidthPolicy,
+)
 from tracer.services.clickhouse.query_builders.trace_list import (
     _LONG_WINDOW_ORDERED_ROOT_INITIAL_SLICE,
     _SELECTIVE_EXACT_TEXT_MIN_LENGTH,
@@ -1416,36 +1420,46 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
         self,
         rows: Iterable[Mapping[str, Any]],
         columns: Iterable[str] | None = None,
-    ) -> int | None:
+    ) -> int | EmptyDensityEstimate | None:
         """Reduce one ``EXPLAIN ESTIMATE`` result to the policy's row bound.
 
-        The statement above returns the estimate table, one row per table it
+        The statement above returns the estimate table, one row per part it
         would read: ``database``, ``table``, ``parts``, ``rows``, ``marks``.
         The policy consumes a single integer, so the lane that emitted the
-        statement is also the one that says how to read it back.
+        statement is also the one that says how to read it back, and several
+        part rows for this table SUM.
 
-        Two shapes have to be told apart, and the ``columns`` the transport
-        reports are what tells them apart - not the row count:
+        Three shapes have to be told apart, and the ``columns`` the transport
+        reports are what separate the last one - not the row count:
 
-        * the estimate table with NO rows is the answer ``zero``. A key
-          condition that selects no part at all is exactly the sparse-tail
-          case this lane crosses by doubling, and reading it as "unknown"
-          would pin the tail at the unprobed cap - the regression the row
-          budget exists to avoid;
+        * the estimate table with part rows is their summed ``rows``;
+        * the estimate table with NO rows is ``EMPTY_DENSITY_ESTIMATE``, which
+          is explicitly NOT the integer zero. A key condition selecting no part
+          and a plan that carried no readable step produce the identical
+          answer here, and they call for opposite decisions, so this method
+          refuses to pick one: the selector decides, and accepts the zero
+          reading only when a completed statement in the same request has
+          already shown the newer region next door to be empty. The repo's
+          other production ``EXPLAIN ESTIMATE`` consumer
+          (``clickhouse/graph_dispatch``) treats the same signal as unusable
+          and falls back; this lane may believe it, but only with that
+          corroboration;
         * anything else - a transport that answered something other than this
           statement, or a server whose estimate table changed shape - is
           ``None``, meaning unknown, and the caller keeps the unprobed cap.
 
         Only this builder's own table counts toward the estimate. A statement
-        naming one table can only answer for one table; an extra row would
-        mean the result is not the one this method is documented to read.
+        naming one table can only answer for one table; a row naming another
+        would mean the result is not the one this method is documented to read.
         """
 
         names = {str(name) for name in (columns or ())}
         if not _SEED_DENSITY_ESTIMATE_COLUMNS.issubset(names):
             return None
+        counted_any = False
         estimate = 0
         for row in rows or ():
+            counted_any = True
             if not isinstance(row, Mapping):
                 return None
             if str(row.get("table") or "") != self.TABLE:
@@ -1454,7 +1468,7 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
             if isinstance(counted, bool) or not isinstance(counted, (int, float)):
                 return None
             estimate += max(0, int(counted))
-        return estimate
+        return estimate if counted_any else EMPTY_DENSITY_ESTIMATE
 
     def supports_filter_windowed_candidate_seed_page(self) -> bool:
         return bool(

@@ -22,6 +22,41 @@ from datetime import timedelta
 _HOUR = timedelta(hours=1)
 
 
+class EmptyDensityEstimate:
+    """The answer a density probe gives when it selected nothing at all.
+
+    An index estimate that names no part is AMBIGUOUS and the ambiguity runs
+    in the two opposite directions that matter here:
+
+    * the key condition selected no part, so the candidate slice holds no rows
+      - the sparse tail's answer, and reading it as unknown would pin the tail
+      at the unprobed cap, which is the regression the row budget exists to
+      remove;
+    * the plan carried no readable step at all - a statement the server
+      answered some other way, or a plan shape this lane cannot read - in
+      which case the slice's population is simply UNKNOWN, and approving the
+      widest proposal on it reinstates the very defect the probe was added to
+      prevent.
+
+    Nothing inside one result can tell those apart, so the reducer refuses to
+    choose: it returns this marker and the caller decides, from what the rest
+    of the request has already proven, whether a zero may be believed. This is
+    deliberately the same conservative default the repo's other production
+    ``EXPLAIN ESTIMATE`` consumer takes (``graph_dispatch`` treats an empty
+    estimate as unusable and falls back); the difference is that this lane may
+    ACCEPT the zero reading when a completed statement in the same request has
+    independently shown the neighbouring, newer region to be empty.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid only
+        return "EMPTY_DENSITY_ESTIMATE"
+
+
+EMPTY_DENSITY_ESTIMATE = EmptyDensityEstimate()
+
+
 def _snap_whole_hour_power_of_two(width: timedelta, *, round_up: bool) -> timedelta:
     """Snap a width of an hour or more onto the whole-hour power-of-two lattice.
 

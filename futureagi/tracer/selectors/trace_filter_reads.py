@@ -12,7 +12,10 @@ from typing import Any, Protocol
 
 from django.conf import settings
 
-from tracer.selectors.filter_seed_width import FilterSeedWidthPolicy
+from tracer.selectors.filter_seed_width import (
+    EMPTY_DENSITY_ESTIMATE,
+    FilterSeedWidthPolicy,
+)
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_service import QueryResult
 from tracer.services.clickhouse.read_budget import is_read_budget_error
@@ -1443,10 +1446,44 @@ def read_bounded_filter_page(
         and callable(seed_density_probe_support)
         and seed_density_probe_support() is True
     )
+    # THE PROBE ALLOWANCE, AND WHY IT IS NOT THE SEED BUDGET.
+    #
+    # ``max_query_count`` is the budget for the statements that ACQUIRE and
+    # classify rows. A density probe acquires nothing: it is a cost question
+    # asked so that an acquisition statement can be sized, and spending an
+    # acquisition slot on it means a page that was already budget-bound
+    # publishes fewer rows than the same page would without the guard -
+    # measured at 11 rows against 13, 21 against 25, and 57 against 59 over
+    # three hops. That is the guard charging the user for its own safety.
+    #
+    # So probes are allowed their own bounded allowance, OUTSIDE the
+    # acquisition budget and structurally bounded at two per seed statement:
+    # at most ``2 * max_seed_attempts`` for the request. They remain counted
+    # in ``attempts`` (telemetry, receipts and ``query_count`` are unchanged),
+    # and they remain bound by the request deadline and by every per-statement
+    # cap, so they cannot buy unbounded wall clock.
+    #
+    # THE BOUND THIS PRESERVES, stated so it can be tested: a request issues
+    # at most ``max_query_count + seed_density_probe_allowance`` statements,
+    # and never more than ``query_contract_limit`` - the read contract's
+    # absolute ceiling, ``_ABSOLUTE_MAX_QUERIES`` (128) on the product path.
+    # The allowance is clipped to whatever headroom that ceiling leaves, so
+    # the hard contract binds even if a caller raises the other two. For the
+    # trace-list lane's defaults (48 queries, 24 seed attempts) the bound is
+    # N = 48 + 48 = 96 <= 128.
+    seed_density_probe_allowance = (
+        min(2 * max_seed_attempts, max(0, query_contract_limit - max_query_count))
+        if seed_density_probe_enabled
+        else 0
+    )
+    seed_density_probe_attempts = 0
     # One probe per distinct candidate slice per request. The schedule only
     # ever proposes a given boundary/width pair once, so this is a guard
     # against a retry paying twice, not an optimization of the common path.
-    seed_density_counts: dict[tuple[datetime, datetime], int | None] = {}
+    # The RAW answer is cached - including "the estimate table was empty",
+    # which is not a number and whose reading depends on what else this
+    # request has proven by the time it is used.
+    seed_density_counts: dict[tuple[datetime, datetime], Any] = {}
     # The window an empty-seed root-time discovery narrows to. One hour is the
     # wall-clock lane's smallest useful slice; a row-budgeted lane cannot use a
     # window below the floor it declared, and would be pinned there, because
@@ -1692,6 +1729,18 @@ def read_bounded_filter_page(
         active_slice_start = slice_start
         active_width = slice_end - slice_start
 
+    def budgeted_query_count() -> int:
+        """Statements charged to ``max_query_count`` so far.
+
+        Every statement is recorded in ``attempts`` - that is what the receipt
+        and ``query_count`` report - but density probes are paid for out of
+        their own allowance, so they are subtracted here. Keeping the two
+        counters apart is what stops a cost question from displacing the
+        acquisition statement it exists to size.
+        """
+
+        return len(attempts) - seed_density_probe_attempts
+
     def execute(
         *,
         kind: str,
@@ -1704,6 +1753,7 @@ def read_bounded_filter_page(
         max_bytes_to_read_cap: int | None = None,
         use_reserved_query_budget: bool = False,
     ) -> QueryResult:
+        nonlocal seed_density_probe_attempts
         # A resumable cursor must leave enough wall time to roll back an
         # in-flight seed batch and publish its last fully classified checkpoint,
         # even when that checkpoint contains zero matches and needs no row
@@ -1728,13 +1778,23 @@ def read_bounded_filter_page(
         )
         if remaining_ms < minimum_query_headroom_ms:
             raise _BudgetExceeded("deadline_exceeded")
-        active_query_limit = (
-            max_query_count
-            if use_reserved_query_budget or not hydration_reserve_is_active
-            else max_query_count - reserved_hydration_queries
-        )
-        if len(attempts) >= active_query_limit:
-            raise _BudgetExceeded("query_budget_exceeded")
+        if kind == "seed_density_probe":
+            # Probes draw on their own allowance, never on the acquisition
+            # budget: a cost question must not displace the statement whose
+            # cost it is answering. The allowance is finite and small, and
+            # every probe below still passes through the same deadline and
+            # per-statement caps as any other read.
+            if seed_density_probe_attempts >= seed_density_probe_allowance:
+                raise _BudgetExceeded("query_budget_exceeded")
+            seed_density_probe_attempts += 1
+        else:
+            active_query_limit = (
+                max_query_count
+                if use_reserved_query_budget or not hydration_reserve_is_active
+                else max_query_count - reserved_hydration_queries
+            )
+            if budgeted_query_count() >= active_query_limit:
+                raise _BudgetExceeded("query_budget_exceeded")
         attempt_started = monotonic()
         statement_timeout_ms = min(query_timeout_ms, remaining_ms)
         if timeout_cap_ms is not None:
@@ -1864,7 +1924,12 @@ def read_bounded_filter_page(
         )
         return result
 
-    def probe_guarded_width(width: timedelta, boundary: datetime) -> timedelta:
+    def probe_guarded_width(
+        width: timedelta,
+        boundary: datetime,
+        *,
+        newer_neighbour_read_rows: int | None = None,
+    ) -> timedelta:
         """Refuse to issue a slice wider than the cap without a density proof.
 
         ``width`` is what the row budget proposes for the slice ending at
@@ -1899,7 +1964,18 @@ def read_bounded_filter_page(
         AT MOST TWO PROBES PER SEED STATEMENT, and structurally so: this is
         the only place a probe is issued, it is called once per seed
         statement, and it asks at most one refinement question. Both estimates
-        are cached per interval for the request.
+        are cached per interval for the request. Probes are paid for from
+        their own allowance rather than from the acquisition budget, so a
+        request issues at most ``max_query_count`` acquisition statements plus
+        ``2 * max_seed_attempts`` probes, and never more than the read
+        contract's absolute ceiling.
+
+        ``newer_neighbour_read_rows`` is the read rows of the last completed
+        seed statement, which by construction covered a region NEWER than
+        ``boundary`` - slices walk strictly older and never overlap. Zero
+        there is the corroboration that lets an EMPTY estimate table be read
+        as a genuine zero rather than as an unusable answer; see
+        ``probed_slice_rows``.
 
         Shrinking is always safe. Slices are contiguous and half-open, so a
         narrower slice defers its older part to the next adjacent slice rather
@@ -1916,9 +1992,20 @@ def read_bounded_filter_page(
             return width
         if not seed_density_probe_enabled:
             return min(width, seed_width_policy.unprobed_cap)
-        counted = probed_slice_rows(width, boundary)
+        empty_estimate_is_zero = newer_neighbour_read_rows == 0
+        counted = probed_slice_rows(
+            width, boundary, empty_estimate_is_zero=empty_estimate_is_zero
+        )
         if counted is None:
             return min(width, seed_width_policy.unprobed_cap)
+        if counted <= seed_width_policy.target_read_rows:
+            # THE PROPOSAL STOOD, so there is nothing left to ask. An estimate
+            # inside the budget - zero included - fits the candidate slice as
+            # proposed, and a refinement question can only ever NARROW a width
+            # the fit already declined to narrow. Asking anyway is what the
+            # first cut of this guard did on the sparse tail: two index reads
+            # per refused proposal that changed no width at all.
+            return width
         fitted = seed_width_policy.probed_width(width, counted)
         if fitted >= width or fitted <= seed_width_policy.min_width:
             # Either the proposal stood, or the fit already reached the floor -
@@ -1936,24 +2023,57 @@ def read_bounded_filter_page(
         # checked. Exactly two questions per seed statement, never three - the
         # ordinary halving rule corrects whatever is left from the next
         # statement's own read rows.
-        refined = probed_slice_rows(fitted, boundary)
+        refined = probed_slice_rows(
+            fitted, boundary, empty_estimate_is_zero=empty_estimate_is_zero
+        )
         if refined is None:
             return fitted
         return seed_width_policy.refined_width(fitted, refined)
 
-    def probed_slice_rows(width: timedelta, boundary: datetime) -> int | None:
+    def probed_slice_rows(
+        width: timedelta,
+        boundary: datetime,
+        *,
+        empty_estimate_is_zero: bool,
+    ) -> int | None:
         """Estimate the rows inside ``[boundary - width, boundary)``, or None.
 
         ``None`` means unknown - no probe was possible, the statement failed,
         or the lane could not read its result - and every caller answers it the
         same way, by refusing to widen past the unprobed cap.
 
-        The estimate is cached per interval for the request, so a retry and the
-        refinement question cannot pay for the same interval twice. The clamp
-        to ``request_start`` is the one the issued slice gets as well
-        (``active_slice_start`` uses the same expression), so the slice this
-        answer approves is always a suffix of the interval it describes.
+        AN EMPTY ESTIMATE IS NOT A ZERO ON ITS OWN. A probe that names no part
+        is the same answer whether the key condition selected nothing (the
+        slice really is empty) or the plan carried no readable step (the
+        slice's population is unknown), and those call for opposite widths -
+        the widest proposal, or the cap. The lane's reducer therefore refuses
+        to pick, and this is where the request's own evidence decides:
+
+        * ``empty_estimate_is_zero`` - a COMPLETED seed statement over a
+          region newer than ``boundary`` read zero rows, so this read has
+          independently established that history here has run out. An empty
+          estimate is then believed and the proposal is approved, which is how
+          a sparse tail is still crossed logarithmically;
+        * otherwise the answer is unknown and the caller keeps the unprobed
+          cap - the same conservative reading the repo's other production
+          ``EXPLAIN ESTIMATE`` consumer takes for the identical signal. The
+          cost is at most one capped slice at the edge where history stops:
+          that slice's own seed then reads zero rows and the next widening is
+          corroborated.
+
+        The RAW answer is cached per interval for the request, so a retry and
+        the refinement question cannot pay for the same interval twice, and an
+        empty answer refused early is re-read (not re-asked) once a later
+        statement corroborates it. The clamp to ``request_start`` is the one
+        the issued slice gets as well (``active_slice_start`` uses the same
+        expression), so the slice this answer approves is always a suffix of
+        the interval it describes.
         """
+
+        def resolved(raw: Any) -> int | None:
+            if raw is EMPTY_DENSITY_ESTIMATE:
+                return 0 if empty_estimate_is_zero else None
+            return raw
 
         if seed_width_policy is None or not seed_density_probe_enabled:
             return None
@@ -1962,8 +2082,8 @@ def read_bounded_filter_page(
             return None
         probe_key = (probe_start, boundary)
         if probe_key in seed_density_counts:
-            return seed_density_counts[probe_key]
-        counted = None
+            return resolved(seed_density_counts[probe_key])
+        counted: Any = None
         try:
             probe_query, probe_params = seed_density_probe_builder(
                 slice_start=probe_start, slice_end=boundary
@@ -1988,13 +2108,16 @@ def read_bounded_filter_page(
         else:
             counted = seed_density_estimate(probe_result)
             # Record the estimate on the statement that bought it, so a driver
-            # or a receipt can say which number the width came from.
+            # or a receipt can say which number the width came from. It is the
+            # number the width was actually chosen from, so an empty estimate
+            # this request could not corroborate records None (unknown), not
+            # zero - the two led to opposite widths.
             if attempts and attempts[-1].kind == "seed_density_probe":
-                attempts[-1] = replace(attempts[-1], probe_rows=counted)
+                attempts[-1] = replace(attempts[-1], probe_rows=resolved(counted))
         seed_density_counts[probe_key] = counted
-        return counted
+        return resolved(counted)
 
-    def seed_density_estimate(probe_result: Any) -> int | None:
+    def seed_density_estimate(probe_result: Any) -> Any:
         """Read one density probe's result as an integer upper bound, or None.
 
         The lane that emitted the statement is the one that knows its result
@@ -2003,6 +2126,12 @@ def read_bounded_filter_page(
         table it would read, not a single labelled scalar. A lane that
         publishes no reducer is answering the older, plainer question and
         returns its count in one ``seed_density_rows`` column.
+
+        Three answers, not two. A reducer may also report
+        ``EMPTY_DENSITY_ESTIMATE`` - an estimate table that named no part at
+        all - which is passed through UNRESOLVED, because whether that reads
+        as zero or as unknown is not a property of the result. Only the
+        caller, which knows what else this request has proven, can decide it.
         """
 
         rows = list(getattr(probe_result, "data", None) or [])
@@ -2012,6 +2141,8 @@ def read_bounded_filter_page(
             )
         else:
             estimate = rows[0].get("seed_density_rows") if rows else None
+        if estimate is EMPTY_DENSITY_ESTIMATE:
+            return estimate
         if estimate is None or isinstance(estimate, bool):
             return None
         if not isinstance(estimate, (int, float)):
@@ -2140,7 +2271,7 @@ def read_bounded_filter_page(
             and (
                 candidate_witness_probe_attempt_count + candidate_witness_probe_strata
                 > candidate_witness_probe_attempt_limit
-                or len(attempts) + prefilter_query_reserve > max_query_count
+                or budgeted_query_count() + prefilter_query_reserve > max_query_count
                 or int((classification_deadline - monotonic()) * 1000)
                 < prefilter_time_reserve_ms
             )
@@ -2195,7 +2326,8 @@ def read_bounded_filter_page(
                 if (
                     candidate_witness_probe_attempt_count
                     >= candidate_witness_probe_attempt_limit
-                    or len(attempts) + 1 + remaining_exact_queries > max_query_count
+                    or budgeted_query_count() + 1 + remaining_exact_queries
+                    > max_query_count
                     or total_probe_remaining_ms < 25
                 ):
                     probe_complete = False
@@ -2412,7 +2544,10 @@ def read_bounded_filter_page(
                 ):
                     if bounded_continuation and pre_match_continuation is None:
                         pre_match_continuation = continuation_before_query
-                    if len(attempts) > max_query_count - reserved_hydration_queries:
+                    if (
+                        budgeted_query_count()
+                        > max_query_count - reserved_hydration_queries
+                    ):
                         raise _BudgetExceeded("query_budget_exceeded")
                     if monotonic() > classification_deadline:
                         raise _BudgetExceeded("deadline_exceeded")
@@ -3069,7 +3204,8 @@ def read_bounded_filter_page(
                 and before_start_time is None
                 and not pending_identity_candidates
                 and slice_end - request_start > timedelta(hours=1)
-                and len(attempts) + 3 + reserved_hydration_queries <= max_query_count
+                and budgeted_query_count() + 3 + reserved_hydration_queries
+                <= max_query_count
                 and (classification_deadline - monotonic()) * 1000
                 >= min(query_timeout_ms, discovery_remaining_ms)
                 + _BOUNDED_CONTINUATION_MIN_QUERY_HEADROOM_MS
@@ -3235,7 +3371,8 @@ def read_bounded_filter_page(
             if optional_candidate_seed and (
                 optional_seed_attempted
                 or not probe_limits_enforced
-                or len(attempts) + 3 + reserved_hydration_queries > max_query_count
+                or budgeted_query_count() + 3 + reserved_hydration_queries
+                > max_query_count
                 or (classification_deadline - monotonic()) * 1000
                 < _OPTIONAL_CANDIDATE_SEED_TIMEOUT_MS
                 + _CANDIDATE_WITNESS_EXACT_RESERVE_MS
@@ -3291,7 +3428,7 @@ def read_bounded_filter_page(
                     seed_result = None
                     if (
                         windowed_seed_available
-                        and len(attempts) + 3 + reserved_hydration_queries
+                        and budgeted_query_count() + 3 + reserved_hydration_queries
                         <= max_query_count
                         and (classification_deadline - monotonic()) * 1000
                         >= query_timeout_ms + _CANDIDATE_WITNESS_EXACT_RESERVE_MS
@@ -3555,6 +3692,12 @@ def read_bounded_filter_page(
                         max_slice_width,
                     ),
                     slice_end,
+                    # The statement just completed covered a region newer than
+                    # this boundary (slices walk strictly older and never
+                    # overlap). Zero rows read there is this request's own
+                    # proof that history has run out, and the only evidence
+                    # that lets an empty index estimate be read as a zero.
+                    newer_neighbour_read_rows=last_seed_read_rows,
                 )
             else:
                 slice_width = min(active_width * 2, max_slice_width)
