@@ -142,6 +142,45 @@ Upgrades re-run the same jobs with the same commands. They are idempotent — ev
 one is a no-op against current state — so a stalled upgrade can be resumed from the
 job that failed rather than restarted from step 1.
 
+### Upgrading an existing install: backfill before you cut over
+
+**This release changes where custom-attribute suggestions come from, and the change
+is not self-healing.**
+
+Previously `dashboard/metrics` and `dashboard/filter_values` served custom-attribute
+keys and values by scanning spans, because the catalog read path was gated off by
+default (`PROPERTY_CATALOG_READ_MODE=off`). That gate is gone: both endpoints now
+read the observed indexes exclusively, and those indexes contain only what has been
+ingested since they were created.
+
+So on an existing installation, immediately after upgrade, every custom-attribute
+key and value picker is **empty for all history** — and the API reports
+`query_complete: true`, so an un-backfilled index looks exactly like a workspace
+that genuinely has no custom attributes. Live ingestion starts filling it from the
+moment the new collector runs, but nothing recovers the past on its own.
+
+Run the span backfill for each project over your retention window before you rely
+on the new pickers:
+
+```bash
+docker compose --env-file deploy/.env.production \
+  -f docker-compose.yml -f deploy/docker-compose.production.yml \
+  run --rm --entrypoint /usr/local/bin/fi-observed-catalog-backfill fi-collector \
+  --source spans \
+  --project <project uuid> \
+  --since  <RFC3339, e.g. the oldest span you intend to keep filterable> \
+  --until  <RFC3339, now> \
+  --checkpoint /backfill/progress.json \
+  --apply
+```
+
+It takes one project per invocation and pages one hour-bucket at a time, so budget
+roughly one page per hour of range and re-run with the same `--checkpoint` to
+resume. Without `--apply` it previews and publishes nothing, which is the right way
+to check scope first.
+
+A fresh install needs none of this: there is no history to recover.
+
 ## 1. Generate secrets
 
 ```bash
