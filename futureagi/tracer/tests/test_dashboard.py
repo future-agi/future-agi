@@ -1325,12 +1325,33 @@ def _get_metrics_with_annotation_labels(auth_client, project_id, label_ids):
     return response
 
 
+def _eval_dimension_filter(column_id, filter_op, filter_value):
+    """A Dataset / Eval Source filter exactly as the widget editor sends it."""
+    return {
+        "column_id": column_id,
+        "property_id": f"system_attribute:all:{column_id}",
+        "display_name": column_id.replace("_", " ").title(),
+        "source": "all",
+        "filter_config": {
+            "filter_type": "text",
+            "filter_op": filter_op,
+            "filter_value": filter_value,
+            "col_type": "SYSTEM_METRIC",
+        },
+    }
+
+
 @pytest.fixture
 def isolated_eval_usage_analytics():
-    """Real CH25 executor with a unique, test-owned eval usage table."""
+    """Real CH25 executor over test-owned eval usage and dataset tables."""
 
     from tracer.services.clickhouse.client import ClickHouseClient
     from tracer.services.clickhouse.query_service import AnalyticsQueryService
+    from tracer.services.clickhouse.schema import (
+        CDC_MODEL_HUB_DATASET,
+        CDC_USAGE_APICALLLOG,
+        _to_single_node_engine,
+    )
     from tracer.services.clickhouse.v2 import get_v2_config
 
     config = get_v2_config()
@@ -1341,35 +1362,24 @@ def isolated_eval_usage_analytics():
         password=config["password"],
         database=config["database"],
     )
-    table = f"_test_dashboard_eval_usage_{uuid.uuid4().hex[:12]}"
+    suffix = uuid.uuid4().hex[:12]
+    table = f"_test_dashboard_eval_usage_{suffix}"
+    dataset_table = f"_test_dashboard_eval_datasets_{suffix}"
     try:
         client.execute(
-            f"""
-            CREATE TABLE {table} (
-                id Int64,
-                organization_id UUID,
-                workspace_id Nullable(UUID),
-                status LowCardinality(String),
-                config String DEFAULT '{{}}',
-                eval_score Float64 MATERIALIZED
-                    JSONExtractFloat(JSONExtractString(config), 'output', 'output'),
-                eval_output_str String MATERIALIZED
-                    JSONExtractString(JSONExtractString(config), 'output', 'output'),
-                eval_trace_id String MATERIALIZED
-                    JSONExtractString(JSONExtractString(config), 'trace_id'),
-                eval_dataset_id String MATERIALIZED
-                    JSONExtractString(JSONExtractString(config), 'dataset_id'),
-                source LowCardinality(String),
-                source_id String,
-                deleted UInt8,
-                created_at DateTime64(6, 'UTC'),
-                _peerdb_is_deleted UInt8,
-                _peerdb_version Int64
-            ) ENGINE = ReplacingMergeTree(_peerdb_version)
-            ORDER BY (organization_id, source_id, created_at, id)
-            """
+            _to_single_node_engine(CDC_USAGE_APICALLLOG).replace(
+                "CREATE TABLE IF NOT EXISTS usage_apicalllog",
+                f"CREATE TABLE {table}",
+            )
+        )
+        client.execute(
+            _to_single_node_engine(CDC_MODEL_HUB_DATASET).replace(
+                "CREATE TABLE IF NOT EXISTS model_hub_dataset",
+                f"CREATE TABLE {dataset_table}",
+            )
         )
     except Exception:
+        client.execute(f"DROP TABLE IF EXISTS {table}")
         client.close()
         raise
 
@@ -1377,10 +1387,17 @@ def isolated_eval_usage_analytics():
     delegate._ch_client = client
 
     class IsolatedEvalUsageAnalytics:
+        def __init__(self):
+            self.ch_client = client
+            self.usage_table = table
+            self.dataset_table = dataset_table
+
         def execute_ch_query(self, query, params=None, timeout_ms=10000, settings=None):
             assert "usage_apicalllog" in query
             return delegate.execute_ch_query(
-                query.replace("usage_apicalllog", table),
+                query.replace("usage_apicalllog", table).replace(
+                    "model_hub_dataset", dataset_table
+                ),
                 params,
                 timeout_ms=timeout_ms,
                 settings=settings,
@@ -1390,6 +1407,7 @@ def isolated_eval_usage_analytics():
         yield IsolatedEvalUsageAnalytics()
     finally:
         client.execute(f"DROP TABLE IF EXISTS {table}")
+        client.execute(f"DROP TABLE IF EXISTS {dataset_table}")
         client.close()
 
 
@@ -7527,6 +7545,132 @@ class TestDashboardQueryExecution:
         assert len(metrics) == 1
         # Query parsed + executed cleanly; no per-widget error attached.
         assert "error" not in metrics[0]
+
+    @pytest.mark.integration
+    @pytest.mark.django_db
+    @pytest.mark.parametrize(
+        ("filters", "expected_pass_rate"),
+        [
+            pytest.param([], 4 / 6, id="no_filter_keeps_every_row"),
+            pytest.param(
+                [_eval_dimension_filter("dataset", "contains", "-prod-")],
+                1.0,
+                id="dataset_contains_matches_only_this_workspaces_datasets",
+            ),
+            pytest.param(
+                [_eval_dimension_filter("dataset", "not_contains", "-prod-")],
+                2 / 4,
+                id="dataset_not_contains_keeps_rows_without_a_dataset",
+            ),
+            pytest.param(
+                [_eval_dimension_filter("eval_source", "in", ["dataset_evaluation"])],
+                3 / 5,
+                id="eval_source_is_excludes_other_sources",
+            ),
+            pytest.param(
+                [
+                    {
+                        "metric_type": "system_metric",
+                        "metric_name": "dataset",
+                        "operator": "str_contains",
+                        "value": "-prod-",
+                    }
+                ],
+                1.0,
+                id="legacy_dataset_filter_without_property_id",
+            ),
+        ],
+    )
+    def test_eval_metric_dataset_and_source_filters_chart_only_matching_rows(
+        self,
+        observe_project,
+        isolated_eval_usage_analytics,
+        filters,
+        expected_pass_rate,
+    ):
+        ch = isolated_eval_usage_analytics
+        workspace = observe_project.workspace
+        template_id = str(uuid.uuid4())
+        prod, sandbox, other_tenant = (str(uuid.uuid4()) for _ in range(3))
+        seeded_at = "now64(6) - toIntervalHour(1)"
+
+        for dataset_id, name, org_id, workspace_id in (
+            (prod, "ci-acc-prod-r1", workspace.organization_id, workspace.id),
+            (sandbox, "ci-acc-sandbox-r1", workspace.organization_id, workspace.id),
+            (other_tenant, "ci-acc-prod-other", uuid.uuid4(), uuid.uuid4()),
+        ):
+            ch.ch_client.execute(
+                f"INSERT INTO {ch.dataset_table} "
+                "(id, name, organization_id, workspace_id, created_at, updated_at, "
+                "_peerdb_synced_at, _peerdb_version) "
+                f"SELECT toUUID('{dataset_id}'), '{name}', toUUID('{org_id}'), "
+                f"toUUID('{workspace_id}'), {seeded_at}, {seeded_at}, {seeded_at}, 1"
+            )
+
+        # The other tenant's "-prod-" dataset is referenced from this workspace,
+        # so only the dataset lookup's tenant scope keeps it out of the match.
+        eval_rows = (
+            ("dataset_evaluation", prod, "Passed"),
+            ("dataset_evaluation", prod, "Passed"),
+            ("dataset_evaluation", sandbox, "Passed"),
+            ("dataset_evaluation", sandbox, "Failed"),
+            ("dataset_evaluation", other_tenant, "Failed"),
+            ("tracer", None, "Passed"),
+        )
+        for row_id, (source, dataset_id, output) in enumerate(eval_rows, start=1):
+            config = {"output": {"output": output}}
+            if dataset_id:
+                config["dataset_id"] = dataset_id
+            ch.ch_client.execute(
+                f"INSERT INTO {ch.usage_table} "
+                "(id, log_id, organization_id, workspace_id, status, config, "
+                "source, source_id, created_at, updated_at, _peerdb_synced_at, "
+                "_peerdb_is_deleted, _peerdb_version) "
+                f"SELECT {row_id}, generateUUIDv4(), "
+                f"toUUID('{workspace.organization_id}'), toUUID('{workspace.id}'), "
+                f"'success', toJSONString('{json.dumps(config)}'), '{source}', "
+                f"'{template_id}', {seeded_at}, {seeded_at}, {seeded_at}, 0, 1"
+            )
+
+        query_config = {
+            "project_ids": [str(observe_project.id)],
+            "granularity": "month",
+            "time_range": {"preset": "6M"},
+            "metrics": [
+                {
+                    "id": template_id,
+                    "name": "task_completion",
+                    "type": "eval_metric",
+                    "source": "all",
+                    "config_id": template_id,
+                    "output_type": "PASS_FAIL",
+                    "aggregation": "pass_rate",
+                }
+            ],
+            "filters": filters,
+        }
+        with patch("tracer.views.dashboard.V2AnalyticsQueryService", return_value=ch):
+            response = DashboardWidgetViewSet()._execute_ch_query_config(
+                query_config,
+                workspace,
+                refresh=True,
+                _exact_worker=True,
+                cache_identity_override={
+                    "workspace_id": str(workspace.id),
+                    "query_config": query_config,
+                },
+            )
+
+        assert response.status_code == 200, response.data
+        [metric] = response.data["result"]["metrics"]
+        assert metric.get("error") is None
+        charted = [
+            point["value"]
+            for series in metric["series"]
+            for point in series["data"]
+            if point["value"] is not None
+        ]
+        assert charted == [pytest.approx(expected_pass_rate, abs=1e-6)]
 
     @pytest.mark.django_db
     @patch("tracer.views.dashboard.AnalyticsQueryService")
