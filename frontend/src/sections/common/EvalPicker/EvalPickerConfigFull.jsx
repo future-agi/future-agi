@@ -524,6 +524,9 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
 
       const normalizedRunConfig = {
         ...rawRunConfig,
+        model:
+          rawRunConfig.model ??
+          evalData?.model,
         agent_mode:
           rawRunConfig.agent_mode ??
           rawRunConfig.agentMode ??
@@ -601,12 +604,6 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         setCode("");
       }
       setCodeLanguage(getEvalCodeLanguage(normalizedFullEval));
-      // Priority: user's saved run-config override → canonical detail
-      // (`fullEval.model`, full form e.g. "turing_small") → list-level
-      // `evalData.model`. The list endpoint returns a stripped form
-      // ("small") for built-in templates while detail returns the full
-      // canonical value, so we intentionally prefer `fullEval.model`
-      // over `evalData.model` to avoid the chip rendering "small".
       setModel(
         config?.model || fullEval?.model || evalData?.model || "turing_large",
       );

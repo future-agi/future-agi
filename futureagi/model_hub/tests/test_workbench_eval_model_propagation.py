@@ -216,7 +216,7 @@ def test_evaluation_configs_endpoint_surfaces_run_config(
     row = response.json()["result"]["evaluation_configs"][0]
     assert row["run_config"]["agent_mode"] == "agent"
     assert row["run_config"]["pass_threshold"] == 0.5
-    assert set(row["run_config"].keys()) == set(_RUN_CONFIG_DEFAULTS)
+    assert set(row["run_config"].keys()) == set(_RUN_CONFIG_DEFAULTS) | {"model"}
 
 
 @pytest.mark.django_db

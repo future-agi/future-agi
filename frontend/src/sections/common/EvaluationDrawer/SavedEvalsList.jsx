@@ -1,5 +1,5 @@
 /* eslint-disable react/prop-types */
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Box,
   Button,
@@ -744,6 +744,7 @@ const SavedEvalsList = ({
   onClose,
   disableDelete = false,
   disableDeleteReason,
+  autoSelectedNames,
 }) => {
   const { setVisibleSection, setCurrentTab } = useEvaluationContext();
   const handleAddClick = () => {
@@ -755,6 +756,21 @@ const SavedEvalsList = ({
     setVisibleSection("config");
   };
   const [sel, setSel] = useState(new Set());
+  const processedRef = useRef(new Set());
+
+  useEffect(() => {
+    if (!autoSelectedNames?.size) return;
+    const newIds = evals
+      .filter((e) => autoSelectedNames.has(e.name) && !processedRef.current.has(e.id))
+      .map((e) => e.id);
+    if (newIds.length === 0) return;
+    newIds.forEach((id) => processedRef.current.add(id));
+    setSel((prev) => {
+      const next = new Set(prev);
+      newIds.forEach((id) => next.add(id));
+      return next;
+    });
+  }, [evals, autoSelectedNames]);
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
   const toggle = (item) =>
     setSel((p) => {
@@ -965,6 +981,7 @@ SavedEvalsList.propTypes = {
   onClose: PropTypes.func,
   disableDelete: PropTypes.bool,
   disableDeleteReason: PropTypes.string,
+  autoSelectedNames: PropTypes.instanceOf(Set),
 };
 
 export default SavedEvalsList;
