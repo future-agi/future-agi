@@ -13,6 +13,7 @@ table on the CH25 connection; annotations retain their own source boundary.
 
 from __future__ import annotations
 
+import functools
 import re
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, replace
@@ -849,7 +850,8 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
             if values and all(isinstance(value, str) for value in values):
                 yield plan, witness, values
 
-    def _public_long_text_candidate_seed_plan(self):
+    @functools.cached_property
+    def _long_text_candidate_seed_plan(self):
         """Find a selective, compiler-proven necessary typed-string witness.
 
         Long positive text filters otherwise classify hundreds of unrelated
@@ -887,7 +889,8 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
             )
         return None
 
-    def _public_short_text_candidate_seed_plan(self):
+    @functools.cached_property
+    def _short_text_candidate_seed_plan(self):
         """Seed short exact strings from the compiler's own typed value bloom.
 
         Selectivity policy for positive typed-string acquisition. A seed is
@@ -952,6 +955,14 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
                 return plan
         return None
 
+    def _public_long_text_candidate_seed_plan(self):
+        """Stable seam over the once-compiled long-text plan."""
+        return self._long_text_candidate_seed_plan
+
+    def _public_short_text_candidate_seed_plan(self):
+        """Stable seam over the once-compiled short-text plan."""
+        return self._short_text_candidate_seed_plan
+
     def _public_text_candidate_seed_plan(self):
         """Either typed-string regime, whichever value index is available."""
         return (
@@ -959,13 +970,40 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
             or self._public_short_text_candidate_seed_plan()
         )
 
-    def _uses_short_text_candidate_seed(self) -> bool:
-        """True when the short exact-string lane is the active seed plan."""
+    @functools.cached_property
+    def _short_text_candidate_seed_lane(self) -> bool:
+        """Compile the three seed plans once per builder, not per hook call.
+
+        Deciding this recompiles ``_partition_trace_filter_plans`` several
+        times over, and the bounded-witness hooks
+        (``_scalar_candidate_witness_envelope`` ->
+        ``_short_text_seed_witness_slack`` -> here) ask for it on every
+        statement and twice inside ``filter_seed_width_policy``. The answer
+        cannot change over a builder's life: every attribute it reads -
+        ``filters``, ``search``, ``sort_params``, ``project_version_id``,
+        ``project_id``/``project_ids`` and the ``_bounded_*`` flags - is
+        assigned in ``__init__`` and never rebound afterwards by this class.
+
+        The one post-construction ``builder.filters`` rebind in the tree
+        (``tracer/selectors/eval_tasks/row_resolver.py``, which pins a
+        resolved ``created_at`` window) is on a builder constructed with
+        ``bounded_identity_only=True``; that makes
+        ``_uses_attribute_coordinate_replay`` - and so
+        ``_uses_scalar_coordinate_replay`` and every text seed plan below it -
+        False whatever the filters say, so the cached answer is invariant
+        there. Only the *lane* is cached: the slack setting and the width
+        policy are still read per statement, so an operator change still takes
+        effect on the next read.
+        """
         return (
             super()._public_scalar_candidate_seed_plan() is None
             and self._public_long_text_candidate_seed_plan() is None
             and self._public_short_text_candidate_seed_plan() is not None
         )
+
+    def _uses_short_text_candidate_seed(self) -> bool:
+        """True when the short exact-string lane is the active seed plan."""
+        return self._short_text_candidate_seed_lane
 
     def _public_boolean_candidate_seed_plan(self):
         leaves = self._active_non_time_filters()

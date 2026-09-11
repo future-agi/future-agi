@@ -1397,7 +1397,7 @@ def _head_seed_cte_prewhere() -> str:
 def _seed(builder=None, *, slack: int | None = None, **kwargs):
     """One seed statement, optionally with the switch on."""
 
-    call = dict(slice_start=SLICE[0], slice_end=SLICE[1], limit=200, **kwargs)
+    call = {"slice_start": SLICE[0], "slice_end": SLICE[1], "limit": 200, **kwargs}
     if slack is None:
         return (builder or picker_leaves(1)).build_filter_candidate_seed_page(**call)
     with override_settings(FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS=slack):
@@ -1429,19 +1429,45 @@ def test_the_seed_statement_is_byte_identical_while_the_switch_is_off():
 
 
 @pytest.mark.parametrize(
-    "offset,expected_start",
+    "start_offset,end_offset,expected_start,expected_end",
     [
-        (timedelta(0), END - timedelta(hours=5)),
+        (
+            timedelta(0),
+            timedelta(0),
+            END - timedelta(hours=5),
+            END + timedelta(hours=1),
+        ),
         # A slice that does not start on the hour floors before the slack is
         # applied, so the bound always lands on the pruning granularity.
-        (timedelta(minutes=17), END - timedelta(hours=6)),
+        (
+            timedelta(minutes=17),
+            timedelta(0),
+            END - timedelta(hours=6),
+            END + timedelta(hours=1),
+        ),
+        # ... and one that does not END on the hour CEILS before the slack, so
+        # the upper bound still covers the last partial hour of roots. The
+        # slice ends at 22:37; the envelope may not stop at 23:37.
+        (
+            timedelta(0),
+            timedelta(hours=1, minutes=23),
+            END - timedelta(hours=5),
+            END,
+        ),
+        # Both ends ragged: the two roundings are independent.
+        (
+            timedelta(minutes=17),
+            timedelta(hours=1, minutes=23),
+            END - timedelta(hours=6),
+            END,
+        ),
     ],
-    ids=["hour_aligned_slice", "ragged_slice"],
+    ids=["hour_aligned_slice", "ragged_start", "ragged_end", "ragged_both_ends"],
 )
 def test_the_switch_bounds_the_witness_scan_on_hour_aligned_parameters(
-    offset, expected_start
+    start_offset, end_offset, expected_start, expected_end
 ):
-    slice_start, slice_end = SLICE[0] - offset, SLICE[1]
+    slice_start, slice_end = SLICE[0] - start_offset, SLICE[1] - end_offset
     with override_settings(FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS=1):
         sql, params = picker_leaves(1).build_filter_candidate_seed_page(
             slice_start=slice_start, slice_end=slice_end, limit=200
@@ -1452,13 +1478,16 @@ def test_the_switch_bounds_the_witness_scan_on_hour_aligned_parameters(
     assert _ENVELOPE_SQL in cte
     assert _ENVELOPE_SQL not in roots
     assert params["filter_witness_start"] == expected_start
-    assert params["filter_witness_end"] == slice_end + timedelta(hours=1)
+    assert params["filter_witness_end"] == expected_end
+    # The envelope contains the slice it bounds, whichever way the ends round.
+    assert params["filter_witness_start"] <= slice_start
+    assert params["filter_witness_end"] >= slice_end
     for name in ("filter_witness_start", "filter_witness_end"):
         moment = params[name]
         assert (moment.minute, moment.second, moment.microsecond) == (0, 0, 0)
         # SQL reads microseconds; the datetimes are the orchestration contract.
         assert params[f"{name}_us"] == _unix_microseconds(moment)
-    assert f"%({name}_us)s" not in roots
+        assert f"%({name}_us)s" not in roots
 
     # Everything else about the CTE is exactly what it was: the root-population
     # subquery on the slice, the membership join, no tombstone or page keyset.
@@ -1492,6 +1521,47 @@ def test_a_keyset_continuation_tightens_the_envelope_to_the_cursor_hour():
     assert params["filter_witness_start"] == page_one_params["filter_witness_start"]
     # The keyset itself stays where it was: outside the witness scan.
     cte, roots = sql.split("SELECT trace_id, id AS root_span_id", 1)
+    assert "filter_before_start_us" in roots
+    assert "filter_before" not in cte
+
+
+def test_a_ragged_continuation_ceils_the_cursor_hour_not_the_ragged_slice_end():
+    """A mid-hour cursor inside a mid-hour slice rounds on its own boundary.
+
+    Page one of this slice ends at 22:37 and has to carry witnesses up to
+    midnight. The continuation resumes below 21:43, so the newest root it can
+    publish sits an hour lower - and the ceiling it rounds up to is the
+    cursor's hour, not the slice's. Both roundings are therefore pinned on
+    values that are not whole hours, which the aligned end could hide.
+    """
+
+    ragged_end = SLICE[1] - timedelta(hours=1, minutes=23)  # 22:37
+    cursor = SLICE[1] - timedelta(hours=2, minutes=17)  # 21:43
+    sql, params = _seed(
+        slack=1,
+        slice_end=ragged_end,
+        before_start_time=cursor,
+        before_id="tr-ragged",
+    )
+    page_one_params = _seed(slack=1, slice_end=ragged_end)[1]
+
+    # ceil_hour(21:43) + 1h = 23:00, an hour below ceil_hour(22:37) + 1h.
+    assert params["filter_witness_end"] == END - timedelta(hours=1)
+    assert page_one_params["filter_witness_end"] == END
+    assert params["filter_witness_end"] < page_one_params["filter_witness_end"]
+    # floor_hour(20:00) - 1h = 19:00; the cursor never moves the lower bound.
+    assert params["filter_witness_start"] == END - timedelta(hours=5)
+    assert params["filter_witness_start"] == page_one_params["filter_witness_start"]
+    for name in ("filter_witness_start", "filter_witness_end"):
+        moment = params[name]
+        assert (moment.minute, moment.second, moment.microsecond) == (0, 0, 0)
+        assert params[f"{name}_us"] == _unix_microseconds(moment)
+    # The envelope still covers every root the continuation can publish.
+    assert params["filter_witness_start"] <= SLICE[0]
+    assert params["filter_witness_end"] >= cursor
+    cte, roots = sql.split("SELECT trace_id, id AS root_span_id", 1)
+    assert _ENVELOPE_SQL in cte
+    assert _ENVELOPE_SQL not in roots
     assert "filter_before_start_us" in roots
     assert "filter_before" not in cte
 
