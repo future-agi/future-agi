@@ -26,6 +26,9 @@ from tracer.selectors.filter_seed_width import (
     EmptyDensityEstimate,
     FilterSeedWidthPolicy,
 )
+from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
+    _TRACE_ANY_SPAN_COLUMNS,
+)
 from tracer.services.clickhouse.query_builders.trace_list import (
     _LONG_WINDOW_ORDERED_ROOT_INITIAL_SLICE,
     _SELECTIVE_EXACT_TEXT_MIN_LENGTH,
@@ -96,6 +99,51 @@ _MAX_WITNESS_SLACK_HOURS = 168
 # opening width and the granularity the ``toStartOfHour`` primary-key prefix
 # prunes on.
 _SHORT_TEXT_SEED_BOUNDED_WITNESS_FLOOR = timedelta(hours=1)
+
+# Every any-scope plan a ``_TRACE_ANY_SPAN_COLUMNS`` leaf compiles to: one
+# ``argMax`` over a bare span column, nullable columns wrapped in ``tuple``.
+# Recognising the emitted aggregate rather than the request leaf identifies
+# such a plan however it was routed - a bare native name and the SYSTEM_METRIC
+# alias of the same column compile to exactly this - and a compiler that
+# changes the spelling stops matching, which returns those shapes to the
+# ordered walk they run today rather than granting them anything.
+_NATIVE_ANY_SPAN_COLUMNS = frozenset(
+    column for column, _, _ in _TRACE_ANY_SPAN_COLUMNS.values()
+)
+_NATIVE_ANY_SPAN_COLUMN_AGGREGATES = (
+    re.compile(r"argMax\((?P<column>\w+), _peerdb_version\) AS \w+"),
+    re.compile(r"argMax\(tuple\((?P<column>\w+)\), _peerdb_version\)\.1 AS \w+"),
+)
+
+#: The typed attribute Maps a coordinate-pruned replay exists to keep off
+#: whole partitions.
+_ATTRIBUTE_REPLAY_COLUMNS = (
+    "span_attr_str",
+    "span_attr_num",
+    "span_attr_bool",
+    "span_attributes_raw",
+)
+
+
+def _replays_typed_attributes(plan: LatestFilterPredicate) -> bool:
+    """True when this plan reads a typed attribute Map or the JSON overflow."""
+
+    return bool(plan.aggregates) and any(
+        column in " ".join(plan.aggregates) for column in _ATTRIBUTE_REPLAY_COLUMNS
+    )
+
+
+def _replays_native_any_span_column(plan: LatestFilterPredicate) -> bool:
+    """True when this plan replays one bare span column and nothing else."""
+
+    if len(plan.aggregates) != 1:
+        return False
+    for pattern in _NATIVE_ANY_SPAN_COLUMN_AGGREGATES:
+        match = pattern.fullmatch(plan.aggregates[0].strip())
+        if match is not None and match.group("column") in _NATIVE_ANY_SPAN_COLUMNS:
+            return True
+    return False
+
 
 # The column names ClickHouse 25.3 returns for ``EXPLAIN ESTIMATE``. They are
 # the discriminator the density probe's reducer uses to tell an empty estimate
@@ -540,7 +588,30 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
     _FILTER_BUILDER_CLS = ClickHouseFilterBuilderV2
 
     def _uses_attribute_coordinate_replay(self) -> bool:
-        """Prune public typed-attribute replay by complete immutable prefixes."""
+        """Prune public typed-attribute replay by complete immutable prefixes.
+
+        At least one any-scope leaf must replay a typed attribute Map, because
+        that replay is what the prefix harvest exists to keep off whole
+        partitions. The remaining any-scope leaves may be native span columns
+        (``model``, ``provider``, ``status``, ``span_name``, ``service_name``,
+        ``span_id``, ``span_kind``/``node_type``): the harvest selects every
+        ``(observation_type, service_name, hour, trace_id)`` coordinate of the
+        candidate trace IDs, carries no leaf predicate and applies no limit, so
+        it cannot hide a span whichever column the classifier later compares.
+        Demoting such a conjunction cost it the prune AND the batch - one
+        ``model`` leaf beside an attribute leaf classified 200 seeded roots ten
+        at a time, twenty statements against a budget of forty-eight.
+
+        Only the classifier's chunking and prefix prune follow from this hook.
+        Seed lane selection follows ``_uses_scalar_coordinate_replay``, which
+        still requires EVERY any-scope leaf to be a typed Map, so no
+        conjunction gains or loses a candidate seed here.
+
+        A leaf the compiler routes to ``residual`` - ``has_eval``,
+        ``has_annotation``, ``annotator``, ``end_user_id``, native ``tags``,
+        annotation and eval-metric columns - still disables the prune: those
+        are not replayed from the spans table at these coordinates.
+        """
 
         if (
             self.project_id is None
@@ -558,31 +629,22 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
             return False
         plans, residual = self._partition_trace_filter_plans(self._bounded_filters())
         any_plans = [plan for plan in plans if plan.scope == "any"]
-        return bool(
-            any_plans
-            and not residual
-            and all(
-                plan.aggregates
-                and any(
-                    column in " ".join(plan.aggregates)
-                    for column in (
-                        "span_attr_str",
-                        "span_attr_num",
-                        "span_attr_bool",
-                        "span_attributes_raw",
-                    )
-                )
-                for plan in any_plans
-            )
+        if residual or not any_plans:
+            return False
+        return any(_replays_typed_attributes(plan) for plan in any_plans) and all(
+            _replays_typed_attributes(plan) or _replays_native_any_span_column(plan)
+            for plan in any_plans
         )
 
     def _uses_scalar_coordinate_replay(self) -> bool:
-        # Numeric raw-witness accelerators retain their scalar-only contract.
+        # Numeric raw-witness accelerators retain their scalar-only contract,
+        # and every seed lane below is gated on it: a native span column beside
+        # an attribute leaf keeps the coordinate prune but chooses no seed.
         if not self._uses_attribute_coordinate_replay():
             return False
         plans, _ = self._partition_trace_filter_plans(self._bounded_filters())
         return all(
-            "JSON" not in " ".join(plan.aggregates)
+            _replays_typed_attributes(plan) and "JSON" not in " ".join(plan.aggregates)
             for plan in plans
             if plan.scope == "any"
         )
