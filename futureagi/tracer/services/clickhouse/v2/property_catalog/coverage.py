@@ -214,9 +214,19 @@ def _any_project_predating_its_floor(client, settings, floors) -> str | None:
     rows = client.execute(
         "SELECT toString(project_id) FROM spans "
         "WHERE project_id IN %(project_ids)s "
-        "AND start_time < arrayElement(%(floors)s, "
-        "    indexOf(%(project_ids)s, toString(project_id))) "
-        f"    - {_COVERAGE_MARGIN} "
+        "AND ("
+        # A row whose id does not map back into the bound array would get
+        # indexOf = 0, and arrayElement(arr, 0) is ClickHouse's DEFAULT (empty
+        # string), whose comparison is false -- silently reporting the project
+        # COVERED. That is the one direction this check must never fail in, so
+        # an unmappable row counts as uncovered instead. The IN clause above
+        # should make this unreachable; it is a fail-closed backstop, not an
+        # expected path.
+        "    indexOf(%(project_ids)s, toString(project_id)) = 0"
+        "    OR start_time < arrayElement(%(floors)s, "
+        "        indexOf(%(project_ids)s, toString(project_id))) "
+        f"        - {_COVERAGE_MARGIN} "
+        ") "
         "LIMIT 1",
         {
             "project_ids": ids,

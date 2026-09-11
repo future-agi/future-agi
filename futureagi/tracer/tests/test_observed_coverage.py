@@ -291,6 +291,30 @@ def test_probe_cost_is_flat_in_scope_size():
 
 
 @pytest.mark.unit
+def test_unmappable_project_id_fails_closed_not_open():
+    """A row whose id does not map back into the bound array is UNCOVERED.
+
+    The probe locates each row's own floor with
+    ``arrayElement(floors, indexOf(project_ids, toString(project_id)))``. On a
+    miss ``indexOf`` returns 0, and ClickHouse's ``arrayElement(arr, 0)`` yields
+    the type default -- an empty string -- whose comparison is false. Without the
+    guard that silently reports the project COVERED, which is the single
+    direction this check must never fail in.
+
+    Verified against ClickHouse 25.3: indexOf(['a','b'],'missing') = 0,
+    arrayElement(['x','y'],0) = '' (empty() = 1), and a `<` against it is false.
+    """
+    client = _Client(below=())
+    _coverage(rows=[{"project_id": "p1", "floor": "2026-01-01 00:00:00"}], client=client)
+
+    sql = client.calls[-1]["sql"]
+    assert "indexOf(%(project_ids)s, toString(project_id)) = 0" in sql
+    # The guard must be an OR arm of the predicate, so an unmappable row matches
+    # and is reported as a gap rather than skipped.
+    assert " OR start_time <" in sql
+
+
+@pytest.mark.unit
 def test_floor_query_is_tenant_scoped():
     """Coverage must not be derived from another tenant's rows."""
     observed = _Observed([{"project_id": "p1", "floor": "2026-01-01 00:00:00"}])
