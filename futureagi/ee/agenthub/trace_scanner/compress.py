@@ -27,6 +27,7 @@ def _get_span_kind(attrs: dict) -> str:
                 return str(value)
     return ""
 
+
 # ---------------------------------------------------------------------------
 # KEVINIFY — "Why waste time say lot word when few word do trick"
 # ---------------------------------------------------------------------------
@@ -362,7 +363,7 @@ def structural_prefilter(trace_data):
     by_depth = {}
     for s in spans_flat:
         by_depth.setdefault(s["depth"], []).append(s)
-    for depth, siblings in by_depth.items():
+    for _depth, siblings in by_depth.items():
         durations = [s["duration"] for s in siblings if s["duration"] > 0]
         if len(durations) >= 3:
             mean = statistics.mean(durations)
@@ -402,7 +403,7 @@ def structural_prefilter(trace_data):
         signals["llm_only_trace"] = True
 
     anomalous_ids = set()
-    for key, ids in signals.items():
+    for _key, ids in signals.items():
         if isinstance(ids, list):
             anomalous_ids.update(ids)
 
@@ -468,7 +469,7 @@ def structural_prefilter_with_ids(trace_data):
     by_depth = {}
     for s in spans_flat:
         by_depth.setdefault(s["depth"], []).append(s)
-    for depth, siblings in by_depth.items():
+    for _depth, siblings in by_depth.items():
         durations = [s["duration"] for s in siblings if s["duration"] > 0]
         if len(durations) >= 3:
             mean = statistics.mean(durations)
@@ -539,7 +540,7 @@ def extract_programmatic_metadata(trace_data, prefilter_result):
         flat_spans.extend(flatten_spans(top_span))
 
     tools_called = []
-    for span, depth in flat_spans:
+    for span, _depth in flat_spans:
         attrs = span.get("span_attributes", {})
         kind = _get_span_kind(attrs)
         if kind in {"Tool", "TOOL"} or "Tool" in span["span_name"]:
@@ -556,7 +557,7 @@ def extract_programmatic_metadata(trace_data, prefilter_result):
 
     all_inputs = []
     all_outputs = []
-    for span, depth in flat_spans:
+    for span, _depth in flat_spans:
         attrs = span.get("span_attributes", {})
         inp = str(attrs.get("input.value", ""))
         out = str(attrs.get("output.value", ""))
@@ -750,7 +751,8 @@ def _is_nontextual(d):
             if isinstance(head, (int, float)):
                 return True
             if isinstance(head, dict) and any(
-                isinstance(head.get(kk), list) and head.get(kk)
+                isinstance(head.get(kk), list)
+                and head.get(kk)
                 and isinstance(head[kk][0], (int, float))
                 for kk in ("embedding", "values", "vector", "scores")
             ):
@@ -786,7 +788,7 @@ def unwrap_output(raw):
             # the completion dimension fires. 11 corpus roots are function-call-only.
             fc = x.get("function_call") or x.get("functionCall")
             if isinstance(fc, dict) and str(fc.get("arguments") or "").strip():
-                return f"[function_call {fc.get('name','')}] {fc['arguments']}"
+                return f"[function_call {fc.get('name', '')}] {fc['arguments']}"
             tcs = x.get("tool_calls")
             if isinstance(tcs, list) and tcs:
                 got = []
@@ -803,7 +805,9 @@ def unwrap_output(raw):
                     if not isinstance(fn, dict):
                         continue
                     if str(fn.get("arguments") or "").strip():
-                        got.append(f"[tool_call {fn.get('name','')}] {fn['arguments']}")
+                        got.append(
+                            f"[tool_call {fn.get('name', '')}] {fn['arguments']}"
+                        )
                 if got:
                     return "\n".join(got)
             if isinstance(x.get("content"), (list, dict)):
@@ -841,6 +845,86 @@ def unwrap_output(raw):
     return raw or ""
 
 
+# ---------------------------------------------------------------------------
+# CHAT TRANSCRIPT — reconstruct ordered turns from per-message attributes
+# ---------------------------------------------------------------------------
+#
+# Producers emit the conversation as per-message attributes
+# (gen_ai./llm. ...messages.N.message.*). A flat input.value is a partial or
+# serialized blob; the attrs are the full ordered turns. Rebuild a readable
+# transcript so the judge sees who said what, in order, with tool calls
+# attached to the message that made them. Input messages render first (the
+# request), then output messages (the reply).
+
+_MSG_DIRECTIONS = (
+    ("gen_ai.input.messages", "llm.input_messages"),
+    ("gen_ai.output.messages", "llm.output_messages"),
+)
+
+
+def _build_message_transcript(attrs: dict) -> str:
+    """Ordered chat turns from per-message attrs, or "" when none exist."""
+    out = []
+    for genai, oinfer in _MSG_DIRECTIONS:
+        msgs: dict[int, dict] = {}
+        for key, val in attrs.items():
+            m = re.match(rf"^{re.escape(genai)}\.(\d+)\.message(?:\.(.+))?$", key)
+            if m:
+                msgs.setdefault(int(m.group(1)), {})[m.group(2) or ""] = val
+        if not msgs:
+            for key, val in attrs.items():
+                m = re.match(rf"^{re.escape(oinfer)}\.(\d+)\.message(?:\.(.+))?$", key)
+                if m:
+                    msgs.setdefault(int(m.group(1)), {})[m.group(2) or ""] = val
+        for idx in sorted(msgs):
+            m = msgs[idx]
+            role = str(m.get("role") or "message")
+            body = []
+            if m.get("content"):
+                body.append(str(m["content"]))
+            for k in sorted(
+                (
+                    k
+                    for k in m
+                    if re.match(r"^contents\.\d+\.message_content\.text$", k)
+                ),
+                key=lambda k: int(k.split(".")[1]),
+            ):
+                body.append(str(m[k]))
+            for k in sorted(
+                (
+                    k
+                    for k in m
+                    if re.match(r"^tool_calls\.\d+\.tool_call\.function\.name$", k)
+                ),
+                key=lambda k: int(k.split(".")[1]),
+            ):
+                n = int(k.split(".")[1])
+                args = m.get(f"tool_calls.{n}.tool_call.function.arguments", "")
+                body.append(f"tool_call {m[k]}({args})")
+            if m.get("function_call_name"):
+                body.append(
+                    f"function_call {m['function_call_name']}"
+                    f"({m.get('function_call_arguments_json', '')})"
+                )
+            if body:
+                out.append(f"{role}: {' | '.join(body)}")
+    return "\n".join(out)
+
+
+def _exception_text(attrs: dict) -> str:
+    """The reason a span errored, from standard OTel exception-event attrs."""
+    parts = []
+    if attrs.get("exception.type"):
+        parts.append(str(attrs["exception.type"]))
+    if attrs.get("exception.message"):
+        parts.append(str(attrs["exception.message"]))
+    if attrs.get("exception.stacktrace"):
+        st = str(attrs["exception.stacktrace"])
+        parts.append("stacktrace: " + (st[:500] + "…" if len(st) > 500 else st))
+    return " | ".join(parts)
+
+
 def build_trace_payload(trace_data, prefilter_result, retry_ids=()):
     """The scanner model's input: every span, raw, in execution order.
 
@@ -871,9 +955,18 @@ def build_trace_payload(trace_data, prefilter_result, retry_ids=()):
         is_flagged = sid in flagged
         inp = _v3_plain(a.get("input.value", ""), FIELD_RUNAWAY_BUDGET)
         out = _v3_plain(a.get("output.value", ""), FIELD_RUNAWAY_BUDGET)
+        msg = _v3_plain(_build_message_transcript(a), FIELD_RUNAWAY_BUDGET)
+        err = _exception_text(a)
         # A span with no content, no status and no flag adds nothing the flow
         # outline doesn't already carry.
-        if not (inp or out or span.get("status_code") not in (None, "Unset") or is_flagged):
+        if not (
+            inp
+            or out
+            or msg
+            or err
+            or span.get("status_code") not in (None, "Unset")
+            or is_flagged
+        ):
             continue
         entry = {
             "id": sid,
@@ -883,6 +976,10 @@ def build_trace_payload(trace_data, prefilter_result, retry_ids=()):
             "in": inp,
             "out": out,
         }
+        if msg:
+            entry["msg"] = msg
+        if err:
+            entry["err"] = err
         kind = _get_span_kind(a)
         if kind:
             entry["kind"] = kind
