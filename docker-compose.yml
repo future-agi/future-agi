@@ -190,6 +190,7 @@ services:
 
   frontend:
     image: futureagi/frontend:${FRONTEND_VERSION:-latest}
+    mem_limit: "${FRONTEND_MEMORY:-256M}"
     ports:
       - "${FRONTEND_PORT:-3000}:80"
     environment:
@@ -206,6 +207,7 @@ services:
 
   backend:
     image: futureagi/future-agi:${FUTURE_AGI_VERSION:-latest}
+    mem_limit: "${BACKEND_MEMORY:-4G}"
     ports:
       - "${BACKEND_PORT:-8000}:80"
     env_file:
@@ -239,6 +241,7 @@ services:
 
   worker:
     image: futureagi/future-agi:${FUTURE_AGI_VERSION:-latest}
+    mem_limit: "${WORKER_MEMORY:-3G}"
     env_file:
       - path: .env
         required: false
@@ -316,6 +319,8 @@ services:
     # Unlike the other per-queue workers this admission boundary is always on;
     # the generic worker deliberately excludes exact_aggregation.
     profiles: []
+    # Concurrency is pinned to 1 activity, so this needs far less than `worker`.
+    mem_limit: "${WORKER_EXACT_AGGREGATION_MEMORY:-1G}"
     environment:
       <<: *backend-env
       SERVICE_TYPE: temporal-worker
@@ -399,6 +404,7 @@ services:
   # the shipped example via AGENTCC_CONFIG_PATH).
   agentcc-gateway:
     image: futureagi/agentcc-gateway:${AGENTCC_GATEWAY_VERSION:-latest}
+    mem_limit: "${AGENTCC_GATEWAY_MEMORY:-512M}"
     ports:
       - "${AGENTCC_GATEWAY_PORT:-8090}:8080"
     env_file:
@@ -420,6 +426,9 @@ services:
 
   serving:
     image: futureagi/serving:${SERVING_VERSION:-latest}
+    # Loads embedding models lazily on first request, so this needs real
+    # headroom — several models can be resident at once.
+    mem_limit: "${SERVING_MEMORY:-4G}"
     ports:
       - "${SERVING_PORT:-8080}:8080"
     env_file:
@@ -452,6 +461,7 @@ services:
 
   postgres:
     image: postgres:16
+    mem_limit: "${PG_MEMORY:-2G}"
     # wal_level=logical + slots enable PeerDB CDC replication.
     command: >
       postgres
@@ -485,6 +495,13 @@ services:
     # CH 24.x volume) to v2 the first time it boots — so an existing
     # volume does not strictly require `docker compose down -v`.
     image: clickhouse/clickhouse-server:25.3-alpine
+    # Without a limit ClickHouse derives max_server_memory_usage from
+    # max_server_memory_usage_to_ram_ratio (0.9) against the *host* — on an
+    # 8 GB Docker VM it budgets 6.87 GiB for itself and the other 17
+    # always-on containers contend for the rest. It reads the cgroup limit,
+    # so capping here bounds that budget (4G -> 3.60 GiB).
+    cpus: "${CH_CPUS:-2.0}"
+    mem_limit: "${CH_MEMORY:-4G}"
     environment:
       # The 25.3-alpine image ships a default-user.xml that restricts
       # the `default` user to 127.0.0.1 / ::1 only. Backend connects
@@ -515,6 +532,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "${CH_CPUS:-2.0}"
+          memory: "${CH_MEMORY:-4G}"
     restart: unless-stopped
 
   # ------------------------------------------------------------------------
@@ -920,6 +942,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    mem_limit: "${REDIS_MEMORY:-512M}"
     command: redis-server --appendonly yes
     ports:
       - "127.0.0.1:${REDIS_PORT:-6379}:6379"
@@ -934,11 +957,15 @@ services:
 
   rabbitmq:
     image: rabbitmq:3-management
+    mem_limit: "${RABBITMQ_MEMORY:-1G}"
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-user}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-password}
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
+      # RabbitMQ ignores the cgroup limit when sizing its memory watermark, so
+      # the limit above is not self-enforcing. This realigns it — see the file.
+      - ./futureagi/config/rabbitmq/rabbitmq.conf:/etc/rabbitmq/conf.d/20-memory.conf:ro
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "check_running"]
       interval: 10s
@@ -948,6 +975,7 @@ services:
 
   minio:
     image: minio/minio:RELEASE.2025-02-07T23-21-09Z
+    mem_limit: "${MINIO_MEMORY:-1G}"
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-futureagi}
@@ -970,6 +998,7 @@ services:
 
   temporal:
     image: temporalio/auto-setup:1.29.1
+    mem_limit: "${TEMPORAL_MEMORY:-1G}"
     environment:
       DB: postgres12
       DB_PORT: 5432
