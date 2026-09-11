@@ -7,7 +7,7 @@ import { transformEvaluationPayload } from "./common";
 import { Box, Button, Skeleton, Typography } from "@mui/material";
 import { useChartsViewContext } from "./ChartsViewProvider/ChartsViewContext";
 import { getStorage } from "src/hooks/use-local-storage";
-import { normalizeTimestamp } from "./ChartsViewProvider/common";
+import { parseTimestampToMs } from "./ChartsViewProvider/timestampUtils";
 import {
   AGGREGATION_PREPARING_MESSAGE,
   awaitAggregationRequestWithDeadline,
@@ -91,7 +91,7 @@ export default function ChartWithFetch({ evaluation, observeId, inView }) {
       series: result.map((seriesObj) => ({
         name: seriesObj?.name,
         data: (seriesObj?.data ?? []).map((item) => ({
-          x: normalizeTimestamp(item.timestamp),
+          x: parseTimestampToMs(item.timestamp),
           y: item?.value,
         })),
       })),
