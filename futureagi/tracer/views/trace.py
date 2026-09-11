@@ -215,8 +215,23 @@ TRACE_LIST_ENRICHMENT_MAX_WORKERS = settings.TRACE_LIST_ENRICHMENT_MAX_WORKERS
 # still placing a hard ceiling on Python memory and the subsequent CH IN set.
 # Pages above this bound fail closed (503); they are never silently truncated.
 TRACE_LIST_ANNOTATION_SCORE_SPAN_LIMIT = settings.TRACE_LIST_ANNOTATION_SCORE_SPAN_LIMIT
+# WHICH KNOB BINDS. The selector merges its own _READ_SETTINGS (whose
+# max_threads is FILTER_SELECTOR_MAX_THREADS, still 1) UNDER whatever the
+# caller passes as read_settings, so on this path the dict below is what
+# reaches ClickHouse - FILTER_SELECTOR_MAX_THREADS is a different spec and does
+# not bind here. Verified server-side against system.query_log: every seed
+# statement of a measured read reported Settings['max_threads'] = the value
+# below. Two phases pin themselves lower regardless and are unaffected: root /
+# population time discovery clamp to 1, and the density probe to 1.
+#
+# Two workers, not one. Measured on the same statements at both settings: a
+# dense four-hour bounded-witness seed ran 3.8 s at one worker and 1.76 s at
+# two, and the heavy statement of a frozen-END read went ~11.0 s to 5.27 s with
+# byte-identical reads. One worker was leaving the interactive list read a
+# factor of two slower for no safety the byte and memory caps below do not
+# already provide.
 TRACE_LIST_READ_SETTINGS = {
-    "max_threads": 1,
+    "max_threads": 2,
     "max_block_size": settings.OBSERVABILITY_LIST_MAX_BLOCK_SIZE,
     "max_memory_usage": settings.OBSERVABILITY_LIST_MAX_MEMORY_BYTES,
     "max_bytes_to_read": settings.OBSERVABILITY_LIST_MAX_BYTES,

@@ -89,6 +89,10 @@ def picker_leaves(width: int = 1, *, operation: str = "in", **kwargs):
     )
 
 
+# Pinned at the legacy slack of zero: this test asserts the UNBOUNDED witness
+# CTE, one start_time pair and no envelope. The default is now one hour, whose
+# extra pair is asserted by the bounded-witness tests further down.
+@override_settings(FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS=0)
 @pytest.mark.parametrize("width", [1, 2, 5, 10])
 @pytest.mark.parametrize(
     "make",
@@ -356,9 +360,20 @@ def test_short_text_declares_a_row_budget_and_the_other_lanes_do_not():
 
     policy = picker_leaves(2).filter_seed_width_policy()
     assert policy is not None
-    assert policy.initial_width == timedelta(hours=4)
-    assert policy.min_width == timedelta(hours=4)
+    # The default is now the bounded-witness mode, whose floor is one hour:
+    # there the statement's cost really is linear in the envelope's hours, so
+    # a narrower slice really is a cheaper statement.
+    assert policy.initial_width == timedelta(hours=1)
+    assert policy.min_width == timedelta(hours=1)
+    # The unprobed/unsignalled cap does not move with the mode: it is the
+    # fixed ceiling the budget replaced, in both modes.
     assert policy.unsignalled_cap == timedelta(hours=4)
+    assert policy.unprobed_cap == timedelta(hours=4)
+    with override_settings(FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS=0):
+        legacy = picker_leaves(2).filter_seed_width_policy()
+    assert legacy.initial_width == timedelta(hours=4)
+    assert legacy.min_width == timedelta(hours=4)
+    assert legacy.unsignalled_cap == timedelta(hours=4)
     assert (
         policy.target_read_rows == settings.FILTER_SELECTOR_TEXT_SEED_TARGET_READ_ROWS
     )
@@ -378,8 +393,8 @@ def test_short_text_declares_a_row_budget_and_the_other_lanes_do_not():
 @pytest.mark.parametrize(
     "window,expected",
     [
-        (timedelta(days=7), timedelta(hours=4)),
-        (timedelta(hours=2), timedelta(hours=2)),
+        (timedelta(days=7), timedelta(hours=1)),
+        (timedelta(hours=2), timedelta(hours=1)),
     ],
 )
 def test_declared_initial_width_is_the_policy_floor_clamped_to_the_request(
@@ -1131,6 +1146,8 @@ def _lane_read(
     return transport, page
 
 
+# The unbounded mode's own schedule: four-hour floor, four-hour opening width.
+@override_settings(FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS=0)
 @pytest.mark.parametrize(
     "window,statements",
     [(timedelta(days=7), 6), (timedelta(days=30), 8), (timedelta(days=365), 12)],
@@ -1165,6 +1182,7 @@ def test_the_real_lane_crosses_a_sparse_window_inside_the_seed_budget(
     assert transport.seed_widths[-2] > timedelta(hours=4)
 
 
+@override_settings(FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS=0)
 def test_the_real_lane_holds_dense_slices_at_the_floor():
     """Where the results are, the budget must not buy less than the old ceiling.
 
@@ -1191,6 +1209,7 @@ def test_the_real_lane_holds_dense_slices_at_the_floor():
     assert page.continuation_slice_end == END - timedelta(hours=24)
 
 
+@override_settings(FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS=0)
 def test_an_unmeasured_real_lane_transport_reproduces_the_ninety_six_hour_cap():
     """The negative control: the budget is only as good as the progress it reads.
 
@@ -1454,6 +1473,7 @@ def _picker_lane_read(
     return transport, page
 
 
+@override_settings(FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS=0)
 def test_the_production_picker_filter_widens_on_a_sparse_tail_and_holds_at_four_hours():
     """The whole point of the budget, on the builder and kwargs the view sends.
 
@@ -1498,6 +1518,7 @@ _ABSENT_THEN_DENSE = {
 @pytest.mark.parametrize(
     "clusters", _ABSENT_THEN_DENSE.values(), ids=_ABSENT_THEN_DENSE
 )
+@override_settings(FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS=0)
 def test_root_time_discovery_never_pins_this_lane_below_its_floor(clusters):
     """Discovery must not hand the budget a window the budget cannot leave.
 
@@ -1753,8 +1774,7 @@ def test_the_seed_statement_is_byte_identical_while_the_switch_is_off():
     difference may be the two-line envelope and its own parameters.
     """
 
-    assert settings.FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS == 0
-    sql, params = _seed()
+    sql, params = _seed(slack=0)
 
     assert sql.startswith(_head_seed_cte_prewhere())
     assert _ENVELOPE_SQL not in sql
@@ -2493,3 +2513,76 @@ def test_a_pinned_slack_changes_the_seed_sql_the_next_hop_emits():
     assert "filter_witness_start_us" in bounded_params
     assert bounded != unbounded
     _render_driver_sql(bounded, bounded_params)
+
+
+def test_the_seed_plan_cache_key_covers_every_input_the_plans_read():
+    """The cache is only correct by construction if this list is complete.
+
+    A memo keyed on a subset of its inputs is a stale answer waiting for the
+    first caller who changes an uncovered one. The claim "nothing outside
+    _SEED_PLAN_CACHE_INPUTS can change a plan" is a claim about a call graph,
+    so walk it: start at the three plan computations, follow every ``self.``
+    method call into the V1 base and this class, and collect every instance
+    ATTRIBUTE read along the way. Every data attribute found must be in the
+    key. Methods and properties are not inputs themselves - their own reads
+    are collected instead, which is what the walk is for.
+
+    If this fails, something now decides a seed plan that the cache cannot
+    see. Add it to _SEED_PLAN_CACHE_INPUTS; do not relax the test.
+    """
+
+    import ast
+    import functools
+    import inspect
+
+    from tracer.services.clickhouse.query_builders import (
+        trace_list as v1_trace_list,
+    )
+    from tracer.services.clickhouse.v2.query_builders import (
+        trace_list as v2_trace_list,
+    )
+
+    sources = {}
+    for module in (v1_trace_list, v2_trace_list):
+        for node in ast.walk(ast.parse(inspect.getsource(module))):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                sources.setdefault(node.name, []).append(node)
+
+    builder = picker_leaves(2)
+    seen: set[str] = set()
+    attributes: set[str] = set()
+    frontier = [
+        "_compute_long_text_candidate_seed_plan",
+        "_compute_short_text_candidate_seed_plan",
+        "_compute_short_text_seed_lane",
+    ]
+    while frontier:
+        name = frontier.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        for node in sources.get(name, []):
+            for child in ast.walk(node):
+                if not (
+                    isinstance(child, ast.Attribute)
+                    and isinstance(child.value, ast.Name)
+                    and child.value.id == "self"
+                ):
+                    continue
+                if child.attr in {"_SEED_PLAN_CACHE_INPUTS", "_seed_plan_memo"}:
+                    continue  # the cache's own machinery, not a plan input
+                member = getattr(type(builder), child.attr, None)
+                if callable(member) or isinstance(
+                    member, (property, functools.cached_property)
+                ):
+                    frontier.append(child.attr)
+                else:
+                    attributes.add(child.attr)
+    # `super()` reaches the V1 sibling of a name this class also defines.
+    assert "_compute_short_text_candidate_seed_plan" in seen
+    assert len(seen) > 5, "the walk found no helpers; the source scan is broken"
+
+    covered = set(type(builder)._SEED_PLAN_CACHE_INPUTS)
+    assert attributes - covered == set(), (
+        f"uncovered seed plan inputs: {sorted(attributes - covered)}"
+    )

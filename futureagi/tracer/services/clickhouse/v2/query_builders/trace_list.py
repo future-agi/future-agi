@@ -614,10 +614,10 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
         The lane has two width schedules because it has two cost shapes, and
         ``FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS`` selects between them:
 
-        * slack zero (the default, and the shipped contract): the witness is
-          time-unbounded, its flat term dominates, and the floor and initial
-          width are both the four hours of the fixed ceiling this budget
-          replaced - ``_SHORT_TEXT_SEED_PROVISIONAL_FLOOR``. Narrowing below
+        * slack zero (the legacy any-span escape hatch; the default is 1 h):
+          the witness is time-unbounded, its flat term dominates, and the
+          floor and initial width are both the four hours of the fixed ceiling
+          this budget replaced - ``_SHORT_TEXT_SEED_PROVISIONAL_FLOOR``. Narrowing below
           that would pay the same flat cost for a fraction of the coverage,
           which is why the row budget can only widen this mode.
         * slack above zero: the witness scan is confined to the roots'
@@ -632,6 +632,12 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
         Both modes keep the same ``target_read_rows`` and the same four-hour
         ``unsignalled_cap``: a transport that reports no progress justifies no
         more than the ceiling this lane started from, whichever mode is on.
+        That number is also the UNPROBED cap - the widest slice either mode may
+        issue on the strength of the previous statement alone. Anything wider
+        must be costed first by ``build_filter_seed_density_probe_query``,
+        because the doubling rule is blind to the next slice's contents and a
+        sparse tail that ends in dense history is exactly where that blindness
+        is expensive.
         The post-discovery reset follows the floor by construction - it is
         ``max(1 h, policy.min_width)`` - so it is one hour in the bounded mode
         and four in the unbounded one, with no second constant to keep in step.
@@ -774,8 +780,9 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
     ) -> tuple[str, dict[str, Any]]:
         """Bound the short exact-string seed's witness scan, when switched on.
 
-        Off (slack zero, the default) this emits nothing and the statement is
-        byte-identical to the unbounded contract. On, the witness must start
+        Off (slack zero, the legacy escape hatch - the default is 1 h) this
+        emits nothing and the statement is byte-identical to the unbounded
+        contract. On, the witness must start
         inside ``[hour_floor(root_start) - slack, hour_ceil(root_end) + slack)``
         where ``[root_start, root_end]`` is the interval of roots the calling
         statement can publish. Every root it publishes therefore keeps any
@@ -1054,8 +1061,9 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
         page that silently drops rows.
 
         So ``_seed_plan_cache_key`` freezes every input the three plans read -
-        filters, search, sort params, project scope, project version and the
-        ``_bounded_*`` flags - and any change to them recomputes. Only the
+        the list is ``_SEED_PLAN_CACHE_INPUTS``, and a test walks the plans'
+        whole call graph and fails if it drifts - and any change to them
+        recomputes. Only the
         plans are cached: the slack setting and the width policy are still read
         per statement, so an operator change still takes effect on the next
         read.
@@ -1069,6 +1077,40 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
             and self._public_short_text_candidate_seed_plan() is not None
         )
 
+    #: Every instance attribute the three text seed plans read, directly or
+    #: through the base-class helpers they call (``_bounded_filters``,
+    #: ``_active_non_time_filters``, ``_uses_attribute_coordinate_replay`` and
+    #: ``_uses_scalar_coordinate_replay``, ``_candidate_witness_plans``,
+    #: ``_positive_exact_end_user_seed_filter``,
+    #: ``_positive_relational_seed_filter``). Nothing outside this tuple may be
+    #: able to change a plan; ``test_the_seed_plan_cache_key_covers_every_input
+    #: _the_plans_read`` walks that call graph and fails if the list drifts.
+    _SEED_PLAN_CACHE_INPUTS = (
+        "filters",
+        "search",
+        "sort_params",
+        "project_id",
+        "project_ids",
+        "project_version_id",
+        "eval_config_ids",
+        "annotation_label_ids",
+        "_eval_config_ids_known",
+        "_annotation_label_set_known",
+        "_bounded_identity_only",
+        "_bounded_internal_scan",
+        "_bounded_bulk_scan",
+        "_bounded_population_proof",
+        "_bounded_sampling_rate",
+        "_bounded_membership_filters",
+        "_bounded_global_span_witnesses",
+        "_bounded_include_filter_witnesses",
+        # Derived from filters at construction and NOT recomputed on a rebind,
+        # so it is a genuine independent input rather than a shadow of
+        # ``filters``: a builder whose filters were rebound still answers with
+        # the window it was constructed with.
+        "_bounded_request_window",
+    )
+
     def _seed_plan_cache_key(self) -> tuple[str, ...]:
         """Freeze every input the three text seed plans read.
 
@@ -1076,25 +1118,12 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
         and nested dicts, and an equal-valued rebind whose dicts were built in
         a different insertion order only costs a recompute, never a wrong
         answer. Anything that is not read here must not be able to change the
-        plans.
+        plans - which is a claim about a call graph, so a test walks it rather
+        than a comment asserting it.
         """
 
-        return (
-            repr(self.filters),
-            repr(self.search),
-            repr(self.sort_params),
-            repr(getattr(self, "project_id", None)),
-            repr(getattr(self, "project_ids", None)),
-            repr(self.project_version_id),
-            repr(
-                (
-                    self._bounded_identity_only,
-                    self._bounded_internal_scan,
-                    self._bounded_bulk_scan,
-                    self._bounded_population_proof,
-                    self._bounded_sampling_rate,
-                )
-            ),
+        return tuple(
+            repr(getattr(self, name, None)) for name in self._SEED_PLAN_CACHE_INPUTS
         )
 
     def _seed_plan_cached(self, name: str, compute: Callable[[], Any]) -> Any:
@@ -1206,6 +1235,37 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
         return super().filter_candidate_seed_is_optional()
 
     def build_filter_candidate_seed_page(self, **kwargs):
+        """Acquire one slice of candidate roots. THE CONTRACT this lane obeys.
+
+        Three sentences a reviewer should be able to hold at once, because
+        every knob below is a consequence of one of them.
+
+        1. ACQUISITION ONLY. This statement produces a candidate superset. The
+           exact latest-state classifier is a separate, unbounded statement and
+           it alone decides membership; a published row is always an exact
+           any-span match. Nothing here can make a non-match appear.
+        2. A SEED STATEMENT NEVER KNOWINGLY READS MORE THAN ~THE ROW BUDGET.
+           The width of the slice is chosen from the rows the previous
+           statement read (``filter_seed_width_policy``), and any width above
+           the unprobed cap must first be costed by a density probe
+           (``build_filter_seed_density_probe_query``). A sparse tail is
+           therefore crossed at probe cost, ~1-2 MB a hop, not at slice cost.
+           Narrowing never skips: slices are contiguous and half-open, so a
+           shrunk slice defers its older part to the next adjacent one.
+        3. THE WITNESS ENVELOPE IS THE ONE PLACE CANDIDACY IS NARROWED, and it
+           is the one behaviour change a user could observe. With
+           ``FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS`` above zero (one
+           hour by default) a trace is a candidate only if a span carrying the
+           value STARTS within that slack of the roots this statement can
+           publish. A trace whose only matching span arrives more than the
+           slack after its root is omitted from a FILTERED list - it is still
+           in the unfiltered list, still fully readable, and still returned by
+           the same filter over a window that contains the span's own hour.
+           Setting the slack to zero restores the unbounded contract with no
+           deploy. A running pagination keeps the slack it started with, which
+           the signed cursor carries, so the boundary cannot move mid-page.
+        """
+
         # A long-text witness starts with the requested root population, not
         # every retained trace in the project. The child history is unbounded
         # in time; the root interval only selects necessary immutable trace IDs.

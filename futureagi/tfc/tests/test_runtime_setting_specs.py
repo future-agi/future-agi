@@ -80,17 +80,21 @@ def test_text_seed_row_budget_rejects_values_outside_the_measured_range(value):
         )
 
 
-def test_the_text_seed_witness_slack_is_off_by_default_and_opt_in():
-    """Narrowing the seed's witness contract is a decision, not a default.
+def test_the_text_seed_witness_slack_defaults_to_one_hour_with_zero_as_the_hatch():
+    """The bounded witness is the default contract; zero is the way back.
 
-    Zero means the shipped contract - no time bound on the witness scan at all
-    - so an operator who never touches this setting keeps byte-identical SQL.
+    One hour is the owner-decided default: on the measured cohort it omitted
+    nothing (largest child-witness lag 468 s; the root carried the value itself
+    in 165 of 165 matching traces) while reading 28.7x fewer bytes. ZERO
+    remains a settable value and emits no envelope at all, so an install whose
+    spans really do arrive more than an hour after their root can be put back
+    on the unbounded contract without a deploy.
     """
 
     defaults = load_numeric_settings(INTERACTIVE_READ_SETTING_SPECS, source={})
-    assert defaults["FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS"] == 0
+    assert defaults["FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS"] == 1
 
-    for raw, expected in (("1", 1), (24, 24), ("168", 168)):
+    for raw, expected in (("0", 0), (0, 0), ("1", 1), (24, 24), ("168", 168)):
         enabled = load_numeric_settings(
             INTERACTIVE_READ_SETTING_SPECS,
             source={"FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS": raw},

@@ -385,12 +385,14 @@ INTERACTIVE_READ_SETTING_SPECS = {
                 50_000_000,
             ),
             # Hours of slack the same seed's child-witness scan is allowed
-            # around the roots one statement can publish. ZERO - the default -
-            # is the shipped contract, under which that scan carries no time
-            # bound at all: a trace is a candidate when ANY raw span of it
-            # carries the value, whenever that span started. At zero the
-            # generated SQL and its parameters are byte-identical to what
-            # shipped, so this setting is inert until an operator raises it.
+            # around the roots one statement can publish. The default is 1 h,
+            # the approved bounded-witness contract. ZERO is the legacy
+            # any-span escape hatch: that scan then carries no time bound at
+            # all - a trace is a candidate when ANY raw span of it carries the
+            # value, whenever that span started - and the generated SQL and its
+            # parameters are byte-identical to what shipped before this
+            # setting, so an operator can restore the old contract without a
+            # deploy.
             #
             # Above zero the seed statement additionally requires a witness to
             # start inside the envelope
@@ -418,13 +420,28 @@ INTERACTIVE_READ_SETTING_SPECS = {
             # matching traces, the largest child-witness lag was 468 s, and 0
             # of 1,000 sampled traces held a span more than two days from their
             # root. That is one project over one burst - bounds, not
-            # guarantees - which is why narrowing the contract stays an owner
-            # decision and the default is off. The 168 h ceiling is one week;
+            # guarantees - which is why narrowing the contract was an owner
+            # decision, taken as the 1 h default; a per-project override is a
+            # follow-up. The 168 h ceiling is one week;
             # beyond that the envelope stops bounding this lane's own windows.
             # See ``filter_seed_width_policy`` for the width schedule each mode
             # uses, which differs because only the bounded shape's cost tracks
             # the slice.
-            ("FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS", 0, 0, 168),
+            # Default one hour as of the bounded-witness owner decision. The
+            # measured cohort puts the largest child-witness lag at 468 s and
+            # carries the value on the root itself in 165 of 165 matching
+            # traces, so one hour of envelope omitted nothing there while
+            # reading 28.7x fewer bytes than the unbounded shape (1.14 MB vs
+            # 32.8 MB over the same sparse hours; one 4 h unbounded slice read
+            # 521,441 rows where the bounded 1 h slice read 1,233). ZERO
+            # remains the legacy escape hatch and emits no envelope at all, so
+            # a tenant whose spans really do arrive more than an hour after
+            # their root can be put back on the old contract without a deploy.
+            # FOLLOW-UP: this is one global number for a property that is
+            # per-tenant (how long after its root a trace's spans may still
+            # arrive). A per-project override belongs here, so the escape hatch
+            # does not have to be pulled for the whole install.
+            ("FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS", 1, 0, 168),
             # Broad key-only span population proofs read thin raw columns;
             # their CPU budget is separate from the normal seed/classifier.
             ("FILTER_SELECTOR_POPULATION_MAX_THREADS", 2, 1, 4),
