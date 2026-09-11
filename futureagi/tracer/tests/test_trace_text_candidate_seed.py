@@ -2412,3 +2412,84 @@ def test_only_the_row_budgeted_lane_offers_a_density_probe():
         subject(1, kind="number", value=5).build_filter_seed_density_probe_query(
             slice_start=END - timedelta(hours=2), slice_end=END
         )
+
+
+# ---------------------------------------------------------------------------
+# The witness slack a pagination starts with must survive its HTTP hops.
+# ---------------------------------------------------------------------------
+
+
+@override_settings(FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS=1)
+def test_the_lane_publishes_the_slack_a_cursor_must_carry():
+    builder = picker_leaves(2)
+    assert builder.filter_seed_witness_slack_hours() == 1
+    assert builder._short_text_seed_witness_slack() == timedelta(hours=1)
+
+
+@override_settings(FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS=1)
+def test_a_request_with_no_envelope_publishes_no_slack_to_carry():
+    """A lane that emits no envelope must not make its cursors differ."""
+
+    assert subject(1, kind="number", value=5).filter_seed_witness_slack_hours() is None
+
+
+@override_settings(FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS=4)
+@pytest.mark.parametrize("pinned", [0, 1, 3])
+def test_a_pinned_slack_outranks_a_mid_pagination_setting_change(pinned):
+    """The operator's new value is for the NEXT read, not this pagination."""
+
+    builder = picker_leaves(2)
+    assert builder.filter_seed_witness_slack_hours() == 4
+
+    builder.pin_filter_seed_witness_slack_hours(pinned)
+
+    assert builder.filter_seed_witness_slack_hours() == pinned
+    assert builder._short_text_seed_witness_slack() == timedelta(hours=pinned)
+    fragment, params = builder._scalar_candidate_witness_envelope(
+        root_start=END - timedelta(hours=2), root_end=END
+    )
+    if pinned:
+        assert params["filter_witness_end"] == END + timedelta(hours=pinned)
+        assert params["filter_witness_start"] == END - timedelta(hours=2 + pinned)
+    else:
+        # Zero is the legacy escape hatch: no envelope at all.
+        assert (fragment, params) == ("", {})
+
+
+@override_settings(FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS=4)
+def test_a_legacy_cursor_carrying_no_slack_clears_the_pin():
+    """Absent means 'use the setting', which is what that token got before."""
+
+    builder = picker_leaves(2)
+    builder.pin_filter_seed_witness_slack_hours(1)
+    assert builder.filter_seed_witness_slack_hours() == 1
+
+    builder.pin_filter_seed_witness_slack_hours(None)
+
+    assert builder.filter_seed_witness_slack_hours() == 4
+
+
+@pytest.mark.parametrize("pinned", [-1, 169, 1.5, True, "1"])
+def test_an_unsupported_pinned_slack_is_refused(pinned):
+    with pytest.raises(ValueError, match="witness slack"):
+        picker_leaves(2).pin_filter_seed_witness_slack_hours(pinned)
+
+
+@override_settings(FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS=0)
+def test_a_pinned_slack_changes_the_seed_sql_the_next_hop_emits():
+    """The pin has to reach the statement, not just the accessor."""
+
+    builder = picker_leaves(2)
+    unbounded, unbounded_params = builder.build_filter_candidate_seed_page(
+        slice_start=END - timedelta(hours=1), slice_end=END, limit=200
+    )
+    assert "filter_witness_start_us" not in unbounded_params
+
+    builder.pin_filter_seed_witness_slack_hours(1)
+    bounded, bounded_params = builder.build_filter_candidate_seed_page(
+        slice_start=END - timedelta(hours=1), slice_end=END, limit=200
+    )
+
+    assert "filter_witness_start_us" in bounded_params
+    assert bounded != unbounded
+    _render_driver_sql(bounded, bounded_params)
