@@ -2,7 +2,6 @@
 Code Executor HTTP API Server.
 
 Provides a simple HTTP endpoint for executing untrusted code in nsjail sandboxes.
-Falls back to subprocess isolation when nsjail is not available.
 
 POST /execute
 {
@@ -12,19 +11,16 @@ POST /execute
     "timeout": 30
 }
 
-Returns:
-{
-    "status": "success" | "error",
-    "data": <result> | <error message>
-}
+Requires Authorization: Bearer <INTERNAL_API_SECRET> on all requests.
+Execution is rejected (503) when nsjail is not available.
 """
 
+import hmac
 import json
 import os
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 
 import falcon
@@ -35,10 +31,10 @@ NSJAIL_AVAILABLE = NSJAIL_PATH is not None
 PYTHON_PATH = sys.executable
 NODE_PATH = shutil.which("node")
 
-CONFIG_DIR = os.path.join(os.path.dirname(__file__), "config")
-
 DEFAULT_TIMEOUT = 30
 MAX_OUTPUT_BYTES = 1 * 1024 * 1024  # 1 MB
+
+INTERNAL_API_SECRET = os.getenv("INTERNAL_API_SECRET", "")
 
 
 def _execute_python_nsjail(code: str, input_data: dict, timeout: int) -> dict:
@@ -66,9 +62,28 @@ def _execute_python_nsjail(code: str, input_data: dict, timeout: int) -> dict:
             "64",  # Max open files (needs more for network)
             "--time_limit",
             str(timeout),  # Wall clock limit
-            "-N",  # Allow network access — code can fetch URLs
+            # TODO(TH-1961): network access needed for MCP tools/agent
+            # playground. Restrict to an egress allowlist if data exfiltration
+            # becomes a concern.
+            "-N",
             "-R",
-            "/",  # Bind-mount root read-only (includes /sandbox/scripts)
+            "/usr",  # Python interpreter and standard library
+            "-R",
+            "/lib",  # System dynamic linker and libraries
+            "-R",
+            "/lib64",  # 64-bit system libraries
+            "-R",
+            "/sandbox/scripts",  # User scripts directory (read-only)
+            # DNS + system CAs, read-only, so -N networking actually works
+            # (/etc/passwd and host secrets stay unmounted).
+            "-R",
+            "/etc/resolv.conf",
+            "-R",
+            "/etc/hosts",
+            "-R",
+            "/etc/nsswitch.conf",
+            "-R",
+            "/etc/ssl/certs",
             "-T",
             "/tmp:size=16777216",  # Writable tmpfs at /tmp (16MB)
             "--",
@@ -114,52 +129,8 @@ def _execute_python_nsjail(code: str, input_data: dict, timeout: int) -> dict:
             pass
 
 
-def _execute_python_fallback(code: str, input_data: dict, timeout: int) -> dict:
-    """Fallback: execute Python code in a subprocess without nsjail."""
-    script = _build_python_script(code, input_data)
-
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".py", delete=False, dir="/tmp", prefix="eval_"
-    ) as f:
-        f.write(script)
-        script_path = f.name
-
-    try:
-        result = subprocess.run(
-            [PYTHON_PATH, "-I", script_path],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            env={"PYTHONDONTWRITEBYTECODE": "1"},
-            cwd="/tmp",
-        )
-
-        stdout = result.stdout.strip()
-        if not stdout:
-            stderr = result.stderr.strip()[:500]
-            return {
-                "status": "error",
-                "data": f"No output. Exit: {result.returncode}. {stderr}",
-            }
-
-        try:
-            return json.loads(stdout)
-        except json.JSONDecodeError:
-            return {"status": "error", "data": f"Invalid JSON: {stdout[:200]}"}
-
-    except subprocess.TimeoutExpired:
-        return {"status": "error", "data": f"Timed out ({timeout}s)"}
-    except Exception as e:
-        return {"status": "error", "data": f"Error: {e}"}
-    finally:
-        try:
-            os.remove(script_path)
-        except OSError:
-            pass
-
-
 def _execute_javascript(code: str, input_data: dict, timeout: int) -> dict:
-    """Execute JavaScript code in nsjail (or fallback subprocess)."""
+    """Execute JavaScript code in nsjail sandbox."""
     if not NODE_PATH:
         return {"status": "error", "data": "Node.js not available"}
 
@@ -171,31 +142,49 @@ def _execute_javascript(code: str, input_data: dict, timeout: int) -> dict:
         f.write(script)
 
     try:
-        if NSJAIL_AVAILABLE:
-            cmd = [
-                NSJAIL_PATH,
-                "-Mo",
-                "-Q",
-                "--rlimit_as",
-                "512",
-                "--rlimit_cpu",
-                str(timeout),
-                "--rlimit_nofile",
-                "64",
-                "--time_limit",
-                str(timeout),
-                "-N",  # Allow network
-                "-R",
-                "/",
-                "-T",
-                "/tmp:size=16777216",
-                "--",
-                NODE_PATH,
-                "--max-old-space-size=64",
-                script_path,
-            ]
-        else:
-            cmd = [NODE_PATH, "--max-old-space-size=64", script_path]
+        if not NSJAIL_AVAILABLE:
+            return {"status": "error", "data": "Javascript sandbox not available"}
+
+        cmd = [
+            NSJAIL_PATH,
+            "-Mo",
+            "-Q",
+            "--rlimit_as",
+            "512",
+            "--rlimit_cpu",
+            str(timeout),
+            "--rlimit_nofile",
+            "64",
+            "--time_limit",
+            str(timeout),
+            # TODO(TH-1961): network access needed for sandboxed JS tools;
+            # restrict to an egress allowlist if data exfiltration becomes a
+            # concern.
+            "-N",
+            "-R",
+            "/usr",
+            "-R",
+            "/lib",
+            "-R",
+            "/lib64",
+            "-R",
+            "/sandbox/scripts",
+            # DNS + system CAs for -N networking, read-only.
+            "-R",
+            "/etc/resolv.conf",
+            "-R",
+            "/etc/hosts",
+            "-R",
+            "/etc/nsswitch.conf",
+            "-R",
+            "/etc/ssl/certs",
+            "-T",
+            "/tmp:size=16777216",
+            "--",
+            NODE_PATH,
+            "--max-old-space-size=64",
+            script_path,
+        ]
 
         result = subprocess.run(
             cmd,
@@ -303,12 +292,6 @@ if __name__ == "__main__":
 def _build_js_script(code: str, input_data: dict) -> str:
     """Build JS eval script."""
     input_json = json.dumps(input_data, default=str)
-    escaped = (
-        code.replace("\\", "\\\\")
-        .replace("'", "\\'")
-        .replace("\n", "\\n")
-        .replace("\r", "\\r")
-    )
 
     return f"""'use strict';
 const inputData = {input_json};
@@ -338,6 +321,22 @@ try {{
 
 class ExecuteResource:
     def on_post(self, req, resp):
+        if not INTERNAL_API_SECRET:
+            resp.status = falcon.HTTP_401
+            resp.media = {"status": "error", "data": "Authentication not configured"}
+            return
+
+        auth_header = req.get_header("Authorization", default="")
+        if not auth_header.startswith("Bearer "):
+            resp.status = falcon.HTTP_401
+            resp.media = {"status": "error", "data": "Missing Bearer token"}
+            return
+
+        if not hmac.compare_digest(auth_header[7:], INTERNAL_API_SECRET):
+            resp.status = falcon.HTTP_401
+            resp.media = {"status": "error", "data": "Invalid token"}
+            return
+
         try:
             body = req.bounded_stream.read()
             data = json.loads(body)
@@ -357,11 +356,20 @@ class ExecuteResource:
         start = time.time()
 
         if language == "javascript":
+            if not NSJAIL_AVAILABLE:
+                resp.status = falcon.HTTP_503
+                resp.media = {
+                    "status": "error",
+                    "data": "Javascript sandbox not available",
+                }
+                return
             result = _execute_javascript(code, input_data, timeout)
         elif NSJAIL_AVAILABLE:
             result = _execute_python_nsjail(code, input_data, timeout)
         else:
-            result = _execute_python_fallback(code, input_data, timeout)
+            resp.status = falcon.HTTP_503
+            resp.media = {"status": "error", "data": "Python sandbox not available"}
+            return
 
         elapsed = time.time() - start
         result["execution_time"] = round(elapsed, 3)
@@ -371,12 +379,10 @@ class ExecuteResource:
 
 class HealthResource:
     def on_get(self, req, resp):
-        resp.media = {
-            "status": "ok",
-            "nsjail": NSJAIL_AVAILABLE,
-            "python": PYTHON_PATH,
-            "node": NODE_PATH,
-        }
+        # Minimal payload on purpose: this endpoint is unauthenticated, so it
+        # must not leak interpreter paths or nsjail availability (recon value
+        # for an attacker).
+        resp.media = {"status": "ok"}
 
 
 app = falcon.App()
