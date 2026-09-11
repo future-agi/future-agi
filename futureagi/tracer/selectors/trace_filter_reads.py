@@ -69,6 +69,12 @@ _ROOT_TIME_DISCOVERY_MAX_WINDOW = timedelta(hours=24)
 _ROOT_TIME_DISCOVERY_TIMEOUT_MS = 1_000
 _ROOT_TIME_DISCOVERY_MAX_BYTES = 1024 * 1024 * 1024
 _ROOT_TIME_DISCOVERY_MAX_ATTEMPTS = 3
+# The density probe a row-budgeted seed must pass before it may widen past its
+# unprobed cap. It is the same shape of cheap metadata read as root-time
+# discovery - a PK-range count with no attribute predicate - so it carries the
+# same caps: one second, one gibibyte, one worker, and never a partial result.
+_SEED_DENSITY_PROBE_TIMEOUT_MS = 1_000
+_SEED_DENSITY_PROBE_MAX_BYTES = 1024 * 1024 * 1024
 _POPULATION_TIME_DISCOVERY_MAX_THREADS = settings.FILTER_SELECTOR_POPULATION_MAX_THREADS
 # Trace/span list queries fetch one additional page-sized de-duplication
 # margin; 5,000 is also the existing server-side result ceiling used by those
@@ -1395,6 +1401,27 @@ def read_bounded_filter_page(
         seed_width_policy, FilterSeedWidthPolicy
     ):
         raise ValueError("filter seed width policy must be a FilterSeedWidthPolicy")
+    # A width above the policy's unprobed cap is a width no measurement in this
+    # read justifies: reactive doubling sizes the next slice from the PREVIOUS
+    # one's rows and is blind to what the next slice contains. A lane that
+    # offers a density probe may buy that knowledge for ~1-2 MB; one that does
+    # not keeps the cap, which is the behaviour the row budget replaced.
+    seed_density_probe_builder = getattr(
+        builder, "build_filter_seed_density_probe_query", None
+    )
+    seed_density_probe_support = getattr(
+        builder, "supports_filter_seed_density_probe", None
+    )
+    seed_density_probe_enabled = bool(
+        seed_width_policy is not None
+        and callable(seed_density_probe_builder)
+        and callable(seed_density_probe_support)
+        and seed_density_probe_support() is True
+    )
+    # One probe per distinct candidate slice per request. The schedule only
+    # ever proposes a given boundary/width pair once, so this is a guard
+    # against a retry paying twice, not an optimization of the common path.
+    seed_density_counts: dict[tuple[datetime, datetime], int | None] = {}
     # The window an empty-seed root-time discovery narrows to. One hour is the
     # wall-clock lane's smallest useful slice; a row-budgeted lane cannot use a
     # window below the floor it declared, and would be pinned there, because
@@ -1711,6 +1738,21 @@ def read_bounded_filter_page(
                     int(settings["max_bytes_to_read"]),
                     max_bytes_to_read_cap,
                 )
+            if kind == "seed_density_probe":
+                # A cost question, never a membership one: one worker, a
+                # gibibyte, and never a partial count (a truncated count would
+                # under-report density and approve the very slice this probe
+                # exists to refuse).
+                settings["max_threads"] = min(int(settings["max_threads"]), 1)
+                settings["max_memory_usage"] = min(
+                    int(settings["max_memory_usage"]),
+                    _SEED_DENSITY_PROBE_MAX_BYTES,
+                )
+                settings.update(
+                    read_overflow_mode="throw",
+                    result_overflow_mode="throw",
+                    timeout_overflow_mode="throw",
+                )
             if kind in {"root_time_discovery", "population_time_discovery"}:
                 if (
                     kind == "population_time_discovery"
@@ -1750,7 +1792,7 @@ def read_bounded_filter_page(
             if is_read_budget_error(exc):
                 error_code = "read_budget_exceeded"
             elif (
-                kind in {"prefilter", "micro_seed", "zero_probe"}
+                kind in {"prefilter", "micro_seed", "zero_probe", "seed_density_probe"}
                 and isinstance(exc, (RuntimeError, TimeoutError))
             ) or (
                 kind
@@ -1796,6 +1838,93 @@ def read_bounded_filter_page(
             )
         )
         return result
+
+    def probe_guarded_width(width: timedelta, boundary: datetime) -> timedelta:
+        """Refuse to issue a slice wider than the cap without a density proof.
+
+        ``width`` is what the row budget proposes for the slice ending at
+        ``boundary``; the return value is what this read is allowed to issue.
+
+        Below the unprobed cap nothing happens - the ordinary 1 h -> 2 h -> 4 h
+        schedule is untouched and costs no extra statement. Above it, the
+        candidate slice is counted first:
+
+        * count within the row budget -> issue the proposed width. This is the
+          sparse tail, and it is why the tail is still crossed logarithmically
+          (8 h, 16 h, 32 h, 64 h ... each approved by its own ~1-2 MB probe)
+          rather than one cap-width slice at a time, which is the regression a
+          bare absolute cap would reintroduce: a 166 h tail at 4 h a slice is
+          42 statements and needs several HTTP continuations before the first
+          row reaches the user;
+        * count over budget -> shrink proportionally, never below the floor.
+          This is the sparse-tail-meets-dense-region case the guard exists for:
+          the 128 h slice whose probe reports tens of millions of rows becomes
+          a few hours, and the first dense seed reads ~1-2M rows instead of
+          over 12 GiB;
+        * probe unavailable, failed or timed out -> the unprobed cap. A lane
+          with no probe hook, and a transport that cannot answer one, get the
+          fixed ceiling the row budget replaced, which is never worse than the
+          behaviour before the budget shipped.
+
+        Shrinking is always safe. Slices are contiguous and half-open, so a
+        narrower slice defers its older part to the next adjacent slice rather
+        than skipping it; predicates, ordering, the exact latest-state
+        classifier and the signed cursor payload are untouched. A failed probe
+        is recorded in ``optional_failed_attempts`` for the same reason the
+        other speculative reads are: it supplies acceleration only, and must
+        not turn an otherwise exact page into a degraded one.
+        """
+
+        if seed_width_policy is None or not seed_width_policy.requires_density_probe(
+            width
+        ):
+            return width
+        if not seed_density_probe_enabled:
+            return min(width, seed_width_policy.unprobed_cap)
+        probe_start = max(request_start, boundary - width)
+        if probe_start >= boundary:
+            return min(width, seed_width_policy.unprobed_cap)
+        probe_key = (probe_start, boundary)
+        if probe_key in seed_density_counts:
+            counted = seed_density_counts[probe_key]
+        else:
+            counted = None
+            try:
+                probe_query, probe_params = seed_density_probe_builder(
+                    slice_start=probe_start, slice_end=boundary
+                )
+                probe_result = execute(
+                    kind="seed_density_probe",
+                    query=probe_query,
+                    params=probe_params,
+                    active_start=probe_start,
+                    active_end=boundary,
+                    result_limit=1,
+                    timeout_cap_ms=_SEED_DENSITY_PROBE_TIMEOUT_MS,
+                    max_bytes_to_read_cap=_SEED_DENSITY_PROBE_MAX_BYTES,
+                )
+            except _BudgetExceeded as exc:
+                if exc.error_code in {"read_budget_exceeded", "prefilter_unavailable"}:
+                    optional_failed_attempts.add(len(attempts) - 1)
+            except (TypeError, ValueError):
+                # A builder that cannot shape this probe for this slice is a
+                # lane without a probe, not a failed read.
+                pass
+            else:
+                probe_rows = list(probe_result.data or [])
+                raw_count = (
+                    probe_rows[0].get("seed_density_rows") if probe_rows else None
+                )
+                if isinstance(raw_count, bool) or not isinstance(
+                    raw_count, (int, float)
+                ):
+                    counted = None
+                else:
+                    counted = max(0, int(raw_count))
+            seed_density_counts[probe_key] = counted
+        if counted is None:
+            return min(width, seed_width_policy.unprobed_cap)
+        return seed_width_policy.probed_width(width, counted)
 
     def row_identity(row: dict[str, Any]) -> Hashable:
         identity_builder = getattr(builder, "bounded_filter_row_identity", None)
@@ -3324,11 +3453,16 @@ def read_bounded_filter_page(
                 # The budget replaces the doubling rule, not the contract the
                 # builder declared around it: a lane that both declares a
                 # policy and recommends a maximum slice keeps that maximum.
-                slice_width = min(
-                    seed_width_policy.next_width(
-                        active_width, last_seed_read_rows, request_width=request_width
+                slice_width = probe_guarded_width(
+                    min(
+                        seed_width_policy.next_width(
+                            active_width,
+                            last_seed_read_rows,
+                            request_width=request_width,
+                        ),
+                        max_slice_width,
                     ),
-                    max_slice_width,
+                    slice_end,
                 )
             else:
                 slice_width = min(active_width * 2, max_slice_width)

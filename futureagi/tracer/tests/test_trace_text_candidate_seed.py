@@ -488,6 +488,44 @@ def test_an_over_budget_slice_below_the_floor_is_never_widened_to_it(
     assert BUDGET.next_width(width, 52_000_000, request_width=request_width) == expected
 
 
+def test_the_unprobed_cap_is_the_unsignalled_cap_under_another_name():
+    """One question, one number: what may a statement be worth unmeasured?"""
+
+    assert BUDGET.unprobed_cap == BUDGET.unsignalled_cap
+    assert BUDGET.requires_density_probe(BUDGET.unprobed_cap) is False
+    assert BUDGET.requires_density_probe(BUDGET.unprobed_cap + timedelta(hours=1))
+
+
+@pytest.mark.parametrize(
+    "width,slice_rows,expected",
+    [
+        # Within budget: the proposal stands. This is the sparse tail, and it
+        # is why the tail is still crossed logarithmically.
+        (timedelta(hours=8), 0, timedelta(hours=8)),
+        (timedelta(hours=64), 1_999_999, timedelta(hours=64)),
+        (timedelta(hours=64), 2_000_000, timedelta(hours=64)),
+        # Over budget: shrink proportionally, snapped DOWN onto the lattice.
+        # 128 h holding 50M rows fits 5.12 h of budget -> 4 h on the lattice.
+        (timedelta(hours=128), 50_000_000, timedelta(hours=4)),
+        # 128 h holding 76.8M (the 600k rows/h end of the measured dense band)
+        # fits 3.33 h -> 2 h.
+        (timedelta(hours=128), 76_800_000, timedelta(hours=2)),
+        # A slice so dense that even one hour is over budget stops at the
+        # floor; narrowing past it buys nothing this lane can spend.
+        (timedelta(hours=128), 10_000_000_000, BUDGET.min_width),
+        # The fit can never widen a proposal.
+        (timedelta(hours=8), 1, timedelta(hours=8)),
+    ],
+)
+def test_a_probed_slice_is_fitted_to_the_row_budget(width, slice_rows, expected):
+    assert BUDGET.probed_width(width, slice_rows) == expected
+
+
+def test_a_density_probe_may_not_report_a_negative_count():
+    with pytest.raises(ValueError, match="negative rows"):
+        BUDGET.probed_width(timedelta(hours=8), -1)
+
+
 def test_an_unmeasured_statement_may_widen_only_to_the_unsignalled_cap():
     assert _walk(None, statements=5) == [
         timedelta(hours=hours) for hours in (1, 2, 4, 4, 4)
@@ -561,17 +599,58 @@ class _RowBudgetFakeBuilder(_FakeBuilder):
     def filter_seed_width_policy() -> FilterSeedWidthPolicy:
         return BUDGET
 
+    @staticmethod
+    def supports_filter_seed_density_probe() -> bool:
+        return True
+
+    @staticmethod
+    def build_filter_seed_density_probe_query(*, slice_start, slice_end):
+        return "density", {"slice_start": slice_start, "slice_end": slice_end}
+
+
+@dataclass
+class _UnprobedRowBudgetFakeBuilder(_RowBudgetFakeBuilder):
+    """A row-budgeted lane that cannot cost a slice before issuing it."""
+
+    @staticmethod
+    def supports_filter_seed_density_probe() -> bool:
+        return False
+
 
 class _RowBudgetFakeExecutor(_FakeExecutor):
     """Report one statement's native read rows the way the transport does."""
 
-    def __init__(self, builder, *, seed_read_rows: Callable[[int], int | None] | int):
+    def __init__(
+        self,
+        builder,
+        *,
+        seed_read_rows: Callable[[int], int | None] | int,
+        density_rows: Callable[[datetime, datetime], int] | int = 0,
+        density_fails: bool = False,
+    ):
         super().__init__(builder)
         self._seed_read_rows = seed_read_rows
+        self._density_rows = density_rows
+        self._density_fails = density_fails
         self.seed_intervals: list[tuple[datetime, datetime]] = []
         self.seed_keysets: list[datetime | None] = []
+        self.density_intervals: list[tuple[datetime, datetime]] = []
 
     def execute_ch_query(self, query, params, *, timeout_ms, settings):
+        if query == "density":
+            self.density_intervals.append((params["slice_start"], params["slice_end"]))
+            if self._density_fails:
+                raise RuntimeError("density probe unavailable")
+            rows = self._density_rows
+            if callable(rows):
+                rows = rows(params["slice_start"], params["slice_end"])
+            return QueryResult(
+                data=[{"seed_density_rows": rows}],
+                row_count=1,
+                backend_used="clickhouse",
+                query_time_ms=1.0,
+                read_rows=1_000,
+            )
         result = super().execute_ch_query(
             query, params, timeout_ms=timeout_ms, settings=settings
         )
@@ -602,9 +681,22 @@ def _read(executor, builder, *, window=timedelta(days=7), **kwargs):
     )
 
 
-def _budget_read(*, window, seed_read_rows, **kwargs):
-    builder = _RowBudgetFakeBuilder([], start=END - window, end=END)
-    executor = _RowBudgetFakeExecutor(builder, seed_read_rows=seed_read_rows)
+def _budget_read(
+    *,
+    window,
+    seed_read_rows,
+    density_rows=0,
+    density_fails=False,
+    builder_cls=_RowBudgetFakeBuilder,
+    **kwargs,
+):
+    builder = builder_cls([], start=END - window, end=END)
+    executor = _RowBudgetFakeExecutor(
+        builder,
+        seed_read_rows=seed_read_rows,
+        density_rows=density_rows,
+        density_fails=density_fails,
+    )
     page = _read(executor, builder, window=window, **kwargs)
     return executor, page
 
@@ -790,6 +882,137 @@ def test_a_declared_maximum_slice_still_binds_a_row_budgeted_lane():
     assert _is_contiguous(executor.seed_intervals)
 
 
+def test_a_widening_past_the_cap_is_probed_before_it_is_issued():
+    """The guard's whole shape, on the fake lane, in one schedule.
+
+    Read rows stay far under a quarter of the budget, so the policy proposes a
+    doubling every time. Below the cap nothing is probed - the statement is
+    issued on the strength of the previous one, exactly as before. Every width
+    ABOVE the cap is costed first, and the probe interval is always the
+    candidate slice itself.
+    """
+
+    executor, page = _budget_read(
+        window=timedelta(days=30), seed_read_rows=5_000, density_rows=0
+    )
+
+    assert page.complete is True
+    # 1 h, 2 h and 4 h are at or below the cap and cost no probe. Everything
+    # above it is probed; this fake builder recommends no maximum slice, so
+    # the shared two-day ceiling is what finally stops the doubling.
+    assert executor.seed_widths[:7] == [
+        timedelta(hours=1),
+        timedelta(hours=2),
+        timedelta(hours=4),
+        timedelta(hours=8),
+        timedelta(hours=16),
+        timedelta(hours=32),
+        timedelta(days=2),
+    ]
+    assert [end - start for start, end in executor.density_intervals][:4] == [
+        timedelta(hours=8),
+        timedelta(hours=16),
+        timedelta(hours=32),
+        timedelta(days=2),
+    ]
+    # Every probe covers exactly the slice it approved, and every slice wider
+    # than the cap was approved by one.
+    approved = {
+        (start, end)
+        for start, end in executor.seed_intervals
+        if end - start > timedelta(hours=4)
+    }
+    assert approved == set(executor.density_intervals)
+    assert _is_contiguous(executor.seed_intervals)
+
+
+def test_an_over_budget_probe_shrinks_the_slice_it_was_asked_about():
+    """A tail that ends in dense history never issues the accumulated width."""
+
+    dense_from = END - timedelta(hours=16)
+
+    def density(slice_start, slice_end):
+        overlap = min(slice_end, dense_from) - slice_start
+        hours = max(0.0, overlap.total_seconds() / 3600.0)
+        return int(hours * 500_000)
+
+    executor, _ = _budget_read(
+        window=timedelta(days=30), seed_read_rows=5_000, density_rows=density
+    )
+
+    # 1 h, 2 h, 4 h below the cap; the 8 h proposal is the first probed one,
+    # and nothing older than 16 h back is inside it yet, so it is issued.
+    assert executor.seed_widths[:4] == [
+        timedelta(hours=1),
+        timedelta(hours=2),
+        timedelta(hours=4),
+        timedelta(hours=8),
+    ]
+    assert executor.density_intervals[0] == (
+        END - timedelta(hours=15),
+        END - timedelta(hours=7),
+    )
+    # The 16 h proposal ending 15 h back reaches into dense history and is
+    # refused at its full width: 16 h holding 8M rows fits 4 h of a 2M budget.
+    refused = executor.density_intervals[1]
+    assert refused == (END - timedelta(hours=31), END - timedelta(hours=15))
+    assert executor.seed_widths[4] == timedelta(hours=4)
+    assert max(executor.seed_widths) == timedelta(hours=8)
+
+
+def test_a_failed_density_probe_pins_the_width_at_the_unprobed_cap():
+    """A probe is an accelerator: it may fail, and only cost coverage."""
+
+    executor, page = _budget_read(
+        window=timedelta(days=7), seed_read_rows=5_000, density_fails=True
+    )
+
+    assert executor.density_intervals, "the guard must still have asked"
+    assert max(executor.seed_widths) == timedelta(hours=4)
+    # A speculative failure must not degrade an otherwise exact page.
+    probe_attempts = [
+        attempt for attempt in page.attempts if attempt.kind == "seed_density_probe"
+    ]
+    assert probe_attempts
+    assert all(
+        attempt.error_code == "prefilter_unavailable" for attempt in probe_attempts
+    )
+    assert page.error_code != "prefilter_unavailable"
+
+
+def test_a_lane_that_cannot_probe_keeps_the_unprobed_cap():
+    """No hook, no proof, no widening: the ceiling the row budget replaced."""
+
+    executor, _ = _budget_read(
+        window=timedelta(days=7),
+        seed_read_rows=5_000,
+        builder_cls=_UnprobedRowBudgetFakeBuilder,
+    )
+
+    assert executor.density_intervals == []
+    assert max(executor.seed_widths) == timedelta(hours=4)
+
+
+def test_a_density_probe_spends_the_request_query_budget():
+    """Probes are statements. They must be counted, or they are free lunch."""
+
+    executor, page = _budget_read(
+        window=timedelta(days=30),
+        seed_read_rows=5_000,
+        density_rows=0,
+        max_query_count=8,
+    )
+
+    probes = [
+        attempt for attempt in page.attempts if attempt.kind == "seed_density_probe"
+    ]
+    assert probes
+    assert len(probes) == len(executor.density_intervals)
+    assert len(page.attempts) <= 8
+    assert page.complete is False
+    assert page.error_code == "query_budget_exceeded"
+
+
 def test_a_lane_without_a_declared_budget_keeps_its_doubling_schedule():
     builder = _FakeBuilder([], start=END - timedelta(days=7), end=END)
     executor = _RowBudgetFakeExecutor(builder, seed_read_rows=3_600_000)
@@ -823,12 +1046,31 @@ class _LaneTransport:
 
     supports_bounded_speculative_reads = False
 
-    def __init__(self, read_rows: int | None):
+    def __init__(self, read_rows: int | None, density_rows: Any = 0):
         self._read_rows = read_rows
+        self._density_rows = density_rows
         self.seed_intervals: list[tuple[datetime, datetime]] = []
+        self.density_intervals: list[tuple[datetime, datetime]] = []
         self.other_statements = 0
 
+    def _density_result(self, params) -> QueryResult:
+        start = _EPOCH + timedelta(microseconds=params["seed_density_start_us"])
+        end = _EPOCH + timedelta(microseconds=params["seed_density_end_us"])
+        self.density_intervals.append((start, end))
+        rows = self._density_rows
+        if callable(rows):
+            rows = rows(start, end)
+        return QueryResult(
+            data=[{"seed_density_rows": rows}],
+            row_count=1,
+            backend_used="clickhouse",
+            query_time_ms=1.0,
+            read_rows=2_000,
+        )
+
     def execute_ch_query(self, query, params, *, timeout_ms, settings):
+        if "seed_density_rows" in query:
+            return self._density_result(params)
         if (
             "matching_scalar_trace_identities" in query
             and "filter_seed_limit" in params
@@ -1039,12 +1281,48 @@ class _PopulationLaneTransport(_LaneTransport):
     the widen-then-halve walk this lane exists for.
     """
 
-    def __init__(self, population: list[dict[str, Any]]):
+    def __init__(
+        self,
+        population: list[dict[str, Any]],
+        *,
+        rows_per_root: int = 1,
+        density_profile: Callable[[datetime, datetime], int] | None = None,
+    ):
         super().__init__(read_rows=None)
         self.population = population
+        # A density probe counts live rows, MATCHING OR NOT. The population
+        # above holds only the roots this filter matches, so a shape whose
+        # sparse tail is sparse in matching roots but dense in traffic needs
+        # its own row profile; without one the count is the population itself.
+        self._density_profile = density_profile
+        # A density probe counts EVERY live row in the slice, roots and
+        # children alike, which is what makes it a cost proof rather than a
+        # membership one. The synthetic population stores roots only, so one
+        # knob turns each root into the trace it stands for.
+        self._rows_per_root = rows_per_root
         self.probes: list[tuple[datetime, datetime, bool]] = []
 
+    def _density_result(self, params) -> QueryResult:
+        start = _EPOCH + timedelta(microseconds=params["seed_density_start_us"])
+        end = _EPOCH + timedelta(microseconds=params["seed_density_end_us"])
+        self.density_intervals.append((start, end))
+        counted = (
+            self._density_profile(start, end)
+            if self._density_profile is not None
+            else sum(1 for row in self.population if start <= row["start_time"] < end)
+            * self._rows_per_root
+        )
+        return QueryResult(
+            data=[{"seed_density_rows": counted}],
+            row_count=1,
+            backend_used="clickhouse",
+            query_time_ms=1.0,
+            read_rows=2_000,
+        )
+
     def execute_ch_query(self, query, params, *, timeout_ms, settings):
+        if "seed_density_rows" in query:
+            return self._density_result(params)
         if (
             "matching_scalar_trace_identities" in query
             and "filter_seed_limit" in params
@@ -1924,3 +2202,213 @@ def test_only_the_bounded_mode_omits_a_witness_outside_its_envelope():
     # the stranded witness really does sit outside all of them.
     assert envelopes
     assert all(end <= END + timedelta(hours=1) for _start, end in envelopes)
+
+
+# ---------------------------------------------------------------------------
+# The shape the guard exists for: a window END far from the newest matching
+# root. This is what the 12M and 30D presets select on a tenant whose traffic
+# stopped days ago, and it is the shape that made one seed statement read over
+# 12 GiB in production measurement.
+# ---------------------------------------------------------------------------
+
+# Measured: ~166 h of tail between the frozen window END and the newest
+# matching root, then a dense region running at 400-600k rows/h.
+_FROZEN_END_TAIL_HOURS = 166
+_DENSE_ROWS_PER_HOUR = 500_000
+
+
+def _frozen_end_density(slice_start: datetime, slice_end: datetime) -> int:
+    """Live rows in a slice: nothing in the tail, then the dense band."""
+
+    dense_from = END - timedelta(hours=_FROZEN_END_TAIL_HOURS)
+    overlap = min(slice_end, dense_from) - slice_start
+    return int(max(0.0, overlap.total_seconds() / 3600.0) * _DENSE_ROWS_PER_HOUR)
+
+
+_FROZEN_END_POPULATION = _root_population(
+    [
+        (hours, 20)
+        for hours in range(_FROZEN_END_TAIL_HOURS, _FROZEN_END_TAIL_HOURS + 40, 2)
+    ]
+)
+
+
+def _frozen_end_read(**kwargs):
+    return _picker_lane_read(
+        _FROZEN_END_POPULATION,
+        window=timedelta(days=365),
+        page_size=50,
+        transport_factory=lambda: _PopulationLaneTransport(
+            _FROZEN_END_POPULATION, density_profile=_frozen_end_density
+        ),
+        **kwargs,
+    )
+
+
+@override_settings(FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS=1)
+def test_a_frozen_window_end_never_drops_a_widened_slice_onto_dense_history():
+    """THE defect, pinned as a schedule.
+
+    Without the guard this population reproduces the measured failure exactly:
+    the reactive doubling crosses the sparse tail in eight cheap seeds and then
+    proposes a 128 h slice whose far end sits in the dense band. That one
+    statement read over 12 GiB. With the guard, every proposal above the
+    four-hour unprobed cap is costed first, so the only slices that reach the
+    dense band are ones a probe has fitted to the row budget.
+
+    What the schedule below shows, in order: the opening 1 h; the root-time
+    discovery jump that skips ~72 h of proven-empty tail; the 1 h -> 32 h
+    doubling across what remains, each width above 4 h approved by its own
+    ~1-2 MB probe; the 64 h proposal REFUSED (its probe reaches 34 h into the
+    dense band) and fitted down to 4 h; the walk repeating twice more as the
+    doubling re-approaches the boundary; and the first genuinely dense seed
+    reading ~2.1M rows - the row budget, not twelve gibibytes.
+
+    Nineteen cheap statements replace one catastrophic one. The statement count
+    is higher than a uniform-density estimate predicts because the proportional
+    fit assumes the candidate slice's rows are spread evenly and they are not:
+    the fitted width lands back in the empty part of the tail and has to widen
+    again. Every one of those statements is a probe or an empty seed.
+    """
+
+    transport, page = _frozen_end_read()
+
+    assert page.complete is True
+    assert page.error_code is None
+    assert len(page.rows) == 50
+    assert transport.seed_widths == [
+        timedelta(hours=1),  # opening width
+        timedelta(hours=1),  # after the root-time discovery jump
+        timedelta(hours=2),
+        timedelta(hours=4),
+        timedelta(hours=8),  # first probed width
+        timedelta(hours=16),
+        timedelta(hours=32),
+        timedelta(hours=4),  # the 64 h proposal, fitted to the budget
+        timedelta(hours=8),
+        timedelta(hours=16),
+        timedelta(hours=4),  # the 32 h proposal, fitted again
+        timedelta(hours=2),  # halved by the first dense statement's read rows
+    ]
+    # Seven probes, one per proposal above the cap, and never more than one per
+    # seed statement.
+    assert [end - start for start, end in transport.density_intervals] == [
+        timedelta(hours=8),
+        timedelta(hours=16),
+        timedelta(hours=32),
+        timedelta(hours=64),
+        timedelta(hours=8),
+        timedelta(hours=16),
+        timedelta(hours=32),
+    ]
+    assert len(transport.density_intervals) <= len(transport.seed_intervals)
+    probe_attempts = [
+        attempt for attempt in page.attempts if attempt.kind == "seed_density_probe"
+    ]
+    assert len(probe_attempts) == 7
+    assert all(attempt.error_code is None for attempt in probe_attempts)
+    # No slice above the cap was issued without its own approving probe, and
+    # the refused 64 h slice was never issued at any width above four hours.
+    approved = set(transport.density_intervals)
+    assert all(
+        (start, end) in approved
+        for start, end in transport.seed_intervals
+        if end - start > timedelta(hours=4)
+    )
+    assert max(transport.seed_widths) == timedelta(hours=32)
+    # Slices walk strictly older and never overlap. They are NOT contiguous
+    # here, and must not be: the root-time discovery probe proved the newest
+    # ~72 h carry no physical root at all and the scan jumped that interval
+    # rather than seeding it hour by hour.
+    assert all(
+        older_end <= newer_start
+        for (newer_start, _), (_, older_end) in zip(
+            transport.seed_intervals, transport.seed_intervals[1:], strict=False
+        )
+    )
+    # Exactness is untouched: the newest fifty matching roots, newest first.
+    assert [row["trace_id"] for row in page.rows] == _newest_first(
+        _FROZEN_END_POPULATION
+    )[:50]
+
+
+@override_settings(FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS=1)
+def test_a_data_anchored_window_is_unchanged_because_it_never_passes_the_cap():
+    """The guard must cost nothing where the defect cannot occur.
+
+    A window anchored on the data - the measured 7 d shape that already runs in
+    2.3-3.8 s - finds matching roots in its first slices, so the row budget
+    holds or halves and never proposes a width above the cap. Zero probes means
+    zero added statements and, because the guard is the identity below the cap,
+    a schedule identical to the one without it.
+    """
+
+    population = _root_population([(hours, 20) for hours in range(1, 169, 2)])
+    transport, page = _picker_lane_read(
+        population,
+        window=timedelta(days=7),
+        page_size=50,
+        transport_factory=lambda: _PopulationLaneTransport(population),
+    )
+
+    assert page.complete is True
+    assert transport.density_intervals == []
+    assert not [
+        attempt for attempt in page.attempts if attempt.kind == "seed_density_probe"
+    ]
+    # Dense from the first statement: the budget holds at the floor and the
+    # proposal never approaches the cap, let alone passes it.
+    assert set(transport.seed_widths) == {timedelta(hours=1), timedelta(hours=2)}
+    assert max(transport.seed_widths) <= timedelta(hours=4)
+    assert [row["trace_id"] for row in page.rows] == _newest_first(population)[:50]
+
+
+def test_the_density_probe_asks_the_cheapest_question_that_answers_the_cost():
+    """The probe's SQL contract: a PK-range count and nothing else."""
+
+    builder = picker_leaves(2)
+    assert builder.supports_filter_seed_density_probe() is True
+
+    sql, params = builder.build_filter_seed_density_probe_query(
+        slice_start=END - timedelta(hours=64, minutes=20),
+        slice_end=END - timedelta(hours=7, minutes=40),
+    )
+
+    assert "count()" in sql
+    assert "AS seed_density_rows" in sql
+    assert "PREWHERE" in sql
+    assert "is_deleted = 0" in sql
+    # A cost question, not a membership one: no attribute predicate, no child
+    # witness, no root restriction, no ordering, no FINAL, no keyset.
+    assert "attrs_string" not in sql
+    assert "parent_span_id" not in sql
+    assert "matching_scalar_trace_identities" not in sql
+    assert "ORDER BY" not in sql
+    assert "FINAL" not in sql
+    assert "filter_before" not in sql
+    assert ACCOUNT_VALUES[0] not in sql
+    assert ACCOUNT_VALUES[0] not in str(params)
+    # Hour-aligned, rounded OUT, so the count over-states the slice it approves.
+    start = _EPOCH + timedelta(microseconds=params["seed_density_start_us"])
+    end = _EPOCH + timedelta(microseconds=params["seed_density_end_us"])
+    assert start == END - timedelta(hours=65)
+    assert end == END - timedelta(hours=7)
+    _render_driver_sql(sql, params)
+
+
+def test_the_density_probe_stays_inside_the_request_window():
+    builder = picker_leaves(2, window=timedelta(days=7))
+    with pytest.raises(ValueError, match="inside the request window"):
+        builder.build_filter_seed_density_probe_query(
+            slice_start=END - timedelta(days=8), slice_end=END
+        )
+
+
+def test_only_the_row_budgeted_lane_offers_a_density_probe():
+    assert subject(1, kind="number", value=5).supports_filter_seed_density_probe() is (
+        False
+    )
+    with pytest.raises(ValueError, match="density probe is unavailable"):
+        subject(1, kind="number", value=5).build_filter_seed_density_probe_query(
+            slice_start=END - timedelta(hours=2), slice_end=END
+        )
