@@ -44,6 +44,29 @@ _PROBE_SETTINGS = {"max_threads": 1, "max_block_size": 1024}
 # spending the wall the caller needs for the page it actually asked for.
 _PROBE_WALL_MS = 1500
 
+# The floor is the earliest span carrying a catalog-eligible attribute, but the
+# probe can only ask about spans. Spans without such attributes -- a child span,
+# one carrying only system fields -- legitimately predate it, so an exact
+# comparison reports "partial" on a perfectly healthy install.
+#
+# Measured on a stack with 846 indexed projects:
+#     gap <= 0            831 projects   (floor is the oldest span)
+#     gap <= 1 second      15 projects   (intra-trace timestamp jitter)
+#     1 second .. 1 hour    0 projects
+#     > 1 hour              0 projects
+#
+# The distribution is bimodal with nothing in between, so a margin separates
+# jitter from real absence cleanly. One hour is not arbitrary: it is the unit
+# the observed backfill itself pages in (cmd/fi-observed-catalog-backfill
+# advances its checkpoint one hour-bucket at a time), so it is the finest
+# granularity at which "this period was indexed" is even meaningful.
+#
+# The cost of the margin is bounded and self-correcting: at worst it calls an
+# install covered while under an hour of history is missing, and live ingestion
+# closes that window on its own. An un-backfilled upgrade is missing days or
+# months, orders of magnitude past this.
+_COVERAGE_MARGIN = "INTERVAL 1 HOUR"
+
 
 @dataclass(frozen=True, slots=True)
 class Coverage:
@@ -114,21 +137,36 @@ def _ch_timestamp(value) -> str:
 
 
 def _has_span_below(client, settings, project_id: str, floor) -> bool:
-    """Does the source retain any span for this project older than the floor?
+    """Does the source retain any span materially older than the floor?
+
+    "Materially" is `_COVERAGE_MARGIN`; see that constant for why an exact
+    comparison is wrong here.
 
     Partition pruning on ``toDate(start_time)`` means a covered project touches
     no partition at all and reads zero bytes; an uncovered one stops at the first
     matching block.
     """
-    result = client.query(
-        "SELECT 1 FROM spans "
-        "WHERE project_id = %(project_id)s "
-        "AND start_time < toDateTime64(%(floor)s, 6, 'UTC') "
-        "LIMIT 1",
-        parameters={"project_id": project_id, "floor": _ch_timestamp(floor)},
-        settings=settings,
+    return bool(
+        client.execute(
+            "SELECT 1 FROM spans "
+            "WHERE project_id = %(project_id)s "
+            f"AND start_time < toDateTime64(%(floor)s, 6, 'UTC') - {_COVERAGE_MARGIN} "
+            "LIMIT 1",
+            {"project_id": project_id, "floor": _ch_timestamp(floor)},
+            settings=settings,
+        )
     )
-    return bool(result.result_rows)
+
+
+def _has_any_span(client, settings, project_id: str) -> bool:
+    """Does this project have any span at all? A primary-key point lookup."""
+    return bool(
+        client.execute(
+            "SELECT 1 FROM spans WHERE project_id = %(project_id)s LIMIT 1",
+            {"project_id": project_id},
+            settings=settings,
+        )
+    )
 
 
 def observed_scope_coverage(*, scope, deadline, observed=None, client=None) -> Coverage:
@@ -152,28 +190,34 @@ def observed_scope_coverage(*, scope, deadline, observed=None, client=None) -> C
         logger.warning("observed_catalog_coverage_floor_failed", exc_info=True)
         return Coverage(False, "floor_unavailable")
 
-    # A project the index has never observed cannot be vouched for: either it
-    # has no spans (harmless) or it has spans nobody indexed (the upgrade case).
-    # We cannot tell those apart without a scan, so report incomplete.
-    if any(pid not in floors for pid in project_ids):
-        return Coverage(False, "project_unindexed")
 
     try:
         if client is None:
-            from tracer.services.clickhouse.v2.end_user_dict_reader import _get_client
+            # The pooled wrapper, not end_user_dict_reader's module-level
+            # clickhouse_connect handle: that one carries a session, and two
+            # concurrent requests sharing it raise "Attempt to execute
+            # concurrent queries within the same session". The probe runs on
+            # every catalog read, so it is concurrent by definition.
+            from tracer.services.clickhouse.client import ClickHouseClient
 
-            client = _get_client()
-        from tracer.services.clickhouse.v2.query_settings import current_settings
-
+            client = ClickHouseClient(server_enforced_readonly=True)
         probe_settings = {
-            **current_settings(),
             **_PROBE_SETTINGS,
             "max_execution_time": max(_PROBE_WALL_MS, 1) / 1000.0,
         }
         for project_id in project_ids:
-            if _has_span_below(client, probe_settings, project_id, floors[project_id]):
+            floor = floors.get(project_id)
+            if floor is None:
+                # No index rows for this project. That is only a gap if the
+                # project actually has spans -- an empty project has nothing to
+                # index, and treating it as suspicious dragged every scope
+                # containing one to "partial".
+                if _has_any_span(client, probe_settings, project_id):
+                    return Coverage(False, "project_unindexed")
+                continue
+            if _has_span_below(client, probe_settings, project_id, floor):
                 return Coverage(
-                    False, "source_predates_index", _ch_timestamp(floors[project_id])
+                    False, "source_predates_index", _ch_timestamp(floor)
                 )
     except Exception:
         # Failing closed is correct, but silence here is not: a broken probe and

@@ -468,6 +468,47 @@ describe("usePropertyCatalog", () => {
     ).toHaveProperty("__propertyCatalogCursorStopped", "malformed_page");
   });
 
+  it("accepts a partially-covered current page instead of calling it malformed", () => {
+    // The observed catalog reports coverage of the source's retained history.
+    // A still-backfilling index answers query_complete:false / "partial" -- the
+    // rows present are real, there may be older ones it has not indexed yet.
+    // This used to be rejected as malformed, which stopped the cursor and left
+    // the property picker empty: strictly worse than the incomplete answer, and
+    // it broke real dashboard and observe flows.
+    const partial = currentPage({
+      query_complete: false,
+      query_status: "partial",
+      coverage_reason: "project_unindexed",
+    });
+    expect(validatePropertyCatalogPage(partial)).toBe(partial);
+
+    // Only the current catalog may claim partial coverage. The legacy activated
+    // path has no coverage concept, so the same pair must still be rejected.
+    const legacyPartial = validatePropertyCatalogPage({
+      ...currentPage(),
+      query_provenance: "activated_property_catalog",
+      query_exact: true,
+      query_complete: false,
+      query_status: "partial",
+    });
+    expect(legacyPartial).toHaveProperty(
+      "__propertyCatalogCursorStopped",
+      "malformed_page",
+    );
+
+    // Widening for "partial" must not admit other incomplete shapes.
+    for (const shape of [
+      { query_complete: false, query_status: "complete" },
+      { query_complete: false, query_status: "degraded" },
+      { query_complete: true, query_status: "partial" },
+    ]) {
+      expect(validatePropertyCatalogPage(currentPage(shape))).toHaveProperty(
+        "__propertyCatalogCursorStopped",
+        "malformed_page",
+      );
+    }
+  });
+
   it("paginates current definitions and accepts live metadata updates", async () => {
     mocks.get
       .mockResolvedValueOnce({

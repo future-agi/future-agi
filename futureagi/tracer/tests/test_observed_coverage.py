@@ -46,17 +46,22 @@ class _Client:
     ``below`` names the projects that have spans older than their index floor.
     """
 
-    def __init__(self, below=(), raises=None):
+    def __init__(self, below=(), raises=None, any_span=None):
         self.below = set(below)
+        # Projects that have at least one span. Defaults to "the ones below",
+        # so an empty project is the default for anything unindexed.
+        self.any_span = set(below) if any_span is None else set(any_span)
         self.raises = raises
         self.calls = []
 
-    def query(self, sql, parameters=None, settings=None):
-        self.calls.append({"sql": sql, "parameters": parameters, "settings": settings})
+    def execute(self, sql, params=None, settings=None):
+        self.calls.append({"sql": sql, "parameters": params, "settings": settings})
         if self.raises:
             raise self.raises
-        hit = (parameters or {}).get("project_id") in self.below
-        return SimpleNamespace(result_rows=[(1,)] if hit else [])
+        pid = (params or {}).get("project_id")
+        # The floor-less probe asks only "does this project have any span".
+        hit = pid in (self.any_span if "start_time" not in sql else self.below)
+        return [(1,)] if hit else []
 
 
 def _coverage(*, rows=None, below=(), scope=SCOPE, observed=None, client=None):
@@ -92,11 +97,37 @@ def test_source_older_than_index_reports_partial_not_complete():
 
 
 @pytest.mark.unit
-def test_project_absent_from_index_is_not_vouched_for():
-    """An unindexed project may have unindexed spans; we cannot tell cheaply."""
-    result = _coverage(rows=[], scope=SCOPE)
+def test_unindexed_project_with_spans_is_a_gap():
+    """Spans present but nothing indexed is exactly the un-backfilled upgrade."""
+    result = _coverage(rows=[], scope=SCOPE, client=_Client(any_span=("p1",)))
     assert result.complete is False
     assert result.reason == "project_unindexed"
+
+
+@pytest.mark.unit
+def test_unindexed_project_without_spans_is_not_a_gap():
+    """An empty project has nothing to index, so it is genuinely covered.
+
+    Regression: treating every floor-less project as suspicious dragged any
+    scope containing an empty project to "partial". Workspaces routinely hold
+    projects with no traces yet, so this made healthy installs report partial
+    and broke dashboard flows asserting completeness.
+    """
+    result = _coverage(rows=[], scope=SCOPE, client=_Client(any_span=()))
+    assert result.complete is True
+    assert result.reason == "covered"
+
+
+@pytest.mark.unit
+def test_an_empty_project_does_not_mask_a_real_gap_elsewhere():
+    """One empty project must not make a genuinely uncovered sibling look fine."""
+    result = _coverage(
+        rows=[{"project_id": "p2", "floor": "2026-06-01 00:00:00"}],
+        scope=TWO_PROJECTS,
+        client=_Client(below=("p2",), any_span=("p2",)),
+    )
+    assert result.complete is False
+    assert result.reason == "source_predates_index"
 
 
 @pytest.mark.unit
@@ -172,7 +203,10 @@ def test_probe_is_scoped_and_bounded_by_construction():
     call = client.calls[0]
     assert "LIMIT 1" in call["sql"]
     assert "project_id = %(project_id)s" in call["sql"]
-    assert "start_time < toDateTime64(%(floor)s, 6, 'UTC')" in call["sql"]
+    assert (
+        "start_time < toDateTime64(%(floor)s, 6, 'UTC') - INTERVAL 1 HOUR"
+        in call["sql"]
+    )
     # Values are bound, never interpolated into SQL text.
     assert call["parameters"] == {"project_id": "p1", "floor": "2026-01-01 00:00:00"}
     assert "p1" not in call["sql"]
@@ -202,6 +236,33 @@ def test_tz_aware_floor_is_rendered_without_an_offset():
     assert "+00:00" not in floor and "T" not in floor and not floor.endswith("Z")
     # The surfaced floor is rendered the same way, so callers see one format.
     assert result.floor == "2026-01-01 12:30:45.123456"
+
+
+@pytest.mark.unit
+def test_probe_ignores_sub_floor_jitter_but_not_real_absence():
+    """Regression: an exact floor comparison reported "partial" on healthy data.
+
+    The floor is the earliest span carrying a catalog-eligible attribute, but
+    the probe can only ask about spans, and spans without such attributes
+    legitimately predate it. On a real stack the oldest span sat **one
+    microsecond** before the floor, so every project reported partial and 11
+    E2E flows that assert ``query_complete: true`` broke.
+
+    Measured across 846 indexed projects: 831 had no gap, 15 had a sub-second
+    gap, and none fell between 1 second and 1 hour -- so the margin separates
+    jitter from absence without masking anything real.
+    """
+    from tracer.services.clickhouse.v2.property_catalog.coverage import (
+        _COVERAGE_MARGIN,
+    )
+
+    client = _Client(below=())
+    _coverage(rows=[{"project_id": "p1", "floor": "2026-01-01 00:00:00"}], client=client)
+
+    # The margin is applied in SQL, so a span a microsecond below the floor can
+    # no longer match; only data older than the margin can.
+    assert _COVERAGE_MARGIN == "INTERVAL 1 HOUR"
+    assert f"- {_COVERAGE_MARGIN}" in client.calls[0]["sql"]
 
 
 @pytest.mark.unit

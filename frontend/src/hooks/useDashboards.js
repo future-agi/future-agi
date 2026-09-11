@@ -179,11 +179,21 @@ export const validatePropertyCatalogPage = (
   consumedCursors = new Set(),
 ) => {
   const current = page?.query_provenance === "current_property_catalog";
+  // The observed catalog reports whether it covers the source's retained
+  // history. An index that is still being backfilled answers
+  // `query_complete: false` / `query_status: "partial"`, which is a truthful,
+  // well-formed page -- the rows in it are real, there may simply be older ones
+  // it has not seen yet. Treating that as malformed stopped the cursor and left
+  // the picker empty, which is both wrong and worse than the incomplete answer.
+  // Only the current catalog may say this; the legacy activated path has no
+  // coverage concept and must still be exactly complete.
+  const partialCoverage =
+    current && page?.query_complete === false && page?.query_status === "partial";
   if (
     !page ||
-    page.query_complete !== true ||
+    (!partialCoverage && page.query_complete !== true) ||
     (current ? page.query_exact !== false : page.query_exact !== true) ||
-    page.query_status !== "complete" ||
+    (!partialCoverage && page.query_status !== "complete") ||
     (!current &&
       (page.query_provenance !== "activated_property_catalog" ||
         !Number.isSafeInteger(page.catalog_epoch) ||
