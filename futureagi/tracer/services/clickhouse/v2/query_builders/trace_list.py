@@ -1345,10 +1345,24 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
         bounded-witness schedule. They share one hook because they share that
         cost shape and one setting; which of them is chosen is decided in
         ``_public_scalar_candidate_seed_plan``, numeric first.
+
+        False for a builder carrying the private ``_eval_task_trace_root``
+        marker. Such a builder is ANOTHER surface's delegate - voice calls
+        construct one for exactly this long-text plan - and those surfaces mint
+        their own cursors without pinning this slack, so a mid-flight setting
+        change there could move candidacy under a half-published page. Their
+        bounded-witness contracts are also their own owner decisions: a voice
+        ``call.*`` attribute written on the closing span is the concrete
+        failure. The widening stops at the surface it is proposed for.
         """
         return self._seed_plan_cached("wide_lane", self._compute_wide_seed_lane)
 
     def _compute_wide_seed_lane(self) -> bool:
+        if any(
+            item.get("_eval_task_trace_root")
+            for item in self._active_non_time_filters()
+        ):
+            return False
         return (
             super()._public_scalar_candidate_seed_plan() is not None
             or self._public_long_text_candidate_seed_plan() is not None
