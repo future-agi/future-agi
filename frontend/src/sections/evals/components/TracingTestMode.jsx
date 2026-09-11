@@ -2119,13 +2119,21 @@ const TracingTestMode = React.forwardRef(
         {/* Variable mapping */}
         {variables.length > 0 &&
           (() => {
-            const isFetchingColumns =
+            // Row-preview fetches genuinely have nothing to offer yet, so
+            // the mapping control stays disabled until they settle.
+            const isLoadingRowColumns =
               !!selectedProjectId &&
-              (loading ||
-                isPendingNewFetch ||
-                loadingDetail ||
-                isFetchingExactAttributes);
-            const mappingDisabledTooltip = isFetchingColumns
+              (loading || isPendingNewFetch || loadingDetail);
+            // The attribute search refetches on every keystroke. Disabling
+            // the Autocomplete mid-type closes its popup and blurs the input,
+            // and neither comes back when the request settles — so the exact
+            // lookup only drives the spinner, never `disabled`. Matches the
+            // hook's own contract: a slow exact lookup must not disable the
+            // mapping control.
+            const isFetchingColumns =
+              isLoadingRowColumns ||
+              (!!selectedProjectId && isFetchingExactAttributes);
+            const mappingDisabledTooltip = isLoadingRowColumns
               ? "Columns are being fetched"
               : "";
             const exactAttributeReadMessage = getAttributeLookupMessage(
@@ -2185,7 +2193,7 @@ const TracingTestMode = React.forwardRef(
                       <Autocomplete
                         size="small"
                         freeSolo={allowCustomFieldPath}
-                        disabled={isFetchingColumns}
+                        disabled={isLoadingRowColumns}
                         options={
                           mapping[variable] &&
                           !fieldNames.includes(mapping[variable])
@@ -2340,7 +2348,7 @@ const TracingTestMode = React.forwardRef(
                           width={14}
                           sx={{ color: "text.disabled" }}
                         />
-                        {isFetchingColumns ? (
+                        {isLoadingRowColumns ? (
                           <CustomTooltip
                             show
                             type="black"
