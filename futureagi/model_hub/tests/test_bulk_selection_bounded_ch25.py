@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 from clickhouse_driver import Client
 
+from conftest import require_live_clickhouse
 from model_hub.services.bulk_selection import (
     BulkSelectionAmbiguousIdentity,
     _resolve_span_ids_clickhouse,
@@ -32,6 +33,7 @@ CH_PASSWORD = os.environ.get("CH25_PASSWORD", "")
 
 @pytest.fixture(scope="module")
 def ch_client():
+    require_live_clickhouse()
     client = Client(
         host=CH_HOST,
         port=CH_NATIVE_PORT,

@@ -24,12 +24,14 @@ from agentic_eval.core.embeddings.embedding_manager import (
     GROUND_TRUTH_TABLE_NAME,
     EmbeddingManager,
 )
+from conftest import require_live_clickhouse
 
 _DIM = 384
 
 
 @pytest.fixture
 def gt_table(monkeypatch):
+    require_live_clickhouse()
     # ``ClickHouseVectorDB`` reads CH connection from raw env vars (not
     # Django settings), so point them at the test compose CH on
     # localhost:19000 before construction.

@@ -9,6 +9,7 @@ import pytest
 from clickhouse_driver import Client
 from clickhouse_driver.errors import NetworkError, ServerException
 
+from conftest import require_live_clickhouse
 from model_hub.selectors import eval_usage
 from model_hub.selectors.eval_usage import read_eval_usage
 from tracer.services.clickhouse import trace_project_scope
@@ -765,6 +766,7 @@ def test_eval_usage_empty_project_set_fails_closed_for_trace_rows(monkeypatch):
 
 @pytest.fixture(scope="module")
 def ch_client():
+    require_live_clickhouse()
     host = os.environ.get("CH25_HOST", "127.0.0.1")
     port = int(os.environ.get("CH25_NATIVE_PORT", "19000"))
     client = Client(host=host, port=port, connect_timeout=3)
