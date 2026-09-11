@@ -1275,7 +1275,7 @@ const TestPlayground = React.forwardRef(
             </Box>
 
             {/* Tab content */}
-            <Box sx={{ flex: 1, overflow: "auto" }}>
+            <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
               {activeTab === "Custom" && (
                 <>
                   <CustomJsonInput
@@ -1595,7 +1595,7 @@ const TestPlayground = React.forwardRef(
           </>
         ) : (
           /* =================== VERSIONS TAB =================== */
-          <Box sx={{ flex: 1, overflow: "auto" }}>
+          <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
             {!templateId ? (
               <Typography
                 variant="body2"

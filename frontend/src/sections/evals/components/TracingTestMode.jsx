@@ -326,7 +326,6 @@ const tracingPreviewRowIdentity = (rowType, row) => {
   return getSpanReadIdentityKey(row);
 };
 
-
 const MAPPING_COMMIT_DEBOUNCE_MS = 120;
 const MAPPING_AUTOCOMPLETE_SX = { flex: 1 };
 
@@ -446,11 +445,19 @@ const MappingRow = React.memo(function MappingRow({
           width={14}
           sx={{ color: "text.secondary" }}
         />
-        <Typography variant="caption" fontWeight={600} sx={{ fontSize: "12px" }}>
+        <Typography
+          variant="caption"
+          fontWeight={600}
+          sx={{ fontSize: "12px" }}
+        >
           {variable}
         </Typography>
       </Box>
-      <Iconify icon="mdi:arrow-right" width={14} sx={{ color: "text.disabled" }} />
+      <Iconify
+        icon="mdi:arrow-right"
+        width={14}
+        sx={{ color: "text.disabled" }}
+      />
       {disabled ? (
         <CustomTooltip
           show
@@ -1469,7 +1476,6 @@ const TracingTestMode = React.forwardRef(
       [truncatedSet, spanDetail, walkedFromDetail],
     );
 
-
     const handleMappingSelect = useCallback((variable, val) => {
       setMapping((prev) => ({ ...prev, [variable]: val }));
     }, []);
@@ -1704,7 +1710,14 @@ const TracingTestMode = React.forwardRef(
     );
 
     return (
-      <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5,height: "100%" }}>
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 1.5,
+          height: "100%",
+        }}
+      >
         {/* Project selector — hidden when pre-selected (e.g. task flow) */}
         {!projectLocked && (
           <Box>
