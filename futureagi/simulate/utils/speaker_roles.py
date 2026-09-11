@@ -83,6 +83,26 @@ class SpeakerRoleResolver:
         "customer": "simulator",
     }
 
+    # ADDED — Twilio call-log ingestion carries no per-turn transcript
+    # (see tracer/utils/twilio_calls.py), so this map exists for
+    # consistency with the resolver's contract rather than active use.
+    # Mirrors Bland's telephony-provider shape until Twilio transcripts
+    # are actually produced by the platform.
+    _TWILIO_INBOUND: dict[str, str] = {
+        "bot": "simulator",
+        "assistant": "simulator",
+        "agent": "simulator",
+        "user": "tested_agent",
+        "customer": "tested_agent",
+    }
+    _TWILIO_OUTBOUND: dict[str, str] = {
+        "bot": "tested_agent",
+        "assistant": "tested_agent",
+        "agent": "tested_agent",
+        "user": "simulator",
+        "customer": "simulator",
+    }
+
     @staticmethod
     def detect_provider(
         provider_call_data: dict[str, Any] | None,
@@ -101,6 +121,8 @@ class SpeakerRoleResolver:
             return ProviderChoices.VAPI
         if provider_call_data.get(ProviderChoices.BLAND.value):
             return ProviderChoices.BLAND
+        if provider_call_data.get(ProviderChoices.TWILIO.value):  # ADDED
+            return ProviderChoices.TWILIO
         logger.error(
             "speaker_role_resolver_unknown_provider",
             provider_call_data_keys=list(provider_call_data.keys()),
@@ -145,6 +167,8 @@ class SpeakerRoleResolver:
             return cls._LIVEKIT_OUTBOUND if is_outbound else cls._LIVEKIT_INBOUND
         if provider == ProviderChoices.BLAND:
             return cls._BLAND_OUTBOUND if is_outbound else cls._BLAND_INBOUND
+        if provider == ProviderChoices.TWILIO:  # ADDED
+            return cls._TWILIO_OUTBOUND if is_outbound else cls._TWILIO_INBOUND
         logger.error(
             "speaker_role_resolver_unsupported_provider",
             provider=str(provider),

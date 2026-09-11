@@ -20,6 +20,10 @@ class TestDetectProvider:
         data = {"vapi": {"id": "abc"}}
         assert SpeakerRoleResolver.detect_provider(data) == ProviderChoices.VAPI
 
+    def test_detects_twilio(self):
+        data = {"twilio": {"call_sid": "CA123"}}
+        assert SpeakerRoleResolver.detect_provider(data) == ProviderChoices.TWILIO
+
     def test_none_falls_back_to_vapi(self):
         assert SpeakerRoleResolver.detect_provider(None) == ProviderChoices.VAPI
 
@@ -103,6 +107,41 @@ class TestIsTestedAgent:
         assert (
             SpeakerRoleResolver.is_tested_agent(
                 "user", provider=ProviderChoices.LIVEKIT, is_outbound=is_outbound
+            )
+            is False
+        )
+
+    # Twilio: mirrors Bland's shape until Twilio transcripts are produced.
+    # Inbound: bot/assistant/agent = simulator, user/customer = tested_agent
+    # Outbound: bot/assistant/agent = tested_agent, user/customer = simulator
+    def test_twilio_inbound_user_is_tested_agent(self):
+        assert (
+            SpeakerRoleResolver.is_tested_agent(
+                "user", provider=ProviderChoices.TWILIO, is_outbound=False
+            )
+            is True
+        )
+
+    def test_twilio_inbound_assistant_is_not_tested_agent(self):
+        assert (
+            SpeakerRoleResolver.is_tested_agent(
+                "assistant", provider=ProviderChoices.TWILIO, is_outbound=False
+            )
+            is False
+        )
+
+    def test_twilio_outbound_assistant_is_tested_agent(self):
+        assert (
+            SpeakerRoleResolver.is_tested_agent(
+                "assistant", provider=ProviderChoices.TWILIO, is_outbound=True
+            )
+            is True
+        )
+
+    def test_twilio_outbound_user_is_not_tested_agent(self):
+        assert (
+            SpeakerRoleResolver.is_tested_agent(
+                "user", provider=ProviderChoices.TWILIO, is_outbound=True
             )
             is False
         )
@@ -202,6 +241,22 @@ class TestIsSimulator:
             is False
         )
 
+    def test_twilio_inbound_assistant_is_simulator(self):
+        assert (
+            SpeakerRoleResolver.is_simulator(
+                "assistant", provider=ProviderChoices.TWILIO, is_outbound=False
+            )
+            is True
+        )
+
+    def test_twilio_outbound_user_is_simulator(self):
+        assert (
+            SpeakerRoleResolver.is_simulator(
+                "user", provider=ProviderChoices.TWILIO, is_outbound=True
+            )
+            is True
+        )
+
 
 class TestGetEvalRoleLabel:
 
@@ -274,6 +329,23 @@ class TestGetEvalRoleLabel:
             == "customer"
         )
 
+    # Twilio inbound: assistant -> customer, user -> agent (mirrors VAPI)
+    def test_twilio_inbound_assistant_becomes_customer(self):
+        assert (
+            SpeakerRoleResolver.get_eval_role_label(
+                "assistant", provider=ProviderChoices.TWILIO, is_outbound=False
+            )
+            == "customer"
+        )
+
+    def test_twilio_outbound_assistant_becomes_agent(self):
+        assert (
+            SpeakerRoleResolver.get_eval_role_label(
+                "assistant", provider=ProviderChoices.TWILIO, is_outbound=True
+            )
+            == "agent"
+        )
+
     def test_system_returned_as_is(self):
         assert (
             SpeakerRoleResolver.get_eval_role_label(
@@ -323,6 +395,24 @@ class TestGetTranscriptRoleSets:
         assert "user" in sim
         assert "customer" in sim
 
+    def test_twilio_inbound(self):
+        ta, sim = SpeakerRoleResolver.get_transcript_role_sets(
+            provider=ProviderChoices.TWILIO, is_outbound=False
+        )
+        assert "user" in ta
+        assert "customer" in ta
+        assert "assistant" in sim
+        assert "bot" in sim
+
+    def test_twilio_outbound(self):
+        ta, sim = SpeakerRoleResolver.get_transcript_role_sets(
+            provider=ProviderChoices.TWILIO, is_outbound=True
+        )
+        assert "assistant" in ta
+        assert "bot" in ta
+        assert "user" in sim
+        assert "customer" in sim
+
     def test_sets_are_disjoint(self):
         ta, sim = SpeakerRoleResolver.get_transcript_role_sets(
             provider=ProviderChoices.VAPI, is_outbound=False
@@ -333,7 +423,11 @@ class TestGetTranscriptRoleSets:
 class TestGetSkipDecisionRoleSets:
 
     def test_returns_same_as_transcript_role_sets(self):
-        for provider in [ProviderChoices.VAPI, ProviderChoices.LIVEKIT]:
+        for provider in [
+            ProviderChoices.VAPI,
+            ProviderChoices.LIVEKIT,
+            ProviderChoices.TWILIO,
+        ]:
             for is_outbound in [True, False]:
                 skip = SpeakerRoleResolver.get_skip_decision_role_sets(
                     provider=provider, is_outbound=is_outbound
@@ -449,12 +543,29 @@ class TestRegressionContracts:
             provider=ProviderChoices.LIVEKIT, is_outbound=True
         )
 
+    def test_twilio_inbound_and_outbound_are_mirror_images(self):
+        """Twilio follows the VAPI-style convention (mirrors Bland), not
+        the LiveKit direction-agnostic one. If they ever collapse to the
+        same map, the map has regressed."""
+        ta_in, sim_in = SpeakerRoleResolver.get_transcript_role_sets(
+            provider=ProviderChoices.TWILIO, is_outbound=False
+        )
+        ta_out, sim_out = SpeakerRoleResolver.get_transcript_role_sets(
+            provider=ProviderChoices.TWILIO, is_outbound=True
+        )
+        assert ta_in == sim_out
+        assert sim_in == ta_out
+
     def test_eval_labels_are_stable_across_providers_and_directions(self):
         """Eval templates read `agent` and `customer` regardless of
         provider. If a fifth label ever leaks through, the LLM prompt
         contract has drifted."""
         seen = set()
-        for provider in [ProviderChoices.VAPI, ProviderChoices.LIVEKIT]:
+        for provider in [
+            ProviderChoices.VAPI,
+            ProviderChoices.LIVEKIT,
+            ProviderChoices.TWILIO,
+        ]:
             for is_outbound in [False, True]:
                 for raw in ["assistant", "user", "bot", "customer", "agent"]:
                     label = SpeakerRoleResolver.get_eval_role_label(
