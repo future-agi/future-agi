@@ -34,6 +34,8 @@ except ImportError:
     VoiceServiceManager = None
 from tracer.models.observability_provider import ProviderChoices
 
+from tfc.utils.storage_client import server_reachable_url
+
 logger = structlog.get_logger(__name__)
 
 
@@ -4426,12 +4428,15 @@ class TestExecutor:
         Returns:
             dict: Transcript and voice recording data
         """
+        # Addressed for a server-side fetch; an unreachable URL is sniffed as text.
         transcript_data = {
             "transcript": "",
-            "voice_recording": call_execution.recording_url or "",
+            "voice_recording": server_reachable_url(call_execution.recording_url or ""),
             "assistant_recording": "",
             "customer_recording": "",
-            "stereo_recording": call_execution.stereo_recording_url or "",
+            "stereo_recording": server_reachable_url(
+                call_execution.stereo_recording_url or ""
+            ),
             "user_chat_transcript": "",
             "assistant_chat_transcript": "",
         }
@@ -4659,7 +4664,7 @@ class TestExecutor:
                         call_execution.stereo_recording_url = s3_url
                         needs_save = True
                         fields_to_update.append("stereo_recording_url")
-                    transcript_data["stereo_recording"] = s3_url
+                    transcript_data["stereo_recording"] = server_reachable_url(s3_url)
                     recording_object["stereo"] = s3_url
 
                 # Convert and save main recording URL (combined)
@@ -4676,7 +4681,7 @@ class TestExecutor:
                         call_execution.recording_url = s3_url
                         needs_save = True
                         fields_to_update.append("recording_url")
-                    transcript_data["voice_recording"] = s3_url
+                    transcript_data["voice_recording"] = server_reachable_url(s3_url)
                     recording_object["combined"] = s3_url
 
             # Save the call_execution if any URLs were converted

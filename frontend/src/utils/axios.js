@@ -224,7 +224,10 @@ axiosInstance.interceptors.response.use(
     }
 
     const errData = (error.response && error.response.data) || {
-      message: "Something went wrong",
+      // Request interceptors (including the development OpenAPI guard) fail
+      // before Axios has a response. Preserve their actual explanation rather
+      // than replacing it with a generic error that cannot be diagnosed.
+      message: error?.message || "Something went wrong",
     };
 
     const customError = {
@@ -299,14 +302,18 @@ export const endpoints = {
         uidb64,
         token,
       }),
-    service: (provider) =>
-      withQuery(apiPath("/saml2_auth/login/"), { provider }),
+    service: (provider, onboardingToken) =>
+      withQuery(apiPath("/saml2_auth/login/"), {
+        provider,
+        onboarding_token: onboardingToken || undefined,
+      }),
     create_org: apiPath("/accounts/team/users/"),
     ssoLogin: (email) =>
       withQuery(apiPath("/saml2_auth/idp-login/"), { email }),
     logout: apiPath("/accounts/logout/"),
     refreshToken: apiPath("/accounts/token/refresh/"),
     awsSignUp: apiPath("/accounts/aws-marketplace/signup/"),
+    gcpSignUp: apiPath("/accounts/gcp-marketplace/signup/"),
     config: apiPath("/accounts/config/"),
     createOrganization: apiPath("/accounts/organizations/create/"),
   },

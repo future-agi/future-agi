@@ -192,6 +192,68 @@ class TestCreateEvalTemplateTool:
         assert result.data["name"] == "new-eval"
         assert result.data["id"]
 
+    def test_create_defaults_to_agent_type(self, tool_context):
+        """No eval_type named means an agent eval (TH-4870)."""
+        result = run_tool(
+            "create_eval_template",
+            {
+                "name": "default-type-eval",
+                "criteria": "Check if {{response}} is polite",
+                "required_keys": ["response"],
+            },
+            tool_context,
+        )
+
+        assert not result.is_error
+        from model_hub.models.evals_metric import EvalTemplate
+
+        assert EvalTemplate.objects.get(id=result.data["id"]).eval_type == "agent"
+
+    @pytest.mark.parametrize("requested", ["llm", "code", "agent"])
+    def test_explicit_eval_type_is_respected(self, tool_context, requested):
+        """An explicitly requested type always wins over the agent default."""
+        payload = {
+            "name": f"explicit-{requested}-eval",
+            "eval_type": requested,
+            "required_keys": ["response"],
+        }
+        if requested == "code":
+            payload["code"] = "def evaluate(**kwargs):\n    return True"
+        else:
+            payload["criteria"] = "Check if {{response}} is polite"
+
+        result = run_tool("create_eval_template", payload, tool_context)
+
+        assert not result.is_error
+        from model_hub.models.evals_metric import EvalTemplate
+
+        assert EvalTemplate.objects.get(id=result.data["id"]).eval_type == requested
+
+    @pytest.mark.parametrize(
+        "template_type,expected",
+        [("Function", "code"), ("Llm", "llm"), ("Futureagi", "agent")],
+    )
+    def test_template_type_alias_maps_to_eval_type(
+        self, tool_context, template_type, expected
+    ):
+        """The template_type alias was unreachable while eval_type had a default."""
+        payload = {
+            "name": f"alias-{expected}-eval",
+            "template_type": template_type,
+            "required_keys": ["response"],
+        }
+        if expected == "code":
+            payload["code"] = "def evaluate(**kwargs):\n    return True"
+        else:
+            payload["criteria"] = "Check if {{response}} is polite"
+
+        result = run_tool("create_eval_template", payload, tool_context)
+
+        assert not result.is_error
+        from model_hub.models.evals_metric import EvalTemplate
+
+        assert EvalTemplate.objects.get(id=result.data["id"]).eval_type == expected
+
     def test_create_with_criteria(self, tool_context):
         result = run_tool(
             "create_eval_template",

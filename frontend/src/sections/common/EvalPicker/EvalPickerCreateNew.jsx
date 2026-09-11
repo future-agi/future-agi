@@ -1265,7 +1265,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                   />
                 </Box>
               )}
-              <Box sx={{ flex: 1, overflow: "auto" }}>
+              <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
                 {(source === "dataset" ||
                   source === "workbench" ||
                   source === "custom" ||

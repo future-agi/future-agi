@@ -84,6 +84,21 @@ def _bounded_env_int(
     return int(spec.parse(name, os.getenv(name)))
 
 
+def _admission_env_int(name: str, default: int) -> int:
+    """A hosted-runner admission ceiling from the environment. A missing,
+    empty, or non-integer value falls back to the default so a bad override can
+    never crash settings import (``_positive_setting`` in the service layer
+    documents the same lenient fallback and cannot help once import has already
+    failed). The service layer re-checks the bound and treats 0 as 'disabled'."""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return int(raw.strip())
+    except ValueError:
+        return default
+
+
 # Numeric runtime knobs are declared once in runtime_setting_specs.py. Parse
 # and cross-validate them before database/cache configuration consumes them.
 _runtime_numeric_settings = _load_numeric_settings(
@@ -194,6 +209,10 @@ CORS_ALLOW_HEADERS = (
         "x-workspace-slug",
         "x-project-id",
         "x-organization-id",
+        # Harness creates are idempotent. Browsers send an OPTIONS preflight
+        # before the POST because this is a non-simple header, so omitting it
+        # here prevents the create request from ever reaching Django.
+        "idempotency-key",
         "sentry-trace",
         "baggage",
         "traceparent",
@@ -601,6 +620,99 @@ BILLING_CONFIG_PATH = os.environ.get(
     os.path.join(BASE_DIR, "..", "ee", "cloud", "billing.yaml"),
 )
 
+# ── GCP Marketplace ─────────────────────────────────
+# Cloud-only. Absent everywhere else, and the integration no-ops without them.
+GCP_MARKETPLACE_PROJECT_ID = os.environ.get("GCP_MARKETPLACE_PROJECT_ID", "")
+GCP_MARKETPLACE_PROVIDER_ID = os.environ.get("GCP_MARKETPLACE_PROVIDER_ID", "")
+GCP_MARKETPLACE_SERVICE_NAME = os.environ.get("GCP_MARKETPLACE_SERVICE_NAME", "")
+GCP_MARKETPLACE_PUBSUB_SUBSCRIPTION = os.environ.get(
+    "GCP_MARKETPLACE_PUBSUB_SUBSCRIPTION", ""
+)
+
+# Accepted `aud` values on the sign-up token, comma separated. Google documents
+# the claim as PARTNER_DOMAIN_NAME, so it is a domain, not the Service Control
+# service name. No default, because the service name is the one value the
+# documentation rules out. Confirm against a real token.
+GCP_MARKETPLACE_TOKEN_AUDIENCES = [
+    value.strip()
+    for value in os.environ.get("GCP_MARKETPLACE_TOKEN_AUDIENCES", "").split(",")
+    if value.strip()
+]
+# Service account JSON for local dev. On GKE leave unset and use Workload Identity.
+GCP_MARKETPLACE_SA_JSON = os.environ.get("GCP_MARKETPLACE_SA_JSON", "")
+
+# Marketplace plan id -> (internal plan, billing interval). Read the live plan
+# ids from Producer Portal; adding or removing a plan there changes them.
+GCP_MARKETPLACE_PLAN_MAP = {
+    # PAYG is monthly only: a $0 platform fee leaves nothing to prepay annually.
+    "payg": ("payg", "monthly"),
+    "scale": ("scale", "monthly"),
+    "scale-P1Y": ("scale", "annual"),
+    # Enterprise is annual only on the portal.
+    "enterprise-P1Y": ("enterprise", "annual"),
+}
+
+# Metric ids are unique per product, so the same dimension has a different id on
+# every plan. Report against the id belonging to the plan on the entitlement.
+# Note payg gateway carries no plan prefix: the naming is not a pattern.
+# Tracing is absent throughout: excluded from Marketplace billing by decision.
+GCP_MARKETPLACE_METRIC_MAP = {
+    "payg": {
+        "ai_credits": "payg_credits",
+        "storage": "payg_storage",
+        "gateway_requests": "gateway_request",
+        "gateway_cache_hits": "payg_cache_hits",
+        "text_sim_tokens": "payg_text_simulation",
+        "voice_sim_minutes": "payg_voice_simulation",
+    },
+    "scale": {
+        "ai_credits": "scale_credits",
+        "storage": "scale_storage",
+        "gateway_requests": "scale_gateway_request",
+        "gateway_cache_hits": "scale_cache_hits",
+        "text_sim_tokens": "scale_text_simulation",
+        "voice_sim_minutes": "scale_voice_simulation",
+    },
+    "enterprise": {
+        "ai_credits": "enterprise_credits",
+        "storage": "enterprise_storage",
+        "gateway_requests": "enterprise_gateway_request",
+        "gateway_cache_hits": "enterprise_cache_hits",
+        "text_sim_tokens": "enterprise_text_simulation",
+        "voice_sim_minutes": "enterprise_voice_simulation",
+    },
+}
+
+# The six dimensions reported to Marketplace, in our ledger's vocabulary.
+GCP_MARKETPLACE_DIMENSIONS = [
+    "ai_credits",
+    "storage",
+    "gateway_requests",
+    "gateway_cache_hits",
+    "text_sim_tokens",
+    "voice_sim_minutes",
+]
+
+# Ledger semantics: these two dimensions are fractional, the other four are
+# whole counts and are floored before they are recorded as reported.
+GCP_MARKETPLACE_FLOAT_DIMENSIONS = {"storage", "voice_sim_minutes"}
+# Wire type is a property of the metric, not the dimension, and Service Control
+# rejects a value whose type differs from the service config ("Inconsistent
+# metric value type ... Expecting double, got int64"). Mirrors the config the
+# service is on -- note payg's gateway_request is DOUBLE while scale's and
+# enterprise's are INT64. Verify against:
+#   gcloud endpoints configs describe <id> \
+#     --service=futureagi.endpoints.futureagiprimary.cloud.goog --format="yaml(metrics)"
+GCP_MARKETPLACE_DOUBLE_METRICS = {
+    "gateway_request",
+    "payg_storage",
+    "payg_voice_simulation",
+    "scale_storage",
+    "scale_voice_simulation",
+    "enterprise_storage",
+    "enterprise_voice_simulation",
+}
+
 # EE license key (self-hosted only, JWT RS256)
 EE_LICENSE_KEY = os.environ.get("EE_LICENSE_KEY", "")
 EE_LICENSE_PUBLIC_KEY = os.environ.get("EE_LICENSE_PUBLIC_KEY", "").replace("\\n", "\n")
@@ -692,6 +804,37 @@ HOSTED_RUNNER_VOICE_ENABLED = os.getenv(
     "HOSTED_RUNNER_VOICE_ENABLED", "false"
 ).lower() in ("true", "1", "yes")
 
+# Sequential reuse of one leased simulator room across a multi-row phone run
+# (D10). Default OFF: only a runner whose simulator kit serves multiple
+# personas over a reused room can honour it; the released kit rejects such a
+# job at SDK hydration. Turn it on by env once that kit image is deployed and
+# verified, not before.
+HOSTED_RUNNER_LEASED_ROOM_REUSE = os.getenv(
+    "HOSTED_RUNNER_LEASED_ROOM_REUSE", "false"
+).lower() in ("true", "1", "yes")
+
+# Admission ceilings for hosted voice runs. Every run reserves a runner child
+# slot for its full wall-clock; a telephony or single-concurrency web run is
+# serial, so an arbitrary dataset otherwise reserves that slot without bound.
+# Refuse a run before the workflow is dispatched when it would reserve too many
+# cases or too much wall-clock. 0 disables that specific limit. Parsed leniently
+# so a bad override cannot crash settings import.
+#
+# Global cap — every hosted voice job.
+HOSTED_RUNNER_MAX_CASES = _admission_env_int("HOSTED_RUNNER_MAX_CASES", 500)
+HOSTED_RUNNER_MAX_WALLCLOCK_SECONDS = _admission_env_int(
+    "HOSTED_RUNNER_MAX_WALLCLOCK_SECONDS", 6 * 60 * 60
+)
+# Tighter cap for the leased-room phone path (the target dials our one scarce
+# leased number, so cases run strictly serially and hold that number for the
+# whole run).
+HOSTED_RUNNER_LEASED_ROOM_MAX_CASES = _admission_env_int(
+    "HOSTED_RUNNER_LEASED_ROOM_MAX_CASES", 25
+)
+HOSTED_RUNNER_LEASED_ROOM_MAX_WALLCLOCK_SECONDS = _admission_env_int(
+    "HOSTED_RUNNER_LEASED_ROOM_MAX_WALLCLOCK_SECONDS", 4 * 60 * 60
+)
+
 # Structured logging configuration with django-structlog
 # This provides:
 # - JSON output in production, colored console in development
@@ -758,6 +901,92 @@ VAPI_WEBHOOK_SECRET = os.getenv("VAPI_WEBHOOK_SECRET", "")
 # Internal API authentication (shared secret for service-to-service calls)
 INTERNAL_API_SECRET = os.getenv("INTERNAL_API_SECRET", "")
 
+# Hosted ALK sandbox gateway
+HARNESS_PUBLIC_BASE_URL = os.getenv("HARNESS_PUBLIC_BASE_URL", "")
+# Execution backend for hosted harness jobs: "daytona" (platform drives the
+# Daytona sandbox) or "sandbox" (proxy to an out-of-process ALK sandbox server).
+HARNESS_PROVIDER = os.getenv("HARNESS_PROVIDER", "daytona")
+ALK_HARNESS_SANDBOX_URL = os.getenv("ALK_HARNESS_SANDBOX_URL", "")
+ALK_HARNESS_SANDBOX_TOKEN = os.getenv("ALK_HARNESS_SANDBOX_TOKEN", "")
+GITHUB_APP_ID = os.getenv("GITHUB_APP_ID", "")
+GITHUB_APP_PRIVATE_KEY = os.getenv("GITHUB_APP_PRIVATE_KEY", "")
+ALK_HOSTED_SOURCE_MAX_BYTES = int(
+    os.getenv("ALK_HOSTED_SOURCE_MAX_BYTES", str(256 * 1024 * 1024))
+)
+ALK_HOSTED_BASE_EGRESS_DOMAINS = [
+    domain.strip()
+    for domain in os.getenv("ALK_HOSTED_BASE_EGRESS_DOMAINS", "").split(",")
+    if domain.strip()
+]
+# Hosted simulator credentials are platform configuration, not customer job input. Values are
+# resolved only while launching the sandbox and are never persisted on HostedHarnessJob.
+ALK_HOSTED_SIMULATOR_SECRET_ENV = {
+    "SIMULATOR_LIVEKIT_URL": "LIVEKIT_URL",
+    "SIMULATOR_LIVEKIT_API_KEY": "LIVEKIT_API_KEY",
+    "SIMULATOR_LIVEKIT_API_SECRET": "LIVEKIT_API_SECRET",
+    "SIMULATOR_DEEPGRAM_API_KEY": "DEEPGRAM_API_KEY",
+    "SIMULATOR_CARTESIA_API_KEY": "CARTESIA_API_KEY",
+    "SIMULATOR_GEMINI_API_KEY": "GEMINI_API_KEY",
+    "SIMULATOR_GOOGLE_API_KEY": "GOOGLE_API_KEY",
+    "SIMULATOR_GOOGLE_APPLICATION_CREDENTIALS_JSON": (
+        "GOOGLE_APPLICATION_CREDENTIALS_JSON"
+    ),
+    "SIMULATOR_GOOGLE_CLOUD_PROJECT": "GOOGLE_CLOUD_PROJECT",
+    "SIMULATOR_GOOGLE_CLOUD_LOCATION": "GOOGLE_CLOUD_LOCATION",
+    "SIMULATOR_GOOGLE_GENAI_USE_VERTEXAI": "GOOGLE_GENAI_USE_VERTEXAI",
+    "SIMULATOR_OPENAI_API_KEY": "OPENAI_API_KEY",
+    "SIMULATOR_LLM_PROVIDER": "SIMULATOR_LLM_PROVIDER",
+    "SIMULATOR_LLM_MODEL": "SIMULATOR_LLM_MODEL",
+    "SIMULATOR_STT_PROVIDER": "SIMULATOR_STT_PROVIDER",
+    "SIMULATOR_STT_MODEL": "SIMULATOR_STT_MODEL",
+    "SIMULATOR_TTS_PROVIDER": "SIMULATOR_TTS_PROVIDER",
+    "SIMULATOR_TTS_MODEL": "SIMULATOR_TTS_MODEL",
+}
+ALK_HOSTED_AUTHORING_CLAUDE_REGION = os.getenv("CLOUD_ML_REGION", "us-east5")
+ALK_HOSTED_AUTHORING_GEMINI_LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+ALK_HOSTED_WEBRTC_EGRESS_CIDRS = [
+    cidr.strip()
+    for cidr in os.getenv("ALK_HOSTED_WEBRTC_EGRESS_CIDRS", "").split(",")
+    if cidr.strip()
+]
+# The OS user the hosted entrypoint runs as inside the sandbox. Must be "root" for the process
+# provisioner to drop privileges to the bundle's declared svc-agent/svc-tools/svc-data users
+# (Popen(user=) needs CAP_SETUID); "svc-control" runs every process uniformly instead.
+ALK_HOSTED_SANDBOX_OS_USER = os.getenv("ALK_HOSTED_SANDBOX_OS_USER", "svc-control")
+# Optional per-source pre-authored environment bundle store: <dir>/<owner>__<repo>/manifest.json.
+# A stopgap delivery path until in-sandbox bundle authoring lands; empty disables it.
+ALK_HOSTED_BUNDLE_DIR = os.getenv("ALK_HOSTED_BUNDLE_DIR", "")
+ALK_HOSTED_EGRESS_UNRESTRICTED = os.getenv(
+    "ALK_HOSTED_EGRESS_UNRESTRICTED", ""
+).lower() in ("1", "true", "yes")
+# Fresh hosted jobs perform contract, environment and scenario authoring before the call-runtime
+# budget begins. Keep that bounded work separate from the customer's maximum call duration;
+# otherwise Daytona expires a healthy sandbox midway through scenario authoring.
+# Three hours: what a two-hundred-scenario suite needs to write, review and top up.
+ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = int(
+    os.getenv("ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS", "10800")
+)
+# Derived from the budget above so the two cannot disagree.
+ALK_HOSTED_AUTHORING_TIMEOUT = int(
+    os.getenv("ALK_HOSTED_AUTHORING_TIMEOUT", "")
+    or ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS + 300
+)
+# Daytona sandbox lifetime is a separate infrastructure envelope. A customer's call-runtime
+# limit must never shorten fresh authoring; two hours is the hosted default/minimum.
+ALK_HOSTED_SANDBOX_TTL_SECONDS = int(
+    os.getenv("ALK_HOSTED_SANDBOX_TTL_SECONDS", "7200")
+)
+DAYTONA_API_KEY = os.getenv("DAYTONA_API_KEY", "")
+DAYTONA_API_URL = os.getenv("DAYTONA_API_URL") or None
+DAYTONA_TARGET = os.getenv("DAYTONA_TARGET") or None
+DAYTONA_ORGANIZATION_ID = os.getenv("DAYTONA_ORGANIZATION_ID") or None
+ALK_DAYTONA_SNAPSHOT = os.getenv("ALK_DAYTONA_SNAPSHOT", "")
+ALK_DAYTONA_SNAPSHOT_DIGEST = os.getenv("ALK_DAYTONA_SNAPSHOT_DIGEST", "")
+# Local certification escape hatch: Daytona builds an ephemeral sandbox directly from the
+# trusted hosted Dockerfile. Production leaves this empty and uses the immutable snapshot above.
+# This is intentionally a control-plane setting, never accepted from a customer job payload.
+ALK_DAYTONA_DOCKERFILE = os.getenv("ALK_DAYTONA_DOCKERFILE", "")
+
 # LiveKit credentials (used for webhook verification and API calls)
 LIVEKIT_URL = os.getenv("LIVEKIT_URL", "")
 LIVEKIT_API_KEY = os.getenv("LIVEKIT_API_KEY", "")
@@ -791,6 +1020,10 @@ STRIPE_LIVE = bool(STRIPE_SECRET_KEY and STRIPE_SECRET_KEY.startswith("sk_live")
 STRIPE_WEBHOOK_SECRET = os.getenv(
     "WEBHOOK_SECRET_LIVE" if STRIPE_LIVE else "WEBHOOK_SECRET_TEST", ""
 )
+# Compatibility for EE service images that still import the pre-rename symbol.
+# Keep one resolved value so OSS and EE billing routes cannot select different
+# webhook secrets during a rolling/local mixed-version deployment.
+WEBHOOK_SECRET = STRIPE_WEBHOOK_SECRET
 
 BUSINESS_MONTHLY_STRIPE_PRICE_IDS_ALL = [
     x

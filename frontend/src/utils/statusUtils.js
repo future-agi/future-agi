@@ -2,6 +2,8 @@ export const STATUS_TYPES = {
   PASS: "pass",
   ERROR: "error",
   UNSET: "unset",
+  RUNNING: "running",
+  CANCELED: "canceled",
 };
 
 export const STATUS_CONFIG = {
@@ -26,6 +28,26 @@ export const STATUS_CONFIG = {
     borderColor: "text.disabled",
     textColor: "text.disabled",
   },
+  // Stopped on purpose — neither a failure nor an unknown, so it gets its own hue rather
+  // than the grey UNSET treatment it used to blend into. No cancel glyph ships under
+  // icons/status, so the neutral one is reused.
+  [STATUS_TYPES.CANCELED]: {
+    icon: "/assets/icons/status/unset.svg",
+    color: "orange.500",
+    bgColor: "orange.o5",
+    borderColor: "orange.500",
+    // Light-mode value; CustomStatusChip swaps it for orange.300 in dark, where the
+    // deep orange would sit at roughly 2:1 against the page.
+    textColor: "orange.700",
+  },
+  // No in-progress glyph ships under icons/status, so the neutral one is reused.
+  [STATUS_TYPES.RUNNING]: {
+    icon: "/assets/icons/status/unset.svg",
+    color: "blue.500",
+    bgColor: "blue.o5",
+    borderColor: "blue.500",
+    textColor: "blue.500",
+  },
 };
 
 /**
@@ -38,7 +60,7 @@ const normalize = (val) => val?.toString?.()?.toLowerCase?.() || "";
 /**
  * Infers status type from a value using flexible string matching
  * @param {any} value - Value to infer status from
- * @returns {string} Status type (pass, error, or unset)
+ * @returns {string} Status type (pass, error, running, or unset)
  */
 const inferStatus = (value) => {
   const norm = normalize(value);
@@ -46,6 +68,11 @@ const inferStatus = (value) => {
   if (norm.includes("pass") || norm.includes("ok")) return STATUS_TYPES.PASS;
   if (norm.includes("error") || norm.includes("fail"))
     return STATUS_TYPES.ERROR;
+  if (norm.includes("cancel")) return STATUS_TYPES.CANCELED;
+  // Matched after the terminal states so anything that already resolved to
+  // pass/error keeps resolving there (e.g. "run failed" stays ERROR).
+  if (norm.includes("running") || norm.includes("progress"))
+    return STATUS_TYPES.RUNNING;
   return STATUS_TYPES.UNSET;
 };
 

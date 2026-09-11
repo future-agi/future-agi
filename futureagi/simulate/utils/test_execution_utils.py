@@ -1451,11 +1451,18 @@ def build_eval_column(eval_config):
     }
 
 
-def reconcile_eval_column_order(*, column_order, eval_configs, evaluated_eval_ids):
+def reconcile_eval_column_order(
+    *, column_order, eval_configs, evaluated_eval_ids, harness_eval_outputs=None
+):
     """Drop removed evals, refresh surviving names + configs, and append
     a newly-active eval only when its id is in ``evaluated_eval_ids``
     (i.e. attempted on at least one call of this execution)."""
     current_eval_by_id = {str(ec.id): ec for ec in eval_configs}
+    harness_eval_outputs = {
+        str(eval_id): value
+        for eval_id, value in (harness_eval_outputs or {}).items()
+        if isinstance(value, dict) and value.get("source") == "harness"
+    }
     changed = False
     reconciled = []
     for col in column_order:
@@ -1464,6 +1471,14 @@ def reconcile_eval_column_order(*, column_order, eval_configs, evaluated_eval_id
             continue
         ec = current_eval_by_id.get(str(col.get("id")))
         if ec is None:
+            harness_output = harness_eval_outputs.get(str(col.get("id")))
+            if harness_output is not None:
+                expected_name = harness_output.get("name") or col.get("column_name")
+                if expected_name and col.get("column_name") != expected_name:
+                    col["column_name"] = expected_name
+                    changed = True
+                reconciled.append(col)
+                continue
             changed = True
             continue
         if col.get("column_name") != ec.name:
@@ -1483,5 +1498,22 @@ def reconcile_eval_column_order(*, column_order, eval_configs, evaluated_eval_id
         if ec_id in preserved or ec_id not in evaluated_eval_ids:
             continue
         reconciled.append(build_eval_column(eval_config))
+        changed = True
+    for eval_id, eval_output in harness_eval_outputs.items():
+        if eval_id in preserved:
+            continue
+        reconciled.append(
+            {
+                "column_name": eval_output.get("name") or eval_id,
+                "id": eval_id,
+                "eval_config": {
+                    "output_type": eval_output.get("output_type", "Pass/Fail")
+                },
+                "visible": True,
+                "type": "evaluation",
+                "source": "harness",
+            }
+        )
+        preserved.add(eval_id)
         changed = True
     return reconciled, changed

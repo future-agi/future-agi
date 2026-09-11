@@ -2399,6 +2399,8 @@ def test_time_only_limit_transition_preserves_newest_first_prefix(
     assert first == second[: len(first)]
     assert calls[0]["workflow_exact"] is False
     assert calls[1]["workflow_exact"] is True
+    assert calls[0]["exact_population_time_discovery"] is True
+    assert calls[1]["exact_population_time_discovery"] is True
 
 
 @pytest.mark.parametrize(

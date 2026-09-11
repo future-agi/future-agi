@@ -1,5 +1,38 @@
 # Changelog
 
+## [1.37.2](https://github.com/future-agi/future-agi/compare/v1.37.1...v1.37.2) (2026-09-10)
+
+
+### Bug Fixes
+
+* **marketplace:** make the consumer heartbeat, follow Google's state, and type usage per metric ([de70acf](https://github.com/future-agi/future-agi/commit/de70acfc87adf60030badfeb4864cf22b832beac))
+* **marketplace:** make the consumer heartbeat, follow Google's state, and type usage per metric [TH-7731] ([ab66aea](https://github.com/future-agi/future-agi/commit/ab66aea398056db402f11489e5cbc4a9e98a9819))
+* **tests:** give the marketplace reconcile subscriptions a tier ([32e5cc4](https://github.com/future-agi/future-agi/commit/32e5cc49e736c854e987facd31f47e9a60029660))
+
+## [1.37.1](https://github.com/future-agi/future-agi/compare/v1.37.0...v1.37.1) (2026-09-09)
+
+
+### Bug Fixes
+
+* **accounts:** fix Marketplace runtime errors that escaped review ([cae3a2b](https://github.com/future-agi/future-agi/commit/cae3a2b58a39c97123fc36950ecccb97e4679a58))
+
+## [1.37.0](https://github.com/future-agi/future-agi/compare/v1.36.1...v1.37.0) (2026-09-09)
+
+
+### Features
+
+* **accounts:** GCP Marketplace integration [TH-7731] ([c4157b7](https://github.com/future-agi/future-agi/commit/c4157b7647fd2aaaff78b544230e7eed34d388d4))
+
+
+### Bug Fixes
+
+* **accounts:** harden Marketplace failure paths [TH-7731] ([cb68f0b](https://github.com/future-agi/future-agi/commit/cb68f0b4f42dcd405b49c54e9a89e3732f5d50ad))
+* **accounts:** resolve latest Marketplace review findings [TH-7731] ([b364723](https://github.com/future-agi/future-agi/commit/b364723f1aa6717941ebedd895237a92d38fa332))
+* **deps:** repin restrictedpython and regenerate requirements.txt for linux/py3.11 ([c24443f](https://github.com/future-agi/future-agi/commit/c24443ff85308ba4bdd87df64eeee0786ff5eff1))
+* **tracer:** apply ground truth to Observe simple evals (TH-7896) ([1f788ef](https://github.com/future-agi/future-agi/commit/1f788ef2a610a81f84916ec03c5c00af11a888ad))
+* **tracer:** apply ground truth to Observe simple evals (TH-7896) ([4c0389d](https://github.com/future-agi/future-agi/commit/4c0389d9a7cba2f4410beb85d859294e99c5e175))
+* **tracer:** unblock bin/test migrations and format the ground truth tests ([e21ff4a](https://github.com/future-agi/future-agi/commit/e21ff4ab3bba8cd62f79380328650e026f3d1842))
+
 ## [1.36.1](https://github.com/future-agi/future-agi/compare/v1.36.0...v1.36.1) (2026-09-08)
 
 
