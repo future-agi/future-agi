@@ -66,7 +66,9 @@ class PromptRunRequestSerializer(serializers.Serializer):
 
 class PromptVersionsQuerySerializer(serializers.Serializer):
     page = serializers.IntegerField(required=False, min_value=1)
-    limit = serializers.IntegerField(required=False, min_value=1, max_value=100)
+    # The versions list never capped `limit`; documenting it must not start
+    # rejecting callers that already passed values above 100.
+    limit = serializers.IntegerField(required=False, min_value=1)
 
 
 class PromptRunStatusQuerySerializer(serializers.Serializer):

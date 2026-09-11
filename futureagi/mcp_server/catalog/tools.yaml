@@ -1,5 +1,5 @@
 version: 1
-expected_tool_count: 93
+expected_tool_count: 100
 
 tools:
   # context
@@ -18,6 +18,42 @@ tools:
     description: Return a workspace by its identifier.
     operation: {method: GET, path: "/accounts/workspaces/{workspace_id}/"}
     access: read
+  # users
+  - name: list_org_members
+    group: users
+    description: List members of the current organization.
+    operation: {method: GET, path: "/accounts/organization/members/"}
+    access: read
+  - name: invite_org_member
+    group: users
+    description: Invite a user to the current organization by email and role.
+    operation: {method: POST, path: "/accounts/organization/invite/"}
+    access: write
+  - name: list_api_keys
+    group: users
+    description: List API keys for the current organization.
+    operation: {method: GET, path: "/accounts/key/get_secret_keys/"}
+    access: read
+  - name: create_api_key
+    group: users
+    description: Create a named API key for the current organization.
+    operation: {method: POST, path: "/accounts/key/generate_secret_key/"}
+    access: write
+  - name: create_workspace
+    group: users
+    description: Create a workspace in the current organization.
+    operation: {method: POST, path: "/accounts/workspaces/"}
+    access: write
+  - name: list_workspace_members
+    group: users
+    description: List members of a workspace.
+    operation: {method: GET, path: "/accounts/workspaces/{workspace_id}/members/"}
+    access: read
+  - name: update_workspace
+    group: users
+    description: Update a workspace name or settings.
+    operation: {method: PUT, path: "/accounts/workspaces/{workspace_id}/"}
+    access: write
   # datasets
   - name: list_datasets
     group: datasets
@@ -49,6 +85,7 @@ tools:
     description: Start the configured evaluations for a dataset.
     operation: {method: POST, path: "/model-hub/develops/{dataset_id}/start_evals_process/"}
     access: write
+    open_world: true
   - name: create_dataset_column
     group: datasets
     description: Create a named static input column before adding dataset rows. Supply column_type using the API schema.
@@ -84,6 +121,7 @@ tools:
     description: Queue configured dataset prompts by run_prompt_ids. Supply row_ids for selected rows, or selected_all_rows=true for all rows; with selected_all_rows=true, row_ids are EXCLUDED. Poll get_dataset for cell results and status.
     operation: {method: POST, path: "/model-hub/run-prompt-for-rows/"}
     access: write
+    open_world: true
   - name: get_dataset_prompt_stats
     group: datasets
     description: Return dataset prompt IDs and token, cost and timing statistics. This is not execution status; use get_dataset for cell outputs and status.
@@ -120,6 +158,7 @@ tools:
     description: Run a configured prompt version by supplying version and is_run="prompt". Optionally replace prompt_config or variable_names. Returns an asynchronous receipt; read get_prompt_run with template_version for status and output.
     operation: {method: POST, path: "/model-hub/prompt-templates/{id}/run_template/"}
     access: write
+    open_world: true
   - name: get_prompt_run
     group: prompts
     description: Read workbench prompt execution status and outputs. Supply template_version matching the version returned by run_prompt to read that version, otherwise the API chooses the default/latest version.
@@ -161,6 +200,7 @@ tools:
     description: Execute an evaluation template against supplied test inputs.
     operation: {method: POST, path: "/model-hub/test-evaluation/"}
     access: write
+    open_world: true
   # observability
   - name: list_projects
     group: observability
@@ -222,12 +262,14 @@ tools:
     description: Create an online evaluation task.
     operation: {method: POST, path: "/tracer/eval-task/"}
     access: write
+    open_world: true
   - name: update_eval_task
     group: observability
     description: Update and rerun an online evaluation task using eval_task_id and edit_type. Pause a running task first. edit_rerun preserves existing results; fresh_run DELETES previous results and starts again. May incur evaluation charges.
     operation: {method: PATCH, path: "/tracer/eval-task/update_eval_task/"}
     access: destructive
     idempotent: false
+    open_world: true
   - name: pause_eval_task
     group: observability
     description: Pause a running online evaluation task by eval_task_id. Already-launched evaluations may finish before the worker stops.
@@ -238,6 +280,7 @@ tools:
     description: Resume a paused online evaluation task by eval_task_id, scheduling remaining evaluations. May incur evaluation charges.
     operation: {method: POST, path: "/tracer/eval-task/unpause_eval_task/"}
     access: write
+    open_world: true
   # error_feed
   - name: list_error_clusters
     group: error_feed
@@ -286,6 +329,7 @@ tools:
     description: Create and start an experiment.
     operation: {method: POST, path: "/model-hub/experiments/v2/"}
     access: write
+    open_world: true
   # optimization
   - name: list_optimization_runs
     group: optimization
@@ -302,36 +346,45 @@ tools:
     description: Create a dataset optimization run.
     operation: {method: POST, path: "/model-hub/dataset-optimization/"}
     access: write
-  # simulation
+    open_world: true
+  # agents (same tools the legacy `agents` category exposed on dev; the rest of
+  # the simulate surface stays under `simulation`)
   - name: list_agents
-    group: simulation
+    group: agents
     description: List agent definitions in the current workspace.
     operation: {method: GET, path: "/simulate/agent-definitions/"}
     access: read
   - name: get_agent
-    group: simulation
+    group: agents
     description: Return an agent definition by its identifier.
     operation: {method: GET, path: "/simulate/agent-definitions/{agent_id}/"}
     access: read
   - name: list_scenarios
-    group: simulation
+    group: agents
     description: List simulation scenarios in the current workspace.
     operation: {method: GET, path: "/simulate/scenarios/"}
     access: read
-  - name: get_scenario
-    group: simulation
-    description: Return a simulation scenario by its identifier.
-    operation: {method: GET, path: "/simulate/scenarios/{scenario_id}/"}
-    access: read
   - name: list_test_executions
-    group: simulation
+    group: agents
     description: List simulation test executions.
     operation: {method: GET, path: "/simulate/api/test-executions/"}
     access: read
   - name: get_test_execution
-    group: simulation
+    group: agents
     description: Return a simulation test execution by its identifier.
     operation: {method: GET, path: "/simulate/test-executions/{test_execution_id}/"}
+    access: read
+  - name: run_simulation
+    group: agents
+    description: Start a saved simulation test asynchronously. Omit scenario_ids to run all configured scenarios. Uses existing provider/worker infrastructure and can incur usage charges. Poll get_test_execution with the returned execution_id, then read get_test_execution_analytics.
+    operation: {method: POST, path: "/simulate/run-tests/{run_test_id}/execute/"}
+    access: write
+    open_world: true
+  # simulation
+  - name: get_scenario
+    group: simulation
+    description: Return a simulation scenario by its identifier.
+    operation: {method: GET, path: "/simulate/scenarios/{scenario_id}/"}
     access: read
   - name: get_test_execution_analytics
     group: simulation
@@ -377,11 +430,6 @@ tools:
     group: simulation
     description: Save a simulation test using name, agent_definition_id and scenario_ids, optionally agent_version and evaluations_config. Does not execute it; pass the returned test ID to run_simulation.
     operation: {method: POST, path: "/simulate/run-tests/create/"}
-    access: write
-  - name: run_simulation
-    group: simulation
-    description: Start a saved simulation test asynchronously. Omit scenario_ids to run all configured scenarios. Uses existing provider/worker infrastructure and can incur usage charges. Poll get_test_execution with the returned execution_id, then read get_test_execution_analytics.
-    operation: {method: POST, path: "/simulate/run-tests/{run_test_id}/execute/"}
     access: write
   # gateway
   - name: list_gateways

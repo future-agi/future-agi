@@ -7405,15 +7405,9 @@ export const AgentccProviderCredentialsRotateBody = zod.object({
   last_rotated_at: zod.string().datetime({ offset: true }).optional(),
 });
 
-export const agentccRequestLogsListQueryLimitMax = 100;
-
 export const AgentccRequestLogsListQueryParams = zod.object({
   page: zod.number().min(1).optional(),
-  limit: zod
-    .number()
-    .min(1)
-    .max(agentccRequestLogsListQueryLimitMax)
-    .optional(),
+  limit: zod.number().min(1).optional(),
   user_id: zod.string().optional(),
   session_id: zod.string().optional(),
   api_key_id: zod.string().uuid().optional(),
@@ -20580,20 +20574,24 @@ export const ModelHubDevelopsAddRowsCreateParams = zod.object({
   dataset_id: zod.string(),
 });
 
+export const modelHubDevelopsAddRowsCreateBodyRowsItemCellsDefault = [];
+
 export const ModelHubDevelopsAddRowsCreateBody = zod.object({
   rows: zod.array(
     zod.object({
       id: zod.string().uuid().optional(),
-      cells: zod.array(
-        zod.object({
-          column_name: zod.string().min(1),
-          value: zod
-            .object({})
-            .passthrough()
-            .optional()
-            .describe("Any valid JSON value."),
-        }),
-      ),
+      cells: zod
+        .array(
+          zod.object({
+            column_name: zod.string().min(1),
+            value: zod
+              .object({})
+              .passthrough()
+              .optional()
+              .describe("Any valid JSON value."),
+          }),
+        )
+        .default(modelHubDevelopsAddRowsCreateBodyRowsItemCellsDefault),
     }),
   ),
 });
@@ -21620,7 +21618,6 @@ export const modelHubEvalGroupsListQueryPageNumberDefault = 0;
 export const modelHubEvalGroupsListQueryPageNumberMin = 0;
 
 export const modelHubEvalGroupsListQueryPageSizeDefault = 10;
-export const modelHubEvalGroupsListQueryPageSizeMax = 100;
 
 export const ModelHubEvalGroupsListQueryParams = zod.object({
   name: zod.string().optional(),
@@ -21631,7 +21628,6 @@ export const ModelHubEvalGroupsListQueryParams = zod.object({
   page_size: zod
     .number()
     .min(1)
-    .max(modelHubEvalGroupsListQueryPageSizeMax)
     .default(modelHubEvalGroupsListQueryPageSizeDefault),
 });
 
@@ -29135,15 +29131,9 @@ export const ModelHubPromptTemplatesVersionsParams = zod.object({
     .describe("A UUID string identifying this prompt template."),
 });
 
-export const modelHubPromptTemplatesVersionsQueryLimitMax = 100;
-
 export const ModelHubPromptTemplatesVersionsQueryParams = zod.object({
   page: zod.number().min(1).optional(),
-  limit: zod
-    .number()
-    .min(1)
-    .max(modelHubPromptTemplatesVersionsQueryLimitMax)
-    .optional(),
+  limit: zod.number().min(1).optional(),
 });
 
 export const modelHubPromptTemplatesVersionsResponseNameMax = 2000;
@@ -37052,17 +37042,12 @@ Query Parameters:
  */
 export const simulateApiTestExecutionsListQuerySearchDefault = ``;
 export const simulateApiTestExecutionsListQueryStatusDefault = ``;
-export const simulateApiTestExecutionsListQueryLimitMax = 100;
 
 export const SimulateApiTestExecutionsListQueryParams = zod.object({
   search: zod.string().default(simulateApiTestExecutionsListQuerySearchDefault),
   status: zod.string().default(simulateApiTestExecutionsListQueryStatusDefault),
   page: zod.number().min(1).optional(),
-  limit: zod
-    .number()
-    .min(1)
-    .max(simulateApiTestExecutionsListQueryLimitMax)
-    .optional(),
+  limit: zod.number().min(1).optional(),
 });
 
 export const simulateApiTestExecutionsListResponseTotalScenariosMin =
@@ -53659,7 +53644,6 @@ export const tracerProjectListQueryPageNumberDefault = 0;
 export const tracerProjectListQueryPageNumberMin = 0;
 
 export const tracerProjectListQueryPageSizeDefault = 20;
-export const tracerProjectListQueryPageSizeMax = 100;
 
 export const TracerProjectListQueryParams = zod.object({
   name: zod.string().optional(),
@@ -53674,11 +53658,7 @@ export const TracerProjectListQueryParams = zod.object({
     .number()
     .min(tracerProjectListQueryPageNumberMin)
     .default(tracerProjectListQueryPageNumberDefault),
-  page_size: zod
-    .number()
-    .min(1)
-    .max(tracerProjectListQueryPageSizeMax)
-    .default(tracerProjectListQueryPageSizeDefault),
+  page_size: zod.number().min(1).default(tracerProjectListQueryPageSizeDefault),
 });
 
 export const tracerProjectListResponseResultsItemNameMax = 255;

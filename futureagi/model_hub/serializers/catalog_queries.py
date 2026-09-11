@@ -22,8 +22,10 @@ class EvalGroupQuerySerializer(serializers.Serializer):
 
 
 class EvalGroupListQuerySerializer(EvalGroupQuerySerializer):
+    # Documents the pre-existing query semantics only: the list endpoint has
+    # never capped page_size, so the contract must not start rejecting values.
     page_number = serializers.IntegerField(min_value=0, default=0)
-    page_size = serializers.IntegerField(min_value=1, max_value=100, default=10)
+    page_size = serializers.IntegerField(min_value=1, default=10)
 
 
 class OptimizationListQuerySerializer(serializers.Serializer):

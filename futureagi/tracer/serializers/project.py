@@ -132,6 +132,21 @@ class ProjectListQuerySerializer(StrictInputSerializer):
     )
 
 
+class ProjectViewSetListQuerySerializer(ProjectListQuerySerializer):
+    """GET /tracer/project/ historically had no page_size ceiling.
+
+    `list_projects` keeps the bounded contract on ProjectListQuerySerializer.
+    Documenting this ViewSet list must not start rejecting callers that already
+    passed page_size above 100.
+    """
+
+    page_size = serializers.IntegerField(
+        required=False,
+        default=20,
+        min_value=1,
+    )
+
+
 class ProjectNameUpdateSerializer(serializers.Serializer):
     project_id = serializers.UUIDField(required=True)
     name = serializers.CharField(required=True)

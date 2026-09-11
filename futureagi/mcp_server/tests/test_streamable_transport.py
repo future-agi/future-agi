@@ -22,13 +22,13 @@ pytestmark = [pytest.mark.e2e, pytest.mark.django_db(transaction=True)]
 @pytest.fixture
 def protocol_client(user, workspace, monkeypatch):
     @asynccontextmanager
-    async def connect():
+    async def connect(key_workspace=None):
         credentials = await sync_to_async(OrgApiKey.objects.create)(
             name="MCP transport test",
             api_key=f"mcp-transport-{uuid4().hex}",
             secret_key=uuid4().hex,
             organization=user.organization,
-            workspace=workspace,
+            workspace=key_workspace or workspace,
             user=user,
             type="mcp",
         )
@@ -56,6 +56,168 @@ def protocol_client(user, workspace, monkeypatch):
     return connect
 
 
+@pytest.fixture
+def oauth_protocol_client(user, workspace, monkeypatch):
+    """Drive the same transport with an OAuth Bearer token instead of a key.
+
+    The Bearer branch resolves the tenant from the token payload and never has
+    an ``OrgApiKey``, so it exercises a different half of the auth rewrite.
+    """
+
+    @asynccontextmanager
+    async def connect(token_user=None, token_workspace=None, expires_in=3600):
+        from mcp_server.oauth_utils import generate_oauth_token
+
+        principal = token_user or user
+        bound = token_workspace if token_workspace is not None else workspace
+        token, _ = await sync_to_async(generate_oauth_token)(
+            principal.id,
+            principal.organization_id,
+            bound.id if bound is not None else None,
+            "test-client",
+            "context datasets",
+            expires_in=expires_in,
+        )
+        monkeypatch.setattr(mcp_app, "_streamable_app", None)
+        monkeypatch.setattr(mcp_app, "_session_manager", None)
+        mcp_app.get_mcp_streamable_app()
+        async with (
+            mcp_app._session_manager.run(),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=mcp_app.mcp_streamable_with_auth),
+                base_url="http://localhost",
+                headers={"Authorization": f"Bearer {token}"},
+            ) as http_client,
+            streamable_http_client(
+                "http://localhost/mcp", http_client=http_client
+            ) as streams,
+        ):
+            async with ClientSession(streams[0], streams[1]) as session:
+                await session.initialize()
+                yield session
+
+    return connect
+
+
+async def _post_initialize(authorization):
+    """POST an initialize request with a raw header, bypassing the MCP client.
+
+    An unauthenticated request never reaches the MCP app, so the SDK client
+    cannot be used to observe the 401 and its WWW-Authenticate challenge.
+    """
+    mcp_app.get_mcp_streamable_app()
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+    if authorization is not None:
+        headers["Authorization"] = authorization
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=mcp_app.mcp_streamable_with_auth),
+        base_url="http://localhost",
+    ) as http_client:
+        return await http_client.post(
+            "/mcp",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "test", "version": "1.0"},
+                },
+            },
+        )
+
+
+async def test_streamable_http_accepts_a_valid_bearer_token(
+    oauth_protocol_client, user, workspace
+):
+    """A valid Bearer token must initialize, list and call like a key does."""
+    async with oauth_protocol_client() as client:
+        tools = await client.list_tools()
+        assert {tool.name for tool in tools.tools}
+
+        result = await client.call_tool("whoami", {})
+
+    assert result.isError is False
+    assert result.structuredContent["id"] == str(user.id)
+    assert result.structuredContent["default_workspace_id"] == str(workspace.id)
+
+
+async def test_streamable_http_rejects_an_expired_bearer_token(user, workspace):
+    """An expired token must 401 with the RFC 9728 challenge, not fall back."""
+    from mcp_server.oauth_utils import generate_oauth_token
+
+    token, _ = await sync_to_async(generate_oauth_token)(
+        user.id,
+        user.organization_id,
+        workspace.id,
+        "test-client",
+        "context",
+        expires_in=-30,
+    )
+    response = await _post_initialize(f"Bearer {token}")
+
+    assert response.status_code == 401
+    assert "oauth-protected-resource" in response.headers["WWW-Authenticate"]
+    assert response.json()["error"] == "invalid_token"
+
+
+async def test_streamable_http_rejects_a_malformed_bearer_token():
+    response = await _post_initialize("Bearer not-a-real-token")
+
+    assert response.status_code == 401
+    assert "oauth-protected-resource" in response.headers["WWW-Authenticate"]
+
+
+async def test_streamable_http_requires_credentials():
+    response = await _post_initialize(None)
+
+    assert response.status_code == 401
+    assert response.json()["error_description"] == "Authentication required"
+
+
+async def test_bearer_transport_fails_closed_when_org_access_is_revoked(
+    oauth_protocol_client, user, workspace
+):
+    """The Bearer path carries no OrgApiKey, so the executor's tenant guards
+    are the only thing preventing a fallback into another tenant."""
+    from accounts.models.organization_membership import OrganizationMembership
+    from model_hub.models.develop_dataset import Dataset
+
+    membership = await sync_to_async(
+        lambda: OrganizationMembership.no_workspace_objects.filter(
+            user=user, organization=user.organization
+        ).first()
+    )()
+    assert membership is not None, "expected an organization membership to revoke"
+
+    async with oauth_protocol_client() as client:
+        before = await client.call_tool(
+            "create_dataset", {"new_dataset_name": "oauth before revoke"}
+        )
+        assert before.isError is False, before
+
+        membership.is_active = False
+        await sync_to_async(membership.save)(update_fields=["is_active"])
+
+        after = await client.call_tool(
+            "create_dataset", {"new_dataset_name": "oauth after revoke"}
+        )
+        listed = await client.call_tool("list_datasets", {})
+
+    assert after.isError is True
+    assert after.structuredContent["error"]["code"] == "HTTP_403"
+    assert listed.isError is True
+    assert listed.structuredContent["error"]["code"] == "HTTP_403"
+    assert not await sync_to_async(
+        Dataset.no_workspace_objects.filter(name="oauth after revoke").exists
+    )()
+
+
 async def test_streamable_http_lists_and_executes_generated_tools(
     protocol_client, user, workspace
 ):
@@ -71,6 +233,76 @@ async def test_streamable_http_lists_and_executes_generated_tools(
         assert result.isError is False
         assert result.structuredContent["id"] == str(user.id)
         assert result.structuredContent["default_workspace_id"] == str(workspace.id)
+
+
+async def test_streamable_http_hands_the_api_key_to_the_executor(
+    protocol_client, user, workspace
+):
+    """The credential that authenticated the request must reach the executor so
+    Django resolves the tenant from the key, exactly as the REST API does."""
+    seen = []
+    original = mcp_app.executor.execute_sync
+
+    def capture(tool, arguments, context):
+        seen.append(context)
+        return original(tool, arguments, context)
+
+    with patch.object(mcp_app.executor, "execute_sync", side_effect=capture):
+        async with protocol_client() as client:
+            result = await client.call_tool("whoami", {})
+
+    assert result.isError is False
+    (context,) = seen
+    assert context.api_key is not None
+    assert context.api_key.type == "mcp"
+    assert context.api_key.workspace_id == workspace.id
+    assert context.organization.id == user.organization.id
+    assert context.workspace.id == workspace.id
+
+
+async def test_streamable_http_denies_tools_once_the_key_workspace_is_deactivated(
+    protocol_client, user, workspace
+):
+    """A key scoped to a workspace that gets deactivated must fail with 403
+    instead of silently executing in the organization's default workspace."""
+    from accounts.models.workspace import Workspace
+    from model_hub.models.develop_dataset import Dataset
+
+    other = await sync_to_async(Workspace.objects.create)(
+        name="Key workspace",
+        organization=user.organization,
+        is_default=False,
+        is_active=True,
+        created_by=user,
+    )
+    async with protocol_client(key_workspace=other) as client:
+        before = await client.call_tool(
+            "create_dataset", {"new_dataset_name": "keyed before deactivation"}
+        )
+        assert before.isError is False, before
+        created = await sync_to_async(Dataset.no_workspace_objects.get)(
+            name="keyed before deactivation"
+        )
+        assert created.workspace_id == other.id
+
+        other.is_active = False
+        await sync_to_async(other.save)(update_fields=["is_active"])
+
+        after = await client.call_tool(
+            "create_dataset", {"new_dataset_name": "keyed after deactivation"}
+        )
+        listed = await client.call_tool("list_datasets", {})
+
+    assert after.isError is True
+    assert after.structuredContent["error"]["code"] == "HTTP_403"
+    assert listed.isError is True
+    assert listed.structuredContent["error"]["code"] == "HTTP_403"
+    assert not await sync_to_async(
+        Dataset.no_workspace_objects.filter(name="keyed after deactivation").exists
+    )()
+    assert not await sync_to_async(
+        Dataset.no_workspace_objects.filter(workspace=workspace).exists
+    )()
 
 
 async def test_protocol_creates_updates_and_reads_prompt(

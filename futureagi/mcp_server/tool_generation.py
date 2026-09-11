@@ -183,7 +183,10 @@ def _operation_parameters(
 
 
 def _build_input_schema(
-    parameters: list[dict[str, Any]], contract: dict[str, Any]
+    parameters: list[dict[str, Any]],
+    contract: dict[str, Any],
+    *,
+    method: str = "",
 ) -> tuple[dict[str, Any], dict[str, list[str]]]:
     properties: dict[str, Any] = {}
     required: list[str] = []
@@ -210,7 +213,12 @@ def _build_input_schema(
 
         body_schema = _dereference_root_schema(_parameter_schema(parameter), contract)
         if body_schema.get("type") == "object" or "properties" in body_schema:
-            body_required = set(body_schema.get("required") or [])
+            # PATCH is partial: Django `partial_update` does not require the
+            # create serializer's fields. Copying `required` onto MCP tools
+            # would reject valid updates such as `{id, description}`.
+            body_required = (
+                set() if method == "patch" else set(body_schema.get("required") or [])
+            )
             for name, field_schema in (body_schema.get("properties") or {}).items():
                 if field_schema.get("readOnly"):
                     continue
@@ -239,6 +247,9 @@ def _annotations(method: str, access: str) -> dict[str, bool]:
         "readOnlyHint": access == "read",
         "destructiveHint": access == "destructive",
         "idempotentHint": method in {"get", "put", "patch", "delete"},
+        # Closed by default: most operations only touch this deployment. Tools
+        # that reach an external provider declare `open_world: true` in the
+        # catalog, because only a human reviewer knows where a view ends up.
         "openWorldHint": False,
     }
 
@@ -297,12 +308,18 @@ def generate_tool_manifest(contract_path: Path, catalog_path: Path) -> dict[str,
             )
 
         parameters = _operation_parameters(path_item, operation, contract)
-        input_schema, request_mapping = _build_input_schema(parameters, contract)
+        input_schema, request_mapping = _build_input_schema(
+            parameters, contract, method=method
+        )
         annotations = _annotations(method, access)
         if "idempotent" in entry:
             if not isinstance(entry["idempotent"], bool):
                 raise ToolGenerationError(f"Invalid idempotent hint for {name}")
             annotations["idempotentHint"] = entry["idempotent"]
+        if "open_world" in entry:
+            if not isinstance(entry["open_world"], bool):
+                raise ToolGenerationError(f"Invalid open_world hint for {name}")
+            annotations["openWorldHint"] = entry["open_world"]
         path_fields = set(PATH_PARAMETER_PATTERN.findall(path))
         mapped_path_fields = set(request_mapping["path"])
         if path_fields != mapped_path_fields:

@@ -12,7 +12,9 @@ class GatewayOverviewQuerySerializer(serializers.Serializer):
 
 class GatewayRequestLogQuerySerializer(serializers.Serializer):
     page = serializers.IntegerField(required=False, min_value=1)
-    limit = serializers.IntegerField(required=False, min_value=1, max_value=100)
+    # The list never capped `limit`; documenting it must not start rejecting
+    # callers that already passed values above 100.
+    limit = serializers.IntegerField(required=False, min_value=1)
     user_id = serializers.CharField(required=False, allow_blank=True)
     session_id = serializers.CharField(required=False, allow_blank=True)
     api_key_id = serializers.UUIDField(required=False)

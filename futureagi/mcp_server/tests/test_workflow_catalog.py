@@ -94,7 +94,14 @@ def test_execution_arguments_and_safety_hints():
     update = tools["update_eval_task"]
     assert update["annotations"]["destructiveHint"] is True
     assert update["annotations"]["idempotentHint"] is False
-    assert {"eval_task_id", "edit_type"} <= set(update["inputSchema"]["required"])
+    # Rerunning an eval task dispatches work to external model providers.
+    assert update["annotations"]["openWorldHint"] is True
+    assert tools["run_prompt"]["annotations"]["openWorldHint"] is True
+    assert tools["get_prompt_run"]["annotations"]["openWorldHint"] is False
+    # PATCH bodies are partial; path-less custom PATCH still exposes the
+    # fields without copying the create serializer's required list.
+    assert {"eval_task_id", "edit_type"} <= set(update["inputSchema"]["properties"])
+    assert "eval_task_id" not in update["inputSchema"].get("required", [])
     assert {"run_prompt_ids"} <= set(
         tools["run_dataset_prompts"]["inputSchema"]["required"]
     )

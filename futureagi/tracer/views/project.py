@@ -43,6 +43,7 @@ from tracer.serializers.project import (
     ProjectUserGraphDataResponseSerializer,
     ProjectUserMetricsRequestSerializer,
     ProjectUsersAggregateGraphDataRequestSerializer,
+    ProjectViewSetListQuerySerializer,
 )
 from tracer.services.clickhouse.graph_action_deadline import (
     GraphActionUnavailable,
@@ -253,7 +254,8 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             logger.warning("pii_cache_invalidation_failed", exc_info=True)
 
     @validated_request(
-        query_serializer=ProjectListQuerySerializer, auto_schema=ExplicitQueryAutoSchema
+        query_serializer=ProjectViewSetListQuerySerializer,
+        auto_schema=ExplicitQueryAutoSchema,
     )
     def list(self, request, *args, **kwargs):
         """

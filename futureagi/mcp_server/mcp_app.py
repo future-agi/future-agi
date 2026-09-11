@@ -9,6 +9,7 @@ no session affinity, survives server restarts, horizontally scalable.
 import json
 import os
 import time
+from contextvars import ContextVar
 
 import structlog
 from asgiref.sync import ThreadSensitiveContext, sync_to_async
@@ -28,6 +29,7 @@ from mcp_server.api_executor import (
 from mcp_server.generated_registry import registry
 from mcp_server.response_limits import ResponseTooLargeError, bounded_response
 from tfc.middleware.workspace_context import (
+    clear_workspace_context,
     get_current_organization,
     get_current_user,
     get_current_workspace,
@@ -35,6 +37,12 @@ from tfc.middleware.workspace_context import (
 )
 
 logger = structlog.get_logger(__name__)
+
+# The exact tenant each request authenticated as. Kept separately from the
+# workspace context so the executor also receives the OrgApiKey that granted it.
+_request_context: ContextVar[MCPRequestContext | None] = ContextVar(
+    "mcp_request_context", default=None
+)
 
 # Build allowed hosts from MCP_SERVER_BASE_URL for DNS rebinding protection.
 _mcp_base_url = os.environ.get("MCP_SERVER_BASE_URL", "")
@@ -109,9 +117,14 @@ def _authenticate_and_set_context(
         .first()
     )
 
-    set_workspace_context(workspace=workspace, organization=organization, user=user)
-
-    return MCPRequestContext(user=user, organization=organization, workspace=workspace)
+    return _bind_context(
+        MCPRequestContext(
+            user=user,
+            organization=organization,
+            workspace=workspace,
+            api_key=org_api_key,
+        )
+    )
 
 
 def _authenticate_via_oauth(token: str) -> MCPRequestContext | None:
@@ -149,12 +162,30 @@ def _authenticate_via_oauth(token: str) -> MCPRequestContext | None:
             .first()
         )
 
-    set_workspace_context(workspace=workspace, organization=organization, user=user)
+    return _bind_context(
+        MCPRequestContext(user=user, organization=organization, workspace=workspace)
+    )
 
-    return MCPRequestContext(user=user, organization=organization, workspace=workspace)
+
+def _bind_context(context: MCPRequestContext) -> MCPRequestContext:
+    set_workspace_context(
+        workspace=context.workspace,
+        organization=context.organization,
+        user=context.user,
+    )
+    _request_context.set(context)
+    return context
+
+
+def _clear_context() -> None:
+    _request_context.set(None)
+    clear_workspace_context()
 
 
 def _current_context() -> MCPRequestContext | None:
+    context = _request_context.get()
+    if context is not None:
+        return context
     organization = get_current_organization()
     workspace = get_current_workspace()
     user = get_current_user()
@@ -365,10 +396,8 @@ async def mcp_streamable_with_auth(scope, receive, send):
     """Keep each MCP request's synchronous work off other clients' executor."""
     from django.db import close_old_connections
 
-    from tfc.middleware.workspace_context import clear_workspace_context
-
     async with ThreadSensitiveContext():
-        clear_workspace_context()
+        _clear_context()
         await sync_to_async(close_old_connections)()
         # Import view modules before this request's workspace is bound; see
         # ensure_urlconf_loaded for why the order matters on a cold worker.
@@ -376,7 +405,7 @@ async def mcp_streamable_with_auth(scope, receive, send):
         try:
             await _mcp_streamable_with_auth(scope, receive, send)
         finally:
-            clear_workspace_context()
+            _clear_context()
             await sync_to_async(close_old_connections)()
 
 

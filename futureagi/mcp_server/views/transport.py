@@ -109,6 +109,7 @@ class MCPToolCallView(APIView):
             user=user,
             organization=organization,
             workspace=workspace,
+            api_key=getattr(request, "org_api_key", None),
         )
 
         start_time = time.time()

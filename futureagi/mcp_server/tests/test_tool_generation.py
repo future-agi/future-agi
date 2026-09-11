@@ -19,7 +19,7 @@ CATALOG_PATH = Path(__file__).resolve().parents[1] / "catalog/tools.yaml"
 def test_committed_catalog_generates_expected_tools():
     manifest = generate_tool_manifest(CONTRACT_PATH, CATALOG_PATH)
 
-    assert manifest["tool_count"] == 93
+    assert manifest["tool_count"] == 100
     tool_names = [tool["name"] for tool in manifest["tools"]]
     assert len(tool_names) == len(set(tool_names))
     assert {
@@ -63,6 +63,78 @@ def test_generator_maps_path_query_and_body_parameters():
             name for fields in request["parameters"].values() for name in fields
         }
         assert mapped_fields <= set(tool["inputSchema"]["properties"])
+
+
+def test_open_world_hint_is_reviewed_catalog_metadata():
+    """Tools that reach an external provider must advertise an open domain.
+
+    The generator cannot infer this: the view looks local, and only a reviewer
+    knows a run/eval/simulation call ends up at a third-party model provider.
+    """
+    manifest = generate_tool_manifest(CONTRACT_PATH, CATALOG_PATH)
+    tools = {tool["name"]: tool for tool in manifest["tools"]}
+
+    external = {
+        name
+        for name, tool in tools.items()
+        if tool["annotations"]["openWorldHint"]
+    }
+    assert external == {
+        "run_prompt",
+        "run_dataset_prompts",
+        "run_dataset_evals",
+        "test_evaluation",
+        "run_simulation",
+        "create_experiment",
+        "create_optimization_run",
+        "create_eval_task",
+        "update_eval_task",
+        "resume_eval_task",
+    }
+    # Pausing stops work; it never reaches a provider.
+    assert tools["pause_eval_task"]["annotations"]["openWorldHint"] is False
+    assert tools["whoami"]["annotations"]["openWorldHint"] is False
+
+
+@pytest.mark.parametrize("declared", [True, False])
+def test_generator_honours_the_open_world_override(tmp_path, declared):
+    catalog = {
+        "expected_tool_count": 1,
+        "tools": [
+            {
+                "name": "whoami",
+                "group": "context",
+                "description": "Current user",
+                "operation": {"method": "GET", "path": "/accounts/user-info/"},
+                "open_world": declared,
+            }
+        ],
+    }
+    catalog_path = tmp_path / "tools.json"
+    catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+
+    manifest = generate_tool_manifest(CONTRACT_PATH, catalog_path)
+    assert manifest["tools"][0]["annotations"]["openWorldHint"] is declared
+
+
+def test_generator_rejects_a_non_boolean_open_world_hint(tmp_path):
+    catalog = {
+        "expected_tool_count": 1,
+        "tools": [
+            {
+                "name": "whoami",
+                "group": "context",
+                "description": "Current user",
+                "operation": {"method": "GET", "path": "/accounts/user-info/"},
+                "open_world": "yes",
+            }
+        ],
+    }
+    catalog_path = tmp_path / "tools.json"
+    catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+
+    with pytest.raises(ToolGenerationError, match="Invalid open_world hint"):
+        generate_tool_manifest(CONTRACT_PATH, catalog_path)
 
 
 def test_generator_rejects_missing_operation(tmp_path):
@@ -181,6 +253,28 @@ def test_catalog_exposes_actual_pagination_and_typed_dataset_rows():
     assert {"page", "limit"} <= tools["list_prompt_versions"]["inputSchema"][
         "properties"
     ].keys()
+    for name in ["list_projects", "list_eval_groups"]:
+        assert (
+            tools[name]["inputSchema"]["properties"]["page_size"].get("maximum") is None
+        ), name
+    assert (
+        tools["list_test_executions"]["inputSchema"]["properties"]["limit"].get(
+            "maximum"
+        )
+        is None
+    )
+    assert (
+        tools["list_prompt_versions"]["inputSchema"]["properties"]["limit"].get(
+            "maximum"
+        )
+        is None
+    )
+    assert (
+        tools["list_gateway_request_logs"]["inputSchema"]["properties"]["limit"].get(
+            "maximum"
+        )
+        is None
+    )
     assert tools["get_knowledge_base"]["request"]["path"] == "/model-hub/kb/{id}/"
     rows = Draft7Validator(tools["add_dataset_rows"]["inputSchema"])
     tool_id = "00000000-0000-0000-0000-000000000001"
@@ -190,7 +284,13 @@ def test_catalog_exposes_actual_pagination_and_typed_dataset_rows():
             "rows": [{"cells": [{"column_name": "input", "value": "hello"}]}],
         }
     )
-    assert not rows.is_valid({"dataset_id": tool_id, "rows": [{"input": "hello"}]})
+    # The API has always treated a row without cells as an empty row, so the
+    # contract must keep accepting it; cells themselves stay typed.
+    assert rows.is_valid({"dataset_id": tool_id, "rows": [{}]})
+    assert not rows.is_valid(
+        {"dataset_id": tool_id, "rows": [{"cells": [{"value": "hello"}]}]}
+    )
+    assert not rows.is_valid({"dataset_id": tool_id, "rows": [{"cells": "hello"}]})
 
 
 def test_dashboard_tools_follow_the_real_dashboard_contract():
@@ -228,6 +328,10 @@ def test_dashboard_tools_follow_the_real_dashboard_contract():
     create = Draft7Validator(tools["create_dashboard"]["inputSchema"])
     assert create.is_valid({"name": "Latency", "description": "Weekly latency"})
     assert not create.is_valid({"description": "missing name"})
+    update = Draft7Validator(tools["update_dashboard"]["inputSchema"])
+    assert update.is_valid({"id": dashboard_id, "description": "Weekly latency"})
+    assert "name" not in tools["update_dashboard"]["inputSchema"].get("required", [])
+    assert not update.is_valid({"description": "missing id"})
     widget_schema = tools["create_dashboard_widget"]["inputSchema"]
     assert "time_range" in widget_schema["properties"]["query_config"]["description"]
     assert "chart_type" in widget_schema["properties"]["chart_config"]["description"]

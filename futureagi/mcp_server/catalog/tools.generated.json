@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "e2a811c496568a1e3cbb22a0a3219f56a8b8f4ce0321fd533287ad00845e845a",
-  "tool_count": 93,
+  "source_contract_sha256": "0e983d5a61c900b2057b5e00d2fdd0c47c7674a122fcf51d73c7fcaab552e5fe",
+  "tool_count": 100,
   "tools": [
     {
       "name": "whoami",
@@ -104,6 +104,432 @@
       },
       "source": {
         "operationId": "accounts_workspaces_read"
+      }
+    },
+    {
+      "name": "list_org_members",
+      "description": "List members of the current organization.",
+      "group": "users",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "default": 1,
+            "minimum": 1
+          },
+          "limit": {
+            "type": "integer",
+            "default": 20,
+            "minimum": 1,
+            "maximum": 100
+          },
+          "search": {
+            "type": "string",
+            "default": ""
+          },
+          "filter_status": {
+            "type": "array",
+            "default": [],
+            "items": {
+              "type": "string",
+              "enum": [
+                "Active",
+                "Pending",
+                "Expired",
+                "Deactivated"
+              ]
+            }
+          },
+          "filter_role": {
+            "type": "array",
+            "default": [],
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "sort": {
+            "type": "string",
+            "enum": [
+              "name",
+              "-name",
+              "email",
+              "-email",
+              "status",
+              "-status",
+              "type",
+              "-type",
+              "date_joined",
+              "-date_joined",
+              "created_at",
+              "-created_at",
+              "org_level",
+              "-org_level"
+            ],
+            "default": "-created_at"
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/accounts/organization/members/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "page",
+            "limit",
+            "search",
+            "filter_status",
+            "filter_role",
+            "sort"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "accounts_organization_members_list"
+      }
+    },
+    {
+      "name": "invite_org_member",
+      "description": "Invite a user to the current organization by email and role.",
+      "group": "users",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "emails": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "email",
+              "minLength": 1
+            },
+            "maxItems": 50,
+            "minItems": 1
+          },
+          "org_level": {
+            "title": "Org level",
+            "description": "Integer org level to grant (Owner=15, Admin=8, Member=3, Viewer=1).",
+            "type": "integer",
+            "enum": [
+              15,
+              8,
+              3,
+              1
+            ]
+          },
+          "workspace_access": {
+            "description": "List of {\"workspace_id\": \"<uuid>\", \"level\": <int>}.",
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/WorkspaceAccessInput"
+            },
+            "default": []
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "emails",
+          "org_level"
+        ],
+        "definitions": {
+          "WorkspaceAccessInput": {
+            "description": "List of {\"workspace_id\": \"<uuid>\", \"level\": <int>}.",
+            "required": [
+              "workspace_id"
+            ],
+            "type": "object",
+            "properties": {
+              "workspace_id": {
+                "title": "Workspace id",
+                "type": "string",
+                "format": "uuid"
+              },
+              "level": {
+                "title": "Level",
+                "type": "integer",
+                "enum": [
+                  8,
+                  3,
+                  1
+                ]
+              }
+            }
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/accounts/organization/invite/",
+        "parameters": {
+          "path": [],
+          "query": [],
+          "body": [
+            "emails",
+            "org_level",
+            "workspace_access"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "accounts_organization_invite_create"
+      }
+    },
+    {
+      "name": "list_api_keys",
+      "description": "List API keys for the current organization.",
+      "group": "users",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/accounts/key/get_secret_keys/",
+        "parameters": {
+          "path": [],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "accounts_key_get_secret_keys"
+      }
+    },
+    {
+      "name": "create_api_key",
+      "description": "Create a named API key for the current organization.",
+      "group": "users",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "key_name": {
+            "title": "Key name",
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "key_name"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/accounts/key/generate_secret_key/",
+        "parameters": {
+          "path": [],
+          "query": [],
+          "body": [
+            "key_name"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "accounts_key_generate_secret_key"
+      }
+    },
+    {
+      "name": "create_workspace",
+      "description": "Create a workspace in the current organization.",
+      "group": "users",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string",
+            "minLength": 1
+          },
+          "display_name": {
+            "title": "Display name",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "emails": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "email",
+              "minLength": 1
+            },
+            "default": []
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "name"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/accounts/workspaces/",
+        "parameters": {
+          "path": [],
+          "query": [],
+          "body": [
+            "name",
+            "display_name",
+            "description",
+            "emails",
+            "role"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "accounts_workspaces_create"
+      }
+    },
+    {
+      "name": "list_workspace_members",
+      "description": "List members of a workspace.",
+      "group": "users",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "workspace_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "workspace_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/accounts/workspaces/{workspace_id}/members/",
+        "parameters": {
+          "path": [
+            "workspace_id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "accounts_workspaces_members_list"
+      }
+    },
+    {
+      "name": "update_workspace",
+      "description": "Update a workspace name or settings.",
+      "group": "users",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "workspace_id": {
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "display_name": {
+            "title": "Display name",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "workspace_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "PUT",
+        "path": "/accounts/workspaces/{workspace_id}/",
+        "parameters": {
+          "path": [
+            "workspace_id"
+          ],
+          "query": [],
+          "body": [
+            "name",
+            "display_name",
+            "description"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "accounts_workspaces_update"
       }
     },
     {
@@ -405,9 +831,6 @@
             }
           },
           "DatasetRowRequest": {
-            "required": [
-              "cells"
-            ],
             "type": "object",
             "properties": {
               "id": {
@@ -419,7 +842,8 @@
                 "type": "array",
                 "items": {
                   "$ref": "#/definitions/DatasetRowCellRequest"
-                }
+                },
+                "default": []
               }
             }
           }
@@ -489,7 +913,7 @@
         "readOnlyHint": false,
         "destructiveHint": false,
         "idempotentHint": false,
-        "openWorldHint": false
+        "openWorldHint": true
       },
       "request": {
         "method": "POST",
@@ -1373,7 +1797,7 @@
         "readOnlyHint": false,
         "destructiveHint": false,
         "idempotentHint": false,
-        "openWorldHint": false
+        "openWorldHint": true
       },
       "request": {
         "method": "POST",
@@ -1568,8 +1992,7 @@
           },
           "limit": {
             "type": "integer",
-            "minimum": 1,
-            "maximum": 100
+            "minimum": 1
           }
         },
         "additionalProperties": false,
@@ -2101,7 +2524,7 @@
         "readOnlyHint": false,
         "destructiveHint": false,
         "idempotentHint": false,
-        "openWorldHint": false
+        "openWorldHint": true
       },
       "request": {
         "method": "POST",
@@ -3076,8 +3499,7 @@
           "page_size": {
             "type": "integer",
             "default": 10,
-            "minimum": 1,
-            "maximum": 100
+            "minimum": 1
           }
         },
         "additionalProperties": false
@@ -3384,7 +3806,7 @@
         "readOnlyHint": false,
         "destructiveHint": false,
         "idempotentHint": false,
-        "openWorldHint": false
+        "openWorldHint": true
       },
       "request": {
         "method": "POST",
@@ -3469,8 +3891,7 @@
           "page_size": {
             "type": "integer",
             "default": 20,
-            "minimum": 1,
-            "maximum": 100
+            "minimum": 1
           }
         },
         "additionalProperties": false
@@ -4553,7 +4974,7 @@
         "readOnlyHint": false,
         "destructiveHint": false,
         "idempotentHint": false,
-        "openWorldHint": false
+        "openWorldHint": true
       },
       "request": {
         "method": "POST",
@@ -4912,17 +5333,13 @@
             "format": "uuid"
           }
         },
-        "additionalProperties": false,
-        "required": [
-          "edit_type",
-          "eval_task_id"
-        ]
+        "additionalProperties": false
       },
       "annotations": {
         "readOnlyHint": false,
         "destructiveHint": true,
         "idempotentHint": false,
-        "openWorldHint": false
+        "openWorldHint": true
       },
       "request": {
         "method": "PATCH",
@@ -5013,7 +5430,7 @@
         "readOnlyHint": false,
         "destructiveHint": false,
         "idempotentHint": false,
-        "openWorldHint": false
+        "openWorldHint": true
       },
       "request": {
         "method": "POST",
@@ -5961,7 +6378,7 @@
         "readOnlyHint": false,
         "destructiveHint": false,
         "idempotentHint": false,
-        "openWorldHint": false
+        "openWorldHint": true
       },
       "request": {
         "method": "POST",
@@ -6153,7 +6570,7 @@
         "readOnlyHint": false,
         "destructiveHint": false,
         "idempotentHint": false,
-        "openWorldHint": false
+        "openWorldHint": true
       },
       "request": {
         "method": "POST",
@@ -6181,7 +6598,7 @@
     {
       "name": "list_agents",
       "description": "List agent definitions in the current workspace.",
-      "group": "simulation",
+      "group": "agents",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -6257,7 +6674,7 @@
     {
       "name": "get_agent",
       "description": "Return an agent definition by its identifier.",
-      "group": "simulation",
+      "group": "agents",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -6297,7 +6714,7 @@
     {
       "name": "list_scenarios",
       "description": "List simulation scenarios in the current workspace.",
-      "group": "simulation",
+      "group": "agents",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -6368,49 +6785,9 @@
       }
     },
     {
-      "name": "get_scenario",
-      "description": "Return a simulation scenario by its identifier.",
-      "group": "simulation",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "scenario_id": {
-            "type": "string"
-          }
-        },
-        "additionalProperties": false,
-        "required": [
-          "scenario_id"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false
-      },
-      "request": {
-        "method": "GET",
-        "path": "/simulate/scenarios/{scenario_id}/",
-        "parameters": {
-          "path": [
-            "scenario_id"
-          ],
-          "query": [],
-          "body": []
-        }
-      },
-      "response": {
-        "unwrap": "result"
-      },
-      "source": {
-        "operationId": "simulate_scenarios_read"
-      }
-    },
-    {
       "name": "list_test_executions",
       "description": "List simulation test executions.",
-      "group": "simulation",
+      "group": "agents",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -6428,8 +6805,7 @@
           },
           "limit": {
             "type": "integer",
-            "minimum": 1,
-            "maximum": 100
+            "minimum": 1
           }
         },
         "additionalProperties": false
@@ -6464,7 +6840,7 @@
     {
       "name": "get_test_execution",
       "description": "Return a simulation test execution by its identifier.",
-      "group": "simulation",
+      "group": "agents",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -6535,6 +6911,115 @@
       },
       "source": {
         "operationId": "simulate_test-executions_read"
+      }
+    },
+    {
+      "name": "run_simulation",
+      "description": "Start a saved simulation test asynchronously. Omit scenario_ids to run all configured scenarios. Uses existing provider/worker infrastructure and can incur usage charges. Poll get_test_execution with the returned execution_id, then read get_test_execution_analytics.",
+      "group": "agents",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "run_test_id": {
+            "type": "string"
+          },
+          "scenario_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "default": []
+          },
+          "simulator_id": {
+            "anyOf": [
+              {
+                "title": "Simulator id",
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "select_all": {
+            "title": "Select all",
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "run_test_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "request": {
+        "method": "POST",
+        "path": "/simulate/run-tests/{run_test_id}/execute/",
+        "parameters": {
+          "path": [
+            "run_test_id"
+          ],
+          "query": [],
+          "body": [
+            "scenario_ids",
+            "simulator_id",
+            "select_all"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_run-tests_execute_create"
+      }
+    },
+    {
+      "name": "get_scenario",
+      "description": "Return a simulation scenario by its identifier.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "scenario_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "scenario_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/scenarios/{scenario_id}/",
+        "parameters": {
+          "path": [
+            "scenario_id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_scenarios_read"
       }
     },
     {
@@ -8269,75 +8754,6 @@
       }
     },
     {
-      "name": "run_simulation",
-      "description": "Start a saved simulation test asynchronously. Omit scenario_ids to run all configured scenarios. Uses existing provider/worker infrastructure and can incur usage charges. Poll get_test_execution with the returned execution_id, then read get_test_execution_analytics.",
-      "group": "simulation",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "run_test_id": {
-            "type": "string"
-          },
-          "scenario_ids": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "format": "uuid"
-            },
-            "default": []
-          },
-          "simulator_id": {
-            "anyOf": [
-              {
-                "title": "Simulator id",
-                "type": "string",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "select_all": {
-            "title": "Select all",
-            "type": "boolean",
-            "default": false
-          }
-        },
-        "additionalProperties": false,
-        "required": [
-          "run_test_id"
-        ]
-      },
-      "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": false,
-        "idempotentHint": false,
-        "openWorldHint": false
-      },
-      "request": {
-        "method": "POST",
-        "path": "/simulate/run-tests/{run_test_id}/execute/",
-        "parameters": {
-          "path": [
-            "run_test_id"
-          ],
-          "query": [],
-          "body": [
-            "scenario_ids",
-            "simulator_id",
-            "select_all"
-          ]
-        }
-      },
-      "response": {
-        "unwrap": "result"
-      },
-      "source": {
-        "operationId": "simulate_run-tests_execute_create"
-      }
-    },
-    {
       "name": "list_gateways",
       "description": "List configured AI gateways.",
       "group": "gateway",
@@ -8421,8 +8837,7 @@
           },
           "limit": {
             "type": "integer",
-            "minimum": 1,
-            "maximum": 100
+            "minimum": 1
           },
           "user_id": {
             "type": "string"
@@ -8847,8 +9262,7 @@
         },
         "additionalProperties": false,
         "required": [
-          "id",
-          "name"
+          "id"
         ]
       },
       "annotations": {

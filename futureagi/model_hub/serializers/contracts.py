@@ -3228,7 +3228,9 @@ class DatasetRowCellRequestSerializer(serializers.Serializer):
 
 class DatasetRowRequestSerializer(serializers.Serializer):
     id = serializers.UUIDField(required=False)
-    cells = DatasetRowCellRequestSerializer(many=True)
+    # A row without cells is valid and creates an empty row; the endpoint has
+    # always accepted ``{"rows": [{}]}`` so the contract must keep it optional.
+    cells = DatasetRowCellRequestSerializer(many=True, required=False, default=list)
 
 
 class DatasetAddRowsRequestSerializer(serializers.Serializer):

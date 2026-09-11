@@ -58,7 +58,9 @@ class TestExecutionListQuerySerializer(serializers.Serializer):
     search = serializers.CharField(required=False, allow_blank=True, default="")
     status = serializers.CharField(required=False, allow_blank=True, default="")
     page = serializers.IntegerField(required=False, min_value=1)
-    limit = serializers.IntegerField(required=False, min_value=1, max_value=100)
+    # The list never capped `limit`; documenting it must not start rejecting
+    # callers that already passed values above 100.
+    limit = serializers.IntegerField(required=False, min_value=1)
 
 
 class ExecutionDetailQuerySerializer(StrictInputSerializer):

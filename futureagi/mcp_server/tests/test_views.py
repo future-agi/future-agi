@@ -150,7 +150,12 @@ class TestMCPToolGroupsView:
     def test_get_default_groups(self, auth_client):
         response = auth_client.get("/mcp/config/tool-groups/")
         assert response.status_code == 200
-        assert "context" in response.data["result"]["enabled_groups"]
+        result = response.data["result"]
+        assert "context" in result["enabled_groups"]
+        assert "users" in result["enabled_groups"]
+        slugs = {group["slug"] for group in result["available_groups"]}
+        assert "users" in slugs
+        assert "docs" not in slugs
 
     def test_update_groups(self, auth_client, user, workspace):
         response = auth_client.put(

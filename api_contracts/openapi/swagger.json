@@ -13179,7 +13179,6 @@
                         "in": "query",
                         "required": false,
                         "type": "integer",
-                        "maximum": 100,
                         "minimum": 1
                     },
                     {
@@ -31576,7 +31575,6 @@
                         "required": false,
                         "type": "integer",
                         "default": 10,
-                        "maximum": 100,
                         "minimum": 1
                     }
                 ],
@@ -44661,7 +44659,6 @@
                         "in": "query",
                         "required": false,
                         "type": "integer",
-                        "maximum": 100,
                         "minimum": 1
                     }
                 ],
@@ -51521,7 +51518,6 @@
                         "in": "query",
                         "required": false,
                         "type": "integer",
-                        "maximum": 100,
                         "minimum": 1
                     }
                 ],
@@ -62140,7 +62136,6 @@
                         "required": false,
                         "type": "integer",
                         "default": 20,
-                        "maximum": 100,
                         "minimum": 1
                     }
                 ],
@@ -100278,9 +100273,6 @@
             }
         },
         "DatasetRowRequest": {
-            "required": [
-                "cells"
-            ],
             "type": "object",
             "properties": {
                 "id": {
@@ -100292,7 +100284,8 @@
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/DatasetRowCellRequest"
-                    }
+                    },
+                    "default": []
                 }
             }
         },

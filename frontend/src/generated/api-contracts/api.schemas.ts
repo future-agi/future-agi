@@ -9528,7 +9528,7 @@ export interface DatasetRowCellRequestApi {
 
 export interface DatasetRowRequestApi {
   id?: string;
-  cells: DatasetRowCellRequestApi[];
+  cells?: DatasetRowCellRequestApi[];
 }
 
 export interface DatasetAddRowsRequestApi {
@@ -27935,7 +27935,6 @@ export type AgentccRequestLogsListParams = {
   page?: number;
   /**
    * @minimum 1
-   * @maximum 100
    */
   limit?: number;
   user_id?: string;
@@ -28636,7 +28635,6 @@ export type ModelHubEvalGroupsListParams = {
   page_number?: number;
   /**
    * @minimum 1
-   * @maximum 100
    */
   page_size?: number;
 };
@@ -29389,7 +29387,6 @@ export type ModelHubPromptTemplatesVersionsParams = {
   page?: number;
   /**
    * @minimum 1
-   * @maximum 100
    */
   limit?: number;
 };
@@ -29940,7 +29937,6 @@ export type SimulateApiTestExecutionsListParams = {
   page?: number;
   /**
    * @minimum 1
-   * @maximum 100
    */
   limit?: number;
 };
@@ -31055,7 +31051,6 @@ export type TracerProjectListParams = {
   page_number?: number;
   /**
    * @minimum 1
-   * @maximum 100
    */
   page_size?: number;
 };

@@ -48,9 +48,18 @@ class APIExecutionError(RuntimeError):
 
 @dataclass(frozen=True)
 class MCPRequestContext:
+    """The tenant an MCP credential authenticated as.
+
+    ``organization`` and ``workspace`` are what the caller was granted at
+    authentication time; the executor refuses to run a tool anywhere else.
+    ``api_key`` is the ``OrgApiKey`` row when the caller used key auth, so the
+    Django request resolves the tenant exactly as the REST API would for it.
+    """
+
     user: Any
     organization: Any
     workspace: Any
+    api_key: Any = None
 
 
 class DjangoAPIExecutor:
@@ -134,9 +143,13 @@ class DjangoAPIExecutor:
 
         # Reuse the existing workspace membership and write-access checks, then
         # inject the already authenticated MCP user for normal DRF permissions.
+        if context.api_key is not None:
+            request.org_api_key = context.api_key
         try:
+            self._require_tenant_access(context)
             authentication = APIKeyAuthentication()
             authentication._set_workspace_context(request, context.user)
+            self._require_authenticated_tenant(request, context)
             # Some legacy GET APIs create a workbench draft. Their catalog
             # write classification must not bypass Django's write-role check.
             if (
@@ -196,6 +209,46 @@ class DjangoAPIExecutor:
                             receipt[key] = value
                 return receipt
             raise APIExecutionError(str(exc), status_code=413) from exc
+
+    @staticmethod
+    def _require_tenant_access(context: MCPRequestContext) -> None:
+        """Re-check the credential's tenant against current memberships.
+
+        Authentication happened moments ago, but the membership or workspace it
+        relied on may since have been revoked or deactivated. Checking here,
+        before Django's resolution runs, also avoids its side effects (such as
+        auto-joining the user to the default workspace) for a denied caller.
+        """
+        if not context.user.can_access_organization(context.organization):
+            raise PermissionDenied("Access denied to this organization")
+        workspace = context.workspace
+        if workspace is None:
+            return
+        if (
+            not workspace.is_active
+            or workspace.organization_id != context.organization.id
+            or not context.user.can_access_workspace(workspace)
+        ):
+            raise PermissionDenied("Access denied to this workspace")
+
+    @staticmethod
+    def _require_authenticated_tenant(request, context: MCPRequestContext) -> None:
+        """Refuse to execute anywhere other than the authenticated tenant.
+
+        ``APIKeyAuthentication._set_workspace_context`` is written for browser
+        sessions: when the requested organization or workspace is unavailable
+        it quietly falls back to whatever the user can still reach. For an MCP
+        credential that fallback would run the tool in a different tenant than
+        the one the caller was granted, so treat any drift as a denial.
+        """
+        organization = getattr(request, "organization", None)
+        if organization is None or organization.id != context.organization.id:
+            raise PermissionDenied("Access denied to this organization")
+        if context.workspace is None:
+            return
+        workspace = getattr(request, "workspace", None)
+        if workspace is None or workspace.id != context.workspace.id:
+            raise PermissionDenied("Access denied to this workspace")
 
     @staticmethod
     def _render_path(

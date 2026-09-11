@@ -39,7 +39,7 @@ TOOL_GROUPS = {
     },
     "agents": {
         "name": "Agents & Simulation",
-        "description": "Manage agents, versions, scenarios, test executions, and call results",
+        "description": "Browse agents, scenarios and test executions, and run saved simulation tests",
     },
     "simulation": {
         "name": "Simulation",
@@ -65,10 +65,6 @@ TOOL_GROUPS = {
         "name": "Dashboards",
         "description": "Dashboards, widgets, metric discovery, and chart data queries",
     },
-    "docs": {
-        "name": "Docs & Guides",
-        "description": "Search and query Future AGI documentation, setup guides, and API references",
-    },
 }
 
 DEFAULT_TOOL_GROUPS = [
@@ -87,7 +83,6 @@ DEFAULT_TOOL_GROUPS = [
     "usage",
     "gateway",
     "dashboards",
-    "docs",
 ]
 
 RATE_LIMITS = {

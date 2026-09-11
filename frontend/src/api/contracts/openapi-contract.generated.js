@@ -7321,7 +7321,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
             schema: {
               type: "integer",
               minimum: 1,
-              maximum: 100,
             },
           },
           user_id: {
@@ -17316,7 +17315,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
             schema: {
               type: "integer",
               minimum: 1,
-              maximum: 100,
               default: 10,
             },
           },
@@ -24718,7 +24716,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
             schema: {
               type: "integer",
               minimum: 1,
-              maximum: 100,
             },
           },
         },
@@ -28676,7 +28673,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
             schema: {
               type: "integer",
               minimum: 1,
-              maximum: 100,
             },
           },
         },
@@ -35116,7 +35112,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
             schema: {
               type: "integer",
               minimum: 1,
-              maximum: 100,
               default: 20,
             },
           },
@@ -81519,7 +81514,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     DatasetRowRequest: {
-      required: ["cells"],
       type: "object",
       properties: {
         id: {
@@ -81532,6 +81526,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/DatasetRowCellRequest",
           },
+          default: [],
         },
       },
     },
