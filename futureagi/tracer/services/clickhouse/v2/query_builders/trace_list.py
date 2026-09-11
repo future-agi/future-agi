@@ -1179,6 +1179,71 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
             )
         return super().build_filter_candidate_seed_page(**kwargs)
 
+    def supports_filter_seed_density_probe(self) -> bool:
+        """Only the row-budgeted short exact-string lane probes for density."""
+
+        return self._uses_short_text_candidate_seed()
+
+    def build_filter_seed_density_probe_query(
+        self, *, slice_start: datetime, slice_end: datetime
+    ) -> tuple[str, dict[str, Any]]:
+        """Count the live rows a candidate seed slice would put under the seed.
+
+        This is the density proof ``FilterSeedWidthPolicy`` requires before the
+        row budget may issue a slice wider than its unprobed cap. The reactive
+        doubling rule sizes the next slice from the PREVIOUS one's read rows,
+        so it crosses a sparse tail cheaply and then drops its accumulated
+        width onto whatever comes next; measured in production, eight doublings
+        over a 166 h sparse tail issued a 128 h slice that read over 12 GiB in
+        one statement. This probe is what makes that impossible: the widened
+        slice is costed before it is issued, and shrunk to fit the budget.
+
+        Deliberately the cheapest statement that answers the question:
+
+        * a PK-range count over ``[hour_floor(start), hour_ceil(end))`` clamped
+          to the request window, which is exactly the ``toStartOfHour`` primary
+          key prefix - so the server prunes to granule boundaries and reads
+          marks, not rows. Rounding OUT rather than in keeps the count an upper
+          bound on the slice it is approving, so the estimate can only make the
+          issued slice narrower, never wider;
+        * no attribute predicate, no typed-Map access, no child witness, no
+          ``FINAL``, no ordering, no per-trace sets. Attribute selectivity is
+          irrelevant to the question asked: the seed's cost tracks the rows the
+          bounded witness envelope must scan, not the rows that match;
+        * every row, roots and children alike, and ``is_deleted = 0`` for the
+          live population the seed itself reads.
+
+        It answers a COST question only. It never decides membership, never
+        prunes candidates and never reaches the published page: shrinking a
+        slice defers its older part to the next contiguous slice, so the scan
+        stays exact whatever the probe says, and a probe that fails or times
+        out simply pins the width at the unprobed cap.
+        """
+
+        request_start, request_end = self.parse_time_range(self.filters)
+        if not request_start <= slice_start < slice_end <= request_end:
+            raise ValueError("seed density probe must stay inside the request window")
+        if not self.supports_filter_seed_density_probe():
+            raise ValueError("seed density probe is unavailable")
+        probe_start = max(request_start, _floor_hour(slice_start))
+        probe_end = min(request_end, _ceil_hour(slice_end))
+        params = {
+            **self.params,
+            "seed_density_start_us": _unix_microseconds(probe_start),
+            "seed_density_end_us": _unix_microseconds(probe_end),
+        }
+        return (
+            f"""
+            SELECT count() AS seed_density_rows
+            FROM {self.TABLE}
+            PREWHERE {self.project_filter_sql()}
+              AND start_time >= fromUnixTimestamp64Micro(%(seed_density_start_us)s)
+              AND start_time < fromUnixTimestamp64Micro(%(seed_density_end_us)s)
+            WHERE is_deleted = 0
+            """,
+            params,
+        )
+
     def supports_filter_windowed_candidate_seed_page(self) -> bool:
         return bool(
             self._uses_scalar_coordinate_replay()

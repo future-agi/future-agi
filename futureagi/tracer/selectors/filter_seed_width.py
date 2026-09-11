@@ -47,9 +47,28 @@ class FilterSeedWidthPolicy:
 
     ``target_read_rows`` is the rows a single seed statement should read.
     ``initial_width`` is the width of the first statement of a read, before any
-    measurement exists. ``unsignalled_cap`` is the only ceiling that applies
-    while no statement of this read has reported read rows — a transport
-    without native progress, or the first slice of a read.
+    measurement exists. ``unsignalled_cap`` is the ceiling that applies to any
+    width this read cannot justify from a measurement: a transport without
+    native progress, the first slice of a read, and — the reason it is also
+    called the *unprobed* cap — any widening past it that no density probe has
+    approved.
+
+    THE WIDENING CONTRACT. Doubling is reactive: it fires on the rows the
+    PREVIOUS slice read, and knows nothing about the population of the NEXT
+    one. Across a sparse tail that is exactly right, and it is how a lane
+    reaches old data in log(n) statements instead of n. But a tail that ends at
+    a dense region ends the doubling on a slice whose measured predecessor was
+    empty and whose own contents are not: eight doublings across a 166 h sparse
+    tail land a 128 h slice on dense history, and that one statement read over
+    12 GiB in production measurement. So a width ABOVE ``unsignalled_cap`` is
+    not a width this policy may issue on the strength of the previous slice
+    alone. The selector must first prove the candidate slice's row population
+    with a cheap density probe and pass the count to ``probed_width``; a probe
+    that fails, or a transport with no probe at all, gets the cap.
+
+    The resulting contract is the one worth stating plainly: *a seed statement
+    never reads more than ~``target_read_rows`` knowingly, and a sparse tail is
+    crossed at probe cost (~1-2 MB and ~70 ms each), not at slice cost.*
 
     ``min_width`` is the width this lane refuses to narrow below. It is a
     declaration, not a derived quantity: a seed whose child witness is
@@ -123,6 +142,54 @@ class FilterSeedWidthPolicy:
                 self.min_width,
             )
         return width
+
+    @property
+    def unprobed_cap(self) -> timedelta:
+        """The widest slice this lane may issue without a density proof.
+
+        The same width as ``unsignalled_cap`` and deliberately not a second
+        knob: both answer one question — how wide may a statement be when this
+        read has measured nothing about what is inside it? An unsignalled
+        transport has measured nothing because it cannot report; an unprobed
+        widening has measured only the slice next door.
+        """
+
+        return self.unsignalled_cap
+
+    def requires_density_probe(self, width: timedelta) -> bool:
+        """Whether issuing ``width`` needs a density proof first."""
+
+        return width > self.unprobed_cap
+
+    def probed_width(self, width: timedelta, slice_rows: int) -> timedelta:
+        """Fit a probed candidate slice to the row budget.
+
+        ``slice_rows`` is the probe's count of live rows inside the candidate
+        slice ``[end - width, end)``. A count within budget issues the slice
+        unchanged — this is the sparse-tail case, and it is why the tail is
+        still crossed by doubling rather than one floor-width slice at a time.
+        A count over budget shrinks the slice proportionally: rows are assumed
+        uniform across the candidate, so the largest width whose share of the
+        count fits is ``width * target / slice_rows``, snapped DOWN onto the
+        lane's whole-hour power-of-two lattice and never below the floor.
+
+        The proportional estimate is an estimate. It is wrong in both
+        directions on a slice whose density is not uniform, which is precisely
+        the shape that produced the defect — but it is wrong by the ratio of
+        the densest part to the mean, not by the two orders of magnitude that
+        separate a sparse week from a dense hour, and the next statement's own
+        read rows correct it through the ordinary halving rule.
+        """
+
+        if slice_rows < 0:
+            raise ValueError("a density probe cannot count negative rows")
+        if slice_rows <= self.target_read_rows:
+            return width
+        fitted = width * (self.target_read_rows / slice_rows)
+        return max(
+            min(_snap_whole_hour_power_of_two(fitted, round_up=False), width),
+            self.min_width,
+        )
 
     def unsignalled_width(self, width: timedelta) -> timedelta:
         """Clamp a width proposed before any statement reported its read rows.
