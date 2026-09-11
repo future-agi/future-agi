@@ -122,6 +122,7 @@ const EvaluationDrawerChild = ({
             ? { error_localizer_enabled: evalItem.error_localizer }
             : {}),
         },
+        bindingConfig: evalItem.config?.config || {},
         mapping: evalItem.mapping || {},
         outputType: evalItem.output_type,
         // Existing UserEvalMetric id — handleAdd routes via editEval
