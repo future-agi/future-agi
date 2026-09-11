@@ -1,6 +1,8 @@
 """Offline guards only. Never connect to a DB or initialize Django in tests."""
 
 import unittest
+import hashlib
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -245,7 +247,8 @@ class UsersRemapCertificateTests(unittest.TestCase):
         project, user, foreign = (str(UUID(int=i)) for i in (1, 2, 3))
         reader = object.__new__(queries.ReadOnlyExecutor)
         reader.client, reader._users_certificate = object(), None
-        reader._users_context = queries._UsersRemapContext((project,), (project,), "bindings", "scope")
+        reader._users_context = queries._UsersRemapContext(
+            (project,), (project,), "bindings", "scope", 26)
         origin = SimpleNamespace(row_count=1, columns=["end_user_id", "project_id"],
                                  data=[{"end_user_id": user, "project_id": project}])
         reader._users_result(origin, origin=True, certificate=None, query_id="actual-origin")
@@ -263,6 +266,130 @@ class UsersRemapCertificateTests(unittest.TestCase):
         origin.data[0]["project_id"] = foreign
         with self.assertRaisesRegex(replay.ReplayError, "USERS_REMAP_ORIGIN_RESULT_INVALID"):
             reader._users_result(origin, origin=True, certificate=None, query_id="bad-origin")
+
+
+class UsersSourcePinTests(unittest.TestCase):
+    """The pins are sha256 of the imported module's FILE BYTES, nothing else."""
+
+    def test_pin_computation_hashes_the_imported_module_file_bytes(self):
+        name = "tracer.services.users_list_manager"
+        with TemporaryDirectory() as tmp:
+            source = Path(tmp) / "users_list_manager.py"
+            source.write_bytes(b"USER_LIST_CANDIDATE_BATCH_SIZE = 25\n")
+            digest = hashlib.sha256(source.read_bytes()).hexdigest()
+            module = SimpleNamespace(__file__=str(source))
+            with (
+                patch.dict(queries._USERS_SOURCE_PINS, {name: digest}, clear=True),
+                patch.object(queries, "import_module", return_value=module) as imported,
+            ):
+                self.assertTrue(queries._users_sources_current())
+                imported.assert_called_once_with(name)
+                # One byte of drift is enough; the harness must not certify it.
+                source.write_bytes(b"USER_LIST_CANDIDATE_BATCH_SIZE = 26\n")
+                self.assertFalse(queries._users_sources_current())
+            with (
+                patch.dict(queries._USERS_SOURCE_PINS, {name: "not-a-digest"}, clear=True),
+                patch.object(queries, "import_module", return_value=module),
+            ):
+                self.assertFalse(queries._users_sources_current())
+
+    def test_pins_match_the_checked_in_users_read_path(self):
+        root = Path(queries.__file__).resolve().parents[2] / "futureagi"
+        for name, digest in queries._USERS_SOURCE_PINS.items():
+            with self.subTest(module=name):
+                source = root.joinpath(*name.split(".")).with_suffix(".py")
+                self.assertTrue(source.is_file(), source)
+                self.assertEqual(
+                    hashlib.sha256(source.read_bytes()).hexdigest(), digest,
+                    f"stale _USERS_SOURCE_PINS entry for {name}; re-pin it",
+                )
+
+
+class UsersOriginBatchTests(unittest.TestCase):
+    def test_origin_limit_follows_the_managers_own_first_batch(self):
+        manager_module = SimpleNamespace(
+            USER_LIST_CANDIDATE_BATCH_SIZE=25,
+            USER_LIST_ATTRIBUTE_WITNESS_BATCH_SIZE=64,
+        )
+        modules = {"tracer.services.users_list_manager": manager_module}
+        with patch.dict(sys.modules, modules):
+            self.assertEqual(
+                queries._users_origin_limit(SimpleNamespace(attribute_exact_text_filters=[])), 26)
+            self.assertEqual(
+                queries._users_origin_limit(
+                    SimpleNamespace(attribute_exact_text_filters=[("attr", ("a", "b"))])), 65)
+            manager_module.USER_LIST_ATTRIBUTE_WITNESS_BATCH_SIZE = 0
+            with self.assertRaisesRegex(replay.ReplayError, "USERS_REMAP_ORIGIN_LIMIT_INVALID"):
+                queries._users_origin_limit(
+                    SimpleNamespace(attribute_exact_text_filters=[("attr", ("a",))]))
+
+    def test_origin_result_cap_is_per_origin_not_a_constant_26(self):
+        from uuid import UUID
+
+        project = str(UUID(int=1))
+        rows = [{"end_user_id": str(UUID(int=i + 10)), "project_id": project} for i in range(65)]
+        for origin_limit, size, ok in ((65, 65, True), (65, 66, False),
+                                       (26, 26, True), (26, 27, False)):
+            with self.subTest(origin_limit=origin_limit, size=size):
+                reader = object.__new__(queries.ReadOnlyExecutor)
+                reader.client, reader._users_certificate = object(), None
+                reader._users_context = queries._UsersRemapContext(
+                    (project,), (project,), "bindings", "scope", origin_limit)
+                data = [dict(row) for row in rows[:size]]
+                while len(data) < size:
+                    data.append({"end_user_id": str(UUID(int=len(data) + 500)),
+                                 "project_id": project})
+                result = SimpleNamespace(row_count=size,
+                                         columns=["end_user_id", "project_id"], data=data)
+                if ok:
+                    reader._users_result(result, origin=True, certificate=None, query_id="origin")
+                    self.assertEqual(len(reader._users_certificate.ids), size)
+                else:
+                    with self.assertRaisesRegex(
+                        replay.ReplayError, "USERS_REMAP_ORIGIN_RESULT_INVALID"
+                    ):
+                        reader._users_result(result, origin=True, certificate=None,
+                                             query_id="origin")
+
+
+class ChUserAssertTests(unittest.TestCase):
+    def test_cli_default_off(self):
+        with patch.object(queries.argparse.ArgumentParser, "parse_args", autospec=True,
+                          side_effect=RuntimeError("stop-before-io")) as parse:
+            with self.assertRaisesRegex(RuntimeError, "stop-before-io"):
+                queries.main()
+        parser = parse.call_args.args[0]
+        self.assertIs(parser.get_default("user_assert"), False)
+        action = next(a for a in parser._actions if a.dest == "user_assert")
+        self.assertEqual(action.option_strings, ["--user-assert"])
+        self.assertIs(action.const, True)
+
+    def test_unset_env_keeps_default_only_while_the_assert_is_off(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop(queries._CH_USER_ENV, None)
+            self.assertEqual(queries.observe_ch_user(SimpleNamespace()), "default")
+            self.assertEqual(
+                queries.observe_ch_user(SimpleNamespace(user_assert=False)), "default")
+            with self.assertRaisesRegex(replay.ReplayError, "CH_USER_NOT_CONFIGURED"):
+                queries.observe_ch_user(SimpleNamespace(user_assert=True))
+            # No identity to compare against is itself a hard failure.
+            with self.assertRaisesRegex(replay.ReplayError, "CH_USER_NOT_CONFIGURED"):
+                queries.assert_ch_identity(SimpleNamespace(user_assert=True), "default")
+
+    def test_identity_mismatch_fails_fast_and_match_passes(self):
+        with patch.dict(os.environ, {queries._CH_USER_ENV: "observe_readonly"}):
+            args = SimpleNamespace(user_assert=True)
+            self.assertEqual(queries.observe_ch_user(args), "observe_readonly")
+            queries.assert_ch_identity(args, "observe_readonly")
+            for actual in ("default", "", None, b"observe_readonly"):
+                with self.subTest(actual=actual):
+                    with self.assertRaisesRegex(
+                        replay.ReplayError, "CH_USER_IDENTITY_MISMATCH"
+                    ):
+                        queries.assert_ch_identity(args, actual)
+            # Off means off: a silent 'default' run is still possible without it.
+            queries.assert_ch_identity(SimpleNamespace(user_assert=False), "default")
+            queries.assert_ch_identity(SimpleNamespace(), "default")
 
 
 class PreviewReferenceGateTests(unittest.TestCase):
