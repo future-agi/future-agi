@@ -1065,9 +1065,25 @@ class DashboardFilterValuesQuerySerializer(serializers.Serializer):
             supplied_name = attrs.get("metric_name")
             supplied_type = attrs.get("metric_type")
             if supplied_name is not None and supplied_name != decoded["metric_name"]:
-                raise serializers.ValidationError(
-                    {"metric_name": "metric_name does not match property_id"}
-                )
+                # A persisted filter keeps the native column spelling
+                # (``user_id``) beside the one canonical registry identity
+                # (``system_attribute:sessions:user``), and
+                # ``validate_property_filter_binding`` admits exactly that
+                # pair.  The registry owns that alias rule, so ask it before
+                # rejecting: comparing the spellings for equality here refused
+                # a payload the persisted filter, the catalog manifest and the
+                # value picker all treat as one property.  A genuine mismatch
+                # still fails, under this same field.
+                try:
+                    validate_property_metric_binding(
+                        property_id,
+                        metric_name=supplied_name,
+                        metric_type=decoded["metric_type"],
+                    )
+                except ValueError as exc:
+                    raise serializers.ValidationError(
+                        {"metric_name": "metric_name does not match property_id"}
+                    ) from exc
             if supplied_type is not None and supplied_type != decoded["metric_type"]:
                 raise serializers.ValidationError(
                     {"metric_type": "metric_type does not match property_id"}

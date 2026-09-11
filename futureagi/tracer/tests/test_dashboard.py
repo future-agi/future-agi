@@ -2247,107 +2247,87 @@ class TestMetricsEndpoint:
         assert "metric_name" in conflicting.errors
 
     def test_eval_filter_values_never_guess_between_config_and_template_ids(self):
-        from tracer.models.custom_eval_config import CustomEvalConfig
-        from tracer.views.dashboard import DashboardViewSet
+        """eval_config and eval_template resolve by their OWN id, never each other's.
+
+        This guards a real correctness property: two different families can
+        carry the same UUID, so resolving an ``eval_config:<uuid>`` request
+        against the template family (or vice versa) would silently return
+        another object's choices.
+
+        The assertions target ``CurrentDefinitionSource.resolve`` because that
+        is where resolution now lives. ``filter_values`` routes eval and
+        annotation property kinds there before reaching the legacy
+        ``CustomEvalConfig`` lookup, so stubbing that model -- as this test did
+        previously -- no longer observes the code under test. The guarantee is
+        now stronger than the path it replaced: the old code fell back to
+        ``eval_template_id`` when a config lookup missed, and this one never
+        falls back at all.
+        """
+        from tracer.services.clickhouse.v2.property_catalog.source_adapters import (
+            CurrentDefinitionSource,
+        )
 
         metric_id = "11111111-1111-4111-8111-111111111111"
-        project_scope = SimpleNamespace(
-            mode="fixed",
-            batched=False,
-            project_ids=("project-1",),
-            requested_project_ids=frozenset({"project-1"}),
-        )
-        eval_template = SimpleNamespace(
-            config={"output": "PASS_FAIL"},
-            choices=[],
-        )
-        config = SimpleNamespace(
-            project_id="project-1",
-            eval_template=eval_template,
-        )
+        scope = {
+            "organization_id": "org-1",
+            "workspace_id": "workspace-1",
+            "project_ids": ("project-1",),
+        }
+        seen = []
 
-        class _EvalConfigQuery:
-            def __init__(self, *, config_result=None, template_result=None):
-                self.config_result = config_result
-                self.template_result = template_result
-                self.lookups = []
-                self.current_lookup = {}
+        class _Recorder:
+            """Stands in for one family's queryset and records its lookups."""
 
-            def filter(self, *_args, **kwargs):
-                self.lookups.append(kwargs)
-                if "id" in kwargs or "eval_template_id" in kwargs:
-                    self.current_lookup = kwargs
+            def __init__(self, kind):
+                self.kind = kind
+
+            def filter(self, **kwargs):
+                seen.append((self.kind, kwargs))
                 return self
 
-            def select_related(self, *_args):
+            def values(self, *_fields):
                 return self
 
             def first(self):
-                if "id" in self.current_lookup:
-                    return self.config_result
-                if "eval_template_id" in self.current_lookup:
-                    return self.template_result
                 return None
 
-        def run_request(property_kind, query, *, page_size=None):
-            property_id = f"{property_kind}:{metric_id}"
-            request_data = {
-                "property_id": property_id,
-                "_property_kind": property_kind,
-                "metric_name": metric_id,
-                "metric_type": "eval_metric",
-                "source": "traces",
-                "project_ids": ["project-1"],
-                "search": "",
-            }
-            if page_size is not None:
-                request_data["page_size"] = page_size
-            request = SimpleNamespace(
-                workspace=SimpleNamespace(id="workspace-1"),
-                validated_query_data=request_data,
-            )
-            view = DashboardViewSet()
-            with (
-                patch(
-                    "tracer.views.dashboard._prepare_filter_value_project_scope",
-                    return_value=project_scope,
-                ),
-                patch(
-                    "tracer.views.dashboard._run_filter_value_pg_read",
-                    side_effect=lambda _deadline, reader: reader(),
-                ),
-                patch(
-                    "tracer.views.dashboard.project_workspace_scope_q",
-                    return_value=object(),
-                ),
-                patch.object(
-                    CustomEvalConfig,
-                    "no_workspace_objects",
-                    query,
-                ),
-                patch(
-                    "tracer.views.dashboard._finite_filter_value_cursor_page",
-                    return_value={"values": [], "query_complete": True},
-                ) as finite_page,
-            ):
-                inspect.unwrap(DashboardViewSet.filter_values)(view, request)
-            return property_id, finite_page
+        def families(_self, _scope, _query):
+            # (…, primary, …, kind, queryset, fields, convert)
+            return [
+                ("", "", "evals", "", "eval_config",
+                 _Recorder("eval_config"), ("id",), lambda row: row),
+                ("", "", "evals", "", "eval_template",
+                 _Recorder("eval_template"), ("id",), lambda row: row),
+            ]
 
-        config_query = _EvalConfigQuery(config_result=None, template_result=config)
-        run_request("eval_config", config_query)
-        assert any("id" in lookup for lookup in config_query.lookups)
-        assert not any("eval_template_id" in lookup for lookup in config_query.lookups)
+        source = CurrentDefinitionSource(deadline=SimpleNamespace(
+            remaining_ms=lambda floor_ms=1: 10_000
+        ))
 
-        template_query = _EvalConfigQuery(config_result=config, template_result=config)
-        property_id, finite_page = run_request(
-            "eval_template",
-            template_query,
-            page_size=10,
-        )
-        assert not any("id" in lookup for lookup in template_query.lookups)
-        assert any("eval_template_id" in lookup for lookup in template_query.lookups)
-        assert finite_page.call_args.kwargs["query"]["property_id"] == property_id
+        with (
+            patch.object(CurrentDefinitionSource, "_families", families),
+            patch.object(CurrentDefinitionSource, "_read",
+                         lambda _self, read: read()),
+        ):
+            source.resolve(scope=scope, property_id=f"eval_config:{metric_id}",
+                           source="evals")
+            config_seen = list(seen)
+            seen.clear()
+            source.resolve(scope=scope, property_id=f"eval_template:{metric_id}",
+                           source="evals")
+            template_seen = list(seen)
 
+        # Each request touches ONLY its own family -- no cross-family guessing.
+        assert {kind for kind, _ in config_seen} == {"eval_config"}
+        assert {kind for kind, _ in template_seen} == {"eval_template"}
+
+        # Each resolves by primary key, and neither ever reaches for the
+        # other family's foreign key.
+        for recorded in (config_seen, template_seen):
+            assert recorded, "the matching family was never queried"
+            assert all(set(kw) == {"id"} for _, kw in recorded)
+            assert all(kw["id"] == metric_id for _, kw in recorded)
+            assert not any("eval_template_id" in kw for _, kw in recorded)
     def test_property_registry_id_is_bound_to_persisted_filter_family(self):
         from rest_framework import serializers
 
@@ -8471,7 +8451,11 @@ class TestFrontendPayloadSimulation:
         queries = builder.build_all_queries()
         sql, params, _ = queries[0]
         assert "span_attr_str" in sql
-        assert "llm.model" in sql
+        # The attribute key is bound as data, never interpolated into the SQL
+        # text, so the key reaches ClickHouse through the parameter the map
+        # access references rather than appearing in the statement itself.
+        assert "span_attr_str[%(_legacy_attr_key_0)s]" in sql
+        assert params["_legacy_attr_key_0"] == "llm.model"
 
     def test_eval_filter_frontend_payload(self):
         eval_uuid = str(uuid.uuid4())
@@ -13644,9 +13628,27 @@ class TestXSSPayloadNonExecutable:
             },
             format="json",
         )
-        assert resp.status_code == 400
-        # Non-executable: served as JSON, so a reflected payload is inert text.
+        # The key no longer reaches SQL text, so it is no longer rejected.
+        # On dev the 400 came from `_sanitize_attr_key`, an SQL-IDENTIFIER gate
+        # that existed only because the key was interpolated:
+        # `s.span_attr_str['{attr_key}']`. This branch binds it instead --
+        # `{attr_map}[%(custom_metric_attr_key)s]` -- so an unknown metric name
+        # is now ordinary data and the request succeeds with no rows.
+        assert resp.status_code == 200
+        # The property this test actually guards is unchanged and is asserted
+        # directly: a reflected payload is inert because the response is JSON
+        # and the browser is forbidden from sniffing it as HTML.
         assert resp["Content-Type"].startswith("application/json")
+        assert resp["X-Content-Type-Options"] == "nosniff"
+        assert not resp.content.lstrip().startswith(b"<")
+        # The payload IS reflected verbatim inside a JSON string value -- Django
+        # does not escape "<" and does not need to. Inertness comes from the two
+        # headers above, not from mangling the value, so assert the payload is
+        # carried as JSON data rather than asserting it is absent.
+        import json as _json
+
+        echoed = _json.loads(resp.content)["result"]["metrics"][0]
+        assert echoed["id"] == payload and echoed["name"] == payload
 
 
 @pytest.mark.django_db
