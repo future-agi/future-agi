@@ -14,6 +14,11 @@ from agentic_eval.core_evals.fi_evals.llm.custom_prompt_evaluator.evaluator impo
     CustomPromptEvaluator,
 )
 from agentic_eval.core_evals.fi_utils.utils import PreserveUndefined
+from model_hub.views.run_prompt import (
+    DEFAULT_TEMPLATE_FORMAT,
+    TEMPLATE_FORMAT_JINJA2,
+    render_template,
+)
 
 
 @pytest.fixture
@@ -176,6 +181,23 @@ class TestRenderTemplateContextMutation:
         assert "obj.field" not in ctx
         assert isinstance(ctx.get("obj"), dict)
         assert ctx["obj"].get("field") == "world"
+
+
+class TestRenderTemplateDefaultBehavior:
+    def test_default_template_format_is_mustache(self):
+        assert DEFAULT_TEMPLATE_FORMAT == "mustache"
+
+    def test_missing_template_format_uses_mustache_rendering(self):
+        out = render_template("Hello {{name}}", {"name": "Karthik"})
+        assert out == "Hello Karthik"
+
+    def test_explicit_jinja2_still_renders_jinja(self):
+        out = render_template(
+            "Hello {% if name == 'Karthik' %}{{name}}{% endif %}",
+            {"name": "Karthik"},
+            TEMPLATE_FORMAT_JINJA2,
+        )
+        assert out == "Hello Karthik"
 
 
 class TestRenderTemplateSSTIProtection:
