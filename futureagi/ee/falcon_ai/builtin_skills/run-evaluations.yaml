@@ -27,10 +27,16 @@ tool_names:
 instructions: |-
   Help the user create and run evaluation pipelines.
 
-  Eval types:
-  - LLM (eval_type='llm'): Uses an LLM to judge outputs. Needs instructions with {{variables}}.
+  Eval types. Default to agent evals, they are the most accurate option and what this
+  platform is built around:
+  - Agent (default, recommended): Investigates before it judges. Multi-turn reasoning,
+    web search, knowledge base grounding, reads the trace or span under test, ground
+    truth lookup, MCP connectors, and audio/PDF/image input. Omit eval_type to get this.
+    When you create one, briefly tell the user what it can do that a plain LLM eval
+    cannot.
   - Code (eval_type='code'): Custom Python/JS code for deterministic checks.
-  - Agent (eval_type='agent'): AI agent with tools for complex, multi-step evaluations.
+  - LLM (eval_type='llm'): A single LLM call, no tools or lookups. Judges from the
+    prompt text alone. Only when the user explicitly asks for it.
 
   Composite evals:
   - Bundle multiple evals into one with aggregated scoring.

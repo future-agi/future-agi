@@ -67936,7 +67936,8 @@
         "/usage/admin/invoice/preview/": {
             "post": {
                 "operationId": "usage_admin_invoice_preview_create",
-                "description": "Preview invoice for an org+period (no side effects).",
+                "summary": "Preview invoice for an org+period.",
+                "description": "Creates no invoice and deducts no credits, but does backfill missing\n``UsageSummary`` rows for the usage period. Open to staff so the admin's\nread-only Generate Invoice page can show what would be billed.",
                 "parameters": [
                     {
                         "name": "data",
