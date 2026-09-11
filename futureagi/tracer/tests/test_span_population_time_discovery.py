@@ -974,7 +974,7 @@ def test_population_real_application_wrapper_clears_caps_and_restores_context(
         server_enforced_readonly = False
         server_profile_locked = False
 
-        def execute_read(self, query, params, *, timeout_ms, settings):
+        def execute_read_with_progress(self, query, params, *, timeout_ms, settings):
             assert is_application_read()
             assert timeout_ms is None
             assert all(settings[key] == 0 for key in UNLIMITED_STATEMENT_SETTINGS)
@@ -996,6 +996,8 @@ def test_population_real_application_wrapper_clears_caps_and_restores_context(
                 [tuple(row[key] for key in columns) for row in result.data],
                 [(key, "String") for key in columns],
                 0.0,
+                len(result.data),
+                0,
             )
 
     monkeypatch.setattr(query_service, "get_v2_query_client", lambda: LocalClient())

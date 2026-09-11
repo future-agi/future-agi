@@ -12,6 +12,7 @@ from typing import Any, Protocol
 
 from django.conf import settings
 
+from tracer.selectors.filter_seed_width import FilterSeedWidthPolicy
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_service import QueryResult
 from tracer.services.clickhouse.read_budget import is_read_budget_error
@@ -163,6 +164,9 @@ class FilterReadAttempt:
     result_payload_bytes: int
     query_count: int = 1
     error_code: str | None = None
+    # Server-side work, not result size, and ``None`` whenever the transport
+    # reports no native progress. Slice widths are the only thing sized from it.
+    read_rows: int | None = None
 
 
 @dataclass(frozen=True)
@@ -1327,6 +1331,19 @@ def read_bounded_filter_page(
     # cursors did not carry it, so resume from the frozen window start: slower,
     # but exact and gap-free.
     active_slice_start: datetime | None
+    # A carried slice that still owns an in-slice keyset is honoured verbatim:
+    # its lower boundary is the exact interval the keyset was proven inside, so
+    # narrowing it would strand the rows between the new and old boundaries. A
+    # carried slice without a keyset only *proposes* a width and may be shrunk.
+    #
+    # A cursor signed before a row budget shipped can therefore still carry one
+    # keyset-bearing slice far wider than that budget would schedule. This is
+    # accepted as a transient bounded by the signed cursor's own maximum age
+    # (TRACER_LIST_CURSOR_MAX_AGE_SECONDS), not repaired by CURSOR_VERSION:
+    # rejecting those cursors turns every open page into a 400, and the grid
+    # answers a 400 by falling back to the numbered lane, whose reads are
+    # strictly worse than one wide slice.
+    carried_slice_width_is_hint = False
     if (
         continuation_slice_end is not None
         and continuation_before_start_time is not None
@@ -1341,6 +1358,7 @@ def read_bounded_filter_page(
         # successful 1h -> 2h -> 4h widening schedule survives the HTTP round
         # trip. Older cursors omit it and retain the conservative initial width.
         active_slice_start = continuation_slice_start
+        carried_slice_width_is_hint = active_slice_start is not None
     else:
         active_slice_start = None
     # Five minutes remains the conservative default for every selector.  A
@@ -1363,6 +1381,43 @@ def read_bounded_filter_page(
             ):
                 raise ValueError("recommended max slice width exceeds bounded contract")
             max_slice_width = max(max_slice_width, raw_max_slice_width)
+    # A wall-clock ceiling is the wrong bound for a seed whose statement cost
+    # tracks the rows inside its slice rather than the slice's width. Such a
+    # builder declares a row budget and every following slice is sized from the
+    # rows the previous seed statement actually read. Only the acquisition
+    # boundary moves: slices stay contiguous, and predicates, ordering, the
+    # exact classifier and the signed cursor payload are unchanged.
+    seed_width_policy_builder = getattr(builder, "filter_seed_width_policy", None)
+    seed_width_policy: FilterSeedWidthPolicy | None = (
+        seed_width_policy_builder() if callable(seed_width_policy_builder) else None
+    )
+    if seed_width_policy is not None and not isinstance(
+        seed_width_policy, FilterSeedWidthPolicy
+    ):
+        raise ValueError("filter seed width policy must be a FilterSeedWidthPolicy")
+    # The window an empty-seed root-time discovery narrows to. One hour is the
+    # wall-clock lane's smallest useful slice; a row-budgeted lane cannot use a
+    # window below the floor it declared, and would be pinned there, because
+    # its own rule leaves a sub-floor width alone instead of widening it.
+    discovery_reset_width = (
+        timedelta(hours=1)
+        if seed_width_policy is None
+        else max(timedelta(hours=1), seed_width_policy.min_width)
+    )
+    if (
+        seed_width_policy is not None
+        and carried_slice_width_is_hint
+        and active_slice_start is not None
+    ):
+        # A carried slice is a width this request has not measured, and cursors
+        # signed before this policy shipped can carry many times the cap. Shrink
+        # it to what an unmeasured statement may read; the uncovered older part
+        # of the carried slice is the next contiguous slice's work, so the scan
+        # stays exact.
+        active_slice_start = max(
+            active_slice_start,
+            slice_end - seed_width_policy.carried_width(slice_end - active_slice_start),
+        )
 
     slice_width = _INITIAL_SLICE
     initial_slice_width_builder = getattr(
@@ -1402,6 +1457,10 @@ def read_bounded_filter_page(
     # slice.  Keep the failed-width ceiling for later widening, but make the
     # immediate recovery attempt use the normal five-minute slice.
     retry_slice_width: timedelta | None = None
+    # The row budget's only inputs. Until one seed statement reports progress,
+    # the unsignalled cap is the sole ceiling the budget can justify.
+    last_seed_read_rows: int | None = None
+    seed_read_rows_signalled = False
     page_complete = False
     degraded_error_code: str | None = None
     safe_slice_end = slice_end
@@ -1733,6 +1792,7 @@ def read_bounded_filter_page(
                 elapsed_ms=(monotonic() - attempt_started) * 1000,
                 rows_returned=len(rows),
                 result_payload_bytes=_result_payload_bytes(rows),
+                read_rows=getattr(result, "read_rows", None),
             )
         )
         return result
@@ -2871,12 +2931,30 @@ def read_bounded_filter_page(
                             discovery_ready = False
                         next_end = min(slice_end, hour_start + timedelta(hours=1))
                         next_start = max(request_start, hour_start)
+                        if discovery_reset_width > timedelta(hours=1):
+                            # A row-budgeted lane's reset window is its floor,
+                            # so extend the replayed hour DOWNWARDS to it. The
+                            # hit hour is still replayed whole and the extra
+                            # coverage is the next contiguous slice's work
+                            # brought forward, so the scan stays exact; without
+                            # it the lane would re-enter the budget holding a
+                            # one-hour slice it can never widen again.
+                            next_start = max(
+                                request_start,
+                                min(next_start, next_end - discovery_reset_width),
+                            )
                     advanced = next_end < slice_end
                     slice_end = next_end
                     active_slice_start = next_start
-                    # Discovery may widen coverage, never the ordered seed's
-                    # working set. Keep a known failed-width ceiling too.
-                    slice_width = min(slice_width, timedelta(hours=1))
+                    # Discovery narrows the next slice so a hit lands in a small
+                    # window: proving where the newest row is only pays if the
+                    # slice that follows is cheap. A wall-clock lane's smallest
+                    # useful window is an hour, the granularity its primary-key
+                    # prefix prunes on; a row-budgeted lane's is the floor it
+                    # declared, below which a statement pays the same flat cost
+                    # for a fraction of the coverage. Narrow to that, never past
+                    # it, and never widen a slice discovery did not widen.
+                    slice_width = min(slice_width, discovery_reset_width)
                     if forced_width_cap is not None and next_start is not None:
                         active_slice_start = max(
                             next_start, slice_end - forced_width_cap
@@ -2906,8 +2984,19 @@ def read_bounded_filter_page(
             # entire request window inside this request's attempt count; that
             # turns a configured one-hour root seed into a multi-day read on
             # year-scale projects and can fail before emitting a checkpoint.
-            if not bounded_continuation and scheduled_coverage < remaining_window:
+            if (
+                not bounded_continuation
+                and scheduled_coverage < remaining_window
+                and not (seed_width_policy is not None and seed_read_rows_signalled)
+            ):
+                # Numbered pages have no cursor to resume from, so they still
+                # schedule the whole remaining window inside this request's
+                # attempt count. Once a statement has reported its read rows the
+                # row budget is the better estimator and supersedes it; the
+                # budget's own doubling reaches a sparse month in ten slices.
                 active_width = max(active_width, remaining_window / remaining_attempts)
+            if seed_width_policy is not None and not seed_read_rows_signalled:
+                active_width = seed_width_policy.unsignalled_width(active_width)
             if forced_width_cap is not None:
                 active_width = min(active_width, forced_width_cap)
             scheduled_slice_start = max(request_start, slice_end - active_width)
@@ -3056,6 +3145,10 @@ def read_bounded_filter_page(
                     continue
                 else:
                     raise
+            last_seed_read_rows = getattr(seed_result, "read_rows", None)
+            seed_read_rows_signalled = (
+                seed_read_rows_signalled or last_seed_read_rows is not None
+            )
             seed_rows = sorted(seed_result.data, key=seed_row_key, reverse=True)
             if (
                 population_discovery
@@ -3227,7 +3320,18 @@ def read_bounded_filter_page(
                     force=True,
                 )
             slice_end = slice_start
-            slice_width = min(active_width * 2, max_slice_width)
+            if seed_width_policy is not None:
+                # The budget replaces the doubling rule, not the contract the
+                # builder declared around it: a lane that both declares a
+                # policy and recommends a maximum slice keeps that maximum.
+                slice_width = min(
+                    seed_width_policy.next_width(
+                        active_width, last_seed_read_rows, request_width=request_width
+                    ),
+                    max_slice_width,
+                )
+            else:
+                slice_width = min(active_width * 2, max_slice_width)
             active_slice_start = (
                 max(request_start, slice_end - slice_width)
                 if carry_continuation_slice_width and slice_end > request_start
