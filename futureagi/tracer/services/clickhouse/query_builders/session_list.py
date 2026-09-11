@@ -908,20 +908,26 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         The lane needs a witness that is a *necessary* condition of a match,
         which is exactly what ``supports_filter_anchor_probe`` already
         establishes (a positive raw any-span witness, no sampling, and not the
-        exact end-user detail seed), and it needs the bounded walk to be the
-        route this shape actually takes, which is what
-        ``prefers_bounded_filter_page`` decides. Shapes that route to the
-        candidate lane therefore never see an envelope, and neither does the
+        exact end-user detail seed). It also asks
+        ``prefers_bounded_filter_page``, which is narrower than "this request
+        walks": the bounded walk also runs when that policy is false and no
+        candidate lane can represent the shape. Being narrower is the safe
+        direction - a shape it excludes keeps today's seed - and it means a
+        request on the candidate lane never sees an envelope. Neither does the
         sampled internal lane, whose seed hashes the canonical public session
         ID.
 
         A running pagination answers with the value it was minted with, so an
         operator turning the knob between two hops cannot move the candidacy
-        boundary under a half-published page. Note that the pin carries the
-        lane's on/off state as well as its magnitude here: a continuation that
-        started seeded finishes seeded. A token minted before the field - or by
-        a read that had no envelope - carries no pin and resolves to the
-        current setting, which is what that token got before.
+        boundary under a half-published page. One asymmetry is deliberate and
+        worth stating, because it differs from the trace lane, where the
+        request *shape* decides whether an envelope exists at all: here the
+        knob does, so a token minted while the lane was OFF carries no slack,
+        is indistinguishable from a token minted before the field existed, and
+        resolves to the current setting. If that setting has since been turned
+        on, the remaining hops seed. That can only narrow candidacy - the same
+        omission the envelope contract already permits, never a duplicated
+        row - and turning the knob back off likewise only widens it.
         """
 
         if not (
