@@ -391,6 +391,44 @@ class ChUserAssertTests(unittest.TestCase):
             queries.assert_ch_identity(SimpleNamespace(user_assert=False), "default")
             queries.assert_ch_identity(SimpleNamespace(), "default")
 
+    def test_executor_identity_is_answered_by_the_server_not_by_our_own_argument(self):
+        """The executor's own connection must be proven, not restated."""
+        with patch.dict(os.environ, {queries._CH_USER_ENV: "observe_readonly"}):
+            for rows, fails in (
+                ([("observe_readonly",)], False),
+                ([("default",)], True),
+                ([], True),
+                ([()], True),
+                ([(b"observe_readonly",)], True),
+            ):
+                with self.subTest(rows=rows):
+                    reader = object.__new__(queries.ReadOnlyExecutor)
+                    reader.args = SimpleNamespace(user_assert=True)
+                    reader.prefix = "observe-local-replay-deadbeef"
+                    reader.client = Mock()
+                    reader.client.execute.return_value = rows
+                    if fails:
+                        with self.assertRaisesRegex(
+                            replay.ReplayError, "CH_USER_IDENTITY_MISMATCH"
+                        ):
+                            reader._assert_server_side_identity()
+                    else:
+                        reader._assert_server_side_identity()
+                    (statement,) = reader.client.execute.call_args.args
+                    self.assertEqual(statement, "SELECT currentUser()")
+                    self.assertEqual(
+                        reader.client.execute.call_args.kwargs,
+                        {
+                            "query_id": "observe-local-replay-deadbeef-identity",
+                            "settings": {"readonly": 2, "max_execution_time": 3},
+                        },
+                    )
+            # Flag off spends nothing: no statement, no identity claim.
+            reader = object.__new__(queries.ReadOnlyExecutor)
+            reader.args, reader.client = SimpleNamespace(), Mock()
+            reader._assert_server_side_identity()
+            reader.client.execute.assert_not_called()
+
 
 class PreviewReferenceGateTests(unittest.TestCase):
     def test_scalar_reference_accepts_previews_but_not_unscoped_user_detail(self):

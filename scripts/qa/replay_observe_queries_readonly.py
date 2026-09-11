@@ -479,8 +479,26 @@ class ReadOnlyExecutor:
             compression="lz4",
         )
         # The executor opens its OWN connection; the preflight assertion on the
-        # metadata client does not cover it. Zero statements, zero bytes.
-        assert_ch_identity(args, self.client.connection.user)
+        # metadata client does not cover it.
+        self._assert_server_side_identity()
+
+    def _assert_server_side_identity(self):
+        """Prove THIS connection's account with the server, not with our own arg.
+
+        Comparing ``self.client.connection.user`` would be tautological: the
+        driver stores verbatim whatever we passed to ``Client(...)``. Only a
+        ``currentUser()`` the server answers proves which account this
+        connection runs as. Costs one metadata statement per executor, under
+        server-enforced readonly, before any table read.
+        """
+        if not getattr(self.args, "user_assert", False):
+            return
+        rows = self.client.execute(
+            "SELECT currentUser()",
+            query_id=f"{self.prefix}-identity",
+            settings={"readonly": 2, "max_execution_time": 3},
+        )
+        assert_ch_identity(self.args, rows[0][0] if rows and rows[0] else None)
 
     def remaining_read_ms(self):
         return max(0, int((self.deadline - time.monotonic()) * 1000))
@@ -1415,7 +1433,7 @@ def main():
     )
     parser.add_argument(
         "--user-assert", action="store_true", default=False,
-        help="Require OBSERVE_CH_USER to be set and to equal the server's currentUser(); aborts before any read so a driver cannot silently run as 'default'",
+        help="Require OBSERVE_CH_USER to be set and to equal the server's currentUser(); the preflight and every executor connection each spend one metadata statement proving it, and abort before any table read, so a driver cannot silently run as 'default'",
     )
     parser.add_argument("--threads", type=int, choices=(1, 2, 4, 8), default=2)
     args = parser.parse_args()
