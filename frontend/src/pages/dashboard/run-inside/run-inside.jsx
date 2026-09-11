@@ -180,7 +180,6 @@ const RunInsidePage = () => {
             setTraceDetailDrawerOpen={setTraceDetailDrawerOpen}
             filterOpen={spanFilterOpen}
             setFilterOpen={setSpanFilterOpen}
-            selectedTraceIds={selectedTraceIds}
             setIsFilterApplied={setIsFilterApplied}
           />
         </ShowComponent>

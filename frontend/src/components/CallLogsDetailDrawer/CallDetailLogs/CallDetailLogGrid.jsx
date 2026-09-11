@@ -49,7 +49,6 @@ const CallDetailLogGrid = forwardRef(
         resizable: true,
         suppressHeaderMenuButton: true,
         suppressHeaderContextMenu: true,
-        suppressMultiSort: true,
         cellStyle: {
           lineHeight: 1,
           padding: "8px",
@@ -182,7 +181,7 @@ const CallDetailLogGrid = forwardRef(
               rowCount: lastRow,
             });
           } catch (error) {
-            logger.error("Error fetching call detail logs:", error);
+            logger.warn("Error fetching call detail logs:", error);
             // Show the error overlay
             params.success({
               rowData: [],
@@ -233,7 +232,6 @@ const CallDetailLogGrid = forwardRef(
           ref={ref}
           columnDefs={CallDetailLogColumnDefs}
           defaultColDef={defaultColDef}
-          suppressRowClickSelection={true}
           paginationPageSizeSelector={false}
           {...(useClientSide
             ? {

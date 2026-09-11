@@ -8,6 +8,10 @@ from accounts.views.aws_marketplace import (
     aws_marketplace_verify_token,
 )
 from accounts.views.config import public_config
+from accounts.views.gcp_marketplace import (
+    gcp_marketplace_signup,
+    gcp_marketplace_verify_token,
+)
 from accounts.views.keys import GetKeysView, SecretKeyAPIViewSet
 from accounts.views.organization_selection import (
     OrganizationSelectionView,
@@ -133,6 +137,29 @@ user_urls = [
     path("user-info/", get_user_info, name="user-info"),
     path("first-checks/", FirstChecksView.as_view(), name="first-checks"),
     path("onboarding/", user_onboarding, name="user-onboarding"),
+    path(
+        "me/timezone/",
+        __import__(
+            "accounts.views.annotation_notifications", fromlist=["UserTimezoneView"]
+        ).UserTimezoneView.as_view(),
+        name="user-timezone",
+    ),
+    path(
+        "notifications/unsubscribe/",
+        __import__(
+            "accounts.views.annotation_notifications",
+            fromlist=["UnsubscribeAnnotationDigestView"],
+        ).UnsubscribeAnnotationDigestView.as_view(),
+        name="annotation-digest-unsubscribe",
+    ),
+    path(
+        "notifications/snooze/",
+        __import__(
+            "accounts.views.annotation_notifications",
+            fromlist=["SnoozeAnnotationDigestView"],
+        ).SnoozeAnnotationDigestView.as_view(),
+        name="annotation-digest-snooze",
+    ),
 ]
 
 team_urls = [
@@ -288,6 +315,17 @@ aws_marketplace_urls = [
     ),
 ]
 
+gcp_marketplace_urls = [
+    path(
+        "gcp-marketplace/verify-token/",
+        gcp_marketplace_verify_token,
+        name="gcp-marketplace-verify-token",
+    ),
+    path(
+        "gcp-marketplace/signup/", gcp_marketplace_signup, name="gcp-marketplace-signup"
+    ),
+]
+
 config_urls = [
     path("config/", public_config, name="public-config"),
 ]
@@ -372,6 +410,7 @@ urlpatterns = (
     + workspace_member_urls
     + organization_urls
     + aws_marketplace_urls
+    + gcp_marketplace_urls
     + config_urls
     + two_factor_urls
     + passkey_urls

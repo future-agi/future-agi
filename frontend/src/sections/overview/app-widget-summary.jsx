@@ -28,7 +28,7 @@ export default function AppWidgetSummary({
   } = chart;
 
   const chartOptions = {
-    colors: colors.map((colr) => colr[1]),
+    colors,
     fill: {
       type: "gradient",
       gradient: {

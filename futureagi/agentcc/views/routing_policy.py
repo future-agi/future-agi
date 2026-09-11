@@ -101,8 +101,7 @@ class AgentccRoutingPolicyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet
     def destroy(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
-            instance.deleted = True
-            instance.save(update_fields=["deleted", "updated_at"])
+            instance.delete()
             synced = self._sync_routing_to_gateway(instance.organization)
             data = {"deleted": True, "gateway_synced": synced}
             if not synced:

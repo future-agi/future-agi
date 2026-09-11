@@ -1,0 +1,44 @@
+slug: cluster-rca
+name: Analyze Cluster
+icon: mdi:star-four-points
+description: Run a root-cause analysis across a whole cluster of failing traces — sample
+  representative calls, compare against a passing baseline, and synthesise the shared
+  root cause with a concrete fix. Streams the investigation live, then answers follow-ups.
+trigger_phrases:
+- analyze this cluster
+- analyse this cluster
+- root cause this cluster
+- why is this cluster failing
+- rca this cluster
+# When this skill is active on the FIRST turn of a conversation, Falcon delegates
+# to the dedicated cluster-RCA agent (ee.agenthub.cluster_rca) which streams its
+# own investigation. The instructions + tool_names below are the fallback path —
+# used only if the delegated run can't resolve a cluster from context, and for the
+# follow-up turns where Falcon takes over with the synthesis already in context.
+tool_names:
+- list_error_clusters
+- get_error_cluster_detail
+- analyze_error_cluster
+- explore_trace_legacy
+- get_trace
+- get_span
+- read_trace_span
+- list_spans
+- list_trace_scores
+- get_eval_log_detail
+- get_session
+instructions: |
+  You are Falcon analysing a CLUSTER of failing traces from the user's AI agent. The
+  cluster-level root-cause run streams its own investigation; your job on follow-up turns
+  is to answer the user's questions about that cluster, grounded in the synthesis already
+  in the conversation plus the trace/eval tools below.
+
+  - Ground every claim in a tool result — a quoted span, an eval log, a cluster detail.
+    No invented trace counts or span contents.
+  - When the user asks "show me an unaffected call" or "why did this start", pull the
+    concrete evidence (a passing trace, the timeline) rather than speculating.
+  - Keep answers tight and actionable. The user already has the synthesis; add to it,
+    don't repeat it.
+  - Propose changes to the user's AGENT (prompt, tools, retrieval, model config), not to
+    the observability platform.
+example_trajectories: []

@@ -1,4 +1,4 @@
-FROM 375763256607.dkr.ecr.us-east-2.amazonaws.com/model-serving:v1.0.7_base
+FROM futureagi/serving-base:v1.0.0
 
 # Copy the rest of the application code into the container
 COPY . .

@@ -5,9 +5,10 @@ from rest_framework import serializers
 
 from model_hub.models.choices import DataTypeChoices, SourceChoices
 from simulate.models import Scenarios
+from tracer.serializers.filters import StrictInputSerializer
 
 
-class ColumnDefinitionSerializer(serializers.Serializer):
+class ColumnDefinitionSerializer(StrictInputSerializer):
     """Typed column definition — replaces DictField() in scenario create/add-columns."""
 
     name = serializers.CharField(max_length=50)
@@ -52,18 +53,18 @@ class ScenarioMultiDatasetFilterSerializer(serializers.Serializer):
     def validate_scenarios(self, value):
         try:
             parsed = json.loads(value)
-        except (json.JSONDecodeError, TypeError):
+        except (json.JSONDecodeError, TypeError) as exc:
             raise serializers.ValidationError(
                 "Must be a valid JSON array of scenario UUIDs."
-            )
+            ) from exc
         if not isinstance(parsed, list):
             raise serializers.ValidationError("Must be a JSON array.")
         validated_ids = []
         for item in parsed:
             try:
                 validated_ids.append(uuid.UUID(str(item)))
-            except (ValueError, AttributeError):
-                raise serializers.ValidationError(f"Invalid UUID: {item}")
+            except (ValueError, AttributeError) as exc:
+                raise serializers.ValidationError(f"Invalid UUID: {item}") from exc
         return validated_ids
 
 
@@ -163,6 +164,27 @@ class ScenarioCreateRequestSerializer(serializers.Serializer):
                 "Dataset not found or not accessible."
             ) from e
 
+    def validate_agent_definition_id(self, value):
+        if not value:
+            return value
+        request = self.context.get("request")
+        if not request:
+            raise serializers.ValidationError("Request context is required.")
+        from simulate.models import AgentDefinition
+
+        try:
+            AgentDefinition.objects.get(
+                id=value,
+                deleted=False,
+                organization=getattr(request, "organization", None)
+                or request.user.organization,
+            )
+            return value
+        except AgentDefinition.DoesNotExist as e:
+            raise serializers.ValidationError(
+                "Agent definition not found or not accessible."
+            ) from e
+
     def validate_prompt_template_id(self, value):
         if not value:
             return value
@@ -178,8 +200,11 @@ class ScenarioCreateRequestSerializer(serializers.Serializer):
                 "organization": getattr(request, "organization", None)
                 or request.user.organization,
             }
-            if hasattr(request.user, "workspace") and request.user.workspace:
-                filters["workspace"] = request.user.workspace
+            request_workspace = getattr(request, "workspace", None) or getattr(
+                request.user, "workspace", None
+            )
+            if request_workspace:
+                filters["workspace"] = request_workspace
             PromptTemplate.objects.get(**filters)
             return value
         except PromptTemplate.DoesNotExist as e:
@@ -204,8 +229,11 @@ class ScenarioCreateRequestSerializer(serializers.Serializer):
                 )
                 or request.user.organization,
             }
-            if hasattr(request.user, "workspace") and request.user.workspace:
-                filters["original_template__workspace"] = request.user.workspace
+            request_workspace = getattr(request, "workspace", None) or getattr(
+                request.user, "workspace", None
+            )
+            if request_workspace:
+                filters["original_template__workspace"] = request_workspace
             PromptVersion.objects.get(**filters)
             return value
         except PromptVersion.DoesNotExist as e:
@@ -227,6 +255,18 @@ class ScenarioCreateRequestSerializer(serializers.Serializer):
         if kind == Scenarios.ScenarioTypes.SCRIPT and not data.get("script_url"):
             raise serializers.ValidationError(
                 {"script_url": "script_url is required for script kind."}
+            )
+
+        if (
+            source_type == Scenarios.SourceTypes.AGENT_DEFINITION
+            and not data.get("agent_definition_id")
+        ):
+            raise serializers.ValidationError(
+                {
+                    "agent_definition_id": (
+                        "agent_definition_id is required for agent_definition source type."
+                    )
+                }
             )
 
         if kind == Scenarios.ScenarioTypes.GRAPH:
@@ -387,7 +427,7 @@ class ScenarioAddRowsRequestSerializer(serializers.Serializer):
         return value
 
 
-class ScenarioAddColumnsRequestSerializer(serializers.Serializer):
+class ScenarioAddColumnsRequestSerializer(StrictInputSerializer):
     """Request serializer for POST /scenarios/{scenario_id}/add-columns/.
 
     Incorporates Phase 0 validations (0.2.1 – 0.2.2) that previously lived in the view.

@@ -3,7 +3,7 @@ import { render, screen } from "src/utils/test-utils";
 import QueueItemsTable from "../../items/queue-items-table";
 
 /**
- * TH-3534 → TH-3561: Pagination replaced with infinite scroll.
+ * Pagination replaced with infinite scroll.
  * These tests validate QueueItemsTable's footer status display.
  */
 
@@ -18,7 +18,7 @@ const makeItems = (count) =>
     created_at: "2026-03-18T00:00:00Z",
   }));
 
-describe("QueueItemsTable infinite scroll (TH-3534)", () => {
+describe("QueueItemsTable infinite scroll", () => {
   it("displays item count in footer", () => {
     render(
       <QueueItemsTable

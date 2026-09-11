@@ -67,7 +67,7 @@ def mock_celery():
 def mock_run_all_prompts():
     """Patch run_all_prompts_task."""
     with patch(
-        "model_hub.tasks.run_prompt.run_all_prompts_task.apply_async"
+        "model_hub.views.run_prompt.run_all_prompts_task.apply_async"
     ) as mock_task:
         yield mock_task
 

@@ -22,7 +22,7 @@ class MCPToolGroupConfig(BaseModel):
         ordering = ["-created_at"]
 
     def save(self, *args, **kwargs):
-        if not self.enabled_groups:
+        if self._state.adding and not self.enabled_groups:
             self.enabled_groups = list(DEFAULT_TOOL_GROUPS)
         super().save(*args, **kwargs)
 

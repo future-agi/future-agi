@@ -26,8 +26,8 @@ export const CreditExhaustionBanner = ({
   onDismiss,
   sx = {},
 }) => {
-  const { isOSS } = useDeploymentMode();
-  if (!error || isOSS) return null;
+  const { isCloud } = useDeploymentMode();
+  if (!error || !isCloud) return null;
 
   const ctaText = error.upgradeCta?.text || "Upgrade your plan";
 

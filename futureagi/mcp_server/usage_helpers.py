@@ -106,7 +106,18 @@ class _UUIDEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, uuid.UUID):
             return str(obj)
-        return super().default(obj)
+        # Tool params may arrive as Pydantic model instances (FastMCP validates
+        # nested fields like render_widget's WidgetConfig into model objects),
+        # which json can't serialize natively.
+        from pydantic import BaseModel as _PydanticBaseModel
+
+        if isinstance(obj, _PydanticBaseModel):
+            return obj.model_dump(mode="json")
+        # Last-resort fallback so usage recording never crashes a tool call.
+        try:
+            return super().default(obj)
+        except TypeError:
+            return str(obj)
 
 
 def _sanitize_params(params):

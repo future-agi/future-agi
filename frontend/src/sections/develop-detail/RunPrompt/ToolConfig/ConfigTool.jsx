@@ -43,13 +43,13 @@ const ConfigTool = ({ control, fieldName = "config.tools" }) => {
 
   const toolsOptions = useMemo(() => {
     return (
-      runPromptOptions?.availableTools?.map((t) => ({
+      runPromptOptions?.available_tools?.map((t) => ({
         label: t.name,
         value: t.id,
         tool: t,
       })) ?? []
     );
-  }, [runPromptOptions?.availableTools]);
+  }, [runPromptOptions?.available_tools]);
 
   const isToolsPresent = toolsOptions?.length > 0;
 

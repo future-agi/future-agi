@@ -1,7 +1,13 @@
 import React, { useCallback, useMemo } from "react";
 import { useParams, useNavigate } from "react-router";
 import { Helmet } from "react-helmet-async";
-import { Box, Button, CircularProgress, Stack, Typography } from "@mui/material";
+import {
+  Box,
+  Button,
+  CircularProgress,
+  Stack,
+  Typography,
+} from "@mui/material";
 import VoiceDetailDrawerV2 from "src/components/VoiceDetailDrawerV2";
 import {
   useCallExecutionDetail,
@@ -39,8 +45,7 @@ export default function VoiceFullPage() {
     isError: isCallExecError,
   } = useCallExecutionDetail(callId, shouldFallback);
 
-  const isLoading =
-    isLoadingVoice || (shouldFallback && isLoadingCallExec);
+  const isLoading = isLoadingVoice || (shouldFallback && isLoadingCallExec);
 
   const mergedData = useMemo(() => {
     if (voiceDetail) {
@@ -76,8 +81,7 @@ export default function VoiceFullPage() {
   // Both fetches resolved (or the fallback wasn't enabled because the
   // first succeeded), but we still have no data — render a terminal
   // "not found" state instead of an infinite spinner.
-  const resolved =
-    !isLoadingVoice && (!shouldFallback || !isLoadingCallExec);
+  const resolved = !isLoadingVoice && (!shouldFallback || !isLoadingCallExec);
   const notFound =
     resolved &&
     !voiceDetail &&

@@ -110,6 +110,7 @@ class TestTokenBasedPricing:
         assert result["prompt_cost"] == 0.0
         assert result["completion_cost"] == 0.0
 
+    @pytest.mark.requires_ee
     def test_turing_alias_pricing_lookup(self):
         """Test that evaluator aliases use catalog pricing instead of fallback."""
         expected_pricing = {
@@ -122,6 +123,7 @@ class TestTokenBasedPricing:
         for model_name, pricing in expected_pricing.items():
             assert get_model_pricing(model_name) == pricing
 
+    @pytest.mark.requires_ee
     def test_calculate_cost_turing_alias(self):
         token_usage = {
             "prompt_tokens": 1000,
@@ -733,85 +735,95 @@ class TestModelModeDetection:
 
 @pytest.mark.unit
 class TestPricingStructureValidation:
-    """Test that pricing structures are valid for different model types."""
+    """Per-mode pricing contract: required keys present, forbidden
+    higher-precedence keys absent.
+
+    calculate_total_cost checks pricing branches in priority order:
+    input_per_1M_tokens > input_per_1M_characters > input_per_minute > per_image.
+    A model whose mode expects a lower-priority branch but carries a
+    higher-priority key will silently take the wrong cost path.
+    """
+
+    _TOKEN_KEYS = {"input_per_1M_tokens", "output_per_1M_tokens"}
+    _CHAR_KEYS = {"input_per_1M_characters"}
+    _MINUTE_KEYS = {"input_per_minute"}
+    _IMAGE_KEYS = {"per_image", "low_quality_per_image"}
 
     def test_major_chat_models_have_token_pricing(self):
-        """Test that major chat models (OpenAI, Anthropic, Google) have proper token pricing.
-
-        This verifies that the most commonly used models have correct pricing structure.
-        Some models have non-standard pricing (marketplace, tier-based, etc.) which is acceptable.
-        """
-        # Focus on major providers with standard token pricing
+        """Major chat models (OpenAI, Anthropic, Google) must carry token or
+        character-based pricing keys."""
         major_chat_models = [
             m
             for m in AVAILABLE_MODELS
             if m.get("mode") == "chat"
             and m.get("providers") in ("openai", "anthropic", "gemini")
+            and m.get("pricing")
         ]
 
-        models_with_valid_pricing = 0
-        models_without_pricing = []
-
         for model in major_chat_models:
-            pricing = model.get("pricing", {})
-            if pricing:
-                has_token_pricing = (
-                    "input_per_1M_tokens" in pricing
-                    and "output_per_1M_tokens" in pricing
-                )
-                if has_token_pricing:
-                    models_with_valid_pricing += 1
-            else:
-                models_without_pricing.append(model["model_name"])
-
-        # At least 80% of major chat models should have proper token pricing
-        total = len(major_chat_models)
-        assert models_with_valid_pricing >= 0.8 * total, (
-            f"Too few major chat models have token pricing: {models_with_valid_pricing}/{total}. "
-            f"Missing: {models_without_pricing[:5]}"
-        )
+            pricing = model["pricing"]
+            has_token = self._TOKEN_KEYS.issubset(pricing)
+            has_char = bool(
+                {"input_per_1k_characters", "input_per_1M_characters"}
+                & set(pricing)
+            )
+            assert has_token or has_char, (
+                f"Chat model {model['model_name']} missing token/character pricing keys"
+            )
 
     def test_tts_models_have_character_pricing(self):
-        """Test that TTS models have character-based pricing."""
-        tts_models = [m for m in AVAILABLE_MODELS if m.get("mode") == "tts"]
+        """TTS models must carry character or token keys."""
+        tts_models = [
+            m for m in AVAILABLE_MODELS
+            if m.get("mode") == "tts" and m.get("pricing")
+        ]
 
         for model in tts_models:
-            pricing = model.get("pricing", {})
-            if pricing:
-                # TTS models should have character pricing OR token pricing (for Gemini TTS)
-                has_char_pricing = "input_per_1M_characters" in pricing
-                has_token_pricing = "input_per_1M_tokens" in pricing
-                assert has_char_pricing or has_token_pricing, (
-                    f"TTS model {model['model_name']} missing character/token pricing"
-                )
+            pricing = model["pricing"]
+            has_char = self._CHAR_KEYS & set(pricing)
+            has_token = self._TOKEN_KEYS & set(pricing)
+            assert has_char or has_token, (
+                f"TTS model {model['model_name']} missing character/token pricing"
+            )
 
     def test_stt_models_have_minute_pricing(self):
-        """Test that STT models have minute-based pricing."""
-        stt_models = [m for m in AVAILABLE_MODELS if m.get("mode") == "stt"]
+        """STT models must carry minute keys and no higher-precedence keys."""
+        stt_models = [
+            m for m in AVAILABLE_MODELS
+            if m.get("mode") == "stt" and m.get("pricing")
+        ]
 
         for model in stt_models:
-            pricing = model.get("pricing", {})
-            if pricing:
-                # STT models should have per-minute pricing
-                assert "input_per_minute" in pricing, (
-                    f"STT model {model['model_name']} missing minute pricing"
-                )
+            pricing = model["pricing"]
+            assert self._MINUTE_KEYS & set(pricing), (
+                f"STT model {model['model_name']} missing minute pricing"
+            )
+            forbidden = (self._TOKEN_KEYS | self._CHAR_KEYS) & set(pricing)
+            assert not forbidden, (
+                f"STT model {model['model_name']} has higher-precedence keys "
+                f"{forbidden} that would shadow minute pricing"
+            )
 
     def test_image_models_have_image_pricing(self):
-        """Test that image models have per-image pricing."""
+        """Image models must carry per_image/quality keys and no
+        higher-precedence keys that would win the cost branch."""
         image_models = [
-            m for m in AVAILABLE_MODELS if m.get("mode") == "image_generation"
+            m for m in AVAILABLE_MODELS
+            if m.get("mode") == "image_generation" and m.get("pricing")
         ]
 
         for model in image_models:
-            pricing = model.get("pricing", {})
-            if pricing:
-                # Image models should have per_image OR quality-based pricing
-                has_simple_pricing = "per_image" in pricing
-                has_quality_pricing = "low_quality_per_image" in pricing
-                assert has_simple_pricing or has_quality_pricing, (
-                    f"Image model {model['model_name']} missing image pricing"
-                )
+            pricing = model["pricing"]
+            assert self._IMAGE_KEYS & set(pricing), (
+                f"Image model {model['model_name']} missing per_image/quality pricing"
+            )
+            forbidden = (
+                self._TOKEN_KEYS | self._CHAR_KEYS | self._MINUTE_KEYS
+            ) & set(pricing)
+            assert not forbidden, (
+                f"Image model {model['model_name']} has higher-precedence keys "
+                f"{forbidden} that would shadow image pricing in calculate_total_cost"
+            )
 
 
 # =============================================================================

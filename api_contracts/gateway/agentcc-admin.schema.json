@@ -1,0 +1,794 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/contracts/gateway/agentcc-admin.schema.json",
+  "title": "AgentCC Gateway Admin Contract",
+  "description": "Canonical backend-to-gateway admin API payload types.",
+  "type": "object",
+  "$defs": {
+    "ProviderConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "api_key": { "type": "string" },
+        "base_url": { "type": "string" },
+        "api_format": { "type": "string" },
+        "models": { "type": "array", "items": { "type": "string" } },
+        "timeout": { "type": "integer" },
+        "weight": { "type": "number" },
+        "enabled": { "type": "boolean" },
+        "max_concurrent": { "type": "integer" },
+        "conn_pool_size": { "type": "integer" },
+        "aws_access_key_id": { "type": "string" },
+        "aws_secret_access_key": { "type": "string" },
+        "aws_region": { "type": "string" },
+        "aws_session_token": { "type": "string" }
+      }
+    },
+    "GuardrailCheck": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "action": { "type": "string" },
+        "confidence_threshold": { "type": "number" },
+        "config": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "GuardrailConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pipeline_mode": { "type": "string" },
+        "fail_open": { "type": "boolean" },
+        "timeout_ms": { "type": "integer" },
+        "checks": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/GuardrailCheck" }
+        }
+      }
+    },
+    "ConditionalRoute": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "field": { "type": "string" },
+        "operator": { "type": "string" },
+        "value": {},
+        "target": { "type": "string" }
+      }
+    },
+    "ComplexityTier": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_score": { "type": "integer" },
+        "model": { "type": "string" },
+        "provider": { "type": "string" }
+      }
+    },
+    "ComplexityRoutingConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "default_tier": { "type": "string" },
+        "tiers": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/ComplexityTier" }
+        },
+        "weights": {
+          "type": "object",
+          "additionalProperties": { "type": "number" }
+        }
+      }
+    },
+    "FastestResponseConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "max_concurrent": { "type": "integer" },
+        "cancel_delay": { "type": "string" },
+        "excluded_providers": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "ScheduledConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "max_pending_jobs": { "type": "integer" },
+        "result_ttl": { "type": "string" },
+        "max_schedule_ahead": { "type": "string" },
+        "retry_attempts": { "type": "integer" },
+        "worker_count": { "type": "integer" }
+      }
+    },
+    "SignalWeights": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "latency": { "type": "number" },
+        "error_rate": { "type": "number" },
+        "cost": { "type": "number" }
+      }
+    },
+    "AdaptiveRoutingConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "learning_requests": { "type": "integer" },
+        "update_interval": { "type": "string" },
+        "smoothing_factor": { "type": "number" },
+        "min_weight": { "type": "number" },
+        "signal_weights": { "$ref": "#/$defs/SignalWeights" }
+      }
+    },
+    "ProviderLockConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "allowed_providers": { "type": "array", "items": { "type": "string" } },
+        "deny_providers": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "AccessGroup": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "models": { "type": "array", "items": { "type": "string" } },
+        "description": { "type": "string" },
+        "aliases": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "FailoverConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "max_attempts": { "type": "integer" },
+        "on_status_codes": { "type": "array", "items": { "type": "integer" } },
+        "on_timeout": { "type": "boolean" },
+        "per_attempt_timeout": { "type": "string" }
+      }
+    },
+    "CircuitBreakerConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "failure_threshold": { "type": "integer" },
+        "success_threshold": { "type": "integer" },
+        "cooldown": { "type": "string" },
+        "on_status_codes": { "type": "array", "items": { "type": "integer" } }
+      }
+    },
+    "RetryConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "max_retries": { "type": "integer" },
+        "initial_delay": { "type": "string" },
+        "max_delay": { "type": "string" },
+        "multiplier": { "type": "number" },
+        "on_status_codes": { "type": "array", "items": { "type": "integer" } },
+        "on_timeout": { "type": "boolean" }
+      }
+    },
+    "MirrorRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source_model": { "type": "string" },
+        "target_provider": { "type": "string" },
+        "target_model": { "type": "string" },
+        "sample_rate": { "type": "number" }
+      }
+    },
+    "MirrorConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "rules": { "type": "array", "items": { "$ref": "#/$defs/MirrorRule" } }
+      }
+    },
+    "RoutingConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "strategy": { "type": "string" },
+        "fallback_enabled": { "type": "boolean" },
+        "fallback_on_status_codes": { "type": "array", "items": { "type": "integer" } },
+        "model_fallbacks": {
+          "type": "object",
+          "additionalProperties": { "type": "array", "items": { "type": "string" } }
+        },
+        "conditional_routes": { "type": "array", "items": { "$ref": "#/$defs/ConditionalRoute" } },
+        "default_model": { "type": "string" },
+        "complexity": { "$ref": "#/$defs/ComplexityRoutingConfig" },
+        "fastest": { "$ref": "#/$defs/FastestResponseConfig" },
+        "scheduled": { "$ref": "#/$defs/ScheduledConfig" },
+        "adaptive": { "$ref": "#/$defs/AdaptiveRoutingConfig" },
+        "provider_lock": { "$ref": "#/$defs/ProviderLockConfig" },
+        "access_groups": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/AccessGroup" }
+        },
+        "failover": { "$ref": "#/$defs/FailoverConfig" },
+        "circuit_breaker": { "$ref": "#/$defs/CircuitBreakerConfig" },
+        "retry": { "$ref": "#/$defs/RetryConfig" },
+        "mirror": { "$ref": "#/$defs/MirrorConfig" },
+        "model_timeouts": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "DiskCacheConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "directory": { "type": "string" },
+        "max_size_bytes": { "type": "integer" },
+        "compress": { "type": "boolean" },
+        "cleanup_interval": { "type": "string" }
+      }
+    },
+    "RedisCacheConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "address": { "type": "string" },
+        "addresses": { "type": "array", "items": { "type": "string" } },
+        "password": { "type": "string" },
+        "db": { "type": "integer" },
+        "mode": { "type": "string" },
+        "pool_size": { "type": "integer" },
+        "tls": { "type": "boolean" },
+        "key_prefix": { "type": "string" },
+        "compress": { "type": "boolean" }
+      }
+    },
+    "S3CacheConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "bucket": { "type": "string" },
+        "prefix": { "type": "string" },
+        "region": { "type": "string" },
+        "access_key_id": { "type": "string" },
+        "secret_access_key": { "type": "string" },
+        "compress": { "type": "boolean" }
+      }
+    },
+    "AzureBlobCacheConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "container": { "type": "string" },
+        "prefix": { "type": "string" },
+        "connection_string": { "type": "string" },
+        "sas_token": { "type": "string" },
+        "compress": { "type": "boolean" }
+      }
+    },
+    "GCSCacheConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "bucket": { "type": "string" },
+        "prefix": { "type": "string" },
+        "project": { "type": "string" },
+        "credentials_file": { "type": "string" },
+        "compress": { "type": "boolean" }
+      }
+    },
+    "QdrantConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "url": { "type": "string" },
+        "collection": { "type": "string" },
+        "api_key": { "type": "string" }
+      }
+    },
+    "WeaviateConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "url": { "type": "string" },
+        "class": { "type": "string" },
+        "api_key": { "type": "string" }
+      }
+    },
+    "PineconeConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "url": { "type": "string" },
+        "api_key": { "type": "string" }
+      }
+    },
+    "SemanticCacheConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "backend": { "type": "string" },
+        "threshold": { "type": "number" },
+        "dimensions": { "type": "integer" },
+        "max_entries": { "type": "integer" },
+        "qdrant": { "$ref": "#/$defs/QdrantConfig" },
+        "weaviate": { "$ref": "#/$defs/WeaviateConfig" },
+        "pinecone": { "$ref": "#/$defs/PineconeConfig" }
+      }
+    },
+    "EdgeCacheConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "default_ttl": { "type": "integer" },
+        "max_size": { "type": "integer" },
+        "cacheable_models": { "type": "array", "items": { "type": "string" } },
+        "require_opt_in": { "type": "boolean" }
+      }
+    },
+    "CacheConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "backend": { "type": "string" },
+        "default_ttl": { "type": "integer" },
+        "max_entries": { "type": "integer" },
+        "disk": { "$ref": "#/$defs/DiskCacheConfig" },
+        "redis": { "$ref": "#/$defs/RedisCacheConfig" },
+        "s3": { "$ref": "#/$defs/S3CacheConfig" },
+        "azure_blob": { "$ref": "#/$defs/AzureBlobCacheConfig" },
+        "gcs": { "$ref": "#/$defs/GCSCacheConfig" },
+        "semantic": { "$ref": "#/$defs/SemanticCacheConfig" },
+        "edge": { "$ref": "#/$defs/EdgeCacheConfig" }
+      }
+    },
+    "RateLimitConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "global_rpm": { "type": "integer" },
+        "global_tpm": { "type": "integer" },
+        "per_key_rpm": { "type": "integer" },
+        "per_key_tpm": { "type": "integer" },
+        "per_model_rpm": { "type": "integer" },
+        "per_user_rpm": { "type": "integer" }
+      }
+    },
+    "BudgetLevelConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "limit": { "type": "number" },
+        "period": { "type": "string" },
+        "hard": { "type": "boolean" },
+        "action": { "type": "string" },
+        "action_mode": { "type": "string" },
+        "on_exceed": { "type": "string" },
+        "per_model": {
+          "type": "object",
+          "additionalProperties": { "type": "number" }
+        }
+      }
+    },
+    "BudgetsConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "default_period": { "type": "string" },
+        "warn_threshold": { "type": "number" },
+        "org_limit": { "type": "number" },
+        "org_period": { "type": "string" },
+        "hard_limit": { "type": "boolean" },
+        "action": { "type": "string" },
+        "action_mode": { "type": "string" },
+        "on_exceed": { "type": "string" },
+        "organization": { "$ref": "#/$defs/BudgetLevelConfig" },
+        "org": { "$ref": "#/$defs/BudgetLevelConfig" },
+        "teams": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/BudgetLevelConfig" }
+        },
+        "users": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/BudgetLevelConfig" }
+        },
+        "keys": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/BudgetLevelConfig" }
+        },
+        "tags": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/BudgetLevelConfig" }
+        }
+      }
+    },
+    "CustomPricing": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "input_per_mtok": { "type": "number" },
+        "output_per_mtok": { "type": "number" }
+      }
+    },
+    "CostTrackingConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "custom_pricing": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/CustomPricing" }
+        }
+      }
+    },
+    "IPACLConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "allow": { "type": "array", "items": { "type": "string" } },
+        "deny": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "AlertRuleConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "metric": { "type": "string" },
+        "condition": { "type": "string" },
+        "threshold": { "type": "number" },
+        "window": { "type": "string" },
+        "cooldown": { "type": "string" },
+        "channels": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "AlertChannelConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "type": { "type": "string" },
+        "url": { "type": "string" },
+        "headers": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "AlertingConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "rules": { "type": "array", "items": { "$ref": "#/$defs/AlertRuleConfig" } },
+        "channels": { "type": "array", "items": { "$ref": "#/$defs/AlertChannelConfig" } }
+      }
+    },
+    "RedactPatternConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "pattern": { "type": "string" }
+      }
+    },
+    "PrivacyConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "mode": { "type": "string" },
+        "redact_patterns": { "type": "array", "items": { "$ref": "#/$defs/RedactPatternConfig" } }
+      }
+    },
+    "ToolPolicyConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "max_tools_per_request": { "type": "integer" },
+        "default_action": { "type": "string" },
+        "allow": { "type": "array", "items": { "type": "string" } },
+        "deny": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "MCPAuthOrgConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string" },
+        "token": { "type": "string" },
+        "header": { "type": "string" },
+        "key": { "type": "string" }
+      }
+    },
+    "MCPServerOrgConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "url": { "type": "string" },
+        "transport": { "type": "string" },
+        "auth": { "$ref": "#/$defs/MCPAuthOrgConfig" },
+        "tools_cache_ttl": { "type": "string" }
+      }
+    },
+    "MCPGuardrailOrgConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "blocked_tools": { "type": "array", "items": { "type": "string" } },
+        "allowed_servers": { "type": "array", "items": { "type": "string" } },
+        "validate_inputs": { "type": "boolean" },
+        "validate_outputs": { "type": "boolean" },
+        "tool_rate_limits": {
+          "type": "object",
+          "additionalProperties": { "type": "integer" }
+        }
+      }
+    },
+    "MCPOrgConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "servers": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/MCPServerOrgConfig" }
+        },
+        "guardrails": { "$ref": "#/$defs/MCPGuardrailOrgConfig" }
+      }
+    },
+    "AuditSinkConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string" },
+        "path": { "type": "string" },
+        "url": { "type": "string" },
+        "headers": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "AuditOrgConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "min_severity": { "type": "string" },
+        "categories": { "type": "array", "items": { "type": "string" } },
+        "sinks": { "type": "array", "items": { "$ref": "#/$defs/AuditSinkConfig" } }
+      }
+    },
+    "A2ACardConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "version": { "type": "string" }
+      }
+    },
+    "A2AAuthConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string" },
+        "token": { "type": "string" },
+        "header": { "type": "string" }
+      }
+    },
+    "A2ASkillConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" }
+      }
+    },
+    "A2AAgentConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "url": { "type": "string" },
+        "auth": { "$ref": "#/$defs/A2AAuthConfig" },
+        "description": { "type": "string" },
+        "skills": { "type": "array", "items": { "$ref": "#/$defs/A2ASkillConfig" } }
+      }
+    },
+    "A2AOrgConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "card": { "$ref": "#/$defs/A2ACardConfig" },
+        "agents": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/A2AAgentConfig" }
+        }
+      }
+    },
+    "PricingOverrideOrg": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "input_per_token": { "type": "number" },
+        "output_per_token": { "type": "number" },
+        "cached_input_per_token": { "type": "number" },
+        "batch_input_per_token": { "type": "number" },
+        "batch_output_per_token": { "type": "number" }
+      }
+    },
+    "CapabilityOverrideOrg": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "function_calling": { "type": "boolean" },
+        "parallel_tool_calls": { "type": "boolean" },
+        "vision": { "type": "boolean" },
+        "audio_input": { "type": "boolean" },
+        "audio_output": { "type": "boolean" },
+        "pdf_input": { "type": "boolean" },
+        "streaming": { "type": "boolean" },
+        "response_schema": { "type": "boolean" },
+        "system_messages": { "type": "boolean" },
+        "prompt_caching": { "type": "boolean" },
+        "reasoning": { "type": "boolean" }
+      }
+    },
+    "ModelOverrideOrgConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_input_tokens": { "type": "integer" },
+        "max_output_tokens": { "type": "integer" },
+        "pricing": { "$ref": "#/$defs/PricingOverrideOrg" },
+        "capabilities": { "$ref": "#/$defs/CapabilityOverrideOrg" }
+      }
+    },
+    "ModelDatabaseOrgConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "overrides": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/ModelOverrideOrgConfig" }
+        }
+      }
+    },
+    "OrgConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "providers": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/ProviderConfig" }
+        },
+        "guardrails": { "$ref": "#/$defs/GuardrailConfig" },
+        "routing": { "$ref": "#/$defs/RoutingConfig" },
+        "cache": { "$ref": "#/$defs/CacheConfig" },
+        "rate_limiting": { "$ref": "#/$defs/RateLimitConfig" },
+        "budgets": { "$ref": "#/$defs/BudgetsConfig" },
+        "cost_tracking": { "$ref": "#/$defs/CostTrackingConfig" },
+        "ip_acl": { "$ref": "#/$defs/IPACLConfig" },
+        "alerting": { "$ref": "#/$defs/AlertingConfig" },
+        "privacy": { "$ref": "#/$defs/PrivacyConfig" },
+        "tool_policy": { "$ref": "#/$defs/ToolPolicyConfig" },
+        "mcp": { "$ref": "#/$defs/MCPOrgConfig" },
+        "audit": { "$ref": "#/$defs/AuditOrgConfig" },
+        "a2a": { "$ref": "#/$defs/A2AOrgConfig" },
+        "model_database": { "$ref": "#/$defs/ModelDatabaseOrgConfig" },
+        "model_map": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "CreateKeyRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string" },
+        "owner": { "type": "string" },
+        "models": { "type": "array", "items": { "type": "string" } },
+        "providers": { "type": "array", "items": { "type": "string" } },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "UpdateKeyRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "owner": { "type": "string" },
+        "models": { "type": "array", "items": { "type": "string" } },
+        "providers": { "type": "array", "items": { "type": "string" } },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "KeyResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "key": { "type": "string" },
+        "key_prefix": { "type": "string" },
+        "name": { "type": "string" },
+        "owner": { "type": "string" },
+        "status": { "type": "string" },
+        "key_type": { "type": "string" },
+        "models": { "type": "array", "items": { "type": "string" } },
+        "providers": { "type": "array", "items": { "type": "string" } },
+        "allowed_models": { "type": "array", "items": { "type": "string" } },
+        "allowed_providers": { "type": "array", "items": { "type": "string" } },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "created_at": { "type": "string" },
+        "updated_at": { "type": "string" },
+        "last_used_at": { "type": "string" },
+        "credit_balance": { "type": "number" }
+      }
+    },
+    "KeyListResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "object": { "type": "string" },
+        "data": { "type": "array", "items": { "$ref": "#/$defs/KeyResponse" } }
+      }
+    },
+    "StatusResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": { "type": "string" },
+        "org_id": { "type": "string" },
+        "deleted": { "type": "boolean" },
+        "loaded": { "type": "integer" }
+      }
+    },
+    "OrgConfigListResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "object": { "type": "string" },
+        "count": { "type": "integer" },
+        "data": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/OrgConfig" }
+        }
+      }
+    }
+  }
+}

@@ -29,6 +29,12 @@ QUEUE_L = "tasks_l"
 # - Eval summary generation
 QUEUE_XL = "tasks_xl"
 
+# Hosted-runner queue: platform-triggered SDK execution
+# - SimulationRunnerWorkflow + hosted_runner activities
+# - Polled by the dedicated simulation-runner worker, which spawns the
+#   released Agent Learning Kit as a child process (plan §9.1)
+QUEUE_RUNNER = "simulation_runner"
+
 
 # =============================================================================
 # Scalability Constants
@@ -59,6 +65,14 @@ DISPATCHER_CONTINUE_AS_NEW_THRESHOLD = 2000
 # Maximum calls per orchestrator before partitioning
 # Temporal recommends max ~1000 child workflows per parent
 MAX_CALLS_PER_ORCHESTRATOR = 500
+
+# Hosted SDK jobs execute dataset rows sequentially inside one child process.
+# Ten voice cases can legitimately consume almost an hour when each reaches its
+# readiness/conversation ceiling, so the supervising activity must not inherit
+# the single-call deadline.
+HOSTED_RUNNER_MAX_DURATION_SECONDS = int(
+    os.getenv("HOSTED_RUNNER_MAX_DURATION_SECONDS", str(65 * 60))
+)
 
 
 # =============================================================================
@@ -122,6 +136,9 @@ CALL_EXECUTION_WORKFLOW_ID_PREFIX = "call-exec"
 
 # Prefix for rerun coordinator workflow IDs
 RERUN_COORDINATOR_WORKFLOW_ID_PREFIX = "rerun-coord"
+
+# Prefix for hosted simulation-runner workflow IDs
+SIMULATION_RUNNER_WORKFLOW_ID_PREFIX = "sim-runner"
 
 # Prefix for rerun call execution workflow IDs (includes timestamp for uniqueness)
 RERUN_CALL_EXECUTION_WORKFLOW_ID_PREFIX = "call-exec-rerun"

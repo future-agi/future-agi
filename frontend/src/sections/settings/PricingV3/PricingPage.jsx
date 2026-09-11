@@ -17,6 +17,7 @@ import {
   PLANS_QUERY_KEY,
 } from "src/hooks/use-plans-and-addons";
 import {
+  Alert,
   Box,
   Typography,
   Stack,
@@ -591,7 +592,7 @@ export default function PricingPage() {
 
   const upgradeMutation = useMutation({
     mutationFn: async () => {
-      const res = await axios.post(endpoints.settings.v2.upgradeToPayg);
+      const res = await axios.post(endpoints.settings.v2.upgradeToPayg, {});
       const checkoutUrl = res.data?.result?.checkout_url;
       if (!checkoutUrl) throw new Error("Failed to create checkout session");
       // Redirect to Stripe Checkout — user enters card on Stripe's hosted page
@@ -652,7 +653,7 @@ export default function PricingPage() {
   });
 
   const downgradeMutation = useMutation({
-    mutationFn: () => axios.post(endpoints.settings.v2.downgradeToFree),
+    mutationFn: () => axios.post(endpoints.settings.v2.downgradeToFree, {}),
     onSuccess: () => {
       enqueueSnackbar("Downgraded to Free plan", { variant: "success" });
       queryClient.invalidateQueries({ queryKey: PLANS_QUERY_KEY });
@@ -714,7 +715,13 @@ export default function PricingPage() {
   }
 
   const currentPlan = data?.current_plan || "free";
-  const isCustomPricing = data?.is_custom_pricing || false;
+  const isCustomPricing =
+    data?.isCustomPricing ?? data?.is_custom_pricing ?? false;
+  const planChangeLocked =
+    data?.planChangeLocked ?? data?.plan_change_locked ?? false;
+  const planChangeLockedReason =
+    data?.planChangeLockedReason ?? data?.plan_change_locked_reason ?? "";
+  const customDetails = data?.customDetails ?? data?.custom_details ?? null;
   const tiers = data?.tiers || [];
   const addons = data?.addons || [];
   const currentAddon = addons.find((a) => a.key === currentPlan);
@@ -736,6 +743,12 @@ export default function PricingPage() {
         Start free or pay as you go. Add Boost, Scale, or Enterprise for
         advanced features and higher limits.
       </Typography>
+
+      {planChangeLocked && (
+        <Alert severity="info" sx={{ mb: 3 }}>
+          {planChangeLockedReason}
+        </Alert>
+      )}
 
       {/* Custom pricing banner + details */}
       {isCustomPricing && (
@@ -764,11 +777,11 @@ export default function PricingPage() {
               <Box>
                 <Typography variant="subtitle1" fontWeight={700}>
                   Custom Pricing
-                  {data?.custom_details?.platform_fee > 0 && (
+                  {customDetails?.platform_fee > 0 && (
                     <Chip
-                      label={`${fCurrency(data.custom_details.per_charge_amount)}/${
+                      label={`${fCurrency(customDetails.per_charge_amount)}/${
                         { 1: "mo", 3: "qtr", 6: "half", 12: "yr" }[
-                          data.custom_details.platform_fee_billing_cycle
+                          customDetails.platform_fee_billing_cycle
                         ] || "mo"
                       }`}
                       size="small"
@@ -785,7 +798,7 @@ export default function PricingPage() {
           </Paper>
 
           {/* Custom plan features */}
-          {data?.custom_details?.features && (
+          {customDetails?.features && (
             <>
               <Typography variant="subtitle1" fontWeight={600} mb={2}>
                 Your plan features
@@ -796,7 +809,7 @@ export default function PricingPage() {
               >
                 <Table size="small">
                   <TableBody>
-                    {canonicalEntries(data.custom_details.features)
+                    {canonicalEntries(customDetails.features)
                       .filter(
                         ([key]) =>
                           !SKIP_FEATURE_PREFIXES.some((p) => key.startsWith(p)),
@@ -838,8 +851,8 @@ export default function PricingPage() {
           )}
 
           {/* Custom pricing tiers */}
-          {data?.custom_details?.pricing &&
-            Object.keys(data.custom_details.pricing).length > 0 && (
+          {customDetails?.pricing &&
+            Object.keys(customDetails.pricing).length > 0 && (
               <>
                 <Typography variant="subtitle1" fontWeight={600} mb={1}>
                   Your pricing tiers
@@ -879,7 +892,7 @@ export default function PricingPage() {
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      {canonicalEntries(data.custom_details.pricing).flatMap(
+                      {canonicalEntries(customDetails.pricing).flatMap(
                         ([dimKey, dim]) =>
                           dim.tiers.map((tier, idx) => (
                             <TableRow key={`${dimKey}-${idx}`}>
@@ -922,7 +935,7 @@ export default function PricingPage() {
       )}
 
       {/* Current plan status */}
-      {currentPlan !== "free" && !isCustomPricing && (
+      {currentPlan !== "free" && !isCustomPricing && !planChangeLocked && (
         <Paper
           variant="outlined"
           sx={(theme) => ({
@@ -968,7 +981,7 @@ export default function PricingPage() {
       )}
 
       {/* Tiers: Free / PAYG (hidden for custom pricing) */}
-      {!isCustomPricing && (
+      {!isCustomPricing && !planChangeLocked && (
         <>
           <Typography variant="subtitle1" fontWeight={600} mb={1.5}>
             Choose your tier
@@ -994,7 +1007,7 @@ export default function PricingPage() {
       )}
 
       {/* Add-ons: Boost / Scale / Enterprise (hidden for custom pricing) */}
-      {!isCustomPricing && (
+      {!isCustomPricing && !planChangeLocked && (
         <Stack direction="column" mb={1.5}>
           <Stack
             direction="row"
@@ -1066,7 +1079,7 @@ export default function PricingPage() {
       )}
 
       {/* Feature comparison (hidden for custom pricing) */}
-      {!isCustomPricing && (
+      {!isCustomPricing && !planChangeLocked && (
         <>
           <Divider sx={{ my: 3 }} />
           <Typography variant="subtitle1" fontWeight={600} mb={2}>

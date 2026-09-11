@@ -23,9 +23,7 @@ const DetailForm = ({
   const [sameRows, setSameRow] = useState(true);
   const navigate = useNavigate();
   const { data: knowledgeBaseList, isPending: isKnowledgeBaseListPending } =
-    useKnowledgeBaseList("", null, {
-      status: true,
-    });
+    useKnowledgeBaseList("", null);
 
   const knowledgeBaseOptions = useMemo(
     () =>

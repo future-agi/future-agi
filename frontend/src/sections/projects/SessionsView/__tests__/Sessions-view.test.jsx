@@ -1,13 +1,25 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { getDateLabel } from "../Sessions-view";
 
+vi.hoisted(() => {
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: {
+      clear: vi.fn(),
+      getItem: vi.fn(() => null),
+      removeItem: vi.fn(),
+      setItem: vi.fn(),
+    },
+  });
+});
+
 describe("Sessions-view getDateLabel", () => {
-  it("returns 'Past 6M' when dateFilter is undefined", () => {
-    expect(getDateLabel(undefined)).toBe("Past 6M");
+  it("returns 'Past 7D' when dateFilter is undefined", () => {
+    expect(getDateLabel(undefined)).toBe("Past 7D");
   });
 
-  it("returns 'Past 6M' when dateFilter is an empty object", () => {
-    expect(getDateLabel({})).toBe("Past 6M");
+  it("returns 'Past 7D' when dateFilter is an empty object", () => {
+    expect(getDateLabel({})).toBe("Past 7D");
   });
 
   it("maps preset options to 'Past <option>' labels", () => {
@@ -32,15 +44,15 @@ describe("Sessions-view getDateLabel", () => {
     expect(label).toBe(`${expectedStart} - ${expectedEnd}`);
   });
 
-  it("falls back to 'Past 6M' when Custom has a malformed date array", () => {
+  it("falls back to 'Past 7D' when Custom has a malformed date array", () => {
     expect(
       getDateLabel({ dateOption: "Custom", dateFilter: ["bogus", "also-bad"] }),
-    ).toBe("Past 6M");
+    ).toBe("Past 7D");
     expect(getDateLabel({ dateOption: "Custom", dateFilter: [] })).toBe(
-      "Past 6M",
+      "Past 7D",
     );
     expect(
       getDateLabel({ dateOption: "Custom", dateFilter: ["2026-03-01"] }),
-    ).toBe("Past 6M");
+    ).toBe("Past 7D");
   });
 });

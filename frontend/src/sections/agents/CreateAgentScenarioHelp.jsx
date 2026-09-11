@@ -15,7 +15,7 @@ import PropTypes from "prop-types";
 import React from "react";
 import Image from "src/components/image";
 import SvgColor from "src/components/svg-color";
-import { stepsInfo } from "./constants";
+import { getStepsInfo } from "./constants";
 import { useNavigate, useParams } from "react-router";
 
 function HelpCard({ title, description, imageSrc }) {
@@ -94,6 +94,8 @@ HelpCard.propTypes = {
 export default function CreateAgentScenarioHelp({ open, onClose }) {
   const { agentDefinitionId } = useParams();
   const navigate = useNavigate();
+  const theme = useTheme();
+  const stepsInfo = getStepsInfo(theme.palette.mode === "dark");
   const handleCreateAgentScenarios = () => {
     navigate("/dashboard/simulate/scenarios/create", {
       state: {

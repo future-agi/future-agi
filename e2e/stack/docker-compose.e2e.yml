@@ -1,0 +1,27 @@
+# Overlay on the root docker-compose.yml for the futureagi-e2e stack.
+services:
+  clickhouse:
+    # Seatbelt on 16GB CI runners: CH is the first OOM-kill victim otherwise.
+    mem_limit: 3g
+  backend:
+    restart: "no"
+  worker:
+    restart: "no"
+  fi-collector:
+    # Root compose reuses FUTURE_AGI_VERSION for this image; the e2e stack
+    # decouples it so CI can retag the backend without inventing a
+    # futureagi/fi-collector:e2e-ci that was never built.
+    image: futureagi/fi-collector:${E2E_FI_COLLECTOR_VERSION:-latest}
+  peerdb-init:
+    environment:
+      # Root compose never passes the flag to peerdb-init, so the setup script
+      # attempts the retired tracer_observation_span mirror.
+      CH25_DROP_LEGACY_CDC_CHAIN: "true"
+  mock-llm:
+    image: node:22-alpine
+    command: ["node", "/srv/server.mjs"]
+    volumes:
+      # Compose resolves paths in an override file against the project
+      # directory (the first -f file's dir = repo root), not this file's dir.
+      - ./e2e/stack/mock-llm/server.mjs:/srv/server.mjs:ro
+    restart: "no"

@@ -20,18 +20,16 @@ config:
   function_params_schema:
     min_words:
       type: integer
-      default: null
-      nullable: true
+      required: true
       minimum: 0
     max_words:
       type: integer
-      default: null
-      nullable: true
+      required: true
       minimum: 1
   config_params_desc:
     text: The text to check word count for
-    min_words: Minimum word count (inclusive). Leave empty for no lower bound.
-    max_words: Maximum word count (inclusive). Leave empty for no upper bound.
+    min_words: Minimum word count (inclusive).
+    max_words: Maximum word count (inclusive).
   code: |
     def evaluate(input, output, expected, context, **kwargs):
         text = str(kwargs.get("text", output or "")).strip()
@@ -39,22 +37,10 @@ config:
         count = len(words)
         min_w = kwargs.get("min_words")
         max_w = kwargs.get("max_words")
-        if min_w is None and max_w is None:
-            return {"score": 0.0, "reason": "At least one of min_words or max_words must be provided"}
-        if min_w is not None:
-            min_w = int(min_w)
-        if max_w is not None:
-            max_w = int(max_w)
-        if min_w is not None and max_w is not None:
-            passed = min_w <= count <= max_w
-            reason = f"Word count {count} {'is' if passed else 'is not'} within [{min_w}, {max_w}]"
-        elif min_w is not None:
-            passed = count >= min_w
-            reason = f"Word count {count} >= {min_w}" if passed else f"Word count {count} < {min_w}"
-        elif max_w is not None:
-            passed = count <= max_w
-            reason = f"Word count {count} <= {max_w}" if passed else f"Word count {count} > {max_w}"
-        else:
-            passed = True
-            reason = f"Word count: {count} (no constraints)"
+        if min_w is None or max_w is None:
+            return {"score": 0.0, "reason": "Both min_words and max_words must be provided"}
+        min_w = int(min_w)
+        max_w = int(max_w)
+        passed = min_w <= count <= max_w
+        reason = f"Word count {count} {'is' if passed else 'is not'} within [{min_w}, {max_w}]"
         return {"score": 1.0 if passed else 0.0, "reason": reason}

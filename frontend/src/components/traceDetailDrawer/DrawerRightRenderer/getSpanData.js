@@ -1,3 +1,5 @@
+import { groupFlattenedMessageAttrs } from "./flattenedMessageAttrs";
+
 /**
  * Get span attributes with backward compatibility.
  * Prefers span_attributes (raw API), falls back to spanAttributes and evalAttributes for older data.
@@ -103,87 +105,72 @@ function extractMessages(evalAttributes = {}, type = "input") {
   const messageObj = [];
   const tempMessages = {};
 
-  // Support multiple attribute naming conventions:
-  // - OpenInference: llm.inputMessages, llm.outputMessages
-  // - OpenInference snake_case: llm.input_messages, llm.output_messages
-  // - OTEL GenAI: gen_ai.input.messages, gen_ai.output.messages
-  const messagePrefixes = [
-    `llm.${type}Messages`,
-    `llm.${type}_messages`,
-    `gen_ai.${type}.messages`,
-  ];
-
-  Object.keys(evalAttributes).forEach((key) => {
-    const matchingPrefix = messagePrefixes.find((prefix) =>
-      key.startsWith(prefix),
-    );
-    if (!matchingPrefix) return;
-
-    const parts = key.replace(`${matchingPrefix}.`, "").split(".");
-    const index = parts[0];
-    const property = parts.slice(1).join(".");
-
-    if (!tempMessages[index]) {
-      tempMessages[index] = {};
-    }
-
-    if (property === "message.role" || property === "role") {
-      tempMessages[index].role = evalAttributes[key];
-    }
-
-    if (
-      property.startsWith("message.content") ||
-      property.startsWith("content")
-    ) {
-      let content = evalAttributes[key];
-
-      if (typeof content === "object" && content !== null) {
-        content = JSON.stringify(content, null, 2);
+  groupFlattenedMessageAttrs(evalAttributes, type).forEach(
+    ({ index, entries }) => {
+      if (!tempMessages[index]) {
+        tempMessages[index] = {};
       }
 
-      const contentParts = key
-        .replace(`${matchingPrefix}.`, "")
-        .replace("message.content.", "")
-        .replace("message.contents.", "")
-        .replace("content.", "")
-        .replace("contents.", "")
-        .split(".")
-        .splice(1);
+      entries.forEach(({ property, value }) => {
+        if (property === "message.role" || property === "role") {
+          tempMessages[index].role = value;
+        }
 
-      const parsedIndex = contentParts?.[0];
-      const isMultipleContent = !isNaN(parseInt(parsedIndex));
+        if (
+          property.startsWith("message.content") ||
+          property.startsWith("content")
+        ) {
+          let content = value;
 
-      const contentProperty = contentParts.slice(2).join(".");
-
-      if (!tempMessages[index].content) {
-        tempMessages[index].content = [];
-      }
-
-      if (isMultipleContent) {
-        // Some SDKs emit BOTH a flat `message.content` summary string and the
-        // structured `message.contents.N.*` parts for the same message — e.g.
-        // when an oversized image is masked to a "[image: …]" placeholder. If a
-        // flat string already occupies this slot, keep it: attaching structured
-        // sub-properties onto a string throws ("Cannot create property 'image.url'
-        // on string") and crashes the whole trace view.
-        const slot = tempMessages[index].content[parsedIndex];
-        if (typeof slot !== "string") {
-          if (!slot) {
-            tempMessages[index].content[parsedIndex] = {};
+          if (typeof content === "object" && content !== null) {
+            content = JSON.stringify(content, null, 2);
           }
-          if (contentProperty.length) {
-            tempMessages[index].content[parsedIndex][contentProperty] = content;
+
+          // property already excludes the message index (no `.splice(1)` needed).
+          const contentParts = property
+            .replace("message.content.", "")
+            .replace("message.contents.", "")
+            .replace("content.", "")
+            .replace("contents.", "")
+            .split(".");
+
+          const parsedIndex = contentParts?.[0];
+          const isMultipleContent = !isNaN(parseInt(parsedIndex));
+
+          const contentProperty = contentParts.slice(2).join(".");
+
+          if (!tempMessages[index].content) {
+            tempMessages[index].content = [];
+          }
+
+          if (isMultipleContent) {
+            // Some SDKs emit BOTH a flat `message.content` summary string and the
+            // structured `message.contents.N.*` parts for the same message — e.g.
+            // when an oversized image is masked to a "[image: …]" placeholder. If a
+            // flat string already occupies this slot, keep it: attaching structured
+            // sub-properties onto a string throws ("Cannot create property
+            // 'image.url' on string") and crashes the whole trace view.
+            const slot = tempMessages[index].content[parsedIndex];
+            if (typeof slot !== "string") {
+              if (!slot) {
+                tempMessages[index].content[parsedIndex] = {};
+              }
+              if (contentProperty.length) {
+                tempMessages[index].content[parsedIndex][contentProperty] =
+                  content;
+              }
+            }
+          } else if (
+            typeof tempMessages[index].content[0] !== "object" ||
+            tempMessages[index].content[0] === null
+          ) {
+            // Don't clobber already-built structured content with a flat summary.
+            tempMessages[index].content[0] = content;
           }
         }
-      } else if (
-        typeof tempMessages[index].content[0] !== "object" ||
-        tempMessages[index].content[0] === null
-      ) {
-        // Don't clobber already-built structured content with a flat summary.
-        tempMessages[index].content[0] = content;
-      }
-    }
-  });
+      });
+    },
+  );
 
   Object.keys(tempMessages)
     .sort((a, b) => parseInt(a) - parseInt(b))

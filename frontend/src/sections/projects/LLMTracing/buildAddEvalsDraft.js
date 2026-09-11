@@ -5,26 +5,19 @@ import { getRandomId } from "src/utils/utils";
 const COL_TYPE_TO_CATEGORY = {
   SPAN_ATTRIBUTE: "attribute",
   SYSTEM_METRIC: "system",
-  EVALUATION_METRIC: "eval",
+  EVAL_METRIC: "eval",
   ANNOTATION: "annotation",
 };
 
-const readField = (f) => f?.columnId ?? f?.column_id;
-const readCfg = (f) => f?.filterConfig ?? f?.filter_config ?? {};
-const readType = (cfg) => cfg.filterType ?? cfg.filter_type;
-const readOp = (cfg) => cfg.filterOp ?? cfg.filter_op;
-const readVal = (cfg) => cfg.filterValue ?? cfg.filter_value;
-const readColType = (cfg) => cfg.colType ?? cfg.col_type;
-
-const toFormRows = (sourceFilters = []) => {
+export const toAddEvalsFormRows = (sourceFilters = []) => {
   const out = [];
   (sourceFilters || []).forEach((f) => {
-    const field = readField(f);
+    const field = f?.column_id;
     if (!field || field === "created_at") return;
-    const cfg = readCfg(f);
-    const category = COL_TYPE_TO_CATEGORY[readColType(cfg)] ?? "system";
+    const cfg = f?.filter_config || {};
+    const category = COL_TYPE_TO_CATEGORY[cfg.col_type] ?? "system";
     const isAttribute = category === "attribute";
-    const raw = readVal(cfg);
+    const raw = cfg.filter_value;
     const values = Array.isArray(raw)
       ? raw
       : typeof raw === "string"
@@ -41,12 +34,17 @@ const toFormRows = (sourceFilters = []) => {
         id: getRandomId(),
         property: isAttribute ? "attributes" : field,
         propertyId: field,
+        ...(f?.property_id || f?.registryId
+          ? { registryId: f.property_id || f.registryId }
+          : {}),
         fieldCategory: category,
         fieldLabel: field,
+        ...(cfg.col_type ? { apiColType: cfg.col_type } : {}),
         filterConfig: {
-          filterType: readType(cfg) === "number" ? "number" : "text",
-          filterOp: readOp(cfg) || "equals",
+          filterType: cfg.filter_type === "number" ? "number" : "text",
+          filterOp: cfg.filter_op || "equals",
           filterValue: v,
+          ...(cfg.col_type ? { colType: cfg.col_type } : {}),
         },
       });
     });
@@ -62,10 +60,19 @@ export function buildAddEvalsDraft({
   dateFilter,
   returnTo,
 }) {
-  const filters = [...toFormRows(mainFilters), ...toFormRows(extraFilters)];
+  const filters = [
+    ...toAddEvalsFormRows(mainFilters),
+    ...toAddEvalsFormRows(extraFilters),
+  ];
   const startDate =
     dateFilter?.dateFilter?.[0] ?? formatDate(sub(new Date(), { months: 12 }));
   const endDate = dateFilter?.dateFilter?.[1] ?? formatDate(endOfToday());
+  // The toolbar's own label is authoritative — passing it through spares the
+  // create page a guess it can only make on calendar-day granularity. An
+  // incoming window with no label is absolute; the fallback above is ours.
+  const datePreset = dateFilter?.dateFilter
+    ? (dateFilter?.dateOption ?? "Custom")
+    : "12M";
 
   const values = {
     name: "",
@@ -77,12 +84,14 @@ export function buildAddEvalsDraft({
     evalsDetails: [],
     startDate,
     endDate,
+    datePreset,
     runType: "historical",
   };
 
   const draftId = crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
   try {
-    localStorage.setItem(
+    const storage = globalThis.window?.localStorage ?? globalThis.localStorage;
+    storage?.setItem(
       `task-draft-${draftId}`,
       JSON.stringify({ savedAt: Date.now(), values }),
     );

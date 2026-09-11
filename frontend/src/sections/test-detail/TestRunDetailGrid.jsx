@@ -2,6 +2,7 @@ import { Box, Typography } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
 import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import {
+  getColumnDefsSignature,
   getSelectedCallExecutionIdsFilter,
   getTestRunDetailColumnQuery,
   getTestRunDetailGridColumnDefs,
@@ -54,7 +55,9 @@ const SelectionHeader = (props) => {
   const onCheckboxClick = (e) => {
     e.stopPropagation(); // Stop event from reaching the header
     const api = props.api;
-    const { selectAll } = api.getServerSideSelectionState();
+    const { selectAll } = api.getServerSideSelectionState() || {
+      selectAll: false,
+    };
     if (selectAll) {
       api.setServerSideSelectionState({ selectAll: false, toggledNodes: [] });
     } else {
@@ -112,7 +115,6 @@ const TestRunDetailGrid = () => {
       resizable: true,
       suppressHeaderMenuButton: true,
       suppressHeaderContextMenu: true,
-      suppressMultiSort: true,
       // flex: 1,
       cellStyle: {
         lineHeight: 1,
@@ -191,7 +193,7 @@ const TestRunDetailGrid = () => {
           try {
             const { data } = await queryClient.fetchQuery(query);
             const status = data?.status;
-            if (TestRunLoadingStatus.includes(status.toLowerCase())) {
+            if (TestRunLoadingStatus.includes(status?.toLowerCase())) {
               isRefreshingRef.current = true;
             }
             const totalRows = data?.count ?? 0;
@@ -203,7 +205,10 @@ const TestRunDetailGrid = () => {
             const newColDefs = getTestRunDetailGridColumnDefs(
               data?.column_order,
             );
-            if (currentColumnDef.length !== newColDefs?.length) {
+            if (
+              getColumnDefsSignature(currentColumnDef) !==
+              getColumnDefsSignature(newColDefs)
+            ) {
               setColumnDef(applyReasonColumnVisibility(newColDefs));
             }
 
@@ -249,7 +254,7 @@ const TestRunDetailGrid = () => {
               queryClient.prefetchQuery(nextQuery);
             }
           } catch (error) {
-            logger.error("Failed to get test run detail", { error });
+            logger.warn("Failed to get test run detail", { error });
             params.fail();
             params.api.showNoRowsOverlay();
           }
@@ -336,7 +341,10 @@ const TestRunDetailGrid = () => {
 
         const currentColumnDef = useTestDetailStore.getState().columnDef;
         const newColDefs = getTestRunDetailGridColumnDefs(columns);
-        if (newColDefs.length !== currentColumnDef?.length) {
+        if (
+          getColumnDefsSignature(newColDefs) !==
+          getColumnDefsSignature(currentColumnDef)
+        ) {
           // If the columns have changed, update the query data no need to use transaction
           logger.debug("columns have changed, updating query data", {
             columns,
@@ -356,7 +364,7 @@ const TestRunDetailGrid = () => {
       }
     }
     setStatus(status);
-    if (TestRunLoadingStatus.includes(status.toLowerCase())) {
+    if (TestRunLoadingStatus.includes(status?.toLowerCase())) {
       isRefreshingRef.current = true;
     } else {
       isRefreshingRef.current = false;
@@ -368,7 +376,10 @@ const TestRunDetailGrid = () => {
 
   const onRowSelectionChanged = useCallback(({ api, context }) => {
     const totalRowCount = context?.totalRowCount;
-    const { selectAll, toggledNodes } = api.getServerSideSelectionState();
+    const { selectAll, toggledNodes } = api.getServerSideSelectionState() || {
+      selectAll: false,
+      toggledNodes: [],
+    };
 
     if (selectAll && totalRowCount - toggledNodes.length === 0) {
       api.deselectAll();

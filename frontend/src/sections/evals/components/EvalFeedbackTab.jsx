@@ -17,8 +17,16 @@ import Iconify from "src/components/iconify";
 import { useDebounce } from "src/hooks/use-debounce";
 import AddEvalsFeedbackDrawer from "src/sections/evals/EvalDetails/EvalsFeedback/AddEvalsFeedbackDrawer";
 
+import { normalizeEvalCellValue } from "src/sections/develop-detail/DataTab/common";
 import { useEvalFeedbackList } from "../hooks/useEvalFeedback";
 import { isEditableElement } from "src/utils/keyboardUtils";
+
+const displayFeedbackValue = (raw) => {
+  const normalized = normalizeEvalCellValue(raw);
+  return Array.isArray(normalized)
+    ? normalized.map((v) => String(v)).join(", ")
+    : String(normalized ?? "");
+};
 
 // ── Columns ──
 const useColumns = () =>
@@ -53,8 +61,14 @@ const useColumns = () =>
         size: 110,
         cell: ({ getValue }) => {
           const v = getValue();
-          const isPassed = v === "passed";
-          const isFailed = v === "failed";
+          const normalized = typeof v === "string" ? v.toLowerCase() : v;
+          const isPassed = normalized === "passed";
+          const isFailed = normalized === "failed";
+          const label = isPassed
+            ? "Correct"
+            : isFailed
+              ? "Incorrect"
+              : displayFeedbackValue(v);
           return (
             <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
               <Iconify
@@ -75,7 +89,7 @@ const useColumns = () =>
                 }}
               />
               <Chip
-                label={isPassed ? "Correct" : isFailed ? "Incorrect" : v}
+                label={label}
                 size="small"
                 color={isPassed ? "success" : isFailed ? "error" : "default"}
                 variant="outlined"
@@ -106,7 +120,7 @@ const useColumns = () =>
         ),
       },
       {
-        id: "actionType",
+        id: "action_type",
         accessorKey: "action_type",
         header: "Action",
         size: 120,
@@ -154,7 +168,7 @@ const useColumns = () =>
         },
       },
       {
-        id: "userName",
+        id: "user_name",
         accessorKey: "user_name",
         header: "By",
         size: 120,
@@ -169,7 +183,7 @@ const useColumns = () =>
         ),
       },
       {
-        id: "createdAt",
+        id: "created_at",
         accessorKey: "created_at",
         header: "Date",
         size: 140,
@@ -216,7 +230,7 @@ const EvalFeedbackTab = ({ templateId }) => {
     page,
     pageSize,
   });
-  const items = data?.items || [];
+  const items = useMemo(() => data?.items || [], [data?.items]);
   const total = data?.total || 0;
 
   const filteredItems = useMemo(() => {
@@ -445,7 +459,20 @@ const EvalFeedbackTab = ({ templateId }) => {
           </Box>
 
           {/* Content */}
-          {detailRow && (
+          {detailRow &&
+            (() => {
+              const detailValue =
+                typeof detailRow.value === "string"
+                  ? detailRow.value.toLowerCase()
+                  : detailRow.value;
+              const detailIsPassed = detailValue === "passed";
+              const detailIsFailed = detailValue === "failed";
+              const detailLabel = detailIsPassed
+                ? "Correct"
+                : detailIsFailed
+                  ? "Incorrect"
+                  : displayFeedbackValue(detailRow.value);
+              return (
             <Box
               sx={{ flex: 1, minHeight: 0, overflow: "auto", px: 1.5, py: 1 }}
             >
@@ -455,28 +482,32 @@ const EvalFeedbackTab = ({ templateId }) => {
               >
                 <Iconify
                   icon={
-                    detailRow.value === "passed"
+                    detailIsPassed
                       ? "mingcute:thumb-up-2-fill"
-                      : "mingcute:thumb-down-2-fill"
+                      : detailIsFailed
+                        ? "mingcute:thumb-down-2-fill"
+                        : "mingcute:chat-3-line"
                   }
                   width={20}
                   sx={{
-                    color:
-                      detailRow.value === "passed"
-                        ? "success.main"
-                        : "error.main",
+                    color: detailIsPassed
+                      ? "success.main"
+                      : detailIsFailed
+                        ? "error.main"
+                        : "text.secondary",
                   }}
                 />
                 <Chip
-                  label={
-                    detailRow.value === "passed"
-                      ? "Correct"
-                      : detailRow.value === "failed"
-                        ? "Incorrect"
-                        : detailRow.value
-                  }
+                  label={detailLabel}
                   size="small"
-                  color={detailRow.value === "passed" ? "success" : "error"}
+                  color={
+                    detailIsPassed
+                      ? "success"
+                      : detailIsFailed
+                        ? "error"
+                        : "default"
+                  }
+                  variant={detailIsPassed || detailIsFailed ? "filled" : "outlined"}
                   sx={{ fontSize: "12px", height: 24, fontWeight: 600 }}
                 />
                 {detailRow.action_type && (
@@ -667,7 +698,8 @@ const EvalFeedbackTab = ({ templateId }) => {
                 </Box>
               </Box>
             </Box>
-          )}
+              );
+            })()}
 
           {/* Edit feedback drawer */}
           {detailRow && (

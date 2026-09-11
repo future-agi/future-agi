@@ -8,6 +8,9 @@ STORAGE_ENV_KEYS = (
     "S3_ENDPOINT_URL",
     "S3_SECURE",
     "MINIO_URL",
+    "MINIO_REGION",
+    "GCS_HMAC_ACCESS_KEY",
+    "GCS_HMAC_SECRET_KEY",
     "AWS_DEFAULT_REGION",
 )
 
@@ -75,3 +78,46 @@ def test_gcs_object_url_ignores_s3_and_minio_urls(monkeypatch):
         storage_client.get_object_url("futureagi", "tempcust/image.png")
         == "https://storage.googleapis.com/futureagi/tempcust/image.png"
     )
+
+
+def test_gcs_client_uses_minio_region(monkeypatch):
+    storage_client = reload_storage_client(
+        monkeypatch,
+        STORAGE_BACKEND="gcs",
+        MINIO_REGION="europe-west3",
+        GCS_HMAC_ACCESS_KEY="access",
+        GCS_HMAC_SECRET_KEY="secret",
+    )
+    captured = {}
+
+    def fake_minio(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return object()
+
+    monkeypatch.setattr(storage_client, "Minio", fake_minio)
+    storage_client.reset_storage_client()
+    storage_client.get_storage_client()
+
+    assert captured["args"][0] == "storage.googleapis.com"
+    assert captured["kwargs"]["region"] == "europe-west3"
+
+
+def test_gcs_client_falls_back_to_auto_region(monkeypatch):
+    storage_client = reload_storage_client(
+        monkeypatch,
+        STORAGE_BACKEND="gcs",
+        GCS_HMAC_ACCESS_KEY="access",
+        GCS_HMAC_SECRET_KEY="secret",
+    )
+    captured = {}
+
+    def fake_minio(*args, **kwargs):
+        captured["kwargs"] = kwargs
+        return object()
+
+    monkeypatch.setattr(storage_client, "Minio", fake_minio)
+    storage_client.reset_storage_client()
+    storage_client.get_storage_client()
+
+    assert captured["kwargs"]["region"] == "auto"

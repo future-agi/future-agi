@@ -235,7 +235,7 @@ export const RetrievalChild = ({
               fullWidth
               size="small"
               loading={isPreviewPending}
-              oonClick={handlePreview}
+              onClick={handlePreview}
             >
               Test
             </LoadingButton>
@@ -289,7 +289,7 @@ const Retrieval = ({ initialData, onFormSubmit }) => {
   return (
     <Drawer
       anchor="right"
-      open={openRetrieval}
+      open={Boolean(openRetrieval)}
       onClose={onClose}
       variant="persistent"
       PaperProps={{
@@ -326,7 +326,6 @@ const Retrieval = ({ initialData, onFormSubmit }) => {
 };
 
 Retrieval.propTypes = {
-  allColumns: PropTypes.array.isRequired,
   initialData: PropTypes.object,
   onFormSubmit: PropTypes.func,
 };

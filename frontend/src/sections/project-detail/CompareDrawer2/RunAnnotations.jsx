@@ -56,11 +56,13 @@ const RunAnnotations = ({ traceData }) => {
   const { data: valuesData, refetch: refetchAnnotationValues } = useQuery({
     queryKey: ["trace-annotation-values", traceId],
     queryFn: () =>
-      axios.post(endpoints.project.getAnnotationsForSpanId(), {
-        trace_id: traceId,
-        annotators: [user?.id],
+      axios.get(endpoints.project.getAnnotationsForSpanId(), {
+        params: {
+          trace_id: traceId,
+          annotators: JSON.stringify([user?.id]),
+        },
       }),
-    enabled: !!traceId,
+    enabled: !!traceId && !!user?.id,
     select: (data) => data?.data?.result?.annotations || [],
   });
 

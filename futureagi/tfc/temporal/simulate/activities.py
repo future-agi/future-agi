@@ -56,7 +56,6 @@ from model_hub.models.choices import (
 )
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from simulate.models import Scenarios
-from tfc.middleware.workspace_context import get_current_organization
 from tfc.temporal.simulate.types import (  # Scenario Generation; Scenario Creation; Graph Scenario Sub-Activity Types (v2+v3)
     AddScenarioColumnsInput,
     CategorizeAndValidateInput,
@@ -1243,18 +1242,6 @@ def _create_dataset_scenario_sync(
     from django.shortcuts import get_object_or_404
 
     try:
-        from ee.agenthub.scenario_graph.graph_generator import (
-            ConversationGraphGenerator,
-        )
-        from ee.agenthub.synthetic_data_agent.synthetic_data_agent import (
-            SyntheticDataAgent,
-        )
-    except ImportError:
-        if settings.DEBUG:
-            logger.warning("Could not import ee.agenthub.scenario_graph.graph_generator", exc_info=True)
-        return None
-
-    try:
         close_old_connections()
 
         user = User.objects.get(id=user_id)
@@ -1294,13 +1281,30 @@ def _create_dataset_scenario_sync(
         except Exception:
             logger.warning("usage_precheck_failed", exc_info=True)
 
-        # Get the source dataset
+        # Scope by scenario.organization: the workspace-context thread-local is
+        # unset inside Temporal workers, and user.organization can differ from it.
         source_dataset = get_object_or_404(
             Dataset,
             id=validated_data["dataset_id"],
             deleted=False,
-            organization=get_current_organization() or user.organization,
+            organization=scenario.organization,
         )
+
+        # Enterprise-only imports; deferred so the source-dataset scope check runs on OSS.
+        try:
+            from ee.agenthub.scenario_graph.graph_generator import (
+                ConversationGraphGenerator,
+            )
+            from ee.agenthub.synthetic_data_agent.synthetic_data_agent import (
+                SyntheticDataAgent,
+            )
+        except ImportError:
+            if settings.DEBUG:
+                logger.warning(
+                    "Could not import ee.agenthub.scenario_graph.graph_generator",
+                    exc_info=True,
+                )
+            return None
 
         # Determine simulation mode
         mode = "voice" if agent_definition.agent_type == "voice" else "chat"
@@ -1736,7 +1740,7 @@ def _create_dataset_scenario_sync(
             branch_to_category = {}
             if branch_to_situations:
                 llm = LLM(
-                    model_name="vertex_ai/gemini-2.5-pro",
+                    model_name="vertex_ai/gemini-3.7-flash",
                     temperature=0.3,
                     max_tokens=400,
                     provider="vertex_ai",
@@ -2522,7 +2526,6 @@ def _create_graph_scenario_sync(
                     name=f"{scenario.name} - Graph",
                     description=f"Graph for {scenario.name}",
                     organization=scenario.organization,
-                    workspace=scenario.workspace,
                     graph_config={"graph_data": graph_data, "source": "user_provided"},
                 )
 
@@ -2551,7 +2554,7 @@ def _create_graph_scenario_sync(
                 prompt = USER_INTENT_PROMPT.format(
                     transcript=transcript, agent_definition=agent_description
                 )
-                llm_config = ModelConfigs.VERTEX_GEMINI_2_5_PRO
+                llm_config = ModelConfigs.VERTEX_GEMINI_3_7_FLASH
                 llm = LLM(
                     model_name=llm_config.model_name,
                     temperature=llm_config.temperature,
@@ -2586,7 +2589,7 @@ def _create_graph_scenario_sync(
             if branches:
                 try:
                     # Use Flash model for intent proposal (classification task)
-                    llm_config = ModelConfigs.VERTEX_GEMINI_2_5_FLASH
+                    llm_config = ModelConfigs.VERTEX_GEMINI_3_5_FLASH_LITE
                     llm = LLM(
                         model_name=llm_config.model_name,
                         temperature=llm_config.temperature,
@@ -2961,7 +2964,6 @@ def _setup_graph_scenario_sync(
                         name=f"{scenario.name} - Graph",
                         description=f"Graph for {scenario.name}",
                         organization=scenario.organization,
-                        workspace=scenario.workspace,
                         graph_config={
                             "graph_data": graph_data,
                             "source": "user_provided",
@@ -3209,7 +3211,7 @@ def _extract_intents_sync(
             transcript: str, agent_desc: str, audio_url: str = None
         ) -> str:
             try:
-                llm_config = ModelConfigs.VERTEX_GEMINI_2_5_PRO
+                llm_config = ModelConfigs.VERTEX_GEMINI_3_7_FLASH
                 llm = LLM(
                     model_name=llm_config.model_name,
                     temperature=llm_config.temperature,
@@ -3311,7 +3313,7 @@ def _extract_intents_sync(
                     intents = cached_intents
                 else:
                     # Use Flash model for intent proposal (classification task)
-                    llm_config = ModelConfigs.VERTEX_GEMINI_2_5_FLASH
+                    llm_config = ModelConfigs.VERTEX_GEMINI_3_5_FLASH_LITE
                     llm = LLM(
                         model_name=llm_config.model_name,
                         temperature=llm_config.temperature,

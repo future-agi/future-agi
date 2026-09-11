@@ -30,9 +30,11 @@ const CustomTraceHeaderRenderer = ({
   }, [eGridHeader]);
 
   const isEvaluationMetric = useMemo(
-    () => column?.colDef?.col?.groupBy === "Evaluation Metrics",
+    () =>
+      column?.colDef?.context?.sourceColumn?.groupBy === "Evaluation Metrics",
     [column],
   );
+  const isGroupHeader = Boolean(group);
 
   const textStyle = {
     fontSize: "13px",
@@ -48,7 +50,7 @@ const CustomTraceHeaderRenderer = ({
     <div style={wrapperStyle}>
       <HeaderIcon
         displayName={displayName}
-        isGroup={group}
+        isGroup={isGroupHeader}
         isEvaluationMetric={isEvaluationMetric}
       />
       <span style={textStyle}>{displayName}</span>
@@ -58,7 +60,7 @@ const CustomTraceHeaderRenderer = ({
 
 CustomTraceHeaderRenderer.propTypes = {
   displayName: PropTypes.string,
-  group: PropTypes.oneOf(["evaluation"]),
+  group: PropTypes.oneOfType([PropTypes.bool, PropTypes.string]),
   column: PropTypes.object,
   eGridHeader: PropTypes.object,
 };

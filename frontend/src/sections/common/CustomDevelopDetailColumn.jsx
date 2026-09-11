@@ -1,4 +1,4 @@
-import { Box, IconButton, Typography, useTheme } from "@mui/material";
+import { alpha, Box, IconButton, Typography, useTheme } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useRef, useEffect } from "react";
 import Iconify from "src/components/iconify";
@@ -118,21 +118,24 @@ export const CustomDevelopDetailColumn = (props) => {
   };
 
   const getBackgroundColor = (originType) => {
+    const isDark = theme.palette.mode === "dark";
     if (
       originType === "evaluation" ||
       originType === "optimisation_evaluation"
     ) {
       return "var(--surface-highlight)";
     } else if (originType === "run_prompt") {
-      return "info.lighter";
+      return isDark ? alpha(theme.palette.info.main, 0.18) : "info.lighter";
     } else if (originType === "optimisation") {
-      return "primary.lighter";
+      return isDark
+        ? alpha(theme.palette.primary.main, 0.16)
+        : "primary.lighter";
     } else if (originType === "annotation_label") {
-      return "primary.lighter";
+      return isDark
+        ? alpha(theme.palette.primary.main, 0.16)
+        : "primary.lighter";
     }
-    return theme.palette.mode === "dark"
-      ? "background.neutral"
-      : "whiteScale.100";
+    return isDark ? "background.neutral" : "whiteScale.100";
   };
 
   return (

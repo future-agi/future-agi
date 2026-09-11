@@ -33,7 +33,7 @@ const CallLogSideDrawerChild = ({ data }) => {
   const { agentDefinitionId: urlAgentDefinitionId, observeId } = useParams();
   const resolvedProjectId = observeId || data?.projectId;
   const filteredTranscript = useMemo(() => {
-    return data?.transcript?.filter((item) => item.speakerRole !== "system");
+    return data?.transcript?.filter((item) => item.speaker_role !== "system");
   }, [data]);
   const theme = useTheme();
 

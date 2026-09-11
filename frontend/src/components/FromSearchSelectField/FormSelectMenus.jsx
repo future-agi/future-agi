@@ -174,8 +174,7 @@ const FormSelectMenus = ({
               // "No option" placeholder so searching narrows the scope.
               if (!multiple || !selectAll) return null;
               const selectableItems = filteredItems.filter(
-                (o) =>
-                  !o.disabled && !o.isGroup && o.value !== emptyValue,
+                (o) => !o.disabled && !o.isGroup && o.value !== emptyValue,
               );
               if (selectableItems.length === 0) return null;
               const currentValues = Array.isArray(value) ? value : [];
@@ -206,9 +205,7 @@ const FormSelectMenus = ({
                       checked={allSelected}
                       indeterminate={
                         !allSelected &&
-                        selectableValues.some((v) =>
-                          currentValues.includes(v),
-                        )
+                        selectableValues.some((v) => currentValues.includes(v))
                       }
                     />
                   )}

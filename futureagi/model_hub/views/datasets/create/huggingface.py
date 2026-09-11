@@ -22,7 +22,16 @@ from model_hub.models.choices import (
     StatusType,
 )
 from model_hub.models.develop_dataset import Column, Dataset, Row
-from model_hub.serializers.develop_dataset import DatasetSerializer, UploadFileForm
+from model_hub.serializers.contracts import (
+    MODEL_HUB_ERROR_RESPONSES,
+    HuggingFaceDatasetConfigRequestSerializer,
+    HuggingFaceDatasetCreateRequestSerializer,
+)
+from model_hub.serializers.develop_dataset_contracts import (
+    DatasetCreateStartedResponseSerializer,
+    HuggingFaceDatasetConfigResponseSerializer,
+)
+from model_hub.serializers.develop_dataset import DatasetSerializer
 from model_hub.utils.utils import (
     get_data_type_huggingface,
     load_hf_dataset_with_retries,
@@ -33,12 +42,16 @@ from model_hub.views.utils.hugginface import (
 )
 from model_hub.views.utils.utils import get_recommendations
 from tfc.settings.settings import HUGGINGFACE_API_TOKEN
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.parse_errors import parse_serialized_errors
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 try:
-    from ee.usage.utils.usage_entries import ROW_LIMIT_REACHED_MESSAGE, log_and_deduct_cost_for_resource_request
+    from ee.usage.utils.usage_entries import (
+        ROW_LIMIT_REACHED_MESSAGE,
+        log_and_deduct_cost_for_resource_request,
+    )
 except ImportError:
     ROW_LIMIT_REACHED_MESSAGE = None
     log_and_deduct_cost_for_resource_request = None
@@ -50,10 +63,17 @@ class GetHuggingFaceDatasetConfigView(APIView):
     renderer_classes = [JSONRenderer]
     parser_classes = (MultiPartParser, FormParser, JSONParser)
 
+    @validated_request(
+        request_serializer=HuggingFaceDatasetConfigRequestSerializer,
+        responses={
+            200: HuggingFaceDatasetConfigResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, *args, **kwargs):
         try:
-            # form = UploadFileForm(request.POST, request.FILES)
-            dataset_path = request.data.get("dataset_path")
+            dataset_path = request.validated_data["dataset_path"]
             organization_id = (
                 getattr(self.request, "organization", None)
                 or self.request.user.organization
@@ -130,53 +150,27 @@ class CreateDatasetFromHuggingFaceView(CreateAPIView):
                 get_error_message("FAILED_TO_LOAD_DATASET_FROM_HUGGINGFACE")
             )
 
+    @validated_request(
+        request_serializer=HuggingFaceDatasetCreateRequestSerializer,
+        responses={
+            200: DatasetCreateStartedResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, *args, **kwargs):
         try:
-            if log_and_deduct_cost_for_resource_request is not None:
-                call_log_row_entry = log_and_deduct_cost_for_resource_request(
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                    api_call_type=APICallTypeChoices.DATASET_ADD.value,
-                    workspace=request.workspace,
-                )
-                if (
-                    call_log_row_entry is None
-                    or call_log_row_entry.status
-                    == APICallStatusChoices.RESOURCE_LIMIT.value
-                ):
-                    return self._gm.too_many_requests(
-                        get_error_message("DATASET_CREATE_LIMIT_REACHED")
-                    )
-                call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
-                call_log_row_entry.save()
+            data = request.validated_data
+            new_dataset_name = data.get("name")
+            model_type = data.get("model_type")
+            num_rows = data.get("num_rows")
 
-            form = UploadFileForm(request.POST, request.FILES)
-            new_dataset_name = form.data.get("name")
-            model_type = form.data.get("model_type")
-            num_rows = form.data.get("num_rows")
-
-            dataset_name = request.data.get("huggingface_dataset_name")
-            config_name = request.data.get("huggingface_dataset_config")
-            split = request.data.get("huggingface_dataset_split")
+            dataset_name = data.get("huggingface_dataset_name")
+            config_name = data.get("huggingface_dataset_config")
+            split = data.get("huggingface_dataset_split")
 
             if not dataset_name:
                 return self._gm.bad_request(get_error_message("DATASET_NAME_MISSING"))
-
-            from model_hub.validators.dataset_validators import (
-                validate_dataset_name_unique,
-            )
-
-            try:
-                validate_dataset_name_unique(
-                    new_dataset_name,
-                    getattr(request, "organization", None) or request.user.organization,
-                )
-            except Exception as validation_err:
-                return self._gm.bad_request(str(validation_err.detail[0]))
-
-            if num_rows:
-                if int(num_rows) < 0:
-                    return self._gm.bad_request(get_error_message("ROWS_NOT_POSITIVE"))
 
             try:
                 file_name = dataset_name.replace(
@@ -189,10 +183,22 @@ class CreateDatasetFromHuggingFaceView(CreateAPIView):
                     get_error_message("FAILED_TO_LOAD_DATASET_FROM_HUGGINGFACE")
                 )
 
-            # Creating Dataset
+            from model_hub.validators.dataset_validators import (
+                validate_dataset_name_unique,
+            )
+
             organization = (
                 getattr(request, "organization", None) or request.user.organization
             )
+            try:
+                validate_dataset_name_unique(new_dataset_name, organization)
+            except Exception as validation_err:
+                return self._gm.bad_request(str(validation_err.detail[0]))
+
+            if num_rows:
+                if int(num_rows) < 0:
+                    return self._gm.bad_request(get_error_message("ROWS_NOT_POSITIVE"))
+
             dataset_id = uuid.uuid4()
             dataset_serializer = DatasetSerializer(
                 data={
@@ -252,6 +258,23 @@ class CreateDatasetFromHuggingFaceView(CreateAPIView):
                         return self._gm.bad_request(
                             get_error_message("FAILED_TO_PREVIEW_DATASET")
                         )
+                    if log_and_deduct_cost_for_resource_request is not None:
+                        call_log_row_entry = log_and_deduct_cost_for_resource_request(
+                            organization=organization,
+                            api_call_type=APICallTypeChoices.DATASET_ADD.value,
+                            workspace=request.workspace,
+                        )
+                        if (
+                            call_log_row_entry is None
+                            or call_log_row_entry.status
+                            == APICallStatusChoices.RESOURCE_LIMIT.value
+                        ):
+                            return self._gm.too_many_requests(
+                                get_error_message("DATASET_CREATE_LIMIT_REACHED")
+                            )
+                        call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
+                        call_log_row_entry.save()
+
                     columns_to_create = []
                     column_order = []
                     column_config_updates = {}
@@ -288,7 +311,9 @@ class CreateDatasetFromHuggingFaceView(CreateAPIView):
                             )
 
                     with transaction.atomic():
-                        dataset = dataset_serializer.save()
+                        dataset = dataset_serializer.save(
+                            workspace=getattr(request, "workspace", None)
+                        )
                         for column in columns_to_create:
                             column.dataset = dataset
                         # Bulk create columns in the database

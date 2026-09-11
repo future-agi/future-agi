@@ -22,12 +22,12 @@ const ToolsConfigSection = ({
   const theme = useTheme();
 
   const toolsOptions = useMemo(() => {
-    return runPromptOptions?.availableTools?.map((t) => ({
+    return runPromptOptions?.available_tools?.map((t) => ({
       label: t.name,
       value: t.id,
       tool: t,
     }));
-  }, [runPromptOptions?.availableTools]);
+  }, [runPromptOptions?.available_tools]);
 
   const filteredToolOptions = useMemo(() => {
     return (toolsOptions || [])?.filter((tool) =>
@@ -104,7 +104,7 @@ const ToolsConfigSection = ({
                   }
                 }}
                 options={[
-                  ...(runPromptOptions?.toolChoices || []),
+                  ...(runPromptOptions?.tool_choices || []),
                   { value: "none", label: "None" },
                 ]}
                 sx={{ width: 200 }}

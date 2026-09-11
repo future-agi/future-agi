@@ -444,7 +444,7 @@ export default function PromptItem({
 }
 
 PromptItem.propTypes = {
-  type: PropTypes.oneOf(["file", "folder"]),
+  type: PropTypes.oneOf(Object.values(PROMPT_ITEM_TYPES)),
   name: PropTypes.string,
   createdBy: PropTypes.string,
   lastModified: PropTypes.string,

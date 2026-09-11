@@ -421,9 +421,21 @@ def generate_scenario_rows(
         logger.info(
             f"Generated {len(cases)} cases, updating cells for {num_rows} rows..."
         )
+
+        target_row_ids = new_rows_id[: min(len(cases), num_rows)]
+        existing_cells = {
+            (str(cell.row_id), str(cell.column_id)): cell
+            for cell in Cell.objects.filter(
+                dataset=dataset,
+                column__in=total_columns,
+                row_id__in=target_row_ids,
+            )
+        }
+
         cells_to_update = []
         for i in range(min(len(cases), num_rows)):
             case = cases[i]
+            row_id = new_rows_id[i]
             for col in total_columns:
                 try:
                     col_lower = col.name.lower()
@@ -440,24 +452,18 @@ def generate_scenario_rows(
                 except Exception:
                     value = ""
 
-                # Get the cell (should already exist from row creation)
-                try:
-                    cell = Cell.objects.get(
-                        dataset=dataset,
-                        column=col,
-                        row_id=new_rows_id[i],
-                    )
+                cell = existing_cells.get((str(row_id), str(col.id)))
+                if cell is not None:
                     cell.value = value
                     cell.status = CellStatus.PASS.value
                     cells_to_update.append(cell)
-                except Cell.DoesNotExist:
-                    # Create if it doesn't exist (fallback)
+                else:
                     cells_to_update.append(
                         Cell(
                             id=uuid.uuid4(),
                             dataset=dataset,
                             column=col,
-                            row_id=new_rows_id[i],
+                            row_id=row_id,
                             value=value,
                             status=CellStatus.PASS.value,
                         )
@@ -500,20 +506,15 @@ def generate_scenario_rows(
                 ]
             )
 
-            # Bulk update cells to failed status
+            existing_error_cells = Cell.objects.filter(
+                dataset=dataset,
+                column__in=total_columns,
+                row_id__in=new_rows_id,
+            )
             cells_to_fail = []
-            for col in total_columns:
-                for row_id in new_rows_id:
-                    try:
-                        cell = Cell.objects.get(
-                            dataset=dataset,
-                            column=col,
-                            row_id=row_id,
-                        )
-                        cell.status = CellStatus.ERROR.value
-                        cells_to_fail.append(cell)
-                    except Cell.DoesNotExist:
-                        pass
+            for cell in existing_error_cells:
+                cell.status = CellStatus.ERROR.value
+                cells_to_fail.append(cell)
 
             # Bulk update all failed cells
             if cells_to_fail:

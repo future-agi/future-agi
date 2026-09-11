@@ -1,4 +1,5 @@
 import structlog
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import GenericViewSet
 
@@ -7,10 +8,14 @@ from agent_playground.models.execution_data import ExecutionData
 from agent_playground.models.graph_execution import GraphExecution
 from agent_playground.models.node_execution import NodeExecution
 from agent_playground.serializers.graph_execution import (
+    GraphExecutionDetailResponseSerializer,
+    GraphExecutionListResponseSerializer,
     GraphExecutionListSerializer,
     GraphExecutionSerializer,
     NodeExecutionBriefSerializer,
+    NodeExecutionDetailResponseSerializer,
 )
+from agent_playground.serializers.contracts import AGENT_PLAYGROUND_ERROR_RESPONSES
 from agent_playground.serializers.graph_version import (
     GraphVersionDetailSerializer,
     prefetch_version_detail,
@@ -59,6 +64,12 @@ class GraphExecutionViewSet(GenericViewSet):
             graph_version__graph_id=self.kwargs["graph_id"],
         )
 
+    @swagger_auto_schema(
+        responses={
+            200: GraphExecutionListResponseSerializer,
+            500: AGENT_PLAYGROUND_ERROR_RESPONSES[500],
+        },
+    )
     def list(self, request, graph_id=None):
         """List all executions for a graph, with optional status filter."""
         try:
@@ -80,6 +91,13 @@ class GraphExecutionViewSet(GenericViewSet):
                 get_error_message("FAILED_TO_LIST_EXECUTIONS")
             )
 
+    @swagger_auto_schema(
+        responses={
+            200: GraphExecutionDetailResponseSerializer,
+            404: AGENT_PLAYGROUND_ERROR_RESPONSES[404],
+            500: AGENT_PLAYGROUND_ERROR_RESPONSES[500],
+        },
+    )
     def retrieve(self, request, *args, **kwargs):
         """
         Returns the full Graph execution detail.
@@ -145,6 +163,13 @@ class GraphExecutionViewSet(GenericViewSet):
         data["node_connections"] = version_data.get("node_connections", [])
         return data
 
+    @swagger_auto_schema(
+        responses={
+            200: NodeExecutionDetailResponseSerializer,
+            404: AGENT_PLAYGROUND_ERROR_RESPONSES[404],
+            500: AGENT_PLAYGROUND_ERROR_RESPONSES[500],
+        },
+    )
     def node_detail(self, request, execution_id=None, node_execution_id=None):
         """
         Returns detailed results for a specific node execution.

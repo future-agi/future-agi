@@ -346,7 +346,7 @@ const LanguageMultiSelect = ({
                           icon={
                             <Iconify
                               icon="system-uicons:checkbox-empty"
-                              color="action.selected"
+                              color="action.default"
                               width={24}
                               height={24}
                               style={{ display: "block" }}

@@ -207,28 +207,17 @@ XAI_MODELS = [
     "xai/grok-2-vision-1212",
 ]
 
-# Perplexity Models
+# Perplexity Models (current generation Sonar API + Agent API)
+# See https://docs.perplexity.ai/getting-started/models
 PERPLEXITY_MODELS = [
-    "perplexity/llama-3.1-70b-instruct",
-    "perplexity/llama-3.1-8b-instruct",
-    "perplexity/llama-3.1-sonar-huge-128k-online",
-    "perplexity/llama-3.1-sonar-large-128k-online",
-    "perplexity/llama-3.1-sonar-large-128k-chat",
-    "perplexity/llama-3.1-sonar-small-128k-chat",
-    "perplexity/llama-3.1-sonar-small-128k-online",
-    "perplexity/sonar-small-chat",
-    "perplexity/sonar-small-online",
-    "perplexity/sonar-medium-chat",
-    "perplexity/sonar-medium-online",
-    "perplexity/codellama-34b-instruct",
-    "perplexity/codellama-70b-instruct",
-    "perplexity/pplx-7b-chat",
-    "perplexity/pplx-70b-chat",
-    "perplexity/pplx-7b-online",
-    "perplexity/pplx-70b-online",
-    "perplexity/llama-2-70b-chat",
-    "perplexity/mistral-7b-instruct",
-    "perplexity/mixtral-8x7b-instruct",
+    # Sonar API (chat completions with built-in web search)
+    "perplexity/sonar",
+    "perplexity/sonar-pro",
+    "perplexity/sonar-reasoning",
+    "perplexity/sonar-reasoning-pro",
+    "perplexity/sonar-deep-research",
+    # Agent API (third-party LLM orchestration; default model gpt-5.1)
+    "perplexity/gpt-5.1",
 ]
 
 # OpenRouter Models
@@ -1036,7 +1025,7 @@ class TestPerplexityLiveAllModels:
     # Temperature Variations
     # -------------------------------------------------------------------------
 
-    @pytest.mark.parametrize("model", ["perplexity/sonar-small-chat"])
+    @pytest.mark.parametrize("model", ["perplexity/sonar-pro"])
     @pytest.mark.parametrize("temperature", TEMPERATURE_VALUES)
     def test_perplexity_temperature_variations(self, model, temperature):
         """Test various temperature settings for Perplexity models."""
@@ -1053,7 +1042,7 @@ class TestPerplexityLiveAllModels:
     # Max Tokens Variations
     # -------------------------------------------------------------------------
 
-    @pytest.mark.parametrize("model", ["perplexity/sonar-small-chat"])
+    @pytest.mark.parametrize("model", ["perplexity/sonar-pro"])
     @pytest.mark.parametrize("max_tokens", MAX_TOKENS_VALUES)
     def test_perplexity_max_tokens_variations(self, model, max_tokens):
         """Test various max_tokens settings for Perplexity models."""
@@ -1070,7 +1059,7 @@ class TestPerplexityLiveAllModels:
     # Top P Variations
     # -------------------------------------------------------------------------
 
-    @pytest.mark.parametrize("model", ["perplexity/sonar-small-chat"])
+    @pytest.mark.parametrize("model", ["perplexity/sonar-pro"])
     @pytest.mark.parametrize("top_p", TOP_P_VALUES)
     def test_perplexity_top_p_variations(self, model, top_p):
         """Test various top_p settings for Perplexity models."""
@@ -1097,7 +1086,7 @@ class TestPerplexityLiveAllModels:
     def test_perplexity_combined_parameters(self, temp, max_tok, top_p):
         """Test combined parameter variations for Perplexity models."""
         content, response = run_model_test(
-            model_name="perplexity/sonar-small-chat",
+            model_name="perplexity/sonar-pro",
             api_key=self.api_key,
             organization_id=self.organization_id,
             temperature=temp,

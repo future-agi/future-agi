@@ -45,12 +45,13 @@ const MetricsHeaderSection = () => {
 
   const appliedFilterCount = useMemo(() => {
     if (!filters?.length) return 0;
-    return filters.filter(
-      (f) =>
-        f?.columnId ||
-        (f?.filterConfig?.filterValue !== "" &&
-          f?.filterConfig?.filterValue?.length !== 0),
-    ).length;
+    return filters.filter((f) => {
+      const value = f?.filter_config?.filter_value;
+      return (
+        f?.column_id ||
+        (value !== "" && !(Array.isArray(value) && value.length === 0))
+      );
+    }).length;
   }, [filters]);
 
   return (

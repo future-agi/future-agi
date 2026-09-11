@@ -20,7 +20,14 @@ def _get_api_call_type(model: str):
 
         model_key: ModelChoices | str = model
         if isinstance(model, str):
-            model_key = ModelChoices(model)
+            try:
+                model_key = ModelChoices(model)
+            except ValueError:
+                # Non-Turing/Protect models (e.g. "gpt-5", "gemini-...") are
+                # legitimate user input but not part of ModelChoices. This is
+                # expected, not an error: fall back to the default api call type.
+                logger.warning("unknown_model_for_api_call_type", model=model)
+                return APICallTypeChoices.TURING_LARGE_EVALUATOR.value
 
         return model_to_api_call_type.get(
             model_key, APICallTypeChoices.TURING_LARGE_EVALUATOR.value

@@ -27,8 +27,10 @@ from simulate.serializers.test_execution import CallExecutionDetailSerializer
 try:
     from ee.voice.tasks.call_log_tasks import _ingest_call_logs, ingest_call_logs_task
 except ImportError:
-    _ingest_call_logs = None
-    ingest_call_logs_task = None
+    pytest.skip(
+        "EE voice call-log ingestion task is not available in OSS",
+        allow_module_level=True,
+    )
 
 requires_ee_voice = pytest.mark.skipif(
     ingest_call_logs_task is None,
@@ -299,10 +301,10 @@ def test_ingest_call_logs_task_delegates_to_helper(call_execution):
         )
 
     assert ok is True
-    MockVSM.return_value.iter_call_logs.assert_called_once_with(
-        url="https://example.com/log",
-        verify_ssl=False,
-    )
+    MockVSM.return_value.iter_call_logs.assert_called_once()
+    call_kwargs = MockVSM.return_value.iter_call_logs.call_args.kwargs
+    assert call_kwargs["url"] == "https://example.com/log"
+    assert call_kwargs["verify_ssl"] is False
 
 
 @requires_ee_voice
@@ -428,6 +430,8 @@ class TestCallExecutionLogsViewEmpty:
             kwargs={
                 "verify_ssl": False,
                 "source": CallLogEntry.LogSource.CUSTOMER,
+                "call_id": None,
+                "api_key": None,
             },
         )
         call_execution.refresh_from_db()

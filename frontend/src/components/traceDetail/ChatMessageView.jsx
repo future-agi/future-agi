@@ -1,27 +1,30 @@
 import React, { useState, useMemo } from "react";
 import PropTypes from "prop-types";
-import { Box, Collapse, IconButton, Stack, Typography } from "@mui/material";
+import { Box, Stack, Typography } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import Markdown from "react-markdown";
+import { ToolCallCard } from "src/components/tool-call/ToolCallCard";
 
-// Role badge colors — accent colors work in both themes; bg/border use alpha for transparency
+// Role badge colors — keyed into palette.accent so each mode gets its own hue;
+// bg/border derive from the resolved accent via alpha for transparency
 const ROLE_STYLES = {
-  system: { color: "#6B7280", icon: "mdi:cog-outline" },
-  user: { color: "#2563EB", icon: "mdi:account-outline" },
-  assistant: { color: "#7C3AED", icon: "mdi:robot-outline" },
-  model: { color: "#7C3AED", icon: "mdi:robot-outline" }, // Gemini uses "model" for assistant
-  tool: { color: "#EA580C", icon: "mdi:wrench-outline" },
-  developer: { color: "#16A34A", icon: "mdi:code-braces" },
-  function: { color: "#EA580C", icon: "mdi:function-variant" },
+  system: { accent: "neutral", icon: "mdi:cog-outline" },
+  user: { accent: "info", icon: "mdi:account-outline" },
+  assistant: { accent: "agent", icon: "mdi:robot-outline" },
+  model: { accent: "agent", icon: "mdi:robot-outline" }, // Gemini uses "model" for assistant
+  tool: { accent: "tool", icon: "mdi:wrench-outline" },
+  developer: { accent: "pass", icon: "mdi:code-braces" },
+  function: { accent: "tool", icon: "mdi:function-variant" },
 };
 
 const getRoleStyle = (role) => {
   const base = ROLE_STYLES[(role || "").toLowerCase()] || ROLE_STYLES.user;
   return {
     ...base,
-    bg: alpha(base.color, 0.08),
-    border: alpha(base.color, 0.2),
+    color: `accent.${base.accent}`,
+    bg: (t) => alpha(t.palette.accent[base.accent], 0.08),
+    border: (t) => alpha(t.palette.accent[base.accent], 0.2),
   };
 };
 
@@ -116,81 +119,6 @@ function normalizeMessage(msg) {
   return { role, content: [JSON.stringify(msg)] };
 }
 
-// ── Tool Call Card ──
-const ToolCallCard = ({ toolCall }) => {
-  const [open, setOpen] = useState(false);
-  const name = toolCall?.function?.name || toolCall?.name || "tool";
-  const args = toolCall?.function?.arguments || toolCall?.arguments || "";
-  const argsStr =
-    typeof args === "string" ? args : JSON.stringify(args, null, 2);
-
-  return (
-    <Box
-      sx={{
-        border: "1px solid",
-        borderColor: alpha("#EA580C", 0.2),
-        borderRadius: "4px",
-        overflow: "hidden",
-        mt: 0.5,
-      }}
-    >
-      <Box
-        data-search-skip="true"
-        onClick={() => setOpen(!open)}
-        sx={{
-          display: "flex",
-          alignItems: "center",
-          gap: 0.5,
-          px: 1,
-          py: 0.5,
-          bgcolor: alpha("#EA580C", 0.08),
-          cursor: "pointer",
-        }}
-      >
-        <Iconify
-          icon="mdi:wrench-outline"
-          width={13}
-          sx={{ color: "#EA580C" }}
-        />
-        <Typography
-          sx={{ fontSize: 12, fontWeight: 600, color: "#EA580C", flex: 1 }}
-        >
-          {name}
-        </Typography>
-        <Iconify
-          icon={open ? "mdi:chevron-up" : "mdi:chevron-down"}
-          width={14}
-          sx={{ color: "#EA580C" }}
-        />
-      </Box>
-      <Collapse in={open}>
-        <Box
-          sx={{
-            p: 1,
-            bgcolor: alpha("#EA580C", 0.04),
-            maxHeight: 200,
-            overflow: "auto",
-          }}
-        >
-          <pre
-            style={{
-              margin: 0,
-              fontSize: 11,
-              fontFamily: "'IBM Plex Mono', monospace",
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-all",
-            }}
-          >
-            {argsStr}
-          </pre>
-        </Box>
-      </Collapse>
-    </Box>
-  );
-};
-
-ToolCallCard.propTypes = { toolCall: PropTypes.object };
-
 // ── Single Message Card ──
 const MessageCard = ({ message }) => {
   const role = message.role || "user";
@@ -220,7 +148,8 @@ const MessageCard = ({ message }) => {
   return (
     <Box
       sx={{
-        border: `1px solid ${style.border}`,
+        border: "1px solid",
+        borderColor: style.border,
         borderRadius: "6px",
         overflow: "hidden",
       }}
@@ -294,7 +223,13 @@ const MessageCard = ({ message }) => {
       {toolCalls?.length > 0 && (
         <Box sx={{ px: 1.5, pb: 1 }}>
           {toolCalls.map((tc, i) => (
-            <ToolCallCard key={tc.id || i} toolCall={tc} />
+            <ToolCallCard
+              key={tc.id || i}
+              toolCall={{
+                name: tc.function?.name || tc.name || "tool",
+                arguments: tc.function?.arguments || tc.arguments || "",
+              }}
+            />
           ))}
         </Box>
       )}

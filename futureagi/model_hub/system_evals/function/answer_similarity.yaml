@@ -35,6 +35,7 @@ config:
     - JaroWincklerSimilarity
     - JaccardSimilarity
     - SorensenDiceSimilarity
+    - PhoneticSimilarity
   code: |
     def evaluate(input, output, expected, context, **kwargs):
         import difflib
@@ -42,10 +43,12 @@ config:
         expected_response = kwargs.get("expected_response", expected or "")
         comparator = kwargs.get("comparator", "CosineSimilarity")
         failure_threshold = float(kwargs.get("failure_threshold", 0.5))
+        # Allow empty strings through so individual comparators can evaluate them
+        if response is None or expected_response is None:
+            return {"score": 0.0, "reason": "Missing response or expected_response"}
+
         response = str(response)
         expected_response = str(expected_response)
-        if not response or not expected_response:
-            return {"score": 0.0, "reason": "Missing response or expected_response"}
         if comparator == "NormalisedLevenshteinSimilarity":
             # Normalized Levenshtein using SequenceMatcher as approximation
             score = difflib.SequenceMatcher(None, response, expected_response).ratio()
@@ -110,9 +113,45 @@ config:
             else:
                 intersection = set1 & set2
                 score = 2 * len(intersection) / (len(set1) + len(set2)) if (len(set1) + len(set2)) > 0 else 0.0
+        elif comparator == "PhoneticSimilarity":
+            import re
+
+            def soundex(word):
+                mapping = {
+                    'B':'1','F':'1','P':'1','V':'1',
+                    'C':'2','G':'2','J':'2','K':'2','Q':'2','S':'2','X':'2','Z':'2',
+                    'D':'3','T':'3','L':'4','M':'5','N':'5','R':'6'
+                }
+                word = word.upper()
+                if not word or not word[0].isalpha():
+                    return "0000"
+                first_letter = word[0]
+                first_code = mapping.get(first_letter, '')
+                encoded = []
+                for char in word[1:]:
+                    code = mapping.get(char, '')
+                    if not code:
+                        continue
+                    if encoded and encoded[-1] == code:
+                        continue
+                    if not encoded and code == first_code:
+                        continue
+                    encoded.append(code)
+                return (first_letter + ''.join(encoded) + '000')[:4]
+
+            tokens1 = set(soundex(w) for w in re.findall(r'\b\w+\b', response.lower()))
+            tokens2 = set(soundex(w) for w in re.findall(r'\b\w+\b', expected_response.lower()))
+
+            if not tokens1 and not tokens2:
+                score = 1.0
+            elif not tokens1 or not tokens2:
+                score = 0.0
+            else:
+                score = len(tokens1.intersection(tokens2)) / len(tokens1.union(tokens2))
         else:
             # Default: CosineSimilarity approximated via SequenceMatcher
             score = difflib.SequenceMatcher(None, response.lower(), expected_response.lower()).ratio()
+
         reason = f"{comparator} score: {score:.4f}"
         if score < failure_threshold:
             reason += f" (below threshold {failure_threshold})"

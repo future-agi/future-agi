@@ -42,6 +42,7 @@ def get_storage_client() -> Minio:
             "storage.googleapis.com",
             access_key=os.getenv("GCS_HMAC_ACCESS_KEY", ""),
             secret_key=os.getenv("GCS_HMAC_SECRET_KEY", ""),
+            region=os.getenv("MINIO_REGION") or "auto",
             secure=True,
         )
         return _client

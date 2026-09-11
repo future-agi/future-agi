@@ -18,7 +18,10 @@ import Iconify from "src/components/iconify";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import SvgColor from "src/components/svg-color";
-import { getOptimizationRunListColumnDef } from "./common";
+import {
+  getOptimizationRunListColumnDef,
+  normalizeDatasetOptimizationRun,
+} from "./common";
 import { useDatasetOptimizationStoreShallow } from "./states";
 import OptimizationNameRenderer from "./CellRenderers/OptimizationNameRenderer";
 import StatusCellRenderer from "./CellRenderers/StatusCellRenderer";
@@ -133,7 +136,9 @@ const DatasetOptimizationRunList = ({
               }),
           });
 
-          const rows = data?.table || data?.result?.table || [];
+          const rows = (data?.table || data?.result?.table || []).map(
+            normalizeDatasetOptimizationRun,
+          );
           const total =
             data?.metadata?.total_rows ||
             data?.result?.metadata?.total_rows ||
@@ -177,7 +182,6 @@ const DatasetOptimizationRunList = ({
       filter: false,
       resizable: true,
       suppressMenu: true,
-      suppressMultiSort: true,
       cellStyle: {
         display: "flex",
         justifyContent: "flex-start",

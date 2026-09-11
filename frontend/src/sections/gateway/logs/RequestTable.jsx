@@ -80,6 +80,10 @@ function formatTimestamp(iso) {
 // ---------------------------------------------------------------------------
 
 const RequestRow = React.memo(function RequestRow({ log, onClick }) {
+  const startedAt = log.started_at;
+  const latencyMs = log.latency_ms;
+  const guardrailTriggered = log.guardrail_triggered;
+  const fallbackUsed = log.fallback_used;
   const isGuardrailBlock = log.status_code === 446;
   const isGuardrailWarn = log.status_code === 246;
   const isError =
@@ -118,9 +122,7 @@ const RequestRow = React.memo(function RequestRow({ log, onClick }) {
     >
       {/* Timestamp */}
       <TableCell sx={{ whiteSpace: "nowrap" }}>
-        <Typography variant="body2">
-          {formatTimestamp(log.startedAt)}
-        </Typography>
+        <Typography variant="body2">{formatTimestamp(startedAt)}</Typography>
       </TableCell>
 
       {/* Model */}
@@ -152,14 +154,11 @@ const RequestRow = React.memo(function RequestRow({ log, onClick }) {
         <Typography
           variant="body2"
           sx={{
-            color:
-              log.latencyMs != null
-                ? getLatencyColor(log.latencyMs)
-                : undefined,
+            color: latencyMs != null ? getLatencyColor(latencyMs) : undefined,
             fontWeight: 500,
           }}
         >
-          {log.latencyMs != null ? `${log.latencyMs}ms` : "-"}
+          {latencyMs != null ? `${latencyMs}ms` : "-"}
         </Typography>
       </TableCell>
 
@@ -198,7 +197,7 @@ const RequestRow = React.memo(function RequestRow({ log, onClick }) {
               />
             </Tooltip>
           )}
-          {log.guardrailTriggered && (
+          {guardrailTriggered && (
             <Tooltip title="Guardrail Triggered" arrow>
               <Iconify
                 icon="mdi:shield-outline"
@@ -207,7 +206,7 @@ const RequestRow = React.memo(function RequestRow({ log, onClick }) {
               />
             </Tooltip>
           )}
-          {log.fallbackUsed && (
+          {fallbackUsed && (
             <Tooltip title="Fallback Used" arrow>
               <Iconify
                 icon="mdi:swap-horizontal"

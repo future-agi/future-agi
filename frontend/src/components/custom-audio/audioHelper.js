@@ -31,24 +31,24 @@ export const transformAudioData = (valueInfos) => {
   return canonicalEntries(errorAnalysis)
     .map(([, value]) => value)
     .flat()
-    .map(({ orgSegment, rankReason, weight }, index) => {
+    .map((raw, index) => {
+      if (!raw || typeof raw !== "object") return null;
+
+      const orgSegment = raw.orgSegment || raw.org_segment;
       if (!orgSegment) return null;
 
-      const {
-        startTime: _startTime,
-        endTime: _endTime,
-        url: segmentUrl,
-      } = orgSegment;
+      const rankReason = raw.rankReason || raw.rank_reason || raw.reason;
+      const weight = raw.weight ?? raw.rank;
       const { activeColor, inactiveColor } = getColorByWeight(weight);
 
       return {
         id: `audio-segment-${index}`,
-        audioData: { url: segmentUrl || orgSegment.url }, // Use segment-specific URL
-        startTime: 0, // Segment URL is pre-trimmed, so start from 0
-        endTime: orgSegment.duration, // Use full duration of trimmed segment
+        audioData: { url: orgSegment.url || raw.segmentUrl },
+        startTime: 0,
+        endTime: orgSegment.duration,
         activeColor,
         inactiveColor,
-        description: rankReason,
+        description: rankReason || "",
       };
     })
     .filter(Boolean);

@@ -1,4 +1,5 @@
 import {
+  Alert,
   Box,
   Button,
   Drawer,
@@ -9,7 +10,14 @@ import {
   Typography,
   useTheme,
 } from "@mui/material";
-import React, { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import React, {
+  lazy,
+  Suspense,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import BackButton from "src/sections/develop-detail/Common/BackButton";
 import SvgColor from "src/components/svg-color";
 import TracingControls from "src/sections/projects/LLMTracing/TracingControls";
@@ -28,6 +36,13 @@ import { useAlertStore } from "../../store/useAlertStore";
 import { useAlertSheetView } from "../../store/useAlertSheetView";
 import { AlertTableSkeleton } from "../AlertSkeletons";
 import _ from "lodash";
+import { isAlertMuted } from "../../common";
+import {
+  keepPreviousMonitorGraphData,
+  MONITOR_GRAPH_ERROR_MESSAGE,
+  monitorGraphDisplayState,
+  monitorGraphRequestConfig,
+} from "../../../monitor_graph_read";
 const Issues = lazy(() => import("./Issues"));
 const AlertDetails = lazy(() => import("./AlertDetails"));
 
@@ -35,10 +50,13 @@ export default function AlertsSheetView() {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const {
+    openCreateAlerts,
     openSheetView,
     handleCloseSheetView,
-    handleStartCreatingAlerts,
     handleProjectChange,
+    handleStartCreatingAlerts,
+    setCurrentTab,
+    setOpenCreateAlerts,
     mainPage,
     refreshGrid: refreshMainGrid,
   } = useAlertStore();
@@ -50,6 +68,7 @@ export default function AlertsSheetView() {
   } = useAlertSheetView();
   const [dateFilter, setDateFilter] = useState(getDefaultDateRange());
   const [duplicateModal, setDuplicateModal] = useState(false);
+  const retainedGraphDataRef = useRef();
   const { mutate: mutateAlerts, isPending: isMutingAlerts } =
     useMuteAlertsMutation({
       onSuccessCallback: () => {
@@ -57,25 +76,46 @@ export default function AlertsSheetView() {
         refreshMainGrid();
       },
     });
+  const alertIsMuted = isAlertMuted(alertRuleDetails);
+  const hasLoadedAlertDetails = Boolean(alertRuleDetails?.id);
 
   const handleDuplicateAlert = () => {
     setDuplicateModal(false);
     handleStartCreatingAlerts();
   };
 
-  const { data } = useQuery({
+  const {
+    data: latestGraphData,
+    isError: isGraphError,
+    isFetching: isGraphFetching,
+    refetch: refetchGraph,
+  } = useQuery({
     queryKey: ["alert-graph", openSheetView, dateFilter],
-    queryFn: () =>
-      axiosInstance.get(endpoints.project.getAlertGraph(openSheetView), {
-        params: {
-          start_date: dateFilter?.dateFilter[0],
-          end_date: dateFilter?.dateFilter[1],
-        },
-      }),
-    refetchInterval: 10 * 1000,
+    queryFn: ({ signal }) =>
+      axiosInstance.get(
+        endpoints.project.getAlertGraph(openSheetView),
+        monitorGraphRequestConfig({ signal, dateFilter }),
+      ),
+    refetchInterval: (query) =>
+      query.state.status === "error" ? false : 10 * 1000,
     enabled: !!openSheetView,
     select: (data) => data?.data,
+    placeholderData: keepPreviousMonitorGraphData,
+    retry: false,
   });
+
+  useEffect(() => {
+    if (latestGraphData !== undefined) {
+      retainedGraphDataRef.current = latestGraphData;
+    }
+  }, [latestGraphData]);
+
+  const graphState = monitorGraphDisplayState({
+    latestData: latestGraphData,
+    retainedData: retainedGraphDataRef.current,
+    isError: isGraphError,
+  });
+  const data = graphState.data;
 
   const [chartKey] = useState(0);
 
@@ -148,14 +188,20 @@ export default function AlertsSheetView() {
               },
             ];
 
-        chartConfig = getSimpleLineChartConfig(data, {
-          seriesName: _.startCase(_.toLower(alertRuleDetails.metricType)),
-          thresholds,
-        });
+        chartConfig = getSimpleLineChartConfig(
+          data,
+          {
+            seriesName: _.startCase(_.toLower(alertRuleDetails.metricType)),
+            thresholds,
+          },
+          { isDark },
+        );
       } else if (selectedThresHoldType === "percentage_change") {
-        chartConfig = getCompareChartConfig(data, {
-          seriesName: _.startCase(_.toLower(alertRuleDetails.metricType)),
-        });
+        chartConfig = getCompareChartConfig(
+          data,
+          { seriesName: _.startCase(_.toLower(alertRuleDetails.metricType)) },
+          { isDark },
+        );
       }
 
       if (!chartConfig) return { series: [], options: {} };
@@ -176,7 +222,7 @@ export default function AlertsSheetView() {
     } catch (err) {
       return { series: [], options: {} };
     }
-  }, [selectedThresHoldType, data, alertRuleDetails]);
+  }, [selectedThresHoldType, data, alertRuleDetails, isDark]);
 
   // Render chart with proper loading states
   const renderChart = () => {
@@ -206,11 +252,17 @@ export default function AlertsSheetView() {
   }, [alertRuleDetails?.id]);
 
   const handleEditClick = () => {
-    if (!alertRuleDetails?.id) return;
+    if (!alertRuleDetails?.id) {
+      return;
+    }
+    if (mainPage && alertRuleDetails?.project) {
+      handleProjectChange(alertRuleDetails.project);
+    }
     trackEvent(Events.alertEditClicked, {
       [PropertyName.id]: alertRuleDetails.id,
     });
-    handleStartCreatingAlerts();
+    setCurrentTab(1);
+    setOpenCreateAlerts(true);
   };
 
   const handleViewTraceClick = () => {
@@ -227,12 +279,12 @@ export default function AlertsSheetView() {
     if (openSheetView) {
       trackEvent(Events.alertMuteClicked, {
         [PropertyName.list]: [openSheetView],
-        [PropertyName.toggle]: alertRuleDetails?.isMute ? "Unmute" : "Mute",
+        [PropertyName.toggle]: alertIsMuted ? "Unmute" : "Mute",
         [PropertyName.source]: "alert_edit",
       });
       mutateAlerts({
         ids: [openSheetView],
-        is_mute: !alertRuleDetails?.isMute,
+        is_mute: !alertIsMuted,
       });
     }
   };
@@ -240,7 +292,7 @@ export default function AlertsSheetView() {
     <>
       <Drawer
         anchor={"bottom"}
-        open={!!openSheetView}
+        open={!!openSheetView && !openCreateAlerts}
         onClose={() => {
           if (mainPage) {
             handleProjectChange(null);
@@ -299,6 +351,7 @@ export default function AlertsSheetView() {
                 </Typography>
               </Stack>
               <IconButton
+                data-alert-sheet-action="close"
                 onClick={() => {
                   if (mainPage) {
                     handleProjectChange(null);
@@ -341,8 +394,9 @@ export default function AlertsSheetView() {
                 <Button
                   variant="outlined"
                   size="small"
+                  data-alert-sheet-action={alertIsMuted ? "unmute" : "mute"}
                   startIcon={
-                    alertRuleDetails?.isMute ? (
+                    alertIsMuted ? (
                       <SvgColor src="/assets/icons/ic_mute.svg" />
                     ) : (
                       <SvgColor src="/assets/icons/ic_unmute.svg" />
@@ -351,11 +405,12 @@ export default function AlertsSheetView() {
                   disabled={isMutingAlerts}
                   onClick={handleToggleMute}
                 >
-                  {alertRuleDetails?.isMute ? "Unmute" : "Mute"}
+                  {alertIsMuted ? "Unmute" : "Mute"}
                 </Button>
                 <Button
                   variant="outlined"
                   size="small"
+                  data-alert-sheet-action="duplicate"
                   startIcon={<SvgColor src="/assets/icons/ic_duplicate.svg" />}
                   onClick={() => setDuplicateModal(true)}
                 >
@@ -364,6 +419,7 @@ export default function AlertsSheetView() {
                 <Button
                   variant="outlined"
                   size="small"
+                  data-alert-sheet-action="view-trace"
                   startIcon={<SvgColor src="/assets/icons/custom/eye.svg" />}
                   onClick={handleViewTraceClick}
                 >
@@ -372,7 +428,9 @@ export default function AlertsSheetView() {
                 <Button
                   variant="outlined"
                   size="small"
+                  data-alert-sheet-action="edit"
                   startIcon={<SvgColor src="/assets/icons/ic_edit.svg" />}
+                  disabled={!hasLoadedAlertDetails}
                   onClick={handleEditClick}
                 >
                   Edit Rule
@@ -380,7 +438,25 @@ export default function AlertsSheetView() {
               </Stack>
             </Stack>
           </Stack>
-          {renderChart()}
+          {graphState.showError && (
+            <Alert
+              severity="error"
+              sx={{ mb: 2 }}
+              action={
+                <Button
+                  color="inherit"
+                  size="small"
+                  disabled={isGraphFetching}
+                  onClick={() => refetchGraph()}
+                >
+                  {isGraphFetching ? "Retrying…" : "Retry"}
+                </Button>
+              }
+            >
+              {MONITOR_GRAPH_ERROR_MESSAGE}
+            </Alert>
+          )}
+          {graphState.showGraph && renderChart()}
           <Grid
             container
             sx={{

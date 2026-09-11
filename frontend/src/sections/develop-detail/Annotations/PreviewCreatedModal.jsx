@@ -33,7 +33,7 @@ export default function PreviewCreatedModal({
     queryFn: () =>
       axios.get(endpoints.annotation.annotateRow(annotationId), {
         params: {
-          rowOrder: columnConfig ? columnConfig?.lowestUnfinishedRow : 0,
+          row_order: columnConfig ? columnConfig?.lowestUnfinishedRow : 0,
         },
       }),
     enabled: !!annotationId,

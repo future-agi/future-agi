@@ -5,13 +5,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
 func TestSyncFromControlPlane_Success(t *testing.T) {
 	// Mock Django bulk endpoint.
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/agentcc/org-configs/bulk/" {
+		if r.URL.Path != "/agentcc/org-configs/bulk/" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		if r.Header.Get("Authorization") != "Bearer test-token" {
@@ -90,8 +91,8 @@ func TestSyncFromControlPlane_ServerDown(t *testing.T) {
 	store := NewStore()
 	// Use a URL that will fail to connect.
 	err := SyncFromControlPlane(context.Background(), "http://127.0.0.1:1", "token", store)
-	if err != nil {
-		t.Fatalf("expected nil error (non-fatal), got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "control plane unreachable") {
+		t.Fatalf("expected control plane unreachable error, got: %v", err)
 	}
 	if store.Count() != 0 {
 		t.Errorf("expected empty store, got %d", store.Count())
@@ -107,8 +108,8 @@ func TestSyncFromControlPlane_Non200(t *testing.T) {
 
 	store := NewStore()
 	err := SyncFromControlPlane(context.Background(), ts.URL, "token", store)
-	if err != nil {
-		t.Fatalf("expected nil error (non-fatal), got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "control plane returned status 500") {
+		t.Fatalf("expected non-200 error, got: %v", err)
 	}
 	if store.Count() != 0 {
 		t.Errorf("expected empty store, got %d", store.Count())
@@ -126,8 +127,8 @@ func TestSyncFromControlPlane_StatusFalse(t *testing.T) {
 
 	store := NewStore()
 	err := SyncFromControlPlane(context.Background(), ts.URL, "token", store)
-	if err != nil {
-		t.Fatalf("expected nil error, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "status=false") {
+		t.Fatalf("expected status=false error, got: %v", err)
 	}
 	if store.Count() != 0 {
 		t.Errorf("expected empty store, got %d", store.Count())

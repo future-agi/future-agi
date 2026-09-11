@@ -14,7 +14,7 @@ import FileCellRenderer from "../../common/DevelopCellRenderer/CellRenderers/Fil
 import PersonaCellRenderer from "src/sections/common/DevelopCellRenderer/CellRenderers/PersonaCellRenderer";
 
 const ScenarioCellRenderer = (props) => {
-  const dataType = props?.value?.dataType;
+  const dataType = props?.value?.data_type;
   const value = props?.value?.value;
   const column = props?.column;
   const cellData = props?.data?.[props?.column?.colId];

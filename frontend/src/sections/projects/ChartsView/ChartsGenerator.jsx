@@ -22,6 +22,20 @@ const ChartsGenerator = ({
   groupName,
 }) => {
   const theme = useTheme();
+  const seriesTotal = React.useMemo(
+    () =>
+      (series || []).reduce(
+        (seriesSum, item) =>
+          seriesSum +
+          (item?.data || []).reduce((pointSum, point) => {
+            const value = Array.isArray(point) ? point[1] : point?.y;
+            const numeric = Number(value);
+            return pointSum + (Number.isFinite(numeric) ? numeric : 0);
+          }, 0),
+        0,
+      ),
+    [series],
+  );
   const onMouseMove = throttle(() => {
     trackEvent(Events.hover, {
       [PropertyName.formFields]: { "Chart Name": label },
@@ -160,6 +174,8 @@ const ChartsGenerator = ({
   };
   return (
     <Box
+      data-chart-label={label}
+      data-chart-total={seriesTotal}
       sx={{
         border: "1px solid",
         borderColor: "divider",

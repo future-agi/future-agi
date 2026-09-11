@@ -34,8 +34,7 @@ const UserList = () => {
   const activeViewConfig = useMemo(() => {
     if (!activeTab?.startsWith?.("view-")) return null;
     const id = activeTab.slice(5);
-    const list =
-      savedViewsData?.customViews ?? savedViewsData?.custom_views ?? [];
+    const list = savedViewsData?.custom_views ?? [];
     return list.find((v) => v.id === id)?.config ?? null;
   }, [activeTab, savedViewsData]);
 

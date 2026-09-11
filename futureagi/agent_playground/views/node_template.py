@@ -1,9 +1,12 @@
 import structlog
 from django.core.exceptions import ValidationError
+from django.utils.decorators import method_decorator
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
 from agent_playground.models.node_template import NodeTemplate
+from agent_playground.serializers.contracts import AGENT_PLAYGROUND_ERROR_RESPONSES
 from agent_playground.serializers.node_template import (
     NodeTemplateDetailSerializer,
     NodeTemplateListSerializer,
@@ -13,7 +16,13 @@ from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
 
+agent_playground_errors = swagger_auto_schema(
+    responses=AGENT_PLAYGROUND_ERROR_RESPONSES
+)
 
+
+@method_decorator(name="list", decorator=agent_playground_errors)
+@method_decorator(name="retrieve", decorator=agent_playground_errors)
 class NodeTemplateViewSet(ModelViewSet):
     """
     Read-only ViewSet for NodeTemplate.

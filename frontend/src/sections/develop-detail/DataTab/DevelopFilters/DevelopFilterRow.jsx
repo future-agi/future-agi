@@ -29,7 +29,7 @@ const DevelopFilterRow = ({
     (e) => {
       const columnId = e.target.value;
       const column = allColumns.find((col) => col.field === columnId);
-      const colDataType = column?.col?.data_type ?? column?.col?.dataType;
+      const colDataType = column?.col?.data_type;
       const filterType = MapColumnTypeToFilterType[colDataType];
 
       updateFilter(filter.id, (internalFilter) => ({
@@ -48,7 +48,7 @@ const DevelopFilterRow = ({
   const allowedColumns = useMemo(
     () =>
       allColumns.filter((column) => {
-        const colDataType = column?.col?.data_type ?? column?.col?.dataType;
+        const colDataType = column?.col?.data_type;
         return allowedColumnTypes?.includes(colDataType);
       }),
     [allColumns],
@@ -72,7 +72,7 @@ const DevelopFilterRow = ({
           value={filter.columnId}
           sx={{ minWidth: "263px" }}
           options={allowedColumns.map((column) => {
-            const colDataType = column?.col?.data_type ?? column?.col?.dataType;
+            const colDataType = column?.col?.data_type;
             const displayName =
               colDataType === "audio"
                 ? `${column.headerName} duration`

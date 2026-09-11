@@ -118,7 +118,7 @@ const ManageMonitorSettings = ({
           (alertData ? selectedMetric?.id : selectedMetricId) +
           "/",
       ),
-    enabled: !!selectedMetricId && selectedMetric?.outputType === "choices",
+    enabled: !!selectedMetricId && selectedMetric?.output_type === "choices",
     select: (data) => data?.data?.config?.choices,
   });
 
@@ -141,16 +141,16 @@ const ManageMonitorSettings = ({
     if (!metric) {
       return "will detect anomalies when evaluation";
     }
-    if (metric.metricType === "system_metric") {
+    if (metric.output_type === "system_metric") {
       return "will detect anomalies that are";
     }
-    if (metric.outputType === "score") {
+    if (metric.output_type === "score") {
       return "will detect anomalies when metric is";
     }
-    if (metric.outputType === "choices") {
+    if (metric.output_type === "choices") {
       return "will detect anomalies when values of";
     }
-    if (metric.outputType === "Pass/Fail") {
+    if (metric.output_type === "Pass/Fail") {
       return "will detect anomalies when";
     }
     return "will detect anomalies that are";
@@ -189,20 +189,26 @@ const ManageMonitorSettings = ({
   };
 
   useEffect(() => {
-    if (selectedMetric?.outputType === "Pass/Fail" && !thresholdMetricValue) {
+    if (selectedMetric?.output_type === "Pass/Fail" && !thresholdMetricValue) {
       setThresholdMetricValue(
         metricOptionsConfig["Pass/Fail"].options[0].value,
       );
     }
 
     if (
-      selectedMetric?.outputType === "choices" &&
+      selectedMetric?.output_type === "choices" &&
       choices?.length > 0 &&
       !thresholdMetricValue
     ) {
       setThresholdMetricValue(choices[0]);
     }
-  }, [selectedMetric, choices, selectedMetricId]);
+  }, [
+    selectedMetric,
+    choices,
+    selectedMetricId,
+    setThresholdMetricValue,
+    thresholdMetricValue,
+  ]);
 
   if (isLoadingAlertData && alertData) {
     return <AlertSettingSkeleton />;
@@ -350,15 +356,19 @@ const ManageMonitorSettings = ({
                   >
                     {getMetricMessage(selectedMetric)}
                   </Typography>
-                  {selectedMetric?.outputType === "Pass/Fail" && (
+                  {selectedMetric?.output_type === "Pass/Fail" && (
                     <>
                       <FormControl size="small" sx={{ flex: 1 }}>
                         <InputLabel>
-                          {metricOptionsConfig[selectedMetric.outputType].label}
+                          {
+                            metricOptionsConfig[selectedMetric.output_type]
+                              .label
+                          }
                         </InputLabel>
                         <Select
                           label={
-                            metricOptionsConfig[selectedMetric.outputType].label
+                            metricOptionsConfig[selectedMetric.output_type]
+                              .label
                           }
                           value={thresholdMetricValue}
                           onChange={(e) =>
@@ -366,7 +376,7 @@ const ManageMonitorSettings = ({
                           }
                         >
                           {metricOptionsConfig[
-                            selectedMetric.outputType
+                            selectedMetric.output_type
                           ].options.map((option) => (
                             <MenuItem key={option.value} value={option.value}>
                               {option.label}
@@ -381,13 +391,13 @@ const ManageMonitorSettings = ({
                         sx={{ color: "text.primary" }}
                       >
                         {
-                          metricOptionsConfig[selectedMetric.outputType]
+                          metricOptionsConfig[selectedMetric.output_type]
                             .suffixText
                         }
                       </Typography>
                     </>
                   )}
-                  {selectedMetric?.outputType === "choices" && (
+                  {selectedMetric?.output_type === "choices" && (
                     <FormSearchSelectFieldState
                       label="Choices"
                       placeholder="Select Choice"
@@ -412,7 +422,7 @@ const ManageMonitorSettings = ({
                     width: "100%",
                   }}
                 >
-                  {selectedMetric?.outputType === "choices" && (
+                  {selectedMetric?.output_type === "choices" && (
                     <Typography
                       variant="s1"
                       fontWeight={"fontWeightRegular"}
@@ -446,13 +456,13 @@ const ManageMonitorSettings = ({
                   <FormTextFieldV2
                     size="small"
                     label={
-                      selectedMetric?.metricType === "system_metric"
+                      selectedMetric?.output_type === "system_metric"
                         ? "Value"
                         : "Percentage"
                     }
                     fieldName="thresholdValue"
                     placeholder={
-                      selectedMetric?.metricType === "system_metric"
+                      selectedMetric?.output_type === "system_metric"
                         ? "Enter value"
                         : "Enter percentage"
                     }

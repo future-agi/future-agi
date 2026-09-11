@@ -41,13 +41,20 @@ const PAGE_CONTEXT_MAP = [
     entity: "knowledge_base",
   },
   { prefix: "/dashboard/knowledge", page: "datasets" },
-  { prefix: "/dashboard/annotations", page: "evaluations" },
+  {
+    prefix: "/dashboard/annotations/queues/",
+    page: "annotation_queues",
+    entity: "annotation_queue",
+  },
+  { prefix: "/dashboard/annotations/queues", page: "annotation_queues" },
+  { prefix: "/dashboard/annotations/labels", page: "annotation_labels" },
+  { prefix: "/dashboard/annotations", page: "annotations" },
   { prefix: "/dashboard/alerts", page: "tracing" },
   { prefix: "/dashboard/users", page: "admin" },
   { prefix: "/dashboard/keys", page: "admin" },
   { prefix: "/dashboard/settings", page: "settings" },
   { prefix: "/dashboard/gateway", page: "gateway" },
-  { prefix: "/dashboard/feed", page: "tracing" },
+  { prefix: "/dashboard/error-feed", page: "tracing" },
   { prefix: "/dashboard/tasks", page: "tracing" },
 ];
 

@@ -20,6 +20,7 @@ import {
 } from "@xyflow/react";
 import { useParams } from "react-router";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import axios, { endpoints } from "src/utils/axios";
 import useKpis from "src/hooks/useKpis";
 import GraphView from "src/components/GraphBuilder/GraphView";
@@ -200,12 +201,15 @@ const PathAnalysisView = ({
   data,
   scenarioId,
   openedExecutionId,
+  testExecutionId,
   enabled,
   viewMode = "checklist",
   onRequestTranscript,
 }) => {
   const { executionId } = useParams();
   const seekTo = useVoiceAudioStore((s) => s.seekTo);
+  const resolvedTestExecutionId = testExecutionId || executionId;
+  const responseScenarioGraph = data?.scenario_graph || null;
 
   // `viewMode` is controlled by the parent (VoiceLeftPanel). Fullscreen
   // remains local so it only matters while the user is on one of the
@@ -219,9 +223,13 @@ const PathAnalysisView = ({
   // parent tab bar level.
   const [selectedStepName, setSelectedStepName] = useState(null);
 
-  const { data: kpis, isLoading: isKpisLoading } = useKpis(executionId, {
-    enabled: false,
-  });
+  const { data: kpis, isLoading: isKpisLoading } = useKpis(
+    resolvedTestExecutionId,
+    {
+      enabled:
+        !!enabled && !!resolvedTestExecutionId && !responseScenarioGraph?.nodes,
+    },
+  );
 
   const {
     data: flowAnalysis,
@@ -235,11 +243,24 @@ const PathAnalysisView = ({
     select: (res) => res.data,
   });
 
-  const scenarioGraph = kpis?.scenarioGraphs?.[scenarioId];
+  const scenarioGraphs = kpis?.scenario_graphs || kpis?.scenarioGraphs || {};
+  const scenarioGraph = responseScenarioGraph?.nodes
+    ? responseScenarioGraph
+    : scenarioGraphs?.[scenarioId];
+  const analysis = flowAnalysis?.analysis || {};
+  const currentPath =
+    analysis.current_path ?? analysis.currentPath ?? undefined;
+  const expectedPath =
+    analysis.expected_path ?? analysis.expectedPath ?? undefined;
+  const newNodes = analysis.new_nodes ?? analysis.newNodes ?? [];
+  const newEdges = analysis.new_edges ?? analysis.newEdges ?? [];
+  const analysisSummary =
+    analysis.analysis_summary ?? analysis.analysisSummary ?? "";
+  const requiresFlowAnalysis = !!openedExecutionId;
 
   const turns = useMemo(() => {
     const raw = (data?.transcript || []).filter(
-      (t) => (t.speakerRole || t.role) !== "system",
+      (t) => (t.speaker_role || t.role) !== "system",
     );
     return enrichTurns(raw);
   }, [data]);
@@ -247,22 +268,20 @@ const PathAnalysisView = ({
   const steps = useMemo(() => {
     const nodes = scenarioGraph?.nodes || [];
     if (!nodes.length) return [];
-    const expectedPath = flowAnalysis?.analysis?.expectedPath;
     if (Array.isArray(expectedPath) && expectedPath.length) {
       const byName = new Map(nodes.map((n) => [n.name, n]));
       return expectedPath.map((name) => byName.get(name)).filter(Boolean);
     }
     return nodes;
-  }, [scenarioGraph, flowAnalysis]);
+  }, [scenarioGraph, expectedPath]);
 
   const currentPathNames = useMemo(() => {
-    const cp = flowAnalysis?.analysis?.currentPath;
-    return Array.isArray(cp) ? new Set(cp) : new Set();
-  }, [flowAnalysis]);
+    return Array.isArray(currentPath) ? new Set(currentPath) : new Set();
+  }, [currentPath]);
 
   // Per-step analysis — precompute once.
   //
-  // Pass/fail source of truth is `flowAnalysis.currentPath` — the same
+  // Pass/fail source of truth is `flowAnalysis.analysis.current_path` — the same
   // list the Graph view uses — so the two views always agree on which
   // scenario steps were addressed.
   //
@@ -277,9 +296,7 @@ const PathAnalysisView = ({
   const stepRows = useMemo(() => {
     if (!steps.length || !turns.length) return [];
     const turnTokens = turns.map((t) => tokenize(t.content));
-    const currentPathList = Array.isArray(flowAnalysis?.analysis?.currentPath)
-      ? flowAnalysis.analysis.currentPath
-      : null;
+    const currentPathList = Array.isArray(currentPath) ? currentPath : null;
 
     // Sequential claim: stepName → { idx, score }. Later-occurring
     // duplicates (same step hit twice) overwrite; that's fine for MVP.
@@ -314,12 +331,12 @@ const PathAnalysisView = ({
       const confirmed = currentPathNames.has(step.name);
 
       // Fallback similarity scan — only for cases where flowAnalysis
-      // isn't available (currentPath is null). When flowAnalysis is
+      // isn't available (current_path is null). When flowAnalysis is
       // present, we trust its pass/fail exclusively so the Graph and
       // Checklist always agree.
       let bestIdx = claim?.idx ?? -1;
       let bestScore = claim?.score ?? 0;
-      if (!flowAnalysis?.analysis?.currentPath && bestIdx < 0) {
+      if (!requiresFlowAnalysis && !currentPath && bestIdx < 0) {
         const target = tokenize(stepTargetText(step));
         turnTokens.forEach((tt, i) => {
           const score = overlapCoefficient(target, tt);
@@ -335,7 +352,7 @@ const PathAnalysisView = ({
       // pass vs miss. The similarity score is only cosmetic (shown as
       // "% match") and used for the partial state when there's no
       // authority.
-      const status = flowAnalysis?.analysis?.currentPath
+      const status = currentPath
         ? confirmed
           ? "pass"
           : "miss"
@@ -356,7 +373,7 @@ const PathAnalysisView = ({
         keywords,
       };
     });
-  }, [steps, turns, flowAnalysis, currentPathNames]);
+  }, [steps, turns, currentPath, currentPathNames, requiresFlowAnalysis]);
 
   const coverage = useMemo(() => {
     if (!stepRows.length) return { pass: 0, partial: 0, miss: 0, total: 0 };
@@ -379,8 +396,8 @@ const PathAnalysisView = ({
   // ── Divergence — the first index where current and expected disagree ──
   // This powers the one-line breadcrumb above the graph / timeline views.
   const divergence = useMemo(() => {
-    const cp = flowAnalysis?.analysis?.currentPath;
-    const ep = flowAnalysis?.analysis?.expectedPath;
+    const cp = currentPath;
+    const ep = expectedPath;
     if (!Array.isArray(cp) || !Array.isArray(ep)) return null;
     const len = Math.max(cp.length, ep.length);
     for (let i = 0; i < len; i++) {
@@ -393,14 +410,10 @@ const PathAnalysisView = ({
       }
     }
     return null;
-  }, [flowAnalysis]);
+  }, [currentPath, expectedPath]);
 
   // ── Legacy graph view ───────────────────────────────────────────────────
   const { graphNodes, graphEdges } = useMemo(() => {
-    const currentPath = flowAnalysis?.analysis?.currentPath;
-    const expectedPath = flowAnalysis?.analysis?.expectedPath;
-    const newNodes = flowAnalysis?.analysis?.newNodes;
-    const newEdges = flowAnalysis?.analysis?.newEdges;
     if (
       !scenarioGraph?.nodes ||
       !Array.isArray(currentPath) ||
@@ -459,10 +472,20 @@ const PathAnalysisView = ({
       },
     }));
     return { graphNodes: recoloredNodes, graphEdges: edges };
-  }, [scenarioGraph, flowAnalysis, selectedStepName]);
+  }, [
+    scenarioGraph,
+    currentPath,
+    expectedPath,
+    newNodes,
+    newEdges,
+    selectedStepName,
+  ]);
 
   // ── Loading / empty ─────────────────────────────────────────────────────
   const loading = isKpisLoading || isFlowLoading;
+  const missingFlowAnalysis =
+    requiresFlowAnalysis && (isFlowError || !Array.isArray(currentPath));
+
   if (loading) {
     return (
       <Box
@@ -477,6 +500,32 @@ const PathAnalysisView = ({
         <CircularProgress size={16} thickness={5} />
         <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
           Analyzing your flow…
+        </Typography>
+      </Box>
+    );
+  }
+  if (missingFlowAnalysis) {
+    return (
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          minHeight: 220,
+          gap: 1,
+          p: 2,
+        }}
+      >
+        <Iconify
+          icon="mdi:graph-outline"
+          width={28}
+          sx={{ color: "text.disabled" }}
+        />
+        <Typography
+          sx={{ fontSize: 12, color: "text.secondary", textAlign: "center" }}
+        >
+          This call does not have enough data to analyze its flow.
         </Typography>
       </Box>
     );
@@ -593,7 +642,7 @@ const PathAnalysisView = ({
       {viewMode === "graph" && divergence && (
         <DivergenceBreadcrumb
           divergence={divergence}
-          newNodes={flowAnalysis?.analysis?.newNodes || []}
+          newNodes={newNodes}
           onJump={(name) => setSelectedStepName(name)}
         />
       )}
@@ -690,7 +739,7 @@ const PathAnalysisView = ({
                 <Box sx={{ ml: 1 }}>
                   <DivergenceBreadcrumb
                     divergence={divergence}
-                    newNodes={flowAnalysis?.analysis?.newNodes || []}
+                    newNodes={newNodes}
                     onJump={(name) => {
                       setSelectedStepName(name);
                       setFullscreen(false);
@@ -715,7 +764,7 @@ const PathAnalysisView = ({
       </Modal>
 
       {/* Analysis summary — always visible, small */}
-      {flowAnalysis?.analysis?.analysisSummary && (
+      {analysisSummary && (
         <Box
           sx={{
             border: "1px solid",
@@ -756,7 +805,7 @@ const PathAnalysisView = ({
               whiteSpace: "pre-wrap",
             }}
           >
-            {flowAnalysis.analysis.analysisSummary}
+            {analysisSummary}
           </Typography>
         </Box>
       )}
@@ -768,6 +817,7 @@ PathAnalysisView.propTypes = {
   data: PropTypes.object,
   scenarioId: PropTypes.string,
   openedExecutionId: PropTypes.string,
+  testExecutionId: PropTypes.string,
   enabled: PropTypes.bool,
   viewMode: PropTypes.oneOf(["checklist", "graph"]),
   onRequestTranscript: PropTypes.func,
@@ -1518,17 +1568,23 @@ const PathStepNode = React.memo(({ data }) => {
   const prompt = data?.prompt;
 
   return (
-    <Tooltip
+    <CustomTooltip
+      show
       arrow
       placement="top"
       title={
         <Box sx={{ maxWidth: 280 }}>
-          <Typography sx={{ fontSize: 11, fontWeight: 700 }}>
+          <Typography sx={{ typography: "c1", color: "text.primary" }}>
             {data?.name}
           </Typography>
           {opener && (
             <Typography
-              sx={{ fontSize: 10, mt: 0.25, color: "text.secondary" }}
+              sx={{
+                typography: "s3",
+                mt: 0.5,
+                color: "text.secondary",
+                lineHeight: 1.4,
+              }}
             >
               “{opener.slice(0, 160)}
               {opener.length > 160 ? "…" : ""}”
@@ -1537,10 +1593,11 @@ const PathStepNode = React.memo(({ data }) => {
           {prompt && (
             <Typography
               sx={{
-                fontSize: 9.5,
+                typography: "s3",
                 mt: 0.5,
-                color: "text.disabled",
+                color: "text.secondary",
                 fontStyle: "italic",
+                lineHeight: 1.4,
               }}
             >
               {prompt.slice(0, 180)}
@@ -1563,7 +1620,9 @@ const PathStepNode = React.memo(({ data }) => {
           bgcolor: data?.isSelected ? alpha(color, 0.28) : alpha(color, 0.14),
           cursor: "pointer",
           transition: "transform 120ms, box-shadow 120ms",
-          boxShadow: data?.isSelected ? `0 0 0 3px ${alpha(color, 0.35)}` : "none",
+          boxShadow: data?.isSelected
+            ? `0 0 0 3px ${alpha(color, 0.35)}`
+            : "none",
           "&:hover": {
             transform: "scale(1.04)",
             boxShadow: data?.isSelected
@@ -1598,7 +1657,7 @@ const PathStepNode = React.memo(({ data }) => {
           style={{ background: color, width: 6, height: 6, border: "none" }}
         />
       </Box>
-    </Tooltip>
+    </CustomTooltip>
   );
 });
 

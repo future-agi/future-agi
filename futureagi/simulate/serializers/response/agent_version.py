@@ -48,10 +48,23 @@ class AgentVersionResponseSerializer(serializers.ModelSerializer):
             for key in ["organization", "knowledge_base", "workspace", "id"]:
                 if key in snapshot and snapshot[key] is not None:
                     snapshot[key] = str(snapshot[key])
-            # Mask sensitive secret so frontend knows it's set but can't read it
-            if "livekit_api_secret" in snapshot and snapshot["livekit_api_secret"]:
-                snapshot["livekit_api_secret"] = "********"
         data["configuration_snapshot"] = snapshot
+        try:
+            creds = instance.credentials
+            data["api_key"] = creds.get_masked_api_key()
+            # The persisted snapshot omits secrets, so the edit form's LiveKit
+            # key/secret fields render blank. Surface display-only masked
+            # values here (never persisted) so the form shows a credential is
+            # set; a masked value round-trips untouched via ``_apply_secrets``.
+            if isinstance(snapshot, dict) and creds.provider_type == "livekit":
+                snapshot = {**snapshot}
+                snapshot["livekit_api_key"] = (
+                    creds.get_masked_api_key() if creds.api_key else ""
+                )
+                snapshot["livekit_api_secret"] = creds.get_masked_api_secret()
+                data["configuration_snapshot"] = snapshot
+        except AgentVersion.credentials.RelatedObjectDoesNotExist:
+            pass
         return data
 
     def get_version_name_display(self, obj):

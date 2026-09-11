@@ -14,6 +14,7 @@ import { useForm } from "react-hook-form";
 import { useQuery } from "@tanstack/react-query";
 import { enqueueSnackbar } from "notistack";
 import axios, { endpoints } from "src/utils/axios";
+import { copyToClipboard as copyTextToClipboard } from "src/utils/utils";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
 
@@ -57,14 +58,13 @@ const AddRowData = ({ dataset }) => {
   const [currentTab, setCurrentTab] = useState("python");
 
   const copyToClipboard = (text, type) => {
-    navigator.clipboard
-      .writeText(text)
-      .then(() => {
+    copyTextToClipboard(text).then((ok) => {
+      if (ok) {
         enqueueSnackbar(`${type} copied to clipboard!`, { variant: "success" });
-      })
-      .catch(() => {
+      } else {
         enqueueSnackbar(`Failed to copy ${type}`, { variant: "error" });
-      });
+      }
+    });
   };
 
   const { data, isLoading } = useQuery({
@@ -75,9 +75,9 @@ const AddRowData = ({ dataset }) => {
     },
   });
   useMemo(() => {
-    setValue("Pcode", data?.result?.code?.pythonAddCol || "");
-    setValue("Tcode", data?.result?.code?.typescriptAddCol || "");
-    setValue("CUcode", data?.result?.code?.curlAddCol || "");
+    setValue("Pcode", data?.result?.code?.python_add_col || "");
+    setValue("Tcode", data?.result?.code?.typescript_add_col || "");
+    setValue("CUcode", data?.result?.code?.curl_add_col || "");
   }, [data, setValue]);
 
   if (isLoading) {

@@ -84,7 +84,7 @@ export const enrichTurns = (transcript) => {
 
   // Step 1: raw extract
   const raw = transcript.map((item, i) => {
-    const role = normalizeRole(item.speakerRole || item.role);
+    const role = normalizeRole(item.speaker_role || item.role);
     const start = readTime(item, [
       "startTimeSeconds",
       "start_time_seconds",
@@ -110,7 +110,7 @@ export const enrichTurns = (transcript) => {
     return {
       id: item.id ?? `turn-${i}`,
       role,
-      rawRole: item.speakerRole || item.role,
+      rawRole: item.speaker_role || item.role,
       content: getContent(item),
       start,
       end,
@@ -291,7 +291,6 @@ export const computeCallMetrics = (turns) => {
       }
     }
   }
-
 
   return {
     duration: lastEnd > 0 ? lastEnd : null,

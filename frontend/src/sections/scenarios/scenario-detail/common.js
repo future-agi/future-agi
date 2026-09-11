@@ -11,9 +11,11 @@ export function normalizeGraph(graph) {
     position: undefined,
     selected: undefined,
     dragging: undefined,
+    deletable: undefined,
     data: {
       ...data,
       editMode: undefined, // ignore editMode
+      highlightColor: undefined, // ignore transient orphan highlight
     },
   }));
 

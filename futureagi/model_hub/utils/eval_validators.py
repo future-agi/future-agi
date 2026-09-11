@@ -114,6 +114,34 @@ def validate_required_key_mapping(mapping: dict, required_keys: list[str]) -> li
     return [k for k in required_keys if k not in mapping or not mapping[k]]
 
 
+def get_required_mapping_keys_for_template(template) -> list[str]:
+    """Return required input keys for single and composite eval bindings."""
+    if getattr(template, "template_type", "single") != "composite":
+        config = getattr(template, "config", None) or {}
+        if not isinstance(config, dict):
+            return []
+        return list(config.get("required_keys") or config.get("requiredKeys") or [])
+
+    from model_hub.models.evals_metric import CompositeEvalChild
+
+    keys = []
+    seen = set()
+    child_links = (
+        CompositeEvalChild.objects.filter(parent=template, deleted=False)
+        .select_related("child")
+        .order_by("order")
+    )
+    for link in child_links:
+        config = getattr(link.child, "config", None) or {}
+        if not isinstance(config, dict):
+            continue
+        for key in config.get("required_keys") or config.get("requiredKeys") or []:
+            if key not in seen:
+                seen.add(key)
+                keys.append(key)
+    return keys
+
+
 def validate_eval_template_org_access(template_id, organization):
     """Look up an eval template with organization scoping.
 

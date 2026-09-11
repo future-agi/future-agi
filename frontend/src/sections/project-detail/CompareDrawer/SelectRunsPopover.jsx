@@ -20,6 +20,9 @@ import { useScrollEnd } from "src/hooks/use-scroll-end";
 import axios, { endpoints } from "src/utils/axios";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 
+const getProjectVersionIds = (result) =>
+  result?.projectVersionIds || result?.project_version_ids || [];
+
 const SelectRunsPopover = ({
   open,
   onClose,
@@ -50,7 +53,7 @@ const SelectRunsPopover = ({
   const list = useMemo(
     () =>
       data?.pages.reduce(
-        (acc, curr) => [...acc, ...curr.data.result.projectVersionIds],
+        (acc, curr) => [...acc, ...getProjectVersionIds(curr.data.result)],
         [],
       ) || [],
     [data],

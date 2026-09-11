@@ -1,8 +1,8 @@
 import { Box, Button, Popper, Skeleton, Typography } from "@mui/material";
-import React, { useEffect, useMemo, useRef } from "react";
+import React, { useEffect, useRef } from "react";
 import PropTypes from "prop-types";
-import { useInfiniteQuery, useMutation } from "@tanstack/react-query";
-import axios, { endpoints } from "src/utils/axios";
+import { useMutation } from "@tanstack/react-query";
+import { useWorkspacesList } from "src/api/workspaces/list";
 import SVGColor from "src/components/svg-color";
 import Iconify from "src/components/iconify";
 import { useCreateWorkspaceModal } from "../states";
@@ -24,21 +24,12 @@ const SelectWorkspaceChild = React.forwardRef(
     const newWorkspaceId = useRef(null);
     const canCreateWorkspace = typeof orgLevel === "number" && orgLevel >= 8;
 
-    const { data, fetchNextPage, isPending, isFetchingNextPage } =
-      useInfiniteQuery({
-        queryFn: ({ pageParam }) =>
-          axios.get(endpoints.workspaces.list, {
-            params: {
-              page: pageParam,
-              limit: 10,
-            },
-          }),
-        queryKey: ["workspaces-list"],
-        getNextPageParam: ({ data }) =>
-          data?.next ? data?.current_page + 1 : null,
-        initialPageParam: 1,
-        staleTime: Infinity,
-      });
+    const {
+      data: workspaces,
+      fetchNextPage,
+      isPending,
+      isFetchingNextPage,
+    } = useWorkspacesList();
 
     const { mutate: doSwitch, isPending: isSwitching } = useMutation({
       mutationFn: (newId) => switchWorkspace(newId, currentWorkspaceId),
@@ -55,17 +46,11 @@ const SelectWorkspaceChild = React.forwardRef(
       },
     });
 
-    const workspaces = useMemo(
-      () => data?.pages.flatMap((page) => page.data.results),
-      [data],
-    );
-
     // Sync sidebar display name with the authoritative workspace list
     useEffect(() => {
       if (!workspaces || !currentWorkspaceId) return;
       const current = workspaces.find((ws) => ws.id === currentWorkspaceId);
-      const latestName =
-        current?.display_name || current?.displayName || current?.name;
+      const latestName = current?.display_name || current?.name;
       if (latestName && latestName !== currentWorkspaceDisplayName) {
         updateWorkspaceName(latestName);
       }
@@ -174,9 +159,7 @@ const SelectWorkspaceChild = React.forwardRef(
                   color="text.primary"
                   fontWeight={500}
                 >
-                  {workspace.display_name ||
-                    workspace.displayName ||
-                    workspace.name}
+                  {workspace.display_name || workspace.name}
                 </Typography>
                 <ShowComponent condition={workspace.id === currentWorkspaceId}>
                   <Iconify

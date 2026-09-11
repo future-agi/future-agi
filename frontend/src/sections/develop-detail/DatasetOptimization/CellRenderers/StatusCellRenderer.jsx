@@ -54,7 +54,6 @@ const StatusCellRenderer = ({ value, data }) => {
   }));
 
   const handleRerun = () => {
-    // Note: Backend response uses camelCase (Django middleware converts snake_case to camelCase)
     // Convert optimizer_config keys to snake_case since the form expects snake_case
     const snakeCaseConfig = convertKeysToSnakeCase(data?.optimizerConfig);
 

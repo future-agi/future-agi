@@ -1,12 +1,15 @@
 import structlog
 from django.db import transaction
 from django.utils import timezone
+from django.utils.decorators import method_decorator
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import GenericViewSet
 
 from agent_playground.models.choices import GraphVersionStatus
 from agent_playground.models.graph_dataset import GraphDataset
 from agent_playground.models.graph_version import GraphVersion
+from agent_playground.serializers.contracts import AGENT_PLAYGROUND_ERROR_RESPONSES
 from agent_playground.serializers.dataset_link import (
     CellUpdateSerializer,
     ColumnSerializer,
@@ -24,7 +27,16 @@ from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
 
+agent_playground_errors = swagger_auto_schema(
+    responses=AGENT_PLAYGROUND_ERROR_RESPONSES
+)
 
+
+@method_decorator(name="retrieve", decorator=agent_playground_errors)
+@method_decorator(name="create_row", decorator=agent_playground_errors)
+@method_decorator(name="delete_rows", decorator=agent_playground_errors)
+@method_decorator(name="update_cell", decorator=agent_playground_errors)
+@method_decorator(name="execute", decorator=agent_playground_errors)
 class GraphDatasetViewSet(GenericViewSet):
     """
     ViewSet for Graph-linked Dataset operations.
@@ -314,6 +326,20 @@ class GraphDatasetViewSet(GenericViewSet):
                 return self._gm.bad_request(serializer.errors)
 
             row_ids = serializer.validated_data.get("row_ids")
+            task_queue = serializer.validated_data.get("task_queue")
+            dataset = graph_dataset.dataset
+
+            if row_ids is not None:
+                rows = Row.no_workspace_objects.filter(id__in=row_ids, dataset=dataset)
+                found_ids = set(rows.values_list("id", flat=True))
+                missing_ids = [str(rid) for rid in row_ids if rid not in found_ids]
+                if missing_ids:
+                    return self._gm.not_found(
+                        {
+                            "message": get_error_message("DATASET_ROWS_NOT_FOUND"),
+                            "missing_ids": missing_ids,
+                        }
+                    )
 
             graph_version = GraphVersion.no_workspace_objects.get(
                 graph=graph_dataset.graph,
@@ -322,8 +348,9 @@ class GraphDatasetViewSet(GenericViewSet):
 
             execution_ids = execute_rows(
                 graph_version=graph_version,
-                dataset=graph_dataset.dataset,
+                dataset=dataset,
                 row_ids=row_ids,
+                task_queue=task_queue,
             )
 
             return self._gm.create_response({"execution_ids": execution_ids})

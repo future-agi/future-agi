@@ -1,4 +1,5 @@
 import {
+  Alert,
   Badge,
   Box,
   Button,
@@ -20,6 +21,8 @@ import { useSnackbar } from "notistack";
 import SvgColor from "src/components/svg-color";
 import Iconify from "src/components/iconify";
 import { ConfirmDialog } from "src/components/custom-dialog";
+import { readObserveProjectPage } from "src/api/project/observe-project-list";
+import { getRequestErrorMessage } from "src/utils/errorUtils";
 
 import ExperimentListView from "./ExperimentListView";
 import ObserveListView from "./ObserveListView";
@@ -27,7 +30,13 @@ import ProjectObserveContextProvider from "./context/ProjectObserveContextProvid
 import ProjectExperimentContextProvider from "./context/ProjectExperimentContextProvider";
 import ProjectRightSection from "./RightSection/ProjectRightSection";
 import ProjectFtux from "./ProjectFtux";
-import ProjectFilterPanel from "./ProjectFilterPanel";
+import TraceFilterPanel from "../projects/LLMTracing/TraceFilterPanel";
+import {
+  PROJECT_FILTER_PROPERTIES,
+  PROJECT_FILTER_DEFAULT_OPERATORS,
+  PROJECT_FILTER_DEFAULT_ROW,
+  projectOperatorFilter,
+} from "./common";
 
 export const SearchFieldBox = styled(Box)(({ theme }) => ({
   display: "flex",
@@ -51,27 +60,26 @@ const ProjectWrapperView = () => {
   const currentTab = location.pathname.split("/").pop();
   const { enqueueSnackbar } = useSnackbar();
   const queryClient = useQueryClient();
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: [`project-${currentTab}-list`],
-    queryFn: () =>
-      axios.get(
-        currentTab === "observe"
-          ? endpoints.project.projectObserveList
-          : endpoints.project.projectExperimentList,
-        {
-          params: {
-            project_type: currentTab === "observe" ? "observe" : "experiment",
-          },
-        },
-      ),
-    select: (data) => data.data,
+    queryFn: ({ signal }) =>
+      currentTab === "observe"
+        ? readObserveProjectPage({ signal })
+        : axios.get(endpoints.project.projectExperimentList, {
+            signal,
+            params: {
+              project_type: "experiment",
+            },
+          }),
+    retry: currentTab === "observe" ? false : 1,
+    select: (response) => (currentTab === "observe" ? response : response.data),
   });
 
   const theme = useTheme();
 
   const isProjectCount =
     currentTab === "observe"
-      ? data?.result?.metadata?.total_rows > 0
+      ? data?.totalRows > 0
       : data?.result?.projects?.length > 0;
 
   const handleSearchChange = (e) => {
@@ -157,6 +165,23 @@ const ProjectWrapperView = () => {
 
   if (isLoading) {
     return <LinearProgress />;
+  }
+
+  if (isError) {
+    return (
+      <Box sx={{ p: 2 }}>
+        <Alert
+          severity="error"
+          action={
+            <Button color="inherit" size="small" onClick={() => refetch()}>
+              Retry
+            </Button>
+          }
+        >
+          {getRequestErrorMessage(error, "Could not load projects")}
+        </Alert>
+      </Box>
+    );
   }
 
   if (!isProjectCount) {
@@ -328,12 +353,19 @@ const ProjectWrapperView = () => {
                 setSelectedRowsData={setSelectedRowsData}
                 filters={observeFilters}
               />
-              <ProjectFilterPanel
+              <TraceFilterPanel
                 anchorEl={filterAnchorEl}
                 open={Boolean(filterAnchorEl)}
                 onClose={() => setFilterAnchorEl(null)}
                 currentFilters={observeFilters}
                 onApply={setObserveFilters}
+                properties={PROJECT_FILTER_PROPERTIES}
+                categories={[]}
+                source="observe"
+                showAi={false}
+                operatorFilter={projectOperatorFilter}
+                defaultOperatorForType={PROJECT_FILTER_DEFAULT_OPERATORS}
+                defaultRow={PROJECT_FILTER_DEFAULT_ROW}
               />
             </>
           ) : (

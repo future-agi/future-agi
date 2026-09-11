@@ -56,6 +56,50 @@ const FORM_COMPONENTS = {
   api_call: AddColumnApiCallChild,
 };
 
+const getEmptyBranchConfig = () => ({
+  column_id: "",
+  instruction: "",
+  language_model_id: "",
+  column_name: "",
+  url: "",
+  method: "POST",
+  params: {},
+  headers: {},
+  body: "",
+  output_type: "string",
+  concurrency: "",
+  json_key: "",
+  code: `# Function name should be main only. You can access any column of the row using the kwargs.
+def main(**kwargs):
+    return kwargs.get("column_name")
+`,
+  new_column_name: "",
+  labels: [],
+  subType: "",
+  apiKey: "",
+  indexName: "",
+  namespace: "",
+  topK: "",
+  queryKey: "",
+  embeddingConfig: { model: "", type: "" },
+  collectionName: "",
+  searchType: "",
+  key: "",
+  vectorLength: "",
+  name: "",
+  model: "",
+  outputFormat: "string",
+  messages: [{ id: getRandomId(), role: "user", content: "" }],
+  responseFormat: null,
+  temperature: 0.5,
+  topP: 1,
+  maxTokens: 4085,
+  presencePenalty: 1,
+  frequencyPenalty: 1,
+  toolChoice: "none",
+  tools: [],
+});
+
 const defaultValues = {
   new_column_name: "",
   type: "conditional",
@@ -65,56 +109,7 @@ const defaultValues = {
       condition: "",
       branch_node_config: {
         type: "",
-        config: {
-          column_id: "",
-          instruction: "",
-          language_model_id: "",
-          columnName: "",
-          url: "",
-          method: "POST",
-          params: {},
-          headers: {},
-          body: "",
-          outputType: "",
-          concurrency: "",
-          jsonKey: "",
-          code: `# Function name should be main only. You can access any column of the row using the kwargs.
-def main(**kwargs):
-    return kwargs.get("column_name")
-`,
-          newColumnName: "",
-          labels: [],
-          subType: "",
-          apiKey: "",
-          indexName: "", // For Pinecone
-          namespace: "", // For Pinecone
-          topK: "", // Common across retrieval types
-          queryKey: "", // For Pinecone
-          embeddingConfig: { model: "", type: "" },
-          collectionName: "", // For Qdrant and Weaviate
-          searchType: "", // For Weaviate
-          key: "",
-          vectorLength: "",
-          name: "",
-          model: "",
-          outputFormat: "string",
-          messages: [
-            {
-              id: getRandomId(),
-              role: "user",
-              content: "",
-            },
-          ],
-          responseFormat: null,
-          temperature: 0.5,
-          topP: 1,
-          maxTokens: 4085,
-          presencePenalty: 1,
-          frequencyPenalty: 1,
-          toolChoice: "none",
-          tools: [],
-          // runType: "",
-        },
+        config: getEmptyBranchConfig(),
       },
     },
   ],
@@ -136,7 +131,6 @@ const transformCondition = (condition, allColumns) => {
 
 const ConditionalNodeChild = ({ editId }) => {
   const { refreshGrid } = useDevelopDetailContext();
-  // Using individual stores
   const { setOpenConditionalNode } = useConditionalNodeStore();
 
   const onClose = () => {
@@ -194,56 +188,7 @@ const ConditionalNodeChild = ({ editId }) => {
       condition: currentConfig.condition,
       branch_node_config: {
         type: value,
-        config: {
-          column_id: "",
-          instruction: "",
-          language_model_id: "",
-          columnName: "",
-          url: "",
-          method: "POST",
-          params: {},
-          headers: {},
-          body: "",
-          outputType: "string",
-          concurrency: "",
-          jsonKey: "",
-          newColumnName: "",
-          code: `# Function name should be main only. You can access any column of the row using the kwargs.
-def main(**kwargs):
-    return kwargs.get("column_name")
-`,
-          labels: [],
-          subType: "",
-          columnId: "",
-          apiKey: "",
-          indexName: "",
-          namespace: "",
-          topK: "",
-          queryKey: "",
-          embeddingConfig: { model: "", type: "" },
-          collectionName: "",
-          searchType: "",
-          key: "",
-          vectorLength: "",
-          name: "",
-          model: "",
-          outputFormat: "string",
-          messages: [
-            {
-              id: getRandomId(),
-              role: "user",
-              content: "",
-            },
-          ],
-          responseFormat: null,
-          temperature: 0.5,
-          topP: 1,
-          maxTokens: 4085,
-          presencePenalty: 1,
-          frequencyPenalty: 1,
-          toolChoice: "none",
-          tools: [],
-        },
+        config: getEmptyBranchConfig(),
       },
     };
 
@@ -282,56 +227,7 @@ def main(**kwargs):
       condition: "",
       branch_node_config: {
         type: "",
-        config: {
-          column_id: "",
-          instruction: "",
-          language_model_id: "",
-          columnName: "",
-          url: "",
-          method: "POST",
-          params: {},
-          headers: {},
-          body: "",
-          outputType: "string",
-          concurrency: "",
-          jsonKey: "",
-          newColumnName: "",
-          code: `# Function name should be main only. You can access any column of the row using the kwargs.
-def main(**kwargs):
-    return kwargs.get("column_name")
-`,
-          labels: [],
-          subType: "",
-          columnId: "",
-          apiKey: "",
-          indexName: "", // For Pinecone
-          namespace: "", // For Pinecone
-          topK: "", // Common across retrieval types
-          queryKey: "", // For Pinecone
-          embeddingConfig: { model: "", type: "" },
-          collectionName: "", // For Qdrant and Weaviate
-          searchType: "", // For Weaviate
-          key: "",
-          vectorLength: "",
-          name: "",
-          model: "",
-          outputFormat: "string",
-          messages: [
-            {
-              id: getRandomId(),
-              role: "user",
-              content: "",
-            },
-          ],
-          responseFormat: null,
-          temperature: 0.5,
-          topP: 1,
-          maxTokens: 4085,
-          presencePenalty: 1,
-          frequencyPenalty: 1,
-          toolChoice: "none",
-          tools: [], // runType: ""
-        },
+        config: getEmptyBranchConfig(),
       },
     });
   };
@@ -374,26 +270,20 @@ def main(**kwargs):
     setType(formData.type);
     let updateConfig = {};
     switch (formData.type) {
-      case "api_call":
+      case "api_call": {
+        const { config: apiCallConfig = {}, type: _type, ...rest } = formData;
         updateConfig = {
           ...currentConfig,
           branch_node_config: {
             ...currentConfig.branch_node_config,
             config: {
-              ...formData,
-              // column_id:formData.columnId,
-              url: formData.config.url,
-              method: formData.config.method,
-              params: formData.config.params,
-              headers: formData.config.headers,
-              body: formData.config.body,
-              outputType: formData.config.outputType,
-              concurrency: formData.concurrency,
-              columnName: formData.columnName,
+              ...rest, // column_name, concurrency
+              ...apiCallConfig, // url, method, params, headers, body, output_type
             },
           },
         };
         break;
+      }
       case "run_prompt":
         updateConfig = {
           ...currentConfig,
@@ -417,7 +307,6 @@ def main(**kwargs):
                   ? undefined
                   : formData.config.toolChoice,
               tools: formData.config.tools || [],
-              // runType  : formData.config.runType,
             },
           },
         };
@@ -427,14 +316,7 @@ def main(**kwargs):
           ...currentConfig,
           branch_node_config: {
             ...currentConfig.branch_node_config,
-            config: {
-              ...formData,
-              column_id: formData.columnId,
-              language_model_id: formData.languageModelId,
-              concurrency: formData.concurrency,
-              labels: formData.labels,
-              newColumnName: formData.newColumnName,
-            },
+            config: { ...formData },
           },
         };
         break;
@@ -463,47 +345,13 @@ def main(**kwargs):
         };
         break;
       case "extract_entities":
-        updateConfig = {
-          ...currentConfig,
-          branch_node_config: {
-            ...currentConfig.branch_node_config,
-            config: {
-              ...formData,
-              column_id: formData.columnId,
-              language_model_id: formData.languageModelId,
-              concurrency: formData.concurrency,
-              instruction: formData.instruction,
-              newColumnName: formData.newColumnName,
-            },
-          },
-        };
-        break;
       case "extract_json":
-        updateConfig = {
-          ...currentConfig,
-          branch_node_config: {
-            ...currentConfig.branch_node_config,
-            config: {
-              ...formData,
-              column_id: formData.columnId,
-              jsonKey: formData.jsonKey,
-              concurrency: formData.concurrency,
-              newColumnName: formData.newColumnName,
-            },
-          },
-        };
-        break;
       case "extract_code":
         updateConfig = {
           ...currentConfig,
           branch_node_config: {
             ...currentConfig.branch_node_config,
-            config: {
-              ...formData,
-              code: formData.code,
-              concurrency: formData.concurrency,
-              newColumnName: formData.newColumnName,
-            },
+            config: { ...formData },
           },
         };
         break;
@@ -588,20 +436,21 @@ def main(**kwargs):
         switch (data.branch_node_config.type) {
           case "api_call":
             {
+              const cfg = data.branch_node_config.config || {};
               const configData = {
                 branch_type: data.branch_type,
                 condition: transformCondition(data.condition, allColumns),
                 branch_node_config: {
                   type: data.branch_node_config.type,
                   config: {
-                    url: data.branch_node_config.config.url,
-                    method: data.branch_node_config.config.method,
-                    params: data.branch_node_config.config.params,
-                    headers: data.branch_node_config.config.headers,
+                    url: cfg.url,
+                    method: cfg.method,
+                    params: cfg.params,
+                    headers: cfg.headers,
                     body: body.length ? JSON.parse(body) : {},
-                    column_name: data.branch_node_config.config.columnName,
-                    output_type: data.branch_node_config.config.outputType,
-                    concurrency: data.branch_node_config.config.concurrency,
+                    column_name: cfg.column_name,
+                    output_type: cfg.output_type,
+                    concurrency: cfg.concurrency,
                   },
                 },
               };
@@ -640,7 +489,6 @@ def main(**kwargs):
                         ? undefined
                         : data.branch_node_config.config.config.toolChoice,
                     tools: data.branch_node_config.config.config.tools || [],
-                    // runType: branch.branch_node_config.config.runType,
                   },
                 },
               };
@@ -679,79 +527,57 @@ def main(**kwargs):
             break;
 
           case "extract_entities":
-            {
-              const configData = {
-                branch_type: data.branch_type,
-                condition: transformCondition(data.condition, allColumns),
-                branch_node_config: {
-                  type: data.branch_node_config.config.type,
-                  config: {
-                    column_id: data.branch_node_config.config.column_id,
-                    instruction: data.branch_node_config.config.instruction,
-                    language_model_id:
-                      data.branch_node_config.config.language_model_id,
-                    new_column_name:
-                      data.branch_node_config.config.newColumnName,
-                    concurrency: data.branch_node_config.config.concurrency,
-                  },
-                },
-              };
-              formattedData.config.push(configData);
-            }
-
-            break;
           case "extract_json":
-            {
-              const configData = {
-                branch_type: data.branch_type,
-                condition: transformCondition(data.condition, allColumns),
-                branch_node_config: {
-                  type: data.branch_node_config.config.type,
-                  config: {
-                    column_id: data.branch_node_config.config.column_id,
-                    json_key: data.branch_node_config.config.jsonKey,
-                    new_column_name:
-                      data.branch_node_config.config.newColumnName,
-                    concurrency: data.branch_node_config.config.concurrency,
-                  },
-                },
-              };
-              formattedData.config.push(configData);
-            }
-            break;
           case "extract_code":
             {
+              const cfg = data.branch_node_config.config || {};
+              const branchType = data.branch_node_config.type;
+              const config = {
+                new_column_name: cfg.new_column_name,
+                concurrency: cfg.concurrency,
+              };
+              if (branchType === "extract_entities" || branchType === "extract_json") {
+                config.column_id = cfg.column_id;
+              }
+              if (branchType === "extract_json") {
+                config.json_key = cfg.json_key;
+              }
+              if (branchType === "extract_entities") {
+                config.language_model_id = cfg.language_model_id;
+                config.instruction = cfg.instruction;
+              }
+              if (branchType === "extract_code") {
+                config.code = cfg.code;
+              }
               const configData = {
                 branch_type: data.branch_type,
                 condition: transformCondition(data.condition, allColumns),
                 branch_node_config: {
-                  type: data.branch_node_config.config.type,
-                  config: {
-                    code: data.branch_node_config.config.code,
-                    new_column_name:
-                      data.branch_node_config.config.newColumnName,
-                    concurrency: data.branch_node_config.config.concurrency,
-                  },
+                  type: branchType,
+                  config,
                 },
               };
               formattedData.config.push(configData);
             }
             break;
           case "classification": {
+            const cfg = data.branch_node_config.config || {};
+            const labels = Array.isArray(cfg.labels)
+              ? cfg.labels.map((item) =>
+                  typeof item === "string" ? item : item?.value,
+                )
+              : [];
             const configData = {
               branch_type: data.branch_type,
               condition: transformCondition(data.condition, allColumns),
               branch_node_config: {
                 type: data.branch_node_config.config.type,
                 config: {
-                  column_id: data.branch_node_config.config.column_id,
-                  labels: data.branch_node_config.config.labels.map((item) => {
-                    return item.value;
-                  }),
-                  new_column_name: data.branch_node_config.config.newColumnName,
-                  concurrency: data.branch_node_config.config.concurrency,
-                  language_model_id:
-                    data.branch_node_config.config.language_model_id,
+                  column_id: cfg.column_id,
+                  labels,
+                  new_column_name: cfg.new_column_name,
+                  concurrency: cfg.concurrency,
+                  language_model_id: cfg.language_model_id,
                 },
               },
             };
@@ -800,7 +626,6 @@ def main(**kwargs):
           width: "550px",
         }}
         component="form"
-        // onSubmit={handleCreateColumn}
       >
         <Box
           sx={{
@@ -950,7 +775,6 @@ def main(**kwargs):
             Test
           </LoadingButton>
           <LoadingButton
-            // type="submit"
             variant="contained"
             color="primary"
             fullWidth
@@ -971,7 +795,6 @@ ConditionalNodeChild.propTypes = {
 };
 
 const ConditionalNode = () => {
-  // Using individual stores
   const { openConditionalNode, setOpenConditionalNode } =
     useConditionalNodeStore();
 

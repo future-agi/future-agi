@@ -4,7 +4,6 @@ import structlog
 from django.core.cache import cache
 from django.core.exceptions import ObjectDoesNotExist
 from django.utils import timezone
-from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import UserRateThrottle
@@ -12,13 +11,26 @@ from rest_framework.views import APIView
 from webauthn.helpers import base64url_to_bytes
 
 from accounts.models.user import User
+from accounts.serializers.contracts import (
+    ACCOUNTS_ERROR_RESPONSES,
+    AccountsEmptyRequestSerializer,
+    AccountsTokenPairResponseSerializer,
+    OrgTwoFactorPolicyResponseSerializer,
+    PasskeyOptionsResponseSerializer,
+    RecoveryCodesRegenerateResponseSerializer,
+    RecoveryCodesRemainingResponseSerializer,
+    TOTPConfirmResponseSerializer,
+    TOTPDisableResponseSerializer,
+    TOTPSetupResponseSerializer,
+    TwoFactorPasskeyVerifyRequestSerializer,
+)
 from accounts.serializers.two_factor import (
     OrgTwoFactorPolicySerializer,
     RecoveryCodesRegenerateSerializer,
     TOTPConfirmSerializer,
     TOTPDisableSerializer,
     TwoFactorChallengeTokenSerializer,
-    TwoFactorVerifyPasskeySerializer,
+    TwoFactorStatusSerializer,
     TwoFactorVerifySerializer,
 )
 from accounts.services.recovery_service import (
@@ -42,6 +54,7 @@ from accounts.services.webauthn_service import (
     get_authentication_options,
     verify_authentication,
 )
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
@@ -62,6 +75,9 @@ class TwoFactorStatusView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @validated_request(
+        responses={200: TwoFactorStatusSerializer, **ACCOUNTS_ERROR_RESPONSES}
+    )
     def get(self, request):
         # Re-fetch user from DB to avoid stale cached reverse relations
         user = User.objects.get(pk=request.user.pk)
@@ -103,6 +119,11 @@ class TOTPSetupView(APIView):
     throttle_classes = [TOTPRateThrottle]
     _gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=AccountsEmptyRequestSerializer,
+        responses={200: TOTPSetupResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
+    )
     def post(self, request):
         try:
             device, provisioning_uri, secret = create_totp_device(request.user)
@@ -126,12 +147,13 @@ class TOTPConfirmView(APIView):
     throttle_classes = [TOTPRateThrottle]
     _gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=TOTPConfirmSerializer,
+        responses={200: TOTPConfirmResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
+    )
     def post(self, request):
-        serializer = TOTPConfirmSerializer(data=request.data)
-        if not serializer.is_valid():
-            return self._gm.bad_request(serializer.errors)
-
-        code = serializer.validated_data["code"]
+        code = request.validated_data["code"]
         if not confirm_totp_device(request.user, code):
             return self._gm.bad_request("Invalid code. Please try again.")
 
@@ -152,12 +174,13 @@ class TOTPDisableView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=TOTPDisableSerializer,
+        responses={200: TOTPDisableResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
+    )
     def delete(self, request):
-        serializer = TOTPDisableSerializer(data=request.data)
-        if not serializer.is_valid():
-            return self._gm.bad_request(serializer.errors)
-
-        code = serializer.validated_data["code"]
+        code = request.validated_data["code"]
 
         # Verify with TOTP or recovery code
         if not (
@@ -179,20 +202,22 @@ class TwoFactorVerifyTOTPView(APIView):
     authentication_classes = []
     _gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=TwoFactorVerifySerializer,
+        responses={
+            200: AccountsTokenPairResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request):
-        serializer = TwoFactorVerifySerializer(data=request.data)
-        if not serializer.is_valid():
-            return self._gm.bad_request(serializer.errors)
-
-        challenge_id = str(serializer.validated_data["challenge_token"])
-        code = serializer.validated_data["code"]
+        challenge_id = str(request.validated_data["challenge_token"])
+        code = request.validated_data["code"]
 
         # Validate challenge
         challenge_data = validate_challenge(challenge_id)
         if not challenge_data:
-            return self._gm.bad_request(
-                {"error": "Invalid or expired verification session."}
-            )
+            return self._gm.bad_request("Invalid or expired verification session.")
 
         # Get the user
         try:
@@ -218,19 +243,21 @@ class TwoFactorVerifyRecoveryView(APIView):
     authentication_classes = []
     _gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=TwoFactorVerifySerializer,
+        responses={
+            200: AccountsTokenPairResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request):
-        serializer = TwoFactorVerifySerializer(data=request.data)
-        if not serializer.is_valid():
-            return self._gm.bad_request(serializer.errors)
-
-        challenge_id = str(serializer.validated_data["challenge_token"])
-        code = serializer.validated_data["code"]
+        challenge_id = str(request.validated_data["challenge_token"])
+        code = request.validated_data["code"]
 
         challenge_data = validate_challenge(challenge_id)
         if not challenge_data:
-            return self._gm.bad_request(
-                {"error": "Invalid or expired verification session."}
-            )
+            return self._gm.bad_request("Invalid or expired verification session.")
 
         try:
             user = User.objects.get(id=challenge_data["user_id"])
@@ -238,9 +265,7 @@ class TwoFactorVerifyRecoveryView(APIView):
             return self._gm.bad_request("Invalid verification session.")
 
         if not verify_recovery_code(user, code):
-            return self._gm.bad_request(
-                {"error": "Invalid or already used recovery code."}
-            )
+            return self._gm.bad_request("Invalid or already used recovery code.")
 
         consume_challenge(challenge_id)
         tokens = issue_tokens(user)
@@ -263,18 +288,17 @@ class TwoFactorVerifyPasskeyOptionsView(APIView):
     authentication_classes = []
     _gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=TwoFactorChallengeTokenSerializer,
+        responses={200: PasskeyOptionsResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
+    )
     def post(self, request):
-        serializer = TwoFactorChallengeTokenSerializer(data=request.data)
-        if not serializer.is_valid():
-            return self._gm.bad_request(serializer.errors)
-
-        challenge_id = str(serializer.validated_data["challenge_token"])
+        challenge_id = str(request.validated_data["challenge_token"])
 
         challenge_data = validate_challenge(challenge_id, count_attempt=False)
         if not challenge_data:
-            return self._gm.bad_request(
-                {"error": "Invalid or expired verification session."}
-            )
+            return self._gm.bad_request("Invalid or expired verification session.")
 
         try:
             user = User.objects.get(id=challenge_data["user_id"])
@@ -293,19 +317,21 @@ class TwoFactorVerifyPasskeyView(APIView):
     authentication_classes = []
     _gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=TwoFactorPasskeyVerifyRequestSerializer,
+        responses={
+            200: AccountsTokenPairResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request):
-        serializer = TwoFactorVerifyPasskeySerializer(data=request.data)
-        if not serializer.is_valid():
-            return self._gm.bad_request(serializer.errors)
-
-        challenge_id = str(serializer.validated_data["challenge_token"])
-        credential_response = serializer.validated_data["credential"]
+        challenge_id = str(request.validated_data["challenge_token"])
+        credential_response = request.validated_data["credential"]
 
         challenge_data = validate_challenge(challenge_id)
         if not challenge_data:
-            return self._gm.bad_request(
-                {"error": "Invalid or expired verification session."}
-            )
+            return self._gm.bad_request("Invalid or expired verification session.")
 
         try:
             user = User.objects.get(id=challenge_data["user_id"])
@@ -324,9 +350,9 @@ class TwoFactorVerifyPasskeyView(APIView):
         # ``session_id`` keys the one-time WebAuthn challenge in Redis.
         # Clients send it at the top level; the ``_session_id`` fallback
         # inside ``credential`` exists for an older client shape.
-        session_id = request.data.get("session_id", "") or credential_response.pop(
-            "_session_id", ""
-        )
+        session_id = request.validated_data.get(
+            "session_id", ""
+        ) or credential_response.pop("_session_id", "")
         challenge_cache_key = WEBAUTHN_AUTH_CHALLENGE_KEY.format(session_id)
         raw_challenge_data = cache.get(challenge_cache_key)
         if not raw_challenge_data:
@@ -342,9 +368,7 @@ class TwoFactorVerifyPasskeyView(APIView):
             expected_challenge = base64url_to_bytes(
                 webauthn_challenge_data["challenge"]
             )
-            verify_authentication(
-                credential_response, expected_challenge, user=user
-            )
+            verify_authentication(credential_response, expected_challenge, user=user)
         except Exception as e:
             logger.exception("passkey_2fa_verification_failed", error=str(e))
             return self._gm.bad_request("Passkey verification failed.")
@@ -360,6 +384,12 @@ class RecoveryCodesView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        responses={
+            200: RecoveryCodesRemainingResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        }
+    )
     def get(self, request):
         remaining = get_remaining_count(request.user)
         return Response({"remaining": remaining})
@@ -371,6 +401,14 @@ class RecoveryCodesRegenerateView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=RecoveryCodesRegenerateSerializer,
+        responses={
+            200: RecoveryCodesRegenerateResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request):
         user = request.user
         has_totp = False
@@ -378,30 +416,31 @@ class RecoveryCodesRegenerateView(APIView):
             has_totp = user.totp_device.confirmed
         except ObjectDoesNotExist:
             pass
+        has_passkey = user.webauthn_credentials.exists()
 
-        serializer = RecoveryCodesRegenerateSerializer(data=request.data)
-        if not serializer.is_valid():
-            return self._gm.bad_request(serializer.errors)
-
-        code = serializer.validated_data.get("code")
-        password = serializer.validated_data.get("password")
+        code = request.validated_data.get("code")
+        password = request.validated_data.get("password")
 
         if has_totp:
             # User has TOTP — require code verification
             if not code:
                 return self._gm.bad_request(
-                    {"error": "Authenticator or recovery code is required."}
+                    "Authenticator or recovery code is required."
                 )
             if not (verify_totp_code(user, code) or verify_recovery_code(user, code)):
-                return self._gm.bad_request({"error": "Invalid code."})
-        else:
+                return self._gm.bad_request("Invalid code.")
+        elif has_passkey:
             # Passkey-only user — require password verification
             if not password:
                 return self._gm.bad_request(
-                    {"error": "Password is required to regenerate recovery codes."}
+                    "Password is required to regenerate recovery codes."
                 )
             if not user.check_password(password):
-                return self._gm.bad_request({"error": "Invalid password."})
+                return self._gm.bad_request("Invalid password.")
+        else:
+            return self._gm.bad_request(
+                "Enable a two-factor authentication method before generating recovery codes."
+            )
 
         recovery_codes = generate_recovery_codes(user)
         return Response({"recovery_codes": recovery_codes})
@@ -418,6 +457,12 @@ class OrgTwoFactorPolicyView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @validated_request(
+        responses={
+            200: OrgTwoFactorPolicyResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        }
+    )
     def get(self, request):
         org = getattr(request, "organization", None)
         if not org:
@@ -431,6 +476,14 @@ class OrgTwoFactorPolicyView(APIView):
             }
         )
 
+    @validated_request(
+        request_serializer=OrgTwoFactorPolicySerializer,
+        responses={
+            200: OrgTwoFactorPolicyResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def put(self, request):
         org = getattr(request, "organization", None)
         if not org:
@@ -441,32 +494,27 @@ class OrgTwoFactorPolicyView(APIView):
 
         user_level = request.user.get_membership_level(org)
         if user_level is None or user_level < Level.ADMIN:
-            return Response(
-                {"error": "Only organization owners and admins can update 2FA policy."},
-                status=status.HTTP_403_FORBIDDEN,
+            return self._gm.forbidden_response(
+                "Only organization owners and admins can update 2FA policy."
             )
 
-        serializer = OrgTwoFactorPolicySerializer(data=request.data)
-        if not serializer.is_valid():
-            return self._gm.bad_request(serializer.errors)
-
-        require_2fa = serializer.validated_data["require_2fa"]
+        require_2fa = request.validated_data["require_2fa"]
 
         # Cannot enforce 2FA for the org unless your own 2FA is enabled
         if require_2fa and not request.user.has_2fa_enabled:
-            return Response(
-                {
-                    "error": "You must enable two-factor authentication on your own account before requiring it for the organization."
-                },
-                status=status.HTTP_400_BAD_REQUEST,
+            return self._gm.bad_request(
+                "You must enable two-factor authentication on your own account before requiring it for the organization."
             )
-        grace_days = serializer.validated_data.get("require_2fa_grace_period_days")
+        grace_days = request.validated_data.get("require_2fa_grace_period_days")
 
         update_fields = ["require_2fa"]
 
         if require_2fa and not org.require_2fa:
             # Newly enabling — set enforcement timestamp
             org.require_2fa_enforced_at = timezone.now()
+            update_fields.append("require_2fa_enforced_at")
+        elif not require_2fa and org.require_2fa_enforced_at is not None:
+            org.require_2fa_enforced_at = None
             update_fields.append("require_2fa_enforced_at")
 
         org.require_2fa = require_2fa

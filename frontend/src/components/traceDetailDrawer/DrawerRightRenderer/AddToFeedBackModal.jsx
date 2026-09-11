@@ -14,7 +14,6 @@ import {
 } from "@mui/material";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
-import { grey, primary } from "src/theme/palette";
 
 const style = {
   position: "absolute",
@@ -191,10 +190,10 @@ function AddToFeedBackModal({ open, handleClose, setOpenSubmitFeedback }) {
               width: "48%",
               fontSize: "12px",
               fontWeight: 600,
-              color: grey[0],
-              backgroundColor: primary.main,
+              color: "primary.contrastText",
+              backgroundColor: "primary.main",
               height: "28px",
-              "&:hover": { backgroundColor: "#6A4BE8" },
+              "&:hover": { backgroundColor: "primary.dark" },
             }}
           >
             Submit Feedback
@@ -376,10 +375,10 @@ export function SubmitFeedBackModal({
               width: "49%",
               fontSize: "12px",
               fontWeight: 600,
-              color: grey[0],
-              backgroundColor: primary.main,
+              color: "primary.contrastText",
+              backgroundColor: "primary.main",
               "&:hover": {
-                backgroundColor: "#6A4BE8",
+                backgroundColor: "primary.dark",
               },
             }}
           >

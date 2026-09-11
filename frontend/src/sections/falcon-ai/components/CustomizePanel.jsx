@@ -1,4 +1,10 @@
-import React, { useEffect, useState, useCallback, useMemo } from "react";
+import React, {
+  useEffect,
+  useState,
+  useCallback,
+  useMemo,
+  useRef,
+} from "react";
 import PropTypes from "prop-types";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
@@ -14,6 +20,7 @@ import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
 import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import {
   listSkills,
   fetchConnectors,
@@ -22,6 +29,15 @@ import {
   discoverConnectorTools,
 } from "../hooks/useFalconAPI";
 import useFalconStore from "../store/useFalconStore";
+import ToolsSkeleton from "./ToolsSkeleton";
+import ConnectorDetailError from "./ConnectorDetailError";
+import { useConnectorToolPermissions } from "../hooks/useConnectorToolPermissions";
+import {
+  LAST_ENABLED_TOOL_HINT,
+  isOnlyEnabledTool,
+  resolveEnabledNames,
+  toolActionErrorMessage,
+} from "./connectorTools";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -1308,6 +1324,12 @@ function ConnectorDetailPanel({
   onDisconnect,
   onReauth,
   onToolToggle,
+  onToolsAllow,
+  toolError,
+  pendingNames,
+  loading,
+  detailError,
+  onRetry,
   onSaved,
   onCancelEdit,
   onEdit,
@@ -1824,6 +1846,16 @@ function ConnectorDetailPanel({
             Choose when Falcon is allowed to use these tools.
           </Typography>
 
+          {toolError && (
+            <Typography
+              role="alert"
+              typography="s2"
+              sx={{ color: "error.main", mb: 2 }}
+            >
+              {toolError}
+            </Typography>
+          )}
+
           {/* Interactive tools */}
           {interactiveTools.length > 0 && (
             <Box sx={{ mb: 2 }}>
@@ -1868,9 +1900,10 @@ function ConnectorDetailPanel({
                     cursor: "pointer",
                   }}
                   onClick={() =>
-                    interactiveTools.forEach((t) => {
-                      if (!isToolEnabled(t)) onToolToggle(connector.id, t);
-                    })
+                    onToolsAllow(
+                      connector.id,
+                      interactiveTools.map((t) => t.name),
+                    )
                   }
                 />
               </Box>
@@ -1886,7 +1919,9 @@ function ConnectorDetailPanel({
                     key={tool.name || idx}
                     tool={tool}
                     enabled={isToolEnabled(tool)}
-                    onToggle={() => onToolToggle(connector.id, tool)}
+                    onlyEnabled={isOnlyEnabledTool(connector, tool.name)}
+                    pending={pendingNames.includes(tool.name)}
+                    onToggle={() => onToolToggle(connector.id, tool.name)}
                     isLast={idx === interactiveTools.length - 1}
                     isDark={isDark}
                     theme={theme}
@@ -1940,9 +1975,10 @@ function ConnectorDetailPanel({
                     cursor: "pointer",
                   }}
                   onClick={() =>
-                    readOnlyTools.forEach((t) => {
-                      if (!isToolEnabled(t)) onToolToggle(connector.id, t);
-                    })
+                    onToolsAllow(
+                      connector.id,
+                      readOnlyTools.map((t) => t.name),
+                    )
                   }
                 />
               </Box>
@@ -1958,7 +1994,9 @@ function ConnectorDetailPanel({
                     key={tool.name || idx}
                     tool={tool}
                     enabled={isToolEnabled(tool)}
-                    onToggle={() => onToolToggle(connector.id, tool)}
+                    onlyEnabled={isOnlyEnabledTool(connector, tool.name)}
+                    pending={pendingNames.includes(tool.name)}
+                    onToggle={() => onToolToggle(connector.id, tool.name)}
                     isLast={idx === readOnlyTools.length - 1}
                     isDark={isDark}
                     theme={theme}
@@ -1970,7 +2008,15 @@ function ConnectorDetailPanel({
         </Box>
       )}
 
-      {tools.length === 0 && (
+      {/* The list row carries no tools, so without this the pane would answer
+          "nothing discovered" for every connector until its detail lands. */}
+      {loading && <ToolsSkeleton />}
+
+      {!loading && detailError && (
+        <ConnectorDetailError message={detailError} onRetry={onRetry} />
+      )}
+
+      {!loading && !detailError && tools.length === 0 && (
         <Box sx={{ textAlign: "center", py: 3 }}>
           <Iconify
             icon="mdi:tools"
@@ -2018,13 +2064,28 @@ ConnectorDetailPanel.propTypes = {
   onDisconnect: PropTypes.func,
   onReauth: PropTypes.func,
   onToolToggle: PropTypes.func,
+  onToolsAllow: PropTypes.func,
+  toolError: PropTypes.string,
+  pendingNames: PropTypes.arrayOf(PropTypes.string),
+  loading: PropTypes.bool,
+  detailError: PropTypes.string,
+  onRetry: PropTypes.func,
   onSaved: PropTypes.func,
   onCancelEdit: PropTypes.func,
   onEdit: PropTypes.func,
 };
 
 // Tool row component for clean per-item rendering
-function ToolRow({ tool, enabled, onToggle, isLast, isDark, theme }) {
+function ToolRow({
+  tool,
+  enabled,
+  onlyEnabled,
+  pending,
+  onToggle,
+  isLast,
+  isDark,
+  theme,
+}) {
   return (
     <Box
       sx={{
@@ -2060,21 +2121,37 @@ function ToolRow({ tool, enabled, onToggle, isLast, isDark, theme }) {
         )}
       </Box>
       <Box sx={{ display: "flex", alignItems: "center", gap: 0.25 }}>
-        <IconButton
+        {/* The guard refuses this click; say so before it, not after. */}
+        <CustomTooltip
+          show={onlyEnabled}
+          arrow
           size="small"
-          onClick={onToggle}
-          title={enabled ? "Allowed" : "Denied"}
-          sx={{
-            width: 26,
-            height: 26,
-            color: enabled ? "success.main" : "text.disabled",
-          }}
+          placement="left"
+          title={LAST_ENABLED_TOOL_HINT}
         >
-          <Iconify
-            icon={enabled ? "mdi:check-circle" : "mdi:close-circle-outline"}
-            width={18}
-          />
-        </IconButton>
+          <IconButton
+            size="small"
+            onClick={onToggle}
+            // The accessible name stays put; the native title is suppressed
+            // under the tooltip so the two don't stack on hover.
+            aria-label={enabled ? "Allowed" : "Denied"}
+            title={onlyEnabled ? undefined : enabled ? "Allowed" : "Denied"}
+            sx={{
+              width: 26,
+              height: 26,
+              color: enabled ? "success.main" : "text.disabled",
+            }}
+          >
+            {pending ? (
+              <CircularProgress size={16} role="status" aria-label="Saving" />
+            ) : (
+              <Iconify
+                icon={enabled ? "mdi:check-circle" : "mdi:close-circle-outline"}
+                width={18}
+              />
+            )}
+          </IconButton>
+        </CustomTooltip>
       </Box>
     </Box>
   );
@@ -2088,6 +2165,8 @@ ToolRow.propTypes = {
     enabled: PropTypes.bool,
   }).isRequired,
   enabled: PropTypes.bool,
+  onlyEnabled: PropTypes.bool,
+  pending: PropTypes.bool,
   onToggle: PropTypes.func.isRequired,
   isLast: PropTypes.bool,
   isDark: PropTypes.bool,
@@ -2105,10 +2184,52 @@ export default function CustomizePanel() {
   const [skills, setSkills] = useState([]);
   const [connectors, setConnectors] = useState([]);
   const [selectedItem, setSelectedItem] = useState(null);
+  const [connectorDetailLoading, setConnectorDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState(null);
+  const applyToolNames = useCallback(
+    (connectorId, names) => {
+      setSelectedItem((prev) =>
+        prev?.id === connectorId
+          ? { ...prev, enabled_tool_names: names }
+          : prev,
+      );
+      // tool_count is the only tool-derived field the list carries.
+      setConnectors((prev) =>
+        prev.map((c) =>
+          c.id === connectorId ? { ...c, tool_count: names.length } : c,
+        ),
+      );
+    },
+    [setSelectedItem, setConnectors],
+  );
+
+  const {
+    toolError,
+    setToolError,
+    pendingNames,
+    handleToolToggle,
+    handleToolsAllow,
+  } = useConnectorToolPermissions({
+    connector: selectedItem,
+    onApply: applyToolNames,
+  });
   const [loadingSkills, setLoadingSkills] = useState(false);
   const [loadingConnectors, setLoadingConnectors] = useState(false);
   const [isEditingSkill, setIsEditingSkill] = useState(false);
   const [isEditingConnector, setIsEditingConnector] = useState(false);
+
+  // Monotonic ticket for the detail fetch kicked off by handleSelectItem.
+  // Bumped whenever the selection is cleared/changed out from under it, so a
+  // response that lands after a newer selection can't overwrite it.
+  const detailRequestRef = useRef(0);
+
+  // Abandon any in-flight detail fetch. Its response is ignored once the
+  // ticket moves, which means its `finally` no longer clears the loading flag
+  // either — so clear it here, or the pane keeps a skeleton up forever.
+  const abandonDetailRequest = useCallback(() => {
+    detailRequestRef.current += 1;
+    setConnectorDetailLoading(false);
+  }, []);
 
   // ---- Load data ----
   const loadSkills = useCallback(async () => {
@@ -2146,75 +2267,122 @@ export default function CustomizePanel() {
   }, [loadSkills, loadConnectors]);
 
   // ---- Handlers ----
-  const handleTabChange = useCallback((tab) => {
-    setSelectedTab(tab);
-    setSelectedItem(null);
-  }, []);
+  const handleTabChange = useCallback(
+    (tab) => {
+      abandonDetailRequest();
+      setSelectedTab(tab);
+      setSelectedItem(null);
+    },
+    [abandonDetailRequest],
+  );
 
   const handleSelectItem = useCallback(
     async (item) => {
       setSelectedItem(item); // show immediately with list data
       setIsEditingSkill(false);
       setIsEditingConnector(false);
+      setToolError(null); // stale error from the previously selected connector
+      setDetailError(null);
 
-      // For skills, fetch full detail (includes instructions)
-      if (selectedTab === "skills" && item?.id) {
-        try {
-          const { getSkill } = await import("../hooks/useFalconAPI");
-          const resp = await getSkill(item.id);
-          const fullSkill = resp.result || resp;
-          setSelectedItem(fullSkill);
-        } catch {
-          // keep partial data from list
+      if (!item?.id) {
+        abandonDetailRequest();
+        return;
+      }
+
+      // Each call gets its own ticket; a response is only applied if it's
+      // still the most recent one requested. Without this, selecting B while
+      // A's detail fetch is still in flight lets A's late response clobber
+      // B's once it resolves out of order.
+      const ticket = ++detailRequestRef.current;
+      const isStale = () => ticket !== detailRequestRef.current;
+
+      // Both tabs list from an endpoint whose serializer is a summary: skills
+      // arrive without instructions, connectors without discovered_tools or
+      // enabled_tool_names. Either pane needs the detail record before it can
+      // render what it is for.
+      setConnectorDetailLoading(selectedTab === "connectors");
+      try {
+        const api = await import("../hooks/useFalconAPI");
+        if (selectedTab === "skills") {
+          const resp = await api.getSkill(item.id);
+          if (isStale()) return;
+          setSelectedItem(resp.result || resp);
+        } else if (selectedTab === "connectors") {
+          const detail = await api.getConnector(item.id);
+          if (isStale()) return;
+          setSelectedItem(detail);
         }
+      } catch (error) {
+        if (isStale()) return;
+        setDetailError(
+          toolActionErrorMessage(error, "Couldn't load this connector."),
+        );
+      } finally {
+        if (!isStale()) setConnectorDetailLoading(false);
       }
     },
-    [selectedTab],
+    [selectedTab, abandonDetailRequest],
   );
 
   const handleCreateSkill = useCallback(() => {
+    abandonDetailRequest();
     setSelectedItem(null);
     setIsEditingSkill(true);
-  }, []);
+  }, [abandonDetailRequest]);
 
-  const handleEditSkill = useCallback((skill) => {
-    setSelectedItem(skill);
-    setIsEditingSkill(true);
-  }, []);
+  const handleEditSkill = useCallback(
+    (skill) => {
+      abandonDetailRequest();
+      setSelectedItem(skill);
+      setIsEditingSkill(true);
+    },
+    [abandonDetailRequest],
+  );
 
-  const handleDuplicateSkill = useCallback((skill) => {
-    // Pre-fill form with skill data but clear id so it creates a new one
-    setSelectedItem({
-      ...skill,
-      id: null,
-      name: `${skill.name} (copy)`,
-      is_system: false,
-      is_builtin: false,
-    });
-    setIsEditingSkill(true);
-  }, []);
+  const handleDuplicateSkill = useCallback(
+    (skill) => {
+      abandonDetailRequest();
+      // Pre-fill form with skill data but clear id so it creates a new one
+      setSelectedItem({
+        ...skill,
+        id: null,
+        name: `${skill.name} (copy)`,
+        is_system: false,
+        is_builtin: false,
+      });
+      setIsEditingSkill(true);
+    },
+    [abandonDetailRequest],
+  );
 
   const handleSkillSaved = useCallback(() => {
+    abandonDetailRequest();
     loadSkills();
     setSelectedItem(null);
     setIsEditingSkill(false);
-  }, [loadSkills]);
+  }, [loadSkills, abandonDetailRequest]);
 
   const handleCreateConnector = useCallback(() => {
+    abandonDetailRequest();
     setSelectedItem(null);
     setIsEditingConnector(true);
-  }, []);
+  }, [abandonDetailRequest]);
 
-  const handleEditConnector = useCallback((conn) => {
-    setSelectedItem(conn);
-    setIsEditingConnector(true);
-  }, []);
+  const handleEditConnector = useCallback(
+    (conn) => {
+      abandonDetailRequest();
+      setSelectedItem(conn);
+      setIsEditingConnector(true);
+    },
+    [abandonDetailRequest],
+  );
 
   const handleConnectorSaved = useCallback(() => {
+    abandonDetailRequest();
     loadConnectors();
     setSelectedItem(null);
     setIsEditingConnector(false);
-  }, [loadConnectors]);
+  }, [loadConnectors, abandonDetailRequest]);
 
   // Listen for OAuth callback postMessage from popup
   useEffect(() => {
@@ -2239,12 +2407,16 @@ export default function CustomizePanel() {
           // if this fails, the connector data from loadConnectors is still valid.
         }
 
-        // Fetch the updated connector list to get the connector with tools
+        // Re-select through handleSelectItem rather than assigning the row:
+        // the list serializer carries neither discovered_tools nor
+        // enabled_tool_names, so assigning it would blank the tools the user
+        // just authorised. handleSelectItem fetches the detail record and
+        // takes a ticket, so a slow response can't land on a newer selection.
         try {
           const data = await fetchConnectors();
           const results = data.results || data || [];
           const updated = results.find((c) => c.id === connectorId);
-          if (updated) setSelectedItem(updated);
+          if (updated) await handleSelectItem(updated);
         } catch {
           // silent — loadConnectors already refreshed the list
         }
@@ -2252,7 +2424,7 @@ export default function CustomizePanel() {
     };
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
-  }, [loadConnectors, selectedItem?.id]);
+  }, [loadConnectors, selectedItem?.id, handleSelectItem]);
 
   const handleReauth = useCallback(
     async (connectorId) => {
@@ -2297,40 +2469,18 @@ export default function CustomizePanel() {
     [loadConnectors, connectors],
   );
 
-  const handleDisconnect = useCallback(async (connectorId) => {
-    try {
-      await deleteConnector(connectorId);
-      setConnectors((prev) => prev.filter((c) => c.id !== connectorId));
-      setSelectedItem(null);
-    } catch {
-      // silent
-    }
-  }, []);
-
-  const handleToolToggle = useCallback(
-    async (connectorId, tool) => {
-      const conn = connectors.find((c) => c.id === connectorId);
-      if (!conn) return;
-      const updatedTools = (conn.tools || []).map((t) =>
-        (t.name || t.id) === (tool.name || tool.id)
-          ? { ...t, enabled: t.enabled === false }
-          : t,
-      );
+  const handleDisconnect = useCallback(
+    async (connectorId) => {
       try {
-        await updateConnectorTools(connectorId, updatedTools);
-        setConnectors((prev) =>
-          prev.map((c) =>
-            c.id === connectorId ? { ...c, tools: updatedTools } : c,
-          ),
-        );
-        setSelectedItem((prev) =>
-          prev?.id === connectorId ? { ...prev, tools: updatedTools } : prev,
-        );
+        await deleteConnector(connectorId);
+        abandonDetailRequest();
+        setConnectors((prev) => prev.filter((c) => c.id !== connectorId));
+        setSelectedItem(null);
       } catch {
         // silent
       }
     },
-    [connectors],
+    [abandonDetailRequest],
   );
 
   // ---- Render ----
@@ -2388,6 +2538,12 @@ export default function CustomizePanel() {
             onDisconnect={handleDisconnect}
             onReauth={handleReauth}
             onToolToggle={handleToolToggle}
+            onToolsAllow={handleToolsAllow}
+            toolError={toolError}
+            pendingNames={pendingNames}
+            loading={connectorDetailLoading}
+            detailError={detailError}
+            onRetry={() => handleSelectItem(selectedItem)}
             onEdit={handleEditConnector}
             onSaved={handleConnectorSaved}
             onCancelEdit={() => setIsEditingConnector(false)}

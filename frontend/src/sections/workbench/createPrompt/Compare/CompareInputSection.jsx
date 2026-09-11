@@ -6,7 +6,7 @@ import {
   Typography,
   useTheme,
 } from "@mui/material";
-import React, { useRef, useEffect } from "react";
+import React, { useRef, useEffect, useMemo } from "react";
 import { format, isValid } from "date-fns";
 import SvgColor from "src/components/svg-color";
 import CustomTooltip from "src/components/tooltip";
@@ -17,6 +17,8 @@ import PropTypes from "prop-types";
 import { ShowComponent } from "src/components/show";
 
 import { useIsVariablesDefined } from "../hooks/use-is-variables-defined";
+import { usePromptVersions } from "../hooks/use-prompt-versions";
+import PromptLabel from "../VersionHistory/LabelDropdown/PromptLabel";
 import VersionStyle from "../promptActions/VersionStyle";
 import PromptSection from "../Playground/PromptSection";
 import { usePromptWorkbenchContext } from "../WorkbenchContext";
@@ -138,6 +140,17 @@ const CompareInputSection = ({
 
   const { id } = useParams();
 
+  const { versions } = usePromptVersions(id);
+
+  // Read from freshly-fetched versions so newly-assigned tags show
+  // immediately; fall back to the version's own labels when not yet loaded.
+  const versionLabels = useMemo(() => {
+    const freshVersion = versions?.find(
+      (v) => v?.template_version === promptVersion?.version,
+    );
+    return freshVersion ? freshVersion.labels : promptVersion?.labels || [];
+  }, [versions, promptVersion?.version, promptVersion?.labels]);
+
   const currentPrompts = prompts?.filter((_, i) => i === index);
 
   const isGenerating = promptGeneratingStatus?.[index];
@@ -187,7 +200,14 @@ const CompareInputSection = ({
         }}
       >
         <Box>
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: 1,
+            }}
+          >
             {promptVersion?.version ? (
               <VersionStyle index={index} text={promptVersion?.version} />
             ) : (
@@ -214,6 +234,15 @@ const CompareInputSection = ({
                 Draft
               </Typography>
             ) : null}
+            {versionLabels?.map((label) => (
+              <PromptLabel
+                key={label.id}
+                name={label.name}
+                id={label.id}
+                version={promptVersion}
+                viewOnly
+              />
+            ))}
           </Box>
           <Typography
             typography="s3"

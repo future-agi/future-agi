@@ -405,28 +405,32 @@ class TestDatasetE2EWorkflow:
     def test_session_counter_increments(
         self, auth_client, user, workspace, mock_resource_limit
     ):
-        """Multiple tool calls reusing a session -> session.tool_call_count matches."""
-        # First call: creates a session
+        """Multiple tool calls reusing a session -> session.tool_call_count matches.
+
+        Stateless transports reuse the most recent active session on the same
+        connection (see ``mcp_server.usage_helpers.get_or_create_session``),
+        so every tool call in this test lands on the same session even when
+        no ``session_id`` is explicitly threaded through — including the
+        ``_create_dataset_via_tool`` call. Count is therefore the total number
+        of tool invocations.
+        """
+        # Call 1: creates the session
         resp1 = _call_tool(auth_client, "list_datasets", {})
         session_id = resp1.data["session_id"]
 
-        # Second call reusing session
+        # Call 2: explicit session_id
         resp2 = _call_tool(auth_client, "list_datasets", {}, session_id=session_id)
         assert resp2.data["session_id"] == session_id
 
-        # Third call
+        # Call 3: no explicit session_id, but the stateless-transport fallback
+        # resolves to the same session.
         _create_dataset_via_tool(auth_client, name="Counter DS", columns=["z"])
-        # Note: _create_dataset_via_tool doesn't pass session_id, so it may create a new session.
-        # Let's explicitly pass session_id for a third call:
-        resp3 = _call_tool(
-            auth_client,
-            "list_datasets",
-            {},
-            session_id=session_id,
-        )
+
+        # Call 4: explicit session_id again
+        _call_tool(auth_client, "list_datasets", {}, session_id=session_id)
 
         session = MCPSession.objects.get(id=session_id)
-        assert session.tool_call_count == 3
+        assert session.tool_call_count == 4
 
 
 # ---------------------------------------------------------------------------
@@ -459,17 +463,22 @@ class TestEvaluationE2EWorkflow:
         assert "not found" in resp.data["result"]["content"].lower()
 
     def test_create_eval_template_via_tool(self, auth_client, user, workspace):
-        """Create template via tool, verify DB entry."""
+        """Create template via tool, verify DB entry.
+
+        Field names match ``ai_tools.tools.evaluations.create_eval_template
+        .CreateEvalTemplateInput``: ``instructions`` (not ``criteria``),
+        ``tags`` (not ``eval_tags``), ``output_type`` values are lowercase
+        (``pass_fail`` / ``percentage`` / ``deterministic``).
+        """
         resp = _call_tool(
             auth_client,
             "create_eval_template",
             {
                 "name": "e2e-test-metric",
                 "description": "A test evaluation template",
-                "criteria": "Evaluate whether {{response}} is helpful.",
-                "required_keys": ["response"],
-                "eval_tags": ["test", "e2e"],
-                "output_type": "Pass/Fail",
+                "instructions": "Evaluate whether {{response}} is helpful.",
+                "tags": ["test", "e2e"],
+                "output_type": "pass_fail",
             },
         )
         assert resp.status_code == 200

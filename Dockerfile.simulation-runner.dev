@@ -1,0 +1,38 @@
+# Dev-only simulation-runner image (hosted runner, plan §9).
+#
+# Identical to Dockerfile.simulation-runner except the Agent Learning Kit SDK
+# is installed from a LOCAL wheel at the build-context root
+# (agent_learning_kit-*.whl) instead of a published FI_VERSION. This lets an
+# unreleased SDK build be verified on dev before it is published to the
+# registry. The prod image stays registry-pinned; do not use this for prod.
+#
+# Build (from repo root, wheel already copied here):
+#   docker build -f Dockerfile.simulation-runner.dev \
+#     --build-arg BACKEND_IMAGE=futureagi/future-agi:dev \
+#     -t futureagi/future-agi-simulation-runner:latest .
+ARG BACKEND_IMAGE=futureagi/future-agi:dev
+FROM ${BACKEND_IMAGE}
+
+ARG ALK_WHEEL=agent_learning_kit-0.1.0-py3-none-any.whl
+# Keep the native LiveKit stack aligned with the ALK release lock (see the prod
+# Dockerfile for why 1.6.x is avoided in linux/amd64 under Rosetta).
+ARG LIVEKIT_AGENTS_VERSION=1.5.17
+
+COPY ${ALK_WHEEL} /tmp/alk/${ALK_WHEEL}
+RUN python -m venv /opt/alk-venv \
+    && /opt/alk-venv/bin/pip install --no-cache-dir \
+        "/tmp/alk/${ALK_WHEEL}[livekit]" \
+        "livekit-agents==${LIVEKIT_AGENTS_VERSION}" \
+        "livekit-plugins-cartesia==${LIVEKIT_AGENTS_VERSION}" \
+        "livekit-plugins-deepgram==${LIVEKIT_AGENTS_VERSION}" \
+        "livekit-plugins-elevenlabs==${LIVEKIT_AGENTS_VERSION}" \
+        "livekit-plugins-google==${LIVEKIT_AGENTS_VERSION}" \
+        "livekit-plugins-openai==${LIVEKIT_AGENTS_VERSION}" \
+        "livekit-plugins-silero==${LIVEKIT_AGENTS_VERSION}" \
+    && /opt/alk-venv/bin/python -c "import fi.simulate.hosted.child_entrypoint" \
+    && rm -rf /tmp/alk
+
+# The activity reads this to spawn the SDK child.
+ENV ALK_RUNNER_PYTHON=/opt/alk-venv/bin/python
+
+ENTRYPOINT ["bash", "./entrypoint.sh"]

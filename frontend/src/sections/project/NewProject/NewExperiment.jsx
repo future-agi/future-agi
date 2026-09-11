@@ -104,7 +104,7 @@ const NewExperiment = () => {
         </TabWrapper>
 
         <InstructionCodeCopy
-          text={getCodeBySection("installationGuide")}
+          text={getCodeBySection("installation_guide")}
           language={languageTab}
           // onCopy={() => trackEvent(Events.installDependenciesCopied)}
         />
@@ -158,7 +158,7 @@ const NewExperiment = () => {
         </TabWrapper>
 
         <InstructionCodeCopy
-          text={getCodeBySection("projectAddCode")}
+          text={getCodeBySection("project_add_code")}
           language={languageTab}
           // onCopy={() => trackEvent(Events.setupTelemetryCopied)}
         />

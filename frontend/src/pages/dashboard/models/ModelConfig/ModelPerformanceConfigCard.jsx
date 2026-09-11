@@ -26,8 +26,7 @@ const ModelPerformanceConfigCard = ({ defaultMetricId, isMetricAdded }) => {
   const queryClient = useQueryClient();
 
   const { mutate: updateMetricId, isPending } = useMutation({
-    mutationFn: (body) =>
-      axios.post(`${endpoints.model.updateMetric}${id}/`, body),
+    mutationFn: (body) => axios.post(endpoints.model.updateMetric(id), body),
     onSuccess: () => {
       enqueueSnackbar("Default metric updated", { variant: "success" });
       queryClient.invalidateQueries({ queryKey: ["model", id] });

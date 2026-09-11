@@ -2,6 +2,7 @@
 {% load i18n %}
 
 {% block content %}
+{% if user.is_superuser %}
 <div id="custom-admin-links" style="margin-bottom: 20px;">
   <div class="module" style="margin-bottom: 0;">
     <table>
@@ -17,5 +18,6 @@
     </table>
   </div>
 </div>
+{% endif %}
 {{ block.super }}
 {% endblock %}

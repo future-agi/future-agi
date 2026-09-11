@@ -12,6 +12,7 @@ import {
   Typography,
   useTheme,
   Button,
+  Badge,
 } from "@mui/material";
 import {
   StyledIntervalSelect,
@@ -27,10 +28,16 @@ import ChartsGenerator from "./ChartsGenerator";
 import ChartsDateTimeRangePicker from "./ChartsDateTimeRangePicker";
 import EvaluationCharts from "./EvaluationCharts";
 import { useChartsViewContext } from "./ChartsViewProvider/ChartsViewContext";
-import { objectCamelToSnake } from "src/utils/utils";
-import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 import { normalizeTimestamp } from "./ChartsViewProvider/common";
 import SvgColor from "src/components/svg-color";
+import Iconify from "src/components/iconify";
+import TraceFilterPanel from "../LLMTracing/TraceFilterPanel";
+import FilterChips from "../LLMTracing/FilterChips";
+import { buildApiFilterFromPanelRow } from "src/api/contracts/filter-contract";
+import {
+  AGGREGATION_PREPARING_MESSAGE,
+  getExactAggregationReadState,
+} from "src/utils/queryReadState";
 
 const DateRangeButtonOptions = [
   { title: "Hour", value: "hour" },
@@ -59,6 +66,8 @@ const ChartsView = () => {
     parentDateFilter,
     setParentDateFilter,
     isMoreThan7Days,
+    extraFilters,
+    setExtraFilters,
     filters,
     handleZoomChange,
     zoomRange,
@@ -68,11 +77,48 @@ const ChartsView = () => {
   const [, setIsData] = useState(false);
   const customDatePickerAnc = useRef(null);
   const [dateOption, setDateOption] = useState("30D");
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [filterButtonEl, setFilterButtonEl] = useState(null);
+  const [panelFilters, setPanelFilters] = useState(null);
 
   const { observeId } = useParams();
   const queryClient = useQueryClient();
   const theme = useTheme();
   const { setHeaderConfig } = useObserveHeader();
+  const hasActiveFilter = extraFilters?.length > 0;
+
+  const handleFilterToggle = useCallback(() => {
+    setIsFilterOpen((open) => !open);
+  }, []);
+
+  const handleApplyFilters = useCallback(
+    (newFilters) => {
+      setPanelFilters(newFilters);
+      if (!newFilters || newFilters.length === 0) {
+        setExtraFilters([]);
+        return;
+      }
+      setExtraFilters(newFilters.map(buildApiFilterFromPanelRow));
+    },
+    [setExtraFilters],
+  );
+
+  const handleClearFilters = useCallback(() => {
+    setPanelFilters(null);
+    setExtraFilters([]);
+  }, [setExtraFilters]);
+
+  const handleRemoveFilter = useCallback(
+    (index) => {
+      setPanelFilters((current) =>
+        current ? current.filter((_, idx) => idx !== index) : current,
+      );
+      setExtraFilters((current) =>
+        current ? current.filter((_, idx) => idx !== index) : [],
+      );
+    },
+    [setExtraFilters],
+  );
 
   useEffect(() => {
     trackEvent(Events.durationSelected, {
@@ -100,7 +146,12 @@ const ChartsView = () => {
     } else if (isLessThan90Days && selectedInterval === "Month") {
       setSelectedInterval("Week");
     }
-  }, [isMoreThan7Days, selectedInterval, isLessThan90Days]);
+  }, [
+    isMoreThan7Days,
+    selectedInterval,
+    isLessThan90Days,
+    setSelectedInterval,
+  ]);
 
   const navigate = useNavigate();
 
@@ -231,6 +282,7 @@ const ChartsView = () => {
   const {
     data: graphData,
     isLoading,
+    isError: graphError,
     refetch: refetchSystemMetrics,
     isRefetching: isRefetchingSystemMetrics,
   } = useQuery({
@@ -239,9 +291,7 @@ const ChartsView = () => {
       const response = await axios.get(endpoints.project.showCharts(), {
         params: {
           project_id: observeId,
-          filters: JSON.stringify(
-            canonicalizeApiFilterColumnIds(objectCamelToSnake(filters)),
-          ),
+          filters: JSON.stringify(filters),
           interval: selectedInterval?.toLowerCase(),
         },
       });
@@ -250,10 +300,18 @@ const ChartsView = () => {
     enabled: Boolean(observeId) && filters?.length > 0,
   });
 
+  const systemMetrics = graphData?.result?.system_metrics;
+  const graphReadState = getExactAggregationReadState(systemMetrics, {
+    isError: graphError,
+  });
+  const graphReadMessage =
+    graphReadState === "complete" ? null : AGGREGATION_PREPARING_MESSAGE;
+
   const chartCategories = useMemo(() => {
     if (
-      graphData?.result?.system_metrics &&
-      Object.keys(graphData?.result?.system_metrics)?.length > 0
+      graphReadState === "complete" &&
+      systemMetrics &&
+      Object.keys(systemMetrics)?.length > 0
     ) {
       setIsData(true);
       return [
@@ -270,7 +328,7 @@ const ChartsView = () => {
                 {
                   name: "Latency",
                   data:
-                    graphData?.result?.system_metrics?.latency?.map((item) => ({
+                    systemMetrics?.latency?.map((item) => ({
                       x: normalizeTimestamp(item?.timestamp),
                       y: item?.latency,
                     })) || [],
@@ -287,7 +345,7 @@ const ChartsView = () => {
                 {
                   name: "Tokens",
                   data:
-                    graphData?.result?.system_metrics?.tokens?.map((item) => ({
+                    systemMetrics?.tokens?.map((item) => ({
                       x: normalizeTimestamp(item?.timestamp),
                       y: item?.tokens,
                     })) || [],
@@ -304,7 +362,7 @@ const ChartsView = () => {
                 {
                   name: "Traffic",
                   data:
-                    graphData?.result?.system_metrics?.traffic?.map((item) => ({
+                    systemMetrics?.traffic?.map((item) => ({
                       x: normalizeTimestamp(item?.timestamp),
                       y: item?.traffic,
                     })) || [],
@@ -321,7 +379,7 @@ const ChartsView = () => {
                 {
                   name: "Cost",
                   data:
-                    graphData?.result?.system_metrics?.cost?.map((item) => ({
+                    systemMetrics?.cost?.map((item) => ({
                       x: normalizeTimestamp(item?.timestamp),
                       y: item?.cost,
                     })) || [],
@@ -334,7 +392,7 @@ const ChartsView = () => {
     }
 
     return [];
-  }, [graphData]);
+  }, [graphReadState, systemMetrics]);
 
   const refreshGrid = useCallback(() => {
     queryClient.invalidateQueries({
@@ -393,6 +451,39 @@ const ChartsView = () => {
             observeId={observeId}
           />
           <Box sx={{ display: "flex", gap: theme.spacing(1) }}>
+            <Button
+              ref={setFilterButtonEl}
+              variant="outlined"
+              size="small"
+              sx={{
+                px: 1.5,
+                bgcolor: isFilterOpen ? "action.hover" : "background.paper",
+              }}
+              onClick={handleFilterToggle}
+              startIcon={
+                hasActiveFilter ? (
+                  <Badge variant="dot" color="error" overlap="circular">
+                    <Iconify icon="mdi:filter-outline" width={16} />
+                  </Badge>
+                ) : (
+                  <Iconify icon="mdi:filter-outline" width={16} />
+                )
+              }
+            >
+              Filter
+            </Button>
+            <TraceFilterPanel
+              anchorEl={filterButtonEl}
+              open={isFilterOpen && Boolean(filterButtonEl)}
+              onClose={handleFilterToggle}
+              currentFilters={panelFilters}
+              projectId={observeId}
+              source="traces"
+              tab="trace"
+              showAi={false}
+              showQueryTab={false}
+              onApply={handleApplyFilters}
+            />
             <Button
               variant="outlined"
               size="small"
@@ -469,10 +560,33 @@ const ChartsView = () => {
             </StyledIntervalSelect>
           </Box>
         </Box>
+        <FilterChips
+          extraFilters={extraFilters}
+          onRemoveFilter={handleRemoveFilter}
+          onClearAll={handleClearFilters}
+          onAddFilter={(anchorEl) => {
+            setFilterButtonEl(anchorEl);
+            setIsFilterOpen(true);
+          }}
+          onChipClick={(_index, anchorEl) => {
+            setFilterButtonEl(anchorEl);
+            setIsFilterOpen(true);
+          }}
+        />
       </Box>
 
       {/* Chart Categories and Charts */}
       <Box sx={{ paddingTop: theme.spacing(3) }}>
+        {graphReadMessage && (
+          <Typography
+            role="status"
+            variant="caption"
+            color="text.secondary"
+            sx={{ display: "block", mb: 1 }}
+          >
+            {graphReadMessage}
+          </Typography>
+        )}
         {isLoading ? (
           <>
             <Skeleton

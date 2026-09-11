@@ -1201,6 +1201,36 @@ def get_specific_error_message(error, is_llm_error=None):
     return get_error_message("FAILED_TO_PROCESS_EVALUATION")
 
 
+def get_usage_error_code(error):
+    """Return a billing/usage error_code for rate-limit or credit-exhaustion
+    errors, else None.
+
+    Mirrors the detection in get_specific_error_message so the per-cell eval
+    error path can stamp value_infos with a code the frontend upgrade banner
+    recognises (see ErrorCellRenderer USAGE_LIMIT_CTA). Returns codes from the
+    same taxonomy as the usage pre-check (CheckResult.error_code).
+    """
+    error_message = str(error)
+    error_status = ""
+    if (
+        isinstance(error, ValueError)
+        and isinstance(error.args, tuple)
+        and len(error.args) > 1
+    ):
+        error_status = str(error.args[1])
+    haystack = f"{error_message} {error_status}".lower()
+    if (
+        "rate_limited" in haystack
+        or "rate limit" in haystack
+        or "too many requests" in haystack
+        or "429" in haystack
+    ):
+        return "RATE_LIMITED"
+    if "insufficient_credits" in haystack or "insufficient credits" in haystack:
+        return "FREE_TIER_LIMIT"
+    return None
+
+
 def get_error_for_api_status(status):
     """
     Maps API call status codes to appropriate error messages.

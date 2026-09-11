@@ -272,7 +272,7 @@ function ScoreTrends({ scoreTrends }) {
               fontSize="26px"
               fontWeight={700}
               sx={{
-                color: "#fff",
+                color: "text.primary",
                 lineHeight: 1,
                 mb: 1.25,
                 fontFeatureSettings: "'tnum'",
@@ -529,7 +529,7 @@ function MetricCards({ metrics }) {
             <Typography
               fontSize="22px"
               fontWeight={700}
-              sx={{ color: "#fff", lineHeight: 1.1 }}
+              sx={{ color: "text.primary", lineHeight: 1.1 }}
             >
               {m.value}
             </Typography>
@@ -562,7 +562,7 @@ MetricCards.propTypes = { metrics: PropTypes.array.isRequired };
 
 // ── Main TrendsTab ──────────────────────────────────────────────────────────
 export default function TrendsTab({ error }) {
-  const clusterId = error?.clusterId;
+  const clusterId = error?.cluster_id;
   const { data, isLoading } = useErrorFeedTrends(clusterId);
 
   if (isLoading || !data) {
@@ -573,7 +573,7 @@ export default function TrendsTab({ error }) {
     );
   }
 
-  const hasHeatmapData = (data.activityHeatmap ?? []).some((row) =>
+  const hasHeatmapData = (data.activity_heatmap ?? []).some((row) =>
     row.some((cell) => cell.value > 0),
   );
 
@@ -583,21 +583,21 @@ export default function TrendsTab({ error }) {
       {data.metrics?.length > 0 && <MetricCards metrics={data.metrics} />}
 
       {/* Events over time */}
-      {data.eventsOverTime?.length > 0 && (
+      {data.events_over_time?.length > 0 && (
         <SectionCard title="Events Over Time" icon="mdi:chart-bar">
-          <EventsLineChart eventsData={data.eventsOverTime} />
+          <EventsLineChart eventsData={data.events_over_time} />
         </SectionCard>
       )}
 
       {/* Score trends */}
       <SectionCard title="Score Trends" icon="mdi:chart-line">
-        <ScoreTrends scoreTrends={data.scoreTrends ?? []} />
+        <ScoreTrends scoreTrends={data.score_trends ?? []} />
       </SectionCard>
 
       {/* Activity heatmap */}
       {hasHeatmapData && (
         <SectionCard title="Activity Heatmap (errors by hour)" icon="mdi:grid">
-          <ActivityHeatmap data={data.activityHeatmap} />
+          <ActivityHeatmap data={data.activity_heatmap} />
         </SectionCard>
       )}
     </Stack>

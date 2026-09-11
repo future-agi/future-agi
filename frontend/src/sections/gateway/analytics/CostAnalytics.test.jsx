@@ -33,11 +33,11 @@ describe("CostAnalytics", () => {
     mockUseAnalyticsCost.mockReturnValue({
       isLoading: false,
       data: {
-        totalCost: "125.5",
+        total_cost: "125.5",
         breakdown: [
-          { name: "gpt-4o", totalCost: "100" },
-          { name: "free-model", totalCost: "0" },
-          { name: "gpt-4o-mini", totalCost: "25.5" },
+          { name: "gpt-4o", total_cost: "100" },
+          { name: "free-model", total_cost: "0" },
+          { name: "gpt-4o-mini", total_cost: "25.5" },
         ],
       },
     });
@@ -64,10 +64,10 @@ describe("CostAnalytics", () => {
     mockUseAnalyticsCost.mockReturnValue({
       isLoading: false,
       data: {
-        totalCost: "0",
+        total_cost: "0",
         breakdown: [
-          { name: "gpt-4o", totalCost: "0" },
-          { name: "gpt-4o-mini", totalCost: "0" },
+          { name: "gpt-4o", total_cost: "0" },
+          { name: "gpt-4o-mini", total_cost: "0" },
         ],
       },
     });

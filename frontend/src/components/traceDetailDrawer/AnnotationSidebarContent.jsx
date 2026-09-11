@@ -387,10 +387,11 @@ function QueueAnnotationSection({
     queue,
     item,
     labels,
-    existingScores,
-    existingNotes,
-    existingLabelNotes,
+    existing_scores: existingScores,
+    existing_notes: existingNotes,
+    existing_label_notes: existingLabelNotes,
   } = queueEntry;
+
   const [values, setValues] = useState({});
   const [notes, setNotes] = useState("");
   const [notesTouched, setNotesTouched] = useState(false);
@@ -471,10 +472,16 @@ function QueueAnnotationSection({
 
     if (scores.length === 0) return;
 
+    // Send queue_item_id so the bulk score write lands in *this* queue's
+    // review context. Without it the backend falls back to the source's
+    // default queue, and every section in this drawer would write to the
+    // same row — making cross-queue values collapse into the last one
+    // saved.
     bulkCreate(
       {
         sourceType: itemSourceType,
         sourceId,
+        queueItemId: item?.id,
         scores,
         notes: "",
         spanNotes: notes,
@@ -495,6 +502,7 @@ function QueueAnnotationSection({
     notesTouched,
     existingNotes,
     labelNotes,
+    item?.id,
     itemSourceType,
     sourceId,
     spanNotesSourceId,
@@ -778,9 +786,9 @@ QueueAnnotationSection.propTypes = {
     queue: PropTypes.object,
     item: PropTypes.object,
     labels: PropTypes.array,
-    existingScores: PropTypes.object,
-    existingNotes: PropTypes.string,
-    existingLabelNotes: PropTypes.object,
+    existing_scores: PropTypes.object,
+    existing_notes: PropTypes.string,
+    existing_label_notes: PropTypes.object,
     spanNotesSourceId: PropTypes.string,
     span_notes_source_id: PropTypes.string,
   }).isRequired,

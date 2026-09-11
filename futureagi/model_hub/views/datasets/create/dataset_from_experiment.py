@@ -3,8 +3,8 @@ import traceback
 import uuid
 
 import structlog
+from django.db.models import Q
 from django.forms import model_to_dict
-from django.shortcuts import get_object_or_404
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
@@ -15,17 +15,75 @@ from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.evals_metric import UserEvalMetric
 from model_hub.models.experiments import ExperimentDatasetTable
 from model_hub.models.run_prompt import RunPrompter
+from model_hub.serializers.contracts import (
+    CreateDatasetFromExperimentRequestSerializer,
+    MODEL_HUB_ERROR_RESPONSES,
+)
+from model_hub.serializers.develop_dataset_contracts import (
+    DevelopDatasetMessageResponseSerializer,
+)
 from model_hub.serializers.develop_dataset import DatasetSerializer
 from model_hub.views.eval_runner import EvaluationRunner
 from model_hub.views.utils.utils import get_recommendations, update_column_id
+from model_hub.validators.dataset_validators import validate_dataset_name_unique
+from tfc.middleware.workspace_context import get_current_workspace
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.parse_errors import parse_serialized_errors
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_resource_request
 except ImportError:
     log_and_deduct_cost_for_resource_request = None
+
+
+def _request_organization(request):
+    return getattr(request, "organization", None) or request.user.organization
+
+
+def _request_workspace_filter(request, field_name="workspace"):
+    workspace = getattr(request, "workspace", None) or get_current_workspace()
+    if not workspace:
+        return Q()
+
+    if getattr(workspace, "is_default", False):
+        return (
+            Q(**{field_name: workspace})
+            | Q(
+                **{
+                    f"{field_name}__is_default": True,
+                    f"{field_name}__organization_id": workspace.organization_id,
+                }
+            )
+            | Q(**{f"{field_name}__isnull": True})
+        )
+
+    return Q(**{field_name: workspace})
+
+
+def _request_experiment_dataset_queryset(request):
+    organization = _request_organization(request)
+    fk_scope = Q(experiment__dataset__organization=organization) & (
+        _request_workspace_filter(request, field_name="experiment__dataset__workspace")
+    )
+    legacy_scope = Q(experiments_datasets_created__dataset__organization=organization) & (
+        _request_workspace_filter(
+            request, field_name="experiments_datasets_created__dataset__workspace"
+        )
+    )
+    return ExperimentDatasetTable.objects.filter(
+        fk_scope | legacy_scope,
+        deleted=False,
+    ).distinct()
+
+
+def _experiment_for_dataset(experiment_dataset):
+    return (
+        experiment_dataset.experiment
+        or experiment_dataset.experiments_datasets_created.filter(deleted=False).first()
+    )
 
 
 class CreateDatasetFromExpView(APIView):
@@ -41,28 +99,61 @@ class CreateDatasetFromExpView(APIView):
         except (ValueError, AttributeError, TypeError):
             return False
 
+    @validated_request(
+        request_serializer=CreateDatasetFromExperimentRequestSerializer,
+        responses={
+            200: DevelopDatasetMessageResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, exp_dataset_id, *args, **kwargs):
         try:
-            new_dataset_name = request.data.get("name")
-            model_type = request.data.get("model_type", ModelTypes.GENERATIVE_LLM.value)
+            data = request.validated_data
+            new_dataset_name = data.get("name")
+            model_type = data.get("model_type", ModelTypes.GENERATIVE_LLM.value)
 
-            _org = getattr(request, "organization", None) or request.user.organization
-            experiment_dataset = get_object_or_404(
-                ExperimentDatasetTable,
-                id=exp_dataset_id,
-                deleted=False,
-                experiments_datasets_created__dataset__organization=_org,
+            _org = _request_organization(request)
+            experiment_dataset = (
+                _request_experiment_dataset_queryset(request)
+                .filter(id=exp_dataset_id)
+                .first()
             )
+            if not experiment_dataset:
+                return self._gm.not_found(
+                    get_error_message("EXPERIMENT_DATASET_NOT_FOUND")
+                )
+
+            experiment = _experiment_for_dataset(experiment_dataset)
+            if not experiment:
+                return self._gm.not_found(get_error_message("EXPERIMENT_NOT_FOUND"))
 
             if not new_dataset_name:
                 new_dataset_name = experiment_dataset.name
 
+            try:
+                validate_dataset_name_unique(new_dataset_name, _org)
+            except Exception as validation_err:
+                return self._gm.bad_request(str(validation_err.detail[0]))
+
+            dataset_serializer = DatasetSerializer(
+                data={
+                    "id": uuid.uuid4(),
+                    "name": new_dataset_name,
+                    "organization": _org.id,
+                    "model_type": model_type,
+                    "user": request.user.id,
+                }
+            )
+
+            if not dataset_serializer.is_valid():
+                return self._gm.bad_request(parse_serialized_errors(dataset_serializer))
+
             if log_and_deduct_cost_for_resource_request is not None:
                 call_log_row_entry = log_and_deduct_cost_for_resource_request(
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
+                    organization=_org,
                     api_call_type=APICallTypeChoices.DATASET_ADD.value,
-                    workspace=request.workspace,
+                    workspace=getattr(request, "workspace", None),
                 )
                 if (
                     call_log_row_entry is None
@@ -74,31 +165,6 @@ class CreateDatasetFromExpView(APIView):
                     )
                 call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
                 call_log_row_entry.save()
-
-            from model_hub.validators.dataset_validators import (
-                validate_dataset_name_unique,
-            )
-
-            try:
-                validate_dataset_name_unique(
-                    new_dataset_name,
-                    getattr(request, "organization", None) or request.user.organization,
-                )
-            except Exception as validation_err:
-                return self._gm.bad_request(str(validation_err.detail[0]))
-
-            dataset_serializer = DatasetSerializer(
-                data={
-                    "id": uuid.uuid4(),
-                    "name": new_dataset_name,
-                    "organization": (
-                        getattr(request, "organization", None)
-                        or request.user.organization
-                    ).id,
-                    "model_type": model_type,
-                    "user": request.user.id,
-                }
-            )
 
             def handle_run_prompt(source_id, dataset):
                 source_run_prompter = RunPrompter.objects.get(id=source_id)
@@ -226,12 +292,8 @@ class CreateDatasetFromExpView(APIView):
                 SourceChoices.EXPERIMENT_EVALUATION.value: handle_experiment_evaluation,
             }
 
-            if not dataset_serializer.is_valid():
-                return self._gm.bad_request(parse_serialized_errors(dataset_serializer))
-
             # experiment_columns = experiment_dataset.columns.all()
             columns_in_experiment = list(experiment_dataset.columns.all())
-            experiment = experiment_dataset.experiment
             user_eval_metric = list(experiment.user_eval_template_ids.all())
             total_columns = []
             for metric in user_eval_metric:
@@ -249,8 +311,12 @@ class CreateDatasetFromExpView(APIView):
                 )
                 total_columns.extend([col_id for col_id in cols_used if col_id])
 
-            total_columns.append(str(experiment.column.id))
-            if experiment.column.source == SourceChoices.RUN_PROMPT.value:
+            if experiment.column:
+                total_columns.append(str(experiment.column.id))
+            if (
+                experiment.column
+                and experiment.column.source == SourceChoices.RUN_PROMPT.value
+            ):
                 run_prompt = RunPrompter.objects.get(id=experiment.column.source_id)
                 # Extract all column UUIDs from messages
                 message_column_ids = []
@@ -285,7 +351,7 @@ class CreateDatasetFromExpView(APIView):
                 Column.objects.filter(
                     id__in=valid_total_columns,  # Convert UUIDs to strings
                     deleted=False,
-                    dataset=experiment.dataset,
+                    dataset=experiment.snapshot_dataset or experiment.dataset,
                 ).order_by("created_at")
             )
             experiment_columns = columns_in_experiment + columns_in_datasets
@@ -301,7 +367,9 @@ class CreateDatasetFromExpView(APIView):
             column_config = {}
 
             try:
-                new_dataset = dataset_serializer.save()
+                new_dataset = dataset_serializer.save(
+                    workspace=getattr(request, "workspace", None)
+                )
             except Exception:
                 return self._gm.bad_request(
                     get_error_message("FAILED_TO_CREATE_DATASET_FROM_EXP")
@@ -349,7 +417,10 @@ class CreateDatasetFromExpView(APIView):
                     },
                 )
                 column_order.append(str(new_column.id))
-                column_config[str(column.id)] = {"is_visible": True, "is_frozen": None}
+                column_config[str(new_column.id)] = {
+                    "is_visible": True,
+                    "is_frozen": None,
+                }
 
                 logger.info(f"Created column: {column.name}")
 

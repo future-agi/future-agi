@@ -43,6 +43,7 @@ from model_hub.models.develop_optimisation import OptimizationDataset
 from model_hub.models.evals_metric import UserEvalMetric
 from model_hub.models.run_prompt import RunPrompter
 from model_hub.serializers.develop_optimisation import OptimizationDetailSerializer
+from model_hub.utils.workspace_scope import scoped_optimization_queryset
 from model_hub.views.eval_runner import EvaluationRunner
 from model_hub.views.prompt_template import replace_ids_with_column_name
 from tfc.constants.api_calls import APICallTypeChoices
@@ -635,6 +636,9 @@ class OptimizationDetailView(RetrieveAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = OptimizationDetailSerializer
     queryset = OptimizationDataset.objects.all()
+
+    def get_queryset(self):
+        return scoped_optimization_queryset(self.request)
 
     def get_object(self):
         obj = super().get_object()

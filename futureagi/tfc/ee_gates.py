@@ -7,6 +7,7 @@ through EE code paths)."""
 from __future__ import annotations
 
 from rest_framework.response import Response
+from tfc.utils.api_errors import build_error_envelope
 
 _TURING_MODELS = frozenset(
     {
@@ -27,35 +28,62 @@ def is_turing_model(model_name: object) -> bool:
 
 
 def voice_sim_oss_gate_response() -> Response | None:
-    """Return a 402 response if the deployment is OSS (ee/ stripped or
-    `CLOUD_DEPLOYMENT`/`EE_LICENSE_KEY` unset), else None.
+    """Return a 402 response when the voice-sim code isn't available in this
+    build (OSS image with ee/ stripped), else None.
 
-    Voice simulation requires livekit/vapi integration and the `ee.voice`
-    module. Use at the top of any view that starts or re-runs a voice
-    call."""
+    Voice simulation requires the `ee.voice` module. This gate decides CODE
+    availability only — license/plan entitlement is the caller's second
+    layer (capability service / cloud plan resolver), and voice_sim is open
+    on self-hosted deployments regardless of license state, so deployment
+    mode alone must never deny here."""
     try:
-        from ee.usage.deployment import DeploymentMode
+        from tfc.capabilities import service as capability_service
+        from tfc.licensing.types import DenialReason
 
-        if not DeploymentMode.is_oss():
-            return None
-    except ImportError:
-        pass  # ee.usage absent → treat as OSS
+        if capability_service.is_configured():
+            decision = capability_service.check("voice_sim")
+            if decision.reason_code != DenialReason.EE_CODE_UNAVAILABLE.value:
+                # Allowed, or a license/plan concern → the caller's
+                # entitlement layer decides. Only missing code denies here.
+                return None
+            return _voice_sim_code_unavailable_response()
+    except Exception:
+        pass  # capability service unusable → fall through to code probe
 
+    # Early-startup fallback: probe the module directly.
+    from tfc.ee_loader import has_ee
+
+    if has_ee("ee.voice"):
+        return None
+    return _voice_sim_code_unavailable_response()
+
+
+def _voice_sim_code_unavailable_response() -> Response:
+    message = (
+        "Voice simulation is not available on OSS. "
+        "Upgrade to cloud or enterprise to run voice calls."
+    )
     return Response(
-        {
-            "error": (
-                "Voice simulation is not available on OSS. "
-                "Upgrade to cloud or enterprise to run voice calls."
-            ),
-            "upgrade_required": True,
-            "feature": "voice_sim",
-        },
+        build_error_envelope(
+            message,
+            status_code=402,
+            error_type="entitlement_error",
+            code="ENTITLEMENT_DENIED",
+            extra={
+                "upgrade_required": True,
+                "feature": "voice_sim",
+            },
+        ),
         status=402,
     )
 
 
 def _is_oss() -> bool:
-    """True when the deployment is OSS (ee/ stripped or DeploymentMode.is_oss)."""
+    """True when the deployment is OSS (ee/ stripped or DeploymentMode.is_oss).
+
+    Early-startup fallback only — prefer `_turing_denied_off_cloud()`, which
+    consults the capability service and also catches self-hosted EE installs
+    whose license doesn't include Turing (a case `is_oss()` alone misses)."""
     try:
         from ee.usage.deployment import DeploymentMode
 
@@ -64,16 +92,49 @@ def _is_oss() -> bool:
         return True  # ee.usage absent → OSS
 
 
+def _turing_denied_off_cloud() -> bool:
+    """Single boundary helper: True when Turing/Protect models aren't
+    available in this deployment and the gate should block/hide them.
+
+    Turing is an ``oss_locked`` capability, so off-cloud it needs either the
+    OSS build (never) or a self-hosted EE license that actually includes it.
+    We route through ``capability_service.check("turing_models")`` so an
+    EE deployment *without* Turing in its license is correctly denied —
+    something the older ``DeploymentMode.is_oss()`` probe let slip through
+    (is_oss() is False for any EE flavor, licensed or not).
+
+    Cloud is intentionally a no-op here (returns False): per-org Turing
+    entitlement on cloud is enforced by the usage/entitlement layer, not this
+    gate, so blocking here would double-gate and can't see the org context.
+
+    Falls back to the deployment probe during early startup, before the
+    capability service is wired in ``AppConfig.ready``."""
+    try:
+        from tfc.capabilities import service as capability_service
+        from tfc.licensing.types import DeploymentLocation
+    except Exception:
+        return _is_oss()  # capability layer unimportable → probe deployment
+
+    if not capability_service.is_configured():
+        return _is_oss()  # early startup → probe deployment
+
+    if capability_service.get_deployment_location() == DeploymentLocation.CLOUD:
+        return False  # cloud: enforced by the per-org entitlement layer
+
+    return not capability_service.check("turing_models").allowed
+
+
 def strip_turing_from_config_options(
     config_params_option: dict | None,
 ) -> dict:
-    """When running OSS, drop Turing/Protect models from the `model` option
-    list so the frontend dropdown never offers a model the gate would 402.
+    """When Turing models aren't available in this deployment, drop
+    Turing/Protect models from the `model` option list so the frontend
+    dropdown never offers a model the gate would 402.
 
     Returns a copy; the original dict is not mutated. No-op on cloud."""
     if not config_params_option:
         return config_params_option or {}
-    if not _is_oss():
+    if not _turing_denied_off_cloud():
         return config_params_option
 
     model_options = config_params_option.get("model")
@@ -104,9 +165,7 @@ def turing_oss_gate_for_template(
             from model_hub.models.evals_metric import EvalTemplate
 
             tpl = (
-                EvalTemplate.no_workspace_objects.filter(
-                    id=template_id, deleted=False
-                )
+                EvalTemplate.no_workspace_objects.filter(id=template_id, deleted=False)
                 .only("eval_type")
                 .first()
             )
@@ -120,30 +179,34 @@ def turing_oss_gate_for_template(
 
 def turing_oss_gate_response(model_name: object) -> Response | None:
     """Return a 402 response if the model is a Turing/Protect model AND
-    the deployment is OSS. Return None otherwise so the caller proceeds.
+    the deployment doesn't include Turing (OSS build, or a self-hosted EE
+    install whose license omits it). Return None otherwise so the caller
+    proceeds — including on cloud, where per-org entitlement is enforced by
+    the usage layer rather than this gate.
 
     Use at the top of any view that accepts a model selection and would
     otherwise route into ee/turing code."""
     if not is_turing_model(model_name):
         return None
 
-    try:
-        from ee.usage.deployment import DeploymentMode
+    if not _turing_denied_off_cloud():
+        return None
 
-        if not DeploymentMode.is_oss():
-            return None
-    except ImportError:
-        pass  # ee.usage absent → treat as OSS
-
+    message = (
+        "Turing and Protect models are not available on OSS. "
+        "Select a different model (OpenAI, Anthropic, etc.) "
+        "or upgrade your plan."
+    )
     return Response(
-        {
-            "error": (
-                "Turing and Protect models are not available on OSS. "
-                "Select a different model (OpenAI, Anthropic, etc.) "
-                "or upgrade your plan."
-            ),
-            "upgrade_required": True,
-            "feature": "turing",
-        },
+        build_error_envelope(
+            message,
+            status_code=402,
+            error_type="entitlement_error",
+            code="ENTITLEMENT_DENIED",
+            extra={
+                "upgrade_required": True,
+                "feature": "turing",
+            },
+        ),
         status=402,
     )

@@ -298,7 +298,6 @@ export const RunPromptOutputTypeOptions = [
 export const SpanChipColors = {
   chain: { backgroundColor: "#FF3EFA14", borderColor: "#FF3EFA29" },
   retriever: { backgroundColor: "#2F7CF714", borderColor: "#2F7CF729" },
-  generation: { backgroundColor: "#4CAF5014", borderColor: "#4CAF5029" },
   llm: { backgroundColor: "#FF950014", borderColor: "#FF950029" },
   tool: { backgroundColor: "#F5E65F29", borderColor: "#F5E65F" },
   agent: { backgroundColor: "action.selected", borderColor: "primary.light" },
@@ -307,6 +306,7 @@ export const SpanChipColors = {
   unknown: { backgroundColor: "#D92D201F", borderColor: "#D92D2066" },
   guardrail: { backgroundColor: "#8237941F", borderColor: "#82379466" },
   evaluator: { backgroundColor: "background.neutral", borderColor: "divider" },
+  conversation: { backgroundColor: "#0EA5E91F", borderColor: "#0EA5E966" },
 };
 
 export const SpanTypes = [
@@ -319,6 +319,8 @@ export const SpanTypes = [
   { label: "Reranker", value: "reranker" },
   { label: "Guardrail", value: "guardrail" },
   { label: "Evaluator", value: "evaluator" },
+  { label: "Conversation", value: "conversation" },
+  { label: "Unknown", value: "unknown" },
 ];
 
 export const AllowedEvalSpanTypes = [

@@ -1,21 +1,34 @@
 import React, { useCallback, useMemo, useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Collapse, IconButton, Stack, Typography } from "@mui/material";
+import {
+  Box,
+  Collapse,
+  IconButton,
+  Stack,
+  Typography,
+  useTheme,
+} from "@mui/material";
 import Iconify from "src/components/iconify";
 import NestedJsonTable from "./NestedJsonTable";
 
 const ROLE_CONFIG = {
-  system: { label: "SYS", color: "#6b7280" },
+  system: { label: "SYS", accent: "neutral" },
   user: { label: "USER", color: "#0ea5e9" },
-  assistant: { label: "AI", color: "#7b56db" },
+  assistant: { label: "AI", accent: "brand" },
   tool: { label: "TOOL", color: "#f59e0b" },
   function: { label: "FN", color: "#f59e0b" },
-  developer: { label: "DEV", color: "#8b5cf6" },
+  developer: { label: "DEV", accent: "violet" },
 };
 
-const roleConfig = (role) => {
+// The badge tints are built by concatenating alpha onto the hex, so the colour
+// has to be a resolved value rather than a palette path.
+const roleConfig = (role, palette) => {
   const key = String(role || "unknown").toLowerCase();
-  return ROLE_CONFIG[key] || { label: key.toUpperCase(), color: "#64748b" };
+  const cfg = ROLE_CONFIG[key] || {
+    label: key.toUpperCase(),
+    accent: "neutral",
+  };
+  return { ...cfg, color: cfg.color || palette.accent[cfg.accent] };
 };
 
 // Backend ships every field in BOTH snake_case and camelCase. Keep the
@@ -386,7 +399,8 @@ KeyValueTable.propTypes = {
 };
 
 const MessageRow = ({ message, index, isExpanded, onToggle }) => {
-  const cfg = roleConfig(message?.role);
+  const theme = useTheme();
+  const cfg = roleConfig(message?.role, theme.palette);
   const preview = getContentPreview(message);
 
   return (

@@ -35,10 +35,16 @@ from channels.routing import ProtocolTypeRouter, URLRouter  # noqa: E402
 from django.core.asgi import get_asgi_application  # noqa: E402
 
 from sockets.routing import websocket_urlpatterns  # noqa: E402
+from tfc.asgi_startup import warm_http_urlconf  # noqa: E402
 from tfc.middleware.jwt_auth import JWTAuthMiddleware  # noqa: E402
 
 # Django ASGI app for standard HTTP requests
 _django_app = get_asgi_application()
+# Granian constructs the middleware stack while importing this module, but
+# Django leaves ROOT_URLCONF lazy until the first HTTP request. Materialize the
+# complete route graph now so a newly spawned worker cannot charge broad view
+# imports to its first customer request.
+warm_http_urlconf()
 
 # MCP Streamable HTTP app - lazy loaded to avoid import errors if mcp not installed
 _mcp_app = None

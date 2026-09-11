@@ -81,25 +81,32 @@ from ai_tools.tools.docs import get_page  # noqa: F401
 from ai_tools.tools.docs import search_docs  # noqa: F401
 
 # Evaluation tools
+from ai_tools.tools.evaluations import apply_eval_group_to_dataset  # noqa: F401
 from ai_tools.tools.evaluations import compare_evaluations  # noqa: F401
 from ai_tools.tools.evaluations import create_composite_eval  # noqa: F401
+from ai_tools.tools.evaluations import create_eval_group  # noqa: F401
 from ai_tools.tools.evaluations import create_eval_template  # noqa: F401
+from ai_tools.tools.evaluations import delete_eval_group  # noqa: F401
 from ai_tools.tools.evaluations import delete_eval_logs  # noqa: F401
 from ai_tools.tools.evaluations import delete_eval_template  # noqa: F401
 from ai_tools.tools.evaluations import duplicate_eval_template  # noqa: F401
+from ai_tools.tools.evaluations import edit_eval_group_templates  # noqa: F401
 from ai_tools.tools.evaluations import evaluate_with_agent  # noqa: F401
 from ai_tools.tools.evaluations import execute_composite_eval  # noqa: F401
 from ai_tools.tools.evaluations import get_eval_code_snippet  # noqa: F401
+from ai_tools.tools.evaluations import get_eval_group  # noqa: F401
 from ai_tools.tools.evaluations import get_eval_log_detail  # noqa: F401
 from ai_tools.tools.evaluations import get_eval_logs  # noqa: F401
 from ai_tools.tools.evaluations import get_eval_playground  # noqa: F401
 from ai_tools.tools.evaluations import get_eval_template  # noqa: F401
 from ai_tools.tools.evaluations import get_evaluation  # noqa: F401
+from ai_tools.tools.evaluations import list_eval_groups  # noqa: F401
 from ai_tools.tools.evaluations import list_eval_templates  # noqa: F401
 from ai_tools.tools.evaluations import list_evaluations  # noqa: F401
 from ai_tools.tools.evaluations import run_evaluation  # noqa: F401
 from ai_tools.tools.evaluations import submit_eval_feedback  # noqa: F401
 from ai_tools.tools.evaluations import test_eval_template  # noqa: F401
+from ai_tools.tools.evaluations import update_eval_group  # noqa: F401
 from ai_tools.tools.evaluations import update_eval_template  # noqa: F401
 
 # Experiment tools (11)
@@ -284,8 +291,7 @@ from ai_tools.tools.users import revoke_api_key  # noqa: F401
 from ai_tools.tools.users import update_user_role  # noqa: F401
 from ai_tools.tools.users import update_workspace  # noqa: F401
 
-# Web tools (4)
+# Web tools (3)
 from ai_tools.tools.web import brave_search  # noqa: F401
-from ai_tools.tools.web import ground_truth_search  # noqa: F401
 from ai_tools.tools.web import kb_search  # noqa: F401
 from ai_tools.tools.web import trace_explorer  # noqa: F401

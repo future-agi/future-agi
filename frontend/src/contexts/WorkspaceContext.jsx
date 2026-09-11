@@ -9,18 +9,31 @@ import React, {
 import PropTypes from "prop-types";
 import axios, { endpoints } from "src/utils/axios";
 import { useAuthContext } from "src/auth/hooks";
+import { useOrganization } from "src/contexts/OrganizationContext";
 import { enqueueSnackbar } from "src/components/snackbar";
 import logger from "src/utils/logger";
+import {
+  SS_KEY_ORG_ID,
+  SS_KEY_WORKSPACE_DISPLAY_NAME,
+  SS_KEY_WORKSPACE_ID,
+  SS_KEY_WORKSPACE_NAME,
+  SS_KEY_WORKSPACE_ORG_ID,
+  SS_KEY_WORKSPACE_ROLE,
+  SS_KEY_WS_LEVEL,
+} from "src/utils/sessionKeys";
 
 // --- sessionStorage helpers ---------------------------------------------------
 
-const SS_KEY_WORKSPACE_ID = "workspaceId";
-const SS_KEY_WORKSPACE_NAME = "workspaceName";
-const SS_KEY_WORKSPACE_DISPLAY_NAME = "workspaceDisplayName";
-const SS_KEY_WORKSPACE_ROLE = "workspaceRole";
-const SS_KEY_WS_LEVEL = "wsLevel";
+const EMPTY_WORKSPACE = {
+  id: null,
+  name: null,
+  displayName: null,
+  role: null,
+  wsLevel: null,
+  orgId: null,
+};
 
-function readSessionWorkspace() {
+export function readSessionWorkspace() {
   try {
     return {
       id: sessionStorage.getItem(SS_KEY_WORKSPACE_ID) || null,
@@ -34,19 +47,37 @@ function readSessionWorkspace() {
         const parsed = parseInt(raw, 10);
         return Number.isNaN(parsed) ? null : parsed;
       })(),
+      orgId: sessionStorage.getItem(SS_KEY_WORKSPACE_ORG_ID) || null,
     };
   } catch {
-    return {
-      id: null,
-      name: null,
-      displayName: null,
-      role: null,
-      wsLevel: null,
-    };
+    return { ...EMPTY_WORKSPACE };
   }
 }
 
-function writeSessionWorkspace({ id, name, displayName, role, wsLevel }) {
+export function readSessionOrgId() {
+  try {
+    return sessionStorage.getItem(SS_KEY_ORG_ID) || null;
+  } catch {
+    return null;
+  }
+}
+
+// Sessions written before workspaceOrgId existed have no orgId, so they fail
+// the check and get reseeded.
+export function readSessionWorkspaceForOrg(orgId) {
+  const stored = readSessionWorkspace();
+  if (!stored.id || !orgId || stored.orgId !== orgId) return null;
+  return stored;
+}
+
+export function writeSessionWorkspace({
+  id,
+  name,
+  displayName,
+  role,
+  wsLevel,
+  orgId,
+}) {
   try {
     if (id) sessionStorage.setItem(SS_KEY_WORKSPACE_ID, id);
     else sessionStorage.removeItem(SS_KEY_WORKSPACE_ID);
@@ -63,6 +94,9 @@ function writeSessionWorkspace({ id, name, displayName, role, wsLevel }) {
 
     if (wsLevel != null) sessionStorage.setItem(SS_KEY_WS_LEVEL, wsLevel);
     else sessionStorage.removeItem(SS_KEY_WS_LEVEL);
+
+    if (orgId) sessionStorage.setItem(SS_KEY_WORKSPACE_ORG_ID, orgId);
+    else sessionStorage.removeItem(SS_KEY_WORKSPACE_ORG_ID);
   } catch {
     // sessionStorage may be unavailable in some contexts (e.g. SSR)
   }
@@ -75,6 +109,7 @@ function clearSessionWorkspace() {
     sessionStorage.removeItem(SS_KEY_WORKSPACE_DISPLAY_NAME);
     sessionStorage.removeItem(SS_KEY_WORKSPACE_ROLE);
     sessionStorage.removeItem(SS_KEY_WS_LEVEL);
+    sessionStorage.removeItem(SS_KEY_WORKSPACE_ORG_ID);
   } catch {
     // noop
   }
@@ -112,50 +147,46 @@ export function useWorkspace() {
 
 export function WorkspaceProvider({ children }) {
   const { user, authenticated, loading } = useAuthContext();
+  const { currentOrganizationId } = useOrganization();
 
   const [workspace, setWorkspace] = useState(() => {
     // On mount, try sessionStorage first (survives refresh, per-tab)
-    const stored = readSessionWorkspace();
-    if (stored.id) {
+    const stored = readSessionWorkspaceForOrg(readSessionOrgId());
+    if (stored) {
       setWorkspaceHeader(stored.id);
       return stored;
     }
-    return {
-      id: null,
-      name: null,
-      displayName: null,
-      role: null,
-      wsLevel: null,
-    };
+    return { ...EMPTY_WORKSPACE };
   });
 
-  const [isReady, setIsReady] = useState(() => {
-    // Ready immediately if sessionStorage had a workspace
-    return !!readSessionWorkspace().id;
-  });
+  const [isReady, setIsReady] = useState(
+    () => !!readSessionWorkspaceForOrg(readSessionOrgId()),
+  );
 
   // When user data arrives (login / refresh), seed workspace if not already set
   useEffect(() => {
     if (!authenticated || !user) return;
 
-    // If sessionStorage already has a workspace, trust it (per-tab persistence)
-    const stored = readSessionWorkspace();
-    if (stored.id) {
+    // The resolved org first: effects run child-first and this provider sits
+    // inside OrganizationProvider, so currentOrganizationId is still the
+    // previous org on the render where `user` arrives. Preferring it adopts the
+    // old org's workspace row, and with it the old org's role and wsLevel.
+    const activeOrgId = user.organization?.id || currentOrganizationId || null;
+
+    // Trust sessionStorage only while it belongs to the org we are in
+    const stored = readSessionWorkspaceForOrg(activeOrgId);
+    if (stored) {
       // Sync axios header (might have been lost after token refresh)
       setWorkspaceHeader(stored.id);
       const updated = { ...stored };
       // Only update role/name/wsLevel from user-info when the workspace IDs match.
       // If they differ (e.g., another tab switched), the user-info response reflects
       // the OTHER workspace's data — we must not overwrite this tab's stored values.
-      const userDefaultWsId =
-        user.default_workspace_id ?? user.defaultWorkspaceId;
-      const userDefaultWsRole =
-        user.default_workspace_role ?? user.defaultWorkspaceRole;
-      const userWsLevel = user.ws_level ?? user.wsLevel;
-      const userDefaultWsName =
-        user.default_workspace_name ?? user.defaultWorkspaceName;
-      const userDefaultWsDisplayName =
-        user.default_workspace_display_name ?? user.defaultWorkspaceDisplayName;
+      const userDefaultWsId = user.default_workspace_id;
+      const userDefaultWsRole = user.default_workspace_role;
+      const userWsLevel = user.ws_level;
+      const userDefaultWsName = user.default_workspace_name;
+      const userDefaultWsDisplayName = user.default_workspace_display_name;
       if (stored.id === userDefaultWsId) {
         updated.role = userDefaultWsRole || stored.role;
         updated.wsLevel = userWsLevel != null ? userWsLevel : stored.wsLevel;
@@ -168,27 +199,29 @@ export function WorkspaceProvider({ children }) {
       return;
     }
 
-    // No sessionStorage → seed from user-info response (new tab / fresh open)
-    const seedDefaultWsId =
-      user.default_workspace_id ?? user.defaultWorkspaceId;
+    // Nothing usable stored → seed from user-info (new tab / org changed)
+    const seedDefaultWsId = user.default_workspace_id;
     if (seedDefaultWsId) {
-      const seedWsLevel = user.ws_level ?? user.wsLevel;
+      const seedWsLevel = user.ws_level;
       const initial = {
         id: seedDefaultWsId,
-        name: user.default_workspace_name ?? user.defaultWorkspaceName ?? null,
-        displayName:
-          user.default_workspace_display_name ??
-          user.defaultWorkspaceDisplayName ??
-          null,
-        role: user.default_workspace_role ?? user.defaultWorkspaceRole ?? null,
+        name: user.default_workspace_name ?? null,
+        displayName: user.default_workspace_display_name ?? null,
+        role: user.default_workspace_role ?? null,
         wsLevel: seedWsLevel != null ? seedWsLevel : null,
+        orgId: activeOrgId,
       };
       setWorkspace(initial);
       writeSessionWorkspace(initial);
       setWorkspaceHeader(initial.id);
       setIsReady(true);
+    } else {
+      clearSessionWorkspace();
+      setWorkspaceHeader(null);
+      setWorkspace({ ...EMPTY_WORKSPACE });
+      setIsReady(true);
     }
-  }, [authenticated, user]);
+  }, [authenticated, user, currentOrganizationId]);
 
   // Switch workspace — called from UI
   const switchWorkspace = useCallback(
@@ -206,6 +239,14 @@ export function WorkspaceProvider({ children }) {
           displayName: wsData.display_name || wsData.name || null,
           role: response?.data?.user_role || null,
           wsLevel: workspace.wsLevel, // preserve until user-info re-fetched
+          // A null here removes workspaceOrgId, and the reader then rejects
+          // the row after the reload below, silently dropping the user back on
+          // their default workspace. The tab's pinned org is the last resort.
+          orgId:
+            currentOrganizationId ||
+            workspace.orgId ||
+            readSessionOrgId() ||
+            null,
         };
 
         // 1. Update sessionStorage
@@ -225,7 +266,7 @@ export function WorkspaceProvider({ children }) {
         throw error;
       }
     },
-    [workspace.id],
+    [workspace.id, workspace.wsLevel, workspace.orgId, currentOrganizationId],
   );
 
   // Update workspace display name in-place (e.g. after rename in settings)
@@ -241,13 +282,7 @@ export function WorkspaceProvider({ children }) {
   const clearWorkspace = useCallback(() => {
     clearSessionWorkspace();
     setWorkspaceHeader(null);
-    setWorkspace({
-      id: null,
-      name: null,
-      displayName: null,
-      role: null,
-      wsLevel: null,
-    });
+    setWorkspace({ ...EMPTY_WORKSPACE });
     setIsReady(false);
   }, []);
 

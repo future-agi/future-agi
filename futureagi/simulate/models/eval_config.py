@@ -7,7 +7,6 @@ from model_hub.models.develop_dataset import KnowledgeBaseFile
 from model_hub.models.eval_groups import EvalGroup
 from model_hub.models.evals_metric import EvalTemplate
 from tfc.utils.base_model import BaseModel
-from tracer.models.custom_eval_config import ModelChoices
 
 from .run_test import RunTest
 
@@ -32,9 +31,7 @@ class SimulateEvalConfig(BaseModel):
     kb_id = models.ForeignKey(
         KnowledgeBaseFile, on_delete=models.CASCADE, null=True, blank=True
     )
-    model = models.CharField(
-        max_length=255, choices=ModelChoices.choices, blank=True, null=True
-    )
+    model = models.CharField(max_length=255, blank=True, null=True)
     status = models.CharField(
         max_length=50,
         choices=StatusType.get_choices(),

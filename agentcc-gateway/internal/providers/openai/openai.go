@@ -23,9 +23,27 @@ import (
 type Provider struct {
 	id         string
 	baseURL    string
+	pathPrefix string
 	apiKey     string
 	httpClient *http.Client
 	semaphore  chan struct{}
+	// openAIAPI reports whether baseURL points at the official OpenAI API, whose
+	// max_tokens/max_completion_tokens handling differs from other OpenAI-format
+	// upstreams. See normalizeMaxTokens.
+	openAIAPI bool
+}
+
+// officialAPIHost is the host of the official OpenAI API. Other upstreams speak
+// the same wire format but not the same parameter contract.
+const officialAPIHost = "api.openai.com"
+
+// isOfficialAPI reports whether baseURL points at the official OpenAI API.
+func isOfficialAPI(baseURL string) bool {
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(u.Hostname(), officialAPIHost)
 }
 
 // New creates a new OpenAI-compatible provider.
@@ -57,27 +75,45 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 	}
 
 	return &Provider{
-		id:      id,
-		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
-		apiKey:  cfg.APIKey,
+		id:         id,
+		baseURL:    strings.TrimRight(cfg.BaseURL, "/"),
+		pathPrefix: cfg.EffectiveAPIPathPrefix(),
+		apiKey:     cfg.APIKey,
 		httpClient: &http.Client{
 			Transport: transport,
 			Timeout:   timeout,
 		},
 		semaphore: make(chan struct{}, maxConcurrent),
+		openAIAPI: isOfficialAPI(cfg.BaseURL),
 	}, nil
 }
 
-// endpoint builds a full upstream URL for a versioned path like "/v1/ocr".
-// If the configured baseURL already ends with "/v1" (as some presets do,
-// e.g. "https://api.cohere.ai/compatibility/v1"), the leading "/v1" of path
-// is stripped to avoid "/v1/v1/..." — keeps callers from having to reason
-// about whether each provider preset includes the version suffix.
-func (p *Provider) endpoint(path string) string {
-	if strings.HasSuffix(p.baseURL, "/v1") && strings.HasPrefix(path, "/v1/") {
-		return p.baseURL + path[len("/v1"):]
+// normalizeMaxTokens rewrites max_tokens to max_completion_tokens for the official
+// OpenAI API, which rejects max_tokens on reasoning models but accepts
+// max_completion_tokens on every chat model. Setting both is also rejected, so
+// max_tokens is always cleared.
+//
+// Deliberately keyed on the upstream, not the model name: the set of models that
+// reject max_tokens keeps growing, while "the official API accepts
+// max_completion_tokens" has held for every model. Other OpenAI-format upstreams
+// (vLLM, Ollama, and other self-hosted servers) are left untouched — several only
+// understand max_tokens.
+//
+// Operates on the caller's copy; the original request is never modified.
+func (p *Provider) normalizeMaxTokens(req *models.ChatCompletionRequest) {
+	if !p.openAIAPI || req.MaxTokens == nil {
+		return
 	}
-	return p.baseURL + path
+	if req.MaxCompletionTokens == nil {
+		req.MaxCompletionTokens = req.MaxTokens
+	}
+	req.MaxTokens = nil
+}
+
+// endpoint builds a full upstream URL for a path like "/v1/ocr", swapping the
+// assumed "/v1" for whatever version segment this provider actually uses.
+func (p *Provider) endpoint(path string) string {
+	return config.JoinEndpoint(p.baseURL, p.pathPrefix, path)
 }
 
 func (p *Provider) ID() string { return p.id }
@@ -209,13 +245,14 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 	reqCopy := *req
 	reqCopy.Model = actualModel
 	reqCopy.Stream = false
+	p.normalizeMaxTokens(&reqCopy)
 
 	body, err := json.Marshal(&reqCopy)
 	if err != nil {
 		return nil, models.ErrInternal(fmt.Sprintf("marshaling request: %v", err))
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/chat/completions", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/chat/completions"), bytes.NewReader(body))
 	if err != nil {
 		return nil, models.ErrInternal(fmt.Sprintf("creating request: %v", err))
 	}
@@ -270,6 +307,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		reqCopy := *req
 		reqCopy.Model = actualModel
 		reqCopy.Stream = true
+		p.normalizeMaxTokens(&reqCopy)
 
 		body, err := json.Marshal(&reqCopy)
 		if err != nil {
@@ -277,7 +315,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 			return
 		}
 
-		httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/chat/completions", bytes.NewReader(body))
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/chat/completions"), bytes.NewReader(body))
 		if err != nil {
 			errs <- models.ErrInternal(fmt.Sprintf("creating request: %v", err))
 			return
@@ -360,7 +398,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 // ListModels returns available models from this provider.
 func (p *Provider) ListModels(ctx context.Context) ([]models.ModelObject, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", p.baseURL+"/v1/models", nil)
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", p.endpoint("/v1/models"), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -402,7 +440,7 @@ func (p *Provider) CreateImage(ctx context.Context, req *models.ImageRequest) (*
 		return nil, models.ErrInternal(fmt.Sprintf("marshaling image request: %v", err))
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/images/generations", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/images/generations"), bytes.NewReader(body))
 	if err != nil {
 		return nil, models.ErrInternal(fmt.Sprintf("creating image request: %v", err))
 	}
@@ -454,7 +492,7 @@ func (p *Provider) CreateSpeech(ctx context.Context, req *models.SpeechRequest) 
 		return nil, "", models.ErrInternal(fmt.Sprintf("marshaling speech request: %v", err))
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/audio/speech", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/audio/speech"), bytes.NewReader(body))
 	if err != nil {
 		p.releaseSemaphore()
 		return nil, "", models.ErrInternal(fmt.Sprintf("creating speech request: %v", err))
@@ -548,7 +586,7 @@ func (p *Provider) CreateTranscription(ctx context.Context, req *models.Transcri
 		return nil, models.ErrInternal(fmt.Sprintf("closing multipart writer: %v", err))
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/audio/transcriptions", &buf)
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/audio/transcriptions"), &buf)
 	if err != nil {
 		return nil, models.ErrInternal(fmt.Sprintf("creating transcription request: %v", err))
 	}
@@ -591,7 +629,7 @@ func (p *Provider) CreateResponse(ctx context.Context, reqBody []byte) ([]byte, 
 	}
 	defer p.releaseSemaphore()
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/responses", bytes.NewReader(reqBody))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/responses"), bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, 0, models.ErrInternal(fmt.Sprintf("creating responses request: %v", err))
 	}
@@ -629,7 +667,7 @@ func (p *Provider) StreamResponse(ctx context.Context, reqBody []byte) (io.ReadC
 	}
 	// NOTE: semaphore is released when the caller closes the returned ReadCloser.
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/responses", bytes.NewReader(reqBody))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/responses"), bytes.NewReader(reqBody))
 	if err != nil {
 		p.releaseSemaphore()
 		return nil, 0, models.ErrInternal(fmt.Sprintf("creating streaming responses request: %v", err))
@@ -706,7 +744,7 @@ func (p *Provider) CreateTranslation(ctx context.Context, req *models.Translatio
 		return nil, models.ErrInternal(fmt.Sprintf("closing multipart writer: %v", err))
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/audio/translations", &buf)
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/audio/translations"), &buf)
 	if err != nil {
 		return nil, models.ErrInternal(fmt.Sprintf("creating translation request: %v", err))
 	}
@@ -757,7 +795,7 @@ func (p *Provider) CreateEmbedding(ctx context.Context, req *models.EmbeddingReq
 		return nil, models.ErrInternal(fmt.Sprintf("marshaling embedding request: %v", err))
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/embeddings", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/embeddings"), bytes.NewReader(body))
 	if err != nil {
 		return nil, models.ErrInternal(fmt.Sprintf("creating embedding request: %v", err))
 	}
@@ -793,231 +831,6 @@ func (p *Provider) CreateEmbedding(ctx context.Context, req *models.EmbeddingReq
 	return &result, nil
 }
 
-// SubmitBatch submits a batch of requests to OpenAI's Batch API.
-func (p *Provider) SubmitBatch(ctx context.Context, requests []models.BatchRequest) (string, error) {
-	if err := p.acquireSemaphore(ctx); err != nil {
-		return "", models.ErrGatewayTimeout("provider concurrency limit reached")
-	}
-	defer p.releaseSemaphore()
-
-	// Build JSONL content.
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	for i := range requests {
-		requests[i].Body.Model = resolveModelName(requests[i].Body.Model)
-		line := struct {
-			CustomID string                       `json:"custom_id"`
-			Method   string                       `json:"method"`
-			URL      string                       `json:"url"`
-			Body     models.ChatCompletionRequest `json:"body"`
-		}{
-			CustomID: requests[i].CustomID,
-			Method:   "POST",
-			URL:      "/v1/chat/completions",
-			Body:     requests[i].Body,
-		}
-		if err := enc.Encode(line); err != nil {
-			return "", models.ErrInternal(fmt.Sprintf("encoding batch request %d: %v", i, err))
-		}
-	}
-
-	// Upload JSONL file.
-	var formBuf bytes.Buffer
-	writer := multipart.NewWriter(&formBuf)
-	writer.WriteField("purpose", "batch")
-	filePart, err := writer.CreateFormFile("file", "batch_input.jsonl")
-	if err != nil {
-		return "", models.ErrInternal(fmt.Sprintf("creating batch file part: %v", err))
-	}
-	filePart.Write(buf.Bytes())
-	writer.Close()
-
-	uploadReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/files", &formBuf)
-	if err != nil {
-		return "", models.ErrInternal(fmt.Sprintf("creating file upload request: %v", err))
-	}
-	uploadReq.Header.Set("Content-Type", writer.FormDataContentType())
-	if p.apiKey != "" {
-		uploadReq.Header.Set("Authorization", "Bearer "+p.apiKey)
-	}
-
-	uploadResp, err := p.httpClient.Do(uploadReq)
-	if err != nil {
-		if ctx.Err() != nil {
-			return "", models.ErrGatewayTimeout("batch file upload timed out")
-		}
-		return "", models.ErrUpstreamProvider(0, fmt.Sprintf("batch file upload failed: %v", err))
-	}
-	defer uploadResp.Body.Close()
-
-	uploadBody, err := io.ReadAll(io.LimitReader(uploadResp.Body, 10*1024*1024))
-	if err != nil {
-		return "", models.ErrUpstreamProvider(uploadResp.StatusCode, fmt.Sprintf("reading file upload response: %v", err))
-	}
-	if uploadResp.StatusCode != http.StatusOK {
-		return "", parseProviderError(uploadResp.StatusCode, uploadBody)
-	}
-
-	var fileResp struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(uploadBody, &fileResp); err != nil {
-		return "", models.ErrUpstreamProvider(uploadResp.StatusCode, fmt.Sprintf("parsing file upload response: %v", err))
-	}
-
-	// Create batch.
-	batchReq := struct {
-		InputFileID      string `json:"input_file_id"`
-		Endpoint         string `json:"endpoint"`
-		CompletionWindow string `json:"completion_window"`
-	}{
-		InputFileID:      fileResp.ID,
-		Endpoint:         "/v1/chat/completions",
-		CompletionWindow: "24h",
-	}
-
-	batchBody, err := json.Marshal(batchReq)
-	if err != nil {
-		return "", models.ErrInternal(fmt.Sprintf("marshaling batch request: %v", err))
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/batches", bytes.NewReader(batchBody))
-	if err != nil {
-		return "", models.ErrInternal(fmt.Sprintf("creating batch request: %v", err))
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	if p.apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
-	}
-
-	resp, err := p.httpClient.Do(httpReq)
-	if err != nil {
-		if ctx.Err() != nil {
-			return "", models.ErrGatewayTimeout("batch creation timed out")
-		}
-		return "", models.ErrUpstreamProvider(0, fmt.Sprintf("batch creation failed: %v", err))
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
-	if err != nil {
-		return "", models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("reading batch response: %v", err))
-	}
-	if resp.StatusCode != http.StatusOK {
-		return "", parseProviderError(resp.StatusCode, respBody)
-	}
-
-	var batchResp struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(respBody, &batchResp); err != nil {
-		return "", models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("parsing batch response: %v", err))
-	}
-
-	return batchResp.ID, nil
-}
-
-// GetBatch retrieves the status of an OpenAI batch.
-func (p *Provider) GetBatch(ctx context.Context, batchID string) (*models.ProviderBatchStatus, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", p.baseURL+"/v1/batches/"+batchID, nil)
-	if err != nil {
-		return nil, models.ErrInternal(fmt.Sprintf("creating get batch request: %v", err))
-	}
-	if p.apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
-	}
-
-	resp, err := p.httpClient.Do(httpReq)
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, models.ErrGatewayTimeout("get batch timed out")
-		}
-		return nil, models.ErrUpstreamProvider(0, fmt.Sprintf("get batch failed: %v", err))
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
-	if err != nil {
-		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("reading batch status: %v", err))
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, parseProviderError(resp.StatusCode, respBody)
-	}
-
-	var oaiBatch struct {
-		ID              string `json:"id"`
-		Status          string `json:"status"`
-		OutputFileID    string `json:"output_file_id"`
-		ErrorFileID     string `json:"error_file_id"`
-		CreatedAt       int64  `json:"created_at"`
-		CompletedAt     *int64 `json:"completed_at"`
-		RequestCounts   struct {
-			Total     int `json:"total"`
-			Completed int `json:"completed"`
-			Failed    int `json:"failed"`
-		} `json:"request_counts"`
-	}
-	if err := json.Unmarshal(respBody, &oaiBatch); err != nil {
-		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("parsing batch status: %v", err))
-	}
-
-	return &models.ProviderBatchStatus{
-		ID:           oaiBatch.ID,
-		Status:       mapOpenAIBatchStatus(oaiBatch.Status),
-		Total:        oaiBatch.RequestCounts.Total,
-		Completed:    oaiBatch.RequestCounts.Completed,
-		Failed:       oaiBatch.RequestCounts.Failed,
-		OutputFileID: oaiBatch.OutputFileID,
-		ErrorFileID:  oaiBatch.ErrorFileID,
-		CreatedAt:    oaiBatch.CreatedAt,
-		CompletedAt:  oaiBatch.CompletedAt,
-	}, nil
-}
-
-// CancelBatch cancels an OpenAI batch.
-func (p *Provider) CancelBatch(ctx context.Context, batchID string) error {
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/batches/"+batchID+"/cancel", nil)
-	if err != nil {
-		return models.ErrInternal(fmt.Sprintf("creating cancel batch request: %v", err))
-	}
-	if p.apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
-	}
-
-	resp, err := p.httpClient.Do(httpReq)
-	if err != nil {
-		if ctx.Err() != nil {
-			return models.ErrGatewayTimeout("cancel batch timed out")
-		}
-		return models.ErrUpstreamProvider(0, fmt.Sprintf("cancel batch failed: %v", err))
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
-		return parseProviderError(resp.StatusCode, respBody)
-	}
-
-	return nil
-}
-
-func mapOpenAIBatchStatus(status string) string {
-	switch status {
-	case "validating", "in_progress":
-		return models.BatchStatusProcessing
-	case "completed":
-		return models.BatchStatusCompleted
-	case "failed":
-		return models.BatchStatusFailed
-	case "cancelled", "cancelling":
-		return models.BatchStatusCancelled
-	case "expired":
-		return models.BatchStatusExpired
-	default:
-		return models.BatchStatusQueued
-	}
-}
-
 // ProxyAssistantsRequest forwards a non-streaming Assistants API request to OpenAI.
 func (p *Provider) ProxyAssistantsRequest(ctx context.Context, method string, path string, body []byte, queryParams url.Values) ([]byte, int, http.Header, error) {
 	if err := p.acquireSemaphore(ctx); err != nil {
@@ -1025,7 +838,7 @@ func (p *Provider) ProxyAssistantsRequest(ctx context.Context, method string, pa
 	}
 	defer p.releaseSemaphore()
 
-	upstreamURL := p.baseURL + path
+	upstreamURL := p.endpoint(path)
 	if len(queryParams) > 0 {
 		upstreamURL += "?" + queryParams.Encode()
 	}
@@ -1082,7 +895,7 @@ func (p *Provider) StreamAssistantsRequest(ctx context.Context, method string, p
 	}
 	// NOTE: semaphore is released when the caller closes the returned ReadCloser.
 
-	upstreamURL := p.baseURL + path
+	upstreamURL := p.endpoint(path)
 	if len(queryParams) > 0 {
 		upstreamURL += "?" + queryParams.Encode()
 	}
@@ -1143,7 +956,7 @@ func (p *Provider) ProxyVectorStoresRequest(ctx context.Context, method string, 
 	}
 	defer p.releaseSemaphore()
 
-	upstreamURL := p.baseURL + path
+	upstreamURL := p.endpoint(path)
 	if len(queryParams) > 0 {
 		upstreamURL += "?" + queryParams.Encode()
 	}

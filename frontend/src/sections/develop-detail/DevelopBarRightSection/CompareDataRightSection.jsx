@@ -35,7 +35,7 @@ const CompareDataRightSection = ({
   const prevColumnKeyRef = useRef(null);
   const { diffMode, handleToggleDiffMode } = useDevelopDetailContext();
   const { role } = useAuthContext();
-   
+
   useEffect(() => {
     const temp = [];
     for (const col of columns) {

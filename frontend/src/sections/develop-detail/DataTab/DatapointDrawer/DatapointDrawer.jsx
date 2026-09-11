@@ -1,4 +1,5 @@
 import {
+  Alert,
   Box,
   Button,
   Chip,
@@ -31,6 +32,12 @@ import ImageDatapointCard from "src/sections/common/ImageDatapointCard";
 import CellMarkdown from "src/sections/common/CellMarkdown";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { canonicalEntries } from "src/utils/utils";
+import {
+  readDatasetCellRow,
+  readDatasetRowAdjacency,
+  runDatasetPointReadAction,
+} from "../dataset_point_read";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 
 const SkeletonLoader = () => (
   <Box
@@ -220,6 +227,8 @@ const DatapointDrawerChild = ({
   const agTheme = useAgThemeWith(DATAPOINT_DRAWER_THEME_PARAMS);
   const [loading, setLoading] = useState(true);
   const [nextId, setNextId] = useState(null);
+  const [navigationError, setNavigationError] = useState(null);
+  const [retryDirection, setRetryDirection] = useState(null);
 
   useEffect(() => {
     setLoading(true);
@@ -351,132 +360,173 @@ const DatapointDrawerChild = ({
     );
   };
 
-  const { mutate: getCellData, isPending } = useMutation({
-    mutationFn: (d) => {
-      return axios.post(endpoints.develop.getCellData, d);
-    },
-    onSuccess: (data, variables) => {
-      updateRowFromApiResult(variables.row_ids[0], data?.data?.result);
+  const { mutateAsync: getCellData, isPending: isLoadingCellData } =
+    useMutation({
+      meta: { errorHandled: true },
+      mutationFn: ({ payload, signal }) =>
+        readDatasetCellRow(
+          ({ signal: requestSignal, timeout }) =>
+            axios.post(endpoints.develop.getCellData, payload, {
+              signal: requestSignal,
+              timeout,
+            }),
+          payload,
+          signal,
+        ),
+      retry: false,
+      onSuccess: (rowData, variables) => {
+        const rowId = variables.payload.row_ids[0];
+        updateRowFromApiResult(rowId, { [rowId]: rowData });
 
-      const next = allRows.find((i) => i?.data?.rowId == variables?.row_ids[0]);
-      const nextIndex = rowIndex + 1;
-      setNextId(allRows[nextIndex + 1]?.data?.rowId);
-      if (next && datapoint.id) {
-        setDataPointDrawerData((pre) => {
-          return {
-            ...pre,
-            index: nextIndex,
-            rowIndexData: nextIndex,
-            rowData: {
-              rowId: variables.row_ids[0],
-              ...data?.data?.result[variables.row_ids[0]],
-            },
-            valueInfos: next[pre.id]?.valueInfos,
-          };
-        });
-        setRowNewData({ current: next });
-        setActiveRow(nextIndex);
+        const nextIndex = rowIndex + 1;
+        if (datapoint.id) {
+          setDataPointDrawerData((pre) => {
+            return {
+              ...pre,
+              index: nextIndex,
+              rowIndexData: nextIndex,
+              rowData: {
+                rowId,
+                ...rowData,
+              },
+              valueInfos: rowData[pre.id]?.valueInfos,
+            };
+          });
+          setRowNewData({ current: { rowId, ...rowData } });
+          setActiveRow(nextIndex);
+          setDisableNext(() => ({
+            next: false,
+            previous: false,
+          }));
+        } else {
+          setDisableNext(() => ({
+            next: nextAction,
+            previous: !nextAction,
+          }));
+          enqueueSnackbar({
+            message: "No more datapoint available",
+            variant: "error",
+          });
+        }
         setDisableNext(() => ({
-          next: false,
-          previous: false,
+          next: nextIndex >= totalCount - 1,
+          previous: nextIndex <= 0,
         }));
-      } else {
-        setDisableNext(() => ({
-          next: nextAction,
-          previous: !nextAction,
-        }));
-        enqueueSnackbar({
-          message: "No more datapoint available",
-          variant: "error",
-        });
-      }
-      setDisableNext(() => ({
-        next: Boolean(!data?.data?.result?.next),
-        previous: !nextAction,
-      }));
-    },
-  });
+      },
+    });
 
-  const { mutate: setNextItem } = useMutation({
-    mutationFn: (d) => {
-      return axios.post(endpoints.develop.getRowData(dataset), d);
-    },
-    onSuccess: (data) => {
-      if (data?.data?.result?.next?.rowId) {
-        const newIds = data?.data?.result?.next?.rowId;
-        setNextId(newIds?.length > 0 ? newIds[0] : null);
+  const { mutateAsync: setNextItem, isPending: isLoadingNextRows } =
+    useMutation({
+      meta: { errorHandled: true },
+      mutationFn: ({ payload, signal }) =>
+        readDatasetRowAdjacency(
+          ({ signal: requestSignal, timeout }) =>
+            axios.post(endpoints.develop.getRowData(dataset), payload, {
+              signal: requestSignal,
+              timeout,
+            }),
+          payload,
+          signal,
+        ),
+      retry: false,
+      onSuccess: ({ nextRowIds }) => {
+        setNextId(nextRowIds.length > 0 ? nextRowIds[0] : null);
         setAllRows((prev) => {
-          const mergedMap = new Map();
-
-          prev.forEach((row) => {
-            const id = row?.rowIndex;
-            if (id !== undefined) {
-              mergedMap.set(id, row);
-            }
-          });
-
-          const totalLength = allRows?.length;
-
-          newIds.forEach((row, index) => {
-            const id = row;
-            if (id !== undefined) {
-              mergedMap.set(row, {
-                rowIndex: totalLength + index,
-                data: { rowId: row },
-              });
-            }
-          });
-
-          return Array.from(mergedMap.values());
+          const seenIds = new Set(
+            prev.map((item) => String(item?.data?.rowId)),
+          );
+          const appended = nextRowIds
+            .filter((rowId) => !seenIds.has(String(rowId)))
+            .map((rowId, index) => ({
+              rowIndex: prev.length + index,
+              data: { rowId },
+            }));
+          return [...prev, ...appended];
         });
-      }
-    },
-  });
+      },
+    });
 
-  const loadDatapoint = (direction) => {
+  const isPending = isLoadingCellData || isLoadingNextRows;
+
+  const loadDatapoint = async (direction) => {
     // const payload = {
     //   row_id: datapoint?.rowData?.rowId,
     //   filters: validatedFilters,
     // };
     setNextAction(direction === "next");
+    setNavigationError(null);
+    setRetryDirection(null);
 
     const next = direction == "next" ? "next" : "previous";
     const nextIndex = direction == "next" ? rowIndex + 1 : rowIndex - 1;
     const nextData = allRows.find((i) => i.rowIndex == nextIndex)?.data;
 
-    if (!nextId && allRows.length > 10) {
-      setNextId(allRows[allRows?.length - 1]?.data?.rowId);
-    }
+    try {
+      await runDatasetPointReadAction(async (actionSignal) => {
+        const continuationRowId =
+          allRows[allRows.length - 1]?.data?.rowId || nextId;
+        let adjacency;
+        if (
+          next === "next" &&
+          nextIndex >= allRows.length - 1 &&
+          allRows.length > 10 &&
+          continuationRowId
+        ) {
+          adjacency = await setNextItem({
+            payload: { row_id: continuationRowId },
+            signal: actionSignal,
+          });
+        }
 
-    if (nextIndex == allRows.length - 1 && allRows.length > 10) {
-      setNextItem({ row_id: nextId });
-    }
+        if (
+          next !== "previous" &&
+          Object.entries(nextData ?? {}).length === 1
+        ) {
+          const targetRowId = nextData?.rowId || adjacency?.nextRowIds?.[0];
+          await getCellData({
+            payload: {
+              row_ids: [targetRowId],
+              column_ids: allColumns.map((i) => i?.col?.id),
+            },
+            signal: actionSignal,
+          });
+          return;
+        }
 
-    if (next != "previous" && Object.entries(nextData ?? {}).length == 1) {
-      const payload = {
-        row_ids: [nextId],
-        column_ids: allColumns.map((i) => i?.col?.id),
-      };
-      getCellData(payload);
-      return;
-    }
+        if (next === "next" && !nextData) {
+          const targetRowId = adjacency?.nextRowIds?.[0];
+          if (!targetRowId) {
+            throw new Error("No additional datapoint was returned.");
+          }
+          await getCellData({
+            payload: {
+              row_ids: [targetRowId],
+              column_ids: allColumns.map((i) => i?.col?.id),
+            },
+            signal: actionSignal,
+          });
+          return;
+        }
 
-    if (next && datapoint.id && nextData) {
-      setDataPointDrawerData((pre) => {
-        return {
-          ...pre,
-          index: nextIndex,
-          rowIndexData: nextIndex,
-          rowData: nextData,
-          valueInfos: nextData[pre.id]?.valueInfos,
-        };
+        if (datapoint.id && nextData) {
+          setDataPointDrawerData((pre) => ({
+            ...pre,
+            index: nextIndex,
+            rowIndexData: nextIndex,
+            rowData: nextData,
+            valueInfos: nextData[pre.id]?.valueInfos,
+          }));
+          setRowNewData({ current: nextData });
+          setActiveRow(nextIndex);
+          setDisableNext(() => ({
+            next: nextIndex >= totalCount - 1,
+            previous: nextIndex <= 0,
+          }));
+        }
       });
-      setRowNewData({ current: nextData });
-      setActiveRow(nextIndex);
-      setDisableNext(() => ({
-        next: false,
-        previous: false,
-      }));
+    } catch (error) {
+      setNavigationError(error);
+      setRetryDirection(direction);
     }
   };
 
@@ -489,7 +539,42 @@ const DatapointDrawerChild = ({
   }, [runEval?.cellValue]);
 
   return (
-    <Box sx={{ display: "flex", height: "100vh", justifyContent: "flex-end" }}>
+    <Box
+      sx={{
+        display: "flex",
+        height: "100vh",
+        justifyContent: "flex-end",
+        position: "relative",
+      }}
+    >
+      {navigationError && (
+        <Alert
+          severity="error"
+          action={
+            <Button
+              color="inherit"
+              size="small"
+              onClick={() => loadDatapoint(retryDirection)}
+              disabled={isPending}
+            >
+              Retry
+            </Button>
+          }
+          sx={{
+            position: "absolute",
+            top: 12,
+            right: 56,
+            zIndex: 2,
+            maxWidth: 520,
+          }}
+        >
+          {getSafeActionErrorMessage(
+            navigationError,
+            "The next datapoint could not be loaded.",
+          )}{" "}
+          The current datapoint is still shown.
+        </Alert>
+      )}
       <Collapse
         in={evalDrawer}
         orientation="horizontal"
@@ -781,6 +866,11 @@ const DatapointDrawerChild = ({
                   sourceId: runEval?.evalMetricId
                     ? runEval?.evalMetricId
                     : datapoint?.sourceId,
+                  value:
+                    runEval?.cell_value ??
+                    runEval?.value ??
+                    datapoint?.cell_value ??
+                    datapoint?.value,
                   valueInfos: runEval?.valueInfos
                     ? runEval?.valueInfos
                     : datapoint?.valueInfos,
@@ -930,7 +1020,7 @@ const DatapointDrawerChild = ({
             return (
               <div key={key}>
                 {isAudioColumn ? (
-                  value?.cellValue ? (
+                  value?.cell_value ? (
                     <AudioDatapointCard value={value} column={col} />
                   ) : (
                     <DatapointCard
@@ -947,7 +1037,7 @@ const DatapointDrawerChild = ({
                     />
                   )
                 ) : isImageColumn ? (
-                  value?.cellValue ? (
+                  value?.cell_value ? (
                     <ImageDatapointCard value={value} column={col} />
                   ) : (
                     <DatapointCard
@@ -1002,7 +1092,7 @@ DatapointDrawerChild.propTypes = {
   currentColumn: PropTypes.object,
   setRowNewData: PropTypes.func,
   allRows: PropTypes.array,
-  setAllRows: PropTypes.array,
+  setAllRows: PropTypes.func,
 };
 
 const DatapointDrawer = ({
@@ -1112,7 +1202,7 @@ DatapointDrawer.propTypes = {
   currentColumn: PropTypes.object,
   setRowNewData: PropTypes.func,
   allRows: PropTypes.array,
-  setAllRows: PropTypes.array,
+  setAllRows: PropTypes.func,
 };
 
 StatusCellRenderer.propTypes = {

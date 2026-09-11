@@ -9,12 +9,37 @@ import asyncio
 import os
 import signal
 import threading
-from typing import TYPE_CHECKING, List
 
 from django.core.management.base import BaseCommand
 
-if TYPE_CHECKING:
-    from temporalio.worker import Worker
+# Queues in this set have their own workload-level concurrency boundary. A
+# generic local ``--all-queues`` worker must not also poll them, otherwise its
+# much higher concurrency silently defeats that admission control.
+_DEDICATED_TASK_QUEUES = frozenset(
+    {"exact_aggregation", "property_catalog_dev_sidecar"}
+)
+
+
+def _generic_all_queues(registered_queues: list[str]) -> list[str]:
+    """Return queues safe for the generic all-queues worker to poll."""
+
+    return [queue for queue in registered_queues if queue not in _DEDICATED_TASK_QUEUES]
+
+
+def _workflow_cache_kwargs(queue_name: str) -> dict[str, int]:
+    """Return queue-specific Temporal workflow cache settings.
+
+    Exact aggregation uses a single workflow-task slot as part of its strict
+    admission boundary. Temporal requires at least two workflow-task slots
+    when sticky workflow caching is enabled. These workflows are one-shot
+    activity runners, so caching them has no reuse benefit; disabling the
+    cache also keeps new work on the normal queue instead of waiting behind
+    sticky long polls.
+    """
+
+    if queue_name == "exact_aggregation":
+        return {"max_cached_workflows": 0}
+    return {}
 
 
 class Command(BaseCommand):
@@ -131,7 +156,8 @@ class Command(BaseCommand):
                 LoggingWorker,
             )
 
-            _noop = lambda *a, **kw: None
+            def _noop(*_args, **_kwargs):
+                return None
 
             async def _noop_worker_loop(self):
                 return
@@ -167,7 +193,16 @@ class Command(BaseCommand):
 
         # Determine which queues to poll
         if all_queues_mode:
-            queues_to_poll = get_all_queues()
+            excluded_queues = {
+                queue.strip()
+                for queue in os.getenv("TEMPORAL_EXCLUDED_QUEUES", "").split(",")
+                if queue.strip()
+            }
+            queues_to_poll = [
+                queue
+                for queue in _generic_all_queues(get_all_queues())
+                if queue not in excluded_queues
+            ]
             # Get all unique workflows and activities across all queues
             workflows = get_all_workflows()
             activities = get_all_activities()
@@ -175,6 +210,7 @@ class Command(BaseCommand):
                 "all_queues_mode",
                 queue_count=len(queues_to_poll),
                 queues=queues_to_poll,
+                excluded_queues=sorted(excluded_queues),
             )
         else:
             # Map Celery-style queue names to Temporal queue names
@@ -262,12 +298,13 @@ class Command(BaseCommand):
                         client.get_workflow_handle(PHONE_NUMBER_DISPATCHER_WORKFLOW_ID)
                     )
 
-                    call_dispatcher_result, phone_number_dispatcher_result = (
-                        await asyncio.gather(
-                            call_dispatcher_workflow_handle.signal("reload"),
-                            phone_number_dispatcher_workflow_handle.signal("reload"),
-                            return_exceptions=True,
-                        )
+                    (
+                        call_dispatcher_result,
+                        phone_number_dispatcher_result,
+                    ) = await asyncio.gather(
+                        call_dispatcher_workflow_handle.signal("reload"),
+                        phone_number_dispatcher_workflow_handle.signal("reload"),
+                        return_exceptions=True,
                     )
 
                     if isinstance(call_dispatcher_result, Exception):
@@ -302,6 +339,7 @@ class Command(BaseCommand):
                     "graceful_shutdown_timeout": timedelta(seconds=graceful_timeout),
                     "max_heartbeat_throttle_interval": timedelta(seconds=5),
                 }
+                kwargs.update(_workflow_cache_kwargs(queue_name))
 
                 # Resource-based tuning is disabled by default due to a known
                 # bug where workers stop polling queues.
@@ -326,7 +364,7 @@ class Command(BaseCommand):
                 return kwargs
 
             # Create workers for each queue
-            workers: List[Worker] = []
+            workers = []
             for queue_name in queues_to_poll:
                 worker_kwargs = create_worker_kwargs(queue_name)
                 workers.append(Worker(**worker_kwargs))
@@ -347,7 +385,7 @@ class Command(BaseCommand):
             # Start all workers concurrently
             worker_tasks = [
                 asyncio.create_task(run_single_worker(w, q))
-                for w, q in zip(workers, queues_to_poll)
+                for w, q in zip(workers, queues_to_poll, strict=True)
             ]
 
             # Wait for shutdown signal, then wait for all workers to finish

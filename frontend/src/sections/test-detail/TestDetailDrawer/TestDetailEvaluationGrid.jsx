@@ -16,7 +16,6 @@ const DEFAULT_COL_DEF = {
   filter: false,
   suppressHeaderMenuButton: true,
   suppressHeaderContextMenu: true,
-  suppressMultiSort: true,
 };
 
 const TestDetailEvaluationGrid = ({ evalOutputs, callStatus }) => {

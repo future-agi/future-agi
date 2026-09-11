@@ -16,6 +16,8 @@ import {
 } from "src/api/agent-playground/agent-playground";
 import { parseVersionResponse } from "../utils/versionPayloadUtils";
 import { VERSION_STATUS } from "../utils/constants";
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
+import useCanEditAgent from "../hooks/useCanEditAgent";
 
 export default function OverviewGraphPreview({
   selectedVersion,
@@ -46,6 +48,7 @@ export default function OverviewGraphPreview({
 
   const { mutate: activateVersion, isPending: isActivating } =
     useActivateVersion();
+  const { canEditAgent } = useCanEditAgent();
 
   const navigateToBuild = useCallback(
     (versionStatus) => {
@@ -64,6 +67,7 @@ export default function OverviewGraphPreview({
   );
 
   const handleRestoreVersion = () => {
+    if (!canEditAgent) return;
     const status = data?.status;
 
     if (status === VERSION_STATUS.INACTIVE) {
@@ -146,18 +150,28 @@ export default function OverviewGraphPreview({
             zIndex: 10,
           }}
         >
-          <Button
-            sx={{
-              color: "primary.main",
-              px: 0.5,
-            }}
+          <CustomTooltip
+            show={!canEditAgent}
+            type=""
             size="small"
-            variant="outlined"
-            onClick={handleRestoreVersion}
-            disabled={isActivating}
+            title="You don't have permission to restore versions."
+            arrow
           >
-            {isActivating ? "Restoring..." : "Restore"}
-          </Button>
+            <span>
+              <Button
+                sx={{
+                  color: "primary.main",
+                  px: 0.5,
+                }}
+                size="small"
+                variant="outlined"
+                onClick={handleRestoreVersion}
+                disabled={!canEditAgent || isActivating}
+              >
+                {isActivating ? "Restoring..." : "Restore"}
+              </Button>
+            </span>
+          </CustomTooltip>
         </Box>
       </ShowComponent>
       {graphData?.nodes?.length === 0 ? (

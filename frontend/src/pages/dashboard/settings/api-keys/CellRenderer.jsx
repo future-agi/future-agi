@@ -51,8 +51,11 @@ const allMenuItems = [
   },
 ];
 
+const getKeyName = (data) => data?.key_name || data?.keyName || "this key";
+
 const ActionMenu = (props) => {
   const data = props.data;
+  const keyName = getKeyName(data);
 
   const [anchorEl, setAnchorEl] = useState(null);
   const [menuItems, setMenuItems] = useState([...allMenuItems]);
@@ -227,7 +230,7 @@ const ActionMenu = (props) => {
           <Box>
             <Typography typography={"s1"} fontWeight={"fontWeightRegular"}>
               <CellMarkdown
-                text={`Are you sure you want to delete **${data.keyName}**? `}
+                text={`Are you sure you want to delete **${keyName}**? `}
               />
             </Typography>
             <Typography typography={"s1"} fontWeight={"fontWeightRegular"}>
@@ -245,7 +248,7 @@ const ActionMenu = (props) => {
             onClick={() =>
               handleMutate({
                 action: "delete",
-                successMessage: `${data.keyName} has been deleted`,
+                successMessage: `${keyName} has been deleted`,
               })
             }
             sx={{ color: "common.white" }}
@@ -272,7 +275,7 @@ const ActionMenu = (props) => {
           <Box>
             <Typography typography={"s1"} fontWeight={"fontWeightRegular"}>
               <CellMarkdown
-                text={`Are you sure you want to disable **${data.keyName}**?`}
+                text={`Are you sure you want to disable **${keyName}**?`}
               />
             </Typography>
             <Typography typography={"s1"} fontWeight={"fontWeightRegular"}>
@@ -289,7 +292,7 @@ const ActionMenu = (props) => {
             onClick={() =>
               handleMutate({
                 action: "disable",
-                successMessage: `${data.keyName} has been disabled`,
+                successMessage: `${keyName} has been disabled`,
               })
             }
           >
@@ -306,7 +309,7 @@ const ActionMenu = (props) => {
           <Box>
             <Typography typography={"s1"} fontWeight={"fontWeightRegular"}>
               <CellMarkdown
-                text={`Are you sure you want to re-enable **${data.keyName}**?`}
+                text={`Are you sure you want to re-enable **${keyName}**?`}
               />
             </Typography>
             <Typography typography={"s1"} fontWeight={"fontWeightRegular"}>
@@ -323,7 +326,7 @@ const ActionMenu = (props) => {
             onClick={() =>
               handleMutate({
                 action: "enable",
-                successMessage: `${data.keyName} has been enabled`,
+                successMessage: `${keyName} has been enabled`,
               })
             }
           >
@@ -348,7 +351,10 @@ const CellRenderer = (props) => {
   const { value } = props;
   const columnKey = props?.column?.colDef?.field || "";
 
-  if (columnKey === "createdBy") {
+  if (columnKey === "createdBy" || columnKey === "created_by") {
+    if (!props?.value?.length) {
+      return "-";
+    }
     return (
       <Box
         sx={{
@@ -379,10 +385,25 @@ const CellRenderer = (props) => {
     return <ActionMenu {...props} />;
   }
 
-  if (columnKey === "keyName") {
+  if (columnKey === "keyName" || columnKey === "key_name") {
     return (
-      <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
-        {value}{" "}
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          height: "100%",
+          minWidth: 0,
+          width: "100%",
+        }}
+      >
+        <Typography
+          component="span"
+          noWrap
+          typography="s2"
+          sx={{ minWidth: 0, flex: "0 1 auto" }}
+        >
+          {value}
+        </Typography>
         {!props?.data?.enabled && (
           <Chip
             label="Disabled"
@@ -390,6 +411,7 @@ const CellRenderer = (props) => {
               padding: "4px 8px",
               borderRadius: "4px",
               ml: 1,
+              flexShrink: 0,
               color: "text.primary",
               height: "26px",
               backgroundColor: "background.neutral",

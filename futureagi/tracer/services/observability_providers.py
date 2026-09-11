@@ -1,13 +1,20 @@
+import concurrent.futures
+import hashlib
+import math
+import random
+import time
 import uuid
-from datetime import datetime, timedelta
+from collections import deque
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import requests
 import structlog
+from django.utils import timezone
 
+from simulate.models.agent_definition import AgentDefinition, ProviderCredentials
 from tracer.constants.external_endpoints import ObservabilityRoutes
-
-logger = structlog.get_logger(__name__)
 from tracer.models.observability_provider import ObservabilityProvider, ProviderChoices
 from tracer.models.project import VoiceCallLogs
 
@@ -15,6 +22,146 @@ logger = structlog.get_logger(__name__)
 
 VAPI_PAGE_LIMIT = 100
 VAPI_MAX_PAGES = 10
+OBSERVABILITY_VERIFY_TIMEOUT_SECONDS = 30
+RETELL_LIST_PAGE_LIMIT = 100
+RETELL_REQUEST_TIMEOUT_SECONDS = 30
+RETELL_MAX_ATTEMPTS = 3
+RETELL_HYDRATION_WORKERS = 4
+RETELL_RETRY_AFTER_CAP_SECONDS = 30
+
+# Module-level so it stays patchable.
+_sleep = time.sleep
+
+
+def _retell_retry_after_seconds(response: requests.Response) -> float | None:
+    """Parse a 429's ``Retry-After`` header (seconds only), capped at
+    RETELL_RETRY_AFTER_CAP_SECONDS. Returns None when absent, malformed, negative,
+    or non-finite (``nan`` or ``inf``; an HTTP-date string is also non-numeric and
+    treated as absent — date parsing is intentionally not implemented)."""
+    raw = response.headers.get("Retry-After")
+    if raw is None:
+        return None
+    try:
+        seconds = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(seconds) or seconds < 0:
+        return None
+    return min(seconds, RETELL_RETRY_AFTER_CAP_SECONDS)
+
+
+def _retell_page_digest(items: list[Any]) -> str | None:
+    """sha256 over the call ids of a page in the order Retell listed them —
+    before hydration, before any drop; None for a page with no items.
+
+    v1.15 A1: the digest identifies the LISTED page, so one value serves both
+    purposes — the orchestrator detects a repeated page with it AND validates
+    that a resumed page is still the same list its earlier run stored from.
+    Order belongs to that identity because a resume skips a PREFIX by
+    position: a page with the same members in a new order would otherwise be
+    resumed over calls that had moved out of the prefix, storing those twice
+    and never storing the ones that moved in. A literal repeat comes back in
+    the same order, so `page_repeated` still sees it.
+    """
+    if not items:
+        return None
+    ids = [str(item.get("call_id")) if isinstance(item, dict) else "" for item in items]
+    return hashlib.sha256(",".join(ids).encode()).hexdigest()
+
+
+# Which slot of the orchestrator's per-page counts each kind of drop belongs
+# to. A drop is reported with the list index it happened at (`RetellPage.drops`)
+# because a page is stored over several runs: the run that resumes it re-decides
+# the fate of everything from its resume point on, so the caller can only count
+# a drop once it knows the index is behind the point it will resume from.
+_DROP_SLOT_NO_END = 3
+_DROP_SLOT_MISSING = 4
+_DROP_SLOT_FAILED = 5
+
+
+@dataclass(frozen=True)
+class RetellPage:
+    calls: list[dict]
+    has_more: bool
+    next_key: str | None
+    dropped_no_end: int
+    dropped_missing: int
+    dropped_failed: int
+    digest: str | None
+    listed: int
+    consumed: int
+    indices: tuple[int, ...]
+    drops: tuple[tuple[int, int], ...]
+
+
+class RetellConfigurationError(Exception):
+    """Agent/credential setup prevents a Retell fetch; message never carries key material or provider values."""
+
+
+class RetellCursorRejected(Exception):
+    """Retell rejected the pagination cursor or offset; the orchestrator restarts the window."""
+
+    def __init__(self, *, cause: str):
+        super().__init__(cause)
+        self.cause = cause
+
+
+def _normalize_voice_call_status(value: object) -> str | None:
+    """Return the canonical lifecycle value rendered by voice-call rows."""
+
+    if value is None:
+        return None
+    token = str(value).strip().lower()
+    if token in {
+        "ended",
+        "done",
+        "complete",
+        "completed",
+        "success",
+        "succeeded",
+        "ok",
+    }:
+        return "completed"
+    if token in {
+        "in-progress",
+        "in_progress",
+        "ongoing",
+        "started",
+        "initiated",
+        "processing",
+        "scheduled",
+        "created",
+        "dialing",
+        "connecting",
+        "ringing",
+        "queued",
+        "pending",
+    }:
+        return "in-progress"
+    if token in {"failed", "failure", "error", "errored"}:
+        return "failed"
+    if token in {
+        "dropped",
+        "cancelled",
+        "canceled",
+        "aborted",
+        "hung-up",
+        "hung_up",
+    }:
+        return "dropped"
+    if token in {
+        "not-connected",
+        "not_connected",
+        "no-answer",
+        "no_answer",
+        "unanswered",
+        "busy",
+    }:
+        return "not-connected"
+    # The public voice status is a closed five-value vocabulary. Unknown
+    # non-empty provider states are safest as transitional/in-progress; raw
+    # SPAN_ATTRIBUTE filters still expose the provider token unchanged.
+    return "in-progress" if token else None
 
 
 class ObservabilityService:
@@ -30,13 +177,42 @@ class ObservabilityService:
         if provider == ProviderChoices.VAPI:
             api_endpoint = f"{ObservabilityRoutes.VAPI_CALL_URL.value}?limit=0"
         elif provider == ProviderChoices.RETELL:
-            api_endpoint = (
-                f"{ObservabilityRoutes.RETELL_LIST_ASSISTANTS_URL.value}?limit=1"
+            api_endpoint = ObservabilityRoutes.RETELL_LIST_AGENTS_URL.value
+        elif provider == ProviderChoices.BLAND:
+            # Bland validates via its read-only account endpoint and takes the
+            # raw key in the authorization header (no Bearer prefix).
+            response = requests.get(
+                ObservabilityRoutes.BLAND_ME_URL.value,
+                headers={"authorization": api_key},
+                timeout=OBSERVABILITY_VERIFY_TIMEOUT_SECONDS,
             )
+            return response.status_code
         else:
             raise ValueError(f"Invalid choice for provider: {provider}")
+
         headers = {"Authorization": f"Bearer {api_key}"}
-        response = requests.get(api_endpoint, headers=headers)
+        if provider == ProviderChoices.RETELL:
+            response = requests.post(
+                api_endpoint,
+                params={"limit": 1},
+                headers=headers,
+                json={
+                    "filter_criteria": {
+                        "channel": {
+                            "type": "string",
+                            "op": "eq",
+                            "value": "voice",
+                        }
+                    }
+                },
+                timeout=OBSERVABILITY_VERIFY_TIMEOUT_SECONDS,
+            )
+        else:
+            response = requests.get(
+                api_endpoint,
+                headers=headers,
+                timeout=OBSERVABILITY_VERIFY_TIMEOUT_SECONDS,
+            )
         return response.status_code
 
     @staticmethod
@@ -52,6 +228,14 @@ class ObservabilityService:
             endpoint = (
                 f"{ObservabilityRoutes.RETELL_GET_ASSISTANT_URL.value}/{assistant_id}"
             )
+        elif provider == ProviderChoices.BLAND:
+            # Bland's "assistant" is a pathway; the raw key goes in authorization.
+            response = requests.get(
+                f"{ObservabilityRoutes.BLAND_PATHWAY_URL.value}/{assistant_id}",
+                headers={"authorization": api_key},
+                timeout=OBSERVABILITY_VERIFY_TIMEOUT_SECONDS,
+            )
+            return response.status_code
         else:
             raise ValueError(f"Invalid choice for provider: {provider}")
 
@@ -59,7 +243,7 @@ class ObservabilityService:
         response = requests.get(
             endpoint,
             headers=headers,
-            timeout=30,
+            timeout=OBSERVABILITY_VERIFY_TIMEOUT_SECONDS,
         )
         return response.status_code
 
@@ -74,14 +258,21 @@ class ObservabilityService:
         """
         if provider.provider == ProviderChoices.VAPI:
             return ObservabilityService._fetch_vapi_logs(provider, start_time, end_time)
-        elif provider.provider == ProviderChoices.RETELL:
-            return ObservabilityService._fetch_retell_logs(
-                provider, start_time, end_time
-            )
         elif provider.provider == ProviderChoices.ELEVEN_LABS:
             return ObservabilityService._fetch_eleven_labs_logs(
                 provider, start_time, end_time
             )
+        elif provider.provider == ProviderChoices.BLAND:
+            return ObservabilityService._fetch_bland_logs(
+                provider, start_time, end_time
+            )
+        elif provider.provider == ProviderChoices.TWILIO:
+            return ObservabilityService._fetch_twilio_logs(
+                provider, start_time, end_time
+            )
+        elif provider.provider == ProviderChoices.LIVEKIT:
+            # LiveKit has no hosted call history; [] avoids a crash-loop.
+            return []
         else:
             raise NotImplementedError(f"Provider {provider.provider} not implemented.")
 
@@ -154,51 +345,415 @@ class ObservabilityService:
         return all_logs
 
     @staticmethod
-    def _fetch_retell_logs(
-        provider: ObservabilityProvider,
-        start_time: datetime | None = None,
-        end_time: datetime | None = None,
-    ):
-        """
-        Fetches call logs from Retell AI.
+    def _retell_request(method: str, url: str, **kwargs: Any) -> requests.Response:
+        """One retry helper for every Retell HTTP call.
 
-        Returns:
-            List of logs, or empty list if API key is missing.
+        429 / 5xx / connection or timeout errors retry up to RETELL_MAX_ATTEMPTS.
+        The base backoff is 1s then 2s; a 429 honours the response's
+        ``Retry-After`` header (seconds, capped at RETELL_RETRY_AFTER_CAP_SECONDS)
+        instead when present. Every retry sleep adds ``random.uniform(0, 0.5)``
+        jitter (avoids a thundering herd across the hydration pool's workers),
+        via the module-level ``_sleep``. 401/403 raise at once. Every other
+        non-2xx raises via ``raise_for_status`` (so any ``requests.HTTPError``
+        this raises carries ``.response``).
         """
-        agent = ObservabilityService._get_agent_definition(provider)
-        api_key = ObservabilityService._validate_agent_api_key(
-            agent, provider, "Retell"
+        request_fn = requests.post if method == "post" else requests.get
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                response = request_fn(
+                    url, timeout=RETELL_REQUEST_TIMEOUT_SECONDS, **kwargs
+                )
+            except (requests.ConnectionError, requests.Timeout):
+                if attempt >= RETELL_MAX_ATTEMPTS:
+                    raise
+                _sleep((1 if attempt == 1 else 2) + random.uniform(0, 0.5))
+                continue
+
+            if response.status_code in (401, 403):
+                response.raise_for_status()
+
+            retryable = response.status_code == 429 or response.status_code >= 500
+            if retryable and attempt < RETELL_MAX_ATTEMPTS:
+                base_delay = 1 if attempt == 1 else 2
+                if response.status_code == 429:
+                    retry_after = _retell_retry_after_seconds(response)
+                    if retry_after is not None:
+                        base_delay = retry_after
+                _sleep(base_delay + random.uniform(0, 0.5))
+                continue
+
+            response.raise_for_status()
+            return response
+
+    @staticmethod
+    def _fetch_retell_call_detail(
+        call: dict[str, Any], headers: dict[str, str]
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        """Hydrate one list item via Get Call. Caller guarantees ``call["call_id"]``.
+
+        Never raises for a single call except 401/403 (propagated so the page
+        fails loudly on an auth problem). Returns ``(merged_call, None)`` on
+        success, or ``(None, "missing")`` for a 400/404/422 (bad or unknown
+        call id — permanent), or ``(None, "failed")`` for anything else after
+        retries, including a body that isn't JSON or doesn't parse to a dict.
+        """
+        call_id = call.get("call_id")
+        try:
+            response = ObservabilityService._retell_request(
+                "get",
+                f"{ObservabilityRoutes.RETELL_GET_CALL_URL.value}/{call_id}",
+                headers=headers,
+            )
+            detail = response.json()
+        except requests.HTTPError as exc:
+            status = getattr(exc.response, "status_code", None)
+            if status in (401, 403):
+                raise
+            if status in (400, 404, 422):
+                return None, "missing"
+            return None, "failed"
+        except (requests.RequestException, ValueError):
+            # Covers ConnectionError/Timeout after retries and a non-JSON body
+            # (requests.JSONDecodeError subclasses both RequestException and ValueError).
+            return None, "failed"
+
+        if not isinstance(detail, dict):
+            return None, "failed"
+
+        merged = dict(call)
+        for key, value in detail.items():
+            if value is not None:
+                merged[key] = value
+        return merged, None
+
+    @staticmethod
+    def _hydrate_retell_calls(
+        items: list[dict[str, Any]],
+        headers: dict[str, str],
+        *,
+        start: int = 0,
+        deadline: datetime | None = None,
+    ) -> tuple[
+        list[dict[str, Any]],
+        tuple[int, ...],
+        int,
+        int,
+        int,
+        int,
+        tuple[tuple[int, int], ...],
+    ]:
+        """Hydrate ``items[start:]`` in list order; drop and count items that
+        never yield a usable call. Returns ``(calls, indices, dropped_no_end,
+        dropped_missing, dropped_failed, consumed, drops)``, where ``drops``
+        pairs each dropped item's LIST INDEX with its count slot and the three
+        scalars are just its totals.
+
+        Detail requests for one page run through a bounded thread pool
+        (RETELL_HYDRATION_WORKERS) so a large page's serial Get Call calls
+        cannot alone exhaust the activity deadline. A 401/403 from any item
+        still fails the whole page, but only once every submitted request has
+        finished (the pool is never cancelled early).
+
+        v1.15 A3: with a ``deadline``, a candidate is submitted only while the
+        clock is still short of it, and the first candidate NOT submitted ends
+        consumption — ``consumed`` is its index, and drops after it are not
+        counted, so the orchestrator can resume the same listed page there.
+        At most RETELL_HYDRATION_WORKERS requests are outstanding at any time
+        (submission waits for the oldest instead of queueing the whole page),
+        which is what makes the deadline check bite and bounds the overrun to
+        those few in flight.
+        """
+        listed = len(items)
+        drops: list[tuple[int, int]] = []
+        consumed = listed
+        # call_id -> (list index, merged call); a repeated id keeps the LAST
+        # occurrence and that occurrence's index.
+        hydrated: dict[str, tuple[int, dict[str, Any]]] = {}
+
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=RETELL_HYDRATION_WORKERS
+        ) as executor:
+            in_flight: deque[tuple[int, str, concurrent.futures.Future]] = deque()
+
+            def collect() -> None:
+                index, call_id, future = in_flight.popleft()
+                merged, reason = future.result()
+                if reason == "missing":
+                    drops.append((index, _DROP_SLOT_MISSING))
+                elif reason == "failed":
+                    drops.append((index, _DROP_SLOT_FAILED))
+                else:
+                    # Key off the list item's own id, not the merged one: a
+                    # detail body can only ever add fields, never replace an
+                    # already-hashable key.
+                    hydrated[call_id] = (index, merged)
+
+            for index in range(start, listed):
+                item = items[index]
+                if not isinstance(item, dict):
+                    # A malformed envelope entry, not a per-call HTTP outcome.
+                    drops.append((index, _DROP_SLOT_FAILED))
+                    continue
+                if item.get("end_timestamp") is None:
+                    drops.append((index, _DROP_SLOT_NO_END))
+                    continue
+                call_id = item.get("call_id")
+                if not isinstance(call_id, str) or not call_id:
+                    # No request can be made without a usable id; same bucket as a
+                    # Retell-confirmed unknown id, since retrying never helps either.
+                    drops.append((index, _DROP_SLOT_MISSING))
+                    continue
+                while len(in_flight) >= RETELL_HYDRATION_WORKERS:
+                    collect()
+                if deadline is not None and timezone.now() >= deadline:
+                    consumed = index
+                    break
+                in_flight.append(
+                    (
+                        index,
+                        call_id,
+                        executor.submit(
+                            ObservabilityService._fetch_retell_call_detail,
+                            item,
+                            headers,
+                        ),
+                    )
+                )
+            while in_flight:
+                collect()
+
+        ordered = sorted(hydrated.values(), key=lambda pair: pair[0])
+        # Drops are appended as they are decided, and a pooled one is decided
+        # when its request is collected, not when it was submitted; sort so the
+        # tuple reads in list order like `indices` does.
+        by_index = sorted(drops)
+        return (
+            [merged for _index, merged in ordered],
+            tuple(index for index, _merged in ordered),
+            sum(1 for _index, slot in by_index if slot == _DROP_SLOT_NO_END),
+            sum(1 for _index, slot in by_index if slot == _DROP_SLOT_MISSING),
+            sum(1 for _index, slot in by_index if slot == _DROP_SLOT_FAILED),
+            consumed,
+            tuple(by_index),
         )
-        if not api_key:
-            return []
 
+    @staticmethod
+    def _resolve_retell_key(provider: ObservabilityProvider) -> tuple[str, str]:
+        """Retell-only key resolution: versioned credential row beats the legacy one.
+
+        Version status is deliberately ignored; soft-deleted rows are excluded
+        by the default manager on both query arms.
+        """
+        try:
+            agent = provider.agent_definition
+        except AgentDefinition.DoesNotExist as exc:
+            raise RetellConfigurationError(
+                "Retell observability needs a linked agent"
+            ) from exc
+
+        rows = (
+            ProviderCredentials.objects.filter(
+                agent_version__agent_definition=agent,
+                provider_type=ProviderCredentials.ProviderType.RETELL,
+            )
+            .exclude(api_key="")
+            .order_by("-agent_version__version_number")
+        )
+        legacy = (
+            ProviderCredentials.objects.filter(
+                agent_definition=agent,
+                provider_type=ProviderCredentials.ProviderType.RETELL,
+            )
+            .exclude(api_key="")
+            .first()
+        )
+        chosen = rows.first() or legacy
+        try:
+            key = chosen.get_api_key() if chosen else (agent.api_key or None)
+        except ValueError as exc:
+            raise RetellConfigurationError(
+                "Retell credential could not be decrypted"
+            ) from exc
+        if not key:
+            raise RetellConfigurationError(
+                "Retell API key is not configured for this agent"
+            )
+        if not agent.assistant_id:
+            raise RetellConfigurationError(
+                "Retell agent id is not configured for this agent"
+            )
+        return key, agent.assistant_id
+
+    @staticmethod
+    def fetch_retell_page(
+        provider: ObservabilityProvider,
+        start_time: datetime | None,
+        end_time: datetime,
+        *,
+        pagination_key: str | None = None,
+        skip: int | None = None,
+        resume_from: int = 0,
+        resume_digest: str | None = None,
+        deadline: datetime | None = None,
+    ) -> RetellPage:
+        """Fetch exactly ONE Retell list-calls page, hydrated up to the deadline.
+
+        Modes are defined by request shape, independent of bootstrap vs
+        windowed: offset mode = ``skip is not None``; cursor mode =
+        everything else (bootstrap or windowed, page 1 included). Bootstrap
+        mode (``start_time is None``) pages the same as windowed mode, under
+        the same one-of ``pagination_key``/``skip`` rule. Knows nothing about
+        watermarks or storage; never writes provider state.
+
+        v1.15 A2: ``resume_from``/``resume_digest`` continue a page an earlier
+        run stored only part of — the leading items are skipped only when the
+        page still hashes to ``resume_digest``, so a page that changed under us
+        is re-listed from 0 and the caller sees the mismatch on ``digest``.
+        ``deadline`` bounds hydration itself; ``None`` (manual runs, existing
+        callers) means unbounded, exactly as before.
+        """
+        if end_time is None or end_time.tzinfo is None:
+            raise RetellConfigurationError("Retell fetch needs an aware end_time")
+        if start_time is not None and start_time.tzinfo is None:
+            raise RetellConfigurationError("Retell fetch needs an aware start_time")
+        if start_time is not None and start_time >= end_time:
+            raise RetellConfigurationError("Retell fetch window is empty")
+        bootstrap = start_time is None
+        if pagination_key is not None and skip is not None:
+            raise RetellConfigurationError(
+                "Retell fetch cannot use both a pagination cursor and an offset"
+            )
+
+        key, assistant_id = ObservabilityService._resolve_retell_key(provider)
         headers = {
-            "Authorization": f"Bearer {api_key}",
+            "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
         }
-        agent_assistant_id = getattr(agent, "assistant_id", None) if agent else None
-        data: dict[str, Any] = {
-            "limit": 1000,
-            "filter_criteria": {
-                # Using assistant_id as the agent identifier
-                "agent_id": [agent_assistant_id] if agent_assistant_id else [],
-                "call_status": ["ended", "error"],
-            },
-        }
-        if start_time and end_time:
-            data["filter_criteria"]["start_timestamp"] = {
-                "lower_threshold": int(start_time.timestamp() * 1000),
-                "upper_threshold": int(end_time.timestamp() * 1000),
-            }
 
-        response = requests.post(
-            ObservabilityRoutes.RETELL_LIST_CALLS_URL.value,
-            headers=headers,
-            json=data,
-            timeout=30,
+        end_ms = int(end_time.timestamp() * 1000)
+        if bootstrap:
+            body: dict[str, Any] = {
+                "sort_order": "descending",
+                "limit": RETELL_LIST_PAGE_LIMIT,
+                "filter_criteria": {
+                    "agent": [{"agent_id": assistant_id}],
+                    "call_status": {
+                        "type": "enum",
+                        "op": "in",
+                        "value": ["ended", "error"],
+                    },
+                    "end_timestamp": {
+                        "type": "range",
+                        "op": "bt",
+                        "value": [0, end_ms],
+                    },
+                },
+            }
+        else:
+            start_ms = int(start_time.timestamp() * 1000)
+            body = {
+                "sort_order": "ascending",
+                "limit": RETELL_LIST_PAGE_LIMIT,
+                "filter_criteria": {
+                    "agent": [{"agent_id": assistant_id}],
+                    "call_status": {
+                        "type": "enum",
+                        "op": "in",
+                        "value": ["ended", "error"],
+                    },
+                    "end_timestamp": {
+                        "type": "range",
+                        "op": "bt",
+                        "value": [start_ms - 1, end_ms],
+                    },
+                },
+            }
+        # Literal placement is the same in every mode, bootstrap included: at
+        # most one of the two optional top-level keys is ever present.
+        if pagination_key is not None:
+            body["pagination_key"] = pagination_key
+        elif skip is not None:
+            body["skip"] = skip
+
+        has_cursor_or_offset = pagination_key is not None or skip is not None
+        try:
+            response = ObservabilityService._retell_request(
+                "post",
+                ObservabilityRoutes.RETELL_LIST_CALLS_URL.value,
+                headers=headers,
+                json=body,
+            )
+        except requests.HTTPError as exc:
+            status = getattr(exc.response, "status_code", None)
+            if has_cursor_or_offset and status in (400, 404, 422):
+                raise RetellCursorRejected(cause=f"http_{status}") from exc
+            raise
+
+        payload = response.json()
+        has_more = bool(payload.get("has_more"))
+        raw_key = payload.get("pagination_key")
+
+        # Offset mode (any mode, bootstrap included) never yields a cursor.
+        # Everything else is cursor mode, bootstrap page 1 included: a
+        # missing/empty key on a has_more response is a rejected cursor.
+        offset_mode = skip is not None
+        if offset_mode:
+            next_key = None
+        else:
+            if has_more and not raw_key:
+                raise RetellCursorRejected(cause="missing_key")
+            next_key = raw_key if has_more else None
+
+        items = payload.get("items") or []
+        digest = _retell_page_digest(items)
+        listed = len(items)
+        # A resume is honoured only against the identical listed page; a
+        # different digest (or none remembered) re-hydrates from 0 and the
+        # orchestrator reconciles what it already stored (v1.15 A2/B3).
+        resume_start = (
+            resume_from
+            if resume_from > 0 and resume_digest is not None and digest == resume_digest
+            else 0
         )
-        response.raise_for_status()
-        return response.json()
+        (
+            calls,
+            indices,
+            dropped_no_end,
+            dropped_missing,
+            dropped_failed,
+            consumed,
+            drops,
+        ) = ObservabilityService._hydrate_retell_calls(
+            items, headers, start=resume_start, deadline=deadline
+        )
+        if dropped_missing:
+            logger.warning(
+                "retell_call_detail_missing",
+                provider_id=str(provider.id),
+                count=dropped_missing,
+            )
+        if dropped_failed:
+            logger.warning(
+                "retell_call_detail_failed",
+                provider_id=str(provider.id),
+                count=dropped_failed,
+            )
+
+        return RetellPage(
+            calls=calls,
+            has_more=has_more,
+            next_key=next_key,
+            dropped_no_end=dropped_no_end,
+            dropped_missing=dropped_missing,
+            dropped_failed=dropped_failed,
+            digest=digest,
+            listed=listed,
+            consumed=consumed,
+            indices=indices,
+            drops=drops,
+        )
 
     @staticmethod
     def _list_eleven_labs_conversations(
@@ -264,6 +819,100 @@ class ObservabilityService:
         return response.json()
 
     @staticmethod
+    def _fetch_bland_logs(
+        provider: ObservabilityProvider,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+    ):
+        """Pull Bland.ai calls + per-call detail. Auth: ``authorization: <api_key>`` (no Bearer)."""
+        agent = ObservabilityService._get_agent_definition(provider)
+        api_key = ObservabilityService._validate_agent_api_key(agent, provider, "Bland")
+        if not api_key:
+            return []
+
+        headers = {"authorization": api_key}
+        params: dict = {"limit": 100, "ascending": False}
+        if start_time:
+            params["start_date"] = start_time.strftime("%Y-%m-%d")
+        if end_time:
+            # end_date is date-granular and exclusive; send day+1 to keep same-day calls.
+            params["end_date"] = (end_time + timedelta(days=1)).strftime("%Y-%m-%d")
+
+        response = requests.get(
+            ObservabilityRoutes.BLAND_CALLS_URL.value,
+            headers=headers,
+            params=params,
+            timeout=30,
+        )
+        response.raise_for_status()
+        calls = response.json().get("calls", []) or []
+
+        detailed_logs = []
+        for call in calls:
+            call_id = call.get("call_id") or call.get("c_id")
+            if not call_id:
+                continue
+            detail_resp = requests.get(
+                f"{ObservabilityRoutes.BLAND_CALLS_URL.value}/{call_id}",
+                headers=headers,
+                timeout=30,
+            )
+            if detail_resp.status_code != 200:
+                logger.warning(
+                    "bland_call_detail_fetch_failed",
+                    provider_id=str(provider.id),
+                    call_id=call_id,
+                    status_code=detail_resp.status_code,
+                )
+                # Fall back to the listing row (metadata-only, no transcripts).
+                detailed_logs.append(call)
+                continue
+            detailed_logs.append(detail_resp.json())
+
+        return detailed_logs
+
+    @staticmethod
+    def _fetch_twilio_logs(
+        provider: ObservabilityProvider,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+    ):
+        """Pull Twilio Call resources (metadata only). ``api_key`` is ``"<AccountSid>:<AuthToken>"`` for basic auth."""
+        agent = ObservabilityService._get_agent_definition(provider)
+        api_key = ObservabilityService._validate_agent_api_key(
+            agent, provider, "Twilio"
+        )
+        if not api_key:
+            return []
+        if ":" not in api_key:
+            logger.warning(
+                "twilio_api_key_format_invalid",
+                provider_id=str(provider.id),
+                message=(
+                    "Twilio observability needs api_key formatted as "
+                    "'<AccountSid>:<AuthToken>'. Skipping log fetch."
+                ),
+            )
+            return []
+
+        account_sid, auth_token = api_key.split(":", 1)
+        params: dict = {"PageSize": 100}
+        if start_time:
+            params["StartTime>"] = start_time.strftime("%Y-%m-%d")
+        if end_time:
+            # StartTime< is date-granular and exclusive; send day+1 to keep same-day calls.
+            params["StartTime<"] = (end_time + timedelta(days=1)).strftime("%Y-%m-%d")
+
+        response = requests.get(
+            ObservabilityRoutes.TWILIO_CALLS_URL.value.format(account_sid=account_sid),
+            auth=(account_sid, auth_token),
+            params=params,
+            timeout=30,
+        )
+        response.raise_for_status()
+        return response.json().get("calls", []) or []
+
+    @staticmethod
     def _fetch_eleven_labs_logs(
         provider: ObservabilityProvider,
         start_time: datetime | None = None,
@@ -309,9 +958,7 @@ class ObservabilityService:
         if not api_key:
             logger.warning(
                 "missing_api_key_for_provider",
-                provider_id=str(provider.id),
                 provider_name=provider_name,
-                message=f"Missing API key for {provider_name} provider. Skipping log fetch.",
             )
             return None
         return api_key
@@ -351,7 +998,10 @@ class ObservabilityService:
         recording_url = (
             sa.get("recording_url")
             or sa.get("conversation.recording.mono.combined")
-            or (raw_log.get("artifact") or {}).get("recording", {}).get("mono", {}).get("combinedUrl")
+            or (raw_log.get("artifact") or {})
+            .get("recording", {})
+            .get("mono", {})
+            .get("combinedUrl")
             or raw_log.get("recordingUrl")
         )
         stereo_recording_url = (
@@ -369,7 +1019,7 @@ class ObservabilityService:
         cost = raw_log_get("cost")
         assistant_id = raw_log_get("assistantId")
         duration_seconds = None
-        analysis_data = raw_log_get("analysis")
+        analysis_data = raw_log_get("analysis") or None
 
         # Cost breakdown (STT/LLM/TTS)
         raw_cost_breakdown = raw_log_get("costBreakdown") or {}
@@ -433,7 +1083,7 @@ class ObservabilityService:
                             "role": message.get("role"),
                             "content": message.get("message"),
                             "time": datetime.fromtimestamp(
-                                message.get("time") / 1000
+                                message.get("time") / 1000, tz=UTC
                             ).isoformat(),
                             "duration": round(duration, 2) if duration else None,
                         }
@@ -479,7 +1129,7 @@ class ObservabilityService:
             "ended_at": ended_at,
             "duration_seconds": duration_seconds,
             "recording_url": recording_url,
-            "cost_cents": cost * 100 if cost else None,
+            "cost_cents": cost * 100 if cost is not None else None,
             "cost_breakdown": cost_breakdown,
             "call_metadata": raw_log_get("callMetadata"),
             "error_message": raw_log_get("errorMessage"),
@@ -528,21 +1178,26 @@ class ObservabilityService:
             else None
         )
         started_at = (
-            datetime.fromtimestamp(started_at_timestamp).isoformat()
+            datetime.fromtimestamp(started_at_timestamp, tz=UTC).isoformat()
             if started_at_timestamp
             else None
         )
         ended_at = (
-            datetime.fromtimestamp(ended_at_timestamp).isoformat()
+            datetime.fromtimestamp(ended_at_timestamp, tz=UTC).isoformat()
             if ended_at_timestamp
             else None
         )
         recording_url = raw_log_get("recording_url")
         transcripts = raw_log_get("transcript_with_tool_calls") or []
         call_cost_object = raw_log_get("call_cost") or {}
-        duration_seconds = None
-        if started_at_timestamp and ended_at_timestamp:
-            duration_seconds = int(ended_at_timestamp - started_at_timestamp)
+        duration_ms = raw_log_get("duration_ms")
+        try:
+            duration_ms = float(duration_ms)
+            duration_seconds = (
+                int(duration_ms / 1000) if math.isfinite(duration_ms) else None
+            )
+        except (TypeError, ValueError):
+            duration_seconds = None
         cost_cents = call_cost_object.get("combined_cost")
         phone_number = raw_log_get("to_number")
         metadata = raw_log_get("metadata") or {}
@@ -585,15 +1240,19 @@ class ObservabilityService:
                 }
             )
             if transcript.get("role") in ["user", "agent"]:
+                if started_at and seconds_from_start is not None:
+                    abs_time = (
+                        datetime.fromisoformat(started_at)
+                        + timedelta(seconds=seconds_from_start)
+                    ).isoformat()
+                else:
+                    abs_time = None
                 processed_transcripts.append(
                     {
                         "id": str(uuid.uuid4()),
                         "role": role,
                         "content": transcript.get("content"),
-                        "time": (
-                            datetime.fromisoformat(started_at)
-                            + timedelta(seconds=seconds_from_start)
-                        ).isoformat(),
+                        "time": abs_time,
                         "duration": duration,
                     }
                 )
@@ -700,31 +1359,199 @@ class ObservabilityService:
         Raises:
             ValueError: If provider is not recognized
         """
-        if provider == ProviderChoices.VAPI:
-            processed = ObservabilityService._process_vapi_logs(raw_log, span_attributes)
-        elif provider == ProviderChoices.RETELL:
+        if not raw_log:
+            # OTLP export drops raw_log; rebuild the call-log shape from the span's call.* attrs.
+            attrs = span_attributes or {}
+            sim_meta = (
+                (attrs.get("metadata") or {})
+                if isinstance(attrs.get("metadata"), dict)
+                else {}
+            )
+            duration = attrs.get("call.duration")
+            combined_cost = attrs.get("combined_cost")
+            total_cost = attrs.get("cost_breakdown.total")
+            cost_cents = (
+                combined_cost
+                if combined_cost is not None
+                else total_cost * 100
+                if total_cost is not None
+                else None
+            )
+            return {
+                "call_id": sim_meta.get("call_execution_id"),
+                "status": _normalize_voice_call_status(attrs.get("call.status"))
+                or "completed",
+                "call_type": attrs.get("call_type"),
+                "ended_reason": attrs.get("ended_reason"),
+                "cost_cents": cost_cents,
+                "started_at": None,  # span start_time is authoritative
+                "duration_seconds": int(duration) if duration is not None else None,
+                "recording_url": attrs.get("conversation.recording.mono.combined"),
+                "stereo_recording_url": attrs.get("conversation.recording.stereo"),
+                "call_metadata": sim_meta,
+            }
+
+        # The `provider` hot column can carry the LLM provider (e.g. 'openai')
+        # for a voice span whose assistant runs an OpenAI model — the collector
+        # ranks gen_ai.provider.name above gen_ai.system. Resolve the real voice
+        # provider: prefer gen_ai.system, then default to vapi (the dominant
+        # provider) rather than 400 the whole voice list on an unrecognized label.
+        voice_providers = {
+            ProviderChoices.VAPI,
+            ProviderChoices.RETELL,
+            ProviderChoices.ELEVEN_LABS,
+            ProviderChoices.BLAND,
+            ProviderChoices.TWILIO,
+        }
+        if provider not in voice_providers:
+            provider = (span_attributes or {}).get("gen_ai.system") or provider
+        if provider not in voice_providers:
+            provider = ProviderChoices.VAPI
+
+        if provider == ProviderChoices.RETELL:
             processed = ObservabilityService._process_retell_logs(raw_log)
-        else:
-            raise ValueError(f"Invalid choice for provider: {provider}")
+        elif provider == ProviderChoices.ELEVEN_LABS:
+            processed = ObservabilityService._process_eleven_labs_raw(raw_log)
+        elif provider == ProviderChoices.BLAND:
+            processed = ObservabilityService._process_bland_raw(raw_log)
+        elif provider == ProviderChoices.TWILIO:
+            processed = ObservabilityService._process_twilio_raw(raw_log)
+        else:  # VAPI, and the default for any still-unrecognized label
+            processed = ObservabilityService._process_vapi_logs(
+                raw_log, span_attributes
+            )
 
         if span_attributes:
+            if not processed.get("ended_reason"):
+                processed["ended_reason"] = span_attributes.get("ended_reason")
+
             from tracer.utils.vapi_recording import VapiRecordingService
 
-            mono_s3 = (
-                span_attributes.get("recording_url")
-                or span_attributes.get("conversation.recording.mono.combined")
+            mono_s3 = span_attributes.get("recording_url") or span_attributes.get(
+                "conversation.recording.mono.combined"
             )
-            stereo_s3 = (
-                span_attributes.get("stereo_recording_url")
-                or span_attributes.get("conversation.recording.stereo")
-            )
-            if mono_s3 and VapiRecordingService.is_s3_url(mono_s3) and not VapiRecordingService.is_s3_url(
-                processed.get("recording_url")
+            stereo_s3 = span_attributes.get(
+                "stereo_recording_url"
+            ) or span_attributes.get("conversation.recording.stereo")
+            if (
+                mono_s3
+                and VapiRecordingService.is_fagi_s3_url(mono_s3)
+                and not VapiRecordingService.is_fagi_s3_url(
+                    processed.get("recording_url")
+                )
             ):
                 processed["recording_url"] = mono_s3
-            if stereo_s3 and VapiRecordingService.is_s3_url(stereo_s3) and not VapiRecordingService.is_s3_url(
-                processed.get("stereo_recording_url")
+            if (
+                stereo_s3
+                and VapiRecordingService.is_fagi_s3_url(stereo_s3)
+                and not VapiRecordingService.is_fagi_s3_url(
+                    processed.get("stereo_recording_url")
+                )
             ):
                 processed["stereo_recording_url"] = stereo_s3
 
         return processed
+
+    @staticmethod
+    def _process_eleven_labs_raw(raw_log: dict) -> dict:
+        """ElevenLabs ConvAI conversation raw_log -> VoiceCallLogs dump."""
+        metadata = raw_log.get("metadata") or {}
+        started_at = None
+        if start_unix := metadata.get("start_time_unix_secs"):
+            started_at = datetime.fromtimestamp(start_unix, tz=UTC).isoformat()
+
+        transcripts = [
+            {
+                "id": str(uuid.uuid4()),
+                "role": msg.get("role"),
+                "content": msg.get("message"),
+                "time": (
+                    str(msg["time_in_call_secs"])
+                    if msg.get("time_in_call_secs") is not None
+                    else None
+                ),
+                "duration": None,
+            }
+            for msg in (raw_log.get("transcript") or [])
+            if isinstance(msg, dict) and msg.get("message")
+        ]
+        cost = metadata.get("cost")
+        processed_log = {
+            "id": None,
+            "call_id": raw_log.get("conversation_id"),
+            "phone_number": None,
+            "status": _normalize_voice_call_status(raw_log.get("status")),
+            "started_at": started_at,
+            "created_at": started_at,
+            "duration_seconds": metadata.get("call_duration_secs"),
+            "recording_url": None,
+            "cost_cents": cost if cost is not None else None,
+            "transcript": transcripts,
+            "call_metadata": {"agent_id": raw_log.get("agent_id")},
+        }
+        return VoiceCallLogs(**processed_log).model_dump()
+
+    @staticmethod
+    def _process_bland_raw(raw_log: dict) -> dict:
+        """Bland.ai call raw_log -> VoiceCallLogs dump (call_length in minutes)."""
+        call_length = raw_log.get("call_length")
+        duration_seconds = (
+            int(round(float(call_length) * 60))
+            if call_length not in (None, "")
+            else None
+        )
+        transcripts = [
+            {
+                "id": str(uuid.uuid4()),
+                "role": row.get("user"),
+                "content": row.get("text"),
+                "time": None,
+                "duration": None,
+            }
+            for row in (raw_log.get("transcripts") or [])
+            if isinstance(row, dict) and row.get("text")
+        ]
+        price = raw_log.get("price")
+        processed_log = {
+            "id": None,
+            "call_id": raw_log.get("call_id"),
+            "phone_number": raw_log.get("to"),
+            "status": _normalize_voice_call_status(raw_log.get("status")),
+            "started_at": raw_log.get("started_at") or raw_log.get("created_at"),
+            # The list's date column binds created_at.
+            "created_at": raw_log.get("created_at") or raw_log.get("started_at"),
+            "duration_seconds": duration_seconds,
+            "recording_url": raw_log.get("recording_url"),
+            "cost_cents": float(price) * 100 if price not in (None, "") else None,
+            "transcript": transcripts,
+            "error_message": raw_log.get("error_message"),
+            "call_metadata": {
+                "from": raw_log.get("from"),
+                "summary": raw_log.get("summary"),
+            },
+        }
+        return VoiceCallLogs(**processed_log).model_dump()
+
+    @staticmethod
+    def _process_twilio_raw(raw_log: dict) -> dict:
+        """Twilio Call resource raw_log -> VoiceCallLogs dump (no transcript)."""
+        duration = raw_log.get("duration")
+        price = raw_log.get("price")
+        processed_log = {
+            "id": None,
+            "call_id": raw_log.get("sid"),
+            "phone_number": raw_log.get("to"),
+            "status": _normalize_voice_call_status(raw_log.get("status")),
+            "started_at": raw_log.get("start_time"),
+            # The list's date column binds created_at.
+            "created_at": raw_log.get("start_time") or raw_log.get("date_created"),
+            "duration_seconds": int(duration) if duration not in (None, "") else None,
+            "recording_url": None,
+            "cost_cents": abs(float(price)) * 100 if price not in (None, "") else None,
+            "transcript": [],
+            "call_metadata": {
+                "from": raw_log.get("from"),
+                "direction": raw_log.get("direction"),
+            },
+        }
+        return VoiceCallLogs(**processed_log).model_dump()

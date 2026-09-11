@@ -46,7 +46,7 @@ const COLUMNS = [
     format: (v) => (v != null ? Number(v).toLocaleString() : "--"),
   },
   {
-    id: "avgLatencyMs",
+    id: "avg_latency_ms",
     label: "Avg Latency",
     align: "right",
     sortable: true,
@@ -59,7 +59,7 @@ const COLUMNS = [
     },
   },
   {
-    id: "p95LatencyMs",
+    id: "p95_latency_ms",
     label: "P95 Latency",
     align: "right",
     sortable: true,
@@ -97,7 +97,7 @@ const COLUMNS = [
     },
   },
   {
-    id: "cacheHitRate",
+    id: "cache_hit_rate",
     label: "Cache Hit Rate",
     align: "right",
     sortable: true,
@@ -152,7 +152,7 @@ const ModelComparison = ({ start, end, gatewayId }) => {
     gatewayId,
   });
 
-  const models = data?.models || [];
+  const models = useMemo(() => data?.models || [], [data?.models]);
 
   const sortedModels = useMemo(() => {
     const comparator = getComparator(order, orderBy);
@@ -256,7 +256,7 @@ const ModelComparison = ({ start, end, gatewayId }) => {
                           sx={{
                             fontWeight: col.id === "model" ? 600 : 400,
                             color:
-                              col.id === "errorRate" &&
+                              col.id === "error_rate" &&
                               row.error_rate != null &&
                               row.error_rate > 5
                                 ? "error.main"

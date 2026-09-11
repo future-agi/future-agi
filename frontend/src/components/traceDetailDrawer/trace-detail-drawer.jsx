@@ -22,7 +22,7 @@ import DrawerRight from "./drawer-right";
 import DrawerBottom from "./drawer-bottom";
 import PropTypes from "prop-types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import axios, { endpoints } from "src/utils/axios";
+import axios, { readQuery, endpoints } from "src/utils/axios";
 import { useParams } from "react-router";
 import { ShowComponent } from "../show";
 import { useSelectedNode } from "./useSelectedNode";
@@ -33,12 +33,11 @@ import { TraceDetailContext } from "./TraceDetailContext";
 import AddAnnotationsDrawer from "./add-annotations-drawer";
 import AnnotationSidebarContent from "./AnnotationSidebarContent";
 import AddLabelDrawer from "./AddLabelDrawer";
+import { buildTraceAnnotationSources } from "../voiceAnnotationSources";
 import _ from "lodash";
 import SvgColor from "../svg-color";
 import { useTraceErrorAnalysis } from "./common";
 import ErrorAnalysis from "./ErrorAnalysis";
-import { objectCamelToSnake } from "src/utils/utils";
-import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 
@@ -177,16 +176,12 @@ const TraceDetailDrawerChild = ({
   const { data: previousNextTraceDataPrototype } = useQuery({
     queryKey: ["trace-id-by-index", traceData.trace_id, traceData?.filters],
     queryFn: () => {
-      return axios.get(endpoints.project.getTraceIdByIndex(), {
+      return readQuery(endpoints.project.getTraceIdByIndex(), {
         params: {
           project_version_id: runId,
           trace_id: traceData?.trace_id,
           // only trace filters can be applied to this
-          filters: JSON.stringify(
-            canonicalizeApiFilterColumnIds(
-              objectCamelToSnake(traceData?.filters),
-            ),
-          ),
+          filters: JSON.stringify(traceData?.filters || []),
         },
       });
     },
@@ -201,15 +196,11 @@ const TraceDetailDrawerChild = ({
       traceData?.filters,
     ],
     queryFn: () => {
-      return axios.get(endpoints.project.getTraceIdByIndexObserve(observeId), {
+      return readQuery(endpoints.project.getTraceIdByIndexObserve(observeId), {
         params: {
           trace_id: traceData.trace_id,
           // only trace filters can be applied to this
-          filters: JSON.stringify(
-            canonicalizeApiFilterColumnIds(
-              objectCamelToSnake(traceData?.filters),
-            ),
-          ),
+          filters: JSON.stringify(traceData?.filters || []),
         },
       });
     },
@@ -221,16 +212,12 @@ const TraceDetailDrawerChild = ({
   const { data: previousNextSpanDataPrototype } = useQuery({
     queryKey: ["span-id-by-index", traceData?.span_id, traceData?.filters],
     queryFn: () => {
-      return axios.get(endpoints.project.getTraceIdByIndexSpansAsBase(), {
+      return readQuery(endpoints.project.getTraceIdByIndexSpansAsBase(), {
         params: {
           span_id: traceData?.span_id,
           project_version_id: runId,
           // only span filters can be applied to this
-          filters: JSON.stringify(
-            canonicalizeApiFilterColumnIds(
-              objectCamelToSnake(traceData?.filters),
-            ),
-          ),
+          filters: JSON.stringify(traceData?.filters || []),
         },
       });
     },
@@ -245,17 +232,13 @@ const TraceDetailDrawerChild = ({
       traceData?.filters,
     ],
     queryFn: () => {
-      return axios.get(
+      return readQuery(
         endpoints.project.getTraceIdByIndexSpansAsObserve(observeId),
         {
           params: {
             span_id: traceData?.span_id,
             // only span filters can be applied to this
-            filters: JSON.stringify(
-              canonicalizeApiFilterColumnIds(
-                objectCamelToSnake(traceData?.filters),
-              ),
-            ),
+            filters: JSON.stringify(traceData?.filters || []),
           },
         },
       );
@@ -781,12 +764,11 @@ const TraceDetailDrawerChild = ({
           }}
         >
           <AnnotationSidebarContent
-            sources={[
-              {
-                sourceType: "observation_span",
-                sourceId: selectedNode?.id || rootSpanId,
-              },
-            ]}
+            sources={buildTraceAnnotationSources({
+              traceId: traceData?.trace_id,
+              spanId: selectedNode?.id || rootSpanId,
+              sessionId: traceDetail?.trace?.session,
+            })}
             onClose={() => setAnnotationSidebarOpen(false)}
             onAddLabel={() => setAddLabelDrawerOpen(true)}
             onScoresChanged={() => {

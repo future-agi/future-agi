@@ -78,6 +78,10 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+if (( WIPE_VOLUMES_FLAG == 1 && NEW_INSTANCE_FLAG == 1 )); then
+  die "--wipe-volumes and --new-instance are mutually exclusive"
+fi
+
 # CI / non-TTY runs always behave as non-interactive.
 [[ -n "${CI:-}" || ! -t 0 ]] && NON_INTERACTIVE=1
 
@@ -206,10 +210,22 @@ set_project_name_in_env() {
 # are already initialized with the OLD password. Rotating CHANGEME-* now
 # would generate a new secret that postgres / minio won't accept, and the
 # stack will fail to come up with cryptic auth errors. Detect and ask.
-project_name="futureagi"  # pinned in docker-compose.yml `name:`
+project_name=$(grep -E '^COMPOSE_PROJECT_NAME=' .env | tail -1 | cut -d= -f2- || true)
+project_name="${project_name:-futureagi}"
+declare -a PERSISTENT_VOLUME_SUFFIXES=(
+  postgres-data
+  clickhouse-data
+  minio-data
+  redis-data
+  rabbitmq-data
+  peerdb-catalog-data
+  peerdb-minio-data
+  property-catalog-kafka-data
+  property-catalog-sequencer-data
+  fi-collector-data
+)
 declare -a STALE_VOLS=()
-for vol in postgres-data clickhouse-data minio-data redis-data \
-           rabbitmq-data peerdb-catalog-data peerdb-minio-data; do
+for vol in "${PERSISTENT_VOLUME_SUFFIXES[@]}"; do
   if docker volume inspect "${project_name}_${vol}" >/dev/null 2>&1; then
     STALE_VOLS+=("${project_name}_${vol}")
   fi
@@ -217,16 +233,16 @@ done
 
 WIPE_VOLS=0
 ROTATE_OK=1
-if (( ${#STALE_VOLS[@]} > 0 )) && grep -Eq "^(PG_PASSWORD|MINIO_ROOT_PASSWORD)=CHANGEME-" .env; then
+if (( WIPE_VOLUMES_FLAG == 1 && ${#STALE_VOLS[@]} > 0 )); then
+  WIPE_VOLS=1
+elif (( ${#STALE_VOLS[@]} > 0 )) && grep -Eq "^(PG_PASSWORD|MINIO_ROOT_PASSWORD)=CHANGEME-" .env; then
   warn "Detected ${#STALE_VOLS[@]} existing project volume(s) — likely from a prior install:"
   for v in "${STALE_VOLS[@]}"; do say "    • $v"; done
   say ""
   say "  These volumes have data initialized with the OLD passwords. If I"
   say "  generate fresh secrets now, the stack will fail to authenticate."
   say ""
-  if (( WIPE_VOLUMES_FLAG == 1 )); then
-    WIPE_VOLS=1
-  elif (( NEW_INSTANCE_FLAG == 1 )); then
+  if (( NEW_INSTANCE_FLAG == 1 )); then
     project_name="$(next_free_project_name)"
     set_project_name_in_env "$project_name"
     STALE_VOLS=()
@@ -268,8 +284,16 @@ fi
 
 if (( WIPE_VOLS == 1 )); then
   step "Wiping existing volumes"
+  # The flag or interactive confirmation is the deletion boundary. Stop only
+  # this Compose project, then remove the exact inventoried volumes rather than
+  # using a broad `down -v` target.
+  if ! $DC down --remove-orphans; then
+    die "Could not stop the existing Compose project before the requested volume wipe."
+  fi
   docker volume rm "${STALE_VOLS[@]}" 2>&1 | sed 's|^|  |'
   ok "Volumes removed. Fresh secrets will work on first boot."
+elif (( WIPE_VOLUMES_FLAG == 1 )); then
+  ok "No existing project volumes found; nothing to wipe"
 fi
 
 # Replace CHANGEME-* placeholders idempotently. A var that has already been
@@ -399,6 +423,7 @@ declare -a PORTS_TO_CHECK=(
   "MINIO_API_PORT:9005"
   "MINIO_CONSOLE_PORT:9006"
   "TEMPORAL_PORT:7233"
+  "PROPERTY_CATALOG_KAFKA_PORT:29092"
 )
 if [[ "$FULL" -eq 1 ]]; then
   PORTS_TO_CHECK+=("PEERDB_UI_PORT:3001" "PEERDB_PORT:9900")
@@ -500,7 +525,7 @@ USER_PASS=""
 prompt_user() {
   step "Create your first account"
   say "  ${DIM}You can press Enter on email to skip and create the user later via${RESET}"
-  say "  ${DIM}'$DC exec -it backend python manage.py create_user'.${RESET}"
+  say "  ${DIM}'docker exec -it futureagi-backend-1 python manage.py create_user'.${RESET}"
   say ""
 
   while true; do
@@ -557,8 +582,21 @@ fi
 
 # ---------------- pull images ----------------
 step "Pulling images"
-log_only "running: $DC pull"
-if ! $DC pull; then
+declare -a pull_command=(pull)
+if $DC pull --help 2>&1 | grep -q -- '--ignore-buildable'; then
+  pull_command+=(--ignore-buildable)
+else
+  # Legacy Compose has no --ignore-buildable. Pull every active service except
+  # the services that deliberately share the locally built collector image.
+  while IFS= read -r service; do
+    case "$service" in
+      fi-collector|fi-property-catalog-sequencer|fi-property-catalog-consumer) ;;
+      *) pull_command+=("$service") ;;
+    esac
+  done < <($DC config --services)
+fi
+log_only "running: $DC ${pull_command[*]}"
+if ! $DC "${pull_command[@]}"; then
   log_only "[fail] pull returned $?"
   die "docker compose pull failed. Check disk space (docker system df) and try again."
 fi
@@ -583,22 +621,141 @@ until $DC up -d --build --remove-orphans; do
 done
 ok "Containers started"
 
-# ---------------- health wait ----------------
-step "Waiting for backend to become healthy"
+# ---------------- readiness wait ----------------
+step "Waiting for the application and property catalog to become ready"
+
+bounded_env_int() {
+  local var="$1" default="$2" min="$3" max="$4" value
+  value=$(grep -E "^${var}=" .env | tail -1 | cut -d= -f2- || true)
+  value="${value:-$default}"
+  if [[ ! "$value" =~ ^[0-9]+$ ]] || (( value < min || value > max )); then
+    die "$var must be an integer in [$min,$max] (got '$value')"
+  fi
+  BOUNDED_ENV_INT="$value"
+}
+
+compose_service_snapshot() {
+  local service="$1" container_id snapshot
+  container_id=$($DC ps -a -q "$service" 2>/dev/null | head -1 || true)
+  if [[ -z "$container_id" ]]; then
+    printf 'missing|missing|-1|0|none|never'
+    return 0
+  fi
+  snapshot=$(docker inspect --format \
+    '{{.State.Status}}|{{.State.ExitCode}}|{{.RestartCount}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}|{{.State.StartedAt}}' \
+    "$container_id" 2>/dev/null || true)
+  if [[ -z "$snapshot" ]]; then
+    printf '%s|missing|-1|0|none|never' "$container_id"
+  else
+    printf '%s|%s' "$container_id" "$snapshot"
+  fi
+}
+
+bounded_env_int INSTALL_READY_TIMEOUT_SECONDS 600 60 1800
+ready_timeout="$BOUNDED_ENV_INT"
+bounded_env_int INSTALL_STABILITY_SECONDS 15 5 120
+stability_seconds="$BOUNDED_ENV_INT"
 
 # Source .env for BACKEND_PORT so we hit the right host port.
 backend_port=$(grep -E '^BACKEND_PORT=' .env | head -1 | cut -d= -f2- || true)
 backend_port="${backend_port:-8000}"
-deadline=$(( $(date +%s) + 600 ))
+deadline=$(( $(date +%s) + ready_timeout ))
+ready_since=0
+last_ready_signature=""
+declare -a catalog_jobs=(
+  property-catalog-kafka-volume-init
+  property-catalog-runtime-volume-init
+  property-catalog-topic-init
+  property-catalog-clickhouse-bootstrap
+  property-catalog-postgres-bootstrap
+)
+declare -a catalog_services=(
+  fi-collector
+  fi-property-catalog-sequencer
+  fi-property-catalog-consumer
+  property-catalog-supervisor
+)
+
 while true; do
-  if curl -fsS "http://localhost:${backend_port}/health/" >/dev/null 2>&1; then
-    ok "Backend healthy at http://localhost:${backend_port}"
-    break
+  now=$(date +%s)
+  all_ready=1
+  fatal_reason=""
+  ready_signature=""
+
+  for service in "${catalog_jobs[@]}"; do
+    snapshot=$(compose_service_snapshot "$service")
+    IFS='|' read -r container_id status exit_code restart_count health started_at <<<"$snapshot"
+    if [[ "$status" == "exited" && "$exit_code" == "0" ]]; then
+      continue
+    fi
+    all_ready=0
+    if [[ "$status" == "dead" || ( "$status" == "exited" && "$exit_code" != "0" ) ]]; then
+      fatal_reason="$service failed with status=$status exit_code=$exit_code"
+      break
+    fi
+  done
+
+  if [[ -z "$fatal_reason" ]]; then
+    snapshot=$(compose_service_snapshot property-catalog-kafka)
+    IFS='|' read -r container_id status exit_code restart_count health started_at <<<"$snapshot"
+    ready_signature+="kafka:${container_id}:${restart_count}:${started_at};"
+    if [[ "$status" != "running" || "$health" != "healthy" ]]; then
+      all_ready=0
+      [[ "$status" == "dead" ]] && fatal_reason="property-catalog-kafka entered dead state"
+    fi
   fi
-  if [[ "$(date +%s)" -ge "$deadline" ]]; then
-    warn "Backend did not pass /health/ within 10 minutes. The stack may still be migrating."
-    warn "Tail the logs: $DC logs -f backend"
-    break
+
+  if [[ -z "$fatal_reason" ]]; then
+    for service in "${catalog_services[@]}"; do
+      snapshot=$(compose_service_snapshot "$service")
+      IFS='|' read -r container_id status exit_code restart_count health started_at <<<"$snapshot"
+      ready_signature+="${service}:${container_id}:${restart_count}:${started_at};"
+      if [[ "$status" != "running" || ( "$service" == "property-catalog-supervisor" && "$health" != "healthy" ) ]]; then
+        all_ready=0
+        [[ "$status" == "dead" ]] && fatal_reason="$service entered dead state"
+      fi
+    done
+  fi
+
+  if ! curl -fsS --max-time 3 "http://localhost:${backend_port}/health/" >/dev/null 2>&1; then
+    all_ready=0
+  fi
+
+  if [[ -n "$fatal_reason" ]]; then
+    $DC ps -a >&3 2>&1 || true
+    $DC logs --tail 80 property-catalog-kafka property-catalog-kafka-volume-init \
+      property-catalog-runtime-volume-init property-catalog-topic-init \
+      property-catalog-clickhouse-bootstrap property-catalog-postgres-bootstrap \
+      fi-collector fi-property-catalog-sequencer fi-property-catalog-consumer \
+      property-catalog-supervisor backend \
+      >&3 2>&1 || true
+    die "$fatal_reason. Relevant service logs were appended to $LOG_FILE"
+  fi
+
+  if (( all_ready == 1 )); then
+    if [[ "$ready_signature" != "$last_ready_signature" ]]; then
+      last_ready_signature="$ready_signature"
+      ready_since="$now"
+    elif (( now - ready_since >= stability_seconds )); then
+      ok "Kafka healthy; candidate and ordered topics plus catalog bootstraps completed"
+      ok "Collector, sequencer, property-catalog consumer, and supervisor stable for ${stability_seconds}s"
+      ok "Backend healthy at http://localhost:${backend_port}"
+      break
+    fi
+  else
+    ready_since=0
+    last_ready_signature=""
+  fi
+
+  if (( now >= deadline )); then
+    $DC ps -a >&3 2>&1 || true
+    $DC logs --tail 80 property-catalog-kafka property-catalog-kafka-volume-init \
+      property-catalog-runtime-volume-init property-catalog-topic-init \
+      property-catalog-clickhouse-bootstrap property-catalog-postgres-bootstrap \
+      fi-collector fi-property-catalog-sequencer fi-property-catalog-consumer \
+      property-catalog-supervisor backend \
+      >&3 2>&1 || true
+    die "Stack did not become fully ready within ${ready_timeout}s. Relevant service logs were appended to $LOG_FILE"
   fi
   sleep 5
 done
@@ -629,7 +786,7 @@ if [[ -n "$USER_EMAIL" ]]; then
     warn "create_user failed (exit $cu_rc). Last 6 lines of output:"
     printf '%s\n' "$cu_out" | tail -6 | sed 's|^|      |'
     warn "Run it manually after the stack settles:"
-    warn "  $DC exec -it backend python manage.py create_user"
+    warn "  docker exec -it futureagi-backend-1 python manage.py create_user"
   fi
 fi
 
@@ -677,6 +834,10 @@ say "  ${BOLD}APIs${RESET}"
 say "    Backend     →  http://localhost:${backend_port}"
 [[ "$FULL" -eq 1 ]] && \
   say "    PeerDB UI   →  http://localhost:3001  ${DIM}(peerdb / peerdb)${RESET}"
+say ""
+say "  ${BOLD}Existing-data catalog backfill${RESET}"
+say "    Restarts do not scan historical data automatically. After an upgrade:"
+say "    ${BOLD}./bin/property-catalog-backfill --execute${RESET}"
 
 if [[ -n "$USER_EMAIL" ]]; then
   say ""

@@ -3,9 +3,9 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, userEvent, within } from "src/utils/test-utils";
 import AnnotatorPicker from "../annotator-picker";
 
-vi.mock("src/auth/hooks", () => ({
-  useAuthContext: () => ({
-    user: { organization: { id: "org-1" } },
+vi.mock("src/contexts/OrganizationContext", () => ({
+  useOrganization: () => ({
+    currentOrganizationId: "org-1",
   }),
 }));
 
@@ -74,5 +74,27 @@ describe("AnnotatorPicker", () => {
         roles: ["reviewer"],
       },
     ]);
+  });
+
+  it("highlights annotator members when auto-assign is enabled", () => {
+    render(
+      <AnnotatorPicker
+        value={[
+          {
+            userId: "user-1",
+            role: "annotator",
+            roles: ["annotator"],
+          },
+        ]}
+        onChange={vi.fn()}
+        highlightAutoAssigned
+      />,
+    );
+
+    const aliceRow = within(screen.getByTestId("annotator-row-user-1"));
+    expect(aliceRow.getByText("Auto-assigned")).toBeInTheDocument();
+
+    const bobRow = within(screen.getByTestId("annotator-row-user-2"));
+    expect(bobRow.queryByText("Auto-assigned")).not.toBeInTheDocument();
   });
 });

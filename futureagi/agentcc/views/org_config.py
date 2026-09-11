@@ -3,6 +3,7 @@ import copy
 import structlog
 from django.db import transaction
 from django.db.models import Max
+from django.http import Http404
 from django.utils import timezone
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -236,6 +237,8 @@ class AgentccOrgConfigViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             if not synced:
                 data["gateway_warning"] = _GATEWAY_SYNC_WARNING
             return self._gm.success_response(data)
+        except Http404:
+            return self._gm.not_found("Org config not found")
         except Exception as e:
             logger.exception("org_config_activate_error", error=str(e))
             return self._gm.bad_request(str(e))

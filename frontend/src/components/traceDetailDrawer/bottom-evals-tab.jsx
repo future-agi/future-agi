@@ -84,6 +84,8 @@ const BottomEvalsTab = ({
           loading: item?.loading,
           error: item?.error,
           outputType: item?.outputType,
+          status: item?.status,
+          skippedReason: item?.skipped_reason,
         }),
       ) || []
     );

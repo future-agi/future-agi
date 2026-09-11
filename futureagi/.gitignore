@@ -14,6 +14,7 @@ static/
 # Internal data / comparison output
 /custom-catalog
 compare/
+media/
 metadata/
 
 # Django venv activation script
@@ -24,4 +25,38 @@ wsgi
 
 # Type-check baseline backups
 mypy-baseline.txt.backup
+# === Python virtualenvs + caches (added by setup) ===
+.venv
+.venv/
+.venv*/
+**/.venv
+**/.venv/
+**/.venv*/
+venv
+venv/
+**/venv
+**/venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+**/.pytest_cache/
+.ruff_cache/
+**/.ruff_cache/
+.mypy_cache/
+**/.mypy_cache/
+.uv-cache/
+**/.uv-cache/
+.hypothesis/
+.tox/
+.nox/
+coverage/
+htmlcov/
+test-results/
+playwright-report/
+*.out
+.DS_Store
+**/.DS_Store
+
 *.core

@@ -2,7 +2,7 @@ import { z } from "zod";
 
 const validationSchema = z.object({
   name: z.string().min(1, "Name is required"),
-  metric: z.string().default("latency"),
+  metric: z.string().default("span_response_time"),
   thresholdType: z.enum([
     "greater_than",
     "less_than",

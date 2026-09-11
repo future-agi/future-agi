@@ -53,6 +53,7 @@ class TestAgentccSafeNameValidationAPI:
         assert NAME_ERROR in response.json()["result"]
         mock_bridge.update_key.assert_not_called()
 
+    @pytest.mark.requires_ee
     def test_create_webhook_rejects_xss_name(self, auth_client):
         response = auth_client.post(
             "/agentcc/webhooks/",
@@ -65,7 +66,7 @@ class TestAgentccSafeNameValidationAPI:
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
-        assert response.json()["result"]["name"][0] == NAME_ERROR
+        assert response.json()["details"]["name"][0] == NAME_ERROR
 
     def test_update_webhook_rejects_xss_name(self, auth_client, user):
         webhook = AgentccWebhook.objects.create(
@@ -82,7 +83,7 @@ class TestAgentccSafeNameValidationAPI:
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
-        assert response.json()["result"]["name"][0] == NAME_ERROR
+        assert response.json()["details"]["name"][0] == NAME_ERROR
 
     def test_create_custom_property_rejects_xss_name(self, auth_client):
         response = auth_client.post(
@@ -95,7 +96,7 @@ class TestAgentccSafeNameValidationAPI:
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
-        assert response.json()["result"]["name"][0] == NAME_ERROR
+        assert response.json()["details"]["name"][0] == NAME_ERROR
 
     def test_update_custom_property_rejects_xss_name(self, auth_client, user):
         schema = AgentccCustomPropertySchema.objects.create(
@@ -111,4 +112,4 @@ class TestAgentccSafeNameValidationAPI:
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
-        assert response.json()["result"]["name"][0] == NAME_ERROR
+        assert response.json()["details"]["name"][0] == NAME_ERROR

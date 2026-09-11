@@ -5,65 +5,56 @@ import LoadingScreen from "./loading-screen";
 describe("LoadingScreen", () => {
   it("renders without crashing", () => {
     render(<LoadingScreen />);
+    expect(screen.getByText("Preparing for liftoff")).toBeInTheDocument();
+  });
 
-    // Check if the linear progress element is present
-    const progressBar = screen.getByRole("progressbar");
-    expect(progressBar).toBeInTheDocument();
+  it("exposes role=status for assistive technology", () => {
+    render(<LoadingScreen />);
+    const status = screen.getByRole("status");
+    expect(status).toBeInTheDocument();
+    expect(status).toHaveAttribute("aria-busy", "true");
   });
 
   it("applies custom sx props correctly", () => {
-    const customSx = {
-      backgroundColor: "red",
-      padding: 2,
-    };
-
-    render(<LoadingScreen sx={customSx} />);
-
-    const container = screen.getByRole("progressbar").closest("div");
-
-    // Note: In a real test, you might want to check computed styles
-    // or use data-testid for more reliable testing
-    expect(container).toBeInTheDocument();
+    render(<LoadingScreen data-testid="loading-wrapper" sx={{ backgroundColor: "red" }} />);
+    expect(screen.getByTestId("loading-wrapper")).toBeInTheDocument();
   });
 
   it("forwards additional props to the Box component", () => {
     render(<LoadingScreen data-testid="custom-loading-screen" />);
-
     const container = screen.getByTestId("custom-loading-screen");
     expect(container).toBeInTheDocument();
   });
 
-  it("has correct default styling classes", () => {
+  it("renders the rocket variant by default", () => {
     render(<LoadingScreen />);
-
-    const progressBar = screen.getByRole("progressbar");
-    expect(progressBar).toBeInTheDocument();
-
-    // The progress bar should have the inherit color
-    expect(progressBar).toHaveClass("MuiLinearProgress-root");
+    expect(screen.getByText("Preparing for liftoff")).toBeInTheDocument();
   });
 
-  it("matches snapshot", () => {
-    const { container } = render(<LoadingScreen />);
-    expect(container.firstChild).toMatchSnapshot();
+  it("renders the orbit variant with standby text", () => {
+    render(<LoadingScreen variant="orbit" />);
+    expect(screen.getByText("Standing by")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeInTheDocument();
+  });
+
+  it("renders a custom message override", () => {
+    render(<LoadingScreen message="Custom message" />);
+    expect(screen.getByText("Custom message")).toBeInTheDocument();
   });
 
   describe("accessibility", () => {
-    it("has proper ARIA role", () => {
+    it("has role=status with aria-busy on rocket variant", () => {
       render(<LoadingScreen />);
-
-      const progressBar = screen.getByRole("progressbar");
-      expect(progressBar).toBeInTheDocument();
+      const el = screen.getByRole("status");
+      expect(el).toHaveAttribute("aria-live", "polite");
+      expect(el).toHaveAttribute("aria-busy", "true");
     });
 
-    it("is keyboard accessible", () => {
-      render(<LoadingScreen />);
-
-      const progressBar = screen.getByRole("progressbar");
-
-      // LinearProgress should be focusable if needed
-      // This test ensures the component doesn't break accessibility
-      expect(progressBar).toBeInTheDocument();
+    it("has role=status with aria-busy on orbit variant", () => {
+      render(<LoadingScreen variant="orbit" />);
+      const el = screen.getByRole("status");
+      expect(el).toHaveAttribute("aria-live", "polite");
+      expect(el).toHaveAttribute("aria-busy", "true");
     });
   });
 });

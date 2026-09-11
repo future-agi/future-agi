@@ -1,6 +1,6 @@
 import React from "react";
 import PropTypes from "prop-types";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { enqueueSnackbar } from "notistack";
@@ -8,32 +8,48 @@ import axios from "src/utils/axios";
 import {
   annotationQueueEndpoints,
   annotationQueueKeys,
+  ADD_QUEUE_ITEMS_TIMEOUT_MS,
   queueItemKeys,
   annotateKeys,
   automationRuleKeys,
   extractErrorMessage,
+  postAddQueueItems,
+  useAddQueueItems,
   useCreateAutomationRule,
   useCreateAnnotationQueue,
+  useEvaluateRule,
+  useBulkReviewItems,
   useCreateDiscussionComment,
+  useDeleteDiscussionComment,
+  useGetOrCreateDefaultQueue,
+  useAddLabelToQueue,
+  useRemoveLabelFromQueue,
   useAnnotateDetail,
   useAssignQueueItems,
   useCompleteItem,
   useItemDiscussion,
   useNextItem,
   useOrgMembersInfinite,
+  useQueueItems,
   useQueueItemsForSource,
   useSkipItem,
   useReopenDiscussionThread,
+  useRestoreAnnotationQueue,
   useReviewItem,
   useResolveDiscussionThread,
   useSubmitAnnotations,
   useToggleDiscussionReaction,
+  useUpdateDiscussionComment,
 } from "../annotation-queues";
+import { INTERACTIVE_REQUEST_TIMEOUT_MS } from "src/config/runtime_limits";
 
 vi.mock("src/utils/axios", () => ({
   default: {
+    delete: vi.fn(),
     get: vi.fn(),
+    patch: vi.fn(),
     post: vi.fn(),
+    put: vi.fn(),
   },
 }));
 
@@ -71,6 +87,10 @@ describe("Annotation Queues API", () => {
     vi.clearAllMocks();
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   describe("queue endpoints", () => {
     it("has correct list endpoint", () => {
       expect(annotationQueueEndpoints.list).toBe(
@@ -93,6 +113,21 @@ describe("Annotation Queues API", () => {
     it("generates correct updateStatus endpoint", () => {
       expect(annotationQueueEndpoints.updateStatus("q-123")).toBe(
         "/model-hub/annotation-queues/q-123/update-status/",
+      );
+    });
+
+    it("generates correct bulk-review and discussion-comment endpoints", () => {
+      expect(annotationQueueEndpoints.bulkReviewItems("q-123")).toBe(
+        "/model-hub/annotation-queues/q-123/items/bulk-review/",
+      );
+      expect(
+        annotationQueueEndpoints.discussionComment(
+          "q-123",
+          "item-1",
+          "comment-1",
+        ),
+      ).toBe(
+        "/model-hub/annotation-queues/q-123/items/item-1/discussion/comments/comment-1/",
       );
     });
   });
@@ -140,6 +175,583 @@ describe("Annotation Queues API", () => {
     });
   });
 
+  describe("useAddQueueItems", () => {
+    it("leaves enumerated adds on their existing transport contract", async () => {
+      axios.post.mockResolvedValueOnce({ data: { result: { added: 1 } } });
+      const items = [{ source_type: "trace", source_id: "trace-1" }];
+
+      await postAddQueueItems({ queueId: "queue-1", items });
+
+      expect(axios.post).toHaveBeenCalledWith(
+        "/model-hub/annotation-queues/queue-1/items/add-items/",
+        { items },
+      );
+    });
+
+    it("sends an AbortSignal and the configured transport ceiling", async () => {
+      axios.post.mockResolvedValueOnce({ data: { result: { added: 1 } } });
+
+      await postAddQueueItems({
+        queueId: "queue-1",
+        selection: {
+          mode: "filter",
+          source_type: "trace",
+          project_id: "project-1",
+        },
+      });
+
+      expect(axios.post).toHaveBeenCalledWith(
+        "/model-hub/annotation-queues/queue-1/items/add-items/",
+        {
+          selection: {
+            mode: "filter",
+            source_type: "trace",
+            project_id: "project-1",
+          },
+        },
+        {
+          signal: expect.any(AbortSignal),
+          timeout: ADD_QUEUE_ITEMS_TIMEOUT_MS,
+        },
+      );
+      expect(ADD_QUEUE_ITEMS_TIMEOUT_MS).toBe(INTERACTIVE_REQUEST_TIMEOUT_MS);
+    });
+
+    it("continues filter adds to the terminal page and aggregates counts", async () => {
+      axios.post
+        .mockResolvedValueOnce({
+          data: {
+            status: true,
+            result: {
+              added: 10_000,
+              duplicates: 1,
+              errors: ["first-page skip"],
+              queue_status: "pending",
+              total_matching: 10_001,
+              total_matching_is_lower_bound: true,
+              has_more: true,
+              next_cursor: "cursor-1",
+              next_cursor_fingerprint: "a".repeat(64),
+            },
+          },
+        })
+        .mockResolvedValueOnce({
+          data: {
+            status: true,
+            result: {
+              added: 7,
+              duplicates: 2,
+              errors: [],
+              queue_status: "active",
+              total_matching: 10_009,
+              total_matching_is_lower_bound: true,
+              has_more: true,
+              next_cursor: "cursor-2",
+              next_cursor_fingerprint: "b".repeat(64),
+            },
+          },
+        })
+        .mockResolvedValueOnce({
+          data: {
+            status: true,
+            result: {
+              added: 3,
+              duplicates: 0,
+              errors: ["terminal skip"],
+              queue_status: "active",
+              total_matching: 10_012,
+              total_matching_is_lower_bound: false,
+              has_more: false,
+              next_cursor: null,
+              next_cursor_fingerprint: null,
+            },
+          },
+        });
+      const selection = {
+        mode: "filter",
+        source_type: "trace",
+        project_id: "project-1",
+        filter: [],
+        exclude_ids: [],
+      };
+
+      const response = await postAddQueueItems({
+        queueId: "queue-1",
+        selection,
+      });
+
+      expect(axios.post).toHaveBeenCalledTimes(3);
+      expect(axios.post.mock.calls.map((call) => call[1].selection)).toEqual([
+        selection,
+        { ...selection, cursor: "cursor-1" },
+        { ...selection, cursor: "cursor-2" },
+      ]);
+      expect(response.data.result).toEqual({
+        added: 10_010,
+        duplicates: 3,
+        errors: ["first-page skip", "terminal skip"],
+        error_count: 2,
+        queue_status: "active",
+        total_matching: 10_012,
+        total_matching_is_lower_bound: false,
+        has_more: false,
+        next_cursor: null,
+        next_cursor_fingerprint: null,
+      });
+    });
+
+    it("rejects re-signed cursors for the same continuation boundary", async () => {
+      axios.post
+        .mockResolvedValueOnce({
+          data: {
+            result: {
+              added: 2,
+              duplicates: 0,
+              errors: [],
+              has_more: true,
+              next_cursor: "signed-cursor-first",
+              next_cursor_fingerprint: "c".repeat(64),
+            },
+          },
+        })
+        .mockResolvedValueOnce({
+          data: {
+            result: {
+              added: 1,
+              duplicates: 0,
+              errors: [],
+              has_more: true,
+              next_cursor: "signed-cursor-rotated",
+              next_cursor_fingerprint: "c".repeat(64),
+            },
+          },
+        });
+
+      await expect(
+        postAddQueueItems({
+          queueId: "queue-1",
+          selection: {
+            mode: "filter",
+            source_type: "trace",
+            project_id: "project-1",
+          },
+        }),
+      ).rejects.toMatchObject({
+        code: "repeated_bulk_continuation",
+        partialAddResult: expect.objectContaining({ added: 3 }),
+      });
+      expect(axios.post).toHaveBeenCalledTimes(2);
+    });
+
+    it("rejects a repeated continuation instead of looping", async () => {
+      axios.post
+        .mockResolvedValueOnce({
+          data: {
+            result: {
+              added: 2,
+              duplicates: 0,
+              errors: [],
+              has_more: true,
+              next_cursor: "cursor-1",
+            },
+          },
+        })
+        .mockResolvedValueOnce({
+          data: {
+            result: {
+              added: 1,
+              duplicates: 1,
+              errors: [],
+              has_more: true,
+              next_cursor: "cursor-1",
+            },
+          },
+        });
+
+      await expect(
+        postAddQueueItems({
+          queueId: "queue-1",
+          selection: {
+            mode: "filter",
+            source_type: "trace",
+            project_id: "project-1",
+          },
+        }),
+      ).rejects.toMatchObject({
+        code: "repeated_bulk_continuation",
+        partialAddResult: expect.objectContaining({
+          added: 3,
+          duplicates: 1,
+          has_more: true,
+        }),
+      });
+      expect(axios.post).toHaveBeenCalledTimes(2);
+    });
+
+    it("rejects a malformed non-terminal cursor before another POST", async () => {
+      axios.post.mockResolvedValueOnce({
+        data: {
+          result: {
+            added: 2,
+            duplicates: 0,
+            errors: [],
+            has_more: true,
+            next_cursor: "   ",
+          },
+        },
+      });
+
+      await expect(
+        postAddQueueItems({
+          queueId: "queue-1",
+          selection: {
+            mode: "filter",
+            source_type: "trace",
+            project_id: "project-1",
+          },
+        }),
+      ).rejects.toMatchObject({
+        code: "invalid_bulk_continuation",
+        partialAddResult: expect.objectContaining({ added: 2 }),
+      });
+      expect(axios.post).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      {
+        label: "cursor token",
+        continuation: { next_cursor: "unexpected-cursor" },
+      },
+      {
+        label: "cursor fingerprint",
+        continuation: { next_cursor_fingerprint: "d".repeat(64) },
+      },
+    ])(
+      "rejects terminal metadata with a non-null $label",
+      async ({ continuation }) => {
+        axios.post.mockResolvedValueOnce({
+          data: {
+            result: {
+              added: 2,
+              duplicates: 0,
+              errors: [],
+              has_more: false,
+              ...continuation,
+            },
+          },
+        });
+
+        await expect(
+          postAddQueueItems({
+            queueId: "queue-1",
+            selection: {
+              mode: "filter",
+              source_type: "trace",
+              project_id: "project-1",
+            },
+          }),
+        ).rejects.toMatchObject({
+          code: "invalid_bulk_continuation",
+          partialAddResult: expect.objectContaining({ added: 2 }),
+        });
+        expect(axios.post).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it("accepts a legacy terminal response that omits continuation fields", async () => {
+      axios.post.mockResolvedValueOnce({
+        data: {
+          result: {
+            added: 2,
+            duplicates: 0,
+            errors: [],
+            has_more: false,
+          },
+        },
+      });
+
+      const response = await postAddQueueItems({
+        queueId: "queue-1",
+        selection: {
+          mode: "filter",
+          source_type: "trace",
+          project_id: "project-1",
+        },
+      });
+
+      expect(response.data.result).toMatchObject({
+        added: 2,
+        has_more: false,
+        next_cursor: null,
+        next_cursor_fingerprint: null,
+      });
+      expect(axios.post).toHaveBeenCalledTimes(1);
+    });
+
+    it("bounds aggregate error samples while retaining the exact error count", async () => {
+      const longErrors = Array.from(
+        { length: 15 },
+        (_, index) => `error-${index}-${"x".repeat(700)}`,
+      );
+      axios.post
+        .mockResolvedValueOnce({
+          data: {
+            result: {
+              added: 1,
+              duplicates: 0,
+              errors: longErrors,
+              has_more: true,
+              next_cursor: "cursor-1",
+            },
+          },
+        })
+        .mockResolvedValueOnce({
+          data: {
+            result: {
+              added: 1,
+              duplicates: 0,
+              errors: longErrors,
+              has_more: false,
+              next_cursor: null,
+            },
+          },
+        });
+
+      const response = await postAddQueueItems({
+        queueId: "queue-1",
+        selection: {
+          mode: "filter",
+          source_type: "trace",
+          project_id: "project-1",
+        },
+      });
+
+      expect(response.data.result.error_count).toBe(30);
+      expect(response.data.result.errors).toHaveLength(20);
+      expect(
+        response.data.result.errors.every((error) => error.length <= 512),
+      ).toBe(true);
+    });
+
+    it("does not traverse page errors after the bounded sample is full", async () => {
+      const guardedErrors = new Proxy(
+        Array.from({ length: 1_000 }, (_, index) => `error-${index}`),
+        {
+          get(target, property, receiver) {
+            const index = Number(property);
+            if (Number.isInteger(index) && index >= 20) {
+              throw new Error("unbounded error traversal");
+            }
+            return Reflect.get(target, property, receiver);
+          },
+        },
+      );
+      axios.post.mockResolvedValueOnce({
+        data: {
+          result: {
+            added: 0,
+            duplicates: 0,
+            errors: guardedErrors,
+            has_more: false,
+            next_cursor: null,
+          },
+        },
+      });
+
+      const response = await postAddQueueItems({
+        queueId: "queue-1",
+        selection: {
+          mode: "filter",
+          source_type: "trace",
+          project_id: "project-1",
+        },
+      });
+
+      expect(response.data.result.errors).toHaveLength(20);
+      expect(response.data.result.error_count).toBe(1_000);
+    });
+
+    it("preserves a mid-chain failure and reports confirmed prior progress", async () => {
+      const failure = {
+        response: { data: { code: "source_resolve_unavailable" } },
+      };
+      axios.post
+        .mockResolvedValueOnce({
+          data: {
+            result: {
+              added: 4,
+              duplicates: 1,
+              errors: [],
+              has_more: true,
+              next_cursor: "cursor-1",
+            },
+          },
+        })
+        .mockRejectedValueOnce(failure);
+
+      await expect(
+        postAddQueueItems({
+          queueId: "queue-1",
+          selection: {
+            mode: "filter",
+            source_type: "trace",
+            project_id: "project-1",
+          },
+        }),
+      ).rejects.toBe(failure);
+      expect(failure.partialAddResult).toMatchObject({
+        added: 4,
+        duplicates: 1,
+      });
+      expect(axios.post).toHaveBeenCalledTimes(2);
+    });
+
+    it("invalidates queue caches when a continuation chain partially commits", async () => {
+      const failure = {
+        response: { data: { code: "source_resolve_unavailable" } },
+      };
+      axios.post
+        .mockResolvedValueOnce({
+          data: {
+            result: {
+              added: 4,
+              duplicates: 0,
+              errors: [],
+              has_more: true,
+              next_cursor: "cursor-1",
+            },
+          },
+        })
+        .mockRejectedValueOnce(failure);
+      const queryClient = createTestQueryClient();
+      const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+      const { result } = renderHook(() => useAddQueueItems(), {
+        wrapper: createQueryWrapper(queryClient),
+      });
+
+      result.current.mutate({
+        queueId: "queue-1",
+        selection: {
+          mode: "filter",
+          source_type: "trace",
+          project_id: "project-1",
+        },
+      });
+
+      await waitFor(() => expect(result.current.isError).toBe(true));
+      expect(failure.partialAddResult).toMatchObject({ added: 4 });
+      expect(invalidateSpy).toHaveBeenCalledWith({
+        queryKey: queueItemKeys.all("queue-1"),
+      });
+      expect(invalidateSpy).toHaveBeenCalledWith({
+        queryKey: annotationQueueKeys.all,
+      });
+    });
+
+    it("actively aborts a request at the transport ceiling", async () => {
+      vi.useFakeTimers();
+      let requestSignal;
+      axios.post.mockImplementationOnce((_url, _payload, config) => {
+        requestSignal = config.signal;
+        return new Promise((_resolve, reject) => {
+          requestSignal.addEventListener("abort", () => {
+            reject({ transportCode: "ERR_CANCELED" });
+          });
+        });
+      });
+
+      const pending = postAddQueueItems({
+        queueId: "queue-1",
+        selection: {
+          mode: "filter",
+          source_type: "trace",
+          project_id: "project-1",
+        },
+      });
+      const rejected = expect(pending).rejects.toMatchObject({
+        transportCode: "ERR_CANCELED",
+      });
+
+      await vi.advanceTimersByTimeAsync(ADD_QUEUE_ITEMS_TIMEOUT_MS);
+      await rejected;
+      expect(requestSignal.aborted).toBe(true);
+    });
+
+    it("shows an unknown-outcome warning instead of claiming rollback on abort", async () => {
+      axios.post.mockRejectedValueOnce({ transportCode: "ERR_CANCELED" });
+      const { result } = renderHook(() => useAddQueueItems(), {
+        wrapper: createQueryWrapper(),
+      });
+
+      result.current.mutate({
+        queueId: "queue-1",
+        selection: {
+          mode: "filter",
+          source_type: "trace",
+          project_id: "project-1",
+        },
+      });
+
+      await waitFor(() => {
+        expect(enqueueSnackbar).toHaveBeenCalledWith(
+          "We couldn't confirm whether the items were added. Refresh the queue and check before retrying.",
+          { variant: "error" },
+        );
+      });
+      expect(enqueueSnackbar).toHaveBeenCalledTimes(1);
+    });
+
+    it("uses the same unknown-outcome warning for a network failure", async () => {
+      axios.post.mockRejectedValueOnce({ transportCode: "ERR_NETWORK" });
+      const { result } = renderHook(() => useAddQueueItems(), {
+        wrapper: createQueryWrapper(),
+      });
+
+      result.current.mutate({
+        queueId: "queue-1",
+        selection: {
+          mode: "filter",
+          source_type: "trace",
+          project_id: "project-1",
+        },
+      });
+
+      await waitFor(() => {
+        expect(enqueueSnackbar).toHaveBeenCalledWith(
+          "We couldn't confirm whether the items were added. Refresh the queue and check before retrying.",
+          { variant: "error" },
+        );
+      });
+      expect(enqueueSnackbar).toHaveBeenCalledTimes(1);
+    });
+
+    it("claims no additions only for the backend rollback deadline code", async () => {
+      axios.post.mockRejectedValueOnce({
+        code: "add_items_deadline_exceeded",
+      });
+      const { result } = renderHook(() => useAddQueueItems(), {
+        wrapper: createQueryWrapper(),
+      });
+
+      result.current.mutate({
+        queueId: "queue-1",
+        selection: {
+          mode: "filter",
+          source_type: "trace",
+          project_id: "project-1",
+        },
+      });
+
+      await waitFor(() => {
+        expect(enqueueSnackbar).toHaveBeenCalledWith(
+          "Adding matching items took too long. Nothing was added. Please retry.",
+          { variant: "error" },
+        );
+      });
+      expect(enqueueSnackbar).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe("useCreateAnnotationQueue", () => {
     it("surfaces structured queue limit messages in the snackbar", async () => {
       axios.post.mockRejectedValueOnce({
@@ -166,6 +778,135 @@ describe("Annotation Queues API", () => {
     });
   });
 
+  describe("useGetOrCreateDefaultQueue", () => {
+    it("surfaces the backend org-wide queue limit message in the snackbar", async () => {
+      const backendMessage =
+        "You've reached the 3 annotation queues limit across this organization (5 existing queues; 2 in the current workspace and 3 in other workspaces). Archive unused queues in another workspace or upgrade your plan.";
+
+      axios.post.mockRejectedValueOnce({
+        error: {
+          code: "ENTITLEMENT_LIMIT",
+          message: backendMessage,
+          detail: {
+            current_usage: 5,
+            limit: 3,
+            workspace_usage: 2,
+            other_workspace_usage: 3,
+          },
+        },
+      });
+
+      const { result } = renderHook(() => useGetOrCreateDefaultQueue(), {
+        wrapper: createQueryWrapper(),
+      });
+
+      result.current.mutate({ projectId: "project-1" });
+
+      await waitFor(() => {
+        expect(enqueueSnackbar).toHaveBeenCalledWith(backendMessage, {
+          variant: "error",
+        });
+      });
+      expect(enqueueSnackbar).toHaveBeenCalledTimes(1);
+      expect(axios.post).toHaveBeenCalledWith(
+        "/model-hub/annotation-queues/get-or-create-default/",
+        { project_id: "project-1" },
+      );
+    });
+
+    it("lets an inline caller own the exact entitlement error without any toast", async () => {
+      const backendMessage =
+        "You've reached the 10 annotation queues limit across this organization.";
+      axios.post.mockRejectedValueOnce({
+        error: { code: "ENTITLEMENT_LIMIT", message: backendMessage },
+      });
+
+      const queryClient = createTestQueryClient();
+      const { result } = renderHook(
+        () => useGetOrCreateDefaultQueue({ notifyOnError: false }),
+        { wrapper: createQueryWrapper(queryClient) },
+      );
+
+      result.current.mutate({ projectId: "project-1" });
+
+      await waitFor(() => expect(result.current.isError).toBe(true));
+      expect(enqueueSnackbar).not.toHaveBeenCalled();
+      const mutation = queryClient.getMutationCache().getAll().at(-1);
+      expect(mutation?.options.meta).toEqual({ errorHandled: true });
+    });
+  });
+
+  describe("default queue label mutations", () => {
+    const infrastructureError = {
+      response: {
+        status: 503,
+        data: {
+          detail:
+            "Code: 159. DB::Exception: Timeout exceeded\nStack trace: SELECT secret FROM spans",
+        },
+      },
+    };
+
+    it("sanitizes add-label failures and owns the global error policy", async () => {
+      axios.post.mockRejectedValueOnce(infrastructureError);
+      const queryClient = createTestQueryClient();
+      const { result } = renderHook(() => useAddLabelToQueue(), {
+        wrapper: createQueryWrapper(queryClient),
+      });
+
+      result.current.mutate({ queueId: "queue-1", labelId: "label-1" });
+
+      await waitFor(() => expect(result.current.isError).toBe(true));
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        "Failed to add label to queue",
+        { variant: "error" },
+      );
+      expect(enqueueSnackbar).toHaveBeenCalledTimes(1);
+      expect(
+        queryClient.getMutationCache().getAll().at(-1)?.options.meta,
+      ).toEqual({ errorHandled: true });
+    });
+
+    it("sanitizes remove-label failures and owns the global error policy", async () => {
+      axios.post.mockRejectedValueOnce(infrastructureError);
+      const queryClient = createTestQueryClient();
+      const { result } = renderHook(() => useRemoveLabelFromQueue(), {
+        wrapper: createQueryWrapper(queryClient),
+      });
+
+      result.current.mutate({ queueId: "queue-1", labelId: "label-1" });
+
+      await waitFor(() => expect(result.current.isError).toBe(true));
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        "Failed to remove label from queue",
+        { variant: "error" },
+      );
+      expect(enqueueSnackbar).toHaveBeenCalledTimes(1);
+      expect(
+        queryClient.getMutationCache().getAll().at(-1)?.options.meta,
+      ).toEqual({ errorHandled: true });
+    });
+  });
+
+  describe("useRestoreAnnotationQueue", () => {
+    it("posts an explicit empty body so the backend accepts the restore", async () => {
+      axios.post.mockResolvedValueOnce({ data: { status: true } });
+
+      const { result } = renderHook(() => useRestoreAnnotationQueue(), {
+        wrapper: createQueryWrapper(),
+      });
+
+      result.current.mutate("queue-1");
+
+      await waitFor(() => {
+        expect(axios.post).toHaveBeenCalledWith(
+          annotationQueueEndpoints.restore("queue-1"),
+          {},
+        );
+      });
+    });
+  });
+
   describe("queue item keys", () => {
     it("generates all key for queue", () => {
       expect(queueItemKeys.all("q-1")).toEqual(["queue-items", "q-1"]);
@@ -179,6 +920,32 @@ describe("Annotation Queues API", () => {
         "list",
         filters,
       ]);
+    });
+  });
+
+  describe("useQueueItems", () => {
+    it("serializes multi-select filters as repeated query params", async () => {
+      axios.get.mockResolvedValueOnce({
+        data: { results: [], count: 0, current_page: 1, total_pages: 1 },
+      });
+
+      renderHook(
+        () =>
+          useQueueItems("q-1", {
+            status: ["pending", "completed"],
+            source_type: ["dataset_row", "trace"],
+          }),
+        { wrapper: createQueryWrapper() },
+      );
+
+      await waitFor(() => expect(axios.get).toHaveBeenCalled());
+
+      const requestConfig = axios.get.mock.calls[0][1];
+      expect(
+        requestConfig.paramsSerializer.serialize(requestConfig.params),
+      ).toBe(
+        "status=pending&status=completed&source_type=dataset_row&source_type=trace&page=1&limit=25",
+      );
     });
   });
 
@@ -313,6 +1080,34 @@ describe("Annotation Queues API", () => {
         "/model-hub/annotation-queues/queue-1/items/item-1/annotate-detail/",
         { params: { include_completed: true } },
       );
+    });
+
+    it("does not add completed navigation params unless the UI explicitly opts in", async () => {
+      axios.get.mockResolvedValueOnce({
+        data: {
+          result: {
+            item: { id: "item-1", status: "completed" },
+            next_item_id: "item-2",
+          },
+        },
+      });
+
+      const { result } = renderHook(
+        () => useAnnotateDetail("queue-1", "item-1"),
+        {
+          wrapper: createQueryWrapper(),
+        },
+      );
+
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true);
+      });
+
+      expect(axios.get).toHaveBeenCalledWith(
+        "/model-hub/annotation-queues/queue-1/items/item-1/annotate-detail/",
+        undefined,
+      );
+      expect(result.current.data.next_item_id).toBe("item-2");
     });
 
     it("passes review view mode without requiring a pending-review filter", async () => {
@@ -465,6 +1260,29 @@ describe("Annotation Queues API", () => {
         "/model-hub/annotation-queues/queue-1/items/next-item/",
         { params: { include_completed: true } },
       );
+    });
+
+    it("leaves completed queue default navigation to the backend", async () => {
+      axios.get.mockResolvedValueOnce({
+        data: { result: { item: { id: "item-1", status: "completed" } } },
+      });
+
+      const { result } = renderHook(() => useNextItem("queue-1"), {
+        wrapper: createQueryWrapper(),
+      });
+
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true);
+      });
+
+      expect(axios.get).toHaveBeenCalledWith(
+        "/model-hub/annotation-queues/queue-1/items/next-item/",
+        undefined,
+      );
+      expect(result.current.data).toEqual({
+        id: "item-1",
+        status: "completed",
+      });
     });
 
     it("passes review view mode for manager submission browsing", async () => {
@@ -656,7 +1474,6 @@ describe("Annotation Queues API", () => {
             .data.result.item.assigned_users,
         ).toEqual([
           {
-            user_id: "user-1",
             id: "user-1",
             name: "Kartik",
             email: "kartik.nvj@futureagi.com",
@@ -681,7 +1498,6 @@ describe("Annotation Queues API", () => {
               assigned_users: [
                 {
                   id: "user-2",
-                  user_id: "user-2",
                   name: "Nikhil",
                   email: "nikhil@example.com",
                 },
@@ -717,7 +1533,6 @@ describe("Annotation Queues API", () => {
         ).toEqual([
           {
             id: "user-2",
-            user_id: "user-2",
             name: "Nikhil",
             email: "nikhil@example.com",
           },
@@ -763,6 +1578,37 @@ describe("Annotation Queues API", () => {
           .result.item.assigned_users,
       ).toEqual([{ id: "user-2", name: "Nikhil" }]);
     });
+
+    it("surfaces the backend's specific message as the sole error toast", async () => {
+      // Regression: the old onError showed a hardcoded "Failed to assign items"
+      // beside the global handler's specific message, so two toasts stacked. The
+      // mutation now sets meta.errorHandled (global handler stays out) and its
+      // onError surfaces the backend's specific message as the single toast.
+      enqueueSnackbar.mockClear();
+      axios.post.mockRejectedValueOnce({
+        result: "Only queue managers can manage queue item assignments.",
+        statusCode: 403,
+      });
+
+      const { result } = renderHook(() => useAssignQueueItems(), {
+        wrapper: createQueryWrapper(),
+      });
+
+      result.current.mutate({
+        queueId: "queue-1",
+        itemIds: ["item-1"],
+        userIds: ["user-1"],
+        action: "set",
+      });
+
+      await waitFor(() => {
+        expect(result.current.isError).toBe(true);
+      });
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        "Only queue managers can manage queue item assignments.",
+        { variant: "error" },
+      );
+    });
   });
 
   describe("useCompleteItem", () => {
@@ -778,7 +1624,7 @@ describe("Annotation Queues API", () => {
       result.current.mutate({
         queueId: "queue-1",
         itemId: "item-1",
-        exclude: "item-1",
+        exclude: ["item-1"],
         excludeReviewStatus: "pending_review",
       });
 
@@ -786,7 +1632,7 @@ describe("Annotation Queues API", () => {
         expect(axios.post).toHaveBeenCalledWith(
           "/model-hub/annotation-queues/queue-1/items/item-1/complete/",
           {
-            exclude: "item-1",
+            exclude: ["item-1"],
             exclude_review_status: "pending_review",
           },
         );
@@ -865,14 +1711,14 @@ describe("Annotation Queues API", () => {
       result.current.mutate({
         queueId: "queue-1",
         itemId: "item-1",
-        exclude: "item-1",
+        exclude: ["item-1"],
         includeCompleted: true,
       });
 
       await waitFor(() => {
         expect(axios.post).toHaveBeenCalledWith(
           "/model-hub/annotation-queues/queue-1/items/item-1/skip/",
-          { exclude: "item-1", include_completed: true },
+          { exclude: ["item-1"], include_completed: true },
         );
       });
     });
@@ -929,6 +1775,79 @@ describe("Annotation Queues API", () => {
         expect(invalidateSpy).toHaveBeenCalledWith({
           queryKey: annotateKeys.annotations("queue-1", "item-1"),
         });
+      });
+    });
+  });
+
+  describe("useBulkReviewItems", () => {
+    it("posts selected item ids and invalidates review-related queries", async () => {
+      axios.post.mockResolvedValueOnce({
+        data: { result: { reviewed: 2, errors: [] } },
+      });
+      const queryClient = createTestQueryClient();
+      const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+      const { result } = renderHook(() => useBulkReviewItems(), {
+        wrapper: createQueryWrapper(queryClient),
+      });
+
+      result.current.mutate({
+        queueId: "queue-1",
+        itemIds: ["item-1", "item-2"],
+        action: "approve",
+        notes: "Looks good.",
+      });
+
+      await waitFor(() => {
+        expect(axios.post).toHaveBeenCalledWith(
+          "/model-hub/annotation-queues/queue-1/items/bulk-review/",
+          {
+            item_ids: ["item-1", "item-2"],
+            action: "approve",
+            notes: "Looks good.",
+          },
+        );
+      });
+
+      await waitFor(() => {
+        expect(enqueueSnackbar).toHaveBeenCalledWith("2 items reviewed", {
+          variant: "success",
+        });
+        expect(invalidateSpy).toHaveBeenCalledWith({
+          queryKey: queueItemKeys.all("queue-1"),
+        });
+        expect(invalidateSpy).toHaveBeenCalledWith({
+          queryKey: annotateKeys.nextItem("queue-1"),
+        });
+        expect(invalidateSpy).toHaveBeenCalledWith({
+          queryKey: annotationQueueKeys.progress("queue-1"),
+        });
+        expect(invalidateSpy).toHaveBeenCalledWith({
+          queryKey: annotationQueueKeys.analytics("queue-1"),
+        });
+      });
+    });
+
+    it("warns when the backend skips some selected items", async () => {
+      axios.post.mockResolvedValueOnce({
+        data: { result: { reviewed: 1, errors: [{ item_id: "item-2" }] } },
+      });
+
+      const { result } = renderHook(() => useBulkReviewItems(), {
+        wrapper: createQueryWrapper(),
+      });
+
+      result.current.mutate({
+        queueId: "queue-1",
+        itemIds: ["item-1", "item-2"],
+        action: "approve",
+      });
+
+      await waitFor(() => {
+        expect(enqueueSnackbar).toHaveBeenCalledWith(
+          "1 items reviewed, 1 skipped",
+          { variant: "warning" },
+        );
       });
     });
   });
@@ -1062,14 +1981,23 @@ describe("Annotation Queues API", () => {
           queryKey: annotateKeys.discussion("queue-1", "item-1"),
         });
       });
+      expect(invalidateSpy).toHaveBeenCalledTimes(1);
+      expect(invalidateSpy).not.toHaveBeenCalledWith({
+        queryKey: annotateKeys.detail("queue-1", "item-1"),
+      });
+      expect(invalidateSpy).not.toHaveBeenCalledWith({
+        queryKey: annotateKeys.annotations("queue-1", "item-1"),
+      });
     });
 
     it("posts resolve, reopen, and reaction actions", async () => {
       axios.post.mockResolvedValue({ data: { result: {} } });
+      const queryClient = createTestQueryClient();
+      const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
 
       const { result: resolveResult } = renderHook(
         () => useResolveDiscussionThread(),
-        { wrapper: createQueryWrapper() },
+        { wrapper: createQueryWrapper(queryClient) },
       );
       resolveResult.current.mutate({
         queueId: "queue-1",
@@ -1079,7 +2007,7 @@ describe("Annotation Queues API", () => {
 
       const { result: reopenResult } = renderHook(
         () => useReopenDiscussionThread(),
-        { wrapper: createQueryWrapper() },
+        { wrapper: createQueryWrapper(queryClient) },
       );
       reopenResult.current.mutate({
         queueId: "queue-1",
@@ -1089,7 +2017,7 @@ describe("Annotation Queues API", () => {
 
       const { result: reactionResult } = renderHook(
         () => useToggleDiscussionReaction(),
-        { wrapper: createQueryWrapper() },
+        { wrapper: createQueryWrapper(queryClient) },
       );
       reactionResult.current.mutate({
         queueId: "queue-1",
@@ -1111,6 +2039,66 @@ describe("Annotation Queues API", () => {
           "/model-hub/annotation-queues/queue-1/items/item-1/discussion/comments/comment-1/reaction/",
           { emoji: "👍" },
         );
+      });
+      await waitFor(() => {
+        expect(invalidateSpy).toHaveBeenCalledTimes(3);
+      });
+      expect(invalidateSpy).toHaveBeenCalledWith({
+        queryKey: annotateKeys.discussion("queue-1", "item-1"),
+      });
+      expect(invalidateSpy).not.toHaveBeenCalledWith({
+        queryKey: annotateKeys.detail("queue-1", "item-1"),
+      });
+      expect(invalidateSpy).not.toHaveBeenCalledWith({
+        queryKey: annotateKeys.annotations("queue-1", "item-1"),
+      });
+    });
+
+    it("patches and deletes author comments through the discussion comment endpoint", async () => {
+      axios.patch.mockResolvedValueOnce({ data: { result: {} } });
+      axios.delete.mockResolvedValueOnce({ data: { result: {} } });
+      const queryClient = createTestQueryClient();
+      const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+      const { result: updateResult } = renderHook(
+        () => useUpdateDiscussionComment(),
+        { wrapper: createQueryWrapper(queryClient) },
+      );
+      updateResult.current.mutate({
+        queueId: "queue-1",
+        itemId: "item-1",
+        commentId: "comment-1",
+        comment: "Updated",
+        mentionedUserIds: ["user-2"],
+      });
+
+      const { result: deleteResult } = renderHook(
+        () => useDeleteDiscussionComment(),
+        { wrapper: createQueryWrapper(queryClient) },
+      );
+      deleteResult.current.mutate({
+        queueId: "queue-1",
+        itemId: "item-1",
+        commentId: "comment-1",
+      });
+
+      await waitFor(() => {
+        expect(axios.patch).toHaveBeenCalledWith(
+          "/model-hub/annotation-queues/queue-1/items/item-1/discussion/comments/comment-1/",
+          {
+            comment: "Updated",
+            mentioned_user_ids: ["user-2"],
+          },
+        );
+        expect(axios.delete).toHaveBeenCalledWith(
+          "/model-hub/annotation-queues/queue-1/items/item-1/discussion/comments/comment-1/",
+        );
+      });
+
+      await waitFor(() => {
+        expect(invalidateSpy).toHaveBeenCalledWith({
+          queryKey: annotateKeys.discussion("queue-1", "item-1"),
+        });
       });
     });
   });
@@ -1145,6 +2133,51 @@ describe("Annotation Queues API", () => {
           { variant: "error" },
         );
       });
+    });
+  });
+
+  describe("useEvaluateRule", () => {
+    it("surfaces flattened 409 duplicate-run errors as warning", async () => {
+      axios.post.mockRejectedValueOnce({
+        statusCode: 409,
+        result: "A run is already in progress for this rule.",
+      });
+
+      const { result } = renderHook(() => useEvaluateRule(), {
+        wrapper: createQueryWrapper(),
+      });
+
+      result.current.mutate({ queueId: "queue-1", ruleId: "rule-1" });
+
+      await waitFor(() => {
+        expect(enqueueSnackbar).toHaveBeenCalledWith(
+          "A run is already in progress for this rule.",
+          { variant: "warning" },
+        );
+      });
+    });
+
+    it("shows the backend's exact all-or-nothing ceiling message", async () => {
+      const message =
+        "Automation rules support at most 10,000 matching items per run. This rule matched more than 10,000 items, so nothing was added.";
+      axios.post.mockRejectedValueOnce({
+        response: { status: 400, data: { result: message } },
+      });
+
+      const queryClient = createTestQueryClient();
+      const { result } = renderHook(() => useEvaluateRule(), {
+        wrapper: createQueryWrapper(queryClient),
+      });
+      result.current.mutate({ queueId: "queue-1", ruleId: "rule-1" });
+
+      await waitFor(() => {
+        expect(enqueueSnackbar).toHaveBeenCalledWith(message, {
+          variant: "error",
+        });
+      });
+      expect(enqueueSnackbar).toHaveBeenCalledTimes(1);
+      const mutation = queryClient.getMutationCache().getAll().at(-1);
+      expect(mutation?.options.meta).toEqual({ errorHandled: true });
     });
   });
 });

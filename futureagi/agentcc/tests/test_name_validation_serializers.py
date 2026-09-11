@@ -65,3 +65,36 @@ class TestAgentccSafeNameValidationSerializers:
         )
 
         assert serializer.is_valid(), serializer.errors
+
+    def test_custom_property_serializer_rejects_enum_without_values(self):
+        serializer = AgentccCustomPropertySchemaSerializer(
+            data={"name": VALID_NAME, "property_type": "enum", "allowed_values": []}
+        )
+
+        assert not serializer.is_valid()
+        assert "allowed_values" in serializer.errors
+
+    def test_custom_property_serializer_rejects_enum_default_outside_values(self):
+        serializer = AgentccCustomPropertySchemaSerializer(
+            data={
+                "name": VALID_NAME,
+                "property_type": "enum",
+                "allowed_values": ["alpha", "beta"],
+                "default_value": "gamma",
+            }
+        )
+
+        assert not serializer.is_valid()
+        assert "default_value" in serializer.errors
+
+    def test_custom_property_serializer_rejects_boolean_as_number_default(self):
+        serializer = AgentccCustomPropertySchemaSerializer(
+            data={
+                "name": VALID_NAME,
+                "property_type": "number",
+                "default_value": True,
+            }
+        )
+
+        assert not serializer.is_valid()
+        assert "default_value" in serializer.errors

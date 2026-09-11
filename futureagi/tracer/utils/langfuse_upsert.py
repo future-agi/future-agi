@@ -10,9 +10,16 @@ from datetime import datetime
 import structlog
 from django.db import transaction
 
-from tracer.models.observation_span import EndUser, EvalLogger, ObservationSpan
+from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.models.trace import Trace
-from tracer.models.trace_session import TraceSession
+from tracer.services.clickhouse.v2.curated_writer import (
+    CuratedEndUser,
+    CuratedSession,
+)
+from tracer.services.clickhouse.v2.deterministic_id import (
+    deterministic_end_user_id,
+    deterministic_trace_session_id,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -90,42 +97,43 @@ def upsert_langfuse_trace(
 
         trace_id = str(trace.id)
 
-        # EndUser
+        # EndUser — CH-derived-dimensions P3b flip: NO PG ``EndUser.get_or_create``.
+        # Compute the DETERMINISTIC end_user_id; Langfuse always uses
+        # ``user_id_type="custom"`` (and ``user_id_hash=""``) — that EXACT hardcode
+        # must feed the deterministic id so a net-new Langfuse user matches the
+        # historical remap (§11.1). The id is stamped onto every span below; the
+        # curated row goes to CH only.
         user_id_str = assembled_trace.get("userId")
-        end_user = None
+        end_user_id = None
+        ch_end_user = None
         if user_id_str:
-            try:
-                end_user, _ = EndUser.no_workspace_objects.get_or_create(
-                    project_id=project_id,
-                    organization=org,
-                    user_id=user_id_str,
-                    user_id_type="custom",
-                    defaults={"workspace": workspace, "user_id_hash": ""},
-                )
-            except Exception:
-                logger.warning(
-                    "langfuse_upsert_end_user_failed",
-                    user_id=user_id_str,
-                    exc_info=True,
-                )
+            end_user_id = deterministic_end_user_id(
+                project_id, org_id, user_id_str, "custom"
+            )
+            ch_end_user = CuratedEndUser(
+                project_id=project_id,
+                end_user_id=end_user_id,
+                organization_id=org_id,
+                user_id=str(user_id_str),
+                user_id_type="custom",
+                user_id_hash="",
+            )
 
-        # TraceSession
+        # TraceSession — P3b flip: NO PG ``TraceSession.get_or_create``. STAMP the
+        # DETERMINISTIC trace_session_id onto ``trace.session_id`` (db_constraint=
+        # False, no PG row needed); the curated row goes to CH only.
         session_id = assembled_trace.get("sessionId")
+        ch_session = None
         if session_id:
-            try:
-                session, _ = TraceSession.no_workspace_objects.get_or_create(
-                    project_id=project_id,
-                    name=session_id,
-                )
-                if trace.session_id != session.id:
-                    trace.session = session
-                    trace.save(update_fields=["session"])
-            except Exception:
-                logger.warning(
-                    "langfuse_upsert_session_failed",
-                    session_id=session_id,
-                    exc_info=True,
-                )
+            session_uuid = deterministic_trace_session_id(project_id, session_id)
+            if trace.session_id != session_uuid:
+                trace.session_id = session_uuid
+                trace.save(update_fields=["session"])
+            ch_session = CuratedSession(
+                project_id=project_id,
+                trace_session_id=session_uuid,
+                external_session_id=session_id,
+            )
 
         # Transform observations
         obs_dicts = transformer.transform_observations(
@@ -176,8 +184,8 @@ def upsert_langfuse_trace(
             obs_data.pop("trace_id", None)
             obs_data.pop("project_id", None)
 
-            if end_user:
-                obs_data["end_user"] = end_user
+            if end_user_id is not None:
+                obs_data["end_user_id"] = end_user_id
 
             ObservationSpan.no_workspace_objects.update_or_create(
                 id=obs_id,
@@ -195,6 +203,17 @@ def upsert_langfuse_trace(
         # in multiple batches, so we must query the DB to get the full range.
         from django.db.models import Max, Min
 
+        # CH25-TODO(read-after-write-inside-atomic; revisit after OTel
+        # direct-to-CH cutover): this aggregate reads spans that were JUST
+        # update_or_create()'d at line 182 inside the same transaction.atomic()
+        # block. CH analytics today are populated via PeerDB CDC from PG
+        # to CH (see tracer/services/clickhouse/__init__.py:4) — there is
+        # an inherent replication lag, so a CHSpanReader.trace_aggregate(
+        # trace.id) call here would NOT see the spans we just wrote and
+        # would silently under-count earliest_start/latest_end (resulting
+        # in a 0-latency root span). After the OTel direct-to-CH cutover
+        # spans are written directly to CH at request time and the lag
+        # disappears; only then can this be safely migrated.
         timing = (
             ObservationSpan.no_workspace_objects.filter(trace=trace)
             .exclude(id=root_span_id)
@@ -231,8 +250,8 @@ def upsert_langfuse_trace(
                 "metadata": trace_data.get("metadata", {}),
             },
         }
-        if end_user:
-            root_defaults["end_user"] = end_user
+        if end_user_id is not None:
+            root_defaults["end_user_id"] = end_user_id
 
         ObservationSpan.no_workspace_objects.update_or_create(
             id=root_span_id,
@@ -248,6 +267,13 @@ def upsert_langfuse_trace(
             observation_id = score_data.pop("observation_id", None)
 
             if observation_id:
+                # CH25-TODO(read-after-write-inside-atomic; revisit after OTel
+                # direct-to-CH cutover): same atomic block as the upserts at
+                # lines 182/246. ObservationSpan is also a Django ForeignKey
+                # on EvalLogger.observation_span (see EvalLogger.no_workspace_
+                # objects.update_or_create call below), so the lookup must
+                # return a Django model instance — CHSpan cannot stand in here.
+                # CH-side lag mechanism: PeerDB CDC replication from PG.
                 try:
                     obs_span = ObservationSpan.no_workspace_objects.get(
                         id=observation_id
@@ -259,6 +285,11 @@ def upsert_langfuse_trace(
                     )
                     continue
             else:
+                # CH25-TODO(read-after-write-inside-atomic; revisit after OTel
+                # direct-to-CH cutover): fallback pick of "earliest span on
+                # the trace" — same read-after-write hazard as the timing
+                # aggregate above, plus the EvalLogger FK requirement that
+                # keeps obs_span as a Django ObservationSpan instance.
                 obs_span = (
                     ObservationSpan.no_workspace_objects.filter(trace=trace)
                     .order_by("start_time")
@@ -281,5 +312,34 @@ def upsert_langfuse_trace(
                 },
             )
             scores_count += 1
+
+    # CH25: mirror this trace into the CH `traces` table — the app-level
+    # replacement for the removed PeerDB CDC path feeding trace_dict. The
+    # Langfuse path is where trace.name is promoted from the root span, so this
+    # keeps named traces correct in CH. One mirror per upsert; best-effort.
+    from tracer.services.clickhouse.v2.trace_writer import (
+        mirror_traces_to_clickhouse,
+    )
+
+    transaction.on_commit(lambda tid=str(trace.id): mirror_traces_to_clickhouse([tid]))
+
+    # CH25 (P3b flip): mirror the curated EndUser / TraceSession into CH
+    # `end_users` / `trace_sessions`, keyed by the DETERMINISTIC ids stamped above.
+    # The PG get_or_create is GONE — pass the CuratedEndUser/CuratedSession built
+    # from the curated fields. One mirror per upsert (Langfuse is one trace per
+    # call); post-commit + best-effort.
+    if ch_end_user is not None or ch_session is not None:
+        from tracer.services.clickhouse.v2.curated_writer import (
+            mirror_curated_dimensions_to_clickhouse,
+        )
+
+        transaction.on_commit(
+            lambda eu=ch_end_user, s=ch_session: (
+                mirror_curated_dimensions_to_clickhouse(
+                    [eu] if eu is not None else None,
+                    [s] if s is not None else None,
+                )
+            )
+        )
 
     return created, spans_count, scores_count

@@ -51,7 +51,7 @@ class CreateEvalTemplateInput(PydanticBaseModel):
         description=(
             "Model for evaluation (not used for code evals). "
             "Built-in: 'turing_large' (default), 'turing_small', 'turing_flash'. "
-            "External (needs configured API key): 'gpt-4o', 'claude-sonnet-4-6', 'gemini-2.5-pro', etc."
+            "External (needs configured API key): 'gpt-4o', 'claude-sonnet-4-6', 'gemini-3.7-flash', etc."
         ),
     )
     output_type: Literal["pass_fail", "percentage", "deterministic"] = Field(
@@ -306,6 +306,23 @@ class CreateEvalTemplateTool(BaseTool):
             else:
                 filtered_vars.append(v)
         required_keys = list(set(filtered_vars))
+
+        explicit_injection = params.data_injection or {}
+        has_data_injection = bool(
+            explicit_injection
+            and (
+                explicit_injection.get("full_row")
+                or explicit_injection.get("fullRow")
+                or not explicit_injection.get("variables_only", True)
+                or not explicit_injection.get("variablesOnly", True)
+            )
+        )
+        if params.eval_type != "code" and not variables and not has_data_injection:
+            return ToolResult.validation_error(
+                "Criteria must contain at least one template variable using "
+                "double curly braces (e.g. {{variable_name}}), or enable data "
+                "injection to evaluate without mapping."
+            )
 
         # ── 3. Build output values ──
         output_map = {

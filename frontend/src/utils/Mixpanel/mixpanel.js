@@ -5,6 +5,7 @@ import logger from "../logger";
 
 import { Events } from "./EventNames";
 import { MIXPANEL_HOST } from "src/config-global";
+import { isSessionReplayBlockedPath } from "src/utils/sessionReplayPolicy";
 
 // Mixpanel is opt-in: skip init entirely on OSS builds where no token
 // is set. mixpanel-browser's init(undefined, ...) silently produces a
@@ -12,6 +13,28 @@ import { MIXPANEL_HOST } from "src/config-global";
 // with "Cannot read properties of undefined (reading 'disable_all_events')".
 const MIXPANEL_TOKEN = import.meta.env.VITE_MIXPANEL_TOKEN;
 const MIXPANEL_ENABLED = Boolean(MIXPANEL_TOKEN);
+const runtimeSessionReplayPercent =
+  typeof window === "undefined"
+    ? undefined
+    : window.__FUTURE_AGI_CONFIG__?.VITE_MIXPANEL_SESSION_REPLAY_PERCENT;
+const configuredSessionReplayPercent = Number(
+  runtimeSessionReplayPercent !== undefined &&
+    String(runtimeSessionReplayPercent).trim() !== ""
+    ? runtimeSessionReplayPercent
+    : import.meta.env.VITE_MIXPANEL_SESSION_REPLAY_PERCENT ?? 0,
+);
+const MIXPANEL_SESSION_REPLAY_PERCENT = Number.isFinite(
+  configuredSessionReplayPercent,
+)
+  ? Math.min(100, Math.max(0, configuredSessionReplayPercent))
+  : 0;
+const INITIAL_PATHNAME =
+  typeof window === "undefined" ? "/" : window.location.pathname;
+let mixpanelReplayMayBeActive =
+  MIXPANEL_SESSION_REPLAY_PERCENT > 0 &&
+  !isSessionReplayBlockedPath(INITIAL_PATHNAME);
+let mixpanelReplayConfigDisabled = false;
+let mixpanelReplayStopScript = null;
 
 if (MIXPANEL_ENABLED) {
   try {
@@ -19,7 +42,13 @@ if (MIXPANEL_ENABLED) {
       debug: true,
       persistence: "localStorage",
       ignore_dnt: true,
-      record_sessions_percent: 100,
+      // Product analytics events remain enabled. Session replay is intentionally
+      // opt-in because multiple rrweb recorders retained hundreds of MiB on
+      // mutation-heavy grids. High-mutation routes are blocked even when an
+      // environment explicitly opts into replay.
+      record_sessions_percent: mixpanelReplayMayBeActive
+        ? MIXPANEL_SESSION_REPLAY_PERCENT
+        : 0,
       record_mask_text_class: ".sensitive",
       ...(MIXPANEL_HOST && { api_host: MIXPANEL_HOST }),
     });
@@ -27,6 +56,77 @@ if (MIXPANEL_ENABLED) {
     logger.error("Failed to initialize Mixpanel:", error);
   }
 }
+
+export const syncMixpanelSessionReplay = (pathname) => {
+  if (
+    !MIXPANEL_ENABLED ||
+    !mixpanelReplayMayBeActive ||
+    !isSessionReplayBlockedPath(pathname)
+  ) {
+    return;
+  }
+
+  try {
+    // Keep each successful transition, but leave replay retryable until every
+    // required operation has succeeded. In particular, do not clear
+    // mixpanelReplayMayBeActive before a throwing set_config/stop call.
+    if (!mixpanelReplayConfigDisabled) {
+      mixpanel.set_config({ record_sessions_percent: 0 });
+      mixpanelReplayConfigDisabled = true;
+    }
+
+    if (mixpanel._recorder) {
+      mixpanel.stop_session_recording();
+      mixpanelReplayMayBeActive = false;
+      mixpanelReplayStopScript = null;
+      return;
+    }
+
+    // The recorder bundle may still be loading. Stop it immediately after its
+    // existing script load handler starts the recorder.
+    const recorderSource = mixpanel.get_config?.("recorder_src");
+    let normalizedRecorderSource = null;
+    if (recorderSource) {
+      try {
+        normalizedRecorderSource = new URL(recorderSource, document.baseURI)
+          .href;
+      } catch (error) {
+        logger.error("Failed to resolve Mixpanel recorder source:", error);
+      }
+    }
+    const recorderScript = normalizedRecorderSource
+      ? Array.from(document.scripts).find(
+          (script) => script.src === normalizedRecorderSource,
+        )
+      : null;
+
+    // A successful config update is sufficient when this browser was not
+    // sampled and no recorder load is in flight.
+    if (!recorderScript) {
+      mixpanelReplayMayBeActive = false;
+      return;
+    }
+    if (mixpanelReplayStopScript === recorderScript) return;
+
+    const stopLoadedRecorder = () => {
+      if (mixpanelReplayStopScript === recorderScript) {
+        mixpanelReplayStopScript = null;
+      }
+      try {
+        if (mixpanel._recorder) mixpanel.stop_session_recording();
+        mixpanelReplayMayBeActive = false;
+      } catch (error) {
+        // The one-shot listener has been consumed. Keep replay eligible for a
+        // direct retry on the next blocked-route synchronization.
+        logger.error("Failed to stop Mixpanel session replay:", error);
+      }
+    };
+    recorderScript.addEventListener("load", stopLoadedRecorder, { once: true });
+    mixpanelReplayStopScript = recorderScript;
+  } catch (error) {
+    logger.error("Failed to stop Mixpanel session replay:", error);
+  }
+};
 
 export const PropertyName = {
   method: "method",
@@ -134,10 +234,7 @@ export const identifyUser = (userData = {}) => {
     mixpanel.people.set_once("$name", userData?.name);
     mixpanel.people.set_once("Org Id", userData?.organization?.id);
     mixpanel.people.set_once("Org Name", userData?.organization?.name);
-    mixpanel.people.set_once(
-      "Workspace Id",
-      userData?.default_workspace_id ?? userData?.defaultWorkspaceId,
-    );
+    mixpanel.people.set_once("Workspace Id", userData?.default_workspace_id);
 
     //set group
     mixpanel.set_group("org_id", userData?.organization?.id);

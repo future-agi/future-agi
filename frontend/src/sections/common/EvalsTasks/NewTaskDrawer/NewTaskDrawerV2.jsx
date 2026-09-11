@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   useForm,
   useWatch,
@@ -32,14 +32,15 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { formatDate } from "src/utils/report-utils";
 import { endOfToday, sub } from "date-fns";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { getNewTaskFilters, NewTaskValidationSchema } from "./validation";
+import { NewTaskValidationSchema } from "./validation";
 import { enqueueSnackbar } from "src/components/snackbar";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import { useNavigate } from "react-router";
 import FilterErrorBoundary from "src/components/ComplexFilter/FilterErrorBoundary";
-import { objectCamelToSnake } from "src/utils/utils";
+import { mappingChipLabel } from "src/sections/evals/utils/evalMappingPath";
 import { EvalPickerDrawer, serializeEvalConfig } from "../../EvalPicker";
+import { useTaskEvalAttributeInventory } from "../use_task_eval_attribute_inventory";
 
 // ── Configured Eval Card ──
 
@@ -77,7 +78,7 @@ const ConfiguredEvalCard = ({ evalItem, onRemove }) => {
             {mappedKeys.slice(0, 3).map((key) => (
               <Chip
                 key={key}
-                label={`${key} → ${evalItem.mapping[key]}`}
+                label={mappingChipLabel(key, evalItem.mapping[key])}
                 size="small"
                 sx={{
                   fontSize: "10px",
@@ -167,12 +168,6 @@ const NewTaskDrawerV2 = ({
   const { errors } = useFormState({ control });
 
   const evalsDetailsErrorMessage = _.get(errors, "evalsDetails")?.message || "";
-  const formValues = useWatch({ control });
-
-  const filtersWithoutDate = useMemo(() => {
-    return getNewTaskFilters(formValues, project, true).filters || [];
-  }, [formValues, project]);
-
   // Fetch pre-configured evals for the project
   const { data: configuredEvalList } = useQuery({
     queryKey: ["configured-evals", project],
@@ -246,18 +241,14 @@ const NewTaskDrawerV2 = ({
     createEvalTask(payload);
   };
 
-  // Fetch eval attributes for variable mapping
-  const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", project, rowType, filtersWithoutDate],
-    queryFn: () =>
-      axios.get(endpoints.project.getEvalAttributeList(), {
-        params: {
-          project_id: project,
-          row_type: rowType,
-          filters: JSON.stringify(objectCamelToSnake(filtersWithoutDate)),
-        },
-      }),
-    select: (data) => data.data?.result,
+  const {
+    sourceColumns,
+    attributeFields: evalAttributes,
+    onSourceColumnSearchChange,
+    sourceColumnInventoryControls,
+  } = useTaskEvalAttributeInventory({
+    projectId: project,
+    rowType,
     enabled: isProjectSelected,
   });
 
@@ -269,16 +260,6 @@ const NewTaskDrawerV2 = ({
       }),
     select: (data) => data.data?.result?.projects,
   });
-
-  // Format eval attributes as source columns for EvalPickerDrawer
-  const sourceColumns = useMemo(() => {
-    if (!evalAttributes) return [];
-    return evalAttributes.map((attr) => ({
-      headerName: attr,
-      field: attr,
-      name: attr,
-    }));
-  }, [evalAttributes]);
 
   // Handle adding eval from the new picker
   const handleEvalAdded = useCallback(
@@ -610,7 +591,11 @@ const NewTaskDrawerV2 = ({
         open={evalPickerOpen}
         onClose={() => setEvalPickerOpen(false)}
         source="task"
+        sourceId={project || ""}
+        sourceRowType={rowType}
         sourceColumns={sourceColumns}
+        onSourceColumnSearchChange={onSourceColumnSearchChange}
+        sourceColumnInventoryControls={sourceColumnInventoryControls}
         onEvalAdded={handleEvalAdded}
         existingEvals={configuredEvals}
       />

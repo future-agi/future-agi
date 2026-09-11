@@ -70,7 +70,11 @@ export function initGoogleAds() {
  * The email is used as the transaction_id so Google Ads dedupes repeats
  * across sessions / retries. user_data is hashed client-side by gtag.
  */
-export function trackSignupConversion({ email, method = "email", userId } = {}) {
+export function trackSignupConversion({
+  email,
+  method = "email",
+  userId,
+} = {}) {
   if (!gtagReady()) return;
   if (!isEnabled() || !GOOGLE_ADS_SIGNUP_LABEL) return;
 
@@ -88,7 +92,6 @@ export function trackSignupConversion({ email, method = "email", userId } = {}) 
       event_callback: () => {},
     });
 
-   
     const attr = getAttribution() || {};
     window.gtag("event", "sign_up", {
       method,

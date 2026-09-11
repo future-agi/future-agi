@@ -1,7 +1,9 @@
 import traceback
 
+from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -9,9 +11,22 @@ from rest_framework.views import APIView
 
 from accounts.utils import get_request_organization
 from simulate.models import CallExecution, CallTranscript
-from simulate.serializers.test_execution import CallTranscriptSerializer
+from simulate.serializers.response.test_execution import ErrorResponseSerializer
+from simulate.serializers.test_execution import (
+    CallBranchAnalysisResponseSerializer,
+    CallBranchDeviationCreateResponseSerializer,
+    CallTranscriptResponseSerializer,
+    CallTranscriptSerializer,
+    TestExecutionTranscriptsResponseSerializer,
+)
 from simulate.services.branch_deviation_analyzer import BranchDeviationAnalyzer
 from simulate.utils.stored_transcript_roles import get_displayable_transcript_roles
+from simulate.views.scoping import run_test_workspace_filter
+from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import EmptyRequestSerializer
+from tfc.utils.general_methods import GeneralMethods
+
+_gm = GeneralMethods()
 
 
 class CallTranscriptView(APIView):
@@ -21,6 +36,13 @@ class CallTranscriptView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={
+            200: CallTranscriptResponseSerializer,
+            404: ErrorResponseSerializer,
+            500: ErrorResponseSerializer,
+        },
+    )
     def get(self, request, call_execution_id, *args, **kwargs):
         """Get transcripts for a specific call execution"""
         try:
@@ -28,16 +50,15 @@ class CallTranscriptView(APIView):
             user_organization = get_request_organization(request)
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return _gm.not_found("Organization not found for the user.")
 
             # Get the call execution
             call_execution = get_object_or_404(
                 CallExecution,
+                run_test_workspace_filter(request, "test_execution__run_test"),
                 id=call_execution_id,
-                test_execution__organization=user_organization,
+                test_execution__run_test__organization=user_organization,
+                test_execution__run_test__deleted=False,
             )
 
             # Get all transcripts for this call
@@ -46,24 +67,32 @@ class CallTranscriptView(APIView):
                 speaker_role__in=get_displayable_transcript_roles(),
             ).order_by("start_time_ms")
 
-            # Serialize the transcripts
-            serializer = CallTranscriptSerializer(transcripts, many=True)
+            from simulate.utils.speaker_roles import SpeakerRoleResolver
+
+            rows = SpeakerRoleResolver.align_transcript_rows(
+                CallTranscriptSerializer(transcripts, many=True).data,
+                provider=SpeakerRoleResolver.detect_provider(
+                    call_execution.provider_call_data
+                ),
+                is_outbound=SpeakerRoleResolver.detect_is_outbound(call_execution),
+            )
 
             return Response(
                 {
                     "call_execution_id": str(call_execution.id),
                     "phone_number": call_execution.phone_number,
                     "status": call_execution.status,
-                    "transcripts": serializer.data,
+                    "transcripts": rows,
                     "total_transcripts": len(transcripts),
                 },
                 status=status.HTTP_200_OK,
             )
 
+        except Http404:
+            return _gm.not_found("Call execution not found.")
         except Exception as e:
-            return Response(
-                {"error": f"Failed to get call transcripts: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return _gm.internal_server_error_response(
+                f"Failed to get call transcripts: {str(e)}"
             )
 
 
@@ -74,6 +103,13 @@ class TestExecutionTranscriptsView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={
+            200: TestExecutionTranscriptsResponseSerializer,
+            404: ErrorResponseSerializer,
+            500: ErrorResponseSerializer,
+        },
+    )
     def get(self, request, test_execution_id, *args, **kwargs):
         """Get all transcripts for a test execution"""
         try:
@@ -81,16 +117,17 @@ class TestExecutionTranscriptsView(APIView):
             user_organization = get_request_organization(request)
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return _gm.not_found("Organization not found for the user.")
 
             # Get all call executions for this test execution with prefetched transcripts
             call_executions = CallExecution.objects.filter(
+                run_test_workspace_filter(request, "test_execution__run_test"),
                 test_execution_id=test_execution_id,
-                test_execution__organization=user_organization,
+                test_execution__run_test__organization=user_organization,
+                test_execution__run_test__deleted=False,
             ).prefetch_related("transcripts", "scenario")
+
+            from simulate.utils.speaker_roles import SpeakerRoleResolver
 
             all_transcripts = []
             for call_execution in call_executions:
@@ -104,6 +141,14 @@ class TestExecutionTranscriptsView(APIView):
                 ]
                 transcripts.sort(key=lambda x: x.start_time_ms)
 
+                rows = SpeakerRoleResolver.align_transcript_rows(
+                    CallTranscriptSerializer(transcripts, many=True).data,
+                    provider=SpeakerRoleResolver.detect_provider(
+                        call_execution.provider_call_data
+                    ),
+                    is_outbound=SpeakerRoleResolver.detect_is_outbound(call_execution),
+                )
+
                 call_data = {
                     "call_execution_id": str(call_execution.id),
                     "phone_number": call_execution.phone_number,
@@ -113,9 +158,7 @@ class TestExecutionTranscriptsView(APIView):
                         if call_execution.scenario
                         else "Unknown"
                     ),
-                    "transcripts": CallTranscriptSerializer(
-                        transcripts, many=True
-                    ).data,
+                    "transcripts": rows,
                     "total_transcripts": len(transcripts),
                 }
                 all_transcripts.append(call_data)
@@ -133,9 +176,8 @@ class TestExecutionTranscriptsView(APIView):
             )
 
         except Exception as e:
-            return Response(
-                {"error": f"Failed to get test execution transcripts: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return _gm.internal_server_error_response(
+                f"Failed to get test execution transcripts: {str(e)}"
             )
 
 
@@ -146,6 +188,13 @@ class CallBranchAnalysisView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={
+            200: CallBranchAnalysisResponseSerializer,
+            404: ErrorResponseSerializer,
+            500: ErrorResponseSerializer,
+        },
+    )
     def get(self, request, call_execution_id, *args, **kwargs):
         """Analyze a call execution against graph branches and identify deviations"""
         try:
@@ -153,18 +202,17 @@ class CallBranchAnalysisView(APIView):
             user_organization = get_request_organization(request)
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return _gm.not_found("Organization not found for the user.")
 
             print(f"Getting call execution: {call_execution_id}")
 
             # Get the call execution
             call_execution = get_object_or_404(
                 CallExecution,
+                run_test_workspace_filter(request, "test_execution__run_test"),
                 id=call_execution_id,
-                # test_execution__organization=user_organization
+                test_execution__run_test__organization=user_organization,
+                test_execution__run_test__deleted=False,
             )
 
             # transcripts = CallTranscript.objects.filter(
@@ -188,7 +236,6 @@ class CallBranchAnalysisView(APIView):
             ):
                 analysis_data = call_execution.analysis_data.get("branch_analysis", {})
             else:
-
                 # Perform branch analysis
                 analyzer = BranchDeviationAnalyzer()
                 analysis = analyzer.analyze_call_execution_branch(call_execution)
@@ -223,13 +270,23 @@ class CallBranchAnalysisView(APIView):
 
             return Response(response_data, status=status.HTTP_200_OK)
 
+        except Http404:
+            return _gm.not_found("Call execution not found.")
         except Exception as e:
             traceback.print_exc()
-            return Response(
-                {"error": f"Failed to analyze call execution: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return _gm.internal_server_error_response(
+                f"Failed to analyze call execution: {str(e)}"
             )
 
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
+        responses={
+            200: CallBranchDeviationCreateResponseSerializer,
+            404: ErrorResponseSerializer,
+            500: ErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, call_execution_id, *args, **kwargs):
         """Create deviation nodes and edges for a call execution"""
         try:
@@ -237,16 +294,15 @@ class CallBranchAnalysisView(APIView):
             user_organization = get_request_organization(request)
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return _gm.not_found("Organization not found for the user.")
 
             # Get the call execution
             call_execution = get_object_or_404(
                 CallExecution,
+                run_test_workspace_filter(request, "test_execution__run_test"),
                 id=call_execution_id,
-                test_execution__organization=user_organization,
+                test_execution__run_test__organization=user_organization,
+                test_execution__run_test__deleted=False,
             )
 
             # Perform branch analysis
@@ -256,10 +312,7 @@ class CallBranchAnalysisView(APIView):
             # Get scenario graph
             scenario_graph = analyzer._get_scenario_graph(call_execution)
             if not scenario_graph:
-                return Response(
-                    {"error": "No scenario graph found for this call execution"},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return _gm.not_found("No scenario graph found for this call execution")
 
             # Create deviation nodes and edges
             deviation_data = analyzer.create_deviation_nodes_and_edges(
@@ -275,8 +328,9 @@ class CallBranchAnalysisView(APIView):
 
             return Response(response_data, status=status.HTTP_200_OK)
 
+        except Http404:
+            return _gm.not_found("Call execution not found.")
         except Exception as e:
-            return Response(
-                {"error": f"Failed to create deviation nodes: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return _gm.internal_server_error_response(
+                f"Failed to create deviation nodes: {str(e)}"
             )

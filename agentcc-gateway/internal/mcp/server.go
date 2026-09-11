@@ -381,7 +381,7 @@ func (s *Server) handleToolsCall(w http.ResponseWriter, r *http.Request, msg *Me
 	}
 
 	// Validate arguments against input schema if available.
-	if len(regTool.Tool.InputSchema) > 0 && len(params.Arguments) > 0 {
+	if len(regTool.Tool.InputSchema) > 0 {
 		if errMsg := validateArgsAgainstSchema(regTool.Tool.InputSchema, params.Arguments); errMsg != "" {
 			writeJSONRPCError(w, msg.ID, ErrCodeInvalidParams, errMsg)
 			return

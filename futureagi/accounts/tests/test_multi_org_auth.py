@@ -11,14 +11,16 @@ Tests for organization-aware authentication:
 These are integration tests that hit the actual auth layer.
 """
 
+import base64
 from unittest.mock import MagicMock, patch
 
 import pytest
+from rest_framework.exceptions import AuthenticationFailed
 
-from accounts.authentication import APIKeyAuthentication
+from accounts.authentication import APIKeyAuthentication, LangfuseBasicAuthentication
 from accounts.models.organization import Organization
 from accounts.models.organization_membership import OrganizationMembership
-from accounts.models.user import User
+from accounts.models.user import OrgApiKey, User
 from accounts.models.workspace import Workspace, WorkspaceMembership
 from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
@@ -147,6 +149,49 @@ def _make_request(headers=None, method="GET", path="/api/test/", query_params=No
     request.GET = query_params or {}
     request.META = {}
     return request
+
+
+# ---------------------------------------------------------------------------
+# authenticate tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+class TestAPIKeyAuthentication:
+    def test_deleted_api_key_is_rejected(self, auth_instance, auth_user, org_primary):
+        key = OrgApiKey.no_workspace_objects.create(
+            name="Deleted API auth key",
+            organization=org_primary,
+            type="user",
+            user=auth_user,
+            deleted=True,
+        )
+        request = _make_request(
+            headers={
+                "X-Api-Key": key.api_key,
+                "X-Secret-Key": key.secret_key,
+            }
+        )
+
+        with pytest.raises(AuthenticationFailed):
+            auth_instance.authenticate(request)
+
+    def test_deleted_basic_api_key_is_rejected(self, auth_user, org_primary):
+        key = OrgApiKey.no_workspace_objects.create(
+            name="Deleted basic auth key",
+            organization=org_primary,
+            type="user",
+            user=auth_user,
+            deleted=True,
+        )
+        encoded = base64.b64encode(
+            f"{key.api_key}:{key.secret_key}".encode("utf-8")
+        ).decode("ascii")
+        request = _make_request()
+        request.META = {"HTTP_AUTHORIZATION": f"Basic {encoded}"}
+
+        with pytest.raises(AuthenticationFailed):
+            LangfuseBasicAuthentication().authenticate(request)
 
 
 # ---------------------------------------------------------------------------

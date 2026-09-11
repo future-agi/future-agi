@@ -18,6 +18,14 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/models"
 )
 
+const (
+	// defaultAPIVersion is used when the provider config sets no api-version.
+	defaultAPIVersion = "2024-10-21"
+	// minAPIVersionMaxCompletionTokens is the first Azure api-version that accepts
+	// max_completion_tokens. Earlier ones reject it.
+	minAPIVersionMaxCompletionTokens = "2024-09-01"
+)
+
 // Provider implements the Provider interface for Azure OpenAI.
 // Azure uses a different URL format: /openai/deployments/{deployment}/chat/completions?api-version={version}
 type Provider struct {
@@ -49,7 +57,7 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 
 	apiVersion := cfg.Headers["api-version"]
 	if apiVersion == "" {
-		apiVersion = "2024-10-21"
+		apiVersion = defaultAPIVersion
 	}
 
 	transport := &http.Transport{
@@ -116,6 +124,35 @@ func (p *Provider) setAuth(req *http.Request) {
 	}
 }
 
+// normalizeMaxTokens rewrites max_tokens to max_completion_tokens, which reasoning
+// deployments require and which Azure rejects alongside max_tokens, so max_tokens
+// is always cleared.
+//
+// Keyed on the api-version rather than the model: Azure routes by deployment name,
+// which the customer chooses freely (the model field in the body is ignored), so a
+// model-name predicate is unreliable here. api-versions before
+// minAPIVersionMaxCompletionTokens reject max_completion_tokens outright and are
+// left untouched.
+//
+// Operates on the caller's copy; the original request is never modified.
+func (p *Provider) normalizeMaxTokens(req *models.ChatCompletionRequest) {
+	if req.MaxTokens == nil || !supportsMaxCompletionTokens(p.apiVersion) {
+		return
+	}
+	if req.MaxCompletionTokens == nil {
+		req.MaxCompletionTokens = req.MaxTokens
+	}
+	req.MaxTokens = nil
+}
+
+// supportsMaxCompletionTokens reports whether an Azure api-version accepts
+// max_completion_tokens. Azure api-versions are date-ordered strings, so a
+// lexicographic compare is sufficient; the newer non-date labels ("preview", "v1")
+// sort above the cutoff, which is correct — they accept it too.
+func supportsMaxCompletionTokens(apiVersion string) bool {
+	return apiVersion >= minAPIVersionMaxCompletionTokens
+}
+
 // ChatCompletion sends a non-streaming chat completion request.
 func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
 	if err := p.acquireSemaphore(ctx); err != nil {
@@ -128,6 +165,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 	reqCopy := *req
 	reqCopy.Stream = false
 	// Azure ignores the model field in the body — routing is via URL deployment name.
+	p.normalizeMaxTokens(&reqCopy)
 
 	body, err := json.Marshal(&reqCopy)
 	if err != nil {
@@ -187,6 +225,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		deployment := resolveDeployment(req.Model)
 		reqCopy := *req
 		reqCopy.Stream = true
+		p.normalizeMaxTokens(&reqCopy)
 
 		body, err := json.Marshal(&reqCopy)
 		if err != nil {

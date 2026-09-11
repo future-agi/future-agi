@@ -6,10 +6,11 @@ and the read-side filters that keep session rows off span/trace surfaces.
 Schema-only tests; PR4 introduces the writers.
 """
 
-import json
-from unittest.mock import MagicMock, patch
+# ruff: noqa: I001 -- model_hub.tasks must load before Django tracer imports.
 
-import pytest
+import uuid
+from types import SimpleNamespace
+from unittest.mock import patch
 
 # Break the same import cycle PR1's runtime tests broke: the chain
 # tracer.utils.eval_tasks -> tracer.utils.eval -> model_hub.tasks.__init__
@@ -18,7 +19,7 @@ import pytest
 # unwinds the cycle via the user_evaluation submodule (no tracer.utils.eval
 # dependency).
 import model_hub.tasks  # noqa: F401, E402
-
+import pytest
 from django.core.exceptions import ValidationError  # noqa: E402
 from django.db import IntegrityError, transaction  # noqa: E402
 
@@ -100,9 +101,7 @@ class TestEvalLoggerTargetTypeShape:
                 custom_eval_config=custom_eval_config,
             )
 
-    def test_rejects_trace_target_with_null_span(
-        self, trace, custom_eval_config
-    ):
+    def test_rejects_trace_target_with_null_span(self, trace, custom_eval_config):
         """target_type='trace' MUST anchor to a root span. NULL observation_span → rejected."""
         with pytest.raises(_REJECTION_ERRORS), transaction.atomic():
             EvalLogger.objects.create(
@@ -192,23 +191,44 @@ class TestEvalLoggerConflationOnRootSpan:
 class TestEvalLoggerReaderAudit:
     """Pin the reader-audit fixes that keep session rows off span/trace surfaces."""
 
-    def test_get_evaluation_details_clickhouse_filters_target_type_span_and_trace(
-        self, observation_span, custom_eval_config
-    ):
-        """CH query allows span+trace targets and excludes session rows."""
-        from tracer.views.observation_span import ObservationSpanView
+    def test_get_eval_detail_ch_filters_target_type_span_and_trace(self):
+        """CH query allows span+trace targets and excludes session rows.
 
-        view = ObservationSpanView()
-        analytics = MagicMock()
-        analytics.execute_ch_query.return_value.data = []
+        The query now lives in ``AnalyticsQueryService.get_eval_detail_ch``
+        (the view delegates to it), so assert against the query that method
+        sends to ``execute_ch_query``.
+        """
+        from tracer.services.clickhouse.query_service import AnalyticsQueryService
 
-        view._get_evaluation_details_clickhouse(
-            observation_span_id=observation_span.id,
-            custom_eval_config_id=custom_eval_config.id,
-            analytics=analytics,
-        )
+        analytics = AnalyticsQueryService()
+        with patch.object(analytics, "execute_ch_query") as mock_exec:
+            mock_exec.return_value.data = []
+            analytics.get_eval_detail_ch(
+                "0000000000000000",
+                str(uuid.uuid4()),
+                project_id=str(uuid.uuid4()),
+            )
 
-        sent_query = analytics.execute_ch_query.call_args.args[0]
+        assert mock_exec.call_count == 1
+        sent_query = mock_exec.call_args.args[0]
+        assert "FROM spans" in sent_query
+        # Without a live authorized span anchor the eval table is never read.
+        assert "target_type" not in sent_query
+
+        with patch.object(analytics, "execute_ch_query") as anchored_exec:
+            anchored_exec.side_effect = [
+                SimpleNamespace(
+                    data=[{"trace_id": "00000000-0000-0000-0000-000000000001"}]
+                ),
+                SimpleNamespace(data=[]),
+            ]
+            analytics.get_eval_detail_ch(
+                "0000000000000000",
+                str(uuid.uuid4()),
+                project_id=str(uuid.uuid4()),
+            )
+
+        sent_query = anchored_exec.call_args_list[1].args[0]
         assert "target_type IN ('span', 'trace')" in sent_query, (
             f"expected target_type IN ('span', 'trace') filter in CH query, got:\n{sent_query}"
         )
@@ -244,17 +264,26 @@ class TestEvalLoggerReaderAudit:
             eval_explanation="session-only row",
         )
 
-        response = auth_client.get(
-            "/tracer/observation-span/get_evaluation_details/",
-            {
-                "observation_span_id": "0000000000000000",
-                "custom_eval_config_id": str(observe_config.id),
-            },
-        )
+        with patch(
+            "tracer.views.observation_span.V2AnalyticsQueryService"
+        ) as analytics_cls:
+            analytics_cls.return_value.get_eval_detail_ch.return_value = None
+            response = auth_client.get(
+                "/tracer/observation-span/get_evaluation_details/",
+                {
+                    "observation_span_id": "0000000000000000",
+                    "custom_eval_config_id": str(observe_config.id),
+                },
+            )
         assert response.status_code == 400
         body = response.json()
         assert body.get("status") is False
         assert "No eval logger found" in str(body.get("result", ""))
+        analytics_cls.return_value.get_eval_detail_ch.assert_called_once_with(
+            "0000000000000000",
+            str(observe_config.id),
+            project_id=str(observe_project.id),
+        )
 
     def test_get_evaluation_details_pg_excludes_session_rows_when_span_row_absent(
         self,
@@ -345,11 +374,10 @@ class TestEvalTaskViewsExposeRowTypeAndTargetType:
         custom_eval_config,
     ):
         """Session-target rows surface session_id + session_name in detail; span/trace IDs NULL."""
-        from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
-
         # Custom eval config tied to the observe project (test data must
         # match the project the trace_session belongs to)
         from tracer.models.custom_eval_config import CustomEvalConfig
+        from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
 
         observe_config = CustomEvalConfig.objects.create(
             name="Observe Eval",

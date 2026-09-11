@@ -23,6 +23,7 @@ import { useNavigate } from "react-router";
 import { trackEvent, Events, PropertyName } from "src/utils/Mixpanel";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { getRequestErrorMessage } from "src/utils/errorUtils";
+import { getCreatedDatasetId } from "./manualCreateDatasetResponse";
 
 const ManuallyCreateDataset = ({ open, onClose, refreshGrid }) => {
   const defaultValues = {
@@ -68,7 +69,10 @@ const ManuallyCreateDataset = ({ open, onClose, refreshGrid }) => {
       queryClient.invalidateQueries({
         queryKey: ["develop", "dataset-name-list"],
       });
-      navigate(`/dashboard/develop/${data?.data?.result?.datasetId}?tab=data`);
+      const datasetId = getCreatedDatasetId(data);
+      if (datasetId) {
+        navigate(`/dashboard/develop/${datasetId}?tab=data`);
+      }
       refreshGrid();
     },
     onError: (error) => {

@@ -31,11 +31,11 @@ const getMessageValidationSchema = () =>
           if (item.type === "text") {
             return item.text.trim().length > 0;
           } else if (item.type === "audio_url") {
-            return item.audioUrl?.url?.trim() !== "";
+            return item.audio_url?.url?.trim() !== "";
           } else if (item.type === "pdf_url") {
-            return item.pdfUrl?.url?.trim() !== "";
+            return item.pdf_url?.url?.trim() !== "";
           } else if (item.type === "image_url") {
-            return item.imageUrl.url.trim().length > 0;
+            return item.image_url?.url?.trim()?.length > 0;
           }
           return false;
         });
@@ -92,7 +92,10 @@ export const getPromptNodeFormSchema = () =>
     prompt_version_id: z.string().nullable().optional().default(null),
     prompt_template_id: z.string().nullable().optional().default(null),
     outputFormat: z.string().optional().default("string"),
-    templateFormat: z.enum(["mustache", "jinja"]).optional().default("mustache"),
+    templateFormat: z
+      .enum(["mustache", "jinja"])
+      .optional()
+      .default("mustache"),
     modelConfig: modelConfigSchema,
     messages: z
       .array(getMessageValidationSchema())

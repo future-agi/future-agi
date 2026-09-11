@@ -49,19 +49,30 @@ const humanizeTime = (iso) => {
 function ErrorTypeTag({ type, isDark }) {
   const shortType = type
     .replace(/Error$/, "")
-    .replace(/([A-Z])/g, " $1")
+    // Only split camelCase boundaries (lowercase→uppercase). The old
+    // `/([A-Z])/g` inserted a space before every capital, which is a no-op
+    // on already-spaced strings like "Tool Selection Errors" (HTML collapses
+    // the doubled space) but visibly breaks acronyms with no existing space,
+    // e.g. "KB Groundedness" -> "K B Groundedness".
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
     .trim();
   return (
     <Chip
-      label={shortType}
       size="small"
+      icon={
+        <Iconify icon="mdi:bug-outline" width={11} sx={{ ml: "4px", mr: 0 }} />
+      }
+      label={shortType}
       sx={{
         height: 18,
         borderRadius: "3px",
         fontSize: "10px",
-        fontWeight: 500,
+        fontWeight: "fontWeightMedium",
         bgcolor: isDark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.06)",
         color: isDark ? "#a1a1aa" : "#605C70",
+        "& .MuiChip-icon": {
+          color: isDark ? "#a1a1aa" : "#605C70",
+        },
         "& .MuiChip-label": { px: "5px" },
         maxWidth: 140,
         overflow: "hidden",
@@ -72,6 +83,42 @@ function ErrorTypeTag({ type, isDark }) {
 
 ErrorTypeTag.propTypes = {
   type: PropTypes.string,
+  isDark: PropTypes.bool,
+};
+
+// Tells the row apart at a glance: a cluster is either Future AGI's built-in
+// scanner or one of the customer's own eval tasks. One icon for both states
+// — the label carries the difference. Mirrors the backend's own source
+// values (ClusterSource.SCANNER / .EVAL) rather than a separate display name.
+function SourceTag({ source, isDark }) {
+  const label = source === "eval" ? "Eval" : "Scanner";
+  return (
+    <Chip
+      size="small"
+      icon={
+        <Iconify icon="mdi:tag-outline" width={11} sx={{ ml: "4px", mr: 0 }} />
+      }
+      label={label}
+      sx={{
+        height: 18,
+        borderRadius: "3px",
+        fontSize: "10px",
+        fontWeight: "fontWeightMedium",
+        bgcolor: isDark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.06)",
+        color: isDark ? "#a1a1aa" : "#605C70",
+        "& .MuiChip-icon": {
+          color: isDark ? "#a1a1aa" : "#605C70",
+        },
+        "& .MuiChip-label": { px: "5px" },
+        maxWidth: 140,
+        overflow: "hidden",
+      }}
+    />
+  );
+}
+
+SourceTag.propTypes = {
+  source: PropTypes.string,
   isDark: PropTypes.bool,
 };
 
@@ -131,7 +178,7 @@ const COLUMNS = [
   { id: "severity", label: "Severity", sortable: true, width: 100 },
   { id: "status", label: "Status", sortable: false, width: 118 },
   { id: "traceCount", label: "Events", sortable: true, width: 85 },
-  { id: "usersAffected", label: "Users", sortable: true, width: 75 },
+  { id: "usersAffected", label: "Users", sortable: false, width: 75 },
   { id: "fixLayer", label: "Fix Layer", sortable: false, width: 120 },
   { id: "trends", label: "Trend (14d)", sortable: false, width: 130 },
   { id: "lastSeen", label: "Last seen", sortable: true, width: 120 },
@@ -260,9 +307,6 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
   const apiParams = useErrorFeedApiParams();
   const { data, isLoading } = useErrorFeedList(apiParams);
 
-  const rows = useMemo(() => data?.data ?? [], [data]);
-  const totalCount = data?.total ?? 0;
-
   const isFiltered = useErrorFeedStore(
     (s) =>
       !!(
@@ -274,6 +318,9 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
         s.selectedErrorType
       ),
   );
+
+  const rows = useMemo(() => data?.data ?? [], [data]);
+  const totalCount = data?.total ?? 0;
 
   const handleRowClick = useCallback(
     (clusterId) => {
@@ -327,7 +374,7 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
                   onChange={(e) =>
                     onSelectAll(
                       e.target.checked,
-                      rows.map((r) => r.clusterId),
+                      rows.map((r) => r.cluster_id),
                     )
                   }
                 />
@@ -383,13 +430,13 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
               <EmptyState filtered={isFiltered} />
             ) : (
               rows.map((row) => {
-                const isSelected = selected.includes(row.clusterId);
+                const isSelected = selected.includes(row.cluster_id);
                 return (
                   <TableRow
-                    key={row.clusterId}
+                    key={row.cluster_id}
                     hover
                     selected={isSelected}
-                    onClick={() => handleRowClick(row.clusterId)}
+                    onClick={() => handleRowClick(row.cluster_id)}
                     sx={{
                       cursor: "pointer",
                       height: 56,
@@ -413,7 +460,7 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
                         size="small"
                         checked={isSelected}
                         onChange={(e) =>
-                          onSelect(row.clusterId, e.target.checked)
+                          onSelect(row.cluster_id, e.target.checked)
                         }
                       />
                     </TableCell>
@@ -446,14 +493,15 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
                           </Typography>
                         </Tooltip>
                         <Stack direction="row" alignItems="center" gap={0.75}>
+                          <SourceTag source={row.source} isDark={isDark} />
                           <ErrorTypeTag type={row.error.type} isDark={isDark} />
-                          {row.evalScore != null && (
+                          {row.eval_score != null && (
                             <Typography
                               typography="s3"
                               color="text.disabled"
                               sx={{ fontFeatureSettings: "'tnum'" }}
                             >
-                              eval: {row.evalScore.toFixed(2)}
+                              eval: {row.eval_score.toFixed(2)}
                             </Typography>
                           )}
                         </Stack>
@@ -478,7 +526,7 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
                         color="text.primary"
                         sx={{ fontFeatureSettings: "'tnum'" }}
                       >
-                        {fmt(row.traceCount)}
+                        {fmt(row.trace_count)}
                       </Typography>
                     </TableCell>
 
@@ -489,13 +537,13 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
                         color="text.secondary"
                         sx={{ fontFeatureSettings: "'tnum'" }}
                       >
-                        {fmt(row.usersAffected)}
+                        {fmt(row.users_affected)}
                       </Typography>
                     </TableCell>
 
                     {/* Fix Layer */}
                     <TableCell>
-                      <FixLayerChip layer={row.fixLayer} />
+                      <FixLayerChip layer={row.fix_layer} />
                     </TableCell>
 
                     {/* Trend sparkline */}
@@ -509,7 +557,7 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
                     {/* Last seen */}
                     <TableCell>
                       <Typography typography="s3" color="text.disabled" noWrap>
-                        {row.lastSeenHuman ?? humanizeTime(row.lastSeen)}
+                        {row.lastSeenHuman ?? humanizeTime(row.last_seen)}
                       </Typography>
                     </TableCell>
 
@@ -523,7 +571,7 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
                             transition: "opacity 0.15s",
                             ".MuiTableRow-root:hover &": { opacity: 1 },
                           }}
-                          onClick={() => handleRowClick(row.clusterId)}
+                          onClick={() => handleRowClick(row.cluster_id)}
                         >
                           <Iconify icon="mdi:arrow-right" width={16} />
                         </IconButton>

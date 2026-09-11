@@ -29,20 +29,23 @@ function getStyles(label, personName, theme) {
   };
 }
 
-const FormMultiSelectField = ({
-  control,
-  options,
-  fieldName,
-  isSearchable,
-  valueSelector,
-  helperText,
-  fullWidth,
-  createLabel,
-  dropDownMaxHeight,
-  onScrollEnd,
-  loadingMoreOptions,
-  ...rest
-}) => {
+const FormMultiSelectField = (
+  {
+    control,
+    options,
+    fieldName,
+    isSearchable,
+    valueSelector,
+    helperText,
+    fullWidth,
+    createLabel,
+    dropDownMaxHeight,
+    onScrollEnd,
+    loadingMoreOptions,
+    ...rest
+  },
+  forwardedRef,
+) => {
   const [searchQuery, setSearchQuery] = useState("");
   const theme = useTheme();
   const anchorRef = useRef(null);
@@ -84,7 +87,12 @@ const FormMultiSelectField = ({
         const data = Array.isArray(value) ? value : [];
 
         return (
-          <FormControl error={isError} fullWidth={fullWidth} size={rest?.size}>
+          <FormControl
+            ref={forwardedRef}
+            error={isError}
+            fullWidth={fullWidth}
+            size={rest?.size}
+          >
             <DropdownWithSearch
               label={rest.label}
               options={options?.map((opt) => ({
@@ -228,7 +236,7 @@ const style = {
   },
 };
 
-FormMultiSelectField.propTypes = {
+const formMultiSelectFieldPropTypes = {
   control: PropTypes.any,
   options: PropTypes.arrayOf(
     PropTypes.shape({
@@ -250,6 +258,10 @@ FormMultiSelectField.propTypes = {
   onChange: PropTypes.func,
 };
 
+FormMultiSelectField.propTypes = formMultiSelectFieldPropTypes;
+
 // @ts-ignore
+FormMultiSelectField.propTypes = formMultiSelectFieldPropTypes;
 export const EnhancedFormMultiSelectField =
   React.forwardRef(FormMultiSelectField);
+EnhancedFormMultiSelectField.propTypes = formMultiSelectFieldPropTypes;

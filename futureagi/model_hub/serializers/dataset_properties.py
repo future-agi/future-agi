@@ -63,7 +63,7 @@ class CreatePropertySerializer(serializers.ModelSerializer):
         """
 
         clickhouse_client = ClickHouseClientSingleton()
-        raw_environment_combinations = clickhouse_client.execute(query)
+        raw_environment_combinations = clickhouse_client.execute_read(query)
 
         for comb in raw_environment_combinations:
             dataset_property = DatasetProperties.objects.create(

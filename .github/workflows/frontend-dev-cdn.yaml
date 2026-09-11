@@ -5,8 +5,8 @@ on:
     branches:
       - dev
     paths:
-      - 'frontend/**'
-      - '.github/workflows/frontend-dev-cdn.yaml'
+      - "frontend/**"
+      - ".github/workflows/frontend-dev-cdn.yaml"
   workflow_dispatch:
     inputs:
       branch:
@@ -16,6 +16,7 @@ on:
 
 jobs:
   deploy:
+    if: github.event_name == 'workflow_dispatch' || vars.DEV_CDN_AUTO_DEPLOY != 'false'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -30,7 +31,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20.19"
+          node-version: "22.18"
           cache: "yarn"
           cache-dependency-path: frontend/yarn.lock
 
@@ -41,6 +42,7 @@ jobs:
         run: |
           cat <<EOF > .env
           VITE_ENVIRONMENT=dev
+          VITE_OBSERVE_LIST_DEFAULT_PAGE_SIZE=25
           VITE_HOST_API=${{ secrets.DEV_VITE_HOST_API }}
           VITE_ASSETS_API=${{ secrets.DEV_VITE_ASSETS_API }}
           VITE_GENERATE_LINK=${{ secrets.DEV_VITE_GENERATE_LINK }}

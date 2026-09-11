@@ -37,10 +37,47 @@ type geminiContent struct {
 
 type geminiPart struct {
 	Text             string              `json:"text,omitempty"`
+	Thought          bool                `json:"thought,omitempty"`
+	ThoughtSignature string              `json:"thoughtSignature,omitempty"`
 	InlineData       *geminiInlineData   `json:"inlineData,omitempty"`
 	FileData         *geminiFileData     `json:"fileData,omitempty"`
 	FunctionCall     *geminiFunctionCall `json:"functionCall,omitempty"`
 	FunctionResponse *geminiFuncResponse `json:"functionResponse,omitempty"`
+}
+
+// toolCallIDDelim separates the synthetic tool_call.id ("call_0") from the
+// base64 thoughtSignature Gemini returned on the corresponding part. The
+// signature has to round-trip back to Gemini verbatim on the next request
+// or thinking-enabled tool calling 400s with "missing thought_signature".
+// The OpenAI ToolCall struct has no extension slot, so we smuggle it through
+// the only string field the client is guaranteed to preserve: the id.
+//
+// Because the signature rides on the id, the id is no longer a clean
+// identifier: the client echoes it back as tool_call_id on the tool-result
+// message. Anywhere we read the id we must split it back apart — recover the
+// signature for the assistant turn (see toolCallIDSignature), and strip it off
+// before using the id as a Gemini functionResponse.Name (see toolCallIDName),
+// otherwise the next turn sends "call_0::sig::<sig>" as the function name and
+// Gemini rejects it because it no longer matches the functionCall name.
+const toolCallIDDelim = "::sig::"
+
+// toolCallIDSignature recovers the base64 thoughtSignature smuggled into a
+// synthetic tool_call id, or "" if none was packed in.
+func toolCallIDSignature(id string) string {
+	if idx := strings.Index(id, toolCallIDDelim); idx != -1 {
+		return id[idx+len(toolCallIDDelim):]
+	}
+	return ""
+}
+
+// toolCallIDName strips the smuggled thoughtSignature suffix off a tool_call
+// id, yielding the original identifier ("call_0"). Safe on ids that never
+// carried a signature — they pass through unchanged.
+func toolCallIDName(id string) string {
+	if idx := strings.Index(id, toolCallIDDelim); idx != -1 {
+		return id[:idx]
+	}
+	return id
 }
 
 type geminiFileData struct {
@@ -72,6 +109,18 @@ type geminiGenerationConfig struct {
 	ResponseSchema     json.RawMessage     `json:"responseSchema,omitempty"`
 	ResponseModalities []string            `json:"responseModalities,omitempty"`
 	SpeechConfig       *geminiSpeechConfig `json:"speechConfig,omitempty"`
+	ThinkingConfig     *geminiThinkingConfig `json:"thinkingConfig,omitempty"`
+}
+
+// geminiThinkingConfig controls Gemini "thinking". includeThoughts MUST be
+// true for the model to return thought summaries (otherwise it reasons
+// internally but returns nothing). thinkingLevel (low|medium|high|minimal) is
+// the Gemini 3.x knob; thinkingBudget (token count) is the 2.5-era knob, kept
+// backwards-compatible on 3.x. Set at most one of level/budget.
+type geminiThinkingConfig struct {
+	IncludeThoughts bool   `json:"includeThoughts,omitempty"`
+	ThinkingLevel   string `json:"thinkingLevel,omitempty"`
+	ThinkingBudget  *int   `json:"thinkingBudget,omitempty"`
 }
 
 type geminiSpeechConfig struct {
@@ -110,7 +159,11 @@ type geminiCandidate struct {
 type geminiUsageMetadata struct {
 	PromptTokenCount     int `json:"promptTokenCount"`
 	CandidatesTokenCount int `json:"candidatesTokenCount"`
-	TotalTokenCount      int `json:"totalTokenCount"`
+	// Gemini reports thinking tokens separately from candidatesTokenCount but
+	// bills them as output. Fold them into CompletionTokens so thinking-on runs
+	// aren't under-billed (OpenAI's completion_tokens includes reasoning too).
+	ThoughtsTokenCount int `json:"thoughtsTokenCount"`
+	TotalTokenCount    int `json:"totalTokenCount"`
 }
 
 type geminiErrorResponse struct {
@@ -130,6 +183,19 @@ func translateRequest(req *models.ChatCompletionRequest) (*geminiRequest, string
 
 	model := resolveModelName(req.Model)
 
+	// Map each tool_call id -> its function name from the assistant turns. A
+	// tool-result message may omit `name` (the OpenAI spec only requires
+	// tool_call_id), yet Gemini still needs functionResponse.Name to match the
+	// originating functionCall.Name. Hence the established id->name fallback.
+	toolCallNames := make(map[string]string)
+	for _, msg := range req.Messages {
+		for _, tc := range msg.ToolCalls {
+			if tc.ID != "" {
+				toolCallNames[tc.ID] = tc.Function.Name
+			}
+		}
+	}
+
 	// Extract system messages.
 	var systemParts []geminiPart
 	for _, msg := range req.Messages {
@@ -141,7 +207,20 @@ func translateRequest(req *models.ChatCompletionRequest) (*geminiRequest, string
 			continue
 		}
 
-		gc := translateMessage(msg)
+		gc := translateMessage(msg, toolCallNames)
+
+		// Coalesce consecutive tool-result messages into a single Gemini user
+		// turn. Gemini requires a turn's functionResponse part count to equal
+		// the preceding model turn's functionCall part count, so parallel tool
+		// calls (one assistant turn -> N tool results) must become ONE user
+		// content with N functionResponse parts, not N separate contents.
+		if msg.Role == "tool" && len(gr.Contents) > 0 {
+			last := &gr.Contents[len(gr.Contents)-1]
+			if isFunctionResponseContent(last) {
+				last.Parts = append(last.Parts, gc.Parts...)
+				continue
+			}
+		}
 		gr.Contents = append(gr.Contents, gc)
 	}
 
@@ -209,6 +288,14 @@ func translateRequest(req *models.ChatCompletionRequest) (*geminiRequest, string
 		}
 	}
 
+	// Thinking is opt-in: a caller enables Gemini thought summaries by passing
+	// `thinking_budget` (int tokens) or `reasoning_effort` (low|medium|high).
+	// includeThoughts is REQUIRED for summaries to be returned. Callers that
+	// pass neither are unaffected — no thinkingConfig, no added latency/cost.
+	if tc := buildThinkingConfig(req.Extra); tc != nil {
+		gc.ThinkingConfig = tc
+	}
+
 	gr.GenerationConfig = gc
 
 	// Translate tools.
@@ -239,7 +326,53 @@ func translateRequest(req *models.ChatCompletionRequest) (*geminiRequest, string
 	return gr, model
 }
 
-func translateMessage(msg models.Message) geminiContent {
+// buildThinkingConfig derives a Gemini thinkingConfig from the opt-in request
+// extras. Returns nil when the caller did not request thinking, leaving other
+// Gemini traffic untouched. `thinking_budget` (int) maps to thinkingBudget;
+// `reasoning_effort` (low|medium|high|minimal) maps to thinkingLevel.
+func buildThinkingConfig(extra map[string]json.RawMessage) *geminiThinkingConfig {
+	if extra == nil {
+		return nil
+	}
+	tc := &geminiThinkingConfig{IncludeThoughts: true}
+	set := false
+	if raw, ok := extra["thinking_budget"]; ok {
+		var n int
+		if err := json.Unmarshal(raw, &n); err == nil {
+			tc.ThinkingBudget = &n
+			set = true
+		}
+	}
+	if raw, ok := extra["reasoning_effort"]; ok && tc.ThinkingBudget == nil {
+		var s string
+		if err := json.Unmarshal(raw, &s); err == nil && s != "" {
+			tc.ThinkingLevel = strings.ToLower(s)
+			set = true
+		}
+	}
+	if !set {
+		return nil
+	}
+	return tc
+}
+
+// isFunctionResponseContent reports whether c is a Gemini user turn whose
+// parts are all functionResponse parts (the translated form of one or more
+// OpenAI tool-result messages). Used to merge parallel tool results into one
+// turn so the functionResponse count matches the model's functionCall count.
+func isFunctionResponseContent(c *geminiContent) bool {
+	if c.Role != "user" || len(c.Parts) == 0 {
+		return false
+	}
+	for _, p := range c.Parts {
+		if p.FunctionResponse == nil {
+			return false
+		}
+	}
+	return true
+}
+
+func translateMessage(msg models.Message, toolCallNames map[string]string) geminiContent {
 	gc := geminiContent{
 		Role: mapRoleToGemini(msg.Role),
 	}
@@ -249,11 +382,20 @@ func translateMessage(msg models.Message) geminiContent {
 		text := extractTextContent(msg.Content)
 		gc.Role = "user" // Gemini uses "user" role for function responses.
 
-		// Gemini requires function Name in FunctionResponse.
-		// OpenAI tool messages may have name in msg.Name, or only tool_call_id.
+		// Gemini requires functionResponse.Name and it must match the
+		// originating functionCall.Name. An OpenAI tool-result message may carry
+		// the name in msg.Name, but the spec lets clients send only
+		// tool_call_id. Resolve it the established way: prefer msg.Name, then
+		// look the id up against the function names from the assistant turn's
+		// tool_calls. Only as a last resort fall back to the id stem (with any
+		// smuggled thoughtSignature suffix stripped) so we never emit
+		// "call_0::sig::<sig>" as the name.
 		funcName := msg.Name
 		if funcName == "" {
-			funcName = msg.ToolCallID // fallback: use the tool call ID as identifier
+			funcName = toolCallNames[msg.ToolCallID]
+		}
+		if funcName == "" {
+			funcName = toolCallIDName(msg.ToolCallID)
 		}
 		if funcName == "" {
 			funcName = "unknown_function"
@@ -273,7 +415,12 @@ func translateMessage(msg models.Message) geminiContent {
 	// Handle assistant messages with tool calls.
 	if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
 		for _, tc := range msg.ToolCalls {
+			// Recover the thoughtSignature we smuggled through the id on the
+			// outbound response (see translateResponse). Without restoring
+			// this, thinking-enabled Gemini 3+ models reject the request
+			// with "Function call is missing a thought_signature".
 			gc.Parts = append(gc.Parts, geminiPart{
+				ThoughtSignature: toolCallIDSignature(tc.ID),
 				FunctionCall: &geminiFunctionCall{
 					Name: tc.Function.Name,
 					Args: json.RawMessage(tc.Function.Arguments),
@@ -486,12 +633,22 @@ func translateResponse(resp *geminiResponse, model string) *models.ChatCompletio
 		msg := models.Message{Role: "assistant"}
 
 		var textParts []string
+		var reasoningParts []string
 		var imageParts []geminiInlineData
 		var audioParts []geminiInlineData
 		var toolCalls []models.ToolCall
 		toolCallIdx := 0
 
 		for _, part := range candidate.Content.Parts {
+			// Thought summaries (returned when includeThoughts is set) surface
+			// as reasoning_content — kept out of user-visible content but no
+			// longer discarded. Signatures still ride on the functionCall part.
+			if part.Thought && part.FunctionCall == nil {
+				if part.Text != "" {
+					reasoningParts = append(reasoningParts, part.Text)
+				}
+				continue
+			}
 			if part.Text != "" {
 				textParts = append(textParts, part.Text)
 			}
@@ -503,8 +660,15 @@ func translateResponse(resp *geminiResponse, model string) *models.ChatCompletio
 				}
 			}
 			if part.FunctionCall != nil {
+				toolCallID := fmt.Sprintf("call_%d", toolCallIdx)
+				// Smuggle thoughtSignature through the id so it survives the
+				// OpenAI SDK round-trip and we can restore it on the next
+				// request — Gemini rejects subsequent turns otherwise.
+				if part.ThoughtSignature != "" {
+					toolCallID = toolCallID + toolCallIDDelim + part.ThoughtSignature
+				}
 				toolCalls = append(toolCalls, models.ToolCall{
-					ID:   fmt.Sprintf("call_%d", toolCallIdx),
+					ID:   toolCallID,
 					Type: "function",
 					Function: models.FunctionCall{
 						Name:      part.FunctionCall.Name,
@@ -565,6 +729,9 @@ func translateResponse(resp *geminiResponse, model string) *models.ChatCompletio
 		if len(toolCalls) > 0 {
 			msg.ToolCalls = toolCalls
 		}
+		if len(reasoningParts) > 0 {
+			msg.ReasoningContent = strings.Join(reasoningParts, "")
+		}
 
 		result.Choices = []models.Choice{
 			{
@@ -578,7 +745,7 @@ func translateResponse(resp *geminiResponse, model string) *models.ChatCompletio
 	if resp.UsageMetadata != nil {
 		result.Usage = &models.Usage{
 			PromptTokens:     resp.UsageMetadata.PromptTokenCount,
-			CompletionTokens: resp.UsageMetadata.CandidatesTokenCount,
+			CompletionTokens: resp.UsageMetadata.CandidatesTokenCount + resp.UsageMetadata.ThoughtsTokenCount,
 			TotalTokens:      resp.UsageMetadata.TotalTokenCount,
 		}
 	}

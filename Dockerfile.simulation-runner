@@ -1,0 +1,42 @@
+# Simulation-runner worker image (hosted runner, plan §9).
+#
+# The backend image deliberately does NOT bundle the Agent Learning Kit SDK
+# (`fi`) — the backend never imports it. This image is the ONE place the
+# released SDK lives: the `run_hosted_sdk_job` activity spawns
+# `python -m fi.simulate.hosted.child_entrypoint` using ALK_RUNNER_PYTHON, so
+# the child runs the exact published SDK, isolated from the backend's deps in
+# its own venv.
+#
+# Build:
+#   docker build -f Dockerfile.simulation-runner \
+#     --build-arg FI_VERSION=<published-version> \
+#     -t futureagi/future-agi-simulation-runner:latest .
+ARG BACKEND_IMAGE=futureagi/future-agi:latest
+FROM ${BACKEND_IMAGE}
+
+# Pinned, published SDK version (public PyPI). Bump in lockstep with a
+# hosted-runner release; the job schema is versioned so a mismatch fails fast.
+ARG FI_VERSION
+ARG FI_PACKAGE=agent-learning-kit
+# Keep the native LiveKit stack aligned with the ALK release lock. An
+# unconstrained install currently resolves livekit-agents 1.6.x, whose native
+# local-inference module crashes in linux/amd64 containers under Rosetta.
+ARG LIVEKIT_AGENTS_VERSION=1.5.17
+
+RUN test -n "${FI_VERSION}" || (echo "FI_VERSION build-arg is required" && exit 1) \
+    && python -m venv /opt/alk-venv \
+    && /opt/alk-venv/bin/pip install --no-cache-dir \
+        "${FI_PACKAGE}[livekit]==${FI_VERSION}" \
+        "livekit-agents==${LIVEKIT_AGENTS_VERSION}" \
+        "livekit-plugins-cartesia==${LIVEKIT_AGENTS_VERSION}" \
+        "livekit-plugins-deepgram==${LIVEKIT_AGENTS_VERSION}" \
+        "livekit-plugins-elevenlabs==${LIVEKIT_AGENTS_VERSION}" \
+        "livekit-plugins-google==${LIVEKIT_AGENTS_VERSION}" \
+        "livekit-plugins-openai==${LIVEKIT_AGENTS_VERSION}" \
+        "livekit-plugins-silero==${LIVEKIT_AGENTS_VERSION}" \
+    && /opt/alk-venv/bin/python -c "import fi.simulate.hosted.child_entrypoint"
+
+# The activity reads this to spawn the SDK child.
+ENV ALK_RUNNER_PYTHON=/opt/alk-venv/bin/python
+
+ENTRYPOINT ["bash", "./entrypoint.sh"]

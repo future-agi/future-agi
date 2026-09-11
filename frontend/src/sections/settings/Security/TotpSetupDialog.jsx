@@ -12,8 +12,8 @@ import {
   Tooltip,
   Typography,
   useTheme,
-  CircularProgress,
 } from "@mui/material";
+import { LoadingScreen } from "src/components/loading-screen";
 import { LoadingButton } from "@mui/lab";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { enqueueSnackbar } from "notistack";
@@ -140,16 +140,7 @@ const TotpSetupDialog = ({ open, onClose, onStatusChange }) => {
         </DialogTitle>
         <DialogContent>
           {isSettingUp || !setupData ? (
-            <Box
-              sx={{
-                display: "flex",
-                justifyContent: "center",
-                alignItems: "center",
-                minHeight: "200px",
-              }}
-            >
-              <CircularProgress />
-            </Box>
+            <LoadingScreen variant="orbit" sx={{ minHeight: "240px" }} />
           ) : (
             <Box
               sx={{

@@ -39,6 +39,7 @@ import useTraceSessionStore from "../Store/useTraceSessionStore";
 import ColumnResizer from "src/components/ColumnResizer/ColumnResizer";
 import CustomTabs from "../CustomMemoizedTabs";
 import TotalRowsStatusBar from "src/sections/develop-detail/Common/TotalRowsStatusBar";
+import { isGridApiLive } from "src/utils/gridApi";
 
 // Updated component using both stores
 const UserTraceSessionSection = () => {
@@ -199,16 +200,15 @@ const UserTraceSessionSection = () => {
     const hasValidFilters =
       debouncedValidatedFilters && debouncedValidatedFilters.length > 0;
     const hasNonDefaultFilters = filters.some((filter) => {
-      // Handle the actual filter structure with filterConfig
-      const filterConfig = filter.filterConfig || {};
-      const defaultConfig = userDefaultFilter.filterConfig || {};
+      const filterConfig = filter.filter_config || {};
+      const defaultConfig = userDefaultFilter.filter_config || {};
 
       return (
-        filter.columnId !== userDefaultFilter.columnId ||
-        filterConfig.filterOp !== defaultConfig.filterOp ||
-        filterConfig.filterValue !== defaultConfig.filterValue ||
-        filterConfig.filterType !== defaultConfig.filterType ||
-        (filterConfig.filterValue && filterConfig.filterValue.length > 0)
+        filter.column_id !== userDefaultFilter.column_id ||
+        filterConfig.filter_op !== defaultConfig.filter_op ||
+        filterConfig.filter_value !== defaultConfig.filter_value ||
+        filterConfig.filter_type !== defaultConfig.filter_type ||
+        (filterConfig.filter_value && filterConfig.filter_value.length > 0)
       );
     });
 
@@ -338,9 +338,10 @@ const UserTraceSessionSection = () => {
       >
         {tabsComponent}
         <Box display="flex" gap={theme.spacing(1)} alignItems="center">
-          {selectedTab === "sessions" && (
-            <TotalRowsStatusBar api={currentGridRef?.current?.api} />
-          )}
+          {selectedTab === "sessions" &&
+            isGridApiLive(currentGridRef?.current?.api) && (
+              <TotalRowsStatusBar api={currentGridRef.current.api} />
+            )}
           {selectedTab === "sessions" && (
             <>
               <Divider

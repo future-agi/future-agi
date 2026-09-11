@@ -12,6 +12,7 @@ import { Box, useTheme } from "@mui/material";
 import {
   getBlocks,
   handleRemoveEditVariable,
+  normalizeContentBlocks,
   placeEditBolt,
   handleRemoveAllImages,
 } from "./common";
@@ -148,7 +149,7 @@ const PromptEditor = React.forwardRef(
     );
 
     const defaultValue = useMemo(() => {
-      const blocks = prompt || [];
+      const blocks = normalizeContentBlocks(prompt) || [];
       const delta = { ops: [] };
 
       blocks.forEach((block) => {
@@ -157,9 +158,9 @@ const PromptEditor = React.forwardRef(
           delta.ops.push({
             insert: {
               ImageBlot: {
-                url: block?.imageUrl?.url,
-                name: block?.imageUrl?.imgName || block?.imageUrl?.img_name,
-                size: block?.imageUrl?.imgSize || block?.imageUrl?.img_size,
+                url: block?.image_url?.url,
+                name: block?.image_url?.img_name,
+                size: block?.image_url?.img_size,
                 setSelectedImage,
                 id: getRandomId(),
                 handleRemoveImage,
@@ -174,11 +175,10 @@ const PromptEditor = React.forwardRef(
           delta.ops.push({
             insert: {
               AudioBlot: {
-                url: block?.audioUrl?.url,
-                name: block?.audioUrl?.audioName || block?.audioUrl?.audio_name,
-                size: block?.audioUrl?.audioSize || block?.audioUrl?.audio_size,
-                mimeType:
-                  block?.audioUrl?.audioType || block?.audioUrl?.audio_type,
+                url: block?.audio_url?.url,
+                name: block?.audio_url?.audio_name,
+                size: block?.audio_url?.audio_size,
+                mimeType: block?.audio_url?.audio_type,
                 id: getRandomId(),
                 handleRemoveAudio,
               },
@@ -188,9 +188,9 @@ const PromptEditor = React.forwardRef(
           delta.ops.push({
             insert: {
               PdfBlot: {
-                url: block?.pdfUrl?.url,
-                name: block?.pdfUrl?.fileName || block?.pdfUrl?.file_name,
-                size: block?.pdfUrl?.pdfSize || block?.pdfUrl?.pdf_size,
+                url: block?.pdf_url?.url,
+                name: block?.pdf_url?.file_name,
+                size: block?.pdf_url?.pdf_size,
                 id: getRandomId(),
                 handleRemovePdf,
               },

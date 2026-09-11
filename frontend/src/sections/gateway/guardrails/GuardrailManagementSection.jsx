@@ -23,6 +23,7 @@ import {
   Switch,
   IconButton,
 } from "@mui/material";
+import { LoadingScreen } from "src/components/loading-screen";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
 import SectionHeader from "../components/SectionHeader";
@@ -766,9 +767,7 @@ const LogsTab = ({ gatewayId }) => {
 
   if (isLoading) {
     return (
-      <Box display="flex" justifyContent="center" py={4}>
-        <CircularProgress />
-      </Box>
+      <LoadingScreen variant="orbit" sx={{ minHeight: "50vh" }} />
     );
   }
 
@@ -793,14 +792,14 @@ const LogsTab = ({ gatewayId }) => {
                 sx={{ cursor: "pointer" }}
                 onClick={() =>
                   navigate(
-                    `/dashboard/gateway/logs?request_id=${encodeURIComponent(log.requestId || log.id)}`,
+                    `/dashboard/gateway/logs?request_id=${encodeURIComponent(log.request_id || log.id)}`,
                   )
                 }
               >
                 <TableCell>
                   <Typography variant="body2">
-                    {log.startedAt
-                      ? new Date(log.startedAt).toLocaleString()
+                    {log.started_at
+                      ? new Date(log.started_at).toLocaleString()
                       : "\u2014"}
                   </Typography>
                 </TableCell>
@@ -829,8 +828,8 @@ const LogsTab = ({ gatewayId }) => {
                     noWrap
                     sx={{ maxWidth: 300 }}
                   >
-                    {log.guardrailResults
-                      ? JSON.stringify(log.guardrailResults).substring(0, 100)
+                    {log.guardrail_results
+                      ? JSON.stringify(log.guardrail_results).substring(0, 100)
                       : log.error_message || "Guardrail triggered"}
                   </Typography>
                 </TableCell>
@@ -839,7 +838,7 @@ const LogsTab = ({ gatewayId }) => {
                     variant="body2"
                     sx={{ fontFamily: "monospace", fontSize: "0.75rem" }}
                   >
-                    {log.requestId?.substring(0, 12) || "\u2014"}
+                    {log.request_id?.substring(0, 12) || "\u2014"}
                   </Typography>
                 </TableCell>
               </TableRow>

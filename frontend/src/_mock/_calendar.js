@@ -1,4 +1,11 @@
-import { info, error, primary, success, warning, secondary } from 'src/theme/palette';
+import {
+  info,
+  error,
+  primary,
+  success,
+  warning,
+  secondary,
+} from "src/theme/palette";
 
 // ----------------------------------------------------------------------
 

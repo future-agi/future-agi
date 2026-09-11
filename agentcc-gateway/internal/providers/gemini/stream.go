@@ -13,7 +13,8 @@ type streamState struct {
 	model       string
 	chunkID     string
 	created     int64
-	toolCallIdx int // tracks incrementing index for tool calls across chunks
+	toolCallIdx int  // tracks incrementing index for tool calls across chunks
+	sawToolCall bool // any tool call emitted so far in this stream
 }
 
 func newStreamState(model string) *streamState {
@@ -47,11 +48,21 @@ func (s *streamState) parseStreamData(data string) (*models.StreamChunk, error) 
 		// earlier text (previous impl was last-wins, which silently lost
 		// content when a chunk held text followed by a function call or image).
 		var textBuilder string
+		var reasoningBuilder string
 		hasText := false
+		hasReasoning := false
 		for _, part := range candidate.Content.Parts {
 			if part.Text != "" {
-				textBuilder += part.Text
-				hasText = true
+				// Thought summaries (includeThoughts) ride as reasoning_content
+				// deltas, mirroring the non-streaming path — keep them out of
+				// user-visible content so the FE can render thinking separately.
+				if part.Thought && part.FunctionCall == nil {
+					reasoningBuilder += part.Text
+					hasReasoning = true
+				} else {
+					textBuilder += part.Text
+					hasText = true
+				}
 			}
 			if part.InlineData != nil {
 				// delta.Content is *string, so we encode the image as a
@@ -61,9 +72,17 @@ func (s *streamState) parseStreamData(data string) (*models.StreamChunk, error) 
 				hasText = true
 			}
 			if part.FunctionCall != nil {
+				// Smuggle the thoughtSignature through the id like the
+				// non-streaming path (translateResponse) — without it,
+				// thinking-enabled Gemini 3+ rejects the next turn with
+				// "Function call is missing a thought_signature".
+				toolCallID := fmt.Sprintf("call_%d", s.toolCallIdx)
+				if part.ThoughtSignature != "" {
+					toolCallID = toolCallID + toolCallIDDelim + part.ThoughtSignature
+				}
 				delta.ToolCalls = append(delta.ToolCalls, models.ToolCallDelta{
 					Index: s.toolCallIdx,
-					ID:    fmt.Sprintf("call_%d", s.toolCallIdx),
+					ID:    toolCallID,
 					Type:  "function",
 					Function: &models.FunctionCall{
 						Name:      part.FunctionCall.Name,
@@ -71,7 +90,12 @@ func (s *streamState) parseStreamData(data string) (*models.StreamChunk, error) 
 					},
 				})
 				s.toolCallIdx++
+				s.sawToolCall = true
 			}
+		}
+		if hasReasoning {
+			reasoning := reasoningBuilder
+			delta.ReasoningContent = &reasoning
 		}
 		if hasText {
 			// Emit the content field whenever any text-bearing part was
@@ -88,7 +112,13 @@ func (s *streamState) parseStreamData(data string) (*models.StreamChunk, error) 
 		}
 
 		if candidate.FinishReason != "" {
-			reason := mapGeminiFinishReasonWithToolCalls(candidate.FinishReason, len(delta.ToolCalls) > 0)
+			// Gemini streams the functionCall and the finishReason in separate
+			// chunks, so the final chunk often carries no tool call of its own.
+			// Map using whether ANY tool call appeared in the stream — otherwise
+			// a tool-calling turn closes as "stop" and the caller discards the
+			// call (breaking multi-turn agents).
+			hasToolCall := s.sawToolCall || len(delta.ToolCalls) > 0
+			reason := mapGeminiFinishReasonWithToolCalls(candidate.FinishReason, hasToolCall)
 			sc.FinishReason = &reason
 		}
 
@@ -98,7 +128,7 @@ func (s *streamState) parseStreamData(data string) (*models.StreamChunk, error) 
 	if resp.UsageMetadata != nil {
 		chunk.Usage = &models.Usage{
 			PromptTokens:     resp.UsageMetadata.PromptTokenCount,
-			CompletionTokens: resp.UsageMetadata.CandidatesTokenCount,
+			CompletionTokens: resp.UsageMetadata.CandidatesTokenCount + resp.UsageMetadata.ThoughtsTokenCount,
 			TotalTokens:      resp.UsageMetadata.TotalTokenCount,
 		}
 	}

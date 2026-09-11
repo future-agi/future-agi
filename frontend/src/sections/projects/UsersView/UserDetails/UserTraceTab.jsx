@@ -30,7 +30,7 @@ const UserTraceTab = forwardRef(
 
     const filtersWithUserId = useMemo(() => {
       const hasUserIdFilter = validatedFilters.some(
-        (f) => f.columnId === "user_id",
+        (f) => f.column_id === "user_id",
       );
 
       if (hasUserIdFilter || !selectedUserId) {
@@ -40,11 +40,11 @@ const UserTraceTab = forwardRef(
       return [
         ...validatedFilters,
         {
-          columnId: "user_id",
-          filterConfig: {
-            filterOp: "equals",
-            filterType: "text",
-            filterValue: selectedUserId,
+          column_id: "user_id",
+          filter_config: {
+            filter_op: "equals",
+            filter_type: "text",
+            filter_value: selectedUserId,
           },
         },
       ];

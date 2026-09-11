@@ -436,6 +436,7 @@ const AddExistingDataset = ({
                           ).map((col, i) => ({
                             label: col?.name,
                             value: col,
+                            disabled: isMenuItemDisabled(col, item),
                             component: (
                               <MenuItem
                                 key={i}
@@ -446,7 +447,7 @@ const AddExistingDataset = ({
                                   alignItems: "center",
                                   color: theme.palette.text.primary,
                                   "&.Mui-disabled": {
-                                    color: theme.palette.divider,
+                                    color: theme.palette.text.disabled,
                                   },
                                 }}
                               >
@@ -476,11 +477,17 @@ const AddExistingDataset = ({
                             value: "add_column",
                             alwaysVisible: true,
                             component: (
-                              <MenuItem key="add_column">
-                                <Box sx={{ color: "primary.main" }}>
-                                  + Add Column
-                                </Box>
-                              </MenuItem>
+                              <Box
+                                key="add_column"
+                                sx={{
+                                  color: "primary.main",
+                                  width: "100%",
+                                  px: 2,
+                                  py: 0.75,
+                                }}
+                              >
+                                + Add Column
+                              </Box>
                             ),
                           },
                         ]}
@@ -650,7 +657,7 @@ const AddExistingDataset = ({
             fontWeight: 600,
             "&.Mui-disabled": {
               bgcolor: theme.palette.divider,
-              color: theme.palette.background.paper,
+              color: theme.palette.text.disabled,
             },
           }}
         >
@@ -663,7 +670,7 @@ const AddExistingDataset = ({
 
 AddExistingDataset.propTypes = {
   handleclose: PropTypes.func,
-  selectedNode: PropTypes.number,
+  selectedNode: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
   availableDatasets: PropTypes.array,
   observationFields: PropTypes.array,
   selectedTraces: PropTypes.array,

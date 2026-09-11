@@ -1,4 +1,5 @@
 import {
+  Autocomplete,
   Box,
   Button,
   Chip,
@@ -20,6 +21,8 @@ import {
   DEFAULT_EVAL_MODEL,
   getEvalBaseName,
 } from "src/sections/common/EvaluationDrawer/common";
+import { FAGI_MODEL_VALUES } from "src/sections/evals/components/ModelSelector";
+import { useFeatureLocked, CAPABILITY } from "src/hooks/useCapabilities";
 import { FUTUREAGI_LLM_MODELS } from "src/sections/common/EvaluationDrawer/validation";
 import { useEvalPickerContext } from "./context/EvalPickerContext";
 import { normalizeEvalPickerEval } from "./evalPickerValue";
@@ -113,7 +116,18 @@ function autoMapVariables(variables, sourceColumns) {
 
 const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
   const theme = useTheme();
-  const { sourceColumns } = useEvalPickerContext();
+  // Only clear a seeded Turing model once denial is *confirmed* (capabilities
+  // loaded AND not allowed). Doing it in the useState initializer below would
+  // wipe a legitimate selection at mount, before the fetch resolves, and never
+  // restore it for entitled users.
+  const { locked: fagiLocked, isLoading: capabilitiesLoading } =
+    useFeatureLocked(CAPABILITY.TURING_MODELS);
+  const fagiModelsDenied = fagiLocked && !capabilitiesLoading;
+  const {
+    sourceColumns,
+    onSourceColumnSearchChange,
+    sourceColumnInventoryControls,
+  } = useEvalPickerContext();
   const normalizedEvalData = useMemo(
     () => normalizeEvalPickerEval(evalData),
     [evalData],
@@ -144,8 +158,13 @@ const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
     return `${getEvalBaseName(normalizedEvalData)}_${format(new Date(), "dd_MMM_yyyy")}`;
   });
   const [model, setModel] = useState(
-    normalizedEvalData?.model || DEFAULT_EVAL_MODEL,
+    () => normalizedEvalData?.model || DEFAULT_EVAL_MODEL,
   );
+  // Drop a seeded Turing model only after denial is confirmed, so entitled
+  // users keep their selection through the capabilities fetch.
+  useEffect(() => {
+    if (fagiModelsDenied && FAGI_MODEL_VALUES.has(model)) setModel("");
+  }, [fagiModelsDenied, model]);
   const [mapping, setMapping] = useState(() =>
     autoMapVariables(variables, sourceColumns),
   );
@@ -180,13 +199,13 @@ const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
       name: evalName,
       model,
       mapping,
-        evalTemplate: normalizedEvalData,
-        evalType: normalizedEvalData?.evalType,
-        templateType: normalizedEvalData?.templateType,
-        outputType: normalizedEvalData?.outputType,
-        config: normalizedEvalData?.config,
-      };
-      onSave(evalConfig);
+      evalTemplate: normalizedEvalData,
+      evalType: normalizedEvalData?.evalType,
+      templateType: normalizedEvalData?.templateType,
+      outputType: normalizedEvalData?.outputType,
+      config: normalizedEvalData?.config,
+    };
+    onSave(evalConfig);
   }, [evalData, normalizedEvalData, evalName, model, mapping, onSave]);
 
   return (
@@ -324,6 +343,7 @@ const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
                     : "rgba(0,0,0,0.01)",
               }}
             >
+              {sourceColumnInventoryControls}
               {variables.map((variable) => (
                 <Box
                   key={variable}
@@ -360,43 +380,66 @@ const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
                   />
 
                   {columnOptions.length > 0 ? (
-                    <Select
+                    <Autocomplete
+                      freeSolo
+                      selectOnFocus
+                      handleHomeEndKeys
                       size="small"
-                      fullWidth
-                      value={mapping[variable] || ""}
-                      onChange={(e) =>
-                        handleMappingChange(variable, e.target.value)
+                      options={columnOptions}
+                      value={
+                        columnOptions.find(
+                          ({ value }) => value === mapping[variable],
+                        ) ||
+                        mapping[variable] ||
+                        null
                       }
-                      displayEmpty
-                      sx={{
-                        fontSize: "12px",
-                        "& .MuiSelect-select": { py: 0.75 },
+                      getOptionLabel={(option) =>
+                        typeof option === "string"
+                          ? option
+                          : option?.label || ""
+                      }
+                      isOptionEqualToValue={(option, value) =>
+                        option.value ===
+                        (typeof value === "string" ? value : value?.value)
+                      }
+                      onChange={(_event, option) => {
+                        const value =
+                          typeof option === "string"
+                            ? option
+                            : option?.value || "";
+                        handleMappingChange(variable, value);
+                        onSourceColumnSearchChange?.(value);
                       }}
-                    >
-                      <MenuItem
-                        value=""
-                        sx={{ fontSize: "12px", color: "text.disabled" }}
-                      >
-                        Select column...
-                      </MenuItem>
-                      {columnOptions.map((col) => (
-                        <MenuItem
-                          key={col.value}
-                          value={col.value}
-                          sx={{ fontSize: "12px" }}
-                        >
-                          {col.label}
-                        </MenuItem>
-                      ))}
-                    </Select>
+                      onInputChange={(_event, value, reason) => {
+                        if (reason === "input" || reason === "clear") {
+                          handleMappingChange(variable, value);
+                          onSourceColumnSearchChange?.(value);
+                        }
+                      }}
+                      onClose={() => onSourceColumnSearchChange?.("")}
+                      sx={{
+                        flex: 1,
+                        fontSize: "12px",
+                        "& .MuiInputBase-input": { py: "5.5px !important" },
+                      }}
+                      renderInput={(params) => (
+                        <TextField
+                          {...params}
+                          fullWidth
+                          placeholder="Select or enter column..."
+                        />
+                      )}
+                    />
                   ) : (
                     <TextField
                       size="small"
                       fullWidth
                       value={mapping[variable] || ""}
-                      onChange={(e) =>
-                        handleMappingChange(variable, e.target.value)
-                      }
+                      onChange={(e) => {
+                        handleMappingChange(variable, e.target.value);
+                        onSourceColumnSearchChange?.(e.target.value);
+                      }}
+                      onBlur={() => onSourceColumnSearchChange?.("")}
                       placeholder="Enter column name..."
                       sx={{
                         "& .MuiInputBase-root": { fontSize: "12px" },
@@ -427,8 +470,8 @@ const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
             Evaluation Summary
           </Typography>
           <Typography variant="body2" sx={{ fontSize: "12px" }}>
-            {evalData?.name} ({evalData?.evalType || "LLM"} eval,{" "}
-            {evalData?.outputType || "pass_fail"} output)
+            {evalData?.name} ({evalData?.eval_type || "LLM"} eval,{" "}
+            {evalData?.output_type || "pass_fail"} output)
           </Typography>
           {evalData?.description && (
             <Typography

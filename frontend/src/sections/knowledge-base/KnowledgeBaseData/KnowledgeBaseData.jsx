@@ -1,5 +1,5 @@
-import { Box, Button, Divider, Typography } from "@mui/material";
-import React, { useCallback, useMemo, useState } from "react";
+import { Alert, Box, Button, Divider, Typography } from "@mui/material";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
@@ -14,6 +14,13 @@ import { useAuthContext } from "src/auth/hooks";
 import { formatNumberWithCommas } from "src/sections/projects/UsersView/common";
 import SvgColor from "src/components/svg-color";
 import { DataTable, DataTablePagination } from "src/components/data-table";
+import { RESPONSE_CODES } from "src/utils/constants";
+
+const getKnowledgeRows = (payload) =>
+  payload?.table_data ?? payload?.tableData ?? [];
+
+const getKnowledgeTotal = (payload) =>
+  payload?.total_rows ?? payload?.totalRows ?? 0;
 
 const KnowledgeBaseData = React.forwardRef(
   ({ setHasData, setShowHelp, setCreateKnowledgeBase }, _ref) => {
@@ -29,7 +36,7 @@ const KnowledgeBaseData = React.forwardRef(
 
     const debouncedSearchQuery = useDebounce(searchQuery.trim(), 500);
 
-    const { data, isLoading } = useQuery({
+    const { data, isLoading, error } = useQuery({
       queryKey: ["knowledge-base", page, pageSize, debouncedSearchQuery],
       queryFn: () =>
         axios.get(endpoints.knowledge.list, {
@@ -42,24 +49,42 @@ const KnowledgeBaseData = React.forwardRef(
       select: (d) => d.data?.result,
       keepPreviousData: true,
       refetchInterval: 10000,
+      retry: (failureCount, queryError) =>
+        queryError?.statusCode === RESPONSE_CODES.PAYMENT_REQUIRED
+          ? false
+          : failureCount < 2,
       onSuccess: (result) => {
-        const rows = result?.tableData ?? [];
+        const rows = getKnowledgeRows(result);
         const hasSearchQuery = !!debouncedSearchQuery;
         setHasData(rows.length > 0 || hasSearchQuery);
       },
     });
 
-    const items = useMemo(() => data?.tableData ?? [], [data]);
-    const total = data?.totalRows ?? 0;
+    const items = useMemo(() => getKnowledgeRows(data), [data]);
+    const total = getKnowledgeTotal(data);
+    const isEntitlementBlocked =
+      error?.statusCode === RESPONSE_CODES.PAYMENT_REQUIRED &&
+      error?.upgrade_required;
+    const entitlementMessage =
+      error?.message ||
+      error?.detail ||
+      error?.result ||
+      "This feature requires an EE license key.";
 
     // Sync hasData on data changes (onSuccess may not fire with keepPreviousData)
-    useMemo(() => {
+    useEffect(() => {
       if (data !== undefined) {
-        const rows = data?.tableData ?? [];
+        const rows = getKnowledgeRows(data);
         const hasSearchQuery = !!debouncedSearchQuery;
         setHasData(rows.length > 0 || hasSearchQuery);
       }
     }, [data, debouncedSearchQuery, setHasData]);
+
+    useEffect(() => {
+      if (isEntitlementBlocked) {
+        setHasData(true);
+      }
+    }, [isEntitlementBlocked, setHasData]);
 
     const selectedItems = useMemo(
       () =>
@@ -296,6 +321,7 @@ const KnowledgeBaseData = React.forwardRef(
                 <Button
                   variant="contained"
                   color="primary"
+                  disabled={isEntitlementBlocked}
                   onClick={() => {
                     if (
                       RolePermission.KNOWLEDGE_BASE[PERMISSIONS.UPDATE][role]
@@ -311,6 +337,12 @@ const KnowledgeBaseData = React.forwardRef(
           </Box>
         </Box>
 
+        {isEntitlementBlocked && (
+          <Alert severity="warning" sx={{ mb: 1 }}>
+            {entitlementMessage}
+          </Alert>
+        )}
+
         <DataTable
           columns={columns}
           data={items}
@@ -321,7 +353,11 @@ const KnowledgeBaseData = React.forwardRef(
           onRowClick={handleRowClick}
           getRowId={(row) => row.id}
           enableSelection
-          emptyMessage="No knowledge bases found"
+          emptyMessage={
+            isEntitlementBlocked
+              ? "Knowledge Base requires an EE license key"
+              : "No knowledge bases found"
+          }
         />
 
         <DataTablePagination

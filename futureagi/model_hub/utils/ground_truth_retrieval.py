@@ -1,335 +1,176 @@
-"""
-Ground truth embedding and retrieval service.
+"""Pure helpers for GT runtime gating and prompt formatting."""
 
-Handles:
-- Text preparation for embedding (from ground truth rows + role mapping)
-- Embedding generation via the model serving client
-- Cosine similarity search for retrieving similar examples
-- Few-shot prompt formatting
-"""
+from __future__ import annotations
 
-import numpy as np
+from typing import Any, Iterator
+
 import structlog
+
+from model_hub.utils.eval_input_validation import is_empty_value
 
 logger = structlog.get_logger(__name__)
 
 
-# =========================================================================
-# Text Preparation
-# =========================================================================
+# Appended to the judge's system prompt when GT exemplars are attached.
+# The "## Reference example N" marker matches what build_ground_truth_blocks emits.
+GT_CALIBRATION_INSTRUCTION = (
+    "Reference examples appear in the user message under "
+    "'## Reference example N'. Treat them only as calibration for your "
+    "reasoning and decision policy. Your final output MUST conform to the "
+    "required output format; never copy literal output values, scores, or "
+    "labels from the examples."
+)
 
 
-def prepare_embedding_text(row: dict, role_mapping: dict | None) -> str:
+def has_usable_inputs_for_gt(
+    variable_mapping: dict[str, Any] | None,
+    runtime_inputs: dict[str, Any] | None,
+) -> bool:
+    """Decide whether GT retrieval is worth running.
+
+    Returns ``True`` only if at least one template variable is mapped to
+    a GT column AND its runtime value is non-empty. The runtime dict can
+    be keyed by the template variable name (canonical) or the GT column
+    name (legacy callers). Both are accepted so the gate doesn't mis-skip.
     """
-    Build the text to embed for a ground truth row.
+    if not variable_mapping:
+        return False
+    if not runtime_inputs or not isinstance(runtime_inputs, dict):
+        return False
+    for tmpl_var, col in variable_mapping.items():
+        if not is_empty_value(runtime_inputs.get(tmpl_var)):
+            return True
+        targets = col if isinstance(col, list) else [col]
+        for target in targets:
+            if target and not is_empty_value(runtime_inputs.get(target)):
+                return True
+    return False
 
-    Prioritizes role-mapped columns (input + expected_output) since that's
-    what we match against at eval time. Excludes score/reasoning (metadata
-    about the judgment, not the content).
 
-    Falls back to concatenating all columns if no role mapping.
+def get_label_columns(role_mapping: dict | None) -> tuple[str, str]:
+    """Return ``(output_column, explanation_column)`` from ``role_mapping``.
+
+    Canonical keys are ``output`` and ``explanation``; legacy stored
+    data may use ``expected_output`` / ``reasoning`` / ``reason`` which
+    we accept for back-compat. Either may be ``""`` when not configured.
     """
-    if role_mapping:
-        parts = []
-        for role in ("input", "expected_output"):
-            col = role_mapping.get(role)
-            if col and col in row:
-                val = row[col]
-                if val is not None and str(val).strip():
-                    parts.append(f"{role}: {val}")
-        if parts:
-            return "\n".join(parts)
+    if not isinstance(role_mapping, dict):
+        return "", ""
 
-    # Fallback: concatenate all columns
-    parts = []
-    for key, value in row.items():
-        if value is not None and str(value).strip():
-            parts.append(f"{key}: {value}")
-    return "\n".join(parts)
-
-
-# =========================================================================
-# Embedding Generation
-# =========================================================================
-
-
-def generate_embedding(text: str) -> list[float]:
-    """
-    Generate an embedding vector for the given text using the serving client.
-    Returns a list of floats.
-    """
-    from agentic_eval.core.embeddings.serving_client import get_serving_client
-
-    client = get_serving_client()
-    embedding = client.embed_text(text)
-    return embedding
-
-
-def generate_embeddings_batch(
-    texts: list[str], batch_size: int = 32
-) -> list[list[float]]:
-    """
-    Generate embeddings for a batch of texts.
-    Processes in chunks to avoid overwhelming the serving client.
-    """
-    from agentic_eval.core.embeddings.serving_client import get_serving_client
-
-    client = get_serving_client()
-    all_embeddings = []
-
-    for i in range(0, len(texts), batch_size):
-        batch = texts[i : i + batch_size]
-        # embed_text accepts list[str] and returns embeddings
-        # For batch, we call individually to match the API
-        for text in batch:
-            try:
-                emb = client.embed_text(text)
-                all_embeddings.append(emb)
-            except Exception as e:
-                logger.warning("embedding_failed_for_row", error=str(e), batch_offset=i)
-                all_embeddings.append(None)
-
-    return all_embeddings
-
-
-# =========================================================================
-# Similarity Search
-# =========================================================================
-
-
-def cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
-    """Compute cosine similarity between two vectors."""
-    a = np.array(vec_a, dtype=np.float32)
-    b = np.array(vec_b, dtype=np.float32)
-    dot = np.dot(a, b)
-    norm_a = np.linalg.norm(a)
-    norm_b = np.linalg.norm(b)
-    if norm_a == 0 or norm_b == 0:
-        return 0.0
-    return float(dot / (norm_a * norm_b))
-
-
-def retrieve_similar_examples(
-    ground_truth_id: str,
-    query_embedding: list[float],
-    max_examples: int = 3,
-    similarity_threshold: float = 0.7,
-) -> list[dict]:
-    """
-    Retrieve top-K most similar ground truth rows by cosine similarity.
-
-    Returns list of dicts: [{"similarity": float, "row_data": dict, "row_index": int}, ...]
-    sorted by similarity descending.
-    """
-    from model_hub.models.evals_metric import EvalGroundTruthEmbedding
-
-    embeddings_qs = EvalGroundTruthEmbedding.objects.filter(
-        ground_truth_id=ground_truth_id,
-    ).values_list("embedding", "row_data", "row_index")
-
-    scored = []
-    for emb_vec, row_data, row_index in embeddings_qs:
-        sim = cosine_similarity(query_embedding, emb_vec)
-        if sim >= similarity_threshold:
-            scored.append(
-                {
-                    "similarity": round(sim, 4),
-                    "row_data": row_data,
-                    "row_index": row_index,
-                }
-            )
-
-    scored.sort(key=lambda x: x["similarity"], reverse=True)
-    return scored[:max_examples]
-
-
-# =========================================================================
-# Ground Truth Loading (for eval execution)
-# =========================================================================
-
-
-def load_ground_truth_config(eval_template) -> dict | None:
-    """
-    Load ground truth configuration from an eval template.
-    Returns the ground_truth config dict, or None if not configured/enabled.
-    """
-    config = eval_template.config or {}
-    gt_config = config.get("ground_truth")
-    if not gt_config or not gt_config.get("enabled"):
-        return None
-    if not gt_config.get("ground_truth_id"):
-        return None
-    return gt_config
-
-
-def get_ground_truth_few_shot_examples(
-    gt_config: dict,
-    current_input: dict,
-) -> list[dict]:
-    """
-    For LLM-as-a-Judge: Retrieve similar ground truth examples for few-shot injection.
-
-    Args:
-        gt_config: The ground_truth config from eval_template.config
-        current_input: The current eval input variables dict
-
-    Returns:
-        List of row_data dicts (the actual ground truth examples)
-    """
-    from model_hub.models.evals_metric import EvalGroundTruth
-
-    gt_id = gt_config.get("ground_truth_id")
-    max_examples = gt_config.get("max_examples", 3)
-    threshold = gt_config.get("similarity_threshold", 0.7)
-
-    try:
-        gt = EvalGroundTruth.objects.get(id=gt_id, deleted=False)
-    except EvalGroundTruth.DoesNotExist:
-        logger.warning("ground_truth_not_found", gt_id=gt_id)
-        return []
-
-    if gt.embedding_status != "completed":
-        logger.warning(
-            "ground_truth_embeddings_not_ready", gt_id=gt_id, status=gt.embedding_status
-        )
-        return []
-
-    # Build query text from current eval input
-    query_parts = []
-    for key in ("input", "output", "expected"):
-        if key in current_input and current_input[key]:
-            query_parts.append(str(current_input[key]))
-    if not query_parts:
-        # Fallback: concatenate all input values
-        for value in current_input.values():
-            if value and str(value).strip():
-                query_parts.append(str(value))
-
-    if not query_parts:
-        return []
-
-    query_text = "\n".join(query_parts)
-
-    try:
-        query_embedding = generate_embedding(query_text)
-    except Exception as e:
-        logger.warning("query_embedding_failed", error=str(e))
-        return []
-
-    results = retrieve_similar_examples(
-        ground_truth_id=gt_id,
-        query_embedding=query_embedding,
-        max_examples=max_examples,
-        similarity_threshold=threshold,
-    )
-
-    return [r["row_data"] for r in results]
-
-
-# =========================================================================
-# Few-Shot Prompt Formatting
-# =========================================================================
-
-
-def format_few_shot_examples(
-    examples: list[dict],
-    role_mapping: dict | None,
-    injection_format: str = "structured",
-) -> str:
-    """
-    Format ground truth examples as a text block for injection into eval prompts.
-
-    Args:
-        examples: List of row_data dicts
-        role_mapping: Maps semantic roles to column names
-        injection_format: "structured", "conversational", or "xml"
-
-    Returns:
-        Formatted string to inject into the prompt
-    """
-    if not examples:
+    def _first_str(*candidates: Any) -> str:
+        for candidate in candidates:
+            if isinstance(candidate, list) and candidate:
+                candidate = candidate[0]
+            if isinstance(candidate, str) and candidate:
+                return candidate
         return ""
 
-    if injection_format == "xml":
-        return _format_xml(examples, role_mapping)
-    elif injection_format == "conversational":
-        return _format_conversational(examples, role_mapping)
-    else:
-        return _format_structured(examples, role_mapping)
+    output = _first_str(role_mapping.get("output"), role_mapping.get("expected_output"))
+    explanation = _first_str(
+        role_mapping.get("explanation"),
+        role_mapping.get("reasoning"),
+        role_mapping.get("reason"),
+    )
+    return output, explanation
 
 
-def _format_structured(examples: list[dict], role_mapping: dict | None) -> str:
-    lines = [
-        "--- Reference Examples (scored by human experts) ---",
-        "",
-    ]
+def detect_input_column_types(
+    examples: list[dict],
+    variable_mapping: dict | None,
+) -> dict[str, str]:
+    """Return ``{gt_column: modality}`` for the mapped input columns.
 
+    Modality detection is expensive (sniff fallback can hit the network),
+    so we run it once over the first non-empty example and reuse the
+    result. All rows in a GT dataset share the same column types, so a
+    single pass is correct.
+    """
+    if not examples:
+        return {}
+    from agentic_eval.core.utils.llm_payloads import detect_and_build_media_blocks
+
+    sample = examples[0]
+    sample_keys = sorted({
+        col for _var, col, _val in _iter_inputs(sample, variable_mapping)
+    })
+    sample_inputs = {k: sample.get(k) for k in sample_keys if sample.get(k)}
+    if not sample_inputs:
+        return {}
+    try:
+        _, key_types = detect_and_build_media_blocks(
+            inputs=sample_inputs,
+            required_keys=list(sample_inputs.keys()),
+        )
+    except Exception as exc:
+        logger.debug("input_column_type_detection_failed", error=str(exc))
+        return {}
+    return {col: modality for col, modality in key_types.items() if modality}
+
+
+def build_ground_truth_blocks(
+    examples: list[dict],
+    *,
+    variable_mapping: dict | None,
+    role_mapping: dict | None,
+    column_types: dict[str, str] | None = None,
+) -> list[dict]:
+    """Render retrieved GT rows as labelled per-example content blocks.
+
+    ``column_types`` is the ``{gt_column: modality}`` map captured from CH
+    metadata at retrieval time. When supplied the per-call modality sniff
+    is skipped; when omitted (legacy vectors without ``input_type``
+    stamped) the sniff fallback runs.
+    """
+    if not examples:
+        return []
+
+    from agentic_eval.core.utils.llm_payloads import build_media_content_block
+
+    output_col, explanation_col = get_label_columns(role_mapping)
+    key_types = column_types or detect_input_column_types(
+        examples, variable_mapping
+    )
+
+    # Per-example labelled framing. Header matches GT_CALIBRATION_INSTRUCTION.
+    blocks: list[dict] = []
     for i, example in enumerate(examples, 1):
-        lines.append(f"Example {i}:")
-        if role_mapping:
-            for role, col in role_mapping.items():
-                if col in example:
-                    label = role.replace("_", " ").title()
-                    val = example[col]
-                    lines.append(f"  {label}: {val}")
-        else:
-            for key, val in example.items():
-                lines.append(f"  {key}: {val}")
-        lines.append("")
-
-    lines.append("--- End Reference Examples ---")
-    return "\n".join(lines)
-
-
-def _format_conversational(examples: list[dict], role_mapping: dict | None) -> str:
-    lines = []
-    for i, example in enumerate(examples, 1):
-        # Build the "case" part
-        case_parts = []
-        answer_parts = []
-        if role_mapping:
-            for role, col in role_mapping.items():
-                if col in example:
-                    if role in ("input", "expected_output"):
-                        case_parts.append(
-                            f"{role.replace('_', ' ').title()}: {example[col]}"
-                        )
-                    else:
-                        answer_parts.append(
-                            f"{role.replace('_', ' ').title()}: {example[col]}"
-                        )
-        else:
-            for key, val in example.items():
-                case_parts.append(f"{key}: {val}")
-
-        if case_parts:
-            lines.append(f"Example {i}: " + " | ".join(case_parts))
-        if answer_parts:
-            lines.append("Expert judgment: " + " | ".join(answer_parts))
-        lines.append("")
-
-    return "\n".join(lines)
+        blocks.append({"type": "text", "text": f"## Reference example {i}"})
+        blocks.append({"type": "text", "text": "Inputs:"})
+        for tmpl_var, col, val in _iter_inputs(example, variable_mapping):
+            modality = key_types.get(col)
+            if modality in {"image", "audio"} and val:
+                blocks.append({"type": "text", "text": f"- {tmpl_var}:"})
+                try:
+                    blocks.extend(
+                        build_media_content_block(val, modality, tmpl_var)
+                    )
+                except Exception:
+                    blocks.append({"type": "text", "text": f"  {val}"})
+            else:
+                blocks.append({"type": "text", "text": f"- {tmpl_var}: {val}"})
+        if output_col and output_col in example:
+            blocks.append({
+                "type": "text",
+                "text": f"Expected output: {example[output_col]}",
+            })
+        if explanation_col and explanation_col in example:
+            blocks.append({
+                "type": "text",
+                "text": f"Explanation: {example[explanation_col]}",
+            })
+    return blocks
 
 
-def _format_xml(examples: list[dict], role_mapping: dict | None) -> str:
-    lines = ["<reference_examples>"]
-
-    for example in examples:
-        score = ""
-        if role_mapping and "score" in role_mapping:
-            score_col = role_mapping["score"]
-            if score_col in example:
-                score = f' score="{example[score_col]}"'
-
-        lines.append(f"  <example{score}>")
-        if role_mapping:
-            for role, col in role_mapping.items():
-                if col in example and role != "score":
-                    lines.append(f"    <{role}>{example[col]}</{role}>")
-        else:
-            for key, val in example.items():
-                lines.append(f"    <{key}>{val}</{key}>")
-        lines.append("  </example>")
-
-    lines.append("</reference_examples>")
-    return "\n".join(lines)
+def _iter_inputs(
+    example: dict, variable_mapping: dict | None
+) -> Iterator[tuple[str, str, Any]]:
+    """Yield ``(template_variable, gt_column, value)`` for the input side."""
+    if not variable_mapping:
+        for key, val in (example or {}).items():
+            yield key, key, val
+        return
+    for tmpl_var, col in variable_mapping.items():
+        targets = col if isinstance(col, list) else [col]
+        for target in targets:
+            if target in example:
+                yield tmpl_var, target, example[target]

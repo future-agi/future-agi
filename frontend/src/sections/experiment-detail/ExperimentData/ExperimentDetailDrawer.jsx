@@ -1,4 +1,4 @@
-import { Drawer } from "@mui/material";
+import { Alert, Box, Button, Drawer } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useEffect, useState } from "react";
 import ExperimentDetailDrawerContent from "./ExperimentDetailDrawerContent";
@@ -6,6 +6,8 @@ import { useMutation } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { useParams } from "react-router";
 import { enqueueSnackbar } from "notistack";
+import { readLegacyExperimentRow } from "./legacy_experiment_row_read";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 
 // const ExperimentDetailSection = ({ col, individualCols, row, columnConfigs, index, refreshGrid }) => {
 //   const evalsData = useMemo(() => {
@@ -521,41 +523,35 @@ const ExperimentDetailDrawer = ({
     );
   };
 
-  const { mutate: setNextItem } = useMutation({
-    mutationFn: () => {
-      return axios.get(
-        endpoints.develop.experiment.rowDetail(experimentId, nextId),
-      );
-    },
-    onSuccess: (data) => {
-      if (data?.data?.result?.nextRowIds) {
-        const newIds = data?.data?.result?.nextRowIds;
-        setNextId(newIds?.length > 0 ? newIds[0] : null);
-        setAllRows((prev) => {
-          const mergedMap = new Map();
-
-          prev.forEach((row) => {
-            const id = row?.rowIndex;
-            if (id !== undefined) {
-              mergedMap.set(id, row);
-            }
-          });
-
-          const totalLength = allRows?.length;
-
-          newIds.forEach((row, index) => {
-            const id = row;
-            if (id !== undefined) {
-              mergedMap.set(row, {
-                rowIndex: totalLength + index,
-                data: { rowId: row },
-              });
-            }
-          });
-
-          return Array.from(mergedMap.values());
-        });
-      }
+  const {
+    mutate: setNextItem,
+    isPending: isLoadingNextRows,
+    isError: isNextRowsError,
+    error: nextRowsError,
+  } = useMutation({
+    meta: { errorHandled: true },
+    mutationFn: (rowId) =>
+      readLegacyExperimentRow(
+        ({ signal, timeout }) =>
+          axios.get(
+            endpoints.develop.experiment.rowDetail(experimentId, rowId),
+            { signal, timeout },
+          ),
+        rowId,
+      ),
+    retry: false,
+    onSuccess: (newIds) => {
+      setNextId(newIds.length > 0 ? newIds[0] : null);
+      setAllRows((prev) => {
+        const seenIds = new Set(prev.map((item) => String(item?.data?.rowId)));
+        const appended = newIds
+          .filter((rowId) => !seenIds.has(String(rowId)))
+          .map((rowId, index) => ({
+            rowIndex: prev.length + index,
+            data: { rowId },
+          }));
+        return [...prev, ...appended];
+      });
     },
   });
 
@@ -723,13 +719,13 @@ const ExperimentDetailDrawer = ({
   const handleFetchNextRow = () => {
     const nextIndex = row?.index + 1;
     const nextData = allRows.find((i) => i.rowIndex == nextIndex)?.data;
-    if (!nextId) {
-      setNextId(allRows[allRows?.length - 1]?.data?.rowId);
+    const continuationRowId =
+      nextId || allRows[allRows?.length - 1]?.data?.rowId;
+    if (!nextId && continuationRowId) setNextId(continuationRowId);
+    if (nextIndex >= allRows.length - 1 && continuationRowId) {
+      setNextItem(continuationRowId);
     }
-    if (nextIndex == allRows.length - 1) {
-      setNextItem(experimentId);
-    }
-    if (Object.entries(nextData).length == 1) {
+    if (nextData && Object.entries(nextData).length == 1) {
       // getCellData(payload);
       setIsApiLoading(true);
       getDiffData({
@@ -738,7 +734,7 @@ const ExperimentDetailDrawer = ({
         compare_column_ids: columnConfig
           ?.filter((i) => i?.originType == "experiment")
           .map((i) => i?.id),
-        row_ids: [nextId],
+        row_ids: [continuationRowId],
       });
       return;
     }
@@ -813,6 +809,33 @@ const ExperimentDetailDrawer = ({
         },
       }}
     >
+      {isNextRowsError && (
+        <Box sx={{ px: 2, pt: 2 }}>
+          <Alert
+            severity="error"
+            action={
+              <Button
+                color="inherit"
+                size="small"
+                onClick={() => {
+                  const retryRowId =
+                    nextId || allRows[allRows?.length - 1]?.data?.rowId;
+                  if (retryRowId) setNextItem(retryRowId);
+                }}
+                disabled={isLoadingNextRows}
+              >
+                Retry
+              </Button>
+            }
+          >
+            {getSafeActionErrorMessage(
+              nextRowsError,
+              "More experiment rows could not be loaded.",
+            )}{" "}
+            The current row is still shown.
+          </Alert>
+        </Box>
+      )}
       <ExperimentDetailDrawerContent
         onClose={onClose}
         row={row}
@@ -825,7 +848,7 @@ const ExperimentDetailDrawer = ({
         prevRowId={prevRowId}
         handleFetchNextRow={handleFetchNextRow}
         handleFetchPrevRow={handleFetchPrevRow}
-        isPending={isApiLoading}
+        isPending={isApiLoading || isLoadingNextRows}
         // handleRefetchRowData={refetch}
         refreshGrid={refreshGrid}
         showDiffModeButton={showDiffModeButton}

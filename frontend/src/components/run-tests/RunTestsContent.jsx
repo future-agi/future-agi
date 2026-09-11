@@ -358,6 +358,7 @@ const RunTestsContent = ({
       limit: pageSize,
       search: debouncedSearchQuery,
       simulation_type: simulationType,
+      summary: true,
     };
     if (simulationType === SIMULATION_TYPE.PROMPT && promptTemplateId) {
       params.prompt_template_id = promptTemplateId;
@@ -506,13 +507,13 @@ const RunTestsContent = ({
         ),
       },
       {
-        id: "lastRunAt",
+        id: "last_run_at",
         accessorKey: "last_run_at",
         header: "Last Run",
         size: 150,
         enableSorting: false,
-        cell: ({ getValue }) => {
-          const v = getValue();
+        cell: ({ row }) => {
+          const v = row.original.last_run_at;
           return (
             <Typography
               variant="body2"

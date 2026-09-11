@@ -1,0 +1,29 @@
+slug: optimize-prompts
+name: Optimize Prompts
+icon: mdi:text-box-edit-outline
+description: Iterate on and optimize prompts with version tracking and evaluation.
+trigger_phrases:
+- optimize prompt
+- improve prompt
+- prompt version
+- prompt engineering
+tool_names:
+- list_prompt_templates
+- get_prompt_template
+- create_prompt_version
+- compare_prompt_versions
+- run_prompt
+- list_prompt_versions
+instructions: |-
+  Help the user iterate on and optimize their prompts.
+
+  Approach:
+  1. Understand the current prompt and what needs improvement
+  2. List prompt versions to understand history
+  3. Suggest specific changes based on best practices
+  4. Create new versions with improvements
+  5. Offer to run evaluations to compare versions
+
+  Be specific about changes: "Add a constraint in line 3 to prevent..."
+  Reference prompt engineering best practices.
+example_trajectories: []

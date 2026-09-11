@@ -30,15 +30,11 @@ from tracer.views.feed import (
     FeedTrendsView,
     LinearTeamsView,
 )
-from tracer.views.http_otlp import OTLPTraceHTTPView
 from tracer.views.imagine_analysis import ImagineAnalysisView
 from tracer.views.monitor import UserAlertMonitorLogView, UserAlertMonitorView
-from tracer.views.observability_provider import (
-    ObservabilityProviderViewSet,
-    WebhookHandlerView,
-)
+from tracer.views.observability_provider import ObservabilityProviderViewSet
 from tracer.views.observation_span import ObservationSpanView
-from tracer.views.otlp import OTLPHealthView, OTLPTraceView
+from tracer.views.otlp import OTLPHealthView
 from tracer.views.project import ProjectView
 from tracer.views.project_version import ProjectVersionView
 from tracer.views.replay_session import ReplaySessionView
@@ -79,15 +75,15 @@ urlpatterns = [
     # Agent graph — explicit path because @action doesn't register reliably with Granian reload
     path(
         "trace/agent_graph/",
-        TraceView.as_view({"get": "agent_graph"}),
+        TraceView.as_view({"get": "agent_graph", "post": "agent_graph"}),
         name="trace-agent-graph",
     ),
-    # Standard OTLP endpoints
-    path("v1/traces", OTLPTraceView.as_view(), name="otlp-traces"),
-    path("v1/traces/", OTLPTraceView.as_view(), name="otlp-traces-slash"),
+    # Legacy OTLP endpoints — fi-collector is the primary OTLP ingestion path (June 2026; root-level routes in tfc/urls.py also migrated)
+    # path("v1/traces", OTLPTraceView.as_view(), name="otlp-traces"),
+    # path("v1/traces/", OTLPTraceView.as_view(), name="otlp-traces-slash"),
     path("v1/health", OTLPHealthView.as_view(), name="otlp-health"),
     # Legacy endpoint (deprecated, use v1/traces)
-    path("otlp/v1/traces", OTLPTraceHTTPView.as_view(), name="otel-traces-http-legacy"),
+    # path("otlp/v1/traces", OTLPTraceHTTPView.as_view(), name="otel-traces-http-legacy"),
     path("bulk-annotation/", BulkAnnotationView.as_view(), name="bulk-annotations"),
     path(
         "get-annotation-labels/",
@@ -166,11 +162,6 @@ urlpatterns = [
         "feed/integrations/linear/teams/",
         LinearTeamsView.as_view(),
         name="feed-linear-teams",
-    ),
-    path(
-        "webhook/",
-        WebhookHandlerView.as_view(),
-        name="webhook-handler",
     ),
     # Dashboard widget nested routes
     path(

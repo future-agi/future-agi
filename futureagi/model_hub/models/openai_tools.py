@@ -3,6 +3,7 @@ import uuid
 from django.core.exceptions import ValidationError
 from django.core.validators import MinLengthValidator
 from django.db import models
+from django.db.models import Q
 
 from accounts.models.organization import Organization
 from accounts.models.workspace import Workspace
@@ -42,9 +43,7 @@ def validate_config(value):
 
 class Tools(BaseModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    name = models.CharField(
-        max_length=255, unique=True, validators=[MinLengthValidator(1)]
-    )
+    name = models.CharField(max_length=255, validators=[MinLengthValidator(1)])
     description = models.TextField(max_length=255, validators=[MinLengthValidator(1)])
     config = models.JSONField()
     organization = models.ForeignKey(
@@ -67,3 +66,12 @@ class Tools(BaseModel):
 
     def __str__(self):
         return self.name
+
+    class Meta(BaseModel.Meta):
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "workspace", "name"],
+                condition=Q(deleted=False),
+                name="unique_active_tool_name_workspace",
+            )
+        ]

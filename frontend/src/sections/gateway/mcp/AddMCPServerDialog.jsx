@@ -46,7 +46,7 @@ const AddMCPServerDialog = ({ open, onClose, gatewayId, editServer }) => {
       const cfg = editServer.config || {};
       const auth = cfg.auth || {};
       setForm({
-        server_id: editServer.server_id || "",
+        server_id: editServer.serverId || editServer.server_id || "",
         url: cfg.url || "",
         transport: cfg.transport || "http",
         authType: auth.type || "none",

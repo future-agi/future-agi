@@ -13,11 +13,6 @@ import { useAuthContext } from "src/auth/hooks";
 const TabOptions = [
   { label: "Data", value: "data", icons: "/assets/icons/summary/database.svg" },
   {
-    label: "Annotations",
-    value: "annotations",
-    icons: "/assets/icons/ic_annotaion.svg",
-  },
-  {
     label: "Experiments",
     value: "experiments",
     icons: "/assets/icons/navbar/ic_experiment.svg",
@@ -135,7 +130,6 @@ const DevelopBar = ({
             onChange={(e, value) => {
               setCurrentTab(value);
               setRowSelected([]);
-              if (value === "annotations") trackEvent(Events.annViewed);
               // if (value === "optimization") trackEvent(Events.optViewed);
               if (value === "experiments") trackEvent(Events.expViewed);
               if (value === "summary") trackEvent(Events.summaryViewed);
@@ -158,10 +152,6 @@ const DevelopBar = ({
             }}
           >
             {TabOptions.map((tab) => {
-              // Hide deprecated Annotations tab (replaced by unified Scores)
-              if (tab.value === "annotations") {
-                return null;
-              }
               // If hideScenarioFeatures is true, only show the Data tab
               if (hideScenarioFeatures && tab.value !== "data") {
                 return null;
@@ -319,7 +309,7 @@ DevelopBar.propTypes = {
   setCurrentTab: PropTypes.func,
   rowSelected: PropTypes.array.isRequired,
   setRowSelected: PropTypes.func.isRequired,
-  rightSection: PropTypes.func.isRequired,
+  rightSection: PropTypes.node,
   tabRef: PropTypes.object.isRequired,
   hideScenarioFeatures: PropTypes.bool,
 };

@@ -1374,3 +1374,134 @@ func TestClose(t *testing.T) {
 		t.Errorf("Close() returned error: %v", err)
 	}
 }
+
+// ─────────────────────────────────────────────────────────────
+// max_tokens → max_completion_tokens normalization
+// ─────────────────────────────────────────────────────────────
+
+func TestSupportsMaxCompletionTokens(t *testing.T) {
+	tests := []struct {
+		apiVersion string
+		want       bool
+	}{
+		{"2024-10-21", true}, // current default
+		{"2024-09-01", true}, // first supporting version
+		{"2025-01-01-preview", true},
+		{"preview", true}, // newer non-date labels sort above the cutoff
+		{"v1", true},
+		{"2024-08-01-preview", false}, // predates support
+		{"2024-06-01", false},
+		{"2023-05-15", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		if got := supportsMaxCompletionTokens(tt.apiVersion); got != tt.want {
+			t.Errorf("supportsMaxCompletionTokens(%q) = %v, want %v", tt.apiVersion, got, tt.want)
+		}
+	}
+}
+
+func intPtr(i int) *int { return &i }
+
+func TestNormalizeMaxTokens(t *testing.T) {
+	tests := []struct {
+		name       string
+		apiVersion string
+		req        models.ChatCompletionRequest
+		wantMCT    any // nil = key absent from the marshaled body
+		wantMax    any
+	}{
+		{
+			// Deployment names are customer-chosen, so this is model-agnostic.
+			name:       "supported api-version rewrites max_tokens",
+			apiVersion: "2024-10-21",
+			req:        models.ChatCompletionRequest{Model: "my-o3-deployment", MaxTokens: intPtr(64)},
+			wantMCT:    float64(64),
+			wantMax:    nil,
+		},
+		{
+			name:       "both set keeps max_completion_tokens and drops max_tokens",
+			apiVersion: "2024-10-21",
+			req:        models.ChatCompletionRequest{Model: "d", MaxTokens: intPtr(64), MaxCompletionTokens: intPtr(128)},
+			wantMCT:    float64(128),
+			wantMax:    nil,
+		},
+		{
+			// Older api-versions reject max_completion_tokens outright.
+			name:       "unsupported api-version passes max_tokens through untouched",
+			apiVersion: "2024-06-01",
+			req:        models.ChatCompletionRequest{Model: "d", MaxTokens: intPtr(64)},
+			wantMCT:    nil,
+			wantMax:    float64(64),
+		},
+		{
+			name:       "neither set adds neither",
+			apiVersion: "2024-10-21",
+			req:        models.ChatCompletionRequest{Model: "d"},
+			wantMCT:    nil,
+			wantMax:    nil,
+		},
+	}
+
+	for _, tt := range tests {
+		for _, streaming := range []bool{false, true} {
+			name := tt.name
+			if streaming {
+				name += " (streaming)"
+			}
+			t.Run(name, func(t *testing.T) {
+				var got map[string]any
+				ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+						t.Errorf("decoding request body: %v", err)
+					}
+					if streaming {
+						w.Header().Set("Content-Type", "text/event-stream")
+						_, _ = w.Write([]byte("data: [DONE]\n\n"))
+						return
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(models.ChatCompletionResponse{ID: "chatcmpl-1"})
+				}))
+				defer ts.Close()
+
+				p := newTestProvider(t, ts.URL)
+				p.apiVersion = tt.apiVersion
+
+				req := tt.req
+				req.Messages = []models.Message{{Role: "user", Content: json.RawMessage(`"hi"`)}}
+
+				if streaming {
+					chunks, errs := p.StreamChatCompletion(context.Background(), &req)
+					for chunks != nil || errs != nil {
+						select {
+						case _, ok := <-chunks:
+							if !ok {
+								chunks = nil
+							}
+						case _, ok := <-errs:
+							if !ok {
+								errs = nil
+							}
+						}
+					}
+				} else if _, err := p.ChatCompletion(context.Background(), &req); err != nil {
+					t.Fatalf("ChatCompletion() error: %v", err)
+				}
+
+				if got["max_completion_tokens"] != tt.wantMCT {
+					t.Errorf("max_completion_tokens = %v, want %v", got["max_completion_tokens"], tt.wantMCT)
+				}
+				if got["max_tokens"] != tt.wantMax {
+					t.Errorf("max_tokens = %v, want %v", got["max_tokens"], tt.wantMax)
+				}
+
+				// The caller's request must survive untouched — the cache plugin
+				// hashes it, so mutating it would poison cache keys.
+				if tt.req.MaxTokens != nil && req.MaxTokens == nil {
+					t.Error("caller's request was mutated: MaxTokens cleared")
+				}
+			})
+		}
+	}
+}

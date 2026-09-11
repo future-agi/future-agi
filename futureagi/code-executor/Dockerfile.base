@@ -1,0 +1,31 @@
+# Code-executor dependency base. System packages, the nsjail build, and the
+# sandbox Python libs — no app source. Rebuilt only when this file changes;
+# published as futureagi/code-executor-base:deps-<sha>.
+FROM python:3.11-slim-bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    protobuf-compiler libprotobuf-dev libnl-3-dev libnl-route-3-dev \
+    pkg-config bison flex git make g++ \
+    nodejs \
+    libprotobuf32 libnl-3-200 libnl-route-3-200 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN cd /tmp \
+    && git clone --depth 1 --branch 3.4 https://github.com/google/nsjail.git \
+    && cd nsjail \
+    && make -j$(nproc) \
+    && cp nsjail /usr/local/bin/ \
+    && cd / && rm -rf /tmp/nsjail
+
+RUN apt-get purge -y protobuf-compiler libprotobuf-dev libnl-3-dev libnl-route-3-dev \
+    pkg-config bison flex git make g++ \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir \
+    numpy pandas pillow scipy scikit-learn requests httpx \
+    nltk rouge-score Levenshtein \
+    && pip install --no-cache-dir falcon gunicorn
+
+RUN mkdir -p /sandbox/tmp /sandbox/python-libs /sandbox/config \
+    && chmod 755 /sandbox/tmp

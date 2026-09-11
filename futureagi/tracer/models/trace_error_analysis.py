@@ -5,10 +5,15 @@ from django.db import models
 from accounts.models.user import User
 from tfc.utils.base_model import BaseModel
 from tracer.models.custom_eval_config import CustomEvalConfig
-from tracer.models.observation_span import EvalLogger, ObservationSpan
+from tracer.models.observation_span import (
+    EvalLogger,
+    EvalTargetType,
+    ObservationSpan,
+)
 from tracer.models.project import Project
 from tracer.models.trace import Trace
 from tracer.models.trace_scan import TraceScanIssue
+from tracer.models.trace_session import TraceSession
 
 
 class Priority(models.TextChoices):
@@ -28,6 +33,7 @@ class TraceErrorAnalysis(BaseModel):
         related_name="error_analyses",
         null=False,
         blank=False,
+        db_constraint=False,  # CH scale: SCALE_ARCHITECTURE.md §9a
     )
     project = models.ForeignKey(
         Project,
@@ -181,6 +187,18 @@ class TraceErrorGroup(BaseModel):
         choices=ClusterSource.choices,
         default=ClusterSource.SCANNER,
     )
+    # The eval target this cluster groups (span / trace / session). Only
+    # meaningful for source=eval clusters — null for scanner clusters. Lets
+    # the RCA agent, manifest, and feed UI name the unit of failure without
+    # joining back through the junction's eval_logger rows. The three targets
+    # are clustered into separate centroid spaces, so a cluster is homogeneous.
+    eval_target_type = models.CharField(
+        max_length=20,
+        choices=EvalTargetType.choices,
+        null=True,
+        blank=True,
+        help_text="span/trace/session for eval clusters; null for scanner",
+    )
     issue_group = models.CharField(
         max_length=100,
         null=True,
@@ -224,6 +242,7 @@ class TraceErrorGroup(BaseModel):
         blank=True,
         related_name="success_for_groups",
         help_text="Precomputed nearest success trace",
+        db_constraint=False,  # CH scale: SCALE_ARCHITECTURE.md §9a
     )
 
     # --- Existing fields (backwards compat) ---
@@ -264,6 +283,53 @@ class TraceErrorGroup(BaseModel):
         null=True,
         blank=True,
         help_text="External issue identifier (e.g. TH-123, #456)",
+    )
+
+    # --- Cluster RCA agent result (cached headline) ---
+    # Populated when the cluster-rca Falcon skill finishes a run. The headline
+    # card reads these so it shows the last synthesis without re-running; the
+    # Analyze tab seeds a Falcon follow-up conversation from them.
+    rca_synthesis = models.TextField(
+        null=True,
+        blank=True,
+        help_text="Agent's one-paragraph root-cause synthesis (last run)",
+    )
+    rca_fix = models.TextField(
+        null=True,
+        blank=True,
+        help_text="Agent's proposed fix (last run)",
+    )
+    rca_confidence = models.CharField(
+        max_length=1,
+        null=True,
+        blank=True,
+        help_text="Synthesis confidence: H / M / L",
+    )
+    rca_evidence_trace_ids = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Trace IDs the synthesis cited as evidence",
+    )
+    rca_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the last cluster-RCA run completed",
+    )
+    rca_failures_at_run = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="error_count snapshot at run time — drives the stale-result nudge",
+    )
+    rca_trace = models.JSONField(
+        null=True,
+        blank=True,
+        default=None,
+        help_text=(
+            "The agent's investigation trail (reasoning + tool steps + synthesis) "
+            "from the last run, so the Analyze tab can replay it on reload. Null "
+            "until analyzed. The Falcon follow-up conversation is NOT persisted — "
+            "only the agent's own run."
+        ),
     )
 
     class Meta:
@@ -447,6 +513,7 @@ class ErrorClusterTraces(BaseModel):
         related_name="error_cluster_traces",
         null=True,
         blank=True,
+        db_constraint=False,  # CH scale: SCALE_ARCHITECTURE.md §9a
     )
 
     span = models.ForeignKey(
@@ -455,6 +522,23 @@ class ErrorClusterTraces(BaseModel):
         related_name="error_cluster_spans",
         null=True,
         blank=True,
+        db_constraint=False,  # CH scale: SCALE_ARCHITECTURE.md §9a
+    )
+    # Session-level eval clusters have no trace/span — the unit of failure is
+    # the session, which fans out to N traces. Such rows set trace_session and
+    # leave trace/span null; the RCA agent expands session -> member traces at
+    # read time for its blast radius. Null for every other membership kind
+    # (scanner, span-eval, trace-eval), which key off trace/span instead.
+    trace_session = models.ForeignKey(
+        TraceSession,
+        on_delete=models.CASCADE,
+        related_name="error_cluster_sessions",
+        null=True,
+        blank=True,
+        # Decoupled like trace/span above: post-flip sessions are stamped with
+        # no PG tracer_trace_session row, so a real FK would IntegrityError at
+        # COMMIT for net-new sessions (see 0082_decouple_trace_session_fk).
+        db_constraint=False,  # CH scale: SCALE_ARCHITECTURE.md §9a
     )
     cluster = models.ForeignKey(
         TraceErrorGroup,
@@ -484,12 +568,19 @@ class ErrorClusterTraces(BaseModel):
 
     class Meta:
         db_table = "tracer_error_cluster_traces"
-        unique_together = [["cluster", "trace", "span"]]
+        # Two independent uniqueness rules: trace/span membership (existing) and
+        # session membership (new). Postgres treats NULLs as distinct, so each
+        # constraint only bites the rows that actually populate its columns.
+        unique_together = [
+            ["cluster", "trace", "span"],
+            ["cluster", "trace_session"],
+        ]
         indexes = [
             models.Index(fields=["cluster", "trace"]),
             models.Index(fields=["cluster"]),
             models.Index(fields=["trace"]),
             models.Index(fields=["span"]),
+            models.Index(fields=["trace_session"]),
             models.Index(fields=["scan_issue"]),
             models.Index(fields=["eval_logger"]),
             models.Index(

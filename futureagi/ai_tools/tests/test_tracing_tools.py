@@ -24,6 +24,7 @@ def trace(tool_context, project):
 @pytest.fixture
 def trace_with_spans(trace):
     from tracer.models.observation_span import ObservationSpan
+    from tracer.tests._ch_seed import seed_ch_spans
 
     spans = []
     spans.append(
@@ -53,6 +54,7 @@ def trace_with_spans(trace):
             status="OK",
         )
     )
+    seed_ch_spans(spans)
     return trace, spans
 
 

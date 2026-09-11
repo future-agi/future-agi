@@ -1,4 +1,10 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, {
+  useState,
+  useEffect,
+  useMemo,
+  useRef,
+  useCallback,
+} from "react";
 import { flushSync } from "react-dom";
 import PropTypes from "prop-types";
 import {
@@ -12,9 +18,7 @@ import {
   MenuItem,
 } from "@mui/material";
 import { useNavigate, useParams, useLocation } from "react-router";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { enqueueSnackbar } from "notistack";
-import axios, { endpoints } from "src/utils/axios";
+import { useQueryClient } from "@tanstack/react-query";
 import Iconify from "src/components/iconify";
 // palette import removed — no longer used
 import { useUrlState } from "src/routes/hooks/use-url-state";
@@ -22,8 +26,6 @@ import { getStorage, setStorage } from "src/hooks/use-local-storage";
 import { ShareDialog } from "src/components/share-dialog";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import { useDebounce } from "src/hooks/use-debounce";
-import { objectCamelToSnake } from "src/utils/utils";
-import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 
 import { useProjectList, DOC_LINKS } from "./LLMTracing/common";
 import { resetTraceGridStore, resetSpanGridStore } from "./LLMTracing/states";
@@ -32,6 +34,10 @@ import ConfigureProject from "../project-detail/ConfigureProject";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { ObserveIconButton } from "./SharedComponents";
 import { useGetProjectDetails } from "src/api/project/project-detail";
+import {
+  OBSERVE_LIST_REFRESH_EVENT,
+  OBSERVE_PAGE_CHANGED_EVENT,
+} from "./observeEvents";
 
 // CustomBackButton removed — replaced with inline Box button
 
@@ -53,26 +59,20 @@ const ProjectDropdownButton = styled(Button)(({ theme }) => ({
   },
 }));
 
-const ObserveHeader = ({
-  text,
-  filterTrace,
-  filterSpan,
-  selectedTab,
-  filterSession,
-  refreshData,
-  resetFilters,
-}) => {
+const ObserveHeader = ({ text, refreshData, resetFilters }) => {
   const [openConfigDialog, setOpenConfigDialog] = useState(false);
   const queryClient = useQueryClient();
   const [openShareUrl, setOpenShareUrl] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState(() => new Date());
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const [isAggregationRefreshing, setIsAggregationRefreshing] = useState(false);
+  const aggregationRefreshSourcesRef = useRef(new Set());
   const [autoRefresh, _setAutoRefresh] = useState(
     () => getStorage("autoRefresh") ?? false,
   );
-  const setAutoRefresh = (value) => {
+  const setAutoRefresh = useCallback((value) => {
     _setAutoRefresh(value);
     setStorage("autoRefresh", value);
-  };
+  }, []);
   const [excludeSimulationCalls, setExcludeSimulationCalls] = useUrlState(
     "remove_simulation_calls",
     false,
@@ -114,8 +114,15 @@ const ObserveHeader = ({
     let intervalId;
     if (autoRefresh) {
       intervalId = setInterval(() => {
-        refreshData?.();
-        setLastUpdated(new Date());
+        // Keep the current rows painted while their same-query replacement is
+        // fetched. Calling the parent refresh callback directly bypasses each
+        // grid's preserve-rows path and makes the whole table flash black.
+        // Exact aggregations remain an explicit reload-only operation.
+        window.dispatchEvent(
+          new CustomEvent(OBSERVE_LIST_REFRESH_EVENT, {
+            detail: { observeId },
+          }),
+        );
       }, 10000);
     }
     return () => {
@@ -123,7 +130,68 @@ const ObserveHeader = ({
         clearInterval(intervalId);
       }
     };
-  }, [autoRefresh, refreshData]);
+  }, [autoRefresh, observeId]);
+
+  useEffect(() => {
+    const handlePageChanged = (event) => {
+      if (Number(event?.detail?.page) > 1) setAutoRefresh(false);
+    };
+    window.addEventListener(OBSERVE_PAGE_CHANGED_EVENT, handlePageChanged);
+    return () =>
+      window.removeEventListener(OBSERVE_PAGE_CHANGED_EVENT, handlePageChanged);
+  }, [setAutoRefresh]);
+
+  useEffect(() => {
+    setLastUpdated(null);
+    aggregationRefreshSourcesRef.current.clear();
+    setIsAggregationRefreshing(false);
+  }, [currentPath, observeId]);
+
+  useEffect(() => {
+    const handleAggregationCompleted = (event) => {
+      if (String(event?.detail?.observeId || "") !== String(observeId || "")) {
+        return;
+      }
+      const raw = event?.detail?.queryCompletedAt;
+      const completedAt = raw ? new Date(raw) : null;
+      if (!completedAt || Number.isNaN(completedAt.getTime())) return;
+      setLastUpdated((current) =>
+        !current || completedAt > current ? completedAt : current,
+      );
+    };
+    window.addEventListener(
+      "observe-aggregation-completed",
+      handleAggregationCompleted,
+    );
+    return () =>
+      window.removeEventListener(
+        "observe-aggregation-completed",
+        handleAggregationCompleted,
+      );
+  }, [observeId]);
+
+  useEffect(() => {
+    const handleAggregationRefreshState = (event) => {
+      if (String(event?.detail?.observeId || "") !== String(observeId || "")) {
+        return;
+      }
+      const sourceId = event?.detail?.sourceId;
+      if (!sourceId) return;
+      const sources = aggregationRefreshSourcesRef.current;
+      if (event.detail.refreshing) sources.add(sourceId);
+      else sources.delete(sourceId);
+      setIsAggregationRefreshing(sources.size > 0);
+    };
+    window.addEventListener(
+      "observe-aggregation-refresh-state",
+      handleAggregationRefreshState,
+    );
+    return () =>
+      window.removeEventListener(
+        "observe-aggregation-refresh-state",
+        handleAggregationRefreshState,
+      );
+  }, [observeId]);
 
   const { data: projectList, isLoading: isLoadingProjects } = useProjectList();
 
@@ -207,73 +275,6 @@ const ObserveHeader = ({
   const handleDropdownClose = () => {
     setProjectDropdownOpen(false);
     setSearchText("");
-  };
-
-  const { mutate: exportData, isPending: isExportData } = useMutation({
-    mutationFn: () => {
-      let url;
-      let filters;
-
-      if (text === "Sessions") {
-        url = endpoints.project.projectSessionListExport;
-        filters = filterSession;
-      } else if (selectedTab === "spans") {
-        url = endpoints.project.getSpansForObserveExport;
-        filters = filterSpan;
-      } else {
-        // Default to trace export
-        url = endpoints.project.getTraceForObserveExport;
-        filters = filterTrace || [];
-      }
-
-      return axios.get(url, {
-        params: {
-          project_id: observeId,
-          filters: JSON.stringify(
-            canonicalizeApiFilterColumnIds(objectCamelToSnake(filters)),
-          ),
-        },
-      });
-    },
-
-    onSuccess: (response) => {
-      const fileSuffix =
-        text === "Sessions"
-          ? "sessions"
-          : selectedTab === "trace"
-            ? "traces"
-            : selectedTab === "spans"
-              ? "spans"
-              : "data";
-
-      enqueueSnackbar(
-        `${fileSuffix.charAt(0).toUpperCase() + fileSuffix.slice(1)} downloaded successfully`,
-        {
-          variant: "success",
-        },
-      );
-
-      const blob = new Blob([response.data], {
-        type: "text/csv;charset=utf-8;",
-      });
-
-      const link = document.createElement("a");
-      const url = window.URL.createObjectURL(blob);
-      link.href = url;
-      link.setAttribute(
-        "download",
-        `${currentProject?.label || "project"}-${fileSuffix}.csv`,
-      );
-      document.body.appendChild(link);
-      link.click();
-
-      link.remove();
-      window.URL.revokeObjectURL(url);
-    },
-  });
-
-  const handleExportClick = () => {
-    exportData();
   };
 
   const handleDocLink = () => {
@@ -441,43 +442,45 @@ const ObserveHeader = ({
         {/* ── Right: Last updated + Auto refresh + Action buttons ── */}
         <Box display="flex" alignItems="center" gap={1}>
           {/* Last updated timestamp */}
-          <Box
-            sx={{
-              display: "flex",
-              alignItems: "center",
-              gap: 0.5,
-              opacity: 0.8,
-            }}
-          >
-            <Iconify
-              icon="mdi:clock-outline"
-              width={14}
-              sx={{ color: "text.secondary" }}
-            />
-            <Typography
+          {lastUpdated && (
+            <Box
               sx={{
-                fontSize: 12,
-                color: "text.secondary",
-                fontFamily: "'IBM Plex Sans', sans-serif",
-                whiteSpace: "nowrap",
+                display: "flex",
+                alignItems: "center",
+                gap: 0.5,
+                opacity: 0.8,
               }}
             >
-              Last updated on{" "}
-              {lastUpdated.toLocaleDateString("en-GB", {
-                day: "2-digit",
-                month: "2-digit",
-                year: "numeric",
-              })}
-              ,{" "}
-              {lastUpdated
-                .toLocaleTimeString("en-US", {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                  hour12: true,
-                })
-                .toLowerCase()}
-            </Typography>
-          </Box>
+              <Iconify
+                icon="mdi:clock-outline"
+                width={14}
+                sx={{ color: "text.secondary" }}
+              />
+              <Typography
+                sx={{
+                  fontSize: 12,
+                  color: "text.secondary",
+                  fontFamily: "'IBM Plex Sans', sans-serif",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                Last updated on{" "}
+                {lastUpdated.toLocaleDateString("en-GB", {
+                  day: "2-digit",
+                  month: "2-digit",
+                  year: "numeric",
+                })}
+                ,{" "}
+                {lastUpdated
+                  .toLocaleTimeString("en-US", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    hour12: true,
+                  })
+                  .toLowerCase()}
+              </Typography>
+            </Box>
+          )}
 
           {/* Auto refresh toggle — bordered pill */}
           <CustomTooltip
@@ -550,51 +553,64 @@ const ObserveHeader = ({
             {/* Reload */}
             <CustomTooltip
               show
-              title="Reload data"
+              title={
+                isAggregationRefreshing ? "Refreshing data" : "Reload data"
+              }
               arrow
               size="small"
               type="black"
             >
               <ObserveIconButton
                 size="small"
+                aria-label={
+                  isAggregationRefreshing ? "Refreshing data" : "Reload data"
+                }
+                disabled={isAggregationRefreshing}
                 onClick={() => {
                   // Use refreshData from LLMTracingView if available
-                  refreshData?.();
-                  setLastUpdated(new Date());
-                  // Also invalidate React Query caches
-                  queryClient.invalidateQueries({
-                    queryKey: ["llm-tracing-graph"],
-                  });
+                  refreshData?.({ includeAggregations: false });
+                  // Keep row/project data fresh. Aggregations listen for the
+                  // explicit event below and send `refresh=true` themselves.
                   queryClient.invalidateQueries({
                     queryKey: ["observe-projects"],
                   });
-                  queryClient.invalidateQueries({ queryKey: ["callLogs"] });
                   // Dispatch a custom event that the grid can listen to
-                  window.dispatchEvent(new CustomEvent("observe-refresh"));
+                  window.dispatchEvent(
+                    new CustomEvent("observe-refresh", {
+                      detail: { observeId },
+                    }),
+                  );
                 }}
               >
-                <Iconify icon="mdi:refresh" width={16} />
+                {isAggregationRefreshing ? (
+                  <CircularProgress size={14} />
+                ) : (
+                  <Iconify icon="mdi:refresh" width={16} />
+                )}
               </ObserveIconButton>
             </CustomTooltip>
 
-            {/* Export/Download */}
-            <CustomTooltip
-              show
-              title={isExportData ? "Exporting..." : "Export CSV"}
-              arrow
-              size="small"
-              type="black"
-            >
-              <span>
-                <ObserveIconButton
-                  size="small"
-                  onClick={handleExportClick}
-                  disabled={isExportData}
-                >
-                  <Iconify icon="mdi:download-outline" width={16} />
-                </ObserveIconButton>
-              </span>
-            </CustomTooltip>
+            {/* Exact Observe exports remain fail-closed until a bounded,
+                resumable export contract is available. */}
+            {(text === "LLM Tracing" || text === "Sessions") && (
+              <CustomTooltip
+                show
+                title="Exact CSV export is temporarily unavailable"
+                arrow
+                size="small"
+                type="black"
+              >
+                <span>
+                  <ObserveIconButton
+                    size="small"
+                    aria-label="Exact CSV export is temporarily unavailable"
+                    disabled
+                  >
+                    <Iconify icon="mdi:download-outline" width={16} />
+                  </ObserveIconButton>
+                </span>
+              </CustomTooltip>
+            )}
 
             {/* View Docs */}
             <CustomTooltip
@@ -665,10 +681,6 @@ const ObserveHeader = ({
 
 ObserveHeader.propTypes = {
   text: PropTypes.string,
-  filterTrace: PropTypes.array,
-  filterSpan: PropTypes.array,
-  selectedTab: PropTypes.string,
-  filterSession: PropTypes.array,
   refreshData: PropTypes.func,
   resetFilters: PropTypes.func,
 };

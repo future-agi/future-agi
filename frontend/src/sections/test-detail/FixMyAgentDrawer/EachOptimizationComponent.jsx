@@ -78,7 +78,7 @@ const EachOptimizationComponent = ({
         >
           <OptmizationLoaderComponent
             optimizationStatus={optimizationData?.status}
-            reason={optimizationData?.errorMessage}
+            reason={optimizationData?.error_message}
           />
         </ShowComponent>
         <ShowComponent

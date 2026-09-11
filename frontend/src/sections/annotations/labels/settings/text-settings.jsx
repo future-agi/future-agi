@@ -16,7 +16,7 @@ export default function TextSettings({ control }) {
           <TextField
             {...field}
             label="Placeholder Text"
-            placeholder="Enter your feedback..."
+            placeholder="Enter text..."
             size="small"
             fullWidth
           />

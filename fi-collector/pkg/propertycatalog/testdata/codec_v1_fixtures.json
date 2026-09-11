@@ -1,0 +1,28 @@
+{
+  "format": "futureagi.property-catalog-codec-fixtures",
+  "version": 1,
+  "canonical_json": [
+    {
+      "name": "nested_utf8",
+      "canonical": "{\"a\":[true,null,3],\"z\":\"東京\"}",
+      "sha256": "6ea2dfa51eab90a54faf1bbe0118a6b4083a24646c34f8bbd48366c2769ba0e6"
+    },
+    {
+      "name": "html_integer_separators_unicode",
+      "canonical": "{\"html\":\"<script>&\",\"integer\":9007199254740991,\"separators\":\"line paragraph \",\"unicode\":\"東京\"}",
+      "sha256": "a1023fec58912a68e7a84ed8ce93786417bb779dd221d5efc64602a531501ed3"
+    },
+    {
+      "name": "canonical_fixed_decimal_numbers",
+      "canonical": "{\"fraction\":0.125,\"large\":100000000000000000000,\"negative_zero\":0,\"small\":0.0000001}",
+      "sha256": "73e89e1cb1b04782a7b6a3f0ac53dca9a4d58327b5393f9b145fd86d238acc6b"
+    }
+  ],
+  "casefold": [
+    {"source": "Straße", "folded": "strasse"},
+    {"source": "İtem", "folded": "i̇tem"},
+    {"source": "é", "folded": "é"},
+    {"source": "é", "folded": "é"},
+    {"source": "ﬃ", "folded": "ffi"}
+  ]
+}

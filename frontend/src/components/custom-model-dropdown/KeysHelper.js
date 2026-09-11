@@ -122,6 +122,17 @@ export const filterAndSortProviders = (
   return typeof sortFn === "function" ? sortFn(filtered) : filtered;
 };
 
+export const normalizeProviderStatus = (provider = {}) => ({
+  ...provider,
+  display_name:
+    provider.display_name || provider.displayName || provider.provider || "",
+  displayName:
+    provider.displayName || provider.display_name || provider.provider || "",
+  hasKey: provider.hasKey ?? provider.has_key ?? false,
+  maskedKey: provider.maskedKey ?? provider.masked_key ?? null,
+  logoUrl: provider.logoUrl ?? provider.logo_url ?? "",
+});
+
 export const getFilterOptions = ({
   defaultModelProviders = [],
   cloudProviders = [],

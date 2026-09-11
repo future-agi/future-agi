@@ -19,7 +19,7 @@ class PromptFolderSerializer(serializers.ModelSerializer):
             "parent_folder",
             "created_by",
         ]
-        read_only_fields = ["organization", "workspace"]
+        read_only_fields = ["organization", "workspace", "is_sample"]
 
     def get_created_by(self, obj):
         """

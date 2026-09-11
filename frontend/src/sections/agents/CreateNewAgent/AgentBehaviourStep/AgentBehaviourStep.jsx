@@ -9,9 +9,7 @@ import CreateNewAgentCards from "../../CreateNewAgentCards";
 import { useFormContext } from "react-hook-form";
 
 const AgentBehaviourStep = ({ control }) => {
-  const { data: knowledgeBaseList } = useKnowledgeBaseList("", null, {
-    status: true,
-  });
+  const { data: knowledgeBaseList } = useKnowledgeBaseList("", null);
 
   // const [openKnowledgeBase, setOpenKnowledgeBase] = useState(false);
   useFormContext();

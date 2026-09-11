@@ -29,7 +29,8 @@ const EvaluationProvider = ({
   const [currentTab, setCurrentTab] = useState("evals");
   const [selectedGroup, setSelectedGroup] = useState(null);
   const [openEditForSavedEval, setOpenEditForSavedEval] = useState(null);
-  const registerOpenEditForSavedEval = (fn) => setOpenEditForSavedEval(() => fn);
+  const registerOpenEditForSavedEval = (fn) =>
+    setOpenEditForSavedEval(() => fn);
 
   // const endpoint = useMemo(()=>{
   //   switch (module) {

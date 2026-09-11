@@ -59,7 +59,9 @@ const CustomViewTab = ({
   return (
     <CustomTooltip
       show
-      title={shortcut ? `${view.name} (${shortcut})` : view.name}
+      title={
+        !isActive && shortcut ? `${view.name} · Press ${shortcut}` : view.name
+      }
       placement="bottom"
       arrow
       size="small"

@@ -19,10 +19,13 @@ try:
 except ImportError:
     ScanResult = _ee_stub("ScanResult")
     TraceScanner = _ee_stub("TraceScanner")
+from tracer.ee_boundary import distill_scan_briefs
 from tracer.models.trace_error_analysis import TraceErrorGroup
 from tracer.queries.scan_clustering import (
+    merge_duplicate_clusters,
     assign_to_cluster,
     create_cluster,
+    delete_centroid,
     embed_texts,
     find_nearest_centroid,
     find_nearest_success_trace,
@@ -36,19 +39,33 @@ from tracer.queries.trace_scanner import (
     fetch_trace_data,
     filter_already_scanned,
     get_scan_config,
+    mark_traces_failed,
     write_scan_results,
 )
 from tracer.types.scan_types import ClusteringSummary, SuccessTraceMatch
 
 logger = structlog.get_logger(__name__)
 
+# Scan + write in sub-chunks of this many traces so partial progress survives an
+# activity timeout (the scanner makes one LLM call per trace, serially).
+_SCAN_WRITE_CHUNK = 5
 
-def scan_and_write(trace_ids: List[str], project_id: str) -> List[ScanResult]:
+
+def scan_and_write(
+    trace_ids: List[str], project_id: str, mark_unresolved: bool = False
+) -> List[ScanResult]:
     """
     Full scan pipeline for a batch of traces.
 
     Returns list of ScanResults (including failed ones).
     Returns empty list if scanning is disabled or all traces filtered out.
+
+    ``mark_unresolved`` writes a terminal FAILED marker for requested traces that
+    resolve no spans. The sweep sets it — its candidates are CH-confirmed roots,
+    so an empty resolve is a real disagreement (deletion race) and the marker
+    stops that trace from pinning the watermark. The inline path leaves it off:
+    an as-yet-unreplicated trace may simply be lagging, and the sweep will pick
+    it up once it lands.
     """
     # Config
     config = get_scan_config(project_id)
@@ -69,17 +86,32 @@ def scan_and_write(trace_ids: List[str], project_id: str) -> List[ScanResult]:
         return []
 
     # Fetch
-    traces_data = fetch_trace_data(trace_ids)
+    traces_data = fetch_trace_data(trace_ids, project_id)
+
+    if mark_unresolved:
+        resolved = {td.trace_id for td in traces_data}
+        unresolved = [t for t in map(str, trace_ids) if t not in resolved]
+        if unresolved:
+            mark_traces_failed(unresolved, project_id, "scan: no span data resolved")
+
     if not traces_data:
         logger.warning("no_trace_data_found", trace_ids=trace_ids)
         return []
 
-    # Scan — convert TraceData → dicts for scanner (scanner expects TRAIL format)
+    # Scan + write in small sub-chunks so partial progress is persisted even if
+    # the surrounding activity hits its time limit mid-batch. Writing only after
+    # scanning the whole batch (the old behavior) meant a large/slow batch that
+    # exceeded the activity time_limit wrote NOTHING — silent data loss under
+    # high sampling/volume.
     scanner = TraceScanner()
-    results = scanner.scan_batch([t.to_dict() for t in traces_data])
+    results: List[ScanResult] = []
+    written = 0
+    for i in range(0, len(traces_data), _SCAN_WRITE_CHUNK):
+        chunk = traces_data[i : i + _SCAN_WRITE_CHUNK]
+        chunk_results = scanner.scan_batch([t.to_dict() for t in chunk])
+        written += write_scan_results(chunk_results, project_id, config.scan_version)
+        results.extend(chunk_results)
 
-    # Write
-    written = write_scan_results(results, project_id, config.scan_version)
     logger.info(
         "scan_pipeline_completed",
         traces_scanned=len(results),
@@ -173,11 +205,37 @@ def cluster_issues(project_id: str) -> ClusteringSummary:
         logger.info("no_unclustered_issues", project_id=project_id)
         return ClusteringSummary()
 
+    # Distill each brief to a canonical failure phrase before embedding — briefs
+    # name this trace's ticker, client and feature, and those entities dominate
+    # the embedding, so one bug seeds a cluster per occurrence. Best-effort: a
+    # failed batch leaves ``distilled`` None and the raw brief is embedded.
+    distill_scan_briefs(issues)
+
     # Embed all issue texts in one batch
     texts = [issue.embedding_text for issue in issues]
     embeddings = embed_texts(texts)
 
     summary = ClusteringSummary()
+
+    def _create_counting(issue, embedding) -> None:
+        """Create a cluster for ``issue``, crediting a join as an assignment.
+
+        create_cluster returns an EXISTING cluster's id when the issue turns out
+        to be a repeat the centroid lookup failed to match. Counting that as a
+        new cluster hides exactly the signal this fix exists to expose, so
+        on_join reclassifies it.
+        """
+        joined = False
+
+        def _on_join() -> None:
+            nonlocal joined
+            joined = True
+
+        create_cluster(project_id, issue, embedding, on_join=_on_join)
+        if joined:
+            summary.assigned += 1
+        else:
+            summary.new_clusters += 1
 
     for issue, embedding in zip(issues, embeddings):
         try:
@@ -185,7 +243,24 @@ def cluster_issues(project_id: str) -> ClusteringSummary:
 
             if match:
                 cluster_id, distance = match
-                assign_to_cluster(cluster_id, project_id, issue, embedding)
+                try:
+                    assign_to_cluster(cluster_id, project_id, issue, embedding)
+                except TraceErrorGroup.DoesNotExist:
+                    # The centroid outlived its cluster. Nothing deletes
+                    # centroids when a cluster goes away, so the store keeps
+                    # rows pointing at clusters that no longer exist; matching
+                    # one used to raise straight into the handler below and the
+                    # issue was dropped for good. Drop the stale centroid so the
+                    # store self-heals, then cluster the issue normally.
+                    logger.warning(
+                        "orphaned_centroid_matched",
+                        cluster_id=cluster_id,
+                        issue_id=issue.issue_id,
+                        distance=round(distance, 4),
+                    )
+                    delete_centroid(cluster_id, project_id)
+                    _create_counting(issue, embedding)
+                    continue
                 summary.assigned += 1
                 logger.debug(
                     "issue_matched",
@@ -194,8 +269,7 @@ def cluster_issues(project_id: str) -> ClusteringSummary:
                     distance=round(distance, 4),
                 )
             else:
-                create_cluster(project_id, issue, embedding)
-                summary.new_clusters += 1
+                _create_counting(issue, embedding)
         except Exception:
             logger.exception(
                 "cluster_issue_failed",
@@ -226,15 +300,31 @@ def embed_trace_inputs(trace_ids: List[str], project_id: str) -> int:
         logger.info("no_root_inputs_found", project_id=project_id)
         return 0
 
-    # Kevinify then embed
-    texts = [inp.kevinified_text for inp in inputs]
+    # Kevinify, then drop anything that reduced to nothing before embedding.
+    # The embedder raises on an empty string, and one such trace would take the
+    # whole batch down with it — losing the embedding for every OTHER trace in
+    # the call, silently, since the caller only sees a count. kevinified_text
+    # also returns None when the compression module isn't installed, so this
+    # guards both.
+    pairs = [(inp, inp.kevinified_text) for inp in inputs]
+    usable = [(inp, text) for inp, text in pairs if text and text.strip()]
+    skipped = len(pairs) - len(usable)
+    if not usable:
+        logger.info(
+            "no_embeddable_root_inputs", project_id=project_id, skipped=skipped
+        )
+        return 0
+
+    embeddable = [inp for inp, _ in usable]
+    texts = [text for _, text in usable]
     embeddings = embed_texts(texts)
 
-    stored = store_trace_input_embeddings(inputs, embeddings)
+    stored = store_trace_input_embeddings(embeddable, embeddings)
     logger.info(
         "trace_inputs_embedded",
         project_id=project_id,
         traces_with_input=len(inputs),
+        skipped_empty=skipped,
         stored=stored,
     )
     return stored

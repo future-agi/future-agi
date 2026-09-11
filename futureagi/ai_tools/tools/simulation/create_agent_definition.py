@@ -247,6 +247,7 @@ class CreateAgentDefinitionTool(BaseTool):
             supported_providers = [
                 ProviderChoices.VAPI,
                 ProviderChoices.RETELL,
+                ProviderChoices.BLAND,
                 ProviderChoices.OTHERS,
             ]
             # Align with backend view: only create when provider is supported.

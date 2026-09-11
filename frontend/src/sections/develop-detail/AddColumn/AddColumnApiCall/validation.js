@@ -9,7 +9,7 @@ export const getAddColumnApiCallValidation = (
 ) => {
   return z.object({
     type: z.string().optional(),
-    columnName:
+    column_name:
       isConditionalNode || isEdit
         ? z.string().optional()
         : z.string().min(1, "Name is required"),
@@ -20,7 +20,10 @@ export const getAddColumnApiCallValidation = (
         .transform((v) => {
           let content = v;
           allColumns.forEach(({ headerName, field }) => {
-            const pattern = new RegExp(`{{\\s*${headerName}((?:\\.[^}\\s]+|\\[\\d+\\])*)\\s*}}`, "g");
+            const pattern = new RegExp(
+              `{{\\s*${headerName}((?:\\.[^}\\s]+|\\[\\d+\\])*)\\s*}}`,
+              "g",
+            );
             content = content.replace(pattern, `{{${field}$1}}`);
           });
           return content;
@@ -40,7 +43,10 @@ export const getAddColumnApiCallValidation = (
             let val = curr.value;
             if (curr.type === "Variable") {
               allColumns.forEach(({ headerName, field }) => {
-                const p = new RegExp(`{{\\s*${headerName}((?:\\.[^}\\s]+|\\[\\d+\\])*)\\s*}}`, "g");
+                const p = new RegExp(
+                  `{{\\s*${headerName}((?:\\.[^}\\s]+|\\[\\d+\\])*)\\s*}}`,
+                  "g",
+                );
                 val = val.replace(p, `{{${field}$1}}`);
               });
             }
@@ -62,7 +68,10 @@ export const getAddColumnApiCallValidation = (
             let val = curr.value;
             if (curr.type === "Variable") {
               allColumns.forEach(({ headerName, field }) => {
-                const p = new RegExp(`{{\\s*${headerName}((?:\\.[^}\\s]+|\\[\\d+\\])*)\\s*}}`, "g");
+                const p = new RegExp(
+                  `{{\\s*${headerName}((?:\\.[^}\\s]+|\\[\\d+\\])*)\\s*}}`,
+                  "g",
+                );
                 val = val.replace(p, `{{${field}$1}}`);
               });
             }
@@ -77,7 +86,10 @@ export const getAddColumnApiCallValidation = (
           let content = v;
 
           allColumns.forEach(({ headerName, field }) => {
-            const pattern = new RegExp(`{{\\s*${headerName}((?:\\.[^}\\s]+|\\[\\d+\\])*)\\s*}}`, "g");
+            const pattern = new RegExp(
+              `{{\\s*${headerName}((?:\\.[^}\\s]+|\\[\\d+\\])*)\\s*}}`,
+              "g",
+            );
             content = content.replace(pattern, `{{${field}$1}}`);
           });
 
@@ -98,7 +110,7 @@ export const getAddColumnApiCallValidation = (
           if (BARE_VARIABLE_RE.test(value)) return value;
           return JSON.parse(value);
         }),
-      outputType: z.string().min(1, "Output type is required"),
+      output_type: z.string().min(1, "Output type is required"),
     }),
     concurrency: z.number().positive("Concurrency must be a positive integer"),
   });

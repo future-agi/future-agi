@@ -43,6 +43,7 @@ const BaseNode = ({
     isCompleted,
     isError,
     isWorkflowRunning,
+    isReadOnly,
   } = state;
 
   const { boxSx, borderColor, theme } = useBaseNodeStyles(state);
@@ -106,7 +107,7 @@ const BaseNode = ({
           type="target"
           position={Position.Left}
           id="input"
-          isConnectable={preview ? false : isConnectable}
+          isConnectable={preview || isReadOnly ? false : isConnectable}
           style={{
             ...handleBaseStyle,
             border: `1px solid ${borderColor}`,
@@ -156,7 +157,7 @@ const BaseNode = ({
           >
             {label}
           </Typography>
-          {!preview && !isWorkflowRunning && (
+          {!preview && !isWorkflowRunning && !isReadOnly && (
             <IconButton
               className="node-delete-btn"
               sx={{
@@ -196,7 +197,7 @@ const BaseNode = ({
           type="source"
           position={Position.Right}
           id="output"
-          isConnectable={preview ? false : isConnectable}
+          isConnectable={preview || isReadOnly ? false : isConnectable}
           style={{
             ...handleBaseStyle,
             border: `1px solid ${borderColor}`,
@@ -212,7 +213,7 @@ const BaseNode = ({
           nodeId={id}
           portId={outputPort?.id}
           label={outputPortLabel}
-          preview={preview || isWorkflowRunning}
+          preview={preview || isWorkflowRunning || isReadOnly}
           sx={{
             left: "100%",
             ml: 2,
@@ -222,7 +223,7 @@ const BaseNode = ({
       )}
 
       {/* Add button — only shown when node has no outgoing edges */}
-      {!preview && !isWorkflowRunning && !hasOutgoingEdge && (
+      {!preview && !isWorkflowRunning && !isReadOnly && !hasOutgoingEdge && (
         <Box
           ref={addButtonRef}
           onClick={handleAddClick}

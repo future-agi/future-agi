@@ -219,7 +219,7 @@ const VersionList = ({
                         fontWeight="fontWeightMedium"
                         color={"text.primary"}
                       >
-                        Version {v.versionNameDisplay}
+                        Version {v.version_name_display}
                       </Typography>
                       {v.isDraft && <DraftBadge>Draft</DraftBadge>}
                     </Box>
@@ -235,7 +235,7 @@ const VersionList = ({
                       fontWeight="fontWeightRegular"
                       color="text.primary"
                     >
-                      {v.commitMessage}
+                      {v.commit_message}
                     </Typography>
                   </Box>
                 }

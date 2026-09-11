@@ -13,7 +13,12 @@ export const useTestRunsList = ({
       queryKey: ["test-runs-list", searchText],
       queryFn: ({ pageParam = 1 }) =>
         axios.get(endpoints.runTests.list, {
-          params: { page: pageParam, limit, search: searchText },
+          params: {
+            page: pageParam,
+            limit,
+            search: searchText,
+            summary: true,
+          },
         }),
       getNextPageParam: ({ data: d }) => (d?.next ? d?.current_page + 1 : null),
       initialPageParam: 1,

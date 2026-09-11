@@ -4,6 +4,9 @@ import { AGENT_TYPES } from "../agents/constants";
 // Mirrors BE `no_of_rows.min_value`.
 export const MIN_DATASET_ROWS = 10;
 
+/** Maximum file size for scenario uploads (5 MB). */
+export const MAX_SCENARIO_FILE_SIZE = 5 * 1024 * 1024;
+
 export const CreateScenarioType = {
   DATASET: "dataset",
   SCRIPT: "script",
@@ -64,7 +67,7 @@ const CreateScenarioDefaultSchema = {
     .default("agent_definition"),
   sourceId: z.string().min(1, "Source is required"),
   sourceLabel: z.string().optional(), // Used for auto-generating scenario name, not sent to API
-  name: z.string().min(1, "Name is required"),
+  name: z.string().trim().min(1, "Name is required"),
   description: z.string().optional(),
   agentDefinitionId: z.string().optional(),
   agentDefinitionVersionId: z.string().optional(),
@@ -73,7 +76,8 @@ const CreateScenarioDefaultSchema = {
   customInstructionDisabled: z.boolean().default(false),
   customInstruction: z.string().optional(),
   noOfRows: z
-    .number()
+    .number({ invalid_type_error: "Number of scenarios is required" })
+    .int("Number of scenarios must be a whole number")
     .min(10, "Minimum 10 Rows are required")
     .max(20000, "Maximum 20000 Rows are allowed"),
   addPersonaAutomatically: z.boolean(),
@@ -140,6 +144,18 @@ export const CreateScenarioValidationSchema = z
       }),
     }),
   ])
+  .refine(
+    (data) => {
+      if (!data.addPersonaAutomatically) {
+        return Array.isArray(data.personas) && data.personas.length > 0;
+      }
+      return true;
+    },
+    {
+      message: "Add at least one persona",
+      path: ["personas"],
+    },
+  )
   .refine(
     (data) => {
       // Validate agent definition fields when source type is agent_definition
@@ -249,3 +265,84 @@ export const extractVersionFromScenarioName = (name, basePattern) => {
   const match = name.match(regex);
   return match ? parseInt(match[1], 10) : 0;
 };
+
+export const createScenarioFileDropHandler =
+  ({ enqueueSnackbar, onChange }) =>
+  (acceptedFiles, fileRejections = []) => {
+    const safeRejections = fileRejections || [];
+    let tooManyFilesSeen = false;
+    let filelessRejectionSeen = false;
+
+    safeRejections.forEach((rejection) => {
+      const { file, errors } = rejection || {};
+
+      if (!file) {
+        // Aggregate fileless rejections into a single message below.
+        filelessRejectionSeen = true;
+        return;
+      }
+
+      const safeErrors = errors || [];
+      const isTooSmall = safeErrors.some((e) => e?.code === "file-too-small");
+      const isInvalidType = safeErrors.some(
+        (e) => e?.code === "file-invalid-type",
+      );
+      const isTooLarge = safeErrors.some((e) => e?.code === "file-too-large");
+      const isTooMany = safeErrors.some((e) => e?.code === "too-many-files");
+
+      if (isTooMany) {
+        // react-dropzone only tags too-many-files on files that already passed
+        // accept/size validation, so it's always the sole code here — aggregate
+        // it into a single message below instead of one toast per file.
+        tooManyFilesSeen = true;
+        return;
+      }
+
+      if (isTooSmall) {
+        enqueueSnackbar(
+          `"${file.name}" is empty. Please upload a file with content.`,
+          { variant: "error" },
+        );
+      } else if (isInvalidType) {
+        enqueueSnackbar(
+          "Unsupported file type. Please upload a TXT or PDF file.",
+          { variant: "error" },
+        );
+      } else if (isTooLarge) {
+        enqueueSnackbar(
+          "File size is too large. Please upload a file under 5 MB.",
+          { variant: "error" },
+        );
+      } else {
+        enqueueSnackbar(
+          `"${file.name}" could not be uploaded. ${safeErrors[0]?.message || "File was rejected"}`,
+          { variant: "error" },
+        );
+      }
+    });
+
+    // Show a single aggregate message for too-many-files rejections
+    if (tooManyFilesSeen) {
+      enqueueSnackbar("Please upload only one file.", { variant: "error" });
+    }
+
+    // And one for fileless rejections so the drop isn't silent
+    if (filelessRejectionSeen) {
+      enqueueSnackbar("File could not be uploaded", { variant: "error" });
+    }
+
+    // Always process accepted files — react-dropzone already filters
+    // by minSize / maxSize / accept, so no manual size check is needed.
+    const files = Array.from(acceptedFiles || []);
+    if (files.length === 0) return;
+
+    const processedFiles = files.map((file) => ({
+      file: file,
+      name: file?.name,
+      size: file?.size,
+    }));
+
+    if (onChange) {
+      onChange(processedFiles?.[0]);
+    }
+  };

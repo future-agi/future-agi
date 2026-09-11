@@ -64,7 +64,6 @@ const MultiTrackAudioPlayer = ({
       cursorWidth: 2,
       trackBackground: isDark ? "#18181b" : "#FFFFFF",
 
-      minPxPerSec: 10,
       rightButtonDrag: true,
       dragBounds: true,
     });

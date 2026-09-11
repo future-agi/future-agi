@@ -17,7 +17,7 @@ import uuid
 
 
 def make_dataset(
-    tool_context, *, name="Test Dataset", source="sdk", columns=None, **kwargs
+    tool_context, *, name="Test Dataset", source="build", columns=None, **kwargs
 ):
     """Create a Dataset with optional columns.
 

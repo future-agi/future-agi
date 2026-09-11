@@ -14,6 +14,10 @@ from simulate.views.chat_simulation import (
     RunTestNameView,
     TestExecutionChatBatchView,
 )
+from simulate.views.preview_pagination import (
+    RunTestPreviewExecutionsView,
+    TestExecutionPreviewCallsView,
+)
 from simulate.views.prompt_simulation import (
     ExecutePromptSimulationView,
     PromptSimulationDetailView,
@@ -95,6 +99,7 @@ from .views.agent_version import (
     DeleteAgentVersionView,
     RestoreAgentVersionView,
 )
+from .views.alk_simulate_ingestion import ALKSimulateIngestionViewSet
 from .views.livekit_api import (
     CallConfigView,
     CallExecutionUpdateView,
@@ -119,6 +124,9 @@ router.register(
     basename="agent-definition-operations",
 )
 router.register(r"agent-prompt-optimiser", AgentPromptOptimiserRunViewSet)
+router.register(
+    r"alk-simulate", ALKSimulateIngestionViewSet, basename="alk-simulate-ingestion"
+)
 
 urlpatterns = [
     path("api/", include(router.urls)),
@@ -299,6 +307,11 @@ urlpatterns = [
         name="run-tests-executions",
     ),
     path(
+        "run-tests/<uuid:run_test_id>/preview-executions/",
+        RunTestPreviewExecutionsView.as_view(),
+        name="run-tests-preview-executions",
+    ),
+    path(
         "run-tests/<uuid:run_test_id>/eval-summary/",
         RunTestEvalSummaryView.as_view(),
         name="run-tests-eval-summary",
@@ -423,6 +436,11 @@ urlpatterns = [
         "test-executions/<uuid:test_execution_id>/",
         TestExecutionDetailView.as_view(),
         name="test-execution-detail",
+    ),
+    path(
+        "test-executions/<uuid:test_execution_id>/preview-calls/",
+        TestExecutionPreviewCallsView.as_view(),
+        name="test-execution-preview-calls",
     ),
     path(
         "test-executions/<uuid:test_execution_id>/column-order/",

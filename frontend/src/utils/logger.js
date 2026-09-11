@@ -109,15 +109,15 @@ class Logger {
 
     console.warn("⚠️ WARN:", message, data || "");
 
-    // Capture warning in Sentry
+    // Warnings are recorded as breadcrumbs (context for a later error), NOT as
+    // standalone Sentry issues. Capturing every warning as an event floods the
+    // issue stream with non-actionable noise.
     if (this.shouldSendToSentry) {
-      Sentry.captureMessage(message, {
+      Sentry.addBreadcrumb({
+        category: "warning",
         level: "warning",
-        tags: { level: "warning" },
-        extra: {
-          data: data || undefined,
-          ...context,
-        },
+        message,
+        data: { data: data || undefined, ...context },
       });
     }
   }

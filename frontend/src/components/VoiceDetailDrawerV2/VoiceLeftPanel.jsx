@@ -46,10 +46,13 @@ const VoiceLeftPanel = ({ data, scenarioId, embedded = false }) => {
 
   const filteredTranscript = useMemo(() => {
     const transcript = data?.transcript;
-    return transcript?.filter((item) => item.speakerRole !== "system");
+    return transcript?.filter((item) => item.speaker_role !== "system");
   }, [data]);
 
-  const showPathTabs = isSimulate && !!data?.id;
+  const callExecutionId =
+    data?.call_execution_id || (data?.id !== data?.trace_id ? data?.id : null);
+  const showPathTabs =
+    isSimulate && (!!callExecutionId || !!data?.scenario_graph?.nodes?.length);
 
   const tabs = useMemo(() => {
     const t = [
@@ -176,8 +179,9 @@ const VoiceLeftPanel = ({ data, scenarioId, embedded = false }) => {
             <ShowComponent condition={isPathTab && showPathTabs}>
               <PathAnalysisView
                 data={data}
-                scenarioId={scenarioId}
-                openedExecutionId={data?.id}
+                scenarioId={scenarioId || data?.scenario_id}
+                openedExecutionId={callExecutionId}
+                testExecutionId={data?.test_execution_id}
                 enabled={isPathTab}
                 viewMode={PATH_VIEW_MODE[currentTab]}
                 onRequestTranscript={() => setCurrentTab(TABS.TRANSCRIPT)}

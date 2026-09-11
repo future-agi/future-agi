@@ -277,4 +277,41 @@ describe("PricingPage", () => {
       expect(screen.getByText("Storage")).toBeInTheDocument();
     });
   });
+
+  it("renders custom pricing from the v2 camelCase contract", async () => {
+    mockGet.mockResolvedValue({
+      data: {
+        result: {
+          ...MOCK_PLANS_RESPONSE.data.result,
+          current_plan: "custom",
+          isCustomPricing: true,
+          customDetails: {
+            platform_fee: 12000,
+            platform_fee_billing_cycle: 12,
+            per_charge_amount: 12000,
+            contract_end_date: "2026-12-31",
+            features: {
+              has_scim: true,
+              monitors: 100,
+            },
+            pricing: {
+              storage: {
+                display_name: "Storage",
+                display_unit: "GB",
+                tiers: [{ start: 0, end: 500, rate: 1.25 }],
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const { default: PricingPage } = await import("../PricingPage");
+    renderWithQuery(<PricingPage />);
+
+    expect(await screen.findByText("Custom Pricing")).toBeInTheDocument();
+    expect(screen.getByText("Your plan features")).toBeInTheDocument();
+    expect(screen.getByText("Your pricing tiers")).toBeInTheDocument();
+    expect(screen.queryByText("Choose your tier")).not.toBeInTheDocument();
+  });
 });

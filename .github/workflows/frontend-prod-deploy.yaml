@@ -24,7 +24,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20.17'
+          node-version: '22.18'
 
       - name: Install dependencies
         run: yarn
@@ -33,6 +33,7 @@ jobs:
         run: |
           cat <<EOF > .env
           VITE_ENVIRONMENT=production
+          VITE_OBSERVE_LIST_DEFAULT_PAGE_SIZE=25
           VITE_HOST_API=${{ secrets.PROD_VITE_HOST_API }}
           VITE_ASSETS_API=${{ secrets.PROD_VITE_ASSETS_API }}
           VITE_GENERATE_LINK=${{ secrets.PROD_VITE_GENERATE_LINK }}

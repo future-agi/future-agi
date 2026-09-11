@@ -5,6 +5,16 @@ Creates data across tracing, datasets, simulation, and prototyping.
 Usage:
     python manage.py seed_dummy_data --email=nikhilpareekiitr@gmail.com
     python manage.py seed_dummy_data --email=nikhilpareekiitr@gmail.com --flush
+
+CH25-TODO: KEEP-PG. Dev seed script — all ObservationSpan.objects sites
+in this file stay PG by design:
+  • ``.create()`` writes are dual-write source-of-truth (D-027). CH
+    receives the seeded rows via PeerDB CDC.
+  • ``_flush()`` performs PG reads/deletes against the legacy
+    ObservationSpan rows; the CH side gets cleaned up by the same
+    CDC pipeline (or a separate dev reset) — the seed script is
+    explicitly PG-scoped.
+``CHSpanReader`` is not applicable here.
 """
 
 import random

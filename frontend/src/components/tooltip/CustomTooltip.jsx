@@ -41,7 +41,9 @@ const CustomTooltip = ({
 
   if (expandable) {
     const existingPopper = updatedSlotProps.popper || {};
-    const existingModifiers = existingPopper.modifiers || [];
+    const existingModifiers = Array.isArray(existingPopper.modifiers)
+      ? existingPopper.modifiers
+      : [];
     const hasFlip = existingModifiers.some((m) => m.name === "flip");
     const flipModifier = {
       name: "flip",

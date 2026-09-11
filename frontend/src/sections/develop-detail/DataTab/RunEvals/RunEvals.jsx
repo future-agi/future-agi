@@ -37,8 +37,8 @@ const RunEvals = ({ gridRef, setIsData }) => {
       return response.data;
     },
     onSuccess: (data) => {
-      const runPromptData = data?.result?.columnConfig?.filter(
-        (item) => item?.originType === "run_prompt",
+      const runPromptData = data?.result?.column_config?.filter(
+        (item) => item?.origin_type === "run_prompt",
       );
       setMainData(runPromptData);
     },
@@ -65,10 +65,10 @@ const RunEvals = ({ gridRef, setIsData }) => {
       const mergedData = [...datasetUserEvalList, ...mainData];
 
       return mergedData.map((item) => ({
-        content: item?.name || item?.evalTemplateName,
-        field: item?.originType === "run_prompt" ? item.sourceId : item.id,
+        content: item?.name || item?.eval_template_name,
+        field: item?.origin_type === "run_prompt" ? item.source_id : item.id,
         originType:
-          item?.originType === "run_prompt" ? item.originType : "eval",
+          item?.origin_type === "run_prompt" ? item.origin_type : "eval",
       }));
     }
     return [];

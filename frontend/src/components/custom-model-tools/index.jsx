@@ -12,6 +12,7 @@ const CustomModelTools = ({
   tools,
   disableHover = false,
   disableClick = false,
+  viewOnly = false,
   hoverPlacement = "bottom",
   onClick = () => {},
   label,
@@ -23,6 +24,7 @@ const CustomModelTools = ({
   };
 
   const handleOpenDropdown = () => {
+    if (viewOnly) return;
     if (!showModelTool) {
       onClick?.();
       setShowModelTool(true);
@@ -51,6 +53,7 @@ const CustomModelTools = ({
         <IconButton
           onClick={handleOpenDropdown}
           disabled={disableClick}
+          disableRipple={viewOnly}
           sx={{
             borderRadius: "4px",
             backgroundColor: "background.paper",
@@ -61,6 +64,7 @@ const CustomModelTools = ({
             width: label ? "auto" : "44px",
             marginTop: isModalContainer ? "-4px" : 0,
             color: "text.primary",
+            ...(viewOnly && { cursor: "default" }),
           }}
         >
           <SvgColor
@@ -115,6 +119,7 @@ CustomModelTools.propTypes = {
   tools: PropTypes.array,
   disableHover: PropTypes.bool,
   disableClick: PropTypes.bool,
+  viewOnly: PropTypes.bool,
   hoverPlacement: PropTypes.string,
   onClick: PropTypes.func,
   label: PropTypes.string,

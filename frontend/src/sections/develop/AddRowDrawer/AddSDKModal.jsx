@@ -77,32 +77,32 @@ const AddSDKModal = ({ open, onClose, datasetId, closeDrawer }) => {
       const result = response.data?.result || {};
 
       const _curlCode = [
-        result?.code?.curlAddCol || "",
-        result?.code?.curlAddRow || "",
+        result?.code?.curl_add_col || "",
+        result?.code?.curl_add_row || "",
       ]
         .filter(Boolean)
         .map((code) => code.replace(/^\n+/, ""))
         .join("\n");
 
       const _typescriptCode = [
-        result?.code?.typescriptAddCol || "",
-        result?.code?.typescriptAddRow || "",
+        result?.code?.typescript_add_col || "",
+        result?.code?.typescript_add_row || "",
       ]
         .filter(Boolean)
         .map((code) => code.replace(/^\n+/, ""))
         .join("\n");
 
       const _pythonCode = [
-        result?.code?.pythonAddCol || "",
-        result?.code?.pythonAddRow || "",
+        result?.code?.python_add_col || "",
+        result?.code?.python_add_row || "",
       ]
         .filter(Boolean)
         .map((code) => code.replace(/^\n+/, ""))
         .join("\n");
 
-      setValue("Pcode", result?.code?.pythonAddRow || "");
-      setValue("Tcode", result?.code?.typescriptAddRow || "");
-      setValue("CUcode", result?.code?.curlAddRow || "");
+      setValue("Pcode", result?.code?.python_add_row || "");
+      setValue("Tcode", result?.code?.typescript_add_row || "");
+      setValue("CUcode", result?.code?.curl_add_row || "");
 
       return response.data;
     },

@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import {
   extractVariablesFromContent,
   buildPromptNodePayload,
+  buildPatchPayload,
 } from "../promptNodeFormUtils";
 
 // Mock getRandomId to return deterministic IDs
@@ -41,7 +42,7 @@ describe("extractVariablesFromContent", () => {
 
   it("ignores non-text blocks", () => {
     const content = [
-      { type: "image_url", imageUrl: { url: "{{not_a_var}}" } },
+      { type: "image_url", image_url: { url: "{{not_a_var}}" } },
       { type: "text", text: "{{real_var}}" },
     ];
     expect(extractVariablesFromContent(content)).toEqual(["real_var"]);
@@ -174,5 +175,77 @@ describe("buildPromptNodePayload", () => {
     const payload = buildPromptNodePayload(baseFormData, null);
     expect(payload.promptConfig[0].configuration).toBeDefined();
     expect(payload.promptConfig[0].configuration.model).toBe("gpt-4");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildPatchPayload
+// ---------------------------------------------------------------------------
+describe("buildPatchPayload", () => {
+  it("maps camelCase prompt payload config into snake_case PATCH contract fields", () => {
+    const formData = {
+      name: "saved_prompt",
+      version: "v1",
+      templateFormat: "jinja",
+      modelConfig: {
+        model: "gpt-4o-mini",
+        modelDetail: { modelName: "GPT-4o mini" },
+        responseFormat: "json",
+        toolChoice: "required",
+        tools: [{ type: "function", function: { name: "lookup" } }],
+      },
+      messages: [
+        {
+          id: "msg-0",
+          role: "user",
+          content: [{ type: "text", text: "Hello {{topic}}" }],
+        },
+      ],
+    };
+    const modelParameters = {
+      sliders: [
+        { id: "temperature", value: 0.3 },
+        { id: "maxTokens", value: 512 },
+        { id: "topP", value: 0.95 },
+        { id: "presencePenalty", value: 0.2 },
+        { id: "frequencyPenalty", value: 0.1 },
+      ],
+    };
+    const payload = buildPromptNodePayload(formData, modelParameters);
+
+    const patch = buildPatchPayload(
+      {
+        label: formData.name,
+        config: {
+          modelConfig: formData.modelConfig,
+          messages: formData.messages,
+          templateFormat: formData.templateFormat,
+          payload,
+        },
+      },
+      {
+        prompt_template_id: "prompt-template-id",
+        prompt_version_id: "prompt-version-id",
+      },
+    );
+
+    expect(patch.name).toBe("saved_prompt");
+    expect(patch.prompt_template).toMatchObject({
+      prompt_template_id: "prompt-template-id",
+      prompt_version_id: "prompt-version-id",
+      model: "gpt-4o-mini",
+      response_format: "json",
+      output_format: "string",
+      temperature: 0.3,
+      max_tokens: 512,
+      top_p: 0.95,
+      presence_penalty: 0.2,
+      frequency_penalty: 0.1,
+      tool_choice: "required",
+      template_format: "jinja",
+      save_prompt_version: false,
+    });
+    expect(patch.prompt_template.tools).toEqual(formData.modelConfig.tools);
+    expect(patch.prompt_template.messages).toEqual(formData.messages);
   });
 });

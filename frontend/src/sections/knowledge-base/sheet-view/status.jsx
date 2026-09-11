@@ -6,13 +6,13 @@ import Iconify from "src/components/iconify";
 const statusMessage = {
   Processing: {
     label: "Processing New Files",
-    message: (count) => 
-      `You've added ${count} ${count > 1 ? "files": "file"}. We're updating the knowledge base to reflect the new data.`,
+    message: (count) =>
+      `You've added ${count} ${count > 1 ? "files" : "file"}. We're updating the knowledge base to reflect the new data.`,
   },
   Deleting: {
     label: "Updating Knowledge Base",
-    message: (count) => 
-      `You've deleted ${count} ${count > 1 ? "files": "file"}. We're processing the changes to update the knowledge base.`,
+    message: (count) =>
+      `You've deleted ${count} ${count > 1 ? "files" : "file"}. We're processing the changes to update the knowledge base.`,
   },
 };
 export default function Status({ sx, status }) {

@@ -62,6 +62,7 @@ export const buildEvalTemplateConfig = ({
   outputType,
   passThreshold,
   choiceScores,
+  multiChoice,
   templateFormat,
 }) => {
   const nextConfig = {
@@ -91,6 +92,13 @@ export const buildEvalTemplateConfig = ({
     nextConfig.choice_scores = choiceScores;
   } else {
     delete nextConfig.choice_scores;
+  }
+
+  // Persist multi_choice into the runtime config so the dataset eval snapshot
+  // (UserEvalMetric.config) carries it — the feedback get_template endpoint
+  // reads multi_choice from that snapshot, not the template.
+  if (multiChoice !== undefined) {
+    nextConfig.multi_choice = Boolean(multiChoice);
   }
 
   return nextConfig;
@@ -132,13 +140,17 @@ export const buildCompositeSourceModeProps = ({
       child_template_ids: children.map((child) => child.child_id),
       child_configs: buildCompositeChildConfigs(children),
       aggregation_enabled:
-        compositeDetail?.aggregation_enabled ?? fullEval?.aggregation_enabled ?? true,
+        compositeDetail?.aggregation_enabled ??
+        fullEval?.aggregation_enabled ??
+        true,
       aggregation_function:
-        compositeDetail?.aggregation_function
-        || fullEval?.aggregation_function
-        || "weighted_avg",
+        compositeDetail?.aggregation_function ||
+        fullEval?.aggregation_function ||
+        "weighted_avg",
       composite_child_axis:
-        compositeDetail?.composite_child_axis || fullEval?.composite_child_axis || "",
+        compositeDetail?.composite_child_axis ||
+        fullEval?.composite_child_axis ||
+        "",
       child_weights:
         Object.keys(mergedWeights).length > 0 ? mergedWeights : null,
       pass_threshold:

@@ -19,6 +19,7 @@ import Iconify from "src/components/iconify";
 import HelperText from "src/sections/develop-detail/Common/HelperText";
 import axios, { endpoints } from "src/utils/axios";
 import { trackEvent, Events, PropertyName } from "src/utils/Mixpanel";
+import { getClonedDatasetInfo } from "./duplicateDatasetResponse";
 
 const DuplicateDataset = ({ open, onClose, refreshGrid, selected }) => {
   const {
@@ -40,13 +41,14 @@ const DuplicateDataset = ({ open, onClose, refreshGrid, selected }) => {
         .post(endpoints.develop.cloneDataset(selected?.id), data)
         .then((res) => res.data),
     onSuccess: (data) => {
+      const clonedDataset = getClonedDatasetInfo(data);
       trackEvent(Events.duplicateDatasetClicked, {
         [PropertyName.meta]: {
-          datasetId: data?.result?.datasetId,
-          datasetName: data?.result?.datasetName,
+          datasetId: clonedDataset.datasetId,
+          datasetName: clonedDataset.datasetName,
         },
       });
-      enqueueSnackbar(`${fieldName} alert has been Created`, {
+      enqueueSnackbar(`${fieldName} dataset has been created`, {
         variant: "success",
       });
       handleClose();

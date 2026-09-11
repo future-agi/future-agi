@@ -7,8 +7,8 @@ const ScrollingWrapper = ({
   position,
   fieldWidth,
   width,
-  scrollFunction =() => {},
-  dependancies=[],
+  scrollFunction = () => {},
+  dependancies = [],
   children,
 }) => {
   const scrollRef = useScrollEnd(scrollFunction, [...dependancies]);

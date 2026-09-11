@@ -75,7 +75,10 @@ const StatusChip = ({ label, status, disabled = false, ...otherProps }) => {
 
 StatusChip.propTypes = {
   label: PropTypes.string,
-  status: PropTypes.oneOf([...getAvailableStatuses(), null, undefined]),
+  status: PropTypes.oneOfType([
+    PropTypes.oneOf([...getAvailableStatuses(), null, undefined]),
+    PropTypes.string,
+  ]),
   disabled: PropTypes.bool,
 };
 

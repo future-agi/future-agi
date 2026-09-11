@@ -32,12 +32,17 @@ const LEVEL_STYLES = {
   ERROR: { label: "Error", color: "#EF4444", bg: "rgba(239, 68, 68, 0.08)" },
   WARN: { label: "Warn", color: "#F59E0B", bg: "rgba(245, 158, 11, 0.08)" },
   INFO: { label: "Info", color: "#3B82F6", bg: "rgba(59, 130, 246, 0.08)" },
-  LOG: { label: "Log", color: "#64748B", bg: "rgba(100, 116, 139, 0.08)" },
+  LOG: { label: "Log", accent: "neutral", bg: "rgba(100, 116, 139, 0.08)" },
   DEBUG: { label: "Debug", color: "#94A3B8", bg: "rgba(148, 163, 184, 0.08)" },
 };
 
-const levelStyle = (level) =>
-  LEVEL_STYLES[String(level || "").toUpperCase()] || LEVEL_STYLES.LOG;
+// Tints are built by concatenating alpha onto the hex, so entries that key off
+// `accent` need the resolved palette value rather than a palette path.
+const levelStyle = (level, palette) => {
+  const cfg =
+    LEVEL_STYLES[String(level || "").toUpperCase()] || LEVEL_STYLES.LOG;
+  return { ...cfg, color: cfg.color || palette.accent[cfg.accent] };
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Row normalization — API and span-attributes shapes both feed in here
@@ -299,7 +304,8 @@ LogAttributes.propTypes = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const LogLine = ({ row, expanded, onToggle, onCategoryClick }) => {
-  const s = levelStyle(row.severity);
+  const theme = useTheme();
+  const s = levelStyle(row.severity, theme.palette);
   return (
     <Box
       sx={{
@@ -713,7 +719,7 @@ const VoiceLogsView = ({ callLogId, vapiId, module, callLogs }) => {
             onClick={() => setLevel("")}
           />
           {LevelOptions.map((lo) => {
-            const s = levelStyle(lo.value);
+            const s = levelStyle(lo.value, theme.palette);
             const count = levelCounts[lo.value] || 0;
             return (
               <LevelPill

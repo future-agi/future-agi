@@ -37,6 +37,7 @@ from agent_playground.models import (
     NodeTemplate,
     Port,
 )
+from agent_playground.models.node_connection import NodeConnection
 from agent_playground.models.choices import (
     GraphVersionStatus,
     NodeType,
@@ -724,15 +725,20 @@ def single_node_graph(db, organization, workspace, user, llm_prompt_template):
         name="LLM Node",
         config={},
     )
+    # llm_prompt template is DYNAMIC mode: port `key` must be "custom", and
+    # the user-facing name goes in `display_name` (per agent_playground Port
+    # validator — see agent_playground/models/port.py).
     Port.no_workspace_objects.create(
         node=node,
-        key="query",
+        key="custom",
+        display_name="query",
         direction=PortDirection.INPUT,
         data_schema={"type": "string"},
     )
     Port.no_workspace_objects.create(
         node=node,
-        key="response",
+        key="custom",
+        display_name="response",
         direction=PortDirection.OUTPUT,
         data_schema={"type": "string"},
     )
@@ -769,15 +775,18 @@ def two_node_graph(db, organization, workspace, user, llm_prompt_template):
         name="Summarizer",
         config={},
     )
+    # llm_prompt template is DYNAMIC mode: port `key` must be "custom".
     p1_in = Port.no_workspace_objects.create(
         node=node1,
-        key="query",
+        key="custom",
+        display_name="query",
         direction=PortDirection.INPUT,
         data_schema={"type": "string"},
     )
     p1_out = Port.no_workspace_objects.create(
         node=node1,
-        key="response",
+        key="custom",
+        display_name="response",
         direction=PortDirection.OUTPUT,
         data_schema={"type": "string"},
     )
@@ -792,17 +801,26 @@ def two_node_graph(db, organization, workspace, user, llm_prompt_template):
     )
     p2_in = Port.no_workspace_objects.create(
         node=node2,
-        key="query",
+        key="custom",
+        display_name="query",
         direction=PortDirection.INPUT,
         data_schema={"type": "string"},
     )
     p2_out = Port.no_workspace_objects.create(
         node=node2,
-        key="response",
+        key="custom",
+        display_name="response",
         direction=PortDirection.OUTPUT,
         data_schema={"type": "string"},
     )
 
+    # NodeConnection at the node level must exist before a port-level Edge
+    # can be created (Edge._validate_node_connection_exists).
+    NodeConnection.no_workspace_objects.create(
+        graph_version=version,
+        source_node=node1,
+        target_node=node2,
+    )
     # Edge: Summarizer.response -> Reviewer.query
     Edge.no_workspace_objects.create(
         graph_version=version,

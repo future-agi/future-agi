@@ -75,7 +75,7 @@ const ChooseWinnerDrawerChild = ({ onClose, evalsList, oldData }) => {
     mutationFn: (data) =>
       axios.post(
         endpoints.develop.experiment.compareExperiments(experimentId),
-        data,
+        { weights: data },
       ),
     onSuccess: (data, variables) => {
       trackEvent(Events.expWinnerSelect, {

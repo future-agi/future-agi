@@ -293,7 +293,7 @@ const FixableRecommendations = ({
                           key={recommendation.heading}
                           title={recommendation.heading}
                           description={recommendation.recommendation}
-                          breakdown={recommendation.breakingPoints}
+                          breakdown={recommendation.breaking_points}
                           isPriority={
                             recommendation.priority === PriorityStatus.HIGH
                           }
@@ -315,7 +315,7 @@ const FixableRecommendations = ({
                             );
                             gridApi?.onFilterChanged?.();
                           }}
-                          branchCategory={recommendation?.branchCategory}
+                          branchCategory={recommendation?.branch_category}
                         />
                       );
                     },

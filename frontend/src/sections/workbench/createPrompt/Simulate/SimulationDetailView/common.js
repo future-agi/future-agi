@@ -11,7 +11,7 @@ export const getSimulationExecutionsColDef = () => {
     },
     {
       headerName: "Run Start Time",
-      field: "startTime",
+      field: "start_time",
       flex: 1,
       minWidth: 150,
       valueFormatter: (params) => {
@@ -23,7 +23,7 @@ export const getSimulationExecutionsColDef = () => {
       headerName: "Total Chats",
       flex: 1,
       minWidth: 100,
-      field: "totalChats",
+      field: "total_chats",
       valueFormatter: (params) => params.value ?? 0,
     },
     {
@@ -35,7 +35,7 @@ export const getSimulationExecutionsColDef = () => {
     },
     {
       headerName: "Total Turns",
-      field: "totalNumberOfFagiAgentTurns",
+      field: "total_number_of_fagi_agent_turns",
       flex: 1,
       minWidth: 100,
       valueFormatter: (params) => {
@@ -47,7 +47,7 @@ export const getSimulationExecutionsColDef = () => {
       headerName: "% Chats Completed",
       flex: 1,
       minWidth: 110,
-      field: "successRate",
+      field: "success_rate",
       valueFormatter: (params) => {
         if (params.value == null) return "-";
         return `${params.value}%`;

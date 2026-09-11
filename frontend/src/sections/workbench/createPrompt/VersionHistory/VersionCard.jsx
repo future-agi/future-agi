@@ -409,15 +409,13 @@ const VersionCard = ({
                 />
                 <CustomModelOptions
                   modelConfig={toolConfig}
-                  disabledClick
+                  viewOnly
                   hoverPlacement="bottom-end"
                 />
                 <CustomModelTools
                   tools={toolConfig?.tools || []}
-                  disableClick
-                  disableHover={
-                    !toolConfig?.tools || toolConfig?.tools.length === 0
-                  }
+                  viewOnly
+                  disableHover={false}
                   hoverPlacement="bottom-end"
                 />
               </Box>

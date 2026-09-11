@@ -16,8 +16,6 @@ def run_post_registration_activity(user_id: str, generated_password: str):
     - Sends signup email
     - Sends HubSpot notification
     - Sends Slack notification
-    - Uploads demo dataset
-    - Creates demo traces and spans
     """
     from accounts.utils import _run_post_registration
 
@@ -60,10 +58,11 @@ def delete_compare_folder_activity(compare_id: str):
     import os
     import shutil
 
-    from tfc.utils.storage import delete_compare_folder
+    from tfc.utils.storage import delete_compare_folder, get_compare_local_dir
 
-    if os.path.isdir(f"compare/{compare_id}"):
-        shutil.rmtree(f"compare/{compare_id}")
+    compare_dir = get_compare_local_dir(compare_id)
+    if os.path.isdir(compare_dir):
+        shutil.rmtree(compare_dir)
     delete_compare_folder(compare_id)
 
 

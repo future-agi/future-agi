@@ -48,31 +48,31 @@ function formatLatency(value) {
 
 const KPI_CARDS = [
   {
-    key: "totalRequests",
+    key: "total_requests",
     label: "Total Requests",
     formatter: formatNumber,
     invertTrend: false,
   },
   {
-    key: "totalCost",
+    key: "total_cost",
     label: "Total Cost",
     formatter: formatCurrency,
     invertTrend: true, // cost going up is "bad"
   },
   {
-    key: "avgLatencyMs",
+    key: "avg_latency_ms",
     label: "Avg Latency",
     formatter: formatLatency,
     invertTrend: true, // latency going up is "bad"
   },
   {
-    key: "errorRate",
+    key: "error_rate",
     label: "Error Rate",
     formatter: formatPercent,
     invertTrend: true, // errors going up is "bad"
   },
   {
-    key: "cacheHitRate",
+    key: "cache_hit_rate",
     label: "Cache Hit Rate",
     formatter: formatPercent,
     invertTrend: false,

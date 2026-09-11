@@ -4527,6 +4527,9 @@ def create_observation_spans(project, trace, organization, project_version):
         span_input, output = get_input_output_span(obs_span_kwarg, decoder)
         obs_span_kwarg.update({"input": span_input, "output": output})
 
+    # CH25-TODO: KEEP-PG. Onboarding-seed write path — bulk_create()
+    # is the dual-write source of truth (D-027). CH receives the rows
+    # via PeerDB CDC; there is no direct CH-write API.
     ObservationSpan.objects.bulk_create(
         ObservationSpan(**obs_span_kwarg) for obs_span_kwarg in spans_to_create
     )

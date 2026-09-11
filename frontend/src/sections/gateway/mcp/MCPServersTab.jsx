@@ -18,6 +18,12 @@ import {
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import { useRemoveMCPServer } from "./hooks/useMCPConfig";
+import {
+  getMCPServerId,
+  getMCPServerStatusColor,
+  getMCPServerStatusLabel,
+  getMCPServerToolCount,
+} from "./utils";
 
 const MCPServersTab = ({ config, mcpStatus, gatewayId, onEditServer }) => {
   const [confirmDelete, setConfirmDelete] = useState(null);
@@ -31,8 +37,8 @@ const MCPServersTab = ({ config, mcpStatus, gatewayId, onEditServer }) => {
     const map = {};
     const statusServers = mcpStatus?.servers || [];
     statusServers.forEach((s) => {
-      const id = s.server_id;
-      map[id] = s;
+      const id = getMCPServerId(s);
+      if (id) map[id] = s;
     });
     return map;
   }, [mcpStatus]);
@@ -96,8 +102,8 @@ const MCPServersTab = ({ config, mcpStatus, gatewayId, onEditServer }) => {
                       </Typography>
                       {health ? (
                         <Chip
-                          label={health.healthy ? "Healthy" : "Unhealthy"}
-                          color={health.healthy ? "success" : "error"}
+                          label={getMCPServerStatusLabel(health)}
+                          color={getMCPServerStatusColor(health)}
                           size="small"
                         />
                       ) : (
@@ -138,7 +144,7 @@ const MCPServersTab = ({ config, mcpStatus, gatewayId, onEditServer }) => {
                       />
                       {health && (
                         <Chip
-                          label={`${Number(health.tool_count || 0)} tools`}
+                          label={`${getMCPServerToolCount(health)} tools`}
                           size="small"
                           variant="outlined"
                           color="primary"

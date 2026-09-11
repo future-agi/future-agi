@@ -16,6 +16,7 @@ from model_hub.views.custom_model import (
     DeleteCustomAIModelView,
     EditCustomModel,
     UpdateBaselineDatasetCustomAIModelView,
+    UpdateMetricCustomAIModelView,
 )
 from model_hub.views.dataset_optimization import DatasetOptimizationViewSet
 from model_hub.views.datasets.add_rows.existing_dataset import AddRowsFromExistingView
@@ -48,6 +49,7 @@ from model_hub.views.derived_variables import (
 from model_hub.views.develop_annotations import (
     AnnotationsLabelsViewSet,
     AnnotationSummaryView,
+    AnnotationTaskViewSet,
     AnnotationsViewSet,
     UserViewSet,
 )
@@ -119,7 +121,8 @@ from model_hub.views.experiments import (
     ExperimentRerunV2View,
     ExperimentRerunView,
     ExperimentsTableDetailView,
-    ExperimentsTableV2View,
+    ExperimentsTableV2CreateView,
+    ExperimentsTableV2DetailView,
     ExperimentsTableView,
     ExperimentStatsV2View,
     ExperimentStatsView,
@@ -158,7 +161,10 @@ from model_hub.views.performance import (
     PerformanceDetailsView,
     PerformanceView,
 )
-from model_hub.views.performance_report import PerformanceReportApiView
+from model_hub.views.performance_report import (
+    PerformanceReportApiView,
+    PerformanceReportDetailApiView,
+)
 from model_hub.views.prompt_base_template import PromptBaseTemplateViewSet
 from model_hub.views.prompt_folder import PromptFolderViewSet
 from model_hub.views.prompt_labels import PromptLabelViewSet
@@ -213,13 +219,10 @@ from model_hub.views.separate_evals import (
     GetAPICallLogView,
     GetEvalTemplateNameView,
     GetEvalTemplates,
-    GroundTruthConfigView,
     GroundTruthDataView,
     GroundTruthDeleteView,
     GroundTruthListView,
-    GroundTruthMappingView,
-    GroundTruthRoleMappingView,
-    GroundTruthSearchView,
+    GroundTruthSetupView,
     GroundTruthStatusView,
     GroundTruthTriggerEmbeddingView,
     GroundTruthUploadView,
@@ -253,6 +256,7 @@ router.register(
     basename="prompt-history-executions",
 )
 router.register(r"feedback", FeedbackViewSet, basename="feedback")  # noqa: F405
+router.register(r"annotation-tasks", AnnotationTaskViewSet, basename="annotation-tasks")
 router.register(r"annotations", AnnotationsViewSet, basename="annotations")
 router.register(
     r"annotations-labels", AnnotationsLabelsViewSet, basename="annotations-labels"
@@ -305,6 +309,11 @@ urlpatterns = [
         UpdateBaselineDatasetCustomAIModelView.as_view(),
         name="update-custom-model-baseline",
     ),
+    path(
+        "custom_models/update-metric/<uuid:id>/",
+        UpdateMetricCustomAIModelView.as_view(),
+        name="update-custom-model-metric",
+    ),
     path("custom_models/edit/", EditCustomModel.as_view(), name="edit-cutom-model"),
     path(
         "custom_models/delete/",
@@ -334,7 +343,7 @@ urlpatterns = [
     ),
     path(
         "performance/report/<uuid:model_id>/<uuid:report_id>/",
-        PerformanceReportApiView.as_view(),
+        PerformanceReportDetailApiView.as_view(),
         name="performance-report-detail",
     ),
     path(
@@ -1162,19 +1171,9 @@ urlpatterns = [
         name="eval-template-ground-truth-upload",
     ),
     path(
-        "eval-templates/<uuid:template_id>/ground-truth-config/",
-        GroundTruthConfigView.as_view(),
-        name="eval-template-ground-truth-config",
-    ),
-    path(
-        "ground-truth/<uuid:ground_truth_id>/mapping/",
-        GroundTruthMappingView.as_view(),
-        name="ground-truth-mapping",
-    ),
-    path(
-        "ground-truth/<uuid:ground_truth_id>/role-mapping/",
-        GroundTruthRoleMappingView.as_view(),
-        name="ground-truth-role-mapping",
+        "ground-truth/<uuid:ground_truth_id>/setup/",
+        GroundTruthSetupView.as_view(),
+        name="ground-truth-setup",
     ),
     path(
         "ground-truth/<uuid:ground_truth_id>/data/",
@@ -1185,11 +1184,6 @@ urlpatterns = [
         "ground-truth/<uuid:ground_truth_id>/status/",
         GroundTruthStatusView.as_view(),
         name="ground-truth-status",
-    ),
-    path(
-        "ground-truth/<uuid:ground_truth_id>/search/",
-        GroundTruthSearchView.as_view(),
-        name="ground-truth-search",
     ),
     path(
         "ground-truth/<uuid:ground_truth_id>/embed/",
@@ -1241,12 +1235,12 @@ urlpatterns = [
     # V2 Experiment APIs
     path(
         "experiments/v2/",
-        ExperimentsTableV2View.as_view(),
+        ExperimentsTableV2CreateView.as_view(),
         name="experiments-v2-create",
     ),
     path(
         "experiments/v2/<uuid:experiment_id>/",
-        ExperimentsTableV2View.as_view(),
+        ExperimentsTableV2DetailView.as_view(),
         name="experiments-v2-detail",
     ),
     path(

@@ -3,6 +3,7 @@ import PropTypes from "prop-types";
 import { Box, Popover, Stack, Typography } from "@mui/material";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import axios from "src/utils/axios";
+import { apiPath } from "src/api/contracts/api-surface";
 import { enqueueSnackbar } from "notistack";
 import { normalizeTags } from "./tagUtils";
 import TagChip from "./TagChip";
@@ -31,9 +32,9 @@ const AddTagsPopover = ({
   }, [open, currentTags, isBulk]);
 
   const patchTrace = (id, newTags) =>
-    axios.patch(`/tracer/trace/${id}/tags/`, { tags: newTags });
+    axios.patch(apiPath("/tracer/trace/{id}/tags/", { id }), { tags: newTags });
   const patchSpan = (id, newTags) =>
-    axios.post(`/tracer/observation-span/update-tags/`, {
+    axios.post(apiPath("/tracer/observation-span/update-tags/"), {
       span_id: id,
       tags: newTags,
     });
@@ -66,9 +67,9 @@ const AddTagsPopover = ({
         isBulk ? `Tags applied to ${items.length} items` : "Tags updated",
         { variant: "success" },
       );
+      // Refreshes the trace-detail drawer. The LLM tracing grid is AG-Grid
+      // server-side (not React Query), so it relies on onSuccess instead.
       queryClient.invalidateQueries({ queryKey: ["trace-detail"] });
-      queryClient.invalidateQueries({ queryKey: ["traceList"] });
-      queryClient.invalidateQueries({ queryKey: ["spanList"] });
       onSuccess?.();
     },
     onError: () => {

@@ -471,7 +471,7 @@ const PromptTemplateCard = ({
                     borderColor: "text.primary",
                   }}
                   options={[
-                    ...(runPromptOptions?.toolChoices || []),
+                    ...(runPromptOptions?.tool_choices || []),
                     { value: "none", label: "None" },
                   ]}
                 />

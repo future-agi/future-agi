@@ -14,7 +14,7 @@ const TranscriptPreview = ({
   simulationCallType,
 }) => {
   const first = transcript?.[0] ?? null;
-  const previewRole = first?.speakerRole;
+  const previewRole = first?.speaker_role;
   const previewContent = getContentMessage(first, simulationCallType);
 
   return (

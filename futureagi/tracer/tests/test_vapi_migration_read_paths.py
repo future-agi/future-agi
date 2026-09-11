@@ -181,7 +181,7 @@ class TestDownloadAudioFromUrlSyncRouting:
         fake_response = Mock(status_code=200)
         fake_response.iter_content = Mock(return_value=[b"legacy-bytes"])
         with patch.object(VapiRecordingService, "download_artifact_sync") as mock_download, \
-             patch("tfc.utils.storage.requests.get") as mock_get:
+             patch("tfc.utils.storage._ssrf_safe_get") as mock_get:
             mock_get.return_value.__enter__ = Mock(return_value=fake_response)
             mock_get.return_value.__exit__ = Mock(return_value=False)
             with patch("tfc.utils.storage._ensure_min_duration", side_effect=lambda b, _: b):

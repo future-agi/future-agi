@@ -34,7 +34,7 @@ const PromptTemplatesSection = ({
   });
   const [expandPrompt, setExpandPrompt] = useState({});
 
-  const messages = watch("config.messages");
+  const messages = watch("config.messages") || [];
 
   const memoizedMentionValues = useMemo(() => {
     return getDropdownOptionsFromCols(

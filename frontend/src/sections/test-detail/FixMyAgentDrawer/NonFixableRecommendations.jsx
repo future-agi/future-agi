@@ -163,7 +163,7 @@ const NonFixableRecommendations = ({
                         isPriority={
                           recommendation.priority === PriorityStatus.HIGH
                         }
-                        breakdown={recommendation.breakingPoints}
+                        breakdown={recommendation.breaking_points}
                         callExecutionIds={recommendation?.call_execution_ids}
                         isSelected={selectedNonFixableRecommendations.find(
                           (r) => r.index === index,

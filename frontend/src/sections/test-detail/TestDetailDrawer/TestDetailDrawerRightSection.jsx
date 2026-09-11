@@ -46,7 +46,7 @@ const TestDetailDrawerRightSection = ({
   simulationCallType,
   sessionId,
   provider,
-  hideAnnotationTab=false,
+  hideAnnotationTab = false,
 }) => {
   const [currentRightTab, setCurrentRightTab] = useState(
     simulationCallType === AGENT_TYPES.CHAT ? "evaluations" : "callAnalytics",

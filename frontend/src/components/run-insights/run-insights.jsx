@@ -29,17 +29,21 @@ const RunInsights = ({ setSelectedTraceIds }) => {
   };
 
   const theme = useTheme();
+  const systemMetrics = data?.systemMetrics || data?.system_metrics || {};
+  const evalMetrics = data?.evalMetrics || data?.eval_metrics || {};
+  const avgLatencyMs = getMetricValue(
+    systemMetrics,
+    "avgLatencyMs",
+    "avg_latency_ms",
+  );
+  const avgCost = getMetricValue(systemMetrics, "avgCost", "avg_cost");
+  const avgTokens = getMetricValue(systemMetrics, "avgTokens", "avg_tokens");
 
   const values = {
-    "Average Latency": data?.systemMetrics?.avgLatencyMs
-      ? `${data.systemMetrics.avgLatencyMs.toLocaleString()} ms`
-      : "N/A",
-    "Avg. Cost": data?.systemMetrics?.avgCost
-      ? `$${data.systemMetrics.avgCost}`
-      : "N/A",
-    "Avg. Tokens": data?.systemMetrics?.avgTokens
-      ? `${data.systemMetrics.avgTokens}`
-      : "N/A",
+    "Average Latency":
+      avgLatencyMs === null ? "N/A" : `${avgLatencyMs.toLocaleString()} ms`,
+    "Avg. Cost": avgCost === null ? "N/A" : `$${avgCost}`,
+    "Avg. Tokens": avgTokens === null ? "N/A" : `${avgTokens}`,
   };
 
   if (isLoading) return <></>;
@@ -173,14 +177,14 @@ const RunInsights = ({ setSelectedTraceIds }) => {
           <ShowComponent condition={selectedTab === 0}>
             <Typography variant="body1">
               <InsightActions
-                evalMetrics={data?.evalMetrics}
+                evalMetrics={evalMetrics}
                 setSelectedTraceIds={setSelectedTraceIds}
               />
             </Typography>
           </ShowComponent>
           <ShowComponent condition={selectedTab === 1}>
             <Typography variant="body1">
-              <InsightEvals evalMetrics={data?.evalMetrics} />
+              <InsightEvals evalMetrics={evalMetrics} />
             </Typography>
           </ShowComponent>
         </Box>
@@ -192,5 +196,9 @@ const RunInsights = ({ setSelectedTraceIds }) => {
 RunInsights.propTypes = {
   setSelectedTraceIds: PropTypes.func,
 };
+
+function getMetricValue(metrics, camelKey, snakeKey) {
+  return metrics?.[camelKey] ?? metrics?.[snakeKey] ?? null;
+}
 
 export default RunInsights;

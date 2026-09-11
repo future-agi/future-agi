@@ -14,6 +14,12 @@ import {
   TableRow,
   Typography,
 } from "@mui/material";
+import {
+  getMCPServerId,
+  getMCPServerStatusColor,
+  getMCPServerStatusLabel,
+  getMCPServerToolCount,
+} from "./utils";
 
 const StatCard = ({ label, value, chip }) => (
   <Card>
@@ -95,25 +101,28 @@ const MCPOverviewTab = ({ mcpStatus }) => {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {servers.map((server) => (
-                  <TableRow key={server.server_id}>
-                    <TableCell>
-                      <Typography variant="body2" fontWeight={600}>
-                        {server.server_id}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Chip
-                        label={server.healthy ? "Healthy" : "Unhealthy"}
-                        color={server.healthy ? "success" : "error"}
-                        size="small"
-                      />
-                    </TableCell>
-                    <TableCell align="right">
-                      {Number(server.tool_count || 0)}
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {servers.map((server) => {
+                  const serverId = getMCPServerId(server);
+                  return (
+                    <TableRow key={serverId}>
+                      <TableCell>
+                        <Typography variant="body2" fontWeight={600}>
+                          {serverId || "—"}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Chip
+                          label={getMCPServerStatusLabel(server)}
+                          color={getMCPServerStatusColor(server)}
+                          size="small"
+                        />
+                      </TableCell>
+                      <TableCell align="right">
+                        {getMCPServerToolCount(server)}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </TableContainer>

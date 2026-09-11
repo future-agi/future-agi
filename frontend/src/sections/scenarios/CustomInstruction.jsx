@@ -62,7 +62,6 @@ export default function CustomInstruction({ control }) {
             >
               <Typography
                 fontWeight={"fontWeightRegular"}
-                color={"background.paper"}
                 typography={"s2"}
               >
                 {watchedCustomInstructionDisabled
@@ -90,7 +89,7 @@ export default function CustomInstruction({ control }) {
           <FormTextFieldV2
             control={control}
             fieldName="customInstruction"
-            label="Extra Instruction Name"
+            label="Extra Instruction"
             fullWidth
             placeholder="Enter any additional instructions for the LLM to follow while generating scenarios"
             required
