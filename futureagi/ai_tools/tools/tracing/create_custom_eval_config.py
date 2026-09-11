@@ -167,13 +167,24 @@ class CreateCustomEvalConfigTool(BaseTool):
         except EvalTemplate.DoesNotExist:
             return ToolResult.not_found("EvalTemplate", str(params.eval_template_id))
 
-        # Check for duplicate name on this project
-        if CustomEvalConfig.objects.filter(
+        # Fetch the clashing row, not just its existence: the caller needs its id.
+        existing = CustomEvalConfig.objects.filter(
             project=project, name=params.name, deleted=False
-        ).exists():
+        ).first()
+        if existing is not None:
             return ToolResult.error(
-                f"An eval config named '{params.name}' already exists on this project.",
+                f"An eval config named '{params.name}' already exists on this "
+                f"project, with ID `{existing.id}`. Use that config ID with "
+                "`create_eval_task` instead of creating another.",
                 error_code="VALIDATION_ERROR",
+                data={
+                    "id": str(existing.id),
+                    "name": existing.name,
+                    "eval_template_id": str(existing.eval_template_id),
+                    "project_id": str(project.id),
+                    "model": existing.model,
+                    "mapping": existing.mapping,
+                },
             )
 
         # Fetch available eval attributes for the project

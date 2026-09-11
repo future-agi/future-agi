@@ -1,3 +1,10 @@
+# The shape of an eval set Falcon proposes, stated once.
+EVAL_SET_BUILT_IN_COUNT = 3
+EVAL_SET_CUSTOM_COUNT = 2
+EVAL_SET_TOTAL_COUNT = EVAL_SET_BUILT_IN_COUNT + EVAL_SET_CUSTOM_COUNT
+EVAL_SET_TYPE = "agent"
+
+
 class PromptBuilder:
     def build(self, mode, skill, memories, tools, context, workspace_name, user_email):
         sections = [
@@ -9,6 +16,8 @@ class PromptBuilder:
             self._tools(tools),
             self._multi_action(),
             self._guidelines(),
+            self._eval_set_shape(),
+            self._output_format(),
             self._suggestions(),
         ]
         return "\n\n".join(s for s in sections if s)
@@ -189,6 +198,91 @@ class PromptBuilder:
             "- For CSV/Excel, parse the data and use it directly with tools.\n"
             "- Images are visible to you — describe what you see and act on it.\n"
             "- URLs in messages have their content fetched automatically."
+        )
+
+    def _eval_set_shape(self):
+        """How many evals a recommendation carries and how they split.
+
+        Left open, the same readiness question answers with a different count
+        every run, and a set of only bespoke evals gives the customer nothing
+        the platform already stands behind.
+        """
+        return (
+            "EVAL SET SHAPE:\n"
+            "When you recommend a set of evaluations for a project, or build "
+            f"one, the set is {EVAL_SET_TOTAL_COUNT} evals: "
+            f"{EVAL_SET_BUILT_IN_COUNT} from the Future AGI built-in suite and "
+            f"{EVAL_SET_CUSTOM_COUNT} written for this project.\n"
+            "\n"
+            f"- Every eval in the set is agent-as-a-judge, "
+            f"eval_type '{EVAL_SET_TYPE}'. Reach for 'llm' or 'code' only when "
+            "the user names that type themselves.\n"
+            f"- Find the {EVAL_SET_BUILT_IN_COUNT} built-in ones with "
+            "list_eval_templates and keep the platform's own names for them. "
+            "Do not rewrite a built-in eval that already covers the risk.\n"
+            f"- Write the {EVAL_SET_CUSTOM_COUNT} custom ones against what you "
+            "actually read on this project's spans, not against the domain in "
+            "general.\n"
+            "- Give each eval one line saying which failure it would have "
+            "caught, tied to something a tool returned.\n"
+            "- Badge the built-in ones `built in` and the project ones "
+            "`custom` so the split is readable on the page.\n"
+            "\n"
+            "If the user asks for a different number or a different mix, give "
+            "them what they asked for."
+        )
+
+    def _output_format(self):
+        """How the answer is laid out. A substantive answer is rendered as a
+        branded document and offered as a PDF, so its structure is what the
+        customer receives, not only what the user reads."""
+        return (
+            "OUTPUT FORMAT:\n"
+            "Your reply is rendered as GitHub-flavoured markdown. Write it as "
+            "something the user can read at a glance, not as one block of prose.\n"
+            "\n"
+            "- Lead with the answer. First line says what happened or what is "
+            "true. No preamble, no restating the question.\n"
+            "- Keep paragraphs to two or three sentences and put a blank line "
+            "between them. A paragraph longer than four lines gets split.\n"
+            "- One fact per bullet. Bullets are short lines, not paragraphs.\n"
+            "- Wrap every ID, name, path, attribute key and tool name in "
+            "backticks so it can be copied.\n"
+            "- Bold at most one phrase per section, and never mid-sentence.\n"
+            "- Give a number its unit and its population: '8 of 24 traces', not "
+            "'8 traces'.\n"
+            "- When you created something, state its name and ID and what it is "
+            "bound to, each on its own line.\n"
+            "- Commas, not em dashes.\n"
+            "\n"
+            "A greeting, a one-line answer or a clarifying question stops there. "
+            "Anything substantial, an analysis, a recommendation, a setup, a "
+            "readiness check, anything the user could forward to their team, is "
+            "written as a report:\n"
+            "\n"
+            "- Open with a single `# Title`, then one plain line naming the "
+            "subject, then one sentence in bold that states the finding.\n"
+            "- `## The section` for each section after that. `## 01 - The "
+            "section` when the sections are ordered steps; the number renders in "
+            "the brand colour.\n"
+            "- A table for three or more items that share the same fields. Two "
+            "items, or items that do not share fields, stay a list. Give it real "
+            "column headers; leave the first header empty to number the rows.\n"
+            "- End an evaluation's name cell with `built in` or `custom` to "
+            "badge it.\n"
+            "- A fenced ```stats block for headline figures, one per line as "
+            "`value | LABEL`. Five at most, and only figures a tool returned.\n"
+            "- A fenced ```prompt block for prompt text the user is meant to "
+            "copy as-is.\n"
+            "- A blockquote whose every line opens in bold reads as a findings "
+            "list; a plain blockquote reads as a callout.\n"
+            "- A closing line in italics for the caveat that qualifies the "
+            "page.\n"
+            "- `---` starts a new page in the PDF. Use it between major parts.\n"
+            "\n"
+            "Every figure in a report traces to a tool result, never an "
+            "estimate. Name surfaces the way the product names them. A report "
+            "ends on its closing caveat and skips the next-step suggestions.\n"
         )
 
     def _suggestions(self):
