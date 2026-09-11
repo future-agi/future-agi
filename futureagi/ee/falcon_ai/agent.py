@@ -21,6 +21,16 @@ logger = structlog.get_logger(__name__)
 SELF_CORRECTION_THRESHOLD = 3  # inject hint after this many consecutive errors
 REPETITION_THRESHOLD = 3  # warn if same tool called this many times
 
+BUILTIN_TOOL_TIMEOUT_SECONDS = 30
+MCP_TOOL_TIMEOUT_SECONDS = 45  # MCP tools get more time (network calls)
+
+
+def tool_timeout_seconds(tool, default):
+    """The wall clock this tool gets: its own declared budget, else the default."""
+    declared = getattr(tool, "timeout_seconds", None)
+    return default if declared is None else declared
+
+
 _UUID_IN_BACKTICKS = re.compile(
     r"`([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})`"
 )
@@ -559,6 +569,7 @@ class AgentLoop:
             # Execute all tool calls in parallel
             async def _run_tool(exec_info):
                 if exec_info["tool"]:
+                    budget = BUILTIN_TOOL_TIMEOUT_SECONDS
                     try:
                         tool = exec_info["tool"]
                         # MCP tools: use async path directly (no thread pool blocking)
@@ -571,19 +582,26 @@ class AgentLoop:
                                 )
                             except Exception as e:
                                 return f"Invalid parameters: {e}", True
+                            budget = tool_timeout_seconds(
+                                tool, MCP_TOOL_TIMEOUT_SECONDS
+                            )
                             result = await asyncio.wait_for(
                                 tool.async_execute(params, self.tool_context),
-                                timeout=45,  # MCP tools get more time (network calls)
+                                timeout=budget,
                             )
                         else:
                             # Built-in tools: run in thread pool
+                            budget = tool_timeout_seconds(
+                                tool, BUILTIN_TOOL_TIMEOUT_SECONDS
+                            )
                             result = await asyncio.wait_for(
                                 self._execute_tool(tool, exec_info["args"]),
-                                timeout=30,
+                                timeout=budget,
                             )
                     except asyncio.TimeoutError:
                         return (
-                            f"Tool '{exec_info['tool_name']}' timed out after 30s",
+                            f"Tool '{exec_info['tool_name']}' timed out after "
+                            f"{budget:g}s",
                             True,
                         )
                     return (
