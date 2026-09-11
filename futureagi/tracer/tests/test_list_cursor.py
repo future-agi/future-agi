@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -826,4 +826,150 @@ def test_the_view_helpers_read_and_pin_the_witness_slack_they_are_given():
     assert _read_filter_seed_witness_slack(indifferent) is None
     _pin_cursor_filter_seed_witness_slack(
         indifferent, SimpleNamespace(witness_slack_hours=1)
+    )
+
+
+def _short_text_lane_builder(*, window_start, window_end):
+    """The real builder behind a value-picker filter on the trace list.
+
+    This is the one lane with a witness envelope, so it is the only one whose
+    cursors have a slack to carry. Built here rather than imported so this
+    module keeps owning the codec's own contract.
+    """
+
+    from tracer.services.clickhouse.v2.query_builders.trace_list import (
+        TraceListQueryBuilderV2,
+    )
+
+    return TraceListQueryBuilderV2(
+        project_id="00000000-0000-4000-8000-00000000000f",
+        filters=[
+            {
+                "column_id": "start_time",
+                "filter_config": {
+                    "filter_type": "datetime",
+                    "filter_op": "between",
+                    "filter_value": [
+                        window_start.replace(tzinfo=None).isoformat(),
+                        window_end.replace(tzinfo=None).isoformat(),
+                    ],
+                },
+            },
+            {
+                "column_id": "account_id",
+                "filter_config": {
+                    "col_type": "SPAN_ATTRIBUTE",
+                    "filter_type": "text",
+                    "filter_op": "in",
+                    "filter_value": ["acct-1", "acct-2"],
+                    "attribute_value_types": ["string", "string"],
+                },
+            },
+        ],
+        page_size=25,
+    )
+
+
+def _seed_witness_params(builder, *, window_end):
+    _, params = builder.build_filter_candidate_seed_page(
+        slice_start=(window_end - timedelta(hours=1)).replace(tzinfo=None),
+        slice_end=window_end.replace(tzinfo=None),
+        limit=200,
+    )
+    return params
+
+
+@override_settings(FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS=1)
+def test_a_minted_cursor_carries_its_slack_through_the_codec_into_the_next_hops_sql():
+    """The whole loop, through the real codec: mint on hop 1, bind on hop 2.
+
+    Every earlier test of this field checks one seam - the payload, the view
+    helper, or the builder pin. This one runs the loop the product runs: the
+    hop-1 builder publishes the slack it used, the token is signed and
+    verified by the real codec, and the hop-2 builder is pinned from the
+    decoded cursor. The assertion that matters is the last one: the pinned
+    slack reaches the EMITTED SQL, so the boundary a half-published page was
+    built on cannot move when an operator turns the runtime knob mid-chain.
+    """
+
+    from tracer.views.trace import (
+        _pin_cursor_filter_seed_witness_slack,
+        _read_filter_seed_witness_slack,
+    )
+
+    window_start = datetime(2026, 1, 1, tzinfo=UTC)
+    window_end = datetime(2026, 8, 1, tzinfo=UTC)
+
+    first_hop = _short_text_lane_builder(
+        window_start=window_start, window_end=window_end
+    )
+    assert first_hop.supports_filter_candidate_seed_page()
+    slack = _read_filter_seed_witness_slack(first_hop)
+    assert slack == 1
+
+    token, values = _token(
+        witness_slack_hours=slack,
+        window_start=window_start,
+        window_end=window_end,
+    )
+
+    # Hop 2 arrives after an operator has widened the runtime setting.
+    with override_settings(FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS=4):
+        cursor = decode_list_cursor(
+            token,
+            resource=values["resource"],
+            scope=values["scope"],
+            query=values["query"],
+            page_size=values["page_size"],
+        )
+        assert cursor.witness_slack_hours == 1
+
+        second_hop = _short_text_lane_builder(
+            window_start=window_start, window_end=window_end
+        )
+        unpinned = _seed_witness_params(second_hop, window_end=window_end)
+        _pin_cursor_filter_seed_witness_slack(second_hop, cursor)
+        assert second_hop.filter_seed_witness_slack_hours() == 1
+        pinned = _seed_witness_params(second_hop, window_end=window_end)
+
+    # The pin reaches the statement, not just the accessor: the envelope the
+    # SQL binds is the one hop 1 used, an hour wide, not the operator's four.
+    assert "filter_witness_start_us" in pinned
+    assert pinned["filter_witness_start_us"] != unpinned["filter_witness_start_us"]
+    assert (pinned["filter_witness_end"] - pinned["filter_witness_start"]) + timedelta(
+        hours=6
+    ) == (unpinned["filter_witness_end"] - unpinned["filter_witness_start"])
+
+
+@override_settings(FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS=4)
+def test_a_cursor_minted_before_the_field_existed_falls_back_to_the_setting():
+    """Legacy behaviour is 'use whatever the setting says', and it still is.
+
+    A token minted by a build that had no such field decodes to ``None``,
+    which clears the pin rather than setting one - so the next hop reads the
+    runtime setting, exactly as that token's own pagination did before.
+    """
+
+    from tracer.views.trace import _pin_cursor_filter_seed_witness_slack
+
+    window_start = datetime(2026, 1, 1, tzinfo=UTC)
+    window_end = datetime(2026, 8, 1, tzinfo=UTC)
+
+    token, values = _token(window_start=window_start, window_end=window_end)
+    cursor = decode_list_cursor(
+        token,
+        resource=values["resource"],
+        scope=values["scope"],
+        query=values["query"],
+        page_size=values["page_size"],
+    )
+    assert cursor.witness_slack_hours is None
+
+    builder = _short_text_lane_builder(window_start=window_start, window_end=window_end)
+    _pin_cursor_filter_seed_witness_slack(builder, cursor)
+
+    assert builder.filter_seed_witness_slack_hours() == 4
+    params = _seed_witness_params(builder, window_end=window_end)
+    assert (params["filter_witness_end"] - params["filter_witness_start"]) == timedelta(
+        hours=9
     )
