@@ -43,7 +43,14 @@ def _source_client():
             if _client is None:
                 from tracer.services.clickhouse.client import ClickHouseClient
 
-                _client = ClickHouseClient(server_enforced_readonly=True)
+                # allow_query_settings_with_server_readonly is REQUIRED: without
+                # it, ClickHouseClient drops `settings` entirely on a
+                # server-readonly client, silently discarding the bounded read
+                # settings below.
+                _client = ClickHouseClient(
+                    server_enforced_readonly=True,
+                    allow_query_settings_with_server_readonly=True,
+                )
     return _client
 
 # `LIMIT 1` does not short-circuit under ClickHouse's default parallelism: the
@@ -56,7 +63,13 @@ def _source_client():
 #
 # 2,048 is two blocks — a read-unit constant, not a function of table size. The
 # un-backfilled state is exactly where this probe runs on every request, so the
-# 200x difference is load-bearing. Do not drop these settings.
+# 200x difference is load-bearing.
+#
+# These only take effect through `execute_read`, and only on a client built with
+# allow_query_settings_with_server_readonly=True. `ClickHouseClient.execute()`
+# sets `settings = None` unconditionally on a server-readonly client (client.py),
+# so routing this probe through `execute()` silently discards every one of them —
+# which is exactly what an earlier revision of this module did.
 _PROBE_SETTINGS = {"max_threads": 1, "max_block_size": 1024}
 
 # The probe reads at most a couple of blocks, but a source cluster under load can
@@ -187,13 +200,13 @@ def _any_project_with_spans(client, settings, project_ids) -> bool:
     """
     if not project_ids:
         return False
-    return bool(
-        client.execute(
-            "SELECT 1 FROM spans WHERE project_id IN %(project_ids)s LIMIT 1",
-            {"project_ids": list(project_ids)},
-            settings=settings,
-        )
+    rows, _, _ = client.execute_read(
+        "SELECT 1 FROM spans WHERE project_id IN %(project_ids)s LIMIT 1",
+        {"project_ids": list(project_ids)},
+        timeout_ms=_PROBE_WALL_MS,
+        settings=settings,
     )
+    return bool(rows)
 
 
 def _any_project_predating_its_floor(client, settings, floors) -> str | None:
@@ -211,7 +224,7 @@ def _any_project_predating_its_floor(client, settings, floors) -> str | None:
     if not floors:
         return None
     ids = list(floors)
-    rows = client.execute(
+    rows, _, _ = client.execute_read(
         "SELECT toString(project_id) FROM spans "
         "WHERE project_id IN %(project_ids)s "
         "AND ("
@@ -232,6 +245,7 @@ def _any_project_predating_its_floor(client, settings, floors) -> str | None:
             "project_ids": ids,
             "floors": [_ch_timestamp(floors[pid]) for pid in ids],
         },
+        timeout_ms=_PROBE_WALL_MS,
         settings=settings,
     )
     return str(rows[0][0]) if rows else None

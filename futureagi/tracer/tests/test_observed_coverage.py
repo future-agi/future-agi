@@ -12,6 +12,7 @@ import pytest
 
 from tracer.services.clickhouse.v2.property_catalog.coverage import (
     _PROBE_SETTINGS,
+    _PROBE_WALL_MS,
     Coverage,
     observed_scope_coverage,
 )
@@ -54,16 +55,27 @@ class _Client:
         self.raises = raises
         self.calls = []
 
-    def execute(self, sql, params=None, settings=None):
-        self.calls.append({"sql": sql, "parameters": params, "settings": settings})
+    def execute_read(self, sql, params=None, timeout_ms=None, settings=None):
+        self.calls.append({"sql": sql, "parameters": params, "settings": settings,
+                           "timeout_ms": timeout_ms})
         if self.raises:
             raise self.raises
         ids = list((params or {}).get("project_ids") or ())
         if "start_time" not in sql:
             # The index-less probe asks only "do any of these have spans".
-            return [(1,)] if any(p in self.any_span for p in ids) else []
-        hit = next((p for p in ids if p in self.below), None)
-        return [(hit,)] if hit else []
+            rows = [(1,)] if any(p in self.any_span for p in ids) else []
+        else:
+            hit = next((p for p in ids if p in self.below), None)
+            rows = [(hit,)] if hit else []
+        # execute_read returns (rows, column_types, elapsed).
+        return rows, [], 0.0
+
+    def execute(self, *args, **kwargs):  # pragma: no cover - guard
+        raise AssertionError(
+            "coverage must use execute_read: ClickHouseClient.execute() discards "
+            "`settings` on a server-readonly client, silently dropping the "
+            "bounded probe settings"
+        )
 
 
 def _coverage(*, rows=None, below=(), scope=SCOPE, observed=None, client=None):
@@ -312,6 +324,44 @@ def test_unmappable_project_id_fails_closed_not_open():
     # The guard must be an OR arm of the predicate, so an unmappable row matches
     # and is reported as a gap rather than skipped.
     assert " OR start_time <" in sql
+
+
+@pytest.mark.unit
+def test_probe_uses_the_guarded_read_path_that_preserves_settings():
+    """The bounded settings must actually reach ClickHouse, not just be passed.
+
+    Regression, and a lesson about doubles. An earlier revision called
+    ``ClickHouseClient.execute()``, which sets ``settings = None``
+    unconditionally on a server-readonly client -- so ``max_threads=1``,
+    ``max_block_size=1024`` and the wall clock were silently discarded, and the
+    200x read amplification they exist to prevent was reintroduced.
+
+    The old test could not see it: it asserted the settings dict handed to a fake
+    that faithfully recorded whatever it was given. The fake now refuses
+    ``execute()`` outright and mirrors ``execute_read``'s real signature and
+    triple return, so the same mistake fails here instead of in production.
+    """
+    client = _Client(below=())
+    _coverage(rows=[{"project_id": "p1", "floor": "2026-01-01 00:00:00"}], client=client)
+
+    call = client.calls[-1]
+    assert call["settings"]["max_threads"] == 1
+    assert call["settings"]["max_block_size"] == 1024
+    # A wall clock must be supplied to the guarded path, not left unbounded.
+    assert call["timeout_ms"] == _PROBE_WALL_MS and _PROBE_WALL_MS > 0
+
+
+@pytest.mark.unit
+def test_source_client_allows_settings_under_server_readonly():
+    """The client must be built so its settings survive server-readonly mode."""
+    import inspect
+
+    from tracer.services.clickhouse.v2.property_catalog import coverage as mod
+
+    src = inspect.getsource(mod._source_client)
+    assert "allow_query_settings_with_server_readonly=True" in src, (
+        "without this flag ClickHouseClient drops settings on a readonly client"
+    )
 
 
 @pytest.mark.unit
