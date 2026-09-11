@@ -5193,7 +5193,9 @@ class TestTraceListQueryBuilderComprehensive:
         )
         query, params = builder.build()
         assert "span_attr_str" in query
-        assert "gen_ai.system" in query
+        # The attribute key is bound, not inlined; assert it in the parameters.
+        assert params["attr_key_1"] == "gen_ai.system"
+        assert "gen_ai.system" in finalize_query(query, params)
 
     def test_build_with_numeric_span_attribute_filter(self):
         """Numeric SPAN_ATTRIBUTE filter should reference span_attr_num."""
@@ -8042,7 +8044,9 @@ class TestVoiceCallListQueryBuilderComprehensive:
         )
         query, params = builder.build()
         assert "span_attr_str" in query
-        assert "ended_reason" in query
+        # The attribute key is bound, not inlined; assert it in the parameters.
+        assert params["attr_key_1"] == "ended_reason"
+        assert "ended_reason" in finalize_query(query, params)
         assert "assistant-ended-call" in params.values()
 
     def test_span_attribute_numeric_filter(self):
@@ -8067,7 +8071,9 @@ class TestVoiceCallListQueryBuilderComprehensive:
         )
         query, params = builder.build()
         assert "span_attr_num" in query
-        assert "call.duration" in query
+        # The attribute key is bound, not inlined; assert it in the parameters.
+        assert params["attr_key_1"] == "call.duration"
+        assert "call.duration" in finalize_query(query, params)
         assert ">" in query
 
     def test_eval_metric_filter(self):
