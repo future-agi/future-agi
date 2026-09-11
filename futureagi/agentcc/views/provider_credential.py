@@ -5,7 +5,6 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
-from integrations.services.credentials import CredentialManager
 from agentcc.models.org_config import AgentccOrgConfig
 from agentcc.models.provider_credential import AgentccProviderCredential
 from agentcc.serializers.provider_credential import (
@@ -15,6 +14,7 @@ from agentcc.serializers.provider_credential import (
 )
 from agentcc.services.config_push import push_org_config
 from agentcc.services.url_safety import build_ssrf_safe_session, ensure_public_http_url
+from integrations.services.credentials import CredentialManager
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.general_methods import GeneralMethods
 
@@ -23,6 +23,20 @@ logger = structlog.get_logger(__name__)
 _GATEWAY_SYNC_WARNING = (
     "Config saved but gateway sync failed. Changes will apply on next gateway restart."
 )
+
+# Whitelist of fields that may be updated via PUT/PATCH. Single source of
+# truth — when a new updatable field is added, only this set needs to change.
+_UPDATE_SAFE_FIELDS = {
+    "display_name",
+    "base_url",
+    "api_format",
+    "models_list",
+    "default_timeout_seconds",
+    "max_concurrent",
+    "conn_pool_size",
+    "extra_config",
+    "is_active",
+}
 
 
 class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
@@ -111,38 +125,58 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
             logger.exception("provider_credential_create_error", error=str(e))
             return self._gm.bad_request(str(e))
 
-    def partial_update(self, request, *args, **kwargs):
+    def _apply_safe_updates(self, instance, validated_data):
+        """Write only whitelisted fields to the DB and return the instance."""
+        update_fields = ["updated_at"]
+        for field, value in validated_data.items():
+            if field in _UPDATE_SAFE_FIELDS:
+                setattr(instance, field, value)
+                update_fields.append(field)
+        instance.save(update_fields=update_fields)
+        return instance
+
+    def _respond_with_gateway_sync(self, instance):
+        """Push config to the gateway and wrap the response with sync status."""
+        synced = self._push_config_to_gateway(instance.organization)
+        data = AgentccProviderCredentialSerializer(instance).data
+        data["gateway_synced"] = synced
+        if not synced:
+            data["gateway_warning"] = _GATEWAY_SYNC_WARNING
+        return self._gm.success_response(data)
+
+    def _update_from_request(self, request, instance):
+        """Validate safe fields, persist them, and synchronize the gateway."""
+        serializer = AgentccProviderCredentialUpdateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return self._gm.bad_request(serializer.errors)
+
+        self._apply_safe_updates(instance, serializer.validated_data)
+        return self._respond_with_gateway_sync(instance)
+
+    def update(self, request, *args, **kwargs):
+        """PUT provider metadata/config and synchronize the live gateway.
+
+        ``get_object()`` intentionally stays outside the broad update-error
+        handler. Tenant-scoped misses and object-permission failures must keep
+        DRF's 404/403 semantics rather than being rewritten as a 400 response.
+        """
+        instance = self.get_object()
         try:
-            instance = self.get_object()
-            serializer = AgentccProviderCredentialUpdateSerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
+            return self._update_from_request(request, instance)
+        except Exception as e:
+            logger.exception("provider_credential_update_error", error=str(e))
+            return self._gm.bad_request(str(e))
 
-            safe_fields = {
-                "display_name",
-                "base_url",
-                "api_format",
-                "models_list",
-                "default_timeout_seconds",
-                "max_concurrent",
-                "conn_pool_size",
-                "extra_config",
-                "is_active",
-            }
-            update_fields = ["updated_at"]
-            for field, value in serializer.validated_data.items():
-                if field in safe_fields:
-                    setattr(instance, field, value)
-                    update_fields.append(field)
-            instance.save(update_fields=update_fields)
+    def partial_update(self, request, *args, **kwargs):
+        """PATCH provider metadata/config and synchronize the live gateway.
 
-            synced = self._push_config_to_gateway(instance.organization)
-
-            data = AgentccProviderCredentialSerializer(instance).data
-            data["gateway_synced"] = synced
-            if not synced:
-                data["gateway_warning"] = _GATEWAY_SYNC_WARNING
-            return self._gm.success_response(data)
+        Mirrors :meth:`update`: ``get_object()`` stays outside the broad
+        update-error handler so tenant-scoped misses and object-permission
+        failures keep DRF's 404/403 semantics instead of being rewritten to 400.
+        """
+        instance = self.get_object()
+        try:
+            return self._update_from_request(request, instance)
         except Exception as e:
             logger.exception("provider_credential_update_error", error=str(e))
             return self._gm.bad_request(str(e))
@@ -308,7 +342,10 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
             data = resp.json()
             return sorted(m["id"] for m in data.get("data", []))
 
-        if name in ("google", "gemini", "google_gemini") or api_format in ("gemini", "google"):
+        if name in ("google", "gemini", "google_gemini") or api_format in (
+            "gemini",
+            "google",
+        ):
             url = "https://generativelanguage.googleapis.com/v1beta/models"
             resp = http.get(
                 url,
