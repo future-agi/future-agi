@@ -55,6 +55,10 @@ MAX_USER_PHYSICAL_IDENTITIES_PER_PAGE = 4_096
 # locates an optimum below it.
 _SHORT_TEXT_SEED_PROVISIONAL_FLOOR = timedelta(hours=4)
 
+# One week, the same ceiling ``FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS``
+# declares: beyond it the envelope stops bounding this lane's own windows.
+_MAX_WITNESS_SLACK_HOURS = 168
+
 # The same two widths once ``FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS``
 # bounds the witness. There the statement's cost is linear in the envelope's
 # hours, so a narrower slice really is a cheaper statement and the row budget
@@ -706,22 +710,64 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
             target_read_rows=settings.FILTER_SELECTOR_TEXT_SEED_TARGET_READ_ROWS,
         )
 
+    def pin_filter_seed_witness_slack_hours(self, hours: int | None) -> None:
+        """Finish a pagination with the witness slack it STARTED with.
+
+        The slack decides which traces are candidates at all, so changing it
+        between two hops of one cursor moves the boundary underneath a
+        half-published page: rows already returned can become non-candidates
+        (the user sees a duplicate when the next hop re-seeds) and rows already
+        skipped can become candidates (the user never sees them). An operator
+        turning the knob mid-request is a real event, not a hypothetical - the
+        setting is deliberately runtime-tunable.
+
+        So a continuation carries the slack it was minted with and pins it
+        here. ``None`` clears the pin and returns the builder to the runtime
+        setting, which is both the legacy behaviour and what a cursor minted
+        before this field carried resolves to.
+        """
+
+        if hours is None:
+            self._pinned_witness_slack_hours = None
+            return
+        if isinstance(hours, bool) or not isinstance(hours, int):
+            raise ValueError("pinned witness slack must be whole hours")
+        if not 0 <= hours <= _MAX_WITNESS_SLACK_HOURS:
+            raise ValueError("pinned witness slack is outside the supported range")
+        self._pinned_witness_slack_hours = hours
+
+    def filter_seed_witness_slack_hours(self) -> int | None:
+        """The slack this read will use, for the cursor to carry forward.
+
+        ``None`` means this request has no witness envelope to preserve - the
+        lane is not active - and a cursor minted from it carries no slack, so
+        it stays byte-identical to one minted before the field existed.
+        """
+
+        if not self._uses_short_text_candidate_seed():
+            return None
+        return int(self._short_text_seed_witness_slack().total_seconds() // 3600)
+
     def _short_text_seed_witness_slack(self) -> timedelta:
         """Hours of lag this lane's witness envelope allows; zero means none.
 
-        Zero is the shipped contract and the default: no envelope is emitted
-        at all and the witness CTE stays time-unbounded. The setting is read
-        per statement rather than cached, so an operator change takes effect
-        on the next read; a change made mid-pagination shifts candidacy
-        between hops of one cursor, because the slack is not carried in the
-        signed cursor payload.
+        Zero is the legacy contract and remains the escape hatch: no envelope
+        is emitted at all and the witness CTE stays time-unbounded. The setting
+        is read per statement rather than cached, so an operator change takes
+        effect on the next read - EXCEPT inside a running pagination, where
+        ``pin_filter_seed_witness_slack_hours`` holds the value the cursor was
+        minted with so a mid-flight change cannot skip or duplicate rows.
         """
 
         if not self._uses_short_text_candidate_seed():
             return timedelta(0)
-        return timedelta(
-            hours=max(int(settings.FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS), 0)
+        pinned = getattr(self, "_pinned_witness_slack_hours", None)
+        hours = (
+            pinned
+            if pinned is not None
+            else int(settings.FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS)
         )
+        return timedelta(hours=min(max(hours, 0), _MAX_WITNESS_SLACK_HOURS))
 
     def _scalar_candidate_witness_envelope(
         self, *, root_start: datetime, root_end: datetime
