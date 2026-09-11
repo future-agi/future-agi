@@ -320,3 +320,28 @@ def test_disconnect_cancels_retained_background_tasks():
         assert not consumer._background_tasks
 
     asyncio.run(run())
+
+
+def test_background_task_exception_is_logged_and_task_is_cleared(monkeypatch):
+    async def run():
+        consumer = _make_consumer(workspace_id="ws-a")
+        logged = asyncio.Event()
+        log_exception = MagicMock(side_effect=lambda *args, **kwargs: logged.set())
+
+        monkeypatch.setattr(
+            "sockets.prompt_stream_consumer.logger.exception",
+            log_exception,
+        )
+
+        async def fail():
+            raise RuntimeError("prompt runner exploded")
+
+        task = consumer._create_background_task(fail())
+
+        await asyncio.wait_for(logged.wait(), timeout=1)
+
+        assert task.done()
+        assert not consumer._background_tasks
+        log_exception.assert_called_once_with("PromptStream background task failed")
+
+    asyncio.run(run())

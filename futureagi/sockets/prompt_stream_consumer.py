@@ -103,8 +103,17 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
     def _create_background_task(self, coro):
         task = asyncio.create_task(coro)
         self._background_tasks.add(task)
-        task.add_done_callback(self._background_tasks.discard)
+        task.add_done_callback(self._on_background_task_done)
         return task
+
+    def _on_background_task_done(self, task):
+        self._background_tasks.discard(task)
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("PromptStream background task failed")
 
     # ------------------------------------------------------------------
     # Access resolution — the single gate.
