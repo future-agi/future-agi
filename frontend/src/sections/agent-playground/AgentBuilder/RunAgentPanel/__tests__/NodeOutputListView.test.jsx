@@ -1,3 +1,4 @@
+/* eslint-disable react/prop-types */
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import NodeOutputListView from "../NodeOutputListView";
