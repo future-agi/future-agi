@@ -63,7 +63,14 @@ def test_coordinate_seed_cannot_filter_versions_values_roots_or_child_time(
 ):
     subject = builder(width, kind=kind, operation=operation, value=value)
     assert subject._uses_scalar_coordinate_replay()
-    assert subject.recommended_filter_classify_batch_size() == 200
+    # The short exact-string lane sizes its classifier to the ordered prefix
+    # its own page can publish - 64 for this twenty-five-row page. Every other
+    # coordinate-replay shape keeps the 200 that equals the seed limit, and the
+    # SEED limit is 200 on all of them: an extra classifier chunk is cheap, a
+    # re-seed is not.
+    assert subject.recommended_filter_classify_batch_size() == (
+        64 if subject._uses_short_text_candidate_seed() else 200
+    )
     assert subject.recommended_filter_cursor_seed_batch_size() == 200
     assert not subject.allow_filter_anchor_probe_for_initial_continuation()
     assert (

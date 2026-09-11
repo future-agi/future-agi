@@ -78,7 +78,13 @@ def test_reported_scalar_witness_is_finite_indexed_and_all_child_time(
     indexed = builder_cls is TraceListQueryBuilderV2
     assert builder.prefer_filter_candidate_witness_probe_first() is not indexed
     assert builder.recommended_filter_cursor_seed_batch_size() == 200
-    assert builder.recommended_filter_classify_batch_size() == (200 if indexed else 10)
+    # The short exact-string lane now classifies only the ordered prefix its
+    # page can publish - a 25-row page asks for 26 and takes this lane's 64-row
+    # floor. The numeric witness lane keeps the coordinate-replay batch, and the
+    # legacy builder keeps its structured ten-trace envelope.
+    assert builder.recommended_filter_classify_batch_size() == (
+        64 if indexed and kind == "company" else (200 if indexed else 10)
+    )
     assert builder.filter_candidate_witness_replays_global_membership() is True
     assert params["filter_candidate_trace_ids"] == ("first", "second")
     assert params["filter_candidate_witness_limit"] == 2
