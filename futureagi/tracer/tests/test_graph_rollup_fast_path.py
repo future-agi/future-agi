@@ -387,6 +387,78 @@ def test_selective_scalar_witness_adds_cost_gated_trace_seed(monkeypatch):
 
 
 @pytest.mark.unit
+def test_single_node_install_seeds_the_filtered_trace_graph(monkeypatch):
+    monkeypatch.setattr(
+        graph_dispatch.settings,
+        "DASHBOARD_TRACE_REPLICA_SHARD_CLUSTER",
+        "",
+    )
+    analytics = mock.Mock()
+    analytics.execute_ch_query.side_effect = [
+        mock.Mock(data=[{"rows": 1_600_000, "marks": 259}], columns=[]),
+        _empty_graph_query_result(),
+    ]
+    filters = [
+        _date_filter("2026-07-01T00:00:00Z", "2026-08-01T00:00:00Z"),
+        _span_attribute_filter("account_id", filter_type="text", value="acct-1"),
+    ]
+
+    response = graph_dispatch._fetch_direct_raw_system_metric_graph(
+        analytics=analytics,
+        project_id=PROJECT_ID,
+        filters=filters,
+        interval="day",
+        metric_id="latency",
+        observe_type="trace",
+        timeout_ms=30_000,
+    )
+
+    assert analytics.execute_ch_query.call_count == 2
+    estimate_call, graph_call = analytics.execute_ch_query.call_args_list
+    assert "EXPLAIN ESTIMATE" in estimate_call.args[0]
+    graph_query = graph_call.args[0]
+    assert "trace_id IN (" in graph_query
+    assert "GLOBAL IN" not in graph_query
+    assert "cluster(" not in graph_query
+    # The seed prunes candidates; the outer read still classifies each one.
+    assert "graph_match_0 = 1" in graph_query
+    assert "FINAL" not in graph_query.upper()
+    assert response["query_count"] == 2
+
+
+@pytest.mark.unit
+def test_single_node_dense_witness_keeps_one_pass_trace_query(monkeypatch):
+    monkeypatch.setattr(
+        graph_dispatch.settings,
+        "DASHBOARD_TRACE_REPLICA_SHARD_CLUSTER",
+        "",
+    )
+    analytics = mock.Mock()
+    analytics.execute_ch_query.side_effect = [
+        mock.Mock(data=[{"rows": 106_000_000, "marks": 14_612}], columns=[]),
+        _empty_graph_query_result(),
+    ]
+    filters = [
+        _date_filter("2026-07-01T00:00:00Z", "2026-08-01T00:00:00Z"),
+        _span_attribute_filter("prompt_slug", filter_type="text", value="summary"),
+    ]
+
+    response = graph_dispatch._fetch_direct_raw_system_metric_graph(
+        analytics=analytics,
+        project_id=PROJECT_ID,
+        filters=filters,
+        interval="day",
+        metric_id="latency",
+        observe_type="trace",
+        timeout_ms=30_000,
+    )
+
+    assert analytics.execute_ch_query.call_count == 2
+    assert "trace_id IN (" not in analytics.execute_ch_query.call_args_list[1].args[0]
+    assert response["query_count"] == 2
+
+
+@pytest.mark.unit
 def test_dense_scalar_witness_keeps_one_pass_trace_query(monkeypatch):
     monkeypatch.setattr(
         graph_dispatch.settings,

@@ -143,8 +143,11 @@ def direct(filters, observe_type):
         observe_type=observe_type,
     )
     assert result["query_complete"] is True
-    assert len(analytics.calls) == 1
-    return analytics.calls[0]
+    # A filtered trace graph may first spend bounded EXPLAIN ESTIMATE probes
+    # choosing a candidate seed. The graph statement is always the last one.
+    assert all("EXPLAIN ESTIMATE" in call[0] for call in analytics.calls[:-1])
+    assert "EXPLAIN ESTIMATE" not in analytics.calls[-1][0]
+    return analytics.calls[-1]
 
 
 @pytest.mark.parametrize("key", RAW_NAMES)

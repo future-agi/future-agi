@@ -220,7 +220,13 @@ def _select_raw_trace_seed_candidate(
     end_date: datetime,
     timeout_ms: int,
 ) -> tuple[_GraphRawTraceCandidate | None, int]:
-    """Use bounded ClickHouse estimates to reject dense witness subqueries."""
+    """Use bounded ClickHouse estimates to reject dense witness subqueries.
+
+    ``_GRAPH_SEED_MAX_ESTIMATED_ROWS`` is also the admitted set-cardinality
+    ceiling: the seed subquery groups by ``trace_id`` over the rows it reads,
+    so the resulting IN set can never hold more identities than the estimate
+    the candidate was admitted on.
+    """
 
     candidates = _raw_trace_seed_candidates(filters)
     total_budget_ms = min(
@@ -1263,11 +1269,11 @@ def _fetch_direct_raw_system_metric_graph(
     )
     seed_candidate: _GraphRawTraceCandidate | None = None
     seed_probe_count = 0
-    if (
-        start_date < end_date
-        and observe_type == "trace"
-        and settings.DASHBOARD_TRACE_REPLICA_SHARD_CLUSTER
-    ):
+    # Seed admission is a cost decision taken from ClickHouse estimates, not a
+    # deployment topology decision: a single-node install pays the same
+    # full-window scan a sharded one does. The builder still renders the
+    # topology-appropriate source and set operator for the selected candidate.
+    if start_date < end_date and observe_type == "trace":
         seed_candidate, seed_probe_count = _select_raw_trace_seed_candidate(
             analytics=analytics,
             project_id=project_id,
