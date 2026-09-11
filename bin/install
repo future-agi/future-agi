@@ -221,7 +221,6 @@ declare -a PERSISTENT_VOLUME_SUFFIXES=(
   peerdb-catalog-data
   peerdb-minio-data
   property-catalog-kafka-data
-  property-catalog-sequencer-data
   fi-collector-data
 )
 declare -a STALE_VOLS=()
@@ -590,7 +589,7 @@ else
   # the services that deliberately share the locally built collector image.
   while IFS= read -r service; do
     case "$service" in
-      fi-collector|fi-property-catalog-sequencer|fi-property-catalog-consumer) ;;
+      fi-collector|fi-property-catalog-consumer) ;;
       *) pull_command+=("$service") ;;
     esac
   done < <($DC config --services)
@@ -606,19 +605,16 @@ ok "Images pulled"
 # ---------------- bring up ----------------
 step "Starting the stack"
 
-attempt=0
 # --build forces a rebuild of any service with `build:` set, so a stale
 # image tag from a previous worktree (or an outdated layer) doesn't carry
 # old source into a new install. Docker's layer cache makes this fast
 # when nothing has actually changed.
-until $DC up -d --build --remove-orphans; do
-  attempt=$((attempt + 1))
-  if [[ "$attempt" -ge 3 ]]; then
-    die "docker compose up failed after $attempt attempts. Check 'docker compose logs'."
-  fi
-  warn "compose up failed (attempt $attempt) — retrying in 30s…"
-  sleep 30
-done
+# One attempt, as in bin/e2e: replaying compose up can rerun an exited schema
+# or mirror job after an uncertain write. Inspect retained state before resuming.
+# Preserve services omitted by an upgrade; legacy retirement is an explicit step.
+if ! $DC up -d --build --wait --wait-timeout 1200; then
+  die "docker compose startup failed or timed out; partial state retained, no automatic retry. Inspect 'docker compose ps -a' and 'docker compose logs' before explicitly resuming."
+fi
 ok "Containers started"
 
 # ---------------- readiness wait ----------------
@@ -667,13 +663,10 @@ declare -a catalog_jobs=(
   property-catalog-runtime-volume-init
   property-catalog-topic-init
   property-catalog-clickhouse-bootstrap
-  property-catalog-postgres-bootstrap
 )
 declare -a catalog_services=(
   fi-collector
-  fi-property-catalog-sequencer
   fi-property-catalog-consumer
-  property-catalog-supervisor
 )
 
 while true; do
@@ -710,7 +703,7 @@ while true; do
       snapshot=$(compose_service_snapshot "$service")
       IFS='|' read -r container_id status exit_code restart_count health started_at <<<"$snapshot"
       ready_signature+="${service}:${container_id}:${restart_count}:${started_at};"
-      if [[ "$status" != "running" || ( "$service" == "property-catalog-supervisor" && "$health" != "healthy" ) ]]; then
+      if [[ "$status" != "running" ]]; then
         all_ready=0
         [[ "$status" == "dead" ]] && fatal_reason="$service entered dead state"
       fi
@@ -725,9 +718,9 @@ while true; do
     $DC ps -a >&3 2>&1 || true
     $DC logs --tail 80 property-catalog-kafka property-catalog-kafka-volume-init \
       property-catalog-runtime-volume-init property-catalog-topic-init \
-      property-catalog-clickhouse-bootstrap property-catalog-postgres-bootstrap \
-      fi-collector fi-property-catalog-sequencer fi-property-catalog-consumer \
-      property-catalog-supervisor backend \
+      property-catalog-clickhouse-bootstrap \
+      fi-collector fi-property-catalog-consumer \
+      backend \
       >&3 2>&1 || true
     die "$fatal_reason. Relevant service logs were appended to $LOG_FILE"
   fi
@@ -737,8 +730,8 @@ while true; do
       last_ready_signature="$ready_signature"
       ready_since="$now"
     elif (( now - ready_since >= stability_seconds )); then
-      ok "Kafka healthy; candidate and ordered topics plus catalog bootstraps completed"
-      ok "Collector, sequencer, property-catalog consumer, and supervisor stable for ${stability_seconds}s"
+      ok "Kafka healthy; observation topic and isolated catalog bootstrap completed"
+      ok "Collector and observation consumer stable for ${stability_seconds}s"
       ok "Backend healthy at http://localhost:${backend_port}"
       break
     fi
@@ -751,9 +744,9 @@ while true; do
     $DC ps -a >&3 2>&1 || true
     $DC logs --tail 80 property-catalog-kafka property-catalog-kafka-volume-init \
       property-catalog-runtime-volume-init property-catalog-topic-init \
-      property-catalog-clickhouse-bootstrap property-catalog-postgres-bootstrap \
-      fi-collector fi-property-catalog-sequencer fi-property-catalog-consumer \
-      property-catalog-supervisor backend \
+      property-catalog-clickhouse-bootstrap \
+      fi-collector fi-property-catalog-consumer \
+      backend \
       >&3 2>&1 || true
     die "Stack did not become fully ready within ${ready_timeout}s. Relevant service logs were appended to $LOG_FILE"
   fi
@@ -837,7 +830,7 @@ say "    Backend     →  http://localhost:${backend_port}"
 say ""
 say "  ${BOLD}Existing-data catalog backfill${RESET}"
 say "    Restarts do not scan historical data automatically. After an upgrade:"
-say "    ${BOLD}./bin/property-catalog-backfill --execute${RESET}"
+say "    See fi-collector/PROPERTY_CATALOG_OSS.md for the bounded backfill command."
 
 if [[ -n "$USER_EMAIL" ]]; then
   say ""

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, userEvent } from "src/utils/test-utils";
+import { createTheme } from "@mui/material/styles";
+import { act, fireEvent, render, screen, userEvent, waitFor } from "src/utils/test-utils";
 import FilterValueLabel from "./FilterValueLabel";
 import {
   filterValuesUseBackendSearch,
@@ -209,6 +210,71 @@ describe("FilterValueLabel", () => {
     await userEvent.hover(screen.getByText("Project Alpha"));
     expect(await screen.findByText("Project Beta")).toBeInTheDocument();
     expect(await screen.findByText("Project Gamma")).toBeInTheDocument();
+  });
+
+  it("closes the summary while editing without replacing the popup anchor", async () => {
+    const filter = { ...baseFilter, value: ["p1", "p2", "p3"] };
+    const onClick = vi.fn();
+    const { rerender } = renderLabel(filter, { onClick });
+    const anchor = screen.getByText("Project Alpha").parentElement;
+    await userEvent.hover(anchor);
+    expect(await screen.findByRole("tooltip")).toBeVisible();
+
+    rerender(
+      <FilterValueLabel filter={filter} source="traces" onClick={onClick} disableTooltip />,
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("tooltip")).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.getByText("Project Alpha", { selector: ".filter-value-name" }).parentElement,
+    ).toBe(anchor);
+    expect(anchor.isConnected).toBe(true);
+    await userEvent.unhover(anchor);
+    await userEvent.hover(anchor);
+    await userEvent.click(anchor);
+    expect(onClick).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+
+    rerender(<FilterValueLabel filter={filter} source="traces" onClick={onClick} />);
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    await userEvent.unhover(anchor);
+    await userEvent.hover(anchor);
+    expect(await screen.findByRole("tooltip")).toBeVisible();
+    expect(
+      screen.getByText("Project Alpha", { selector: ".filter-value-name" }).parentElement,
+    ).toBe(anchor);
+  });
+
+  it("does not reopen from a hover timer queued before editing", () => {
+    vi.useFakeTimers();
+    const filter = { ...baseFilter, value: ["p1", "p2"] };
+    const view = render(
+      <FilterValueLabel filter={filter} source="traces" />,
+      {
+        theme: createTheme({
+          components: {
+            MuiTooltip: { defaultProps: { enterDelay: 100, enterNextDelay: 100 } },
+          },
+        }),
+      },
+    );
+    try {
+      const anchor = screen.getByText("Project Alpha").parentElement;
+      fireEvent.mouseOver(anchor);
+      act(() => vi.advanceTimersByTime(50));
+      expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+      view.rerender(<FilterValueLabel filter={filter} source="traces" disableTooltip />);
+      act(() => vi.advanceTimersByTime(150));
+      expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+      view.rerender(<FilterValueLabel filter={filter} source="traces" />);
+      act(() => vi.advanceTimersByTime(250));
+      expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+      expect(screen.getByText("Project Alpha").parentElement).toBe(anchor);
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+    }
   });
 });
 

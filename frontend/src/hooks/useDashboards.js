@@ -5,7 +5,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import axios, { endpoints } from "src/utils/axios";
+import axios, { endpoints, readQuery } from "src/utils/axios";
 import { getFilterValueReadState } from "src/utils/queryReadState";
 import { accumulateUniqueListContinuations } from "src/sections/projects/LLMTracing/listCursorPagination";
 import { truncateUtf8String } from "src/api/contracts/filter-contract";
@@ -63,7 +63,7 @@ const DASHBOARD_KEYS = {
     cacheScopeKey,
   ) => [
     ...DASHBOARD_KEYS.all,
-    "property-catalog",
+    "property-catalog-current-v2",
     category,
     search,
     source,
@@ -87,6 +87,11 @@ const PROPERTY_CATALOG_COUNT_KEYS = [
 ];
 
 const validPropertyCatalogCategoryCounts = (page) => {
+  if (
+    page?.query_provenance === "current_property_catalog" &&
+    !Object.prototype.hasOwnProperty.call(page, "category_counts")
+  )
+    return true;
   const hasCounts = Object.prototype.hasOwnProperty.call(
     page || {},
     "category_counts",
@@ -154,9 +159,15 @@ const serializedPropertyDefinition = (metric) =>
   JSON.stringify(canonicalizePropertyDefinition(metric));
 
 const samePropertyCatalogActivation = (page, baseline) =>
-  page?.catalog_epoch === baseline?.catalog_epoch &&
-  page?.catalog_revision === baseline?.catalog_revision &&
-  page?.activation_fingerprint === baseline?.activation_fingerprint;
+  page?.query_provenance === "current_property_catalog" ||
+  baseline?.query_provenance === "current_property_catalog"
+    ? page?.query_provenance === baseline?.query_provenance
+    : page?.catalog_epoch === baseline?.catalog_epoch &&
+      page?.catalog_revision === baseline?.catalog_revision &&
+      page?.activation_fingerprint === baseline?.activation_fingerprint;
+
+const isExpiredPropertyCursor = (error) =>
+  (error?.response?.data?.code ?? error?.code) === "cursor_expired";
 
 const stopPropertyCatalogCursor = (page, reason) => ({
   ...(page || {}),
@@ -167,17 +178,19 @@ export const validatePropertyCatalogPage = (
   page,
   consumedCursors = new Set(),
 ) => {
+  const current = page?.query_provenance === "current_property_catalog";
   if (
     !page ||
     page.query_complete !== true ||
-    page.query_exact !== true ||
+    (current ? page.query_exact !== false : page.query_exact !== true) ||
     page.query_status !== "complete" ||
-    page.query_provenance !== "activated_property_catalog" ||
-    !Number.isSafeInteger(page.catalog_epoch) ||
-    page.catalog_epoch < 1 ||
-    !Number.isSafeInteger(page.catalog_revision) ||
-    page.catalog_revision < 1 ||
-    !/^[0-9a-f]{64}$/.test(page.activation_fingerprint || "") ||
+    (!current &&
+      (page.query_provenance !== "activated_property_catalog" ||
+        !Number.isSafeInteger(page.catalog_epoch) ||
+        page.catalog_epoch < 1 ||
+        !Number.isSafeInteger(page.catalog_revision) ||
+        page.catalog_revision < 1 ||
+        !/^[0-9a-f]{64}$/.test(page.activation_fingerprint || ""))) ||
     !Array.isArray(page.metrics) ||
     page.total !== null ||
     page.total_is_exact !== false ||
@@ -500,6 +513,8 @@ export function usePropertyCatalog({
   fallbackScopeKey = "",
   cacheScopeKey = "",
 } = {}) {
+  const queryClient = useQueryClient();
+  const restartedError = useRef(null);
   const boundedSearch = boundPropertyCatalogSearch(search);
   const canonicalProjectIds = [
     ...new Set((projectIds || []).map(String)),
@@ -523,28 +538,26 @@ export function usePropertyCatalog({
       cacheScopeKey,
     ),
     queryFn: ({ pageParam, signal }) =>
-      axios
-        .get(endpoints.dashboard.metrics, {
-          signal,
-          timeout: PROPERTY_CATALOG_REQUEST_TIMEOUT_MS,
-          params: {
-            cursor_mode: true,
-            page_size: pageSize,
-            ...(category ? { category } : {}),
-            ...(source ? { source } : {}),
-            ...(boundedSearch ? { search: boundedSearch } : {}),
-            ...(canonicalProjectIds.length
-              ? { project_ids: canonicalProjectIds.join(",") }
-              : {}),
-            ...(agentDefinitionId
-              ? { agent_definition_id: agentDefinitionId }
-              : {}),
-            ...(perEvalConfig ? { per_eval_config: true } : {}),
-            ...(role ? { role } : {}),
-            ...(pageParam ? { cursor: pageParam } : {}),
-          },
-        })
-        .then(({ data }) => data?.result || {}),
+      readQuery(endpoints.dashboard.metrics, {
+        signal,
+        timeout: PROPERTY_CATALOG_REQUEST_TIMEOUT_MS,
+        params: {
+          cursor_mode: true,
+          page_size: pageSize,
+          ...(category ? { category } : {}),
+          ...(source ? { source } : {}),
+          ...(boundedSearch ? { search: boundedSearch } : {}),
+          ...(canonicalProjectIds.length
+            ? { project_ids: canonicalProjectIds.join(",") }
+            : {}),
+          ...(agentDefinitionId
+            ? { agent_definition_id: agentDefinitionId }
+            : {}),
+          ...(perEvalConfig ? { per_eval_config: true } : {}),
+          ...(role ? { role } : {}),
+          ...(pageParam ? { cursor: pageParam } : {}),
+        },
+      }).then(({ data }) => data?.result || {}),
     initialPageParam: null,
     getNextPageParam: (lastPage, allPages) => {
       const consumed = new Set(
@@ -570,6 +583,48 @@ export function usePropertyCatalog({
     refetchOnWindowFocus: false,
     meta: { errorHandled: true },
   });
+
+  useEffect(() => {
+    if (
+      !enabled ||
+      !isExpiredPropertyCursor(query.error) ||
+      restartedError.current === query.error ||
+      (!query.isFetchNextPageError && !query.data?.pageParams?.some(Boolean))
+    )
+      return;
+    restartedError.current = query.error;
+    // Restart the entire scoped walk. Never append a fresh first page to a
+    // retired v1 chain, and never restart authorization or validation failures.
+    queryClient.resetQueries({
+      queryKey: DASHBOARD_KEYS.propertyCatalog(
+        category,
+        boundedSearch,
+        source,
+        canonicalProjectIds,
+        agentDefinitionId,
+        perEvalConfig,
+        role,
+        pageSize,
+        cacheScopeKey,
+      ),
+      exact: true,
+    });
+  }, [
+    enabled,
+    query.error,
+    query.data,
+    query.isFetchNextPageError,
+    queryClient,
+    category,
+    boundedSearch,
+    source,
+    canonicalProjectIds,
+    agentDefinitionId,
+    perEvalConfig,
+    role,
+    pageSize,
+    cacheScopeKey,
+  ]);
 
   useEffect(() => {
     if (
@@ -616,6 +671,7 @@ export function usePropertyCatalog({
   }
   if (
     baselinePage &&
+    baselinePage.query_provenance !== "current_property_catalog" &&
     checkedPages.some(
       (page) =>
         JSON.stringify(page.category_counts) !==
@@ -627,7 +683,7 @@ export function usePropertyCatalog({
   let duplicateProperty = false;
   let definitionConflict = false;
   const definitionsById = new Map();
-  const candidateMetrics = checkedPages.flatMap((page) =>
+  let candidateMetrics = checkedPages.flatMap((page) =>
     (page.metrics || []).filter((metric) => {
       const propertyId = metric?.property_id;
       if (typeof propertyId !== "string" || propertyId.length === 0) {
@@ -646,6 +702,28 @@ export function usePropertyCatalog({
       return true;
     }),
   );
+  if (baselinePage?.query_provenance === "current_property_catalog") {
+    // Native definitions are current reads, not an immutable multi-page
+    // snapshot. Keep the latest metadata when concurrent edits revisit an ID.
+    candidateMetrics = [
+      ...new Map(
+        checkedPages
+          .flatMap((page) => page.metrics || [])
+          .filter(
+            (metric) =>
+              typeof metric?.property_id === "string" && metric.property_id,
+          )
+          .map((metric) => [metric.property_id, metric]),
+      ).values(),
+    ];
+    definitionConflict = checkedPages.some((page) =>
+      (page.metrics || []).some(
+        (metric) =>
+          typeof metric?.property_id !== "string" || !metric.property_id,
+      ),
+    );
+    duplicateProperty = false;
+  }
   if (definitionConflict) {
     chainFailureReason ||= "definition_conflict";
   } else if (duplicateProperty) {
@@ -908,25 +986,23 @@ export function useDashboardFilterValues({
   ];
   const queryIdentity = JSON.stringify(queryKey);
   const requestFilterValuePage = (cursor, signal) =>
-    axios
-      .get(endpoints.dashboard.filterValues, {
-        signal,
-        timeout: FILTER_VALUE_REQUEST_TIMEOUT_MS,
-        params: {
-          ...(resolvedPropertyId ? { property_id: resolvedPropertyId } : {}),
-          metric_name: metricName,
-          metric_type: metricType,
-          project_ids: (projectIds || []).join(","),
-          ...(datasetId ? { dataset_id: datasetId } : {}),
-          source,
-          ...(workflow ? { workflow } : {}),
-          ...(boundedSearch ? { search: boundedSearch } : {}),
-          ...(pageSize ? { page_size: pageSize } : {}),
-          ...(cursor ? { cursor } : {}),
-          ...(attributeType ? { attribute_type: attributeType } : {}),
-        },
-      })
-      .then((res) => res.data?.result || {});
+    readQuery(endpoints.dashboard.filterValues, {
+      signal,
+      timeout: FILTER_VALUE_REQUEST_TIMEOUT_MS,
+      params: {
+        ...(resolvedPropertyId ? { property_id: resolvedPropertyId } : {}),
+        metric_name: metricName,
+        metric_type: metricType,
+        project_ids: (projectIds || []).join(","),
+        ...(datasetId ? { dataset_id: datasetId } : {}),
+        source,
+        ...(workflow ? { workflow } : {}),
+        ...(boundedSearch ? { search: boundedSearch } : {}),
+        ...(pageSize ? { page_size: pageSize } : {}),
+        ...(cursor ? { cursor } : {}),
+        ...(attributeType ? { attribute_type: attributeType } : {}),
+      },
+    }).then((res) => res.data?.result || {});
   const readFilterValuePage = async ({ signal, pageParam, publishedData }) => {
     const actionStartedAt = Date.now();
     const requestPage = (cursor, requestSignal = signal) =>

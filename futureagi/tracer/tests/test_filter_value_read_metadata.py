@@ -211,7 +211,8 @@ def test_voice_system_suggestions_use_normalized_list_expressions(
         assert marker in query
 
 
-def test_end_user_values_use_exact_latest_state_keyset_pages():
+@pytest.mark.parametrize("column", ["user_id", "user_id_type", "user_id_hash"])
+def test_end_user_values_use_exact_latest_state_keyset_pages(column):
     class Analytics:
         calls = []
 
@@ -227,13 +228,13 @@ def test_end_user_values_use_exact_latest_state_keyset_pages():
     first = read_end_user_filter_value_cursor_page(
         analytics,
         project_ids=[PROJECT_ID],
-        source_column="user_id",
+        source_column=column,
         page_size=2,
     )
     second = read_end_user_filter_value_cursor_page(
         analytics,
         project_ids=[PROJECT_ID],
-        source_column="user_id",
+        source_column=column,
         page_size=2,
         value_after=first.next_value_after,
     )
@@ -245,9 +246,52 @@ def test_end_user_values_use_exact_latest_state_keyset_pages():
     assert second.has_more is False
     sql, _, settings = analytics.calls[0]
     assert "argMax(is_deleted, version) AS latest_is_deleted" in sql
-    assert "argMax(tuple(user_id), version).1 AS raw_value" in sql
+    assert f"argMax(tuple({column}), version).1 AS raw_value" in sql
+    assert "PREWHERE project_id IN %(project_ids)s" in sql
+    assert "latest_is_deleted = 0" in sql
+    assert "SELECT DISTINCT toString(raw_value) AS val" in sql
     assert "FINAL" not in sql
     assert settings["settings"]["timeout_overflow_mode"] == "throw"
+
+
+def test_end_user_hash_search_and_cursor_values_are_bound_parameters():
+    class Analytics:
+        call = None
+
+        def execute_ch_query(self, query, params, **kwargs):
+            self.call = (query, params, kwargs)
+            return SimpleNamespace(data=[{"val": "0"}])
+
+    analytics = Analytics()
+    page = read_end_user_filter_value_cursor_page(
+        analytics,
+        project_ids=[PROJECT_ID],
+        source_column="user_id_hash",
+        page_size=1,
+        search="' OR 1=1 --",
+        value_after="'",
+    )
+    assert page.values == ("0",)
+    assert page.has_more is False
+    sql, params, _ = analytics.call
+    assert "' OR 1=1 --" not in sql
+    assert "positionCaseInsensitiveUTF8(val, %(filter_value_search)s)" in sql
+    assert "AND val > %(value_after)s" in sql
+    assert params["filter_value_search"] == "' OR 1=1 --"
+    assert params["value_after"] == "'"
+    assert params["project_ids"] == (PROJECT_ID,)
+
+
+@pytest.mark.parametrize("column", ["metadata", "user_id_hash) FROM spans --"])
+def test_end_user_value_reader_rejects_unapproved_columns_before_query(column):
+    class Analytics:
+        def execute_ch_query(self, *_args, **_kwargs):
+            pytest.fail("invalid column must be rejected before query")
+
+    with pytest.raises(ValueError, match="unsupported end-user filter-value column"):
+        read_end_user_filter_value_cursor_page(
+            Analytics(), project_ids=[PROJECT_ID], source_column=column, page_size=1
+        )
 
 
 def test_end_user_cursor_consumes_the_request_owned_property_deadline():

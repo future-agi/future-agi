@@ -70,16 +70,6 @@ PROPERTY_CATALOG_RUNTIME_SETTING_SPECS = {
             ("MAX_PAGE_SIZE", 50, 1, 200),
             ("MAX_SEARCH_BYTES", 512, 1, 4096),
             ("QUERY_WALL_MS", 10_000, 100, 30_000),
-            ("DEV_STANDARD_MAX_WALL_MS", 100_000, 100, 1_740_000),
-            ("DEV_INITIAL_BACKFILL_MAX_WALL_MS", 1_740_000, 100, 3_600_000),
-            ("DEV_SCHEDULED_RECONCILE_MAX_WALL_MS", 1_740_000, 100, 3_600_000),
-            ("REVISION_LEASE_SECONDS", 600, 60, 1_800),
-            ("MAX_REVISION_LEASE_SECONDS", 1_800, 60, 3_600),
-            ("INITIAL_BACKFILL_LEASE_HEADROOM_MS", 60_000, 1_000, 600_000),
-            ("RECONCILE_INTERVAL_SECONDS", 120, 30, 86_400),
-            ("RECONCILE_MAX_WORKSPACES", 1, 1, 256),
-            ("RECONCILE_DEFAULT_EXTENDED_WALL_MS", 1_200_000, 100, 3_600_000),
-            ("RECONCILE_ACTIVITY_TIME_LIMIT_SECONDS", 1_800, 60, 7_200),
             ("READ_POOL_SIZE", 4, 1, 32),
             ("READ_MAX_THREADS", 2, 1, 16),
             ("READ_MAX_CONCURRENT_QUERIES_PER_USER", 4, 1, 16),
@@ -98,60 +88,15 @@ PROPERTY_CATALOG_RUNTIME_SETTING_SPECS = {
                 32 * 1024**2,
                 8 * 1024**3,
             ),
-            ("MAX_LINEAGE_REVISIONS", 2_048, 1, 16_384),
-            ("SOURCE_MAX_PAGE_BYTES", 2 * 1024**2, 64 * 1024, 32 * 1024**2),
-            ("SOURCE_MAX_TOTAL_BYTES", 32 * 1024**2, 64 * 1024, 64 * 1024**2),
-            ("POSTGRES_STATEMENT_TIMEOUT_MS", 8_000, 100, 60_000),
-            ("POSTGRES_PAGE_ROWS", 1_000, 1, 10_000),
-            ("POSTGRES_MAX_TOTAL_ROWS", 100_000, 1, 1_000_000),
-            ("PUBLISHER_WALL_MS", 8_500, 100, 60_000),
-            ("DEADLINE_MAX_WALL_MS", 7_200_000, 100, 24 * 60 * 60 * 1_000),
-            ("DRAIN_PROOF_MAX_BYTES", 64 * 1024**2, 64 * 1024, 64 * 1024**2),
-            ("DRAIN_POLL_INTERVAL_MS", 50, 1, 1_000),
-            ("DRAIN_POLL_CAP_MS", 1_000, 1, 5_000),
-            ("VISIBILITY_RETRY_CAP_MS", 250, 1, 5_000),
-            ("STATE_STORE_TIMEOUT_MS", 8_500, 100, 60_000),
-            ("STATE_STORE_MIN_ROW_CAP", 256, 1, 16_384),
-            ("CURRENT_BINDING_MAX_ROWS", 100_000, 1, 1_000_000),
             ("CURSOR_MAX_AGE_SECONDS", 24 * 60 * 60, 60, 7 * 24 * 60 * 60),
-            ("CURSOR_MAX_BYTES", 16 * 1024, 1024, 64 * 1024),
-            ("LINEAGE_ANCHOR_MAX_AGE_SECONDS", 26 * 60 * 60, 60 * 60, 604_800),
-            ("FULL_REPAIR_INTERVAL_SECONDS", 24 * 60 * 60, 60 * 60, 604_800),
-            ("MAX_NONTERMINAL_RESERVATIONS", 64, 1, 1024),
-            ("CANONICAL_SPAN_MAX_WINDOWS", 366 * 24, 24, 5 * 366 * 24),
-            ("CANONICAL_SPAN_PAGE_ROWS", 1024, 1, 4096),
-            ("CANONICAL_SPAN_DEFAULT_PAGE_ROWS", 8, 1, 4096),
-            ("DEV_CANONICAL_SPAN_PAGE_ROWS", 256, 1, 4096),
-            ("INITIAL_BACKFILL_CANONICAL_SPAN_PAGE_ROWS", 1024, 1, 4096),
-            ("CANONICAL_SPAN_QUERY_TIMEOUT_MS", 8_500, 100, 60_000),
-            ("CANONICAL_SPAN_MAX_THREADS", 1, 1, 16),
-            ("INITIAL_BACKFILL_CANONICAL_SPAN_QUERY_TIMEOUT_MS", 30_000, 100, 120_000),
-            ("CANONICAL_SPAN_SCAN_WINDOW_HOURS", 7 * 24, 1, 31 * 24),
-            ("CANONICAL_SPAN_MAX_GROUPS", 100_000, 1000, 1_000_000),
-            ("CANONICAL_SPAN_MAX_GROUP_BYTES", 64 * 1024**2, 1024**2, 512 * 1024**2),
-            ("AUTHORITATIVE_VALUE_BATCH_MAX_ROWS", 2000, 1, 10_000),
-            ("AUTHORITATIVE_VALUE_BATCH_MAX_BYTES", 400 * 1024, 64 * 1024, 8 * 1024**2),
-            ("RECONCILE_INCREMENTAL_OVERLAP_SECONDS", 120, 0, 86_400),
-            ("RECONCILE_DEFAULT_ENVELOPE_ROWS", 500, 1, 1000),
-            ("RECONCILE_MAX_ENVELOPE_ROWS", 1000, 1, 10_000),
-            ("RECONCILE_DEFAULT_MAX_ENVELOPE_BYTES", 1024**2, 64 * 1024, 2 * 1024**2),
-            ("RECONCILE_MAX_ENVELOPE_BYTES", 2 * 1024**2, 64 * 1024, 8 * 1024**2),
-            ("PRODUCER_RETIREMENT_MAX_BYTES", 64 * 1024**2, 64 * 1024, 64 * 1024**2),
+            # A keyset contains canonical value bytes; do not depend on JSON
+            # compression to fit an eligible 16 KiB string after escaping.
+            ("CURSOR_MAX_BYTES", 256 * 1024, 1024, 256 * 1024),
         ),
         prefix="PROPERTY_CATALOG_",
     ),
     **_specs(
-        (
-            ("READ_TRANSPORT_TIMEOUT_SECONDS", 10.0, 0.1, 30.0),
-            ("SOURCE_ADAPTER_WALL_SECONDS", 8.5, 0.1, 540.0),
-            (
-                "SCHEDULED_RECONCILE_SOURCE_ADAPTER_WALL_SECONDS",
-                120.0,
-                0.1,
-                540.0,
-            ),
-            ("INITIAL_BACKFILL_SOURCE_ADAPTER_WALL_SECONDS", 540.0, 0.1, 540.0),
-        ),
+        (("READ_TRANSPORT_TIMEOUT_SECONDS", 10.0, 0.1, 30.0),),
         value_type=float,
         prefix="PROPERTY_CATALOG_",
     ),
@@ -544,61 +489,6 @@ def validate_property_catalog_settings(values: Mapping[str, Numeric]) -> None:
         return values[f"PROPERTY_CATALOG_{name}"]
 
     _require_at_most(
-        value("REVISION_LEASE_SECONDS"),
-        value("MAX_REVISION_LEASE_SECONDS"),
-        "revision lease cannot exceed maximum revision lease",
-    )
-    _require_at_most(
-        value("DEV_STANDARD_MAX_WALL_MS"),
-        value("DEV_INITIAL_BACKFILL_MAX_WALL_MS"),
-        "standard DEV wall cannot exceed initial-backfill DEV wall",
-    )
-    _require_at_most(
-        value("RECONCILE_DEFAULT_EXTENDED_WALL_MS"),
-        value("DEV_SCHEDULED_RECONCILE_MAX_WALL_MS"),
-        "default reconcile wall cannot exceed scheduled reconcile wall",
-    )
-    _require_at_most(
-        value("SOURCE_MAX_PAGE_BYTES"),
-        value("SOURCE_MAX_TOTAL_BYTES"),
-        "source page bytes cannot exceed source total bytes",
-    )
-    _require_at_most(
-        value("SOURCE_ADAPTER_WALL_SECONDS"),
-        value("SCHEDULED_RECONCILE_SOURCE_ADAPTER_WALL_SECONDS"),
-        "source adapter wall cannot exceed scheduled reconcile source adapter wall",
-    )
-    _require_at_most(
-        value("SCHEDULED_RECONCILE_SOURCE_ADAPTER_WALL_SECONDS"),
-        value("INITIAL_BACKFILL_SOURCE_ADAPTER_WALL_SECONDS"),
-        "scheduled reconcile source adapter wall cannot exceed initial backfill source adapter wall",
-    )
-    if (
-        value("POSTGRES_STATEMENT_TIMEOUT_MS")
-        >= value("SOURCE_ADAPTER_WALL_SECONDS") * 1_000
-    ):
-        raise ValueError("PostgreSQL statement timeout must be below the source wall")
-    _require_at_most(
-        value("POSTGRES_PAGE_ROWS"),
-        value("POSTGRES_MAX_TOTAL_ROWS"),
-        "PostgreSQL page rows cannot exceed total rows",
-    )
-    _require_at_most(
-        value("PUBLISHER_WALL_MS"),
-        value("DEADLINE_MAX_WALL_MS"),
-        "deadline wall cannot be below the publisher wall",
-    )
-    _require_at_most(
-        value("DRAIN_POLL_INTERVAL_MS"),
-        value("DRAIN_POLL_CAP_MS"),
-        "drain poll interval cannot exceed the poll cap",
-    )
-    _require_at_most(
-        value("STATE_STORE_TIMEOUT_MS"),
-        value("PUBLISHER_WALL_MS"),
-        "state-store timeout cannot exceed the publisher wall",
-    )
-    _require_at_most(
         value("READ_MAX_THREADS"),
         value("READ_POOL_SIZE"),
         "ClickHouse read threads cannot exceed the read pool size",
@@ -617,63 +507,6 @@ def validate_property_catalog_settings(values: Mapping[str, Numeric]) -> None:
         value("READ_EXTERNAL_SORT_BYTES"),
         value("READ_MAX_MEMORY_BYTES"),
         "ClickHouse external sort threshold cannot exceed read memory",
-    )
-    if (
-        value("DEV_INITIAL_BACKFILL_MAX_WALL_MS")
-        + value("INITIAL_BACKFILL_LEASE_HEADROOM_MS")
-        > value("MAX_REVISION_LEASE_SECONDS") * 1_000
-    ):
-        raise ValueError(
-            "initial-backfill wall plus headroom cannot exceed the maximum lease"
-        )
-    _require_at_most(
-        value("CURSOR_MAX_AGE_SECONDS"),
-        value("LINEAGE_ANCHOR_MAX_AGE_SECONDS"),
-        "cursor lifetime cannot exceed lineage-anchor retention",
-    )
-    _require_at_most(
-        max(
-            value("CANONICAL_SPAN_DEFAULT_PAGE_ROWS"),
-            value("DEV_CANONICAL_SPAN_PAGE_ROWS"),
-            value("INITIAL_BACKFILL_CANONICAL_SPAN_PAGE_ROWS"),
-        ),
-        value("CANONICAL_SPAN_PAGE_ROWS"),
-        "specialized span page size cannot exceed the maximum",
-    )
-    _require_at_most(
-        value("CANONICAL_SPAN_QUERY_TIMEOUT_MS"),
-        value("INITIAL_BACKFILL_CANONICAL_SPAN_QUERY_TIMEOUT_MS"),
-        "standard span timeout cannot exceed initial backfill timeout",
-    )
-    _require_at_most(
-        value("CANONICAL_SPAN_MAX_THREADS"),
-        value("READ_MAX_THREADS"),
-        "canonical-span threads cannot exceed catalog read threads",
-    )
-    _require_at_most(
-        value("CANONICAL_SPAN_MAX_GROUP_BYTES"),
-        min(value("READ_MAX_BYTES"), value("READ_MAX_MEMORY_BYTES")),
-        "canonical-span group bytes cannot exceed read or memory bytes",
-    )
-    _require_at_most(
-        value("AUTHORITATIVE_VALUE_BATCH_MAX_ROWS"),
-        value("CANONICAL_SPAN_MAX_GROUPS"),
-        "authoritative value batch rows cannot exceed canonical span groups",
-    )
-    _require_at_most(
-        value("AUTHORITATIVE_VALUE_BATCH_MAX_BYTES"),
-        value("CANONICAL_SPAN_MAX_GROUP_BYTES"),
-        "authoritative value batch bytes cannot exceed canonical group bytes",
-    )
-    _require_at_most(
-        value("RECONCILE_DEFAULT_ENVELOPE_ROWS"),
-        value("RECONCILE_MAX_ENVELOPE_ROWS"),
-        "default envelope rows cannot exceed maximum envelope rows",
-    )
-    _require_at_most(
-        value("RECONCILE_DEFAULT_MAX_ENVELOPE_BYTES"),
-        value("RECONCILE_MAX_ENVELOPE_BYTES"),
-        "default envelope bytes cannot exceed maximum envelope bytes",
     )
 
 

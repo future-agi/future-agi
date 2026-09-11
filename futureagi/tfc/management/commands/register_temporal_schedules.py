@@ -3,6 +3,7 @@ Django management command to register Temporal schedules.
 
 Usage:
     python manage.py register_temporal_schedules
+    python manage.py register_temporal_schedules --cleanup-orphans
     python manage.py register_temporal_schedules --list
     python manage.py register_temporal_schedules --delete-all
     python manage.py register_temporal_schedules --pause <schedule_id>
@@ -17,7 +18,6 @@ from django.core.management.base import BaseCommand, CommandError
 from tfc.temporal import (
     ALL_SCHEDULES,
     MODEL_HUB_SCHEDULES,
-    PROPERTY_CATALOG_SCHEDULES,
 )
 from tfc.temporal.common.client import get_client
 from tfc.temporal.schedules import (
@@ -51,9 +51,12 @@ class Command(BaseCommand):
             help="Only register model_hub schedules",
         )
         parser.add_argument(
-            "--property-catalog-only",
+            "--cleanup-orphans",
             action="store_true",
-            help="Only register the one reviewed DEV property-catalog schedule",
+            help=(
+                "Delete schedules outside the full registration set "
+                "(explicit opt-in; incompatible with --model-hub-only or actions)"
+            ),
         )
         parser.add_argument(
             "--pause",
@@ -84,26 +87,24 @@ class Command(BaseCommand):
         asyncio.run(self._handle_async(options))
 
     async def _handle_async(self, options):
-        action_names = ("list", "delete_all", "pause", "unpause", "trigger", "describe")
-        scoped_registration = (
-            options["model_hub_only"] or options["property_catalog_only"]
+        id_actions = ("pause", "unpause", "trigger", "describe")
+        has_action = options["list"] or options["delete_all"] or any(
+            options[name] is not None for name in id_actions
         )
-        if options["model_hub_only"] and options["property_catalog_only"]:
+        if options["cleanup_orphans"] and (
+            options["model_hub_only"] or has_action
+        ):
             raise CommandError(
-                "--model-hub-only and --property-catalog-only are mutually exclusive"
+                "--cleanup-orphans requires full registration without schedule actions"
             )
-        if scoped_registration and any(options[name] for name in action_names):
+        if options["model_hub_only"] and has_action:
             raise CommandError(
                 "registration scope flags cannot be combined with schedule actions"
             )
+        if any(options[name] == "" for name in id_actions):
+            raise CommandError("schedule actions require a non-empty schedule ID")
 
-        if options["property_catalog_only"]:
-            schedules = PROPERTY_CATALOG_SCHEDULES
-            if len(schedules) != 1:
-                raise CommandError(
-                    "property-catalog-only registration requires exactly one configured schedule"
-                )
-        elif options["model_hub_only"]:
+        if options["model_hub_only"]:
             schedules = MODEL_HUB_SCHEDULES
         else:
             schedules = ALL_SCHEDULES
@@ -137,12 +138,12 @@ class Command(BaseCommand):
         # Register schedules
         self.stdout.write(f"Registering {len(schedules)} schedules...")
 
-        # A scoped registration must not treat schedules outside its scope as
-        # orphans. Only a full registration owns the complete schedule set.
+        # Registration preserves unknown schedules unless cleanup is explicitly
+        # requested for the full set. Upgrades must not imply legacy retirement.
         await a_register_schedules(
             client,
             schedules,
-            cleanup_orphans=not scoped_registration,
+            cleanup_orphans=options["cleanup_orphans"],
         )
 
         self.stdout.write(

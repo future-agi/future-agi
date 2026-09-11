@@ -21,6 +21,7 @@ from unittest.mock import ANY, MagicMock, patch
 from urllib.parse import urlencode
 
 import pytest
+from clickhouse_connect.driver.binding import finalize_query
 from clickhouse_driver.errors import NetworkError, ServerException
 from django.conf import settings
 from django.core import signing
@@ -377,9 +378,9 @@ def test_dashboard_worker_has_one_deadline_for_every_exact_source():
     assert settings.GRAPH_BACKGROUND_WALL_MS > _DASHBOARD_EXACT_QUERY_TIMEOUT_MS
     assert source.count("ReadDeadline.start(") == 1
     assert source.count("timeout_ms=read_deadline.remaining_ms(") == 3
-    assert source.count(
-        "timeout_ms=read_deadline.remaining_ms(statement_timeout_ms)"
-    ) == 3
+    assert (
+        source.count("timeout_ms=read_deadline.remaining_ms(statement_timeout_ms)") == 3
+    )
     assert source.count("read_deadline.remaining_ms(floor_ms=1)") == 1
     assert "query_timeout =" not in source
 
@@ -2246,107 +2247,87 @@ class TestMetricsEndpoint:
         assert "metric_name" in conflicting.errors
 
     def test_eval_filter_values_never_guess_between_config_and_template_ids(self):
-        from tracer.models.custom_eval_config import CustomEvalConfig
-        from tracer.views.dashboard import DashboardViewSet
+        """eval_config and eval_template resolve by their OWN id, never each other's.
+
+        This guards a real correctness property: two different families can
+        carry the same UUID, so resolving an ``eval_config:<uuid>`` request
+        against the template family (or vice versa) would silently return
+        another object's choices.
+
+        The assertions target ``CurrentDefinitionSource.resolve`` because that
+        is where resolution now lives. ``filter_values`` routes eval and
+        annotation property kinds there before reaching the legacy
+        ``CustomEvalConfig`` lookup, so stubbing that model -- as this test did
+        previously -- no longer observes the code under test. The guarantee is
+        now stronger than the path it replaced: the old code fell back to
+        ``eval_template_id`` when a config lookup missed, and this one never
+        falls back at all.
+        """
+        from tracer.services.clickhouse.v2.property_catalog.source_adapters import (
+            CurrentDefinitionSource,
+        )
 
         metric_id = "11111111-1111-4111-8111-111111111111"
-        project_scope = SimpleNamespace(
-            mode="fixed",
-            batched=False,
-            project_ids=("project-1",),
-            requested_project_ids=frozenset({"project-1"}),
-        )
-        eval_template = SimpleNamespace(
-            config={"output": "PASS_FAIL"},
-            choices=[],
-        )
-        config = SimpleNamespace(
-            project_id="project-1",
-            eval_template=eval_template,
-        )
+        scope = {
+            "organization_id": "org-1",
+            "workspace_id": "workspace-1",
+            "project_ids": ("project-1",),
+        }
+        seen = []
 
-        class _EvalConfigQuery:
-            def __init__(self, *, config_result=None, template_result=None):
-                self.config_result = config_result
-                self.template_result = template_result
-                self.lookups = []
-                self.current_lookup = {}
+        class _Recorder:
+            """Stands in for one family's queryset and records its lookups."""
 
-            def filter(self, *_args, **kwargs):
-                self.lookups.append(kwargs)
-                if "id" in kwargs or "eval_template_id" in kwargs:
-                    self.current_lookup = kwargs
+            def __init__(self, kind):
+                self.kind = kind
+
+            def filter(self, **kwargs):
+                seen.append((self.kind, kwargs))
                 return self
 
-            def select_related(self, *_args):
+            def values(self, *_fields):
                 return self
 
             def first(self):
-                if "id" in self.current_lookup:
-                    return self.config_result
-                if "eval_template_id" in self.current_lookup:
-                    return self.template_result
                 return None
 
-        def run_request(property_kind, query, *, page_size=None):
-            property_id = f"{property_kind}:{metric_id}"
-            request_data = {
-                "property_id": property_id,
-                "_property_kind": property_kind,
-                "metric_name": metric_id,
-                "metric_type": "eval_metric",
-                "source": "traces",
-                "project_ids": ["project-1"],
-                "search": "",
-            }
-            if page_size is not None:
-                request_data["page_size"] = page_size
-            request = SimpleNamespace(
-                workspace=SimpleNamespace(id="workspace-1"),
-                validated_query_data=request_data,
-            )
-            view = DashboardViewSet()
-            with (
-                patch(
-                    "tracer.views.dashboard._prepare_filter_value_project_scope",
-                    return_value=project_scope,
-                ),
-                patch(
-                    "tracer.views.dashboard._run_filter_value_pg_read",
-                    side_effect=lambda _deadline, reader: reader(),
-                ),
-                patch(
-                    "tracer.views.dashboard.project_workspace_scope_q",
-                    return_value=object(),
-                ),
-                patch.object(
-                    CustomEvalConfig,
-                    "no_workspace_objects",
-                    query,
-                ),
-                patch(
-                    "tracer.views.dashboard._finite_filter_value_cursor_page",
-                    return_value={"values": [], "query_complete": True},
-                ) as finite_page,
-            ):
-                inspect.unwrap(DashboardViewSet.filter_values)(view, request)
-            return property_id, finite_page
+        def families(_self, _scope, _query):
+            # (…, primary, …, kind, queryset, fields, convert)
+            return [
+                ("", "", "evals", "", "eval_config",
+                 _Recorder("eval_config"), ("id",), lambda row: row),
+                ("", "", "evals", "", "eval_template",
+                 _Recorder("eval_template"), ("id",), lambda row: row),
+            ]
 
-        config_query = _EvalConfigQuery(config_result=None, template_result=config)
-        run_request("eval_config", config_query)
-        assert any("id" in lookup for lookup in config_query.lookups)
-        assert not any("eval_template_id" in lookup for lookup in config_query.lookups)
+        source = CurrentDefinitionSource(deadline=SimpleNamespace(
+            remaining_ms=lambda floor_ms=1: 10_000
+        ))
 
-        template_query = _EvalConfigQuery(config_result=config, template_result=config)
-        property_id, finite_page = run_request(
-            "eval_template",
-            template_query,
-            page_size=10,
-        )
-        assert not any("id" in lookup for lookup in template_query.lookups)
-        assert any("eval_template_id" in lookup for lookup in template_query.lookups)
-        assert finite_page.call_args.kwargs["query"]["property_id"] == property_id
+        with (
+            patch.object(CurrentDefinitionSource, "_families", families),
+            patch.object(CurrentDefinitionSource, "_read",
+                         lambda _self, read: read()),
+        ):
+            source.resolve(scope=scope, property_id=f"eval_config:{metric_id}",
+                           source="evals")
+            config_seen = list(seen)
+            seen.clear()
+            source.resolve(scope=scope, property_id=f"eval_template:{metric_id}",
+                           source="evals")
+            template_seen = list(seen)
 
+        # Each request touches ONLY its own family -- no cross-family guessing.
+        assert {kind for kind, _ in config_seen} == {"eval_config"}
+        assert {kind for kind, _ in template_seen} == {"eval_template"}
+
+        # Each resolves by primary key, and neither ever reaches for the
+        # other family's foreign key.
+        for recorded in (config_seen, template_seen):
+            assert recorded, "the matching family was never queried"
+            assert all(set(kw) == {"id"} for _, kw in recorded)
+            assert all(kw["id"] == metric_id for _, kw in recorded)
+            assert not any("eval_template_id" in kw for _, kw in recorded)
     def test_property_registry_id_is_bound_to_persisted_filter_family(self):
         from rest_framework import serializers
 
@@ -4419,12 +4400,23 @@ class TestMetricsEndpoint:
         assert continued_state.contains(_value_digest("new-status")) is True
 
     @pytest.mark.django_db
+    @pytest.mark.parametrize(
+        "metric_name,source",
+        [
+            ("user_id", "traces"),
+            ("user_id", "sessions"),
+            ("user_id_type", "sessions"),
+            ("user_id_hash", "sessions"),
+        ],
+    )
     @patch("tracer.views.dashboard.V2AnalyticsQueryService")
     def test_filter_values_end_user_cursor_reaches_values_after_first_page(
         self,
         mock_analytics_cls,
         auth_client,
         observe_project,
+        metric_name,
+        source,
     ):
         analytics = mock_analytics_cls.return_value
         analytics.execute_ch_query.side_effect = [
@@ -4432,12 +4424,16 @@ class TestMetricsEndpoint:
             MagicMock(data=[{"val": "bob"}]),
         ]
         params = {
-            "metric_name": "user_id",
+            "metric_name": metric_name,
             "metric_type": "system_metric",
             "project_ids": str(observe_project.id),
-            "source": "traces",
+            "source": source,
             "page_size": 1,
         }
+        if source == "sessions":
+            params["property_id"] = (
+                f"system_attribute:users:{'user' if metric_name == 'user_id' else metric_name}"
+            )
 
         first = auth_client.get("/tracer/dashboard/filter_values/", params)
         first_payload = first.json()["result"]
@@ -4454,6 +4450,7 @@ class TestMetricsEndpoint:
         first_sql = analytics.execute_ch_query.call_args_list[0].args[0]
         second_params = analytics.execute_ch_query.call_args_list[1].args[1]
         assert "FROM end_users" in first_sql
+        assert f"argMax(tuple({metric_name}), version).1 AS raw_value" in first_sql
         assert "FINAL" not in first_sql
         assert second_params["value_after"] == "alice"
 
@@ -5120,18 +5117,24 @@ class TestDashboardQueryBuilder:
             for key in filtered_params
         )
 
-    @pytest.mark.parametrize("attribute_key", ["call.total_turns", "legacy_numeric_attribute"])
+    @pytest.mark.parametrize(
+        "attribute_key", ["call.total_turns", "legacy_numeric_attribute"]
+    )
     def test_numeric_custom_metric_final_replay_keeps_key_removals_and_tombstones(
         self, sample_query_config, settings, attribute_key
     ):
         settings.DASHBOARD_ATTR_ROLLUP_ENABLED = False
         metric = {
-            "id": "call.total_turns", "name": "call.total_turns",
-            "type": "custom_attribute", "attribute_key": attribute_key,
-            "attribute_type": "number", "aggregation": "avg",
+            "id": "call.total_turns",
+            "name": "call.total_turns",
+            "type": "custom_attribute",
+            "attribute_key": attribute_key,
+            "attribute_type": "number",
+            "aggregation": "avg",
         }
         sql, params, _ = _build_v2_metric_for_snapshot_mode(
-            {**sample_query_config, "metrics": [metric]}, latest_state=True,
+            {**sample_query_config, "metrics": [metric]},
+            latest_state=True,
         )
         replay, live = sql.split("), live_custom_metric_spans AS (", 1)
         assert "FROM spans AS custom_metric_source FINAL" in replay
@@ -5143,7 +5146,9 @@ class TestDashboardQueryBuilder:
         assert "is_deleted" not in prewhere
         assert "indexHint(" not in prewhere
         assert params["custom_metric_attr_key"] == attribute_key
-        assert "mapContains(" in replay and "custom_metric_source.attrs_number" in replay
+        assert (
+            "mapContains(" in replay and "custom_metric_source.attrs_number" in replay
+        )
         assert "tupleElement(latest_metric_state, 1) = 0" in live
         assert "tupleElement(latest_metric_state, 3) = 1" in live
         assert "tupleElement(latest_metric_state, 2) >= %(start_date)s" in live
@@ -5245,7 +5250,8 @@ class TestDashboardQueryBuilder:
             latest_state=True,
         )
 
-        assert "attrs_string['optional_status'] = ''" in sql
+        assert "attrs_string[%(_legacy_attr_key_0)s] = ''" in sql
+        assert params["_legacy_attr_key_0"] == "optional_status"
         assert "_raw_attr_presence_key_0" not in params
         assert "FROM spans AS finalized FINAL" in sql
         assert "arrayJoin([finalized.start_time])" in sql
@@ -5355,9 +5361,10 @@ class TestDashboardQueryBuilder:
             latest_state=True,
         )
 
-        assert "attrs_bool['is_final'] = %(f_0_val)s" in sql
+        assert "attrs_bool[%(_legacy_attr_key_0)s] = %(f_0_val)s" in sql
+        assert params["_legacy_attr_key_0"] == "is_final"
         assert "_raw_attr_presence_key_0" not in params
-        assert "attrs_string['is_final']" not in sql
+        assert "attrs_string[%(_legacy_attr_key_0)s]" not in sql
         assert params["f_0_val"] is True
         assert "FROM spans AS finalized FINAL" in sql
         assert "arrayJoin([finalized.start_time])" in sql
@@ -5856,8 +5863,9 @@ class TestDashboardQueryBuilder:
 
         sql, params, _ = DashboardQueryBuilderV2(config).build_all_queries()[0]
 
-        assert "s.attrs_bool['is_final'] = %(_evf_0_val)s" in sql
-        assert "s.attrs_string['is_final']" not in sql
+        assert "s.attrs_bool[%(_evf_0_attr_key)s] = %(_evf_0_val)s" in sql
+        assert params["_evf_0_attr_key"] == "is_final"
+        assert "s.attrs_string[%(_evf_0_attr_key)s]" not in sql
         assert params["_evf_0_val"] is True
 
     def test_eval_metric_string_dimension_keeps_numeric_looking_value_as_string(self):
@@ -6648,7 +6656,8 @@ class TestDashboardQueryBuilder:
 
         sql, params, _ = DashboardQueryBuilderV2(config).build_all_queries()[0]
 
-        assert "LEFT JOIN model_hub_score AS ann0" in sql
+        assert "FROM model_hub_score AS ann0_score" in sql
+        assert "ann0.project_id = s.project_id AND ann0.trace_id = s.trace_id" in sql
         assert "attrs_string[%(_custom_bd_key_0)s]" in sql
         assert "mapContains(attrs_string, %(_custom_bd_key_0)s)" in sql
         assert params["_custom_bd_key_0"] == attribute_key
@@ -7038,7 +7047,7 @@ class TestDashboardQueryBuilderFilters:
         assert "cost" in sql
         assert any("val" in k for k in params)
 
-    def test_custom_attr_key_injection_rejected(self):
+    def test_custom_attr_key_is_bound_as_data(self):
         config = {
             "project_ids": ["p1"],
             "granularity": "day",
@@ -7055,8 +7064,14 @@ class TestDashboardQueryBuilderFilters:
             ],
         }
         builder = DashboardQueryBuilder(config)
-        with pytest.raises(ValueError, match="Invalid attribute key"):
-            builder.build_all_queries()
+        sql, params, _ = builder.build_all_queries()[0]
+        key = config["metrics"][0]["attribute_key"]
+        assert params["custom_metric_attr_key"] == key
+        assert params["project_ids"] == config["project_ids"]
+        assert key not in sql
+        assert "span_attr_num[%(custom_metric_attr_key)s]" in sql
+        literal = finalize_query("%(key)s", {"key": key})
+        assert f"span_attr_num[{literal}]" in finalize_query(sql, params)
 
     def test_unknown_metric_type_raises(self):
         config = {
@@ -8436,7 +8451,11 @@ class TestFrontendPayloadSimulation:
         queries = builder.build_all_queries()
         sql, params, _ = queries[0]
         assert "span_attr_str" in sql
-        assert "llm.model" in sql
+        # The attribute key is bound as data, never interpolated into the SQL
+        # text, so the key reaches ClickHouse through the parameter the map
+        # access references rather than appearing in the statement itself.
+        assert "span_attr_str[%(_legacy_attr_key_0)s]" in sql
+        assert params["_legacy_attr_key_0"] == "llm.model"
 
     def test_eval_filter_frontend_payload(self):
         eval_uuid = str(uuid.uuid4())
@@ -8749,8 +8768,8 @@ class TestQueryBuilderSecurity:
         # Falls back to custom attribute — queries span_attr_num map
         assert "span_attr_num" in sql or "span_attr_str" in sql
 
-    def test_sql_injection_in_metric_name_blocked(self, sample_query_config):
-        """Verify that a SQL injection attempt in metric_name is safely handled."""
+    def test_sql_looking_fallback_metric_name_is_bound(self, sample_query_config):
+        """The legacy custom-attribute fallback binds names as data, never SQL."""
         sample_query_config["metrics"] = [
             {
                 "name": "1; DROP TABLE spans--",
@@ -8759,9 +8778,15 @@ class TestQueryBuilderSecurity:
             }
         ]
         builder = DashboardQueryBuilder(sample_query_config)
-        # Falls back to custom attribute, which rejects unsafe attribute keys
-        with pytest.raises(ValueError, match="Invalid attribute key"):
-            builder.build_metric_query(sample_query_config["metrics"][0])
+        sql, params = builder.build_metric_query(sample_query_config["metrics"][0])
+        # Preserve the existing system-name normalization before fallback.
+        key = sample_query_config["metrics"][0]["name"].lower()
+        assert params["custom_metric_attr_key"] == key
+        assert params["project_ids"] == sample_query_config["project_ids"]
+        assert key not in sql
+        assert "span_attr_num[%(custom_metric_attr_key)s]" in sql
+        literal = finalize_query("%(key)s", {"key": key})
+        assert f"span_attr_num[{literal}]" in finalize_query(sql, params)
 
     def test_like_metacharacters_escaped(self):
         """Verify that _coerce_filter_value escapes % in LIKE patterns."""
@@ -9010,9 +9035,7 @@ class TestDashboardQuerySerializer:
         sql, params = DashboardQueryBuilderV2(
             serializer.validated_data
         ).build_metric_query(metric)
-        assert (
-            f"{aggregation}(attrs_number[%(custom_metric_attr_key)s])" in sql
-        )
+        assert f"{aggregation}(attrs_number[%(custom_metric_attr_key)s])" in sql
         assert "latest_custom_metric_spans AS" not in sql
         assert "FINAL" not in without_query_settings(sql)
         assert "mapContains(attrs_number, %(custom_metric_attr_key)s)" in sql
@@ -9852,13 +9875,298 @@ class TestDashboardV2RewriteRouting:
 
         sql, _, _ = DashboardQueryBuilderV2(config).build_all_queries()[0]
 
-        assert "LEFT JOIN model_hub_score AS ann0" in sql
+        assert "FROM model_hub_score AS ann0_score" in sql
+        assert "ann0.project_id = s.project_id AND ann0.trace_id = s.trace_id" in sql
         assert "s.start_time >= %(start_date)s" in sql
         assert "s.start_time < %(end_date)s" in sql
         assert "s.created_at >=" not in sql
         assert " AND created_at >= %(start_date)s" not in sql
-        assert "ann0._peerdb_is_deleted = 0" in sql
-        assert "ann0.is_deleted = 0" not in sql
+        assert "ann0_score._peerdb_is_deleted" in sql
+        assert "tupleElement(score_state, 9) = 0" in sql
+        assert "ann0_score.is_deleted" not in sql
+
+    @pytest.mark.parametrize("mode", ["legacy", "v2-physical", "v2-latest"])
+    @pytest.mark.parametrize("placement", ["global", "per-metric"])
+    @pytest.mark.parametrize("filter_type", ["annotation_metric", "eval_metric"])
+    @pytest.mark.parametrize("breakdown_type", ["annotation_metric", "eval_metric"])
+    def test_annotation_breakdown_qualifies_only_outer_filter_reference(
+        self, mode, placement, filter_type, breakdown_type
+    ):
+        label_id = "44444444-4444-4444-4444-444444444444"
+        config = _single_metric_config(
+            {
+                "id": "trace_count",
+                "name": "trace_count",
+                "type": "system_metric",
+                "aggregation": "count_distinct",
+            },
+            breakdowns=[
+                {
+                    "name": label_id,
+                    "type": breakdown_type,
+                    "output_type": (
+                        "numeric" if breakdown_type == "annotation_metric" else "SCORE"
+                    ),
+                }
+            ],
+        )
+        conditions = [
+            {
+                "metric_type": filter_type,
+                "metric_name": label_id,
+                "operator": "equal_to",
+                "value": 25,
+                "output_type": (
+                    "numeric" if filter_type == "annotation_metric" else "SCORE"
+                ),
+            }
+        ]
+        target = config if placement == "global" else config["metrics"][0]
+        target["filters"] = conditions
+        if mode == "legacy":
+            sql, params, _ = DashboardQueryBuilder(config).build_all_queries()[0]
+        else:
+            sql, params, _ = _build_v2_metric_for_snapshot_mode(
+                config, latest_state=mode == "v2-latest"
+            )
+        compact_sql = " ".join(sql.split())
+
+        assert "AS s.trace_id" not in sql
+        assert "AS s.project_id" not in sql
+        assert "s.trace_id IN (" in sql
+        assert "s.project_id IN %(project_ids)s" in sql
+        assert "s.start_time >= %(start_date)s" in sql
+        assert "s.start_time < %(end_date)s" in sql
+        assert params["project_ids"] == config["project_ids"]
+        assert params["s_0_val"] == 25
+        if filter_type == "annotation_metric":
+            assert "annotation_s_filter_0.trace_id AS trace_id" in compact_sql
+            assert "annotation_s_filter_0._peerdb_is_deleted = 0" in sql
+            assert "annotation_s_filter_0.created_at >= %(start_date)s" in sql
+            assert "annotation_s_filter_0.created_at < %(end_date)s" in sql
+            assert params["s_ann_org_id_0"] == config["organization_id"]
+            if mode != "legacy":
+                assert (
+                    "SELECT DISTINCT direct_candidate.trace_id AS trace_id"
+                    in compact_sql
+                )
+                assert "trace_project_scan.id AS trace_id" in compact_sql
+                assert (
+                    "SELECT trace_id, tupleElement(latest_state, 1) AS project_id"
+                    in compact_sql
+                )
+                assert "WHERE project_identity_count = 1" in compact_sql
+                assert "AND tupleElement(latest_state, 2) = 0" in compact_sql
+            else:
+                assert (
+                    "SELECT toString(direct_annotation.trace_id) AS trace_id"
+                    in compact_sql
+                )
+                assert (
+                    "'trace_dict', 'project_id', direct_annotation.trace_id"
+                    in compact_sql
+                )
+        else:
+            assert "SELECT usage_s_eval_filter_latest_0.eval_trace_id" in sql
+            assert "usage_s_eval_filter_scan_0._peerdb_version DESC" in sql
+            assert "LIMIT 1 BY usage_s_eval_filter_scan_0.id" in sql
+            assert "usage_s_eval_filter_latest_0._peerdb_is_deleted = 0" in sql
+            assert params["s_scope_id_0"] == config["workspace_id"]
+
+    @pytest.mark.parametrize("mode", ["legacy", "v2-physical", "v2-latest"])
+    def test_joined_mixed_membership_keeps_inner_aliases_and_quoted_text(self, mode):
+        config = _single_metric_config(
+            {
+                "id": "trace_count",
+                "name": "trace_count",
+                "type": "system_metric",
+                "aggregation": "count_distinct",
+                "filters": [
+                    {
+                        "metric_type": "annotation_metric",
+                        "metric_name": "44444444-4444-4444-4444-444444444444",
+                        "output_type": "text",
+                        "operator": "contains",
+                        "value": ["trace_id", "start_time"],
+                    }
+                ],
+            },
+            breakdowns=[
+                {
+                    "name": "44444444-4444-4444-4444-444444444444",
+                    "type": "annotation_metric",
+                    "output_type": "text",
+                }
+            ],
+        )
+        config["filters"] = [
+            {
+                "metric_type": "eval_metric",
+                "metric_name": "55555555-5555-4555-8555-555555555555",
+                "output_type": "SCORE",
+                "operator": "greater_than",
+                "value": 0.5,
+            }
+        ]
+        config["time_range"] = {
+            "custom_start": "2026-09-01T00:00:00Z",
+            "custom_end": "2026-09-02T00:00:00Z",
+        }
+        if mode == "legacy":
+            sql, params, _ = DashboardQueryBuilder(config).build_all_queries()[0]
+        else:
+            sql, params, _ = _build_v2_metric_for_snapshot_mode(
+                config, latest_state=mode == "v2-latest"
+            )
+        compact_sql = " ".join(sql.split())
+
+        assert compact_sql.count("s.trace_id IN (") == 2
+        assert "s.project_id IN %(project_ids)s" in sql
+        assert "s.start_time >= %(start_date)s" in sql
+        assert "s.start_time < %(end_date)s" in sql
+        assert "FROM model_hub_score AS ann0_score" in sql
+        assert "ann0.project_id = s.project_id AND ann0.trace_id = s.trace_id" in sql
+        assert "JSONExtract(ann0_subject.value, 'text', 'Nullable(String)')" in sql
+        assert "ann0_score._peerdb_is_deleted" in sql
+        assert "tupleElement(score_state, 9) = 0" in sql
+        assert "ann0_score.deleted" in sql
+        assert "tupleElement(score_state, 8) = 0" in sql
+        assert "AS s.trace_id" not in sql
+        assert "AS s.project_id" not in sql
+        assert "annotation_s_filter_1.trace_id AS trace_id" in compact_sql
+        assert "SELECT DISTINCT annotation_membership.trace_id" in compact_sql
+        assert "annotation_s_span_filter_latest_1.identity_count = 1" in sql
+        assert (
+            "tupleElement( annotation_s_span_filter_latest_1.latest_state, 2 ) = 0"
+            in compact_sql
+        )
+        assert (
+            "usage_s_eval_filter_scan_0.workspace_id = toUUID(%(s_scope_id_0)s)" in sql
+        )
+        assert "usage_s_eval_filter_scan_0.source_id = %(s_eval_id_0)s" in sql
+        assert "usage_s_eval_filter_scan_0._peerdb_version DESC" in sql
+        assert "LIMIT 1 BY usage_s_eval_filter_scan_0.id" in sql
+        assert "usage_s_eval_filter_latest_0._peerdb_is_deleted = 0" in sql
+        assert "usage_s_eval_filter_latest_0.deleted = 0" in sql
+        assert "usage_s_eval_filter_latest_0.status = 'success'" in sql
+        assert "usage_s_eval_filter_latest_0.eval_score > %(s_0_val)s" in sql
+        assert (
+            "annotation_s_filter_1.label_id = toUUID(%(s_label_id_1)s)" in compact_sql
+        )
+        assert (
+            "annotation_s_filter_1.organization_id = toUUID(%(s_ann_org_id_1)s)"
+            in compact_sql
+        )
+        for alias in ("usage_s_eval_filter_scan_0", "annotation_s_filter_1"):
+            assert f"{alias}.created_at >= %(start_date)s" in sql
+            assert f"{alias}.created_at < %(end_date)s" in sql
+        assert "annotation_s_filter_1._peerdb_is_deleted = 0" in sql
+        assert "annotation_s_filter_1.deleted = 0" in sql
+        assert params["project_ids"] == ["11111111-1111-1111-1111-111111111111"]
+        assert params["s_scope_id_0"] == "33333333-3333-3333-3333-333333333333"
+        assert params["s_ann_org_id_1"] == "22222222-2222-2222-2222-222222222222"
+        assert params["s_eval_id_0"] == "55555555-5555-4555-8555-555555555555"
+        assert params["s_label_id_1"] == "44444444-4444-4444-4444-444444444444"
+        assert params["_ann_bd_label_0"] == "44444444-4444-4444-4444-444444444444"
+        assert params["s_0_val"] == 0.5
+        assert params["s_1_val"] == ["trace_id", "start_time"]
+        assert params["start_date"] == datetime(2026, 9, 1, tzinfo=UTC)
+        assert params["end_date"] == datetime(2026, 9, 2, tzinfo=UTC)
+        # Bind with the real driver, but never send SQL to a service. Expected
+        # quoted data is literal, not produced by the alias-prefix helper.
+        bound_sql = " ".join(finalize_query(sql, params).split())
+        assert (
+            "JSONExtract(annotation_s_filter_1.value, 'text', 'Nullable(String)') "
+            "IN ['trace_id', 'start_time']" in bound_sql
+        )
+        assert "'s.trace_id'" not in bound_sql
+        assert "'s.start_time'" not in bound_sql
+
+    @pytest.mark.parametrize("mode", ["legacy", "v2-physical", "v2-latest"])
+    def test_flat_mixed_membership_keeps_unqualified_outer_reference(self, mode):
+        config = _single_metric_config(
+            {
+                "id": "trace_count",
+                "name": "trace_count",
+                "type": "system_metric",
+                "aggregation": "count_distinct",
+                "filters": [
+                    {
+                        "metric_type": "annotation_metric",
+                        "metric_name": "44444444-4444-4444-4444-444444444444",
+                        "output_type": "text",
+                        "operator": "contains",
+                        "value": ["trace_id", "start_time"],
+                    }
+                ],
+            }
+        )
+        config["filters"] = [
+            {
+                "metric_type": "eval_metric",
+                "metric_name": "55555555-5555-4555-8555-555555555555",
+                "output_type": "SCORE",
+                "operator": "greater_than",
+                "value": 0.5,
+            }
+        ]
+        config["time_range"] = {
+            "custom_start": "2026-09-01T00:00:00Z",
+            "custom_end": "2026-09-02T00:00:00Z",
+        }
+        if mode == "legacy":
+            sql, params, _ = DashboardQueryBuilder(config).build_all_queries()[0]
+        else:
+            sql, params, _ = _build_v2_metric_for_snapshot_mode(
+                config, latest_state=mode == "v2-latest"
+            )
+        compact_sql = " ".join(sql.split())
+
+        assert compact_sql.count(" AND trace_id IN (") == 2
+        assert "s.trace_id IN (" not in sql
+        assert "LEFT JOIN model_hub_score AS ann0" not in sql
+        assert "FROM model_hub_score AS ann0_score" not in sql
+        assert "breakdown_value" not in sql
+        assert "toStartOfDay(start_time) AS time_bucket" in sql
+        assert "WHERE project_id IN %(project_ids)s" in compact_sql
+        assert " AND start_time >= %(start_date)s" in compact_sql
+        assert " AND start_time < %(end_date)s" in compact_sql
+        assert "AS s.trace_id" not in sql
+        assert "AS s.project_id" not in sql
+        assert "annotation_s_filter_1.trace_id AS trace_id" in compact_sql
+        assert "SELECT DISTINCT annotation_membership.trace_id" in compact_sql
+        assert "annotation_s_span_filter_latest_1.identity_count = 1" in sql
+        assert (
+            "tupleElement( annotation_s_span_filter_latest_1.latest_state, 2 ) = 0"
+            in compact_sql
+        )
+        for alias in ("usage_s_eval_filter_scan_0", "annotation_s_filter_1"):
+            assert f"{alias}.created_at >= %(start_date)s" in sql
+            assert f"{alias}.created_at < %(end_date)s" in sql
+        assert "usage_s_eval_filter_scan_0._peerdb_version DESC" in sql
+        assert "LIMIT 1 BY usage_s_eval_filter_scan_0.id" in sql
+        assert "usage_s_eval_filter_latest_0._peerdb_is_deleted = 0" in sql
+        assert "usage_s_eval_filter_latest_0.deleted = 0" in sql
+        assert "usage_s_eval_filter_latest_0.status = 'success'" in sql
+        assert "annotation_s_filter_1._peerdb_is_deleted = 0" in sql
+        assert "annotation_s_filter_1.deleted = 0" in sql
+        assert params["project_ids"] == ["11111111-1111-1111-1111-111111111111"]
+        assert params["s_scope_id_0"] == "33333333-3333-3333-3333-333333333333"
+        assert params["s_ann_org_id_1"] == "22222222-2222-2222-2222-222222222222"
+        assert params["s_eval_id_0"] == "55555555-5555-4555-8555-555555555555"
+        assert params["s_label_id_1"] == "44444444-4444-4444-4444-444444444444"
+        assert "_ann_bd_label_0" not in params
+        assert params["s_0_val"] == 0.5
+        assert params["s_1_val"] == ["trace_id", "start_time"]
+        assert params["start_date"] == datetime(2026, 9, 1, tzinfo=UTC)
+        assert params["end_date"] == datetime(2026, 9, 2, tzinfo=UTC)
+        bound_sql = " ".join(finalize_query(sql, params).split())
+        assert (
+            "JSONExtract(annotation_s_filter_1.value, 'text', 'Nullable(String)') "
+            "IN ['trace_id', 'start_time']" in bound_sql
+        )
+        assert "'s.trace_id'" not in bound_sql
+        assert "'s.start_time'" not in bound_sql
 
     def test_annotation_metric_uses_bounded_direct_latest_live_trace_scope(self):
         config = _single_metric_config(
@@ -9986,10 +10294,10 @@ class TestDashboardV2RewriteRouting:
         assert "dashboard_filter_candidate_identities AS" in compact_sql
         assert "SELECT DISTINCT s.trace_id FROM spans AS s FINAL" not in compact_sql
         assert "LEFT JOIN ( SELECT * FROM spans AS s FINAL" not in compact_sql
-        assert ") AS s PREWHERE s.project_id IN %(project_ids)s" in compact_sql
+        assert ") AS s WHERE s.project_id IN %(project_ids)s" in compact_sql
         assert "dashboard_replay_source._version DESC" in compact_sql
         assert "LIMIT 1 BY" in compact_sql
-        assert "PREWHERE s.project_id IN %(project_ids)s" in compact_sql
+        assert "PREWHERE s.project_id IN %(project_ids)s" not in compact_sql
         assert "s.trace_id IN (" in compact_sql
         assert "(s.parent_span_id IS NULL OR s.parent_span_id = '')" in compact_sql
         assert "s.is_deleted = 0" in compact_sql
@@ -9999,6 +10307,54 @@ class TestDashboardV2RewriteRouting:
         assert params["_ann_span_filter_2_value"] == "ERROR"
         assert params["latest_filter_key_0"] == "is_final"
         assert params["latest_filter_key_1"] == "routing"
+
+    @pytest.mark.parametrize("latest_state", [False, True])
+    def test_annotation_project_filter_places_prewhere_only_on_physical_source(
+        self, latest_state
+    ):
+        label_id = "44444444-4444-4444-4444-444444444444"
+        config = _single_metric_config(
+            {
+                "id": label_id,
+                "name": "quality",
+                "type": "annotation_metric",
+                "label_id": label_id,
+                "output_type": "numeric",
+                "aggregation": "avg",
+            }
+        )
+        config["filters"] = [
+            {
+                "column_id": "project",
+                "filter_config": {
+                    "col_type": "SYSTEM_METRIC",
+                    "filter_type": "text",
+                    "filter_op": "in",
+                    "filter_value": config["project_ids"],
+                },
+            }
+        ]
+        config = _normalize_dashboard_query_filters(config)
+        sql, params, _ = _build_v2_metric_for_snapshot_mode(
+            config, latest_state=latest_state
+        )
+        compact_sql = " ".join(sql.split())
+        assert ") AS s PREWHERE" not in compact_sql
+        if latest_state:
+            assert "FROM spans AS finalized FINAL PREWHERE" in compact_sql
+            assert "arrayJoin([finalized.start_time]) AS start_time" in compact_sql
+            assert ") AS s WHERE s.project_id IN %(project_ids)s" in compact_sql
+        else:
+            assert (
+                "FROM spans AS s PREWHERE s.project_id IN %(project_ids)s"
+                in compact_sql
+            )
+        assert "AND s.trace_id IN (" in compact_sql
+        assert "(s.parent_span_id IS NULL OR s.parent_span_id = '')" in compact_sql
+        assert "s.is_deleted = 0" in compact_sql
+        assert "toString(s.project_id) IN %(_ann_span_filter_0_value)s" in compact_sql
+        assert params["_ann_span_filter_0_value"] == config["project_ids"]
+        assert params["annotation_organization_id"] == config["organization_id"]
 
     def test_annotation_system_string_filter_keeps_numeric_value_as_string(self):
         label_id = "44444444-4444-4444-4444-444444444444"
@@ -11872,9 +12228,12 @@ class TestMetricsCatalogPagination:
             patch.object(catalog.transaction, "atomic", pg.atomic),
         ):
             for name in ("first_family", "second_family"):
-                assert catalog._run_metrics_catalog_pg_read(
-                    deadline, name, lambda name=name: pg.execute(f"SELECT {name}")
-                ) == f"SELECT {name}"
+                assert (
+                    catalog._run_metrics_catalog_pg_read(
+                        deadline, name, lambda name=name: pg.execute(f"SELECT {name}")
+                    )
+                    == f"SELECT {name}"
+                )
                 assert pg.timeout == "750ms" and pg.in_atomic_block
         assert pg.query_timeouts == ["0", "0"]
         assert not pg.wrappers
@@ -11889,8 +12248,12 @@ class TestMetricsCatalogPagination:
 
         def read_page():
             # Count/slice scopes nest before the snapshot's first actual SQL.
-            catalog._run_metrics_catalog_pg_read(deadline, "count", lambda: pg.execute("SELECT count"))
-            return catalog._run_metrics_catalog_pg_read(deadline, "slice", lambda: pg.execute("SELECT page"))
+            catalog._run_metrics_catalog_pg_read(
+                deadline, "count", lambda: pg.execute("SELECT count")
+            )
+            return catalog._run_metrics_catalog_pg_read(
+                deadline, "slice", lambda: pg.execute("SELECT page")
+            )
 
         with (
             patch.object(catalog, "connection", pg),
@@ -12106,7 +12469,7 @@ class TestDashboardAuthRequired:
 
 
 class TestAnnotationMetricAggregation:
-    def _annotation_sql(self, output_type):
+    def _annotation_sql(self, output_type, aggregation="avg"):
         config = {
             "project_ids": ["proj1"],
             "granularity": "day",
@@ -12117,7 +12480,7 @@ class TestAnnotationMetricAggregation:
                     "name": "quality",
                     "type": "annotation_metric",
                     "label_id": str(uuid.uuid4()),
-                    "aggregation": "avg",
+                    "aggregation": aggregation,
                     "output_type": output_type,
                 }
             ],
@@ -12136,7 +12499,7 @@ class TestAnnotationMetricAggregation:
         assert "count() AS value" in sql
 
     def test_text_uses_count(self):
-        sql = self._annotation_sql("text")
+        sql = self._annotation_sql("text", "count")
         assert "count() AS value" in sql
 
 
@@ -12637,30 +13000,20 @@ class TestFilterValuesAnnotationBranches:
         organization,
         workspace,
     ):
-        from tracer.services.annotation_label_source import (
-            AnnotationLabelScoresProjectPG,
-        )
-
         label = self._label(organization, workspace, "thumbs_up_down")
-        with patch.object(
-            AnnotationLabelScoresProjectPG,
-            "label_has_scores_for_projects",
-            return_value=False,
-        ) as visibility_read:
-            response = auth_client.get(
-                self.URL,
-                {
-                    "source": "traces",
-                    "metric_type": "annotation_metric",
-                    "metric_name": str(label.id),
-                    "project_ids": str(project.id),
-                    "page_size": 20,
-                },
-            )
+        response = auth_client.get(
+            self.URL,
+            {
+                "source": "traces",
+                "metric_type": "annotation_metric",
+                "metric_name": str(label.id),
+                "project_ids": str(project.id),
+                "page_size": 20,
+            },
+        )
 
         assert response.status_code == 200
         assert response.json()["result"]["values"] == []
-        visibility_read.assert_called_once_with(label.id, [str(project.id)])
 
     @pytest.mark.django_db
     def test_workspace_label_with_requested_project_score_returns_values(
@@ -12670,33 +13023,38 @@ class TestFilterValuesAnnotationBranches:
         organization,
         workspace,
     ):
-        from tracer.services.annotation_label_source import (
-            AnnotationLabelScoresProjectPG,
-        )
+        from model_hub.models.score import Score
 
         label = self._label(organization, workspace, "thumbs_up_down")
-        with patch.object(
-            AnnotationLabelScoresProjectPG,
-            "label_has_scores_for_projects",
-            return_value=True,
-        ) as visibility_read:
-            response = auth_client.get(
-                self.URL,
-                {
-                    "source": "traces",
-                    "metric_type": "annotation_metric",
-                    "metric_name": str(label.id),
-                    "project_ids": str(project.id),
-                    "page_size": 20,
-                },
-            )
+        Score.no_workspace_objects.bulk_create(
+            [
+                Score(
+                    source_type="trace",
+                    trace_id=uuid.uuid4(),
+                    tracer_project_id=project.id,
+                    label=label,
+                    value={"value": "up"},
+                    organization=organization,
+                    workspace=workspace,
+                )
+            ]
+        )
+        response = auth_client.get(
+            self.URL,
+            {
+                "source": "traces",
+                "metric_type": "annotation_metric",
+                "metric_name": str(label.id),
+                "project_ids": str(project.id),
+                "page_size": 20,
+            },
+        )
 
         assert response.status_code == 200
         assert {item["value"] for item in response.json()["result"]["values"]} == {
             "thumbs_up",
             "thumbs_down",
         }
-        visibility_read.assert_called_once_with(label.id, [str(project.id)])
 
     @pytest.mark.django_db
     def test_unknown_label_returns_empty(self, auth_client):
@@ -13270,9 +13628,27 @@ class TestXSSPayloadNonExecutable:
             },
             format="json",
         )
-        assert resp.status_code == 400
-        # Non-executable: served as JSON, so a reflected payload is inert text.
+        # The key no longer reaches SQL text, so it is no longer rejected.
+        # On dev the 400 came from `_sanitize_attr_key`, an SQL-IDENTIFIER gate
+        # that existed only because the key was interpolated:
+        # `s.span_attr_str['{attr_key}']`. This branch binds it instead --
+        # `{attr_map}[%(custom_metric_attr_key)s]` -- so an unknown metric name
+        # is now ordinary data and the request succeeds with no rows.
+        assert resp.status_code == 200
+        # The property this test actually guards is unchanged and is asserted
+        # directly: a reflected payload is inert because the response is JSON
+        # and the browser is forbidden from sniffing it as HTML.
         assert resp["Content-Type"].startswith("application/json")
+        assert resp["X-Content-Type-Options"] == "nosniff"
+        assert not resp.content.lstrip().startswith(b"<")
+        # The payload IS reflected verbatim inside a JSON string value -- Django
+        # does not escape "<" and does not need to. Inertness comes from the two
+        # headers above, not from mangling the value, so assert the payload is
+        # carried as JSON data rather than asserting it is absent.
+        import json as _json
+
+        echoed = _json.loads(resp.content)["result"]["metrics"][0]
+        assert echoed["id"] == payload and echoed["name"] == payload
 
 
 @pytest.mark.django_db

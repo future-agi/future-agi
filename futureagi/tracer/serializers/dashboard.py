@@ -5,6 +5,8 @@ from accounts.serializers.user import UserSerializer
 from tracer.constants.dashboard import (
     DASHBOARD_AGGREGATIONS,
     DASHBOARD_NUMERIC_ONLY_AGGREGATIONS,
+    annotation_breakdown_error,
+    text_annotation_aggregation_error,
 )
 from tracer.models.dashboard import Dashboard, DashboardWidget
 from tracer.serializers.filters import (
@@ -19,6 +21,12 @@ from tracer.services.clickhouse.query_builders.dataset_dashboard import (
 from tracer.services.clickhouse.query_builders.simulation_dashboard import (
     SIMULATION_BREAKDOWN_COLUMNS,
     SIMULATION_FILTER_COLUMNS,
+)
+from tracer.services.clickhouse.v2.property_catalog.codec import (
+    CUSTOM_ATTRIBUTE_PREFIX,
+    MAX_CUSTOM_PROPERTY_ID_BYTES,
+    MAX_IDENTITY_COMPONENT_BYTES,
+    validate_text,
 )
 from tracer.utils.property_registry import (
     normalize_custom_attribute_source,
@@ -135,10 +143,50 @@ class DashboardTimeRangeSerializer(StrictInputSerializer):
         return attrs
 
 
+class _ExactAttributeCharField(serializers.CharField):
+    """JSON attribute keys are opaque UTF-8, not whitespace-normalized names."""
+
+    def get_value(self, dictionary):
+        value = super().get_value(dictionary)
+        property_id = dictionary.get("property_id", "")
+        self._exact_key = (
+            isinstance(value, str) and value.startswith(CUSTOM_ATTRIBUTE_PREFIX)
+            if self.field_name == "property_id"
+            else self.field_name == "attribute_key"
+            or dictionary.get("metric_type", dictionary.get("type"))
+            == "custom_attribute"
+            or isinstance(property_id, str)
+            and property_id.startswith(CUSTOM_ATTRIBUTE_PREFIX)
+        )
+        return value
+
+    def run_validation(self, data=serializers.empty):
+        if (
+            not getattr(self, "_exact_key", False)
+            or data is serializers.empty
+            or data is None
+        ):
+            return super().run_validation(data)
+        try:
+            return validate_text(
+                data,
+                field=self.field_name,
+                max_bytes=(
+                    MAX_CUSTOM_PROPERTY_ID_BYTES
+                    if self.field_name == "property_id"
+                    else MAX_IDENTITY_COMPONENT_BYTES
+                ),
+                allow_empty=self.allow_blank,
+                allow_controls=True,
+            )
+        except (TypeError, ValueError) as exc:
+            raise serializers.ValidationError(str(exc)) from exc
+
+
 class DashboardMetricSerializer(StrictInputSerializer):
     id = serializers.CharField(required=False, allow_blank=True)
-    name = serializers.CharField(required=True, allow_blank=False)
-    property_id = serializers.CharField(required=False, allow_blank=False)
+    name = _ExactAttributeCharField(required=True, allow_blank=False)
+    property_id = _ExactAttributeCharField(required=False, allow_blank=False)
     display_name = serializers.CharField(required=False, allow_blank=True)
     type = serializers.ChoiceField(choices=DASHBOARD_METRIC_TYPES)
     source = serializers.ChoiceField(
@@ -152,7 +200,7 @@ class DashboardMetricSerializer(StrictInputSerializer):
     eval_key = serializers.CharField(required=False, allow_blank=True)
     config_id = serializers.CharField(required=False, allow_blank=True)
     label_id = serializers.CharField(required=False, allow_blank=True)
-    attribute_key = serializers.CharField(required=False, allow_blank=True)
+    attribute_key = _ExactAttributeCharField(required=False, allow_blank=True)
     attribute_type = serializers.ChoiceField(
         choices=DASHBOARD_DATA_TYPES,
         required=False,
@@ -177,6 +225,13 @@ class DashboardMetricSerializer(StrictInputSerializer):
         Dashboard Y-axis aggregations are numeric unless the caller explicitly
         requests a text-safe count operation; explicit types always win.
         """
+
+        if attrs.get("type") == "annotation_metric":
+            error = text_annotation_aggregation_error(
+                attrs.get("output_type", ""), attrs.get("aggregation", "avg")
+            )
+            if error:
+                raise serializers.ValidationError({"aggregation": error})
 
         property_id = attrs.get("property_id")
         if property_id:
@@ -212,8 +267,8 @@ class DashboardMetricSerializer(StrictInputSerializer):
 
 
 class DashboardBreakdownSerializer(StrictInputSerializer):
-    name = serializers.CharField(required=True, allow_blank=False)
-    property_id = serializers.CharField(required=False, allow_blank=False)
+    name = _ExactAttributeCharField(required=True, allow_blank=False)
+    property_id = _ExactAttributeCharField(required=False, allow_blank=False)
     display_name = serializers.CharField(required=False, allow_blank=True)
     type = serializers.ChoiceField(
         choices=DASHBOARD_METRIC_TYPES, required=False, default="system_metric"
@@ -225,7 +280,7 @@ class DashboardBreakdownSerializer(StrictInputSerializer):
     label_id = serializers.CharField(required=False, allow_blank=True)
     config_id = serializers.CharField(required=False, allow_blank=True)
     eval_key = serializers.CharField(required=False, allow_blank=True)
-    attribute_key = serializers.CharField(required=False, allow_blank=True)
+    attribute_key = _ExactAttributeCharField(required=False, allow_blank=True)
     attribute_type = serializers.ChoiceField(
         choices=DASHBOARD_DATA_TYPES,
         required=False,
@@ -458,6 +513,11 @@ class DashboardQuerySerializer(StrictInputSerializer):
 
     def validate(self, attrs):
         metrics = attrs.get("metrics") or []
+        annotation_error = annotation_breakdown_error(
+            metrics, attrs.get("breakdowns") or []
+        )
+        if annotation_error:
+            raise serializers.ValidationError({"breakdowns": annotation_error})
         dataset_metrics = [
             metric for metric in metrics if metric.get("source") == "datasets"
         ]
@@ -711,7 +771,7 @@ class DashboardMetricCatalogItemSerializer(serializers.Serializer):
             choices=["string", "number", "boolean", "array", "map", "json"]
         ),
         required=False,
-        allow_empty=False,
+        allow_empty=True,
     )
     attribute_types_exact = serializers.BooleanField(required=False)
 
@@ -749,7 +809,8 @@ class DashboardMetricsCatalogResultSerializer(serializers.Serializer):
     query_exact = serializers.BooleanField(required=False)
     query_status = serializers.ChoiceField(choices=["complete"], required=False)
     query_provenance = serializers.ChoiceField(
-        choices=["activated_property_catalog"], required=False
+        choices=["activated_property_catalog", "current_property_catalog"],
+        required=False,
     )
 
 
@@ -914,16 +975,16 @@ class DashboardMetricsCatalogQuerySerializer(StrictInputSerializer):
 
 
 class DashboardFilterValuesQuerySerializer(serializers.Serializer):
-    property_id = serializers.CharField(
+    property_id = _ExactAttributeCharField(
         required=False,
         allow_blank=False,
-        max_length=1_024,
+        max_length=MAX_CUSTOM_PROPERTY_ID_BYTES,
         help_text=(
             "Stable namespaced property identity returned by the metrics catalog. "
             "Legacy metric_name/metric_type remain accepted during migration."
         ),
     )
-    metric_name = serializers.CharField(required=False, allow_blank=False)
+    metric_name = _ExactAttributeCharField(required=False, allow_blank=False)
     metric_type = serializers.ChoiceField(
         choices=[
             "system_metric",
@@ -1004,9 +1065,25 @@ class DashboardFilterValuesQuerySerializer(serializers.Serializer):
             supplied_name = attrs.get("metric_name")
             supplied_type = attrs.get("metric_type")
             if supplied_name is not None and supplied_name != decoded["metric_name"]:
-                raise serializers.ValidationError(
-                    {"metric_name": "metric_name does not match property_id"}
-                )
+                # A persisted filter keeps the native column spelling
+                # (``user_id``) beside the one canonical registry identity
+                # (``system_attribute:sessions:user``), and
+                # ``validate_property_filter_binding`` admits exactly that
+                # pair.  The registry owns that alias rule, so ask it before
+                # rejecting: comparing the spellings for equality here refused
+                # a payload the persisted filter, the catalog manifest and the
+                # value picker all treat as one property.  A genuine mismatch
+                # still fails, under this same field.
+                try:
+                    validate_property_metric_binding(
+                        property_id,
+                        metric_name=supplied_name,
+                        metric_type=decoded["metric_type"],
+                    )
+                except ValueError as exc:
+                    raise serializers.ValidationError(
+                        {"metric_name": "metric_name does not match property_id"}
+                    ) from exc
             if supplied_type is not None and supplied_type != decoded["metric_type"]:
                 raise serializers.ValidationError(
                     {"metric_type": "metric_type does not match property_id"}
@@ -1027,6 +1104,9 @@ class DashboardFilterValuesQuerySerializer(serializers.Serializer):
             # native metric family, so downstream adapters must not guess the
             # definition type from UUID lookup order.
             attrs["_property_kind"] = decoded["property_kind"]
+            # Preserve the logical native adapter when the public transport
+            # source is normalized (prompt eval UUIDs are not Observe configs).
+            attrs["_definition_source"] = attrs.get("source", "traces")
         elif not attrs.get("metric_name"):
             raise serializers.ValidationError(
                 {"metric_name": "metric_name or property_id is required"}
@@ -1088,6 +1168,7 @@ class DashboardFilterValueOptionSerializer(serializers.Serializer):
 
 
 class DashboardFilterValuesResultSerializer(serializers.Serializer):
+    query_exact = serializers.BooleanField(required=False)
     values = DashboardFilterValueOptionSerializer(many=True)
     query_complete = serializers.BooleanField(required=False)
     query_status = serializers.ChoiceField(
@@ -1124,7 +1205,7 @@ class DashboardFilterValuesResultSerializer(serializers.Serializer):
             choices=["string", "number", "boolean", "array", "map", "json"]
         ),
         required=False,
-        allow_empty=False,
+        allow_empty=True,
     )
     attribute_types_exact = serializers.BooleanField(required=False)
     catalog_epoch = serializers.IntegerField(
@@ -1133,7 +1214,8 @@ class DashboardFilterValuesResultSerializer(serializers.Serializer):
     catalog_revision = serializers.IntegerField(min_value=1, required=False)
     activation_fingerprint = serializers.RegexField(r"^[0-9a-f]{64}$", required=False)
     query_provenance = serializers.ChoiceField(
-        choices=["activated_property_catalog"], required=False
+        choices=["activated_property_catalog", "current_property_catalog"],
+        required=False,
     )
 
 

@@ -11,6 +11,9 @@
 // Reliability guarantees:
 //   - Each batch is retried up to `MaxRetries` with exponential backoff +
 //     jitter. Non-retryable HTTP statuses (4xx other than 429) skip retries.
+//     An unconfirmed HTTP 200 also skips retries: the canonical insert may
+//     already have committed. Reconcile the source before any replay; do not
+//     hand off observations merely because the response status was 200.
 //   - Any batch that exhausts retries is appended verbatim to a local
 //     dead-letter file (one JSONEachRow line per row) so the operator can
 //     replay it later via `clickhouse-client -q "INSERT INTO spans FORMAT
@@ -131,6 +134,8 @@ func New(cfg Config) (*Writer, error) {
 		urlEscape(fmt.Sprintf("INSERT INTO %s FORMAT JSONEachRow", cfg.Table)))
 	if cfg.AsyncInsert {
 		q += "&async_insert=1&wait_for_async_insert=0"
+	} else {
+		q += "&async_insert=0"
 	}
 
 	return &Writer{
@@ -143,8 +148,9 @@ func New(cfg Config) (*Writer, error) {
 
 // Insert serialises `rows` to a single JSONEachRow request body and POSTs
 // with retry/backoff into the writer's PINNED table (cfg.Table — `spans`).
-// Returns nil on success (HTTP 200) OR on dead-letter (rows persisted to disk,
-// error returned for the caller's awareness).
+// Returns nil only on a complete, exception-free HTTP 200 response. Explicit
+// AsyncInsert still means acceptance, not commit confirmation. Dead-lettered
+// batches return an error, including ambiguous inserts needing reconciliation.
 //
 // Caller owns `rows`. We do NOT mutate the slice; row maps are also not
 // mutated. Returning quickly on transient CH outages with successful
@@ -210,6 +216,7 @@ func (w *Writer) insert(ctx context.Context, url string, rows []map[string]any) 
 	}
 
 	var lastErr error
+	attempts := 0
 	for attempt := 0; attempt <= w.cfg.MaxRetries; attempt++ {
 		if attempt > 0 {
 			atomic.AddUint64(&w.stats.BatchesRetried, 1)
@@ -218,6 +225,7 @@ func (w *Writer) insert(ctx context.Context, url string, rows []map[string]any) 
 				break
 			}
 		}
+		attempts++
 		status, err := w.doRequest(ctx, url, body)
 		if err == nil && status == http.StatusOK {
 			atomic.AddUint64(&w.stats.BatchesInserted, 1)
@@ -225,6 +233,12 @@ func (w *Writer) insert(ctx context.Context, url string, rows []map[string]any) 
 			return nil
 		}
 		lastErr = err
+		if status == http.StatusOK {
+			// A late exception or incomplete response does not prove that no
+			// rows committed. Preserve the batch, but never add a source replay.
+			lastErr = fmt.Errorf("chwriter: insert not confirmed; reconcile canonical source before replay: %w", err)
+			break
+		}
 		// 4xx (except 429) is non-retryable — schema or data bug. Dead-letter
 		// immediately so we don't loop on a guaranteed failure.
 		if status >= 400 && status < 500 && status != http.StatusTooManyRequests {
@@ -240,7 +254,7 @@ func (w *Writer) insert(ctx context.Context, url string, rows []map[string]any) 
 	}
 	atomic.AddUint64(&w.stats.BatchesFailed, 1)
 	atomic.AddUint64(&w.stats.RowsDeadLettered, uint64(len(rows)))
-	return fmt.Errorf("chwriter: batch dead-lettered after %d attempts: %w", w.cfg.MaxRetries+1, lastErr)
+	return fmt.Errorf("chwriter: batch dead-lettered after %d attempts: %w", attempts, lastErr)
 }
 
 // insertURL builds an INSERT URL for an arbitrary table, mirroring the
@@ -251,13 +265,15 @@ func (w *Writer) insertURL(table string) string {
 		urlEscape(fmt.Sprintf("INSERT INTO %s FORMAT JSONEachRow", table)))
 	if w.cfg.AsyncInsert {
 		q += "&async_insert=1&wait_for_async_insert=0"
+	} else {
+		q += "&async_insert=0"
 	}
 	return w.cfg.URL + q
 }
 
 // doRequest issues a single POST to `url` and returns the HTTP status + any
-// transport-level error. 5xx and 429 are reported as both (status set,
-// err non-nil) so the retry loop can decide.
+// transport/confirmation error. Preserve the status on response failures so
+// insert can distinguish an unconfirmed 200 from existing retryable failures.
 func (w *Writer) doRequest(ctx context.Context, url string, body []byte) (int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
@@ -275,8 +291,17 @@ func (w *Writer) doRequest(ctx context.Context, url string, body []byte) (int, e
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusOK {
-		// Drain body so the connection can be reused via keep-alive.
-		_, _ = io.Copy(io.Discard, resp.Body)
+		// INSERT has no result body. Read through EOF before acknowledging;
+		// ClickHouse can send an exception after the HTTP status is committed.
+		// Bound unexpected responses and never include source payloads in errors.
+		const maxResponse = 4096
+		b, readErr := io.ReadAll(io.LimitReader(resp.Body, maxResponse+1))
+		if readErr != nil || len(b) > maxResponse || (resp.ContentLength >= 0 && int64(len(b)) != resp.ContentLength) {
+			return resp.StatusCode, fmt.Errorf("CH HTTP %d: incomplete or oversized insert response", resp.StatusCode)
+		}
+		if len(bytes.TrimSpace(b)) != 0 || resp.Header.Get("X-ClickHouse-Exception-Code") != "" || resp.Trailer.Get("X-ClickHouse-Exception-Code") != "" {
+			return resp.StatusCode, fmt.Errorf("CH HTTP %d: insert response contains an exception or unexpected result", resp.StatusCode)
+		}
 		return resp.StatusCode, nil
 	}
 	// Include the response body in the error message — CH's HTTP responses

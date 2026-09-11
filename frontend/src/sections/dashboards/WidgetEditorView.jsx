@@ -335,6 +335,69 @@ const WIDGET_OPTION_TYPE_BY_CATALOG_CATEGORY = {
   custom_column: "custom_column",
 };
 
+const toDashboardFilterType = (type) =>
+  WIDGET_OPTION_TYPE_BY_CATALOG_CATEGORY[type] ||
+  {
+    systemMetric: "system",
+    evalMetric: "eval_metric",
+    annotationMetric: "annotation",
+    customAttribute: "custom_attribute",
+    customColumn: "custom_column",
+  }[type] ||
+  type ||
+  "system";
+
+// Saved query names may be display labels (annotations) or backend keys
+// (legacy system/eval metrics). Keep explicit typed identities authoritative;
+// never reconstruct them from a catalog label or property_id.
+// eslint-disable-next-line react-refresh/only-export-components
+export function restoreWidgetQueryItem(
+  item,
+  fallbackSource = "traces",
+  fallbackDataType = "number",
+) {
+  const type = toDashboardFilterType(item.type);
+  const identity = {
+    annotation: item.label_id || item.labelId,
+    custom_column: item.column_id || item.columnId,
+    custom_attribute: item.attribute_key || item.attributeKey,
+  }[type];
+  const outputType = item.output_type || item.outputType;
+  const dataType =
+    type === "custom_attribute"
+      ? item.attribute_type ||
+        item.attributeType ||
+        item.dataType ||
+        item.data_type
+      : outputType && ["annotation", "eval_metric"].includes(type)
+        ? getWidgetMetricDataType({
+            category: type === "annotation" ? "annotation_metric" : type,
+            outputType,
+          })
+        : item.dataType || item.data_type;
+  return {
+    ...item,
+    id: identity || item.name || item.id,
+    registryId: item.property_id || item.propertyId || item.registryId,
+    name: item.displayName || item.display_name || item.name || item.id,
+    type,
+    dataType: dataType || fallbackDataType,
+    columnDataType: item.columnDataType || item.data_type || item.dataType,
+    outputType,
+    // Saved widgets do not carry current catalog capabilities. Preserve their
+    // requested operation, but offer only supported choices when editing text.
+    allowedAggregations:
+      item.allowedAggregations ||
+      item.allowed_aggregations ||
+      (type === "annotation" && outputType?.toLowerCase() === "text"
+        ? ["count", "count_distinct"]
+        : undefined),
+    evalKey: item.eval_key || item.evalKey,
+    configId: item.config_id || item.configId,
+    source: item.source || fallbackSource,
+  };
+}
+
 const getEligibleWidgetAttributeTypes = (attributeTypes, pickerMode) =>
   attributeTypes.filter((dataType) =>
     pickerMode === "metric"
@@ -370,6 +433,71 @@ const widgetOptionSources = (option) =>
   new Set(
     [option?.source, ...(option?.sources || [])].filter(Boolean).map(String),
   );
+
+export function WidgetCatalogOption({ option, onSelect }) {
+  const sourceNames = {
+    all: "All sources",
+    both: "Traces, Datasets",
+    traces: "Traces",
+    datasets: "Datasets",
+    simulation: "Simulate",
+    users: "Users",
+    sessions: "Sessions",
+    prompts: "Prompts",
+  };
+  // `sources` also contains search/category tokens; `source` owns identity.
+  const source = option.source || "all";
+  const sourceLabel = sourceNames[source] || source;
+  const outputLabel =
+    { SCORE: "score", PASS_FAIL: "P/F", CHOICE: "choice" }[option.outputType] ||
+    option.outputType;
+  const typeLabel = option.type === "custom_attribute" ? option.dataType : null;
+  const labels = [outputLabel, typeLabel, sourceLabel].filter(Boolean);
+
+  return (
+    <ListItemButton
+      component="button"
+      type="button"
+      aria-label={`${option.name} (${labels.join(", ")})`}
+      onClick={() => onSelect(option)}
+      sx={{ width: "100%", gap: 1, px: 1.5, py: 0.75 }}
+    >
+      <Iconify
+        icon={METRIC_TYPE_ICONS[option.type] || "mdi:cog-outline"}
+        width={15}
+        sx={{ color: "text.disabled", flexShrink: 0 }}
+      />
+      <Typography
+        variant="body2"
+        title={option.name}
+        sx={{
+          fontSize: "13px",
+          flex: 1,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          textAlign: "left",
+        }}
+      >
+        {option.name}
+      </Typography>
+      {labels.map((label, index) => (
+        <Chip
+          key={`${index}:${label}`}
+          size="small"
+          variant="outlined"
+          label={label}
+          sx={{ height: 18, fontSize: 10, flexShrink: 0 }}
+        />
+      ))}
+    </ListItemButton>
+  );
+}
+
+WidgetCatalogOption.propTypes = {
+  option: PropTypes.object.isRequired,
+  onSelect: PropTypes.func.isRequired,
+};
 
 // eslint-disable-next-line react-refresh/only-export-components
 export function isWidgetPickerOptionInCategory(option, pickerCategory) {
@@ -448,6 +576,10 @@ export function buildWidgetCatalogPickerOptions({
   search = "",
   requestSettled = true,
   selectedMetricSources = [],
+  selectedMetrics = [],
+  metricTargetIndex = null,
+  selectedBreakdowns = [],
+  otherBreakdownCount = 0,
   targetMetricSource = null,
 }) {
   if (!requestSettled) return [];
@@ -457,6 +589,10 @@ export function buildWidgetCatalogPickerOptions({
     .filter((metric) =>
       isWidgetCatalogOptionAllowed(metric, pickerMode, {
         selectedMetricSources,
+        selectedMetrics,
+        metricTargetIndex,
+        selectedBreakdowns,
+        otherBreakdownCount,
         targetMetricSource,
       }),
     )
@@ -536,8 +672,18 @@ export function getWidgetCatalogExactResultCount({
   categoryCounts,
   categoryCountsExact,
   requestSettled,
+  pickerMode = "metric",
+  selectedBreakdowns = [],
 }) {
   if (!requestSettled || !categoryCountsExact || !categoryCounts) return null;
+  // Inventory counts do not include local adapter/grouping capability gates.
+  // A loaded-page count cannot stand in for the restricted result total.
+  if (
+    pickerMode !== "metric" ||
+    selectedBreakdowns.some((item) => item.id || item.name)
+  ) {
+    return null;
+  }
   const countKey = request?.category || "all";
   const count = categoryCounts[countKey];
   return Number.isSafeInteger(count) && count >= 0 ? count : null;
@@ -594,6 +740,7 @@ export function resolveWidgetCatalogSidebarCounts({
 export function buildWidgetCursorAttributeOptions(
   cursorAttributes,
   pickerMode,
+  context = {},
 ) {
   return (cursorAttributes || [])
     .flatMap((attribute) => {
@@ -622,7 +769,13 @@ export function buildWidgetCursorAttributeOptions(
         pickerMode,
       });
     })
-    .filter(Boolean);
+    .filter(
+      (option) =>
+        isWidgetCatalogOptionAllowed(option, pickerMode, {
+          selectedMetricSources: ["traces"],
+          ...context,
+        }) && isWidgetPickerOptionInCategory(option, context.pickerCategory),
+    );
 }
 
 export function mergeWidgetCursorAttributeOptions(
@@ -641,8 +794,8 @@ export function mergeWidgetCursorAttributeOptions(
     if (seen.has(identity)) return false;
     seen.add(identity);
     return true;
-  });
-}
+        });
+        }
 
 export function getWidgetMetricCatalogRequest({
   pickerCategory,
@@ -811,13 +964,81 @@ const SIMULATION_BREAKDOWN_DIMENSIONS = new Set([
   "test_execution",
 ]);
 
+function isTraceAnnotationMetric(metric) {
+  return (
+    ["annotation", "annotation_metric"].includes(
+      metric.category || metric.type,
+    ) && !["datasets", "simulation"].includes(metric.source)
+  );
+}
+
+function isOwnAnnotationBreakdown(breakdown, metric) {
+  const label = metric.label_id || metric.id || metric.name;
+  const breakdownLabel = breakdown.label_id || breakdown.id || breakdown.name;
+  return Boolean(
+    label &&
+      isTraceAnnotationMetric(breakdown) &&
+      String(breakdownLabel).toLowerCase() === String(label).toLowerCase(),
+  );
+}
+
 export function isWidgetCatalogOptionAllowed(
   metric,
   pickerMode,
-  { selectedMetricSources = [], targetMetricSource = null } = {},
+  {
+    selectedMetricSources = [],
+    selectedMetrics = [],
+    metricTargetIndex = null,
+    selectedBreakdowns = [],
+    otherBreakdownCount = 0,
+    targetMetricSource = null,
+  } = {},
 ) {
+  if (pickerMode === "metric") {
+    const dimensions = selectedBreakdowns.filter(
+      (item) => item.id || item.name,
+    );
+    const prospectiveMetrics = [
+      ...selectedMetrics.filter((_, index) => index !== metricTargetIndex),
+      metric,
+    ];
+    // Reuse the breakdown guard for both selection orders. A replacement must
+    // remove only its target; retained metrics and saved dimensions stay intact.
+    return dimensions.every((breakdown) =>
+      isWidgetCatalogOptionAllowed(breakdown, "breakdown", {
+        selectedMetrics: prospectiveMetrics,
+        selectedMetricSources: prospectiveMetrics.map(
+          getWidgetMetricAdapterSource,
+        ),
+        otherBreakdownCount: dimensions.length - 1,
+      }),
+    );
+  }
   if (!["filter", "metric_filter", "breakdown"].includes(pickerMode)) {
     return true;
+  }
+  if (pickerMode === "breakdown") {
+    // _build_custom_attr_query cannot consume annotation/eval joined dimensions.
+    if (
+      ["annotation", "annotation_metric", "eval_metric"].includes(
+        metric.category || metric.type,
+      ) &&
+      selectedMetrics.some(
+        (item) =>
+          (item.category || item.type) === "custom_attribute" &&
+          getWidgetMetricAdapterSource(item) === "traces",
+      )
+    ) {
+      return false;
+    }
+    const annotations = selectedMetrics.filter(isTraceAnnotationMetric);
+    if (
+      annotations.length &&
+      (otherBreakdownCount > 0 ||
+        !annotations.every((item) => isOwnAnnotationBreakdown(metric, item)))
+    ) {
+      return false;
+    }
   }
   const declaredSources = [
     ...(metric.source ? [metric.source] : []),
@@ -833,15 +1054,18 @@ export function isWidgetCatalogOptionAllowed(
     optionSources.has(source),
   );
   const targetsSimulation = optionSources.has("simulation");
+  const isSystem = ["system", "system_metric"].includes(
+    metric.category || metric.type,
+  );
+  const dimensionName = metric.id || metric.name;
   const isSupportedDatasetDimension =
-    metric.category === "system_metric" &&
-    DATASET_WIDGET_DIMENSIONS.has(metric.name);
+    isSystem && DATASET_WIDGET_DIMENSIONS.has(dimensionName);
   const isSupportedSimulationDimension =
-    metric.category === "system_metric" &&
+    isSystem &&
     (pickerMode === "breakdown"
       ? SIMULATION_BREAKDOWN_DIMENSIONS
       : SIMULATION_FILTER_DIMENSIONS
-    ).has(metric.name);
+    ).has(dimensionName);
 
   if (pickerMode === "metric_filter") {
     if (targetMetricSource === "datasets") {
@@ -876,7 +1100,10 @@ export function isWidgetCatalogOptionAllowed(
 
 function getWidgetMetricAdapterSource(metric) {
   if (metric.source === "datasets") return "datasets";
-  if (metric.source === "simulation" && metric.type !== "custom_attribute") {
+  if (
+    metric.source === "simulation" &&
+    (metric.category || metric.type) !== "custom_attribute"
+  ) {
     return "simulation";
   }
   return "traces";
@@ -1704,7 +1931,12 @@ const selectedEntriesFromFilter = (filter) => {
   const valueTypes = Array.isArray(filter?.valueTypes) ? filter.valueTypes : [];
   return values.map((value, index) => ({
     value,
-    type: inferFilterValueStorageType(value, valueTypes[index]),
+    // Array membership keeps its scalar member values, but option identity
+    // carries the array storage family, not persisted scalar type tags.
+    type: inferFilterValueStorageType(
+      value,
+      filter?.dataType === "array" ? "array" : valueTypes[index],
+    ),
   }));
 };
 
@@ -1719,6 +1951,7 @@ const filterValuePickerScopeKey = (filter, source) =>
       filter?.id ||
       null,
     filter?.metric_type || filter?.metricType || filter?.type || null,
+    filter?.dataType || null,
     filter?.value || [],
     filter?.valueTypes || [],
   ]);
@@ -1868,7 +2101,7 @@ export function FilterValuePickerPopup({
     });
   };
 
-  const exactValueType = ["string", "number", "boolean"].includes(
+  const exactValueType = ["string", "number", "boolean", "array"].includes(
     filter?.dataType,
   )
     ? filter.dataType
@@ -2517,6 +2750,8 @@ export default function WidgetEditorView() {
             categoryCounts: activeCategoryCounts,
             categoryCountsExact: activeCategoryCountsExact,
             requestSettled: activeRequestSettled,
+            pickerMode,
+            selectedBreakdowns: breakdowns,
           });
   const fetchNextPage = activeUsesLegacyCatalog
     ? activeLegacyMetricCatalog.fetchNextPage
@@ -2555,6 +2790,26 @@ export default function WidgetEditorView() {
     pickerMetricIndex == null
       ? null
       : getWidgetMetricAdapterSource(metrics[pickerMetricIndex] || {});
+  const pickerCapabilityContext = useMemo(
+    () => ({
+      selectedMetricSources,
+      selectedMetrics: metrics,
+      selectedBreakdowns: breakdowns,
+      metricTargetIndex: pickerMode === "metric" ? pickerTargetIndex : null,
+      otherBreakdownCount: breakdowns.filter(
+        (item, index) => item.id && index !== pickerTargetIndex,
+      ).length,
+      targetMetricSource,
+    }),
+    [
+      metrics,
+      breakdowns,
+      pickerMode,
+      pickerTargetIndex,
+      selectedMetricSources,
+      targetMetricSource,
+    ],
+  );
   const catalogMetricOptions = useMemo(
     () =>
       buildWidgetCatalogPickerOptions({
@@ -2563,23 +2818,25 @@ export default function WidgetEditorView() {
         pickerCategory,
         search: trimmedDebouncedPickerSearch,
         requestSettled: activeRequestSettled,
-        selectedMetricSources,
-        targetMetricSource,
+        ...pickerCapabilityContext,
       }),
     [
       activeRequestSettled,
       paginatedMetrics,
       pickerCategory,
       pickerMode,
-      selectedMetricSources,
-      targetMetricSource,
+      pickerCapabilityContext,
       trimmedDebouncedPickerSearch,
     ],
   );
 
   const cursorAttributeOptions = useMemo(
-    () => buildWidgetCursorAttributeOptions(cursorAttributes, pickerMode),
-    [cursorAttributes, pickerMode],
+    () =>
+      buildWidgetCursorAttributeOptions(cursorAttributes, pickerMode, {
+        ...pickerCapabilityContext,
+        pickerCategory,
+      }),
+    [cursorAttributes, pickerMode, pickerCategory, pickerCapabilityContext],
   );
 
   const pickerMetricOptions = useMemo(
@@ -2682,73 +2939,34 @@ export default function WidgetEditorView() {
           }));
         }
         // Restore metrics with frontend type keys + source
+        const fallbackSource =
+          qc.workflow === "simulation"
+            ? "simulation"
+            : qc.workflow === "dataset"
+              ? "datasets"
+              : "traces";
         const savedMetrics = (qc.metrics || []).map((m) => {
-          const frontendType = toDashboardFilterType(m.type);
-          // Infer source from old workflow field if metric lacks source
-          const source =
-            m.source ||
-            (qc.workflow === "simulation"
-              ? "simulation"
-              : qc.workflow === "dataset"
-                ? "datasets"
-                : "traces");
+          const restored = restoreWidgetQueryItem(m, fallbackSource, "number");
           // Restore per-metric filters from saved backend format
           const restoredFilters = (m.filters || []).map((f) =>
-            restoreFilterPayload(f, source),
+            restoreFilterPayload(f, restored.source),
           );
           return {
-            ...m,
-            id: m.name || m.id,
-            registryId: m.property_id || m.propertyId,
-            name: m.displayName || m.display_name || m.name || m.id,
-            type: frontendType,
-            dataType: m.dataType || m.data_type || m.attribute_type || "number",
-            source,
+            ...restored,
             filters: restoredFilters,
           };
         });
         setMetrics(savedMetrics);
         setFilters(
           (qc.filters || []).map((f) =>
-            restoreFilterPayload(
-              f,
-              qc.workflow === "simulation"
-                ? "simulation"
-                : qc.workflow === "dataset"
-                  ? "datasets"
-                  : "traces",
-            ),
+            restoreFilterPayload(f, fallbackSource),
           ),
         );
         // Restore breakdowns — saved format uses "name" as the key,
         // but the frontend picker/filter logic expects "id".
-        const bdTypeMap = {
-          system_metric: "system",
-          systemMetric: "system",
-          annotation_metric: "annotation",
-          annotationMetric: "annotation",
-          custom_column: "custom_column",
-          customColumn: "custom_column",
-          custom_attribute: "custom_attribute",
-          customAttribute: "custom_attribute",
-          eval_metric: "eval_metric",
-          evalMetric: "eval_metric",
-        };
-        const savedBreakdowns = (qc.breakdowns || []).map((b) => ({
-          ...b,
-          id: b.id || b.name,
-          registryId: b.property_id || b.propertyId,
-          name: b.displayName || b.display_name || b.name || b.id,
-          type: bdTypeMap[b.type] || b.type || "system",
-          dataType: b.dataType || b.data_type || b.attribute_type || "string",
-          source:
-            b.source ||
-            (qc.workflow === "simulation"
-              ? "simulation"
-              : qc.workflow === "dataset"
-                ? "datasets"
-                : "traces"),
-        }));
+        const savedBreakdowns = (qc.breakdowns || []).map((b) =>
+          restoreWidgetQueryItem(b, fallbackSource, "string"),
+        );
         setBreakdowns(savedBreakdowns);
         setInitialized(true);
       }
@@ -2765,17 +2983,6 @@ export default function WidgetEditorView() {
       custom_column: "custom_column",
     };
     return map[type] || type;
-  };
-
-  const toDashboardFilterType = (backendType) => {
-    const map = {
-      system_metric: "system",
-      eval_metric: "eval_metric",
-      annotation_metric: "annotation",
-      custom_attribute: "custom_attribute",
-      custom_column: "custom_column",
-    };
-    return map[backendType] || backendType || "system";
   };
 
   const buildFilterPayload = (f) => {
@@ -2834,15 +3041,14 @@ export default function WidgetEditorView() {
 
   const buildMetricPayload = (m, i) => {
     const backendType = toBackendType(m.type);
-    const aggregation =
-      m.allowedAggregations?.length &&
-      !m.allowedAggregations.includes(m.aggregation)
-        ? m.allowedAggregations[0]
-        : m.aggregation || "avg";
+    // Choose a supported default only when adding a metric. A saved operation
+    // must reach validation unchanged, not silently turn Average into Count.
+    const aggregation = m.aggregation || "avg";
     const base = {
       id: m.id || `m${i}`,
       name: m.id,
       ...(m.registryId && { property_id: m.registryId }),
+      ...(m.configId && { config_id: m.configId }),
       display_name: m.name || m.id,
       type: backendType,
       source: m.source || "traces",
@@ -2885,11 +3091,13 @@ export default function WidgetEditorView() {
     const base = {
       name: b.id,
       ...(b.registryId && { property_id: b.registryId }),
+      ...(b.configId && { config_id: b.configId }),
       display_name: b.name || b.id,
       type: backendType,
       source: b.source || "traces",
     };
     if (backendType === "custom_attribute") {
+      if (b.attribute_key || b.attributeKey) base.attribute_key = b.id;
       base.attribute_type = normalizeWidgetDashboardDataType(
         b.dataType || b.data_type || "string",
       );
@@ -2901,6 +3109,11 @@ export default function WidgetEditorView() {
     if (backendType === "eval_metric") {
       // b.id is eval_template_id
       if (b.outputType) base.output_type = b.outputType;
+      if (b.evalKey) base.eval_key = b.evalKey;
+    }
+    if (backendType === "custom_column") {
+      if (b.column_id || b.columnId) base.column_id = b.id;
+      if (b.columnDataType) base.data_type = b.columnDataType;
     }
     return base;
   };
@@ -6309,12 +6522,7 @@ export default function WidgetEditorView() {
                         </IconButton>
                       </Stack>
                       <AggregationPicker
-                        value={
-                          m.allowedAggregations?.length &&
-                          !m.allowedAggregations.includes(m.aggregation)
-                            ? m.allowedAggregations[0]
-                            : m.aggregation
-                        }
+                        value={m.aggregation}
                         onChange={(val) =>
                           handleUpdateMetricAggregation(i, val)
                         }
@@ -6422,6 +6630,9 @@ export default function WidgetEditorView() {
                                 <FilterValueLabel
                                   filter={mf}
                                   source={mf.source || "traces"}
+                                  disableTooltip={Boolean(
+                                    filterValueAnchor || mfValueAnchor,
+                                  )}
                                   variant="caption"
                                   innerRef={(el) => {
                                     mfValueRefs.current[`${i}_${fi}`] = el;
@@ -6912,6 +7123,9 @@ export default function WidgetEditorView() {
                                 <FilterValueLabel
                                   filter={f}
                                   source={f.source || "traces"}
+                                  disableTooltip={Boolean(
+                                    filterValueAnchor || mfValueAnchor,
+                                  )}
                                   variant="body2"
                                   innerRef={(el) => {
                                     filterValueRefs.current[i] = el;
@@ -7637,15 +7851,15 @@ export default function WidgetEditorView() {
                     </InputAdornment>
                   ) : !cursorAttributePickerActive &&
                     Number.isSafeInteger(paginatedTotal) ? (
-                      <InputAdornment position="end">
-                        <Typography
-                          variant="caption"
-                          sx={{ color: "text.disabled", fontSize: 11 }}
-                        >
-                          {paginatedTotal} results
-                        </Typography>
-                      </InputAdornment>
-                    ) : null,
+                    <InputAdornment position="end">
+                      <Typography
+                        variant="caption"
+                        sx={{ color: "text.disabled", fontSize: 11 }}
+                      >
+                        {paginatedTotal} results
+                      </Typography>
+                    </InputAdornment>
+                  ) : null,
                 }}
               />
             </Box>
@@ -7808,103 +8022,13 @@ export default function WidgetEditorView() {
                       />
                     </Box>
                   ))}
-                {pickerMetricOptions.map((opt) => {
-                  const alreadyUsed = false;
-
-                  const sourceBadge =
-                    opt.type === "eval_metric" || opt.type === "annotation"
-                      ? null
-                      : opt.sources && opt.sources.length > 1
-                        ? null
-                        : opt.source === "simulation"
-                          ? { label: "Sim", color: "secondary" }
-                          : opt.source === "datasets"
-                            ? { label: "Dataset", color: "default" }
-                            : opt.source === "traces"
-                              ? { label: "Trace", color: "primary" }
-                              : null;
-
-                  return (
-                    <Box
-                      key={`${opt.source || "all"}-${opt.type}-${opt.id}-${opt.dataType || ""}`}
-                      onClick={
-                        alreadyUsed ? undefined : () => handlePickerSelect(opt)
-                      }
-                      sx={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 1,
-                        px: 1.5,
-                        py: 0.75,
-                        cursor: alreadyUsed ? "default" : "pointer",
-                        opacity: alreadyUsed ? 0.4 : 1,
-                        "&:hover": {
-                          bgcolor: alreadyUsed ? "transparent" : "action.hover",
-                        },
-                      }}
-                    >
-                      <Iconify
-                        icon={METRIC_TYPE_ICONS[opt.type] || "mdi:cog-outline"}
-                        width={15}
-                        sx={{ color: "text.disabled", flexShrink: 0 }}
-                      />
-                      <Typography
-                        variant="body2"
-                        title={opt.name}
-                        sx={{
-                          fontSize: "13px",
-                          flex: 1,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {opt.name}
-                      </Typography>
-                      {opt.outputType && (
-                        <Chip
-                          size="small"
-                          variant="outlined"
-                          label={
-                            opt.outputType === "SCORE"
-                              ? "score"
-                              : opt.outputType === "PASS_FAIL"
-                                ? "P/F"
-                                : opt.outputType === "CHOICE"
-                                  ? "choice"
-                                  : opt.outputType
-                          }
-                          sx={{
-                            height: 18,
-                            fontSize: 10,
-                            flexShrink: 0,
-                          }}
-                        />
-                      )}
-                      {opt.type === "custom_attribute" && opt.dataType && (
-                        <Chip
-                          size="small"
-                          variant="outlined"
-                          label={opt.dataType}
-                          sx={{ height: 18, fontSize: 10, flexShrink: 0 }}
-                        />
-                      )}
-                      {sourceBadge && (
-                        <Chip
-                          size="small"
-                          label={sourceBadge.label}
-                          color={sourceBadge.color}
-                          variant="outlined"
-                          sx={{
-                            height: 18,
-                            fontSize: 10,
-                            flexShrink: 0,
-                          }}
-                        />
-                      )}
-                    </Box>
-                  );
-                })}
+                {pickerMetricOptions.map((opt) => (
+                  <WidgetCatalogOption
+                    key={`${opt.registryId || `${opt.source || "all"}:${opt.type}:${opt.id}`}:${opt.dataType || ""}`}
+                    option={opt}
+                    onSelect={handlePickerSelect}
+                  />
+                ))}
                 <WidgetCatalogPaginationControl
                   key={`${pickerCatalogSession}:${pickerMode}:${pickerCategory}:${debouncedPickerSearch}`}
                   pickerCategory={pickerCategory}

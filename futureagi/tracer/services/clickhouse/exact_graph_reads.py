@@ -81,6 +81,9 @@ from tracer.services.clickhouse.v2.query_builders.filters import (
     ClickHouseFilterBuilderV2,
     rewrite_v1_sql_to_v2,
 )
+from tracer.services.clickhouse.v2.query_builders.session_list import (
+    SessionListQueryBuilderV2,
+)
 from tracer.services.clickhouse.v2.query_builders.trace_list import (
     TraceListQueryBuilderV2,
 )
@@ -2908,6 +2911,7 @@ class _SessionMembershipPlan:
     params: dict[str, Any]
     scalar_group_predicates: tuple[str, ...] = ()
     scalar_witness_predicate: str | None = None
+    relational_ctes: str = ""
 
 
 def _finite_survivor_map_ctes(
@@ -3136,7 +3140,17 @@ def _session_membership_plan(
         project_id,
         relational_filters,
     )
+    annotation_filters = []
     for leaf_index, item in enumerate(relational_filters):
+        config = item.get("filter_config") or item.get("filterConfig") or {}
+        column_type = str(config.get("col_type") or config.get("colType") or "").upper()
+        column_id = item.get("column_id") or item.get("columnId")
+        if column_type == "ANNOTATION" or (
+            column_type != "EVAL_METRIC"
+            and column_id in {"annotator", "has_annotation", "my_annotations"}
+        ):
+            annotation_filters.append(item)
+            continue
         predicate, leaf_params = compile_exact_graph_filter_predicates(
             [item],
             project_id=project_id,
@@ -3159,6 +3173,40 @@ def _session_membership_plan(
             )
             params[namespaced_name] = value
         relational_predicates.append(predicate)
+
+    # Reuse the list's finite, project-correlated Session/trace/span Score
+    # mapping. A Session Score has no trace/span FK; treating it as a trace
+    # annotation silently excludes it, even when the catalog and list agree.
+    relational_ctes, annotation_predicates, annotation_params = (
+        SessionListQueryBuilderV2(
+            project_id=project_id,
+            annotation_label_ids=annotation_label_ids,
+            bounded_internal_scan=True,
+        )._bounded_relational_membership_plan(
+            annotation_filters,
+            scope_to_request_window=True,
+            available_params={
+                "project_id": project_id,
+                "start_date": None,
+                "end_date": None,
+            },
+        )
+    )
+    for predicate in annotation_predicates:
+        # Annotation leaves have their own numbering; do not collide with an
+        # eval or other relation already compiled at the same leaf index.
+        predicate = predicate.replace("%(session_relational_", "%(session_annotation_")
+        relational_predicates.append(
+            predicate.replace("%(start_date)s", "%(snapshot_start_date)s").replace(
+                "%(end_date)s", "%(snapshot_end_date)s"
+            )
+        )
+    params.update(
+        {
+            name.replace("session_relational_", "session_annotation_", 1): value
+            for name, value in annotation_params.items()
+        }
+    )
     return _SessionMembershipPlan(
         scalar_aggregates=tuple(scalar_aggregates),
         scalar_predicates=tuple(scalar_predicates),
@@ -3166,6 +3214,7 @@ def _session_membership_plan(
         params=params,
         scalar_group_predicates=tuple(scalar_group_predicates),
         scalar_witness_predicate=scalar_witness,
+        relational_ctes=relational_ctes,
     )
 
 
@@ -3320,6 +3369,15 @@ def _session_aggregate_source_sql(
         map_name="ts_survivor_map",
     )
     membership_ctes = ""
+    if membership_plan.relational_ctes:
+        membership_ctes = f""",
+    resolved_root_sessions AS (
+        SELECT rs.project_id, rs.trace_id, {resolved_session_id} AS session_id
+        FROM ({session_root_rows}) AS rs
+        LEFT JOIN ts_survivor_map AS ts_remap
+          ON rs.trace_session_id = ts_remap.any_id
+        WHERE {resolved_session_id} IN (SELECT session_id FROM candidate_sessions)
+    ){membership_plan.relational_ctes}"""
     selected_session_predicates: list[str] = []
     if membership_plan.scalar_predicates:
         scalar_datetime_predicate, scalar_datetime_params = (

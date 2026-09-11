@@ -318,7 +318,9 @@ import type {
   CustomerInvoicesResponseApi,
   DashboardCreateUpdateApi,
   DashboardDetailApi,
+  DashboardFilterValuesQueryApi,
   DashboardFilterValuesResponseApi,
+  DashboardMetricsCatalogQueryApi,
   DashboardMetricsCatalogResponseApi,
   DashboardPreviewQueryApi,
   DashboardQueryApi,
@@ -65080,6 +65082,76 @@ export const tracerDashboardFilterValues = async (
   );
 };
 
+export type tracerDashboardFilterValuesCreateResponse200 = {
+  data: DashboardFilterValuesResponseApi;
+  status: 200;
+};
+
+export type tracerDashboardFilterValuesCreateResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerDashboardFilterValuesCreateResponse422 = {
+  data: ApiErrorResponseApi;
+  status: 422;
+};
+
+export type tracerDashboardFilterValuesCreateResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerDashboardFilterValuesCreateResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerDashboardFilterValuesCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 422 | 500 | 503>;
+};
+
+export type tracerDashboardFilterValuesCreateResponseSuccess =
+  tracerDashboardFilterValuesCreateResponse200 & {
+    headers: Headers;
+  };
+export type tracerDashboardFilterValuesCreateResponseError = (
+  | tracerDashboardFilterValuesCreateResponse400
+  | tracerDashboardFilterValuesCreateResponse422
+  | tracerDashboardFilterValuesCreateResponse500
+  | tracerDashboardFilterValuesCreateResponse503
+  | tracerDashboardFilterValuesCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type tracerDashboardFilterValuesCreateResponse =
+  | tracerDashboardFilterValuesCreateResponseSuccess
+  | tracerDashboardFilterValuesCreateResponseError;
+
+export const getTracerDashboardFilterValuesCreateUrl = () => {
+  return `/tracer/dashboard/filter_values/`;
+};
+
+/**
+ * Return distinct values for a given metric/attribute, for filter value picker.
+ */
+export const tracerDashboardFilterValuesCreate = async (
+  dashboardFilterValuesQueryApi: DashboardFilterValuesQueryApi,
+  options?: RequestInit,
+): Promise<tracerDashboardFilterValuesCreateResponse> => {
+  return apiMutator<tracerDashboardFilterValuesCreateResponse>(
+    getTracerDashboardFilterValuesCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(dashboardFilterValuesQueryApi),
+    },
+  );
+};
+
 export type tracerDashboardMetricsResponse200 = {
   data: DashboardMetricsCatalogResponseApi;
   status: 200;
@@ -65158,6 +65230,72 @@ export const tracerDashboardMetrics = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type tracerDashboardMetricsCreateResponse200 = {
+  data: DashboardMetricsCatalogResponseApi;
+  status: 200;
+};
+
+export type tracerDashboardMetricsCreateResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerDashboardMetricsCreateResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerDashboardMetricsCreateResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerDashboardMetricsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 500 | 503>;
+};
+
+export type tracerDashboardMetricsCreateResponseSuccess =
+  tracerDashboardMetricsCreateResponse200 & {
+    headers: Headers;
+  };
+export type tracerDashboardMetricsCreateResponseError = (
+  | tracerDashboardMetricsCreateResponse400
+  | tracerDashboardMetricsCreateResponse500
+  | tracerDashboardMetricsCreateResponse503
+  | tracerDashboardMetricsCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type tracerDashboardMetricsCreateResponse =
+  | tracerDashboardMetricsCreateResponseSuccess
+  | tracerDashboardMetricsCreateResponseError;
+
+export const getTracerDashboardMetricsCreateUrl = () => {
+  return `/tracer/dashboard/metrics/`;
+};
+
+/**
+ * Backward compat: if ``workflow`` param is provided, return only
+that source's metrics in the old grouped format.
+ * @summary Return all available metrics across traces and datasets.
+ */
+export const tracerDashboardMetricsCreate = async (
+  dashboardMetricsCatalogQueryApi: DashboardMetricsCatalogQueryApi,
+  options?: RequestInit,
+): Promise<tracerDashboardMetricsCreateResponse> => {
+  return apiMutator<tracerDashboardMetricsCreateResponse>(
+    getTracerDashboardMetricsCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(dashboardMetricsCatalogQueryApi),
     },
   );
 };

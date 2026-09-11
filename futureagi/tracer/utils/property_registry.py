@@ -164,7 +164,11 @@ def normalize_custom_attribute_source(
 def parse_property_registry_id(property_id: str) -> dict[str, str]:
     """Decode one public registry identity into its native adapter identity."""
 
-    normalized = str(property_id or "").strip()
+    normalized = str(property_id or "")
+    # Attribute names are opaque source keys. Trimming a custom identity would
+    # route a suggestion or filter to a different attribute.
+    if not normalized.startswith("custom_attribute:"):
+        normalized = normalized.strip()
     property_kind, separator, remainder = normalized.partition(":")
     if not separator or property_kind not in PROPERTY_KIND_TO_METRIC_TYPE:
         raise ValueError("invalid property_id")

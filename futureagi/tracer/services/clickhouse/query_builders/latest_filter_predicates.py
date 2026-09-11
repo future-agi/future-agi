@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-import unicodedata
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -14,6 +13,10 @@ from tracer.services.clickhouse.query_builders.filters import (
     ClickHouseFilterBuilder,
     build_literal_text_predicate,
     normalize_filter_op,
+)
+from tracer.utils.attribute_suggestion_contract import (
+    ATTRIBUTE_KEY_MAX_UTF8_BYTES,
+    validate_exact_attribute_key,
 )
 from tracer.utils.filter_operators import (
     JSON_ARRAY_FILTER_MAX_MEMBERS,
@@ -26,7 +29,7 @@ from tracer.utils.filter_operators import (
     validate_json_map_filter_value,
 )
 
-_MAX_ATTRIBUTE_KEY_UTF8_BYTES = 4096
+_MAX_ATTRIBUTE_KEY_UTF8_BYTES = ATTRIBUTE_KEY_MAX_UTF8_BYTES
 _MAX_LEGACY_ASCII_BLOOM_VARIANTS = 256
 
 
@@ -84,17 +87,12 @@ def _legacy_ascii_lower_bloom_predicate(
 
 
 def _validate_attribute_key(key: str) -> str:
-    """Accept real customer keys while rejecting ambiguous control payloads."""
+    """Preserve the ingested UTF-8 key; callers bind it as data, not an identifier."""
 
     try:
-        encoded = key.encode("utf-8", errors="strict")
-    except UnicodeEncodeError as exc:
-        raise UnsupportedFilterShapeError("attribute key must be valid UTF-8") from exc
-    if not encoded or len(encoded) > _MAX_ATTRIBUTE_KEY_UTF8_BYTES:
-        raise UnsupportedFilterShapeError("attribute key length is invalid")
-    if any(unicodedata.category(character) in {"Cc", "Cf"} for character in key):
-        raise UnsupportedFilterShapeError("attribute key contains control characters")
-    return key
+        return validate_exact_attribute_key(key)
+    except ValueError as exc:
+        raise UnsupportedFilterShapeError(str(exc)) from exc
 
 
 def _strict_bool(value: object) -> int:

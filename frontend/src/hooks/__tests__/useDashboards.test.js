@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("src/utils/axios", () => ({
   default: mocks,
+  readQuery: mocks.get,
   endpoints: {
     dashboard: {
       list: "/tracer/dashboard/",
@@ -62,6 +63,24 @@ import {
 } from "../useDashboards";
 
 describe("property catalog search contract", () => {
+  it("preserves exact custom JSON keys in public identities", () => {
+    for (const key of [
+      "\tline\n\u0000tail \t",
+      "x".repeat(4096),
+      "ΐ".repeat(1365) + "x",
+    ]) {
+      expect(
+        buildPropertyRegistryId({
+          metricName: key,
+          metricType: "custom_attribute",
+        }),
+      ).toBe(`custom_attribute:${key}`);
+      expect(
+        buildPropertyRegistryId({ propertyId: `custom_attribute:${key}` }),
+      ).toBe(`custom_attribute:${key}`);
+    }
+  });
+
   it("bounds multibyte searches without splitting a code point", () => {
     const search = boundPropertyCatalogSearch("é".repeat(400));
 
@@ -423,6 +442,134 @@ describe("usePropertyCatalog", () => {
     query_provenance: "activated_property_catalog",
     ...overrides,
   });
+
+  const currentPage = (overrides = {}) => {
+    const result = page({
+      query_provenance: "current_property_catalog",
+      query_exact: false,
+      ...overrides,
+    });
+    for (const key of [
+      "catalog_epoch",
+      "catalog_revision",
+      "activation_fingerprint",
+      "category_counts",
+      "category_counts_exact",
+    ])
+      delete result[key];
+    return result;
+  };
+
+  it("accepts current pages without activation or exact category counts", () => {
+    const result = currentPage();
+    expect(validatePropertyCatalogPage(result)).toBe(result);
+    expect(
+      validatePropertyCatalogPage(currentPage({ query_exact: true })),
+    ).toHaveProperty("__propertyCatalogCursorStopped", "malformed_page");
+  });
+
+  it("paginates current definitions and accepts live metadata updates", async () => {
+    mocks.get
+      .mockResolvedValueOnce({
+        data: {
+          result: currentPage({ has_more: true, next_cursor: "current-next" }),
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          result: currentPage({
+            metrics: [
+              {
+                name: "customer.plan",
+                property_id: "custom_attribute:customer.plan",
+                display_name: "Updated",
+              },
+              { name: "new", property_id: "custom_attribute:new" },
+            ],
+          }),
+        },
+      });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { result } = renderHook(() => usePropertyCatalog(), {
+      wrapper: createQueryWrapper(client),
+    });
+    await waitFor(() => expect(result.current.hasNextPage).toBe(true));
+    await act(async () => {
+      await result.current.fetchNextPage();
+    });
+    expect(result.current.cursorChainStopped).toBe(false);
+    await waitFor(() => expect(result.current.metrics).toHaveLength(2));
+    expect(result.current.metrics[0].display_name).toBe("Updated");
+    expect(result.current.categoryCountsExact).toBe(false);
+  });
+
+  it("restarts an expired first continuation without appending to the old walk", async () => {
+    mocks.get
+      .mockResolvedValueOnce({
+        data: { result: page({ has_more: true, next_cursor: "v1-next" }) },
+      })
+      .mockRejectedValueOnce({
+        response: { status: 400, data: { code: "cursor_expired" } },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          result: currentPage({
+            metrics: [{ name: "fresh", property_id: "custom_attribute:fresh" }],
+          }),
+        },
+      });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { result } = renderHook(() => usePropertyCatalog(), {
+      wrapper: createQueryWrapper(client),
+    });
+    await waitFor(() => expect(result.current.hasNextPage).toBe(true));
+    await act(async () => {
+      await result.current.fetchNextPage();
+    });
+    await waitFor(() =>
+      expect(result.current.metrics.map((metric) => metric.name)).toEqual([
+        "fresh",
+      ]),
+    );
+    expect(mocks.get).toHaveBeenCalledTimes(3);
+    expect(mocks.get.mock.calls[1][1].params.cursor).toBe("v1-next");
+    expect(mocks.get.mock.calls[2][1].params.cursor).toBeUndefined();
+    expect(result.current.cursorChainStopped).toBe(false);
+  });
+
+  it.each(["cursor_mismatch", "invalid_cursor", "permission_denied"])(
+    "does not restart a %s continuation",
+    async (code) => {
+      mocks.get
+        .mockResolvedValueOnce({
+          data: {
+            result: currentPage({
+              has_more: true,
+              next_cursor: "current-next",
+            }),
+          },
+        })
+        .mockRejectedValueOnce({ response: { status: 400, data: { code } } });
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      const reset = vi.spyOn(client, "resetQueries");
+      const { result } = renderHook(() => usePropertyCatalog(), {
+        wrapper: createQueryWrapper(client),
+      });
+      await waitFor(() => expect(result.current.hasNextPage).toBe(true));
+      await act(async () => {
+        await result.current.fetchNextPage();
+      });
+      await waitFor(() => expect(result.current.isError).toBe(true));
+      expect(reset).not.toHaveBeenCalled();
+      expect(mocks.get).toHaveBeenCalledTimes(2);
+    },
+  );
 
   it("reports a cached remote search refetch as pending", async () => {
     let resolveRefetch;

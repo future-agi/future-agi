@@ -681,6 +681,90 @@ describe("OpenAPI runtime contract", () => {
     ).toMatchObject({ ok: false });
   });
 
+  describe.each([
+    ["/api/traces/span-attribute-detail/", "key", {}],
+    ["/api/traces/span-attribute-keys/", "q", {}],
+    ["/api/traces/span-attribute-values/", "key", {}],
+    [
+      "/tracer/observation-span/get_span_attributes_list/",
+      "q",
+      {
+        filters: JSON.stringify({
+          project_id: "c4de3065-12b5-488c-a814-aa1c8e3f856f",
+        }),
+      },
+    ],
+  ])(
+    "exact attribute-key request contract %s",
+    (route, field, observationParams) => {
+      // Acceptance checks only: the backend enforces the exact UTF-8 byte bound.
+      // Swagger query string constraints cannot express that byte-count contract.
+      it.each([
+        ["ascii-over-old-limit", "a".repeat(513)],
+        ["unicode-4096-bytes", "😀".repeat(1024)],
+        ["whitespace-only", " \t\n"],
+        ["nul", "\0"],
+        ["literal-plus", "a+b"],
+        ["literal-percent-zero", "%00"],
+        ["combined-exact-key", " 客户\t\0+%00\n "],
+      ])("preserves %s in params and encoded URL", (_label, key) => {
+        const scope =
+          field === "q" && observationParams.filters
+            ? observationParams
+            : { project_id: "c4de3065-12b5-488c-a814-aa1c8e3f856f" };
+        const params = { ...scope, [field]: key };
+        const encodedUrl = `${route}?${new URLSearchParams(params)}`;
+        expect(
+          new URL(encodedUrl, "http://offline.invalid").searchParams.get(field),
+        ).toBe(key);
+        for (const config of [
+          { url: route, method: "get", params },
+          { url: encodedUrl, method: "get" },
+        ]) {
+          const original = JSON.stringify(config);
+          const result = validateContractedRequestConfig(config);
+          expect(result.skipped).not.toBe(true);
+          expect(result.ok).toBe(true);
+          expect(JSON.stringify(config)).toBe(original);
+        }
+      });
+    },
+  );
+
+  it("retains attribute values search, required project, and inventory cursor limits", () => {
+    const project_id = "c4de3065-12b5-488c-a814-aa1c8e3f856f";
+    const valid = (url, params) =>
+      validateContractedRequestConfig({ url, method: "get", params }).ok;
+    const values = "/api/traces/span-attribute-values/";
+    expect(
+      valid(values, { project_id, key: "ordinary", q: "x".repeat(512) }),
+    ).toBe(true);
+    expect(
+      valid(values, { project_id, key: "ordinary", q: "x".repeat(513) }),
+    ).toBe(false);
+    expect(valid(values, { key: "ordinary" })).toBe(false);
+    for (const route of [values, "/api/traces/span-attribute-detail/"]) {
+      expect(valid(route, { project_id: "not-a-uuid", key: "ordinary" })).toBe(
+        false,
+      );
+      expect(valid(route, { project_id })).toBe(false);
+    }
+    const keys = "/api/traces/span-attribute-keys/";
+    expect(
+      valid(keys, { project_id, page_size: 50, cursor: "x".repeat(8192) }),
+    ).toBe(true);
+    expect(
+      valid(keys, { project_id, page_size: 50, cursor: "x".repeat(8193) }),
+    ).toBe(false);
+    expect(valid(keys, { project_id, page_size: 51 })).toBe(false);
+    expect(valid(keys, { project_id: "not-a-uuid" })).toBe(false);
+    expect(
+      valid("/tracer/observation-span/get_span_attributes_list/", {
+        q: "ordinary",
+      }),
+    ).toBe(false);
+  });
+
   it("accepts every JSON value shape in dashboard filter-picker options", () => {
     expect(
       OPENAPI_CONTRACT.definitions.DashboardFilterValueOption.properties.value[

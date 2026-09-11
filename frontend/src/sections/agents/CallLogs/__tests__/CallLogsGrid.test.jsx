@@ -104,9 +104,120 @@ describe("CallLogsGrid bounded-read state", () => {
   beforeEach(() => {
     agGridState.props = null;
     agentDetailsState.selectedVersion = "version-1";
-    getCallLogsColumnDefsMock.mockClear();
+    getCallLogsColumnDefsMock.mockReset().mockReturnValue([]);
     prefetchCallLogsMock.mockReset();
     useCallLogsMock.mockReset();
+  });
+
+  it("reports voice columns after a disabled project becomes active", () => {
+    const definitions = [
+      { field: "call_id", headerName: "Call ID", hide: true },
+    ];
+    getCallLogsColumnDefsMock.mockReturnValue(definitions);
+    useCallLogsMock.mockReturnValue({
+      data: completeData,
+      isLoading: false,
+      error: null,
+      queryKey: ["callLogs", "project", "project-1", 25, {}, 1],
+    });
+    const onConfigLoaded = vi.fn();
+    const view = render(
+      <CallLogsGrid
+        id="project-1"
+        module="project"
+        enabled={false}
+        onConfigLoaded={onConfigLoaded}
+        hideDrawer
+      />,
+    );
+    expect(onConfigLoaded).not.toHaveBeenCalled();
+    view.rerender(
+      <CallLogsGrid
+        id="project-1"
+        module="project"
+        enabled
+        onConfigLoaded={onConfigLoaded}
+        hideDrawer
+      />,
+    );
+    expect(onConfigLoaded).toHaveBeenCalledExactlyOnceWith([
+      {
+        id: "call_id",
+        field: "call_id",
+        name: "Call ID",
+        isVisible: false,
+        groupBy: "Call Columns",
+      },
+    ]);
+    getCallLogsColumnDefsMock.mockReturnValue([]);
+  });
+
+  it("reports same-length columns for a new project and changed definitions", () => {
+    getCallLogsColumnDefsMock.mockReturnValue([
+      { field: "call_id", headerName: "Call ID" },
+    ]);
+    useCallLogsMock.mockReturnValue({
+      data: { ...completeData, config: [{ id: "call_id" }] },
+      isLoading: false,
+      error: null,
+      queryKey: ["callLogs", "project", "project-1", 25, {}, 1],
+    });
+    const onConfigLoaded = vi.fn();
+    const view = render(
+      <CallLogsGrid
+        id="project-1"
+        module="project"
+        onConfigLoaded={onConfigLoaded}
+        hideDrawer
+      />,
+    );
+    expect(onConfigLoaded).toHaveBeenCalledTimes(1);
+    view.rerender(
+      <CallLogsGrid
+        id="project-2"
+        module="project"
+        onConfigLoaded={onConfigLoaded}
+        hideDrawer
+      />,
+    );
+    expect(onConfigLoaded).toHaveBeenCalledTimes(2);
+    getCallLogsColumnDefsMock.mockReturnValue([
+      { field: "cost_cents", headerName: "Cost" },
+    ]);
+    useCallLogsMock.mockReturnValue({
+      data: { ...completeData, config: [{ id: "cost_cents" }] },
+      isLoading: false,
+      error: null,
+      queryKey: ["callLogs", "project", "project-2", 25, {}, 1],
+    });
+    view.rerender(
+      <CallLogsGrid
+        id="project-2"
+        module="project"
+        onConfigLoaded={onConfigLoaded}
+        hideDrawer
+      />,
+    );
+    expect(onConfigLoaded).toHaveBeenLastCalledWith([
+      {
+        id: "cost_cents",
+        field: "cost_cents",
+        name: "Cost",
+        isVisible: true,
+        groupBy: "Call Columns",
+      },
+    ]);
+    expect(onConfigLoaded).toHaveBeenCalledTimes(3);
+    view.rerender(
+      <CallLogsGrid
+        id="project-2"
+        module="project"
+        onConfigLoaded={onConfigLoaded}
+        hideDrawer
+      />,
+    );
+    expect(onConfigLoaded).toHaveBeenCalledTimes(3);
+    getCallLogsColumnDefsMock.mockReturnValue([]);
   });
 
   it("labels an incomplete page and disables misleading pagination/prefetch", async () => {

@@ -1,0 +1,38 @@
+# Optional three-replica qualification; pair with compose.yml under a unique
+# project name. No external volumes, credentials or production endpoints.
+x-replica: &replica
+  init: true
+  image: clickhouse/clickhouse-server:25.3-alpine
+  volumes:
+    - ./replica.xml:/etc/clickhouse-server/config.d/observed-test.xml:ro
+  mem_limit: 1536m
+  cpus: 1
+  depends_on:
+    - keeper
+  healthcheck:
+    test: [CMD, clickhouse-client, --user, test, --password, test, --query, "SELECT 1"]
+    interval: 3s
+    timeout: 3s
+    retries: 30
+
+services:
+  keeper:
+    init: true
+    image: clickhouse/clickhouse-server:25.3-alpine
+    entrypoint: [clickhouse-keeper, --config-file=/etc/clickhouse-keeper/observed.xml]
+    volumes:
+      - ./keeper.xml:/etc/clickhouse-keeper/observed.xml:ro
+    mem_limit: 256m
+    cpus: 0.5
+  replica1:
+    <<: *replica
+    environment: {CLICKHOUSE_USER: test, CLICKHOUSE_PASSWORD: test, CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1, OBS_REPLICA: replica1}
+    ports: ["127.0.0.1:${OBS_TEST_REPLICA1_PORT:-18144}:8123"]
+  replica2:
+    <<: *replica
+    environment: {CLICKHOUSE_USER: test, CLICKHOUSE_PASSWORD: test, CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1, OBS_REPLICA: replica2}
+    ports: ["127.0.0.1:${OBS_TEST_REPLICA2_PORT:-18145}:8123"]
+  replica3:
+    <<: *replica
+    environment: {CLICKHOUSE_USER: test, CLICKHOUSE_PASSWORD: test, CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1, OBS_REPLICA: replica3}
+    ports: ["127.0.0.1:${OBS_TEST_REPLICA3_PORT:-18146}:8123"]

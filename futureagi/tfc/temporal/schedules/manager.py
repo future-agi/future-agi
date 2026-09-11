@@ -337,15 +337,16 @@ async def cleanup_orphaned_schedules(
 async def a_register_schedules(
     client: Client,
     schedules: list[ScheduleConfig],
-    cleanup_orphans: bool = True,
+    cleanup_orphans: bool = False,
 ) -> None:
     """
-    Register multiple schedules with Temporal.
+    Register multiple schedules with Temporal, preserving unknown schedules by default.
 
     Args:
         client: Temporal client
         schedules: List of schedule configs to register
-        cleanup_orphans: If True, delete schedules not in the provided list (default: True)
+        cleanup_orphans: Explicitly delete schedules outside the provided full set
+            (default: False). Legacy/operator schedules otherwise remain untouched.
     """
     from tfc.temporal.common.registry import _import_temporal_activity_modules
 
@@ -410,9 +411,12 @@ async def a_register_schedules(
 async def register_schedules(
     client: Client,
     schedules: list[ScheduleConfig],
-    cleanup_orphans: bool = True,
+    cleanup_orphans: bool = False,
 ) -> None:
-    """Sync wrapper for a_register_schedules."""
+    """Sync registration; preserve unknown schedules unless cleanup is explicit.
+
+    cleanup_orphans defaults to False; True deletes schedules outside the full set.
+    """
     return await a_register_schedules(
         client, schedules, cleanup_orphans=cleanup_orphans
     )
