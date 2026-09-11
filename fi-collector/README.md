@@ -86,7 +86,7 @@ Off-the-shelf options considered:
 
 ```
 fi-collector/
-├── cmd/fi-collector/main.go               — ocb-generated entrypoint
+├── cmd/fi-collector/main.go               — standalone collector entrypoint
 ├── pkg/
 │   ├── adapter/                           — typed-Map split logic
 │   │   ├── adapter.go                     — port of pg_to_ch_adapter.py:split_attributes
@@ -94,34 +94,45 @@ fi-collector/
 │   └── chwriter/                          — CH 25.3 writer
 │       ├── writer.go                      — clickhouse-go/v2 batched bulk insert
 │       └── writer_test.go
-├── exporter/clickhouse25exporter/         — the OTel Collector component
-│   ├── config.go                          — yaml-config schema
-│   ├── factory.go                         — component registration with otelcol
-│   ├── exporter.go                        — OTLP traces → adapter → chwriter
-│   └── exporter_test.go
+├── exporter/clickhouse25exporter/         — OTLP span-to-row conversion
+│   ├── converter.go
+│   ├── converter_test.go
+│   └── e2e_ch_test.go
 ├── config/
-│   ├── fi-collector-local.yaml            — local dev: OTLP → batch → clickhouse25
-│   └── fi-collector-prod.yaml             — prod: + memory_limiter, retry, queue
-├── builder-config.yaml                    — ocb manifest (which components to compile in)
-├── Dockerfile                             — scratch runtime, ~25 MiB image
+│   └── collector.yaml                     — writer, server, auth, and catalog settings
+├── Dockerfile                             — Go build + distroless runtime
 ├── docker-compose.standalone.yml          — collector + CH only, for isolated testing
-├── Makefile                               — build / run / test / docker / bench
 ├── go.mod / go.sum
 └── README.md                              — this file
 ```
 
 ## Build / run
 
-Local dev (against a CH 25.3 sidecar running at 127.0.0.1:19001):
+Run these commands from `fi-collector/` with Go 1.24.3 or newer (see
+`go.mod`). The collector builds directly from the checked-in command; no
+OpenTelemetry Collector builder (OCB) or Makefile is required.
 
 ```bash
-make build               # ocb + go build → bin/fi-collector
-make run                 # bin/fi-collector --config config/fi-collector-local.yaml
-make test                # unit tests
-make bench               # benchmark adapter + writer
+go build -o bin/fi-collector ./cmd/fi-collector
+go test ./pkg/adapter ./pkg/chwriter
+./bin/fi-collector --help
 ```
 
-For OCB (the OTel Collector builder): the Makefile installs it if missing.
+To run against an existing local Future AGI stack, use the checked-in
+`config/collector.yaml`. Set `FI_CH_URL` to the ClickHouse **HTTP** endpoint
+(not its native-protocol port) and `FI_PG_WRITE` to the platform's Postgres
+connection string. Postgres is required to resolve API keys and project IDs.
+The config's `clickhouse` and `db` hostnames are container-network names;
+replace them with host-accessible endpoints when running the binary on your host.
+
+```bash
+# Set FI_CH_URL and FI_PG_WRITE for your running stack before this command.
+FI_DEAD_LETTER_FILE=./dead_letter.jsonl \
+  ./bin/fi-collector --config config/collector.yaml
+```
+
+Also set `FI_AUTH_REDIS_ADDR` to enable quota enforcement, usage metering,
+and cache invalidation. See `config/collector.yaml` for the other settings.
 
 ## Pricing Configuration
 
@@ -137,7 +148,7 @@ Use this to refresh pricing without rebuilding the collector:
 
 ```bash
 # Mount a newer pricing file (e.g., from a ConfigMap or shared volume)
-FI_PRICING_JSON=/etc/fi-collector/model_prices.json ./bin/fi-collector --config config/fi-collector-prod.yaml
+FI_PRICING_JSON=/etc/fi-collector/model_prices.json ./bin/fi-collector --config config/collector.yaml
 ```
 
 Refresh the embedded snapshot by re-vendoring `fi-collector/pkg/pricing/model_prices.json` at build
@@ -147,7 +158,8 @@ time (this is a compile-time `//go:embed`):
 # Inside the repo
 curl -sSL https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json \
   -o fi-collector/pkg/pricing/model_prices.json
-make build
+cd fi-collector
+go build -o bin/fi-collector ./cmd/fi-collector
 ```
 
 **Note:** Token-based cost computation also includes a per-organization fallback (`CustomAIModel`)
