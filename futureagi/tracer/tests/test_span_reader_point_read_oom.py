@@ -17,6 +17,9 @@ unpruned merge: the skip-index setting is on, and the ``is_deleted = 0``
 predicate (which, alongside the setting, arms the ``is_deleted`` minmax-index
 resurrection bug — the 2-arg ReplacingMergeTree drops deleted rows under FINAL
 anyway) is off. A revert of either fails here rather than as a prod OOM.
+
+``get()`` left FINAL entirely (even with the bloom, FINAL's merge cost tracks
+part count) and is pinned in ``test_span_reader_limit_by_dedup.py``.
 """
 
 from tracer.services.clickhouse.v2.span_reader import CHSpanReader
@@ -56,12 +59,6 @@ def _assert_final_oom_safe(client, key_predicate):
     assert "is_deleted = 0" not in client.sql
     # still prunes on the stable bloom-indexed column
     assert key_predicate in client.sql
-
-
-def test_get_is_final_oom_safe():
-    client = _RecordingClient()
-    _reader_with(client).get("span-1")
-    _assert_final_oom_safe(client, "id = %(span_id)s")
 
 
 def test_list_by_trace_is_final_oom_safe():
