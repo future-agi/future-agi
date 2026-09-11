@@ -565,6 +565,36 @@ def cursor_page_metadata(
     }
 
 
+def read_filter_seed_witness_slack(builder) -> int | None:
+    """The witness slack this read used, for its continuation to carry.
+
+    ``None`` for every builder and every request shape that has no witness
+    envelope, which keeps their cursors byte-identical to the ones minted
+    before the field existed.
+    """
+
+    read = getattr(builder, "filter_seed_witness_slack_hours", None)
+    return read() if callable(read) else None
+
+
+def pin_filter_seed_witness_slack(builder, cursor_state) -> None:
+    """Finish a pagination under the slack its first hop was minted with.
+
+    The slack decides candidacy, so an operator turning the runtime knob
+    between two hops of one cursor would move the boundary under a
+    half-published page - duplicating rows that stop being candidates and
+    losing rows that start being them. A legacy token carries no slack; the
+    pin then clears and the builder falls back to the current setting, which
+    is exactly what that token got before.
+    """
+
+    if cursor_state is None:
+        return
+    pin = getattr(builder, "pin_filter_seed_witness_slack_hours", None)
+    if callable(pin):
+        pin(cursor_state.witness_slack_hours)
+
+
 def frozen_window_filter(cursor: ListCursor) -> dict[str, Any]:
     """Return the immutable time bound carried by a live keyset cursor."""
 
@@ -589,5 +619,7 @@ __all__ = [
     "frozen_window_filter",
     "normalize_filter_conjunction",
     "normalize_cursor_query",
+    "pin_filter_seed_witness_slack",
+    "read_filter_seed_witness_slack",
     "snapshot_cursor_supported",
 ]
