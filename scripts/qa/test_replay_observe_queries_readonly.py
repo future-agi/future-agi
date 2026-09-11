@@ -248,7 +248,7 @@ class UsersRemapCertificateTests(unittest.TestCase):
         reader = object.__new__(queries.ReadOnlyExecutor)
         reader.client, reader._users_certificate = object(), None
         reader._users_context = queries._UsersRemapContext(
-            (project,), (project,), "bindings", "scope", 26)
+            (project,), (project,), "bindings", "scope", 26, "origin-sha")
         origin = SimpleNamespace(row_count=1, columns=["end_user_id", "project_id"],
                                  data=[{"end_user_id": user, "project_id": project}])
         reader._users_result(origin, origin=True, certificate=None, query_id="actual-origin")
@@ -305,6 +305,41 @@ class UsersSourcePinTests(unittest.TestCase):
                 )
 
 
+class UsersOriginShaSetTests(unittest.TestCase):
+    """The Users read path emits several shapes; one scalar pin cannot cover it."""
+
+    def test_pin_set_holds_the_two_reviewed_first_page_shapes(self):
+        self.assertIsInstance(queries._USERS_ORIGIN_SHAS, frozenset)
+        for digest in queries._USERS_ORIGIN_SHAS:
+            with self.subTest(digest=digest):
+                self.assertRegex(digest, r"^[0-9a-f]{64}$")
+        # Unseeded and ASCII-exact-text acquisition are different statements.
+        self.assertEqual(
+            queries._USERS_ORIGIN_SHAS,
+            frozenset(
+                {
+                    "ba51ea62b5e2f3831b6d9d1e4ab345283c068af90f1795bb7b7082526cd4d4e5",
+                    "7b8c40bf16c6d1a869f19c75d26304d755298c7016ac451233958599369f3f51",
+                }
+            ),
+        )
+
+    def test_origin_sha_selects_a_pinned_shape_and_fails_closed_otherwise(self):
+        statement = "WITH x AS (SELECT 1) SELECT * FROM x"
+        digest = hashlib.sha256(statement.encode()).hexdigest()
+        with patch.object(queries, "_USERS_ORIGIN_SHAS", frozenset({digest})):
+            # Same normalization validate_select applies before execution.
+            # ``strip()`` then ``rstrip(";")``, in that order, exactly as
+            # validate_select normalizes the statement it hands the client.
+            for variant in (statement, statement + ";", f"\n  {statement};\n"):
+                with self.subTest(variant=variant):
+                    self.assertEqual(queries._users_origin_sha(variant), digest)
+            with self.assertRaisesRegex(
+                replay.ReplayError, "USERS_REMAP_ORIGIN_NOT_QUALIFIED"
+            ):
+                queries._users_origin_sha(statement + " LIMIT 1")
+
+
 class UsersOriginBatchTests(unittest.TestCase):
     def test_origin_limit_follows_the_managers_own_first_batch(self):
         manager_module = SimpleNamespace(
@@ -334,7 +369,9 @@ class UsersOriginBatchTests(unittest.TestCase):
                 reader = object.__new__(queries.ReadOnlyExecutor)
                 reader.client, reader._users_certificate = object(), None
                 reader._users_context = queries._UsersRemapContext(
-                    (project,), (project,), "bindings", "scope", origin_limit)
+                    (project,), (project,), "bindings", "scope", origin_limit,
+                    "origin-sha",
+                )
                 data = [dict(row) for row in rows[:size]]
                 while len(data) < size:
                     data.append({"end_user_id": str(UUID(int=len(data) + 500)),

@@ -354,12 +354,49 @@ def diagnostic_read_settings(
     return limits
 
 
-# SQL pins: sha256 of the statement text the deployed builders emit for the
-# qualified origin shape (no user_id label witness, no numeric scalar witness).
-# ``limit`` is a *binding* (``LIMIT %(limit)s``), so one origin pin covers every
-# first-batch size. Recompute by building the same two statements against the
-# checked-in builders and hashing ``sql.strip().rstrip(";")``.
-_USERS_ORIGIN_SHA = "7120eaf17118a7ae3708911c7a61e88f46e8a2df1d59753463e5d99e0aacbeb9"
+# SQL pins: sha256 of the statement text the deployed builders emit for each
+# REVIEWED first-page origin shape. The Users read path emits more than one
+# shape, so this is a set of reviewed statements, never a blanket exemption for
+# Users queries: the run stays bound to the one shape it actually selected.
+#
+# Recompute offline against the checked-in builders -- no connection, no
+# production access. From ``futureagi/`` with ``PYTHONPATH=.`` and every
+# DB/CH/Redis port pointed at a dead port, after ``django.setup()`` only::
+#
+#     b = UserListQueryBuilderV2(organization_id=str(UUID(int=11)),
+#                                project_ids=[str(UUID(int=12))],
+#                                filters=FILTERS, search="", empty_scope=False)
+#     sql, _ = b.build_dimension_candidate_query(
+#         limit=26, window_start=datetime(2026, 9, 3, 0, 0, tzinfo=timezone.utc),
+#         window_end=datetime(2026, 9, 3, 4, 0, tzinfo=timezone.utc))
+#     hashlib.sha256(sql.strip().rstrip(";").encode()).hexdigest()
+#
+# ``.strip().rstrip(";")`` is exactly the normalization ``validate_select``
+# applies before the statement runs, so one digest covers both check sites.
+# Organization, projects, window, ``limit`` and the attribute key AND value are
+# all *bindings*, so none of them enters the digest: limit 26 and limit 65 hash
+# identically, and so do two different attribute keys or values.
+_USERS_ORIGIN_SHAS = frozenset(
+    {
+        # FILTERS = a ``created_at`` between filter only (unseeded first page).
+        # Post immutable-hour replay this statement carries no
+        # ``candidate_span_identities`` CTE.
+        "ba51ea62b5e2f3831b6d9d1e4ab345283c068af90f1795bb7b7082526cd4d4e5",
+        # FILTERS = the same date filter plus ONE exact-text attribute filter
+        # (``col_type`` SPAN_ATTRIBUTE, ``filter_type`` text, ``filter_op``
+        # equals, a single non-empty ASCII value). That qualifies a scalar text
+        # witness, so ``scalar_witness_identities`` is present and the
+        # manager's own first batch is 65 rows.
+        "7b8c40bf16c6d1a869f19c75d26304d755298c7016ac451233958599369f3f51",
+    }
+)
+# Deliberately NOT pinned: a multi-value picker (``filter_op`` ``in`` with N
+# values) also reaches the 65-row batch, but it binds one parameter per value,
+# so its statement text -- and its digest -- changes with N; pinning any single
+# N would certify one cardinality and silently reject the rest. Those reads, the
+# user_id label witness, the search shape and the numeric witness all fail
+# closed with USERS_REMAP_ORIGIN_NOT_QUALIFIED until a lane reviews and pins
+# them here, which is the safe direction.
 _USERS_REMAP_SHA = "090df268267944b22e713077c59d4836e4046fadb60bfbb78116f3a43af46676"
 # Source pins: sha256 of the *file bytes* backing each imported module, i.e.
 # ``sha256(Path(import_module(name).__file__).read_bytes())``. Re-pin with
@@ -367,7 +404,7 @@ _USERS_REMAP_SHA = "090df268267944b22e713077c59d4836e4046fadb60bfbb78116f3a43af4
 # ``UsersSourcePinTests`` fails the moment these drift from the tree again.
 _USERS_SOURCE_PINS = {
     "tracer.services.users_list_manager": "b5da3657a94ab71710a8db384990e018269929e80c2f651cf8a25b02df3eb831",
-    "tracer.services.clickhouse.query_builders.user_list": "b0c34215bee82ac898c2c05272e95a8a1b6f4552c30515364e3c810467782e7f",
+    "tracer.services.clickhouse.query_builders.user_list": "94ab7ca8a68c391a3dd147b6a43d2d9cae6f134c2b4a022033d9cb77aef11bf5",
     "tracer.services.clickhouse.v2.query_builders.user_list": "d5024fe5a46b7cbdf2621d04dfd02027c17816f7250f84120c920a0dd3c9908e",
     "tracer.services.clickhouse.v2.id_remap_sql": "56903f382c0f8dc40099e5ebfda45a8ab853c0b8f7ec16b5712f9c11092fe24a",
 }
@@ -377,6 +414,19 @@ _CH_USER_ENV = "OBSERVE_CH_USER"
 def _users_sources_current():
     return all(hashlib.sha256(Path(import_module(name).__file__).read_bytes()).hexdigest() == digest
                for name, digest in _USERS_SOURCE_PINS.items())
+
+
+def _users_origin_sha(sql):
+    """Return the pinned digest of this origin statement, or fail closed.
+
+    The selected shape travels on the remap context so the statement that is
+    actually executed is re-checked against the SAME pin, not merely against
+    set membership a second time.
+    """
+    digest = hashlib.sha256(sql.strip().rstrip(";").encode()).hexdigest()
+    if digest not in _USERS_ORIGIN_SHAS:
+        raise replay.ReplayError("USERS_REMAP_ORIGIN_NOT_QUALIFIED")
+    return digest
 
 
 def _users_origin_limit(manager):
@@ -437,6 +487,7 @@ class _UsersRemapContext:
     origin_bindings: str
     binding: str
     origin_limit: int
+    origin_sql_sha256: str
 
 
 @dataclass(frozen=True)
@@ -532,13 +583,13 @@ class ReadOnlyExecutor:
             limit=origin_limit, window_start=replay.utc(case["window"]["start"]),
             window_end=replay.utc(case["window"]["end"]),
         )
-        if hashlib.sha256(sql.strip().rstrip(";").encode()).hexdigest() != _USERS_ORIGIN_SHA:
-            raise replay.ReplayError("USERS_REMAP_ORIGIN_NOT_QUALIFIED")
+        origin_sha = _users_origin_sha(sql)
         self._users_context = _UsersRemapContext(
             tuple(_user_uuid(p) for p in projects), tuple(map(str, self.projects)),
             replay.digest(safe_json(bindings)),
             replay.digest({"case": case, "scope": scope, "plan_id": plan_id, "projects": projects}),
             origin_limit,
+            origin_sha,
         )
         self._users_origin_expected = True
 
@@ -602,7 +653,7 @@ class ReadOnlyExecutor:
                 raise
             self._validate_users_remap(query, params, pending)
             sql, certified = query, pending
-        if origin and (hashlib.sha256(sql.encode()).hexdigest() != _USERS_ORIGIN_SHA
+        if origin and (hashlib.sha256(sql.encode()).hexdigest() != self._users_context.origin_sql_sha256
                        or replay.digest(safe_json(params)) != self._users_context.origin_bindings):
             raise replay.ReplayError("USERS_REMAP_ORIGIN_BINDINGS_CHANGED")
         remaining = self.remaining_read_ms()
@@ -637,7 +688,7 @@ class ReadOnlyExecutor:
             record["scope_certificate"] = {
                 "kind": "finite_users_remap_certificate.v1",
                 "origin_query_id": certified.origin_query_id,
-                "origin_sql_sha256": _USERS_ORIGIN_SHA,
+                "origin_sql_sha256": certified.context.origin_sql_sha256,
                 "source_sha256": replay.digest(_USERS_SOURCE_PINS),
                 "scope_binding_sha256": certified.context.binding,
                 "candidate_count": len(certified.ids), "candidate_ids_sha256": replay.digest(certified.ids),
