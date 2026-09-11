@@ -1144,7 +1144,7 @@ def test_raw_annotator_span_attribute_never_uses_score_candidate_seed() -> None:
 
 
 @pytest.mark.parametrize("column_id", ["end_user_id", "user", "user_id"])
-def test_raw_user_named_span_attribute_does_not_use_candidate_seed(
+def test_raw_user_named_span_attribute_never_uses_the_end_user_candidate_seed(
     column_id: str,
 ) -> None:
     builder = TraceListQueryBuilderV2(
@@ -1163,7 +1163,6 @@ def test_raw_user_named_span_attribute_does_not_use_candidate_seed(
         ],
     )
 
-    assert builder.supports_filter_candidate_seed_page() is False
     raw_sql, _ = builder.build_filter_seed_page(
         slice_start=END - timedelta(days=30),
         slice_end=END,
@@ -1173,12 +1172,26 @@ def test_raw_user_named_span_attribute_does_not_use_candidate_seed(
     assert "attrs_string[" in raw_sql
     assert "end_users" not in raw_sql
     assert "end_user_id_remap" not in raw_sql
-    with pytest.raises(ValueError, match="trace user candidate seed is unavailable"):
-        builder.build_filter_candidate_seed_page(
+    # A user-named raw attribute is an ordinary typed string leaf: it may seed
+    # through the exact-string candidate lane, but never through the end-user
+    # relation.
+    assert builder._positive_exact_end_user_seed_filter() is None
+    with pytest.raises(ValueError, match="trace user candidate predicate"):
+        builder.build_filter_ordered_seed_page(
             slice_start=END - timedelta(days=30),
             slice_end=END,
             limit=26,
+            _positive_user_candidate_first=True,
         )
+    candidate_sql, _ = builder.build_filter_candidate_seed_page(
+        slice_start=END - timedelta(days=30),
+        slice_end=END,
+        limit=26,
+    )
+    assert "matching_scalar_trace_identities" in candidate_sql
+    assert "attrs_string[" in candidate_sql
+    assert "end_users" not in candidate_sql
+    assert "end_user_id_remap" not in candidate_sql
 
 
 @override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger_v2")

@@ -604,10 +604,16 @@ def test_widget_trace_queries_use_direct_write_backend_independent_of_routing(
     dashboard_widget.save(update_fields=["query_config"])
 
     v2_client = MagicMock()
-    v2_client.execute_read.return_value = (
+    # ``execute_ch_query`` reads through the progress-reporting transport so
+    # the result can carry the server's rows-read counter; the fake answers
+    # with that transport's five-tuple (rows, columns, elapsed, rows read,
+    # bytes read) and the legacy ``execute_read`` must stay untouched.
+    v2_client.execute_read_with_progress.return_value = (
         [(datetime(2026, 8, 1, tzinfo=UTC), 123.0)],
         [("time_bucket", "DateTime('UTC')"), ("metric_0", "Float64")],
         1.0,
+        1,
+        64,
     )
     v2_client.server_enforced_readonly = False
     v2_client.server_profile_locked = False
@@ -653,7 +659,8 @@ def test_widget_trace_queries_use_direct_write_backend_independent_of_routing(
     assert response.status_code == 200
     assert response.json()["result"]["query_status"] == "complete"
     assert response.json()["result"]["query_provenance"] == "exact_snapshot"
-    assert v2_client.execute_read.call_count == 1
+    assert v2_client.execute_read_with_progress.call_count == 1
+    v2_client.execute_read.assert_not_called()
     # Cache planning and execution build separate configs; only execution reads CH.
     assert v2_builder.call_count == 2
     assert v2_builder.call_args_list[0].args[0]["require_versioned_snapshot"] is True

@@ -4584,7 +4584,9 @@ class TestAnalyticsQueryService:
         from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
 
         class TimeoutClient:
-            def execute_read(self, query, params, *, timeout_ms, settings):
+            def execute_read_with_progress(
+                self, query, params, *, timeout_ms, settings
+            ):
                 raise TimeoutError("private ClickHouse driver timeout detail")
 
         service = AnalyticsQueryService()

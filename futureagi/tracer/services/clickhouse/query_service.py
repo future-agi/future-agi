@@ -100,13 +100,21 @@ class QueryType(StrEnum):
 
 @dataclass
 class QueryResult:
-    """Container for query results with metadata."""
+    """Container for query results with metadata.
+
+    ``read_rows`` is the server's own native rows-read counter for the
+    statement, or ``None`` when the transport cannot report it. It describes
+    the work the statement did, never its result: a caller sizing its next read
+    by it must treat ``None`` as "unmeasured", not as zero. Bytes read are
+    logged but not carried here, because nothing decides on them.
+    """
 
     data: Any  # Can be list, dict, or any serializable structure
     row_count: int
     backend_used: str  # "clickhouse" or "postgres"
     query_time_ms: float
     columns: list[str] | None = None
+    read_rows: int | None = None
 
     @classmethod
     def from_clickhouse_rows(cls, rows, columns, query_time_ms):
@@ -217,13 +225,24 @@ class AnalyticsQueryService:
         ``timeout_ms`` is retained for legacy selector compatibility; it is no
         longer a statement deadline. Request/continuation admission and transport
         failure detection are separate from server query execution limits.
+
+        The result carries the statement's own native rows-read progress, which
+        a caller may use to size its next read; the transport leaves it
+        unmeasured when the server reported none. Bytes read reach the log line
+        only - no caller decides on them.
         """
         if self.supports_per_query_read_settings:
             settings = application_read_settings(settings)
         start = time.monotonic()
         try:
             with application_read_context():
-                rows, columns, qt = self.ch_client.execute_read(
+                (
+                    rows,
+                    columns,
+                    _,
+                    read_rows,
+                    read_bytes,
+                ) = self.ch_client.execute_read_with_progress(
                     query, params or {}, timeout_ms=None, settings=settings
                 )
         except TimeoutError as exc:
@@ -243,6 +262,8 @@ class AnalyticsQueryService:
             "ch_query_executed",
             query_time_ms=round(elapsed, 2),
             rows=len(rows),
+            read_rows=read_rows,
+            read_bytes=read_bytes,
             backend="clickhouse",
         )
 
@@ -252,6 +273,7 @@ class AnalyticsQueryService:
             backend_used="clickhouse",
             query_time_ms=round(elapsed, 2),
             columns=col_names,
+            read_rows=read_rows,
         )
 
     def get_span_attribute_keys_ch_for_projects(

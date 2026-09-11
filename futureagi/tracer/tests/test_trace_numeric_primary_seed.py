@@ -916,8 +916,17 @@ def test_mixed_scalar_siblings_cannot_create_numeric_anchor(anchor):
     builder = subject(
         leaves=[mixed_leaf_cases()[0][0], mixed_leaf_cases()[1][0], anchor]
     )
-    assert builder._public_scalar_candidate_seed_plan() is None
-    assert not builder.supports_filter_candidate_seed_page()
+    # A zero-default or negative numeric sibling still cannot become the
+    # numeric anchor. The short exact-string leaf in this mix does carry the
+    # compiler's typed value companion, so it — and only it — seeds the page;
+    # every sibling leaf remains the classifier's exact responsibility.
+    assert TraceListQueryBuilder._public_scalar_candidate_seed_plan(builder) is None
+    plan = builder._public_scalar_candidate_seed_plan()
+    assert plan == builder._public_short_text_candidate_seed_plan()
+    assert "span_attr_str[" in plan.raw_graph_value_witness_predicate
+    assert "span_attr_num" not in plan.raw_graph_value_witness_predicate
+    assert builder.supports_filter_candidate_seed_page()
+    assert not builder.filter_candidate_seed_is_optional()
 
 
 @pytest.mark.parametrize("width", [2, 5, 10])

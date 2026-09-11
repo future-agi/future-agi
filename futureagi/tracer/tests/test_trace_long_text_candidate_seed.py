@@ -202,7 +202,6 @@ def test_long_text_primary_seed_runs_without_speculative_caps_and_replays_exactl
 @pytest.mark.parametrize(
     "operation,value",
     [
-        ("equals", "short"),
         ("contains", "short"),
         ("in", [LONG_TEXT, "short"]),
         ("not_equals", LONG_TEXT),
