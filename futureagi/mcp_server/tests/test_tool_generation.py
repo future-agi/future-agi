@@ -275,6 +275,12 @@ def test_catalog_exposes_actual_pagination_and_typed_dataset_rows():
         )
         is None
     )
+    assert (
+        tools["list_optimization_runs"]["inputSchema"]["properties"]["limit"].get(
+            "maximum"
+        )
+        is None
+    )
     assert tools["get_knowledge_base"]["request"]["path"] == "/model-hub/kb/{id}/"
     rows = Draft7Validator(tools["add_dataset_rows"]["inputSchema"])
     tool_id = "00000000-0000-0000-0000-000000000001"

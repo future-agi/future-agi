@@ -28532,7 +28532,6 @@ export type ModelHubDatasetOptimizationListParams = {
   page?: number;
   /**
    * @minimum 1
-   * @maximum 100
    */
   limit?: number;
 };

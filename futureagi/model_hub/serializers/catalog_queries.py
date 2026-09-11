@@ -33,4 +33,6 @@ class OptimizationListQuerySerializer(serializers.Serializer):
     column_id = serializers.UUIDField(required=False)
     develop_id = serializers.UUIDField(required=False)
     page = serializers.IntegerField(min_value=1, required=False)
-    limit = serializers.IntegerField(min_value=1, max_value=100, required=False)
+    # Documents the pre-existing query semantics only: the paginator already
+    # silently caps at 100. Documenting `limit` must not start rejecting 200.
+    limit = serializers.IntegerField(min_value=1, required=False)

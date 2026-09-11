@@ -24907,7 +24907,6 @@
                         "in": "query",
                         "required": false,
                         "type": "integer",
-                        "maximum": 100,
                         "minimum": 1
                     }
                 ],

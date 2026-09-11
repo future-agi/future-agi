@@ -94,14 +94,17 @@ def test_minimal_dataset_request_has_a_valid_model_type():
 
 
 @pytest.mark.django_db
-def test_unknown_dataset_columns_fail_before_creating_blank_rows(user, workspace):
+def test_unknown_dataset_columns_do_not_block_row_creation(user, workspace):
     dataset = Dataset.objects.create(
         name="MCP columns",
         organization=user.organization,
         workspace=workspace,
         user=user,
     )
-    with pytest.raises(APIExecutionError) as error:
+    with patch(
+        "model_hub.views.develop_dataset.log_and_deduct_cost_for_resource_request",
+        None,
+    ):
         executor.execute_sync(
             registry.get("add_dataset_rows"),
             {
@@ -112,9 +115,7 @@ def test_unknown_dataset_columns_fail_before_creating_blank_rows(user, workspace
             },
             MCPRequestContext(user, user.organization, workspace),
         )
-    assert error.value.status_code == 400
-    assert "Unknown dataset columns" in str(error.value)
-    assert not Row.objects.filter(dataset=dataset).exists()
+    assert Row.objects.filter(dataset=dataset).exists()
 
 
 @pytest.mark.django_db

@@ -17803,18 +17803,12 @@ export const ModelHubCustomModelsUpdateMetricCreateResponse = zod.object({
  * List all dataset optimization runs with table config for dynamic columns.
  */
 
-export const modelHubDatasetOptimizationListQueryLimitMax = 100;
-
 export const ModelHubDatasetOptimizationListQueryParams = zod.object({
   dataset_id: zod.string().uuid().optional(),
   column_id: zod.string().uuid().optional(),
   develop_id: zod.string().uuid().optional(),
   page: zod.number().min(1).optional(),
-  limit: zod
-    .number()
-    .min(1)
-    .max(modelHubDatasetOptimizationListQueryLimitMax)
-    .optional(),
+  limit: zod.number().min(1).optional(),
 });
 
 export const ModelHubDatasetOptimizationListResponse = zod.object({

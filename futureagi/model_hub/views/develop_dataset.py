@@ -5483,26 +5483,6 @@ class AddDataRowsView(APIView):
 
             dataset = get_object_or_404(Dataset, id=dataset_id)
 
-            columns = list(
-                Column.objects.filter(dataset=dataset, deleted=False).exclude(
-                    source__in=[
-                        SourceChoices.EXPERIMENT.value,
-                        SourceChoices.EXPERIMENT_EVALUATION.value,
-                        SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
-                    ]
-                )
-            )
-            column_names = {column.name for column in columns}
-            unknown_columns = {
-                cell["column_name"] for row in rows for cell in row["cells"]
-            } - column_names
-            if unknown_columns:
-                return self._gm.bad_request(
-                    "Unknown dataset columns: "
-                    + ", ".join(sorted(unknown_columns)[:10])
-                    + ". Create the columns before adding rows."
-                )
-
             # Validate row limit
             organization = (
                 getattr(request, "organization", None) or request.user.organization
@@ -5535,6 +5515,13 @@ class AddDataRowsView(APIView):
                 max_order = last_row.order
             else:
                 max_order = -1
+            columns = Column.objects.filter(dataset=dataset, deleted=False).exclude(
+                source__in=[
+                    SourceChoices.EXPERIMENT.value,
+                    SourceChoices.EXPERIMENT_EVALUATION.value,
+                    SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
+                ]
+            )
 
             # Create rows and cells
             for index, row_data in enumerate(rows):

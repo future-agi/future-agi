@@ -13929,7 +13929,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
             schema: {
               type: "integer",
               minimum: 1,
-              maximum: 100,
             },
           },
         },
