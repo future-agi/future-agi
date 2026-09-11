@@ -17,7 +17,10 @@ from django.test import override_settings
 
 from tracer.selectors.filter_seed_width import FilterSeedWidthPolicy
 from tracer.selectors.trace_filter_reads import read_bounded_filter_page
-from tracer.services.clickhouse.query_builders.trace_list import TraceListQueryBuilder
+from tracer.services.clickhouse.query_builders.trace_list import (
+    TraceListQueryBuilder,
+    _unix_microseconds,
+)
 from tracer.services.clickhouse.query_service import QueryResult
 from tracer.services.clickhouse.v2.query_builders.trace_list import (
     TraceListQueryBuilderV2,
@@ -1071,6 +1074,7 @@ def _picker_lane_read(
     page_size: int = 500,
     max_seed_attempts: int = 24,
     continuation: dict[str, Any] | None = None,
+    transport_factory: Callable[[], _PopulationLaneTransport] | None = None,
 ):
     """The grid's own call: one attribute leaf, cursor lane, discovery enabled.
 
@@ -1084,7 +1088,11 @@ def _picker_lane_read(
 
     builder = picker_leaves(1, window=window)
     assert builder.supports_filter_empty_seed_root_time_discovery() is True
-    transport = _PopulationLaneTransport(population)
+    transport = (
+        _PopulationLaneTransport(population)
+        if transport_factory is None
+        else transport_factory()
+    )
     page = read_bounded_filter_page(
         builder=builder,
         analytics=transport,
@@ -1203,8 +1211,13 @@ def _picker_lane_hop_chain(
     page_size: int,
     max_seed_attempts: int,
     max_hops: int = 40,
+    transport_factory: Callable[[], _PopulationLaneTransport] | None = None,
 ) -> list[str]:
-    """Walk the cursor exactly as ``views/trace.py`` re-signs and resumes it."""
+    """Walk the cursor exactly as ``views/trace.py`` re-signs and resumes it.
+
+    A fresh transport per hop, because every hop is its own HTTP request;
+    ``transport_factory`` lets a variant transport answer the same chain.
+    """
 
     cursor: dict[str, Any] | None = None
     published: list[str] = []
@@ -1213,6 +1226,7 @@ def _picker_lane_hop_chain(
             population,
             page_size=page_size,
             max_seed_attempts=max_seed_attempts,
+            transport_factory=transport_factory,
             continuation={
                 "cursor_start_time": cursor["order"][0] if cursor else None,
                 "cursor_order_token": cursor["order"][1] if cursor else None,
@@ -1329,3 +1343,451 @@ def test_a_discovery_widened_slice_still_publishes_every_root_exactly_once(clust
 
     assert published == ground_truth
     assert len(published) == len(set(published)) == len(population)
+
+
+# ---------------------------------------------------------------------------
+# The bounded-witness switch: FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS
+#
+# Off (zero, the default) the seed statement is the shipped one, byte for byte.
+# On, the witness scan is confined to the hours the statement's own roots can
+# occupy plus the slack, which narrows CANDIDACY only: the exact latest-state
+# classifier stays unbounded, so a published row is still an exact any-span
+# match and the switch can only omit a trace whose sole witness lies outside
+# the envelope. That omission is the contract change, and it is pinned below.
+# ---------------------------------------------------------------------------
+
+# The seed CTE's PREWHERE exactly as HEAD emitted it before the switch existed,
+# for ``picker_leaves(1)`` over one four-hour slice with no keyset. ``~`` marks
+# the end of a line that is blank apart from the template's own indentation, so
+# neither an editor nor a linter trimming trailing whitespace can weaken the
+# pin without the marker going missing.
+_HEAD_SEED_CTE_PREWHERE = """
+        ~
+        WITH matching_scalar_trace_identities AS (
+            SELECT DISTINCT trace_id
+            FROM spans
+            PREWHERE project_id = %(project_id)s
+              ~
+              ~
+              AND trace_id IN (
+                  SELECT trace_id FROM spans
+                  PREWHERE project_id = %(project_id)s
+                      AND start_time >= fromUnixTimestamp64Micro(%(filter_slice_start_us)s)
+                      AND start_time < fromUnixTimestamp64Micro(%(filter_slice_end_us)s)
+                  WHERE parent_span_id IS NULL OR parent_span_id = ''
+              )
+        ~
+            """
+
+# The whole of the difference the switch may make to the statement.
+_ENVELOPE_SQL = (
+    "\n              AND start_time >= "
+    "fromUnixTimestamp64Micro(%(filter_witness_start_us)s)"
+    "\n              AND start_time < "
+    "fromUnixTimestamp64Micro(%(filter_witness_end_us)s)"
+)
+
+SLICE = (END - timedelta(hours=4), END)
+
+
+def _head_seed_cte_prewhere() -> str:
+    return _HEAD_SEED_CTE_PREWHERE.replace("~", "")
+
+
+def _seed(builder=None, *, slack: int | None = None, **kwargs):
+    """One seed statement, optionally with the switch on."""
+
+    call = dict(slice_start=SLICE[0], slice_end=SLICE[1], limit=200, **kwargs)
+    if slack is None:
+        return (builder or picker_leaves(1)).build_filter_candidate_seed_page(**call)
+    with override_settings(FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS=slack):
+        return (builder or picker_leaves(1)).build_filter_candidate_seed_page(**call)
+
+
+def test_the_seed_statement_is_byte_identical_while_the_switch_is_off():
+    """Off is not "a narrower envelope of zero hours"; it is no envelope at all.
+
+    Pinned twice over: against the literal statement HEAD emitted before the
+    switch existed, and against the switched-on statement, whose only
+    difference may be the two-line envelope and its own parameters.
+    """
+
+    assert settings.FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS == 0
+    sql, params = _seed()
+
+    assert sql.startswith(_head_seed_cte_prewhere())
+    assert _ENVELOPE_SQL not in sql
+    assert [name for name in params if name.startswith("filter_witness")] == []
+
+    bounded_sql, bounded_params = _seed(slack=1)
+    assert bounded_sql.replace(_ENVELOPE_SQL, "") == sql
+    assert {
+        name: value
+        for name, value in bounded_params.items()
+        if not name.startswith("filter_witness")
+    } == params
+
+
+@pytest.mark.parametrize(
+    "offset,expected_start",
+    [
+        (timedelta(0), END - timedelta(hours=5)),
+        # A slice that does not start on the hour floors before the slack is
+        # applied, so the bound always lands on the pruning granularity.
+        (timedelta(minutes=17), END - timedelta(hours=6)),
+    ],
+    ids=["hour_aligned_slice", "ragged_slice"],
+)
+def test_the_switch_bounds_the_witness_scan_on_hour_aligned_parameters(
+    offset, expected_start
+):
+    slice_start, slice_end = SLICE[0] - offset, SLICE[1]
+    with override_settings(FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS=1):
+        sql, params = picker_leaves(1).build_filter_candidate_seed_page(
+            slice_start=slice_start, slice_end=slice_end, limit=200
+        )
+    cte, roots = sql.split("SELECT trace_id, id AS root_span_id", 1)
+
+    # The bound belongs to the witness scan, not to the root population.
+    assert _ENVELOPE_SQL in cte
+    assert _ENVELOPE_SQL not in roots
+    assert params["filter_witness_start"] == expected_start
+    assert params["filter_witness_end"] == slice_end + timedelta(hours=1)
+    for name in ("filter_witness_start", "filter_witness_end"):
+        moment = params[name]
+        assert (moment.minute, moment.second, moment.microsecond) == (0, 0, 0)
+        # SQL reads microseconds; the datetimes are the orchestration contract.
+        assert params[f"{name}_us"] == _unix_microseconds(moment)
+    assert f"%({name}_us)s" not in roots
+
+    # Everything else about the CTE is exactly what it was: the root-population
+    # subquery on the slice, the membership join, no tombstone or page keyset.
+    assert "AND trace_id IN (\n                  SELECT trace_id FROM spans" in cte
+    assert (
+        "AND start_time >= fromUnixTimestamp64Micro(%(filter_slice_start_us)s)" in cte
+    )
+    assert "WHERE parent_span_id IS NULL OR parent_span_id = ''" in cte
+    assert "AND trace_id IN (" in roots
+    assert "SELECT trace_id FROM matching_scalar_trace_identities" in roots
+    assert "is_deleted" not in cte
+    assert "LIMIT" not in cte
+    assert "filter_before" not in cte
+
+
+def test_a_keyset_continuation_tightens_the_envelope_to_the_cursor_hour():
+    """No root above the cursor can be published, so none may widen the scan.
+
+    The continuation resumes strictly below its keyset, so the newest root the
+    statement can publish is the cursor's own position rather than the slice's
+    end - and the envelope that has to carry its witness shrinks with it.
+    """
+
+    cursor = END - timedelta(hours=1, minutes=17)
+    sql, params = _seed(slack=1, before_start_time=cursor, before_id="tr-mid")
+    page_one_params = _seed(slack=1)[1]
+
+    assert params["filter_witness_end"] == END
+    assert params["filter_witness_end"] < page_one_params["filter_witness_end"]
+    # The lower bound is the slice's, which the cursor does not move.
+    assert params["filter_witness_start"] == page_one_params["filter_witness_start"]
+    # The keyset itself stays where it was: outside the witness scan.
+    cte, roots = sql.split("SELECT trace_id, id AS root_span_id", 1)
+    assert "filter_before_start_us" in roots
+    assert "filter_before" not in cte
+
+
+def test_org_scope_never_reaches_this_lane_and_keeps_its_composite_keyset():
+    """Org reads are outside the lane by construction, so outside the switch.
+
+    ``_uses_attribute_coordinate_replay`` requires a single project, so an
+    org-scoped read has no scalar candidate seed to bound at all. Its ordered
+    seed - composite ``(trace_id, project_id)`` keyset and all - must therefore
+    come out identical in both modes.
+    """
+
+    project_b = "00000000-0000-4000-8000-000000000002"
+    leaf = _attribute_filter(ACCOUNT_KEY, ACCOUNT_VALUES, operation="in")
+    leaf["filter_config"]["attribute_value_types"] = ["string"] * len(ACCOUNT_VALUES)
+    builder = TraceListQueryBuilderV2(
+        project_ids=[str(PROJECT), project_b],
+        filters=[_time_filter(END - timedelta(days=7), END), leaf],
+        page_size=25,
+    )
+    assert not builder._uses_short_text_candidate_seed()
+    assert builder.filter_seed_width_policy() is None
+
+    statements = []
+    for slack in (0, 1):
+        with override_settings(FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS=slack):
+            statements.append(
+                builder.build_filter_ordered_seed_page(
+                    slice_start=SLICE[0],
+                    slice_end=SLICE[1],
+                    limit=200,
+                    before_start_time=END - timedelta(hours=1),
+                    before_id=("tr-mid", str(PROJECT)),
+                )
+            )
+
+    assert statements[0] == statements[1]
+    sql, params = statements[0]
+    assert "toString(project_id) < %(filter_before_project_id)s" in sql
+    assert "matching_scalar_trace_identities" not in sql
+    assert _ENVELOPE_SQL not in sql
+    assert [name for name in params if name.startswith("filter_witness")] == []
+
+
+@pytest.mark.parametrize(
+    "make",
+    [
+        lambda: subject(
+            extra_leaves=[
+                _attribute_filter(
+                    "duration_s", 0.01, filter_type="number", operation="greater_than"
+                )
+            ]
+        ),
+        lambda: subject(1, kind="boolean", value=True),
+        lambda: subject(value=LONG_TEXT),
+    ],
+    ids=["numeric", "boolean", "long_text"],
+)
+def test_the_other_seed_lanes_are_untouched_by_the_switch(make):
+    """The switch is the short exact-string lane's alone.
+
+    The numeric and long-text lanes prune raw granules by value and the boolean
+    lane is a different plan entirely; none of them pays the trace-id bloom
+    scan this envelope exists to bound, so none of them may change.
+    """
+
+    unbounded_sql, unbounded_params = _seed(make())
+    bounded_sql, bounded_params = _seed(make(), slack=1)
+
+    assert bounded_sql == unbounded_sql
+    assert bounded_params == unbounded_params
+    assert _ENVELOPE_SQL not in bounded_sql
+    assert [name for name in bounded_params if name.startswith("filter_witness")] == []
+    with override_settings(FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS=24):
+        assert make().filter_seed_width_policy() is None
+
+
+@pytest.mark.parametrize(
+    "slack,floor",
+    [
+        (0, timedelta(hours=4)),
+        (1, timedelta(hours=1)),
+        (24, timedelta(hours=1)),
+        (168, timedelta(hours=1)),
+    ],
+)
+def test_the_width_floor_follows_the_witness_contract(slack, floor):
+    """Two cost shapes, two schedules, one setting choosing between them.
+
+    Unbounded, the flat bloom term does not shrink with the slice, so narrowing
+    below the four hours of the ceiling this budget replaced would buy less
+    coverage for the same statement. Bounded, cost is linear in the envelope's
+    hours, so the row budget becomes a real signal and the lane opens at - and
+    floors on - the measured schedule's one hour. The unsignalled cap is the
+    same four hours in both: a transport that reports nothing justifies no more
+    than what already shipped.
+    """
+
+    with override_settings(FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS=slack):
+        builder = picker_leaves(2)
+        policy = builder.filter_seed_width_policy()
+
+        assert policy.initial_width == policy.min_width == floor
+        assert policy.unsignalled_cap == timedelta(hours=4)
+        assert (
+            policy.target_read_rows
+            == settings.FILTER_SELECTOR_TEXT_SEED_TARGET_READ_ROWS
+        )
+        assert builder.recommended_filter_initial_slice_width() == floor
+        # The post-discovery reset is single-sourced from the same floor.
+        assert max(timedelta(hours=1), policy.min_width) == floor
+        # A dense statement walks back down to the floor, never below it.
+        assert policy.next_width(
+            timedelta(hours=4),
+            policy.target_read_rows + 1,
+            request_width=timedelta(days=7),
+        ) == (timedelta(hours=2) if slack else timedelta(hours=4))
+
+
+@pytest.mark.parametrize(
+    "candidate_ids", [["tr-1"], ["tr-1", "tr-2", "tr-3"]], ids=["one", "many"]
+)
+def test_the_exact_classifier_is_identical_in_both_modes(candidate_ids):
+    """The oracle never moves; only what reaches it does.
+
+    This is what keeps the switch one-sided: because the classifier is still
+    unbounded, every row the bounded mode publishes is an exact any-span match
+    on the shipped contract. The switch can only subtract candidates.
+    """
+
+    unbounded = picker_leaves(1).build_filter_match_query(candidate_ids)
+    with override_settings(FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS=1):
+        bounded = picker_leaves(1).build_filter_match_query(candidate_ids)
+
+    assert bounded == unbounded
+    assert "filter_witness" not in bounded[0]
+    assert [name for name in bounded[1] if name.startswith("filter_witness")] == []
+    assert_coherent_classifier(bounded[0])
+
+
+@pytest.mark.parametrize(
+    "slack,floor",
+    [(0, timedelta(hours=4)), (1, timedelta(hours=1))],
+    ids=["unbounded", "bounded"],
+)
+def test_a_dense_read_holds_at_whichever_floor_its_mode_declares(slack, floor):
+    """The schedule change, on the builder and kwargs the view actually sends.
+
+    Every statement here overruns the row budget, so the read sits on its floor
+    throughout - which is the whole point of having two: with an unbounded
+    witness four hours is the cheapest useful statement, and with a bounded one
+    the same budget can afford to stop at an hour. Coverage per statement falls
+    accordingly, and the cursor checkpoint follows it, so nothing is skipped.
+    """
+
+    with override_settings(FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS=slack):
+        transport, page = _lane_read(
+            window=timedelta(days=7),
+            read_rows=52_000_000,
+            cursor=True,
+            max_seed_attempts=6,
+        )
+
+    assert transport.seed_widths == [floor] * 6
+    assert _is_contiguous(transport.seed_intervals)
+    assert page.complete is False
+    assert page.continuation_slice_end == transport.seed_intervals[-1][0]
+    assert page.continuation_slice_end == END - 6 * floor
+
+
+class _WitnessLaneTransport(_PopulationLaneTransport):
+    """A population whose value may be carried by a span other than the root.
+
+    ``witness_at`` maps a trace id to the start time of the only span of that
+    trace carrying the filter value; a trace absent from the map is witnessed
+    by its own root, which is the shape both modes must agree on. The seed
+    branch applies the envelope exactly as the CTE does - a trace is a
+    candidate only when its witness starts inside ``[start, end)`` - and only
+    when the statement carries one, so the unbounded mode filters nothing.
+    Classification and hydration keep seeing the whole population, because the
+    classifier this lane publishes through is unbounded in both modes.
+    """
+
+    def __init__(self, population, witness_at=None):
+        super().__init__(population)
+        self.witness_at = dict(witness_at or {})
+        self.envelopes: list[tuple[datetime, datetime]] = []
+
+    def execute_ch_query(self, query, params, *, timeout_ms, settings):
+        witness_start = params.get("filter_witness_start")
+        if (
+            witness_start is None
+            or "matching_scalar_trace_identities" not in query
+            or "filter_seed_limit" not in params
+        ):
+            return super().execute_ch_query(
+                query, params, timeout_ms=timeout_ms, settings=settings
+            )
+        witness_end = params["filter_witness_end"]
+        self.envelopes.append((witness_start, witness_end))
+        whole_population = self.population
+        self.population = [
+            row
+            for row in whole_population
+            if witness_start
+            <= self.witness_at.get(row["trace_id"], row["start_time"])
+            < witness_end
+        ]
+        try:
+            return super().execute_ch_query(
+                query, params, timeout_ms=timeout_ms, settings=settings
+            )
+        finally:
+            self.population = whole_population
+
+
+def _witness_hop_chain(population, witness_at=None, *, slack, page_size=25):
+    """The full cursor chain under one mode, plus every envelope it emitted."""
+
+    transports: list[_WitnessLaneTransport] = []
+
+    def factory() -> _WitnessLaneTransport:
+        transports.append(_WitnessLaneTransport(population, witness_at))
+        return transports[-1]
+
+    with override_settings(FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS=slack):
+        published = _picker_lane_hop_chain(
+            population,
+            page_size=page_size,
+            max_seed_attempts=24,
+            transport_factory=factory,
+        )
+    return published, [window for one in transports for window in one.envelopes]
+
+
+def _newest_first(population) -> list[str]:
+    return [
+        row["trace_id"]
+        for row in sorted(
+            population,
+            key=lambda row: (row["start_time"], row["trace_id"]),
+            reverse=True,
+        )
+    ]
+
+
+@pytest.mark.parametrize("slack", [0, 1])
+def test_both_modes_are_exact_when_every_witness_is_its_own_root(slack):
+    """Where the modes agree they must agree completely, not approximately.
+
+    A root carries the value itself in the overwhelming majority of measured
+    traces, and on that population the envelope excludes nothing - so the
+    bounded mode has to publish the identical set, in the identical order, once
+    each, even though it walks a different width schedule to get there.
+    """
+
+    population = _root_population(_SPARSE_TAIL + _DENSE_REGION)
+
+    published, envelopes = _witness_hop_chain(population, slack=slack)
+
+    assert published == _newest_first(population)
+    assert len(published) == len(set(published)) == len(population)
+    assert bool(envelopes) is bool(slack)
+    # Every envelope is whole hours and contains the slack on both sides.
+    assert all(
+        (start.minute, start.second, start.microsecond) == (0, 0, 0)
+        and (end.minute, end.second, end.microsecond) == (0, 0, 0)
+        and end - start >= timedelta(hours=2)
+        for start, end in envelopes
+    )
+
+
+def test_only_the_bounded_mode_omits_a_witness_outside_its_envelope():
+    """THE contract change, pinned as an omission and nothing else.
+
+    One trace's only span carrying the value starts three days after the whole
+    request window, so it lies outside every envelope any slice of this read
+    can produce. Today's contract publishes that trace; the bounded mode does
+    not, and that single row is the entire difference - everything else about
+    both pages, including order and exactness, is unchanged.
+    """
+
+    population = _root_population([(5, 3), (11, 3)])
+    stranded = population[0]["trace_id"]
+    witness_at = {stranded: END + timedelta(days=3)}
+
+    unbounded, _ = _witness_hop_chain(population, witness_at, slack=0)
+    bounded, envelopes = _witness_hop_chain(population, witness_at, slack=1)
+
+    assert unbounded == _newest_first(population)
+    assert bounded == [trace for trace in unbounded if trace != stranded]
+    assert set(unbounded) - set(bounded) == {stranded}
+    assert len(bounded) == len(set(bounded)) == len(population) - 1
+    # Not an accident of an empty read: the envelopes really were emitted, and
+    # the stranded witness really does sit outside all of them.
+    assert envelopes
+    assert all(end <= END + timedelta(hours=1) for _start, end in envelopes)
