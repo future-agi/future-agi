@@ -75,6 +75,73 @@ migration authority. Do not remove these guards or run the mutating root-only
 Compose stack as a production workaround. Retain partial state after a failed check
 and review the exact failed job before explicitly resuming.
 
+### Performing that initialization (first install)
+
+The prohibition above is on using the mutating root stack as a *workaround* — on
+letting `up` apply schema implicitly. It is not a prohibition on initializing at
+all. A first install has to run these jobs once, deliberately, one at a time,
+reviewing each before the next.
+
+Run them against the production env file, overriding only the command so each job
+applies instead of checking. `run --rm` starts one job and nothing else; it never
+brings up the application.
+
+```bash
+cd <repo root>
+COMPOSE="docker compose --env-file deploy/.env.production \
+  -f docker-compose.yml -f deploy/docker-compose.production.yml"
+
+# 1. PostgreSQL schema.
+$COMPOSE run --rm --entrypoint python postgres-schema-bootstrap \
+  manage.py migrate --noinput
+
+# 2. Native ClickHouse objects.
+$COMPOSE run --rm clickhouse-native-bootstrap --phase native --apply
+
+# 3. PeerDB Temporal namespace, then peers and mirrors.
+$COMPOSE run --rm peerdb-temporal-init --apply
+$COMPOSE run --rm peerdb-init --apply
+
+# 4. CDC-derived objects, once the mirrors above report ready.
+$COMPOSE run --rm clickhouse-cdc-bootstrap \
+  --phase cdc --apply --wait-for-mirrors --timeout 900
+
+# 5. The two observed indexes and their reader/writer grants.
+#    This job takes no --apply flag: the script provisions when given NO
+#    arguments and only validates when given --check, and the production
+#    overlay pins it to --check. Clearing the command is what makes it apply.
+#    It CREATEs a database, tables and two roles, so it needs an administrative
+#    ClickHouse login -- the overlay's own CLICKHOUSE_USER is the read-only
+#    observed_catalog_reader and cannot provision. Supply your admin credential:
+$COMPOSE run --rm \
+  -e CLICKHOUSE_USER=<clickhouse admin user> \
+  -e CLICKHOUSE_PASSWORD=<clickhouse admin password> \
+  --entrypoint /bin/sh property-catalog-clickhouse-bootstrap \
+  /bootstrap/bootstrap_clickhouse.sh
+```
+
+The writer and reader passwords this step installs come from
+`PROPERTY_CATALOG_CONSUMER_PASSWORD` and `PROPERTY_CATALOG_API_PASSWORD` in your
+env file. They are installed once and never rotated by setup, so for a retained
+installation reuse the exact values already in place rather than generating new
+ones.
+
+Order matters: PostgreSQL migrations, then native ClickHouse tables, then the
+PeerDB snapshot/CDC pair, then the observed indexes. Step 4 depends on step 3's
+mirrors existing, which is why it waits rather than assuming.
+
+Then boot normally. From that point the overlay is check-only for the lifetime of
+the install, and `--confirm-initialized` is your acknowledgement that the steps
+above were completed and reviewed:
+
+```bash
+./deploy/setup.sh --confirm-initialized
+```
+
+Upgrades re-run the same jobs with the same commands. They are idempotent — every
+one is a no-op against current state — so a stalled upgrade can be resumed from the
+job that failed rather than restarted from step 1.
+
 ## 1. Generate secrets
 
 ```bash

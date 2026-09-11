@@ -216,6 +216,7 @@ pointed at: nothing here has a default, and every guard fails closed.
 | `E2E_H5_CH_USER`            | the live run            | A SELECT-only ClickHouse user. `default`/`admin`/the catalog writer are rejected.     |
 | `E2E_H5_CH_PASSWORD`        | the live run            | That user's password. There is no credential fallback.                                |
 | `E2E_H5_AUDIT_CONTAINER`    | Kafka images without CLIs | `1` to allow the task-owned audit container when the broker lacks the shell tools.  |
+| `E2E_H5_EXPECT_WRONG`       | fallibility proofs only | Injects one deliberate defect so a passing assertion can be shown to fail. One of `source-id`, `preview-count`, `checkpoint`, `index-value`, `api-type`, `late-time`; unset for a real run. |
 
 `E2E_H5_DOCKER_CONTEXT` names the context; it does not create one. Declare the context you actually
 run this stack under, and export the same value as `DOCKER_CONTEXT` so the harness and the `docker`
