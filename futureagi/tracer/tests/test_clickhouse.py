@@ -1492,7 +1492,9 @@ class TestClickHouseFilterBuilder:
         ]
         where, params = builder.translate(filters)
         assert "span_attr_str" in where
-        assert "gen_ai.system" in where
+        # The attribute key is bound, not inlined; assert it in the parameters.
+        assert params["attr_key_1"] == "gen_ai.system"
+        assert "gen_ai.system" in finalize_query(where, params)
         assert "openai" in params.values()
 
     def test_translate_span_attribute_numeric(self):
@@ -1514,7 +1516,9 @@ class TestClickHouseFilterBuilder:
             }
         ]
         where, params = builder.translate(filters)
-        assert "prompt_tokens" in where
+        # The attribute key is bound, not inlined; assert it in the parameters.
+        assert params["attr_key_1"] == "gen_ai.usage.prompt_tokens"
+        assert "prompt_tokens" in finalize_query(where, params)
         assert ">" in where
 
     def test_translate_span_attribute_boolean(self):

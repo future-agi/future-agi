@@ -80,10 +80,10 @@ test('DASH-E2E-008: a saved User widget keeps project and identifier-type scope'
     ],
   }),
 }, async ({ browser, scopeActors, scopeProbe: probe }, testInfo) => {
-  test.setTimeout(660_000); // Master U/R9: ASYNC_JOB60 + 2×SPAN_VISIBLE15 + 9×UI_READY60 + 30 headroom.
+  test.setTimeout(660_000); // ASYNC_JOB60 + 2×SPAN_VISIBLE15 + 9×UI_READY60 + 30 headroom.
   const uiExpect = expect.configure({ timeout: UI_READY });
-  // Approved observed-catalog-dash8-plan-20260910.md. Source authoring is not
-  // image/runtime proof. No native users adapter or provider execution is claimed.
+  // Source authoring is not image/runtime proof. No native users adapter or
+  // provider execution is claimed.
   const prefix = `e2e-dash8-${testInfo.workerIndex}-${Date.now().toString(36)}`;
   const U1 = `${prefix}-u1@example.test`, U2 = `${prefix}-u2-phone`;
   const S1 = `${prefix}-S1`, S2 = `${prefix}-S2`, foreignKey = `${prefix}.foreign-only`;

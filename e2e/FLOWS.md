@@ -337,7 +337,7 @@
 ### DASH-E2E-009 — a saved conversation widget excludes child-model call-metric decoys
 
 **Goal:** A saved conversation widget excludes child-model call-metric decoys.  
-**Spec:** `flows/dashboards/conversation-attribute-widget.spec.ts:54`  
+**Spec:** `flows/dashboards/conversation-attribute-widget.spec.ts:53`  
 **Tags:** —
 
 **User steps:**
@@ -360,7 +360,7 @@
 ### DASH-E2E-010 — a saved trace annotation widget retains numeric scores
 
 **Goal:** A saved trace annotation widget retains numeric scores.  
-**Spec:** `flows/dashboards/trace-numeric-annotation-widget.spec.ts:59`  
+**Spec:** `flows/dashboards/trace-numeric-annotation-widget.spec.ts:58`  
 **Tags:** —
 
 **User steps:**
@@ -383,7 +383,7 @@
 ### DASH-E2E-011 — a saved trace annotation widget retains star ratings
 
 **Goal:** A saved trace annotation widget retains star ratings.  
-**Spec:** `flows/dashboards/trace-star-annotation-widget.spec.ts:60`  
+**Spec:** `flows/dashboards/trace-star-annotation-widget.spec.ts:59`  
 **Tags:** —
 
 **User steps:**
@@ -393,6 +393,29 @@
 3. discover the star annotation and Traces metrics and explicitly choose Average and Distinct Count
 4. select primary Project through its native exhausted cursor chain and verify scoped unfiltered facts
 5. select star Equals2 and the same label breakdown, prove disjoint4 and restore2
+6. save the exact binding and inspect its persisted Table and ownership
+7. reload the saved dashboard and read the exact independent-clock series
+8. reopen the same widget, verify controls and results and conserve source and Score versions
+
+**Backend state verified:**
+
+- Native catalog and selected property identities preserve this flow's source, types, choices and actor scope.
+- This flow's exact publicly produced source identities and typed latest facts are present and unchanged outside its authorized UI actions.
+- The preview, saved binding and reopened widget equal this flow's independently specified filtered and grouped result.
+
+### DASH-E2E-012 — a saved trace annotation widget retains exact text membership
+
+**Goal:** A saved trace annotation widget retains exact text membership.  
+**Spec:** `flows/dashboards/trace-text-annotation-widget.spec.ts:62`  
+**Tags:** —
+
+**User steps:**
+
+1. submit three native text trace Scores in independently seeded primary, sibling and foreign projects
+2. create and name a Table widget with 7D and Day
+3. discover the text annotation and Traces metrics and explicitly choose Count and Distinct Count
+4. select primary Project through its native exhausted cursor chain and verify scoped unfiltered facts
+5. select native Is A and the same-label breakdown, prove disjoint B and substring C empty, and restore A
 6. save the exact binding and inspect its persisted Table and ownership
 7. reload the saved dashboard and read the exact independent-clock series
 8. reopen the same widget, verify controls and results and conserve source and Score versions
@@ -496,7 +519,7 @@
 ### EVAL-E2E-003 — typed executed evaluations retain exact native results and reject invalid output
 
 **Goal:** Read typed evaluations on real spans, find exactly their matching traces and reject invalid judge output visibly  
-**Spec:** `flows/evals/catalog-result-types.spec.ts:138`  
+**Spec:** `flows/evals/catalog-result-types.spec.ts:137`  
 **Tags:** —
 
 **User steps:**

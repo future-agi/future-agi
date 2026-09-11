@@ -201,6 +201,34 @@ tags with any dev stack you are running, and its `--reload` watcher restarts the
 Attach mode covers the hot-reload need without any of that. In CI none of this applies: the workflow
 builds `:e2e-ci` images from the PR's own code.
 
+### The live observed-catalog backfill harness (`harness/catalog-backfill.spec.ts`)
+
+`lib/catalog-lifecycle.ts` drives the real `fi-observed-catalog-backfill` binary against a running
+stack. Because it starts containers, it refuses to run against anything it was not explicitly
+pointed at: nothing here has a default, and every guard fails closed.
+
+| Variable                    | Required for            | Meaning                                                                             |
+| --------------------------- | ----------------------- | ----------------------------------------------------------------------------------- |
+| `E2E_H5_LIVE`               | the live run            | Must be `1`. Without it only the offline `@h5-guard` assertions run.                  |
+| `E2E_H5_DOCKER_CONTEXT`     | the live run            | The Docker context of your approved local runtime. `DOCKER_CONTEXT` must equal it.    |
+| `E2E_H5_DOCKER_SOCKET`      | the live run            | That context's `unix:///` socket. The manifest and the live context must both match it. |
+| `E2E_H5_RUNTIME_MANIFEST`   | the live run            | Absolute path to a run manifest **outside the checkout** holding the machine pins.    |
+| `E2E_H5_CH_USER`            | the live run            | A SELECT-only ClickHouse user. `default`/`admin`/the catalog writer are rejected.     |
+| `E2E_H5_CH_PASSWORD`        | the live run            | That user's password. There is no credential fallback.                                |
+| `E2E_H5_AUDIT_CONTAINER`    | Kafka images without CLIs | `1` to allow the task-owned audit container when the broker lacks the shell tools.  |
+
+`E2E_H5_DOCKER_CONTEXT` names the context; it does not create one. Declare the context you actually
+run this stack under, and export the same value as `DOCKER_CONTEXT` so the harness and the `docker`
+CLI cannot drift apart. `DOCKER_HOST` and `DOCKER_TLS_VERIFY` must be unset — the harness only ever
+attaches to a local runtime.
+
+`E2E_H5_DOCKER_SOCKET` is the endpoint that context resolves to — read it from
+`docker context inspect "$E2E_H5_DOCKER_CONTEXT" --format '{{.Endpoints.docker.Host}}'`. It must be an
+absolute `unix:///` path, so a TCP daemon can never be an approved runtime, and it is compared for
+exact equality twice: the run manifest's `socket` must equal it, and so must the endpoint the live
+context reports at preflight. Any container runtime that exposes a Unix socket works — the harness
+has no preference between Colima, Docker Desktop, OrbStack, Rancher or a plain dockerd.
+
 ---
 
 ## Writing a flow

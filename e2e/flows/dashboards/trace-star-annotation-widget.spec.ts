@@ -7,7 +7,6 @@ import { E2E } from '../../lib/env';
 import { POLL } from '../../lib/state-probe';
 import { flowAnnotation } from '../../lib/flow-meta';
 
-// Approved master A-trace-star/A8 and external DASH11 plan §§11,15.
 // AnnotationSidebarContent/scores.js, annotation_queues.py and WidgetEditorView.
 const LABELS = '/model-hub/annotations-labels/', QUEUES = '/model-hub/annotation-queues/';
 const BULK = '/model-hub/scores/bulk/', LIST = '/tracer/trace/list_traces_of_session/';

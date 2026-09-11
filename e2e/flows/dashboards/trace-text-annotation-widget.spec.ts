@@ -7,7 +7,6 @@ import { E2E } from '../../lib/env';
 import { POLL } from '../../lib/state-probe';
 import { flowAnnotation } from '../../lib/flow-meta';
 
-// Approved DASH012/A8 plan and grouped-text amendment (2026-09-10).
 // Pins: AnnotationSidebarContent/scores.js, annotation_queues.py, WidgetEditorView.
 // Endpoints: api/scores/scores.js, hooks/useDashboards.js and the scoped DRF views.
 // Native Count + Is only. Text aggregation-menu and presence-control gaps remain

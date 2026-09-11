@@ -6,8 +6,8 @@ import { POLL } from '../../lib/state-probe';
 import { E2E } from '../../lib/env';
 import { flowAnnotation } from '../../lib/flow-meta';
 
-// Approved core/observed-catalog-eval4-flow-plan-20260909.md. Shared LOCAL
-// serving-health route must be attested BEFORE model registration and dispatch.
+// The shared LOCAL serving-health route must be attested BEFORE model
+// registration and dispatch.
 // Main separately attests eval-evaluation/default/tasks_l: this fixture's
 // agent_compass receipt is NOT evidence of the dataset schedule/queues.
 test.use({ evalBackground: true });

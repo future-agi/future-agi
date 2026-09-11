@@ -73,10 +73,10 @@ test('DASH-E2E-007: a saved Session widget counts only the selected project sess
     ],
   }),
 }, async ({ browser, scopeActors, scopeProbe: probe }, testInfo) => {
-  test.setTimeout(660_000); // ASYNC_JOB60 + 2×SPAN_VISIBLE15 + 9×UI_READY60 + 30 headroom; master S/R9.
+  test.setTimeout(660_000); // ASYNC_JOB60 + 2×SPAN_VISIBLE15 + 9×UI_READY60 + 30 headroom.
   const uiExpect = expect.configure({ timeout: UI_READY }); // Source polls keep their named ceilings.
-  // Approved observed-catalog-dash7-plan-20260910.md. Requires main-qualified
-  // serving images, including popup tooltip suppression; prior runs are not proof.
+  // Requires main-qualified serving images, including popup tooltip
+  // suppression; prior runs are not proof.
   const prefix = `e2e-dash7-${testInfo.workerIndex}-${Date.now().toString(36)}`;
   const S1 = `${prefix}-S1`, S2 = `${prefix}-S2`, miss = randomUUID();
   const projectNames = [`${prefix}-primary`, `${prefix}-sibling`, `${prefix}-foreign`];

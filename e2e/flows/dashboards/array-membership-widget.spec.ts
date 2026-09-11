@@ -67,7 +67,7 @@ test('DASH-E2E-006: a saved widget retains native array membership through popup
     ],
   }),
 }, async ({ browser, scopeActors, scopeProbe: probe }, testInfo) => {
-  test.setTimeout(600_000); // ASYNC_JOB60 + 2×SPAN_VISIBLE15 + 8×UI_READY60 + 30 headroom (master R8).
+  test.setTimeout(600_000); // ASYNC_JOB60 + 2×SPAN_VISIBLE15 + 8×UI_READY60 + 30 headroom.
   const uiExpect = expect.configure({ timeout: UI_READY }); // Source polls retain their own budgets.
   // Requires the managed FRONTEND containing WidgetEditorView's array identity fix;
   // earlier DASH/EVAL images and the 46 offline picker tests are not browser proof.

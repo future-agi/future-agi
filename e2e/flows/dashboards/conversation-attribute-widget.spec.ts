@@ -7,7 +7,6 @@ import { E2E } from '../../lib/env';
 import { POLL } from '../../lib/state-probe';
 import { flowAnnotation } from '../../lib/flow-meta';
 
-// Master V/R8 and approved observed-catalog-dash9-plan-20260910.md.
 // OBS008 / ProjectSerializer: public simulator-labelled project, ordinary OTLP;
 // dashboard.py has no voice_calls metric adapter. These fixed keys stay custom.
 const DASHBOARDS = '/tracer/dashboard/';

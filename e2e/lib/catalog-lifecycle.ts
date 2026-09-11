@@ -8,9 +8,10 @@ import pg from 'pg';
 import { test as fixtures } from './fixtures';
 import { E2E } from './env';
 
-// H5 only. Local allowlist; machine-specific pins live in an external run manifest.
+// H5 only. Local allowlist of values that are the same on every machine. Every
+// machine-specific pin is either declared by the operator through E2E_H5_*
+// (see e2e/README.md) or read from the external run manifest.
 export const H5_PIN = {
-  context: 'colima-observed-catalog-release',
   project: 'futureagi-e2e',
   network: 'futureagi-e2e_default',
   broker: 'property-catalog-kafka:9092',
@@ -57,6 +58,23 @@ function invariant(ok: unknown, message: string): asserts ok {
   if (!ok) throw new Error('H5 refused: ' + message);
 }
 
+/** The Docker context the operator declares as the approved local runtime. Required; no default. */
+export function h5DockerContext(env: NodeJS.ProcessEnv = process.env): string {
+  const declared = env.E2E_H5_DOCKER_CONTEXT;
+  invariant(declared, 'E2E_H5_DOCKER_CONTEXT must declare the approved local Docker context');
+  return declared;
+}
+
+/** The Docker socket the operator declares for that context. Required; no default. Local
+ * Unix sockets only — a TCP daemon is never an approved local runtime. */
+export function h5DockerSocket(env: NodeJS.ProcessEnv = process.env): string {
+  const declared = env.E2E_H5_DOCKER_SOCKET;
+  invariant(declared, 'E2E_H5_DOCKER_SOCKET must declare the approved local Docker socket');
+  invariant(declared.startsWith('unix:///') && !declared.includes('..'),
+    'E2E_H5_DOCKER_SOCKET must be an absolute local Unix socket');
+  return declared;
+}
+
 async function readRuntimePins(): Promise<RuntimePins> {
   const path = process.env.E2E_H5_RUNTIME_MANIFEST;
   invariant(path && resolve(path) === path, 'explicit absolute external runtime manifest required');
@@ -68,8 +86,7 @@ async function readRuntimePins(): Promise<RuntimePins> {
   const match = /<!-- H5_RUNTIME_BEGIN -->\s*([\s\S]*?)\s*<!-- H5_RUNTIME_END -->/.exec(text);
   invariant(match, 'external evidence lacks an H5 runtime manifest');
   const pins = JSON.parse(match[1]) as RuntimePins;
-  invariant(/^unix:\/\/\/.*\/\.colima\/observed-catalog-release\/docker\.sock$/.test(pins.socket),
-    'manifest socket is not the task Colima Unix socket');
+  invariant(pins.socket === h5DockerSocket(), 'manifest socket is not the declared local Docker socket');
   invariant(/^[0-9a-f]{64}$/.test(pins.networkId)
     && [pins.image, pins.auditImage].every(id => /^sha256:[0-9a-f]{64}$/.test(id)),
   'manifest requires immutable local image IDs and network ID');
@@ -83,7 +100,7 @@ async function readRuntimePins(): Promise<RuntimePins> {
 
 export function validateH5Environment(env: NodeJS.ProcessEnv, endpoints = E2E) {
   invariant(env.E2E_H5_LIVE === '1', 'local live run requires explicit coordination opt-in');
-  invariant(env.DOCKER_CONTEXT === H5_PIN.context && !env.DOCKER_HOST && !env.DOCKER_TLS_VERIFY,
+  invariant(env.DOCKER_CONTEXT === h5DockerContext(env) && !env.DOCKER_HOST && !env.DOCKER_TLS_VERIFY,
     'Docker context/host is not the approved local runtime');
   const urls = { appUrl: 'http://localhost:3100', apiUrl: 'http://localhost:8100',
     collectorUrl: 'http://localhost:24318', chUrl: 'http://localhost:28123' };
@@ -246,7 +263,7 @@ export function reachedOffsetBarrier(barrier: ReturnType<typeof parseOffsets>, l
 
 // Fixed Docker executable/argv, bounded output and deadline. Never a shell command.
 async function docker(args: string[], env: NodeJS.ProcessEnv = {}, binary = false): Promise<CommandResult> {
-  return new Promise(resolve => execFile('docker', ['--context', H5_PIN.context, ...args],
+  return new Promise(resolve => execFile('docker', ['--context', h5DockerContext(), ...args],
     { env: { ...process.env, ...env }, timeout: 60_000, maxBuffer: 2 * 1024 * 1024,
       encoding: binary ? 'latin1' : 'utf8' }, (error, stdout, stderr) => {
       resolve({ code: error ? (typeof error.code === 'number' ? error.code : -1) : 0,
@@ -276,7 +293,7 @@ export class CatalogLifecycle {
     validateH5Environment(process.env);
     invariant(/^e2e-h5-[a-z0-9-]{1,48}$/.test(runId), 'invalid task resource prefix');
     const pins = await readRuntimePins();
-    const socket = JSON.parse(await checked(['context', 'inspect', H5_PIN.context]))[0].Endpoints.docker.Host;
+    const socket = JSON.parse(await checked(['context', 'inspect', h5DockerContext()]))[0].Endpoints.docker.Host;
     const containers: Container[] = JSON.parse(await checked(['inspect',
       ...SERVICES.map(s => 'futureagi-e2e-' + s + '-1')]));
     validateRuntime(containers, socket, pins);
@@ -297,7 +314,7 @@ export class CatalogLifecycle {
       const image = JSON.parse(await checked(['image', 'inspect', pins.auditImage]))[0];
       invariant(image.Id === pins.auditImage, 'local audit image missing');
     }
-    h5.receipts.push({ phase: 'preflight', at: new Date().toISOString(), context: H5_PIN.context,
+    h5.receipts.push({ phase: 'preflight', at: new Date().toISOString(), context: h5DockerContext(),
       imageId: pins.image, sourceUser: user, grants, containers: containers.map(c =>
         ({ id: c.Id, name: c.Name, image: c.Image })), audit: h5.audit ? 'existing' : 'task-owned-required' });
     return h5;
@@ -305,7 +322,7 @@ export class CatalogLifecycle {
   private service(name: string) { return this.containers.find(c => c.Name === '/futureagi-e2e-' + name + '-1')!; }
   async recheck() {
     validateH5Environment(process.env);
-    const socket = JSON.parse(await checked(['context', 'inspect', H5_PIN.context]))[0].Endpoints.docker.Host;
+    const socket = JSON.parse(await checked(['context', 'inspect', h5DockerContext()]))[0].Endpoints.docker.Host;
     const now: Container[] = JSON.parse(await checked(['inspect', ...this.containers.map(c => c.Name.slice(1))]));
     validateRuntime(now, socket, this.pins);
     invariant(now.every((c, i) => c.Id === this.containers[i].Id && c.Image === this.containers[i].Image

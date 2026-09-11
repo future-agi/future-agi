@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { test, expect } from '@playwright/test';
-import { catalogLifecycleTest as live, H5_PIN, validateH5Environment, validateRuntime,
+import { catalogLifecycleTest as live, H5_PIN, h5DockerSocket, validateH5Environment, validateRuntime,
   validateSelection, validateSourceGrants, validateProgress, validateCLIResult, selectionBinding,
   validateOwnedContainer, parseOffsets, reachedOffsetBarrier,
   type Container, type Progress, type Selection, type RuntimePins } from '../lib/catalog-lifecycle';
@@ -12,10 +12,13 @@ import { POLL } from '../lib/state-probe';
 
 // Harness prerequisite H5; OBS-E2E-010 owns the separate browser journey.
 // No @flow annotation or shared catalog/config changes.
-const guardEnv = { E2E_H5_LIVE: '1', DOCKER_CONTEXT: H5_PIN.context,
+const DECLARED_CONTEXT = 'e2e-h5-declared-context';
+const DECLARED_SOCKET = 'unix:///var/run/docker.sock';
+const guardEnv = { E2E_H5_LIVE: '1', E2E_H5_DOCKER_CONTEXT: DECLARED_CONTEXT,
+  DOCKER_CONTEXT: DECLARED_CONTEXT,
   E2E_H5_CH_USER: 'h5_source_reader', E2E_H5_CH_PASSWORD: 'offline-placeholder' };
 // Synthetic guard data only; live runtime pins are read from external evidence.
-const offlinePins: RuntimePins = { socket: 'unix:///test/.colima/observed-catalog-release/docker.sock',
+const offlinePins: RuntimePins = { socket: DECLARED_SOCKET,
   networkId: 'a'.repeat(64), image: 'sha256:' + 'b'.repeat(64), auditImage: 'sha256:' + 'c'.repeat(64),
   sourcePorts: { http: 34318, admin: 39464 },
   partitions: 6,
@@ -65,6 +68,9 @@ test.describe('H5 offline guards', { tag: '@h5-guard' }, () => {
       [{ ...guardEnv, E2E_H5_LIVE: undefined }, E2E],
       [{ ...guardEnv, DOCKER_CONTEXT: 'colima' }, E2E],
       [{ ...guardEnv, DOCKER_CONTEXT: 'fi-catalog-simple-ch-20260907' }, E2E],
+      [{ ...guardEnv, DOCKER_CONTEXT: undefined }, E2E],
+      [{ ...guardEnv, E2E_H5_DOCKER_CONTEXT: undefined }, E2E],
+      [{ ...guardEnv, E2E_H5_DOCKER_CONTEXT: '', DOCKER_CONTEXT: '' }, E2E],
       [{ ...guardEnv, DOCKER_HOST: 'tcp://remote:2375' }, E2E],
       [{ ...guardEnv, E2E_H5_CH_USER: 'default' }, E2E],
       [{ ...guardEnv, E2E_H5_CH_USER: 'observed_catalog_writer' }, E2E],
@@ -82,6 +88,11 @@ test.describe('H5 offline guards', { tag: '@h5-guard' }, () => {
     }).toThrow('H5 refused');
     expect(mutations).toBe(0);
     expect(() => validateH5Environment(guardEnv)).not.toThrow();
+    // The declared socket is required, absolute, and never a remote daemon.
+    for (const bad of [{}, { E2E_H5_DOCKER_SOCKET: '' }, { E2E_H5_DOCKER_SOCKET: 'tcp://remote:2375' },
+      { E2E_H5_DOCKER_SOCKET: '/var/run/docker.sock' }, { E2E_H5_DOCKER_SOCKET: 'unix:///a/../b.sock' }])
+      expect(() => h5DockerSocket(bad)).toThrow('H5 refused');
+    expect(h5DockerSocket({ E2E_H5_DOCKER_SOCKET: DECLARED_SOCKET })).toBe(DECLARED_SOCKET);
   });
 
   test('rejects unknown runtime, image, routing and auth defaults', () => {

@@ -8,7 +8,6 @@ import { flowAnnotation } from '../../lib/flow-meta';
 // Requires the separately approved LOCAL background mock and fresh pre-dispatch
 // attestation, not merely collection/typecheck. Main owns managed execution and
 // secondary-workflow outcome/drain evidence; no skip or softened result matrix.
-// Approved external plan: observed-catalog-eval3-plan-20260909.md (core directory).
 test.use({ evalBackground: true });
 
 // model_hub/serializers/contracts.py: EvalTemplateCreateV2/UpdateRequestSerializer;
