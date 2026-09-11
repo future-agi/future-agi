@@ -14,6 +14,8 @@ import re
 from datetime import datetime, timedelta
 from typing import Any
 
+from django.conf import settings
+
 from tracer.services.clickhouse.eval_logger_table import (
     eval_logger_live_state_columns,
     eval_logger_source,
@@ -23,6 +25,10 @@ from tracer.services.clickhouse.query_builders.base import (
     NIL_UUID,
     BaseQueryBuilder,
     _unix_microseconds,
+)
+from tracer.services.clickhouse.query_builders.filter_seed_witness import (
+    MAX_WITNESS_SLACK_HOURS,
+    witness_envelope_sql,
 )
 from tracer.services.clickhouse.query_builders.filters import (
     ClickHouseFilterBuilder,
@@ -48,6 +54,9 @@ _SESSION_FILTER_ANCHOR_TIMEOUT_MS = 900
 _SESSION_FILTER_ANCHOR_STRATA = 4
 _SESSION_FILTER_ANCHOR_MAX_BYTES = 192 * 1024 * 1024
 _USER_DETAIL_FILTER_TIMEOUT_MS = 9_500
+# The seed's witness subquery sits two levels in; its envelope lines up with
+# the ``PREWHERE`` of that subquery, not with the seed's own block.
+_SEED_WITNESS_ENVELOPE_INDENT = " " * 22
 
 
 class SessionListQueryBuilder(BaseQueryBuilder):
@@ -887,6 +896,139 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         except (TypeError, ValueError):
             return False
         return self._bounded_root_witness_plan(plans) is not None
+
+    def filter_seed_witness_slack_hours(self) -> int | None:
+        """The hours of witness slack this seed will use, or ``None`` for none.
+
+        ``None`` means this read has no witness envelope to preserve - the
+        seed carries no attribute predicate, which is the shipped contract -
+        so a cursor minted from it carries no slack and stays byte-identical
+        to one minted before the field existed.
+
+        The lane needs a witness that is a *necessary* condition of a match,
+        which is exactly what ``supports_filter_anchor_probe`` already
+        establishes (a positive raw any-span witness, no sampling, and not the
+        exact end-user detail seed), and it needs the bounded walk to be the
+        route this shape actually takes, which is what
+        ``prefers_bounded_filter_page`` decides. Shapes that route to the
+        candidate lane therefore never see an envelope, and neither does the
+        sampled internal lane, whose seed hashes the canonical public session
+        ID.
+
+        A running pagination answers with the value it was minted with, so an
+        operator turning the knob between two hops cannot move the candidacy
+        boundary under a half-published page. Note that the pin carries the
+        lane's on/off state as well as its magnitude here: a continuation that
+        started seeded finishes seeded. A token minted before the field - or by
+        a read that had no envelope - carries no pin and resolves to the
+        current setting, which is what that token got before.
+        """
+
+        if not (
+            self.prefers_bounded_filter_page() and self.supports_filter_anchor_probe()
+        ):
+            return None
+        pinned = getattr(self, "_pinned_witness_slack_hours", None)
+        hours = (
+            pinned
+            if pinned is not None
+            else int(settings.SESSION_LIST_FILTER_SEED_WITNESS_SLACK_HOURS)
+        )
+        if hours < 0:
+            return None
+        return min(hours, MAX_WITNESS_SLACK_HOURS)
+
+    def pin_filter_seed_witness_slack_hours(self, hours: int | None) -> None:
+        """Finish a pagination with the witness slack it STARTED with.
+
+        ``None`` clears the pin and returns the builder to the runtime setting,
+        which is both the legacy behaviour and what a cursor minted before this
+        field carried resolves to. Negative values never reach here: they are
+        the setting's "no envelope" state, and a read in that state mints no
+        slack at all.
+        """
+
+        if hours is None:
+            self._pinned_witness_slack_hours = None
+            return
+        if isinstance(hours, bool) or not isinstance(hours, int):
+            raise ValueError("pinned witness slack must be whole hours")
+        if not 0 <= hours <= MAX_WITNESS_SLACK_HOURS:
+            raise ValueError("pinned witness slack is outside the supported range")
+        self._pinned_witness_slack_hours = hours
+
+    def _seed_witness_identity_gate(
+        self,
+        plans: tuple[Any, ...] | list[Any],
+        *,
+        slice_start: datetime,
+        slice_end: datetime,
+    ) -> tuple[str, dict[str, Any]]:
+        """Narrow the root seed to sessions that own a witnessing span.
+
+        The seed reads root identity and order columns only, so a raw witness
+        applied to the seed's own rows would be wrong: a qualifying attribute
+        may live on any child span, and a root that does not carry it is still
+        a root of a matching session. The gate is therefore a membership test
+        on ``trace_session_id`` - the session owns a witnessing span *anywhere*
+        - and not a predicate on the root row.
+
+        Exactness. The witness is a necessary condition of a match (the same
+        property ``build_filter_anchor_probe`` rests on), so with an unbounded
+        envelope this removes only sessions the classifier would have rejected.
+        With one, a session reaches the page through the slice that holds the
+        root of the trace its witness sits on: the published order key is
+        ``min`` over the session's live roots, so that slice is at or before
+        the session's own publication rank and the walk has not passed it yet.
+        The envelope can then omit only a session whose every witness lies more
+        than the slack away from its own trace's root.
+        ``build_filter_match_query`` stays unbounded and remains the authority
+        on what is published, so nothing the current contract rejects can be
+        admitted.
+
+        Physical versions and tombstones deliberately participate: the
+        subquery carries no ``_peerdb_is_deleted`` guard, so it bounds *when* a
+        witnessing row starts, never which versions count.
+
+        The envelope is derived from the whole slice rather than from the
+        keyset the seed may also carry. A keyset only removes newer roots, so
+        the wider bound is the conservative one: it can only admit candidates,
+        never omit one this statement could have published.
+        """
+
+        slack_hours = self.filter_seed_witness_slack_hours()
+        if slack_hours is None:
+            return "", {}
+        anchor = self._bounded_root_witness_plan(plans)
+        if anchor is None or not anchor.raw_witness_predicate:
+            return "", {}
+        witness = anchor.raw_witness_predicate
+        envelope, params = witness_envelope_sql(
+            root_start=slice_start,
+            root_end=slice_end,
+            slack=timedelta(hours=slack_hours),
+            # The seed selects ``max(seed_spans.start_time) AS start_time``;
+            # qualify the bound so the analyzer cannot substitute that
+            # aggregate alias back into this physical-row predicate.
+            column="witness_spans.start_time",
+            indent=_SEED_WITNESS_ENVELOPE_INDENT,
+        )
+        params.update(
+            {
+                key: value
+                for key, value in anchor.params.items()
+                if f"%({key})s" in witness
+            }
+        )
+        fragment = f"""
+              AND seed_spans.trace_session_id IN (
+                  SELECT witness_spans.trace_session_id
+                  FROM {self.TABLE} AS witness_spans
+                  PREWHERE {self.project_filter_sql()}{envelope}
+                  WHERE isNotNull(witness_spans.trace_session_id)
+                    AND ({witness})
+              )"""
+        return fragment, params
 
     def recommended_filter_query_timeout_ms(self) -> int | None:
         """Use the request's remaining wall time for public session filters.
@@ -2144,6 +2286,10 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         }
         _plans, residual = self._bounded_span_filter_parts()
         self._validate_bounded_relational_filters(residual)
+        witness_fragment, witness_params = self._seed_witness_identity_gate(
+            _plans, slice_start=slice_start, slice_end=slice_end
+        )
+        params.update(witness_params)
         datetime_predicate, datetime_params = self.bounded_datetime_exclusion_sql(
             self.filters,
             column="start_time",
@@ -2200,7 +2346,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
               AND seed_spans.start_time < fromUnixTimestamp64Micro(%(filter_slice_end_us)s, 'UTC'){datetime_fragment}
             WHERE (seed_spans.parent_span_id IS NULL OR seed_spans.parent_span_id = '')
               AND isNotNull(seed_spans.trace_session_id)
-              AND seed_spans.trace_session_id != toUUID('{NIL_UUID}')
+              AND seed_spans.trace_session_id != toUUID('{NIL_UUID}'){witness_fragment}
             GROUP BY seed_spans.trace_session_id
         """
         if self._bounded_sampling_rate is not None:

@@ -111,6 +111,8 @@ from tracer.services.clickhouse.list_cursor import (
     exact_total_explicitly_required,
     frozen_window_filter,
     list_cursor_boundary_fingerprint,
+    pin_filter_seed_witness_slack,
+    read_filter_seed_witness_slack,
 )
 from tracer.services.clickhouse.query_builders.base import NIL_UUID, BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.eval_status import (
@@ -355,6 +357,7 @@ class SessionPageSelection:
             window_start=start,
             window_end=end,
             seen_rows=seen,
+            witness_slack_hours=read_filter_seed_witness_slack(self.builder),
             **boundary,
         )
         return seen, token, True
@@ -2970,6 +2973,9 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             annotation_label_ids_by_project=annotation_label_ids_by_project,
             bounded_internal_scan=cursor_enabled,
         )
+        # Pin before any route or seed decision reads the slack, so every
+        # statement of this hop uses the value the pagination started with.
+        pin_filter_seed_witness_slack(builder, cursor_state)
         prefer_bounded = builder.prefers_bounded_filter_page() is True
         candidate_cursor = bool(
             cursor_enabled

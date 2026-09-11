@@ -467,6 +467,31 @@ INTERACTIVE_READ_SETTING_SPECS = {
             ("SESSION_LIST_MAX_RESULT_BYTES", 32 * 1024**2, 64 * 1024, 512 * 1024**2),
             ("SESSION_LIST_ATTRIBUTE_MAX_RESULT_ROWS", 50_000, 1, 1_000_000),
             ("SESSION_LIST_FILTER_MAX_CANDIDATES", 200, 1, 5_000),
+            # Whether the bounded session seed narrows candidacy by the
+            # filter's own any-span witness, and how many hours of slack that
+            # witness scan is allowed around the roots one seed statement can
+            # publish.
+            #
+            # NEGATIVE (the default) is today's contract: the seed carries no
+            # attribute predicate at all and groups every root span of its
+            # slice, so the generated SQL and its parameters are byte-identical
+            # to what shipped before this setting.
+            #
+            # ZERO seeds the identity superset with a time-UNBOUNDED witness: a
+            # session is a candidate when any raw span of it carries the value,
+            # whenever that span started. That publishes exactly the same rows
+            # as the default - the witness is a necessary condition of a match
+            # and ``build_filter_match_query`` stays authoritative - but its
+            # cost is unmeasured on this surface and the trace lane's
+            # equivalent scan read tens of millions of rows per statement.
+            #
+            # ABOVE ZERO additionally requires the witness to start inside
+            #     [hour_floor(slice_start) - slack, hour_ceil(slice_end) + slack)
+            # which is the bounded-witness contract. On sessions that contract
+            # is NOT approved yet: it can omit a session whose sole witness lies
+            # outside every such envelope, so it needs the owner's decision
+            # before a deployment moves off the default.
+            ("SESSION_LIST_FILTER_SEED_WITNESS_SLACK_HOURS", -1, -1, 168),
             ("SESSION_LIST_FILTER_MAX_SEED_ATTEMPTS", 24, 1, 512),
             ("SESSION_LIST_FILTER_MAX_QUERIES", 48, 1, 1_024),
             ("ANNOTATION_QUEUE_ADD_ITEMS_SYNC_MAX", 1_000, 1, 10_000),
