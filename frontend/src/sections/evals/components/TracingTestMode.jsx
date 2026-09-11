@@ -1456,7 +1456,7 @@ const TracingTestMode = React.forwardRef(
     );
 
     return (
-      <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+      <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5,height: "100%" }}>
         {/* Project selector — hidden when pre-selected (e.g. task flow) */}
         {!projectLocked && (
           <Box>
