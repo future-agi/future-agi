@@ -419,3 +419,77 @@ def test_export_trace_items_no_project_n_plus_one(
     # dropped from the export queryset).
     point_reads = _project_point_reads(cap)
     assert len(point_reads) <= 1, [q["sql"] for q in point_reads]
+
+
+# ── origin compression (TH-7235) ───────────────────────────────────────────────
+
+
+@pytest.mark.django_db
+def test_export_compresses_at_origin_when_the_client_accepts_gzip(
+    auth_client, organization, workspace, user
+):
+    """The export must carry its own Content-Encoding.
+
+    nginx gzips application/json, but it runs one replica capped at 100m CPU, so
+    compressing a 38MB export there cost ~17s of a ~24s request on a real
+    account. nginx skips any response that already has Content-Encoding, so
+    compressing here moves that work to the backend pods. Losing this decorator
+    silently hands the work back to the throttled proxy — no test would notice
+    without this one.
+    """
+    import gzip
+    import json as json_mod
+
+    seed = _build_dataset_queue(
+        organization=organization, workspace=workspace, user=user, n_rows=5
+    )
+    url = EXPORT_URL.format(queue_id=seed["queue"].id) + "?export_format=json"
+
+    resp = auth_client.get(url, HTTP_ACCEPT_ENCODING="gzip")
+
+    assert resp.status_code == status.HTTP_200_OK
+    assert resp["Content-Encoding"] == "gzip"
+    assert "Accept-Encoding" in resp.get("Vary", "")
+    # The bytes must be real gzip AND decode to the same envelope the
+    # uncompressed response returns — a corrupted stream is worse than no gzip.
+    payload = json_mod.loads(gzip.decompress(resp.content).decode())
+    assert len(_unwrap(payload)) == 5
+
+
+@pytest.mark.django_db
+def test_export_is_uncompressed_when_the_client_does_not_accept_gzip(
+    auth_client, organization, workspace, user
+):
+    """Negotiation, not unconditional compression — an identity client must get
+    a body it can read."""
+    seed = _build_dataset_queue(
+        organization=organization, workspace=workspace, user=user, n_rows=5
+    )
+    resp = auth_client.get(
+        EXPORT_URL.format(queue_id=seed["queue"].id) + "?export_format=json",
+        HTTP_ACCEPT_ENCODING="identity",
+    )
+
+    assert resp.status_code == status.HTTP_200_OK
+    assert not resp.has_header("Content-Encoding")
+    assert len(_unwrap(resp.data)) == 5
+
+
+@pytest.mark.django_db
+def test_csv_export_is_compressed_too(auth_client, organization, workspace, user):
+    """CSV was never compressed in production — nginx's gzip_types omits
+    text/csv — so this path gains the most from origin compression."""
+    import gzip
+
+    seed = _build_dataset_queue(
+        organization=organization, workspace=workspace, user=user, n_rows=5
+    )
+    resp = auth_client.get(
+        EXPORT_URL.format(queue_id=seed["queue"].id) + "?export_format=csv",
+        HTTP_ACCEPT_ENCODING="gzip",
+    )
+
+    assert resp.status_code == status.HTTP_200_OK
+    assert resp["Content-Encoding"] == "gzip"
+    body = gzip.decompress(resp.content).decode()
+    assert "item_id" in body.splitlines()[0]
