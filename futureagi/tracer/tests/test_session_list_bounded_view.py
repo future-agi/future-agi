@@ -153,11 +153,14 @@ def _session_handler_resolved_filters(filters, *, user_id=None, org_scope=False)
     display_rows.values.return_value.first.return_value = None
     with (
         mock.patch(
-            "tracer.services.clickhouse.v2.end_user_dict_reader.resolve_end_user_ids_by_user_id",
-            side_effect=lambda value, **kwargs: {
-                "user-a": [str(uuid.UUID(int=1))],
-                "user-b": [str(uuid.UUID(int=2))],
-            }.get(value, []),
+            "tracer.services.clickhouse.v2.end_user_dict_reader.resolve_end_user_ids_by_user_ids",
+            side_effect=lambda values, **kwargs: {
+                value: {
+                    "user-a": [str(uuid.UUID(int=1))],
+                    "user-b": [str(uuid.UUID(int=2))],
+                }.get(value, [])
+                for value in values
+            },
         ) as resolve,
         mock.patch(
             "tracer.views.trace_session.EndUser.objects.filter",
@@ -180,15 +183,12 @@ def _session_handler_resolved_filters(filters, *, user_id=None, org_scope=False)
             validated_data=serializer.validated_data,
             org_project_ids=project_ids,
         )
-    for call in resolve.call_args_list:
-        assert call.kwargs["organization_id"] == request.organization.id
-        assert call.kwargs["project_id"] == (None if org_scope else project_id)
-        assert call.kwargs["timeout_ms"] > 0
-        assert call.kwargs["settings"] is not None
-    # Repeated leaves remain separate, but reuse the same tenant-scoped lookup.
-    assert len(resolve.call_args_list) == len(
-        {call.args[0] for call in resolve.call_args_list}
-    )
+    resolve.assert_called_once()
+    call = resolve.call_args
+    assert call.kwargs["organization_id"] == request.organization.id
+    assert call.kwargs["project_id"] == (None if org_scope else project_id)
+    assert call.kwargs["timeout_ms"] > 0
+    assert call.kwargs["settings"] is not None
     if display_rows.filter.called:
         display_rows.filter.assert_any_call(organization=request.organization)
         if org_scope:
@@ -373,8 +373,8 @@ def test_session_handler_native_user_checks_each_operator(unsupported_first):
     analytics = mock.MagicMock()
     with (
         mock.patch(
-            "tracer.services.clickhouse.v2.end_user_dict_reader.resolve_end_user_ids_by_user_id",
-            return_value=[],
+            "tracer.services.clickhouse.v2.end_user_dict_reader.resolve_end_user_ids_by_user_ids",
+            return_value={},
         ),
         mock.patch(
             "tracer.views.trace_session.SessionListQueryBuilderV2",

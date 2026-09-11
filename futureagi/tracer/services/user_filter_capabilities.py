@@ -22,7 +22,7 @@ def is_native_user_id_filter(item):
     its own predicate compiler unchanged instead of becoming account scope.
     Call after public filter normalization/validation.
     """
-    if item.get("column_id") != "user_id":
+    if item.get("column_id") not in {"user", "user_id"}:
         return False
     cfg = item.get("filter_config") or {}
     family = str(cfg.get("col_type") or "").upper()

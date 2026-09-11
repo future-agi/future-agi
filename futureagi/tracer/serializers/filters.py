@@ -916,6 +916,31 @@ class SessionFilterItemField(FilterItemField):
     allow_session_numeric_membership = True
 
 
+_SESSION_ID_COLUMNS = {"session", "session_id", "trace_session_id"}
+_SESSION_ID_OPERATORS = {
+    "equals",
+    "not_equals",
+    "in",
+    "not_in",
+    "is_null",
+    "is_not_null",
+}
+
+
+class _SessionFilterListMixin:
+    """Drop unsupported session-identity leaves without rejecting the page."""
+
+    def to_internal_value(self, data):
+        values = super().to_internal_value(data)
+        return [
+            value
+            for value in values
+            if value.get("column_id") not in _SESSION_ID_COLUMNS
+            or (value.get("filter_config") or {}).get("filter_op")
+            in _SESSION_ID_OPERATORS
+        ]
+
+
 class FilterListField(serializers.ListField):
     """List wrapper that carries the exact filter-item OpenAPI shape.
 
@@ -939,7 +964,7 @@ class FilterListField(serializers.ListField):
         return validated
 
 
-class SessionFilterListField(FilterListField):
+class SessionFilterListField(_SessionFilterListMixin, FilterListField):
     """Session-only filter list; all other surfaces retain the FE contract."""
 
     child = SessionFilterItemField()
@@ -965,7 +990,7 @@ class BoundedFilterListField(FilterListField):
         return value
 
 
-class SessionBoundedFilterListField(BoundedFilterListField):
+class SessionBoundedFilterListField(_SessionFilterListMixin, BoundedFilterListField):
     """Bounded session-only filter list with numeric aggregate membership."""
 
     child = SessionFilterItemField()
