@@ -13,7 +13,6 @@ table on the CH25 connection; annotations retain their own source boundary.
 
 from __future__ import annotations
 
-import functools
 import re
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, replace
@@ -850,8 +849,15 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
             if values and all(isinstance(value, str) for value in values):
                 yield plan, witness, values
 
-    @functools.cached_property
+    @property
     def _long_text_candidate_seed_plan(self):
+        """Memoize the long-text plan against the inputs that decided it."""
+
+        return self._seed_plan_cached(
+            "long_text", self._compute_long_text_candidate_seed_plan
+        )
+
+    def _compute_long_text_candidate_seed_plan(self):
         """Find a selective, compiler-proven necessary typed-string witness.
 
         Long positive text filters otherwise classify hundreds of unrelated
@@ -889,8 +895,15 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
             )
         return None
 
-    @functools.cached_property
+    @property
     def _short_text_candidate_seed_plan(self):
+        """Memoize the short-text plan against the inputs that decided it."""
+
+        return self._seed_plan_cached(
+            "short_text", self._compute_short_text_candidate_seed_plan
+        )
+
+    def _compute_short_text_candidate_seed_plan(self):
         """Seed short exact strings from the compiler's own typed value bloom.
 
         Selectivity policy for positive typed-string acquisition. A seed is
@@ -970,36 +983,86 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
             or self._public_short_text_candidate_seed_plan()
         )
 
-    @functools.cached_property
+    @property
     def _short_text_candidate_seed_lane(self) -> bool:
-        """Compile the three seed plans once per builder, not per hook call.
+        """Compile the three seed plans once per input shape, not per hook call.
 
         Deciding this recompiles ``_partition_trace_filter_plans`` several
         times over, and the bounded-witness hooks
         (``_scalar_candidate_witness_envelope`` ->
         ``_short_text_seed_witness_slack`` -> here) ask for it on every
-        statement and twice inside ``filter_seed_width_policy``. The answer
-        cannot change over a builder's life: every attribute it reads -
-        ``filters``, ``search``, ``sort_params``, ``project_version_id``,
-        ``project_id``/``project_ids`` and the ``_bounded_*`` flags - is
-        assigned in ``__init__`` and never rebound afterwards by this class.
+        statement and twice inside ``filter_seed_width_policy``.
 
-        The one post-construction ``builder.filters`` rebind in the tree
-        (``tracer/selectors/eval_tasks/row_resolver.py``, which pins a
-        resolved ``created_at`` window) is on a builder constructed with
-        ``bounded_identity_only=True``; that makes
-        ``_uses_attribute_coordinate_replay`` - and so
-        ``_uses_scalar_coordinate_replay`` and every text seed plan below it -
-        False whatever the filters say, so the cached answer is invariant
-        there. Only the *lane* is cached: the slack setting and the width
-        policy are still read per statement, so an operator change still takes
-        effect on the next read.
+        The cache is keyed on the inputs that decide the answer, NOT held for
+        the life of the builder. An earlier revision of this memo asserted that
+        ``filters`` is assigned in ``__init__`` and never rebound; that premise
+        is false. ``tracer/selectors/eval_tasks/row_resolver.py`` rebinds
+        ``builder.filters`` after construction on a production path, and at
+        least five test modules do the same. That rebind is harmless today only
+        because its builder carries ``bounded_identity_only=True``, which forces
+        every text seed plan below ``_uses_scalar_coordinate_replay`` to None
+        whatever the filters say - a coincidence of the current call sites, not
+        an invariant. A lane-changing rebind against a life-of-builder cache
+        would serve a stale plan, and a stale plan here means a seed statement
+        restricted by a predicate the caller has removed: an under-inclusive
+        page that silently drops rows.
+
+        So ``_seed_plan_cache_key`` freezes every input the three plans read -
+        filters, search, sort params, project scope, project version and the
+        ``_bounded_*`` flags - and any change to them recomputes. Only the
+        plans are cached: the slack setting and the width policy are still read
+        per statement, so an operator change still takes effect on the next
+        read.
         """
+        return self._seed_plan_cached("lane", self._compute_short_text_seed_lane)
+
+    def _compute_short_text_seed_lane(self) -> bool:
         return (
             super()._public_scalar_candidate_seed_plan() is None
             and self._public_long_text_candidate_seed_plan() is None
             and self._public_short_text_candidate_seed_plan() is not None
         )
+
+    def _seed_plan_cache_key(self) -> tuple[str, ...]:
+        """Freeze every input the three text seed plans read.
+
+        ``repr`` rather than a hash: the filter leaves carry datetimes, UUIDs
+        and nested dicts, and an equal-valued rebind whose dicts were built in
+        a different insertion order only costs a recompute, never a wrong
+        answer. Anything that is not read here must not be able to change the
+        plans.
+        """
+
+        return (
+            repr(self.filters),
+            repr(self.search),
+            repr(self.sort_params),
+            repr(getattr(self, "project_id", None)),
+            repr(getattr(self, "project_ids", None)),
+            repr(self.project_version_id),
+            repr(
+                (
+                    self._bounded_identity_only,
+                    self._bounded_internal_scan,
+                    self._bounded_bulk_scan,
+                    self._bounded_population_proof,
+                    self._bounded_sampling_rate,
+                )
+            ),
+        )
+
+    def _seed_plan_cached(self, name: str, compute: Callable[[], Any]) -> Any:
+        """Return ``compute()`` memoized for as long as the inputs hold still."""
+
+        key = self._seed_plan_cache_key()
+        cached = getattr(self, "_seed_plan_memo", None)
+        if cached is None or cached[0] != key:
+            cached = (key, {})
+            self._seed_plan_memo = cached
+        values = cached[1]
+        if name not in values:
+            values[name] = compute()
+        return values[name]
 
     def _uses_short_text_candidate_seed(self) -> bool:
         """True when the short exact-string lane is the active seed plan."""

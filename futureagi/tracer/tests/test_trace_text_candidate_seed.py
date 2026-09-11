@@ -266,6 +266,69 @@ def test_other_modes_do_not_acquire_the_short_text_seed(kwargs):
     assert not builder._uses_short_text_candidate_seed()
 
 
+def test_a_lane_changing_filter_rebind_recompiles_the_plan_and_the_sql():
+    """The seed plan cache must follow ``builder.filters``, not outlive it.
+
+    ``tracer/selectors/eval_tasks/row_resolver.py`` rebinds ``builder.filters``
+    after construction on a production path, and several test modules do the
+    same. A cache held for the life of the builder would answer a rebound
+    builder with the lane it compiled from the ORIGINAL filters, and the seed
+    CTE it emits would still be restricted by a predicate the caller removed -
+    an under-inclusive page that silently drops rows. Warm the cache, rebind
+    to a time-only list, and the lane, the plan and the SQL must all follow.
+    """
+
+    builder = picker_leaves()
+    assert builder._uses_short_text_candidate_seed() is True
+    assert builder.supports_filter_candidate_seed_page() is True
+    warm_query, warm_params = builder.build_filter_candidate_seed_page(
+        slice_start=END - timedelta(hours=1), slice_end=END, limit=200
+    )
+    assert "acct-1" in repr(warm_params)
+
+    builder.filters = [_time_filter(END - timedelta(days=7), END)]
+
+    assert builder._public_short_text_candidate_seed_plan() is None
+    assert builder._uses_short_text_candidate_seed() is False
+    assert builder.supports_filter_candidate_seed_page() is False
+    assert builder.filter_seed_width_policy() is None
+    with pytest.raises(ValueError):
+        builder.build_filter_candidate_seed_page(
+            slice_start=END - timedelta(hours=1), slice_end=END, limit=200
+        )
+    # ...and a fresh builder on the SAME final filters agrees with the rebound
+    # one, which is the property "correct by construction" actually means here.
+    fresh = TraceListQueryBuilderV2(
+        project_id=PROJECT,
+        filters=[_time_filter(END - timedelta(days=7), END)],
+        page_size=25,
+    )
+    assert fresh._uses_short_text_candidate_seed() is False
+    assert warm_query  # the warm plan really was compiled before the rebind
+
+
+def test_an_equal_valued_rebind_keeps_the_compiled_plan():
+    """Recompute on change, not on every call: the memo must still memoize."""
+
+    builder = picker_leaves()
+    first = builder._public_short_text_candidate_seed_plan()
+    builder.filters = list(builder.filters)
+    assert builder._public_short_text_candidate_seed_plan() is first
+
+
+def test_a_sort_or_scope_rebind_also_invalidates_the_plan():
+    """Every input the plans read is in the key, not just ``filters``."""
+
+    builder = picker_leaves()
+    assert builder._uses_short_text_candidate_seed() is True
+    builder.sort_params = [{"field": "latency_ms", "direction": "desc"}]
+    assert builder._uses_short_text_candidate_seed() is False
+    builder.sort_params = []
+    assert builder._uses_short_text_candidate_seed() is True
+    builder.project_version_id = "00000000-0000-4000-8000-00000000000f"
+    assert builder._uses_short_text_candidate_seed() is False
+
+
 def test_legacy_builder_is_unchanged():
     builder = subject(cls=TraceListQueryBuilder)
     assert builder._public_scalar_candidate_seed_plan() is None
