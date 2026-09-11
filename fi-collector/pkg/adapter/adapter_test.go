@@ -29,6 +29,7 @@ func buildAttrs() pcommon.Map {
 	m.PutEmptyMap("nested").PutStr("k", "v")
 	m.PutStr("llm.prompt.0.role", "user")      // overflow prefix
 	m.PutStr("input.value", "Hi")              // overflow prefix
+	m.PutStr("raw_log", `{"id":"call_1"}`)     // overflow prefix (voice blob, string-typed)
 	return m
 }
 
@@ -81,6 +82,12 @@ func TestSplit(t *testing.T) {
 	}
 	if _, ok := of["input.value"]; !ok {
 		t.Errorf("input.value must overflow (caller reads from overflow to fill `input`)")
+	}
+	if _, ok := of["raw_log"]; !ok {
+		t.Errorf("raw_log must overflow (heavy voice blob kept off hot attrs_string reads)")
+	}
+	if _, ok := str["raw_log"]; ok {
+		t.Errorf("raw_log must NOT land in attrs_string")
 	}
 }
 
