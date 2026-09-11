@@ -1056,6 +1056,90 @@ describe.each(["trace", "span"])("%s grid loading lifecycle", (kind) => {
     resetMetricIds.mockReset();
   });
 
+  it.each(["filter", "refresh"])(
+    "releases the real grid request slot when %s cancels its first read",
+    async (action) => {
+      const { createGrid, ModuleRegistry } = await import("ag-grid-community");
+      const { AllEnterpriseModule } = await import("ag-grid-enterprise");
+      ModuleRegistry.registerModules([AllEnterpriseModule]);
+      // A transport that never resolves must not block the replacement datasource.
+      getMock.mockImplementationOnce(() => new Promise(() => {}));
+      const ref = React.createRef();
+      const props = baseProps();
+      const view = render(
+        renderGridSubject({ kind, ref, props, filters: props.filters }),
+      );
+      const host = document.createElement("div");
+      document.body.appendChild(host);
+      let api;
+      try {
+        act(() => {
+          api = createGrid(host, {
+            theme: "legacy",
+            domLayout: "autoHeight",
+            columnDefs: [{ field: "trace_id" }],
+            rowModelType: "serverSide",
+            cacheBlockSize: 25,
+            maxConcurrentDatasourceRequests: 1,
+            serverSideInitialRowCount: 1,
+            serverSideDatasource: gridState.props.serverSideDatasource,
+          });
+          gridState.api = api;
+        });
+        await waitFor(() => expect(getMock).toHaveBeenCalledOnce());
+        const firstSignal = getMock.mock.calls[0][1].signal;
+        const replacement = {
+          trace_id: "replacement",
+          span_id: "replacement",
+          project_id: "project-1",
+          start_time: "2026-01-01T00:00:00Z",
+        };
+        getMock.mockResolvedValueOnce(
+          listResponse({ rows: [replacement], totalRows: 1 }),
+        );
+        if (action === "filter") {
+          view.rerender(
+            renderGridSubject({
+              kind,
+              ref,
+              props,
+              filters: [
+                {
+                  column_id: "tenant_label",
+                  filter_config: {
+                    col_type: "SPAN_ATTRIBUTE",
+                    filter_type: "text",
+                    filter_op: "in",
+                    filter_value: ["alpha", "beta"],
+                  },
+                },
+              ],
+            }),
+          );
+          act(() =>
+            api.setGridOption(
+              "serverSideDatasource",
+              gridState.props.serverSideDatasource,
+            ),
+          );
+        } else {
+          act(() => window.dispatchEvent(new Event("observe-refresh")));
+        }
+        expect(firstSignal.aborted).toBe(true);
+        await waitFor(() =>
+          expect(api.getDisplayedRowAtIndex(0)?.data?.trace_id).toBe(
+            "replacement",
+          ),
+        );
+        expect(getMock).toHaveBeenCalledTimes(2);
+        expect(host.textContent).toContain("replacement");
+      } finally {
+        act(() => api?.destroy());
+        host.remove();
+      }
+    },
+  );
+
   it("settles an empty first page across an equivalent-filter rerender", async () => {
     let resolveResponse;
     getMock.mockImplementationOnce(
@@ -1183,8 +1267,9 @@ describe.each(["trace", "span"])("%s grid loading lifecycle", (kind) => {
       await pendingRead;
     });
 
-    // Reset now settles through the neutral cancellation path before late data.
-    expect(params.fail).not.toHaveBeenCalled();
+    // Cancellation releases the real grid slot without publishing stale rows.
+    expect(params.fail).toHaveBeenCalledOnce();
+    expect(params.api.retryServerSideLoads).toHaveBeenCalledOnce();
     expect(params.success).not.toHaveBeenCalled();
     await waitFor(() => expect(gridState.props.loading).toBe(false));
   });

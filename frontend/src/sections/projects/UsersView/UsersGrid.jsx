@@ -46,7 +46,11 @@ import {
   sanitizeUserSortModel,
 } from "./userSortContract";
 import { isExpectedRequestCancellation } from "src/utils/cacheUtils";
-import { isGridApiLive, withLiveGridApi } from "src/utils/gridApi";
+import {
+  isGridApiLive,
+  withLiveGridApi,
+  settleCancelledGridRead,
+} from "src/utils/gridApi";
 import {
   OBSERVE_GRID_MAX_BLOCKS_IN_CACHE,
   OBSERVE_GRID_MAX_CONCURRENT_REQUESTS,
@@ -555,6 +559,11 @@ const UsersGrid = React.memo(
             });
           } catch (error) {
             if (isExpectedRequestCancellation(error)) {
+              settleCancelledGridRead(params, {
+                retry:
+                  requestGeneration !== null &&
+                  !cursorPagination.current.isCurrent(requestGeneration),
+              });
               return;
             }
             if (!isGridApiLive(params.api)) return;

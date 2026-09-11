@@ -1,4 +1,5 @@
 import PropTypes from "prop-types";
+import { isGridApiLive, settleCancelledGridRead } from "src/utils/gridApi";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, Button, Typography } from "@mui/material";
 import {
@@ -64,9 +65,10 @@ export const createExactSelectorDataSource = ({
       });
 
       if (!pagination.isCurrent(requestGeneration) || exactPage.stale) {
-        gridParams.fail();
+        settleCancelledGridRead(gridParams, { retry: true });
         return;
       }
+      if (!isGridApiLive(gridParams.api)) return;
 
       onPageLoaded(exactPage, gridParams);
       const rowCount = exactPage.isLastPage
@@ -76,9 +78,10 @@ export const createExactSelectorDataSource = ({
       onPaused(null);
     } catch (error) {
       if (!pagination.isCurrent(requestGeneration)) {
-        gridParams.fail();
+        settleCancelledGridRead(gridParams, { retry: true });
         return;
       }
+      if (!isGridApiLive(gridParams.api)) return;
       const hasRetainedCheckpoint = Boolean(
         pagination.bufferedVisiblePage(pageNumber),
       );
@@ -90,6 +93,7 @@ export const createExactSelectorDataSource = ({
         // discard the already-proven rows/checkpoint or become a terminal
         // grid error. Keep the block retryable from that signed position.
         onPaused(() => {
+          if (!isGridApiLive(gridParams.api)) return;
           if (gridParams.api?.retryServerSideLoads) {
             gridParams.api.retryServerSideLoads();
           } else {
@@ -121,6 +125,11 @@ export const useExactSelectorDataSource = ({
   const paginationRef = useRef(createListCursorPagination());
   const activeSignatureRef = useRef(null);
   const [continuationResume, setContinuationResume] = useState(null);
+
+  useEffect(() => {
+    const pagination = paginationRef.current;
+    return () => pagination.reset();
+  }, []);
 
   useEffect(() => {
     paginationRef.current.reset();

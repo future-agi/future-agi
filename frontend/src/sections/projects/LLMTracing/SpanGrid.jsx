@@ -76,7 +76,11 @@ import {
   compactObserveListResponse,
 } from "./observeListPayload";
 import { isExpectedRequestCancellation } from "src/utils/cacheUtils";
-import { isGridApiLive, withLiveGridApi } from "src/utils/gridApi";
+import {
+  isGridApiLive,
+  withLiveGridApi,
+  settleCancelledGridRead,
+} from "src/utils/gridApi";
 import CursorGridPagination from "./CursorGridPagination";
 import useCursorGridPagination from "./useCursorGridPagination";
 import useImmediateGridQueryTransition from "./useImmediateGridQueryTransition";
@@ -722,6 +726,11 @@ const SpanGrid = React.forwardRef(
               setContinuationNotice(null);
             } catch (error) {
               if (isExpectedRequestCancellation(error)) {
+                settleCancelledGridRead(params, {
+                  retry:
+                    requestGeneration !== null &&
+                    !cursorPagination.current.isCurrent(requestGeneration),
+                });
                 return;
               }
               if (!isGridApiLive(params.api)) return;

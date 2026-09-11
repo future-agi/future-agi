@@ -700,7 +700,7 @@ describe("SessionGrid cursor continuation", () => {
     const params = makeParams();
     await getRows(params);
 
-    expect(params.fail).not.toHaveBeenCalled();
+    expect(params.fail).toHaveBeenCalledOnce();
     expect(params.success).not.toHaveBeenCalled();
     expect(enqueueSnackbarMock).not.toHaveBeenCalled();
   });
@@ -782,7 +782,7 @@ describe("SessionGrid cursor continuation", () => {
       expect(screen.getByRole("status")).toHaveTextContent("Loading page…");
       expect(screen.getByRole("button", { name: "page 2" })).toBeDisabled();
       expect(oldParams.success).not.toHaveBeenCalled();
-      expect(oldParams.fail).not.toHaveBeenCalled();
+      expect(oldParams.fail).toHaveBeenCalledOnce();
       expect(currentParams.success).not.toHaveBeenCalled();
       expect(enqueueSnackbarMock).not.toHaveBeenCalled();
       expect(currentParams.api.showNoRowsOverlay).not.toHaveBeenCalled();
@@ -834,7 +834,7 @@ describe("SessionGrid cursor continuation", () => {
     await act(async () => staleRead);
 
     expect(currentParams.success).toHaveBeenCalledTimes(1);
-    expect(staleParams.fail).not.toHaveBeenCalled();
+    expect(staleParams.fail).toHaveBeenCalledOnce();
     expect(staleParams.success).not.toHaveBeenCalled();
     expect(enqueueSnackbarMock).not.toHaveBeenCalled();
   });
