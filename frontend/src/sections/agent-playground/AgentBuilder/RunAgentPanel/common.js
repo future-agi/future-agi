@@ -23,8 +23,7 @@ export const getNodeConfig = (type) => {
   return NODE_TYPE_CONFIG[type] || NODE_TYPE_CONFIG.default;
 };
 
-const getNodeExecution = (node) =>
-  node?.nodeExecution || node?.node_execution;
+const getNodeExecution = (node) => node?.nodeExecution || node?.node_execution;
 
 const getSubGraph = (node) => node?.subGraph || node?.sub_graph;
 

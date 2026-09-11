@@ -55,31 +55,25 @@ describe("NodeOutputListView", () => {
       target: { value: "search" },
     });
 
-    expect(screen.getByRole("button", { name: "Research agent" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Search the web" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Research agent" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Search the web" }),
+    ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Summarize results" }),
     ).not.toBeInTheDocument();
   });
 
   it("shows an empty state for an execution without nodes", () => {
-    render(
-      <NodeOutputListView
-        nodes={[]}
-        onNodeSelect={vi.fn()}
-      />,
-    );
+    render(<NodeOutputListView nodes={[]} onNodeSelect={vi.fn()} />);
 
     expect(screen.getByText("No nodes to display")).toBeInTheDocument();
   });
 
   it("shows a distinct empty state when search has no matches", () => {
-    render(
-      <NodeOutputListView
-        nodes={nodes}
-        onNodeSelect={vi.fn()}
-      />,
-    );
+    render(<NodeOutputListView nodes={nodes} onNodeSelect={vi.fn()} />);
 
     fireEvent.change(screen.getByPlaceholderText("Search"), {
       target: { value: "missing" },
