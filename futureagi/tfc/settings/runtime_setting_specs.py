@@ -384,6 +384,47 @@ INTERACTIVE_READ_SETTING_SPECS = {
                 100_000,
                 50_000_000,
             ),
+            # Hours of slack the same seed's child-witness scan is allowed
+            # around the roots one statement can publish. ZERO - the default -
+            # is the shipped contract, under which that scan carries no time
+            # bound at all: a trace is a candidate when ANY raw span of it
+            # carries the value, whenever that span started. At zero the
+            # generated SQL and its parameters are byte-identical to what
+            # shipped, so this setting is inert until an operator raises it.
+            #
+            # Above zero the seed statement additionally requires a witness to
+            # start inside the envelope
+            #     [hour_floor(slice_start) - slack, hour_ceil(slice_end) + slack)
+            # where the roots that statement can publish are the ones inside
+            # the slice, tightened on a keyset continuation to the cursor's own
+            # position - so the envelope is the tightest one that still carries
+            # every publishable root's own witness. Every published row is
+            # still an exact any-span match: the latest-state classifier
+            # (``build_filter_match_query``) stays UNBOUNDED, so the switch can
+            # only OMIT a trace whose sole witness lies outside the envelope
+            # and can never admit one the unbounded contract would reject.
+            #
+            # Why it is a switch and not a tuning knob: the unbounded witness
+            # was measured (read-only, against production) to cost a flat
+            # ~4-5 GB bloom false-positive scan per seed statement whatever the
+            # slice's width, with no measured path to a page under five
+            # seconds; the bounded shape's cost is instead LINEAR in envelope
+            # hours (~0.46-0.49 GB per hour - a dense four-hour slice reads
+            # 3.66M rows / 4.47 GB in 3.8 s at ``max_threads`` 1 and 1.76 s at
+            # 2, sparse hours 30-116 MB / 0.4 s), and at one hour of slack it
+            # reproduced the unbounded results exactly on the measured cohort
+            # (3 of 3 page digests, 150 of 150 classifier rows). What one hour
+            # rests on there: the root itself carried the value in 165 of 165
+            # matching traces, the largest child-witness lag was 468 s, and 0
+            # of 1,000 sampled traces held a span more than two days from their
+            # root. That is one project over one burst - bounds, not
+            # guarantees - which is why narrowing the contract stays an owner
+            # decision and the default is off. The 168 h ceiling is one week;
+            # beyond that the envelope stops bounding this lane's own windows.
+            # See ``filter_seed_width_policy`` for the width schedule each mode
+            # uses, which differs because only the bounded shape's cost tracks
+            # the slice.
+            ("FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS", 0, 0, 168),
             # Broad key-only span population proofs read thin raw columns;
             # their CPU budget is separate from the normal seed/classifier.
             ("FILTER_SELECTOR_POPULATION_MAX_THREADS", 2, 1, 4),

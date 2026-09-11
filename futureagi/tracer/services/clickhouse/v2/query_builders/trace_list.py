@@ -46,13 +46,31 @@ class BoundedUserResolution:
 
 MAX_USER_PHYSICAL_IDENTITIES_PER_PAGE = 4_096
 
-# The width the short exact-string seed opens at and refuses to narrow below.
-# It is the fixed ceiling this lane's row budget replaced, kept as the floor so
-# the budget can only ever buy MORE coverage per statement than the ceiling did
-# - see ``filter_seed_width_policy``. Provisional: the dense per-statement cost
-# belongs to the pending owner decision on bounding this seed's child witness,
-# and no measurement here locates an optimum.
+# The width the short exact-string seed opens at and refuses to narrow below
+# while its child witness stays time-unbounded. It is the fixed ceiling this
+# lane's row budget replaced, kept as the floor so the budget can only ever buy
+# MORE coverage per statement than the ceiling did - see
+# ``filter_seed_width_policy``. Provisional: with an unbounded witness the
+# dense per-statement cost does not shrink with the slice, so no measurement
+# locates an optimum below it.
 _SHORT_TEXT_SEED_PROVISIONAL_FLOOR = timedelta(hours=4)
+
+# The same two widths once ``FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS``
+# bounds the witness. There the statement's cost is linear in the envelope's
+# hours, so a narrower slice really is a cheaper statement and the row budget
+# is a signal rather than a constant; one hour is the measured schedule's
+# opening width and the granularity the ``toStartOfHour`` primary-key prefix
+# prunes on.
+_SHORT_TEXT_SEED_BOUNDED_WITNESS_FLOOR = timedelta(hours=1)
+
+
+def _floor_hour(moment: datetime) -> datetime:
+    return moment.replace(minute=0, second=0, microsecond=0)
+
+
+def _ceil_hour(moment: datetime) -> datetime:
+    floored = _floor_hour(moment)
+    return floored if floored == moment else floored + timedelta(hours=1)
 
 
 def _caseless_ascii_ngram_anchor(value: str) -> str | None:
@@ -589,15 +607,41 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
     def filter_seed_width_policy(self) -> FilterSeedWidthPolicy | None:
         """Budget the short exact-string seed by rows read, not by hours.
 
-        The long-text and numeric lanes prune raw granules by value, so the
-        base builder lets them widen to the whole request window. A short exact
-        literal only prunes by key/value bloom, and this seed's cost has two
+        The lane has two width schedules because it has two cost shapes, and
+        ``FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS`` selects between them:
+
+        * slack zero (the default, and the shipped contract): the witness is
+          time-unbounded, its flat term dominates, and the floor and initial
+          width are both the four hours of the fixed ceiling this budget
+          replaced - ``_SHORT_TEXT_SEED_PROVISIONAL_FLOOR``. Narrowing below
+          that would pay the same flat cost for a fraction of the coverage,
+          which is why the row budget can only widen this mode.
+        * slack above zero: the witness scan is confined to the roots'
+          own hours plus the slack, so the statement's cost is linear in the
+          envelope's hours (~0.46-0.49 GB per hour measured) and a narrower
+          slice really is a cheaper statement. Floor and initial width both
+          drop to ``_SHORT_TEXT_SEED_BOUNDED_WITNESS_FLOOR``, one hour, which
+          is the opening width of the measured 1 h -> 2 h -> 4 h schedule; the
+          row budget then does real work in both directions, halving a dense
+          slice back down toward that hour.
+
+        Both modes keep the same ``target_read_rows`` and the same four-hour
+        ``unsignalled_cap``: a transport that reports no progress justifies no
+        more than the ceiling this lane started from, whichever mode is on.
+        The post-discovery reset follows the floor by construction - it is
+        ``max(1 h, policy.min_width)`` - so it is one hour in the bounded mode
+        and four in the unbounded one, with no second constant to keep in step.
+
+        Why the unbounded mode's floor is what it is. The long-text and
+        numeric lanes prune raw granules by value, so the base builder lets
+        them widen to the whole request window. A short exact literal only prunes by
+        key/value bloom, and with an unbounded witness this seed's cost has two
         terms, neither of which a wall-clock ceiling tracks:
 
         * A flat term, which dominates: the child witness in this CTE is
-          deliberately time-unbounded (any live span of a candidate trace may
-          carry the value), so every statement scans the trace-id bloom's
-          false positives across retained history. A measured unbounded child
+          time-unbounded in that mode (any raw span of a candidate trace may
+          carry the value, whenever it started), so every statement scans the
+          trace-id bloom's false positives across retained history. A measured unbounded child
           lookup over a fifteen-minute dense root window read 52.4M rows /
           4.29 GB after the trace-id, key and value blooms had each roughly
           halved the granule count (55,689 -> 27,219 -> 14,528 -> 9,069 ->
@@ -624,21 +668,23 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
         ceiling walked one slice at a time down a 166 h sparse tail. Anywhere
         the user's own results live, every width is over budget instead, and
         there the budget must not be allowed to buy less coverage than the
-        fixed ceiling it replaces. Hence the floor, and the initial width, are
-        both the four hours that ceiling was: this lane only ever *widens* on
-        sparse history and otherwise holds at four hours, which is at least
-        the previous behaviour in both regimes. Halving therefore applies only
-        to a width that first grew above four hours and then ran into data.
+        fixed ceiling it replaces. Hence the unbounded mode's floor, and its
+        initial width, are both the four hours that ceiling was: there this
+        lane only ever *widens* on sparse history and otherwise holds at four
+        hours, which is at least the previous behaviour in both regimes.
+        Halving therefore applies only to a width that first grew above four
+        hours and then ran into data.
 
-        The four-hour floor is provisional. It is a deliberately conservative
-        choice pending the owner decision on bounding this seed's child
-        witness, which is what actually owns the dense per-statement cost; it
-        is not a measured optimum, and no measurement here says where
-        narrowing stops paying. (The 3.66M rows / 4.47 GB / 3.8 s at
-        ``max_threads`` 1, 1.76 s at 2 sometimes quoted for a dense four-hour
-        slice belongs to that *bounded*-witness design experiment, whose child
-        lookup is confined to the window plus an hour of slack. It is not a
-        measurement of the seed this builder emits.)
+        The four-hour floor is provisional, and it is provisional precisely
+        because the flat term above is what a narrower slice cannot buy back.
+        It is not a measured optimum, and no measurement says where narrowing
+        an unbounded-witness statement stops paying. Bounding the witness is
+        the other half of that question, and it is what the slack switch
+        settles: the 3.66M rows / 4.47 GB / 3.8 s at ``max_threads`` 1 and
+        1.76 s at 2 measured for a dense four-hour slice is a measurement of
+        the *bounded* statement, confined to the window plus an hour of slack -
+        which this builder emits only when the switch is on, and never at the
+        default.
 
         Slices at or above an hour are whole-hour multiples of the immutable
         ``toStartOfHour`` primary-key prefix; their boundaries snap onto an hour
@@ -649,11 +695,83 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
         """
         if not self._uses_short_text_candidate_seed():
             return None
+        floor = (
+            _SHORT_TEXT_SEED_BOUNDED_WITNESS_FLOOR
+            if self._short_text_seed_witness_slack()
+            else _SHORT_TEXT_SEED_PROVISIONAL_FLOOR
+        )
         return FilterSeedWidthPolicy(
-            initial_width=_SHORT_TEXT_SEED_PROVISIONAL_FLOOR,
-            min_width=_SHORT_TEXT_SEED_PROVISIONAL_FLOOR,
+            initial_width=floor,
+            min_width=floor,
             target_read_rows=settings.FILTER_SELECTOR_TEXT_SEED_TARGET_READ_ROWS,
         )
+
+    def _short_text_seed_witness_slack(self) -> timedelta:
+        """Hours of lag this lane's witness envelope allows; zero means none.
+
+        Zero is the shipped contract and the default: no envelope is emitted
+        at all and the witness CTE stays time-unbounded. The setting is read
+        per statement rather than cached, so an operator change takes effect
+        on the next read; a change made mid-pagination shifts candidacy
+        between hops of one cursor, because the slack is not carried in the
+        signed cursor payload.
+        """
+
+        if not self._uses_short_text_candidate_seed():
+            return timedelta(0)
+        return timedelta(
+            hours=max(int(settings.FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS), 0)
+        )
+
+    def _scalar_candidate_witness_envelope(
+        self, *, root_start: datetime, root_end: datetime
+    ) -> tuple[str, dict[str, Any]]:
+        """Bound the short exact-string seed's witness scan, when switched on.
+
+        Off (slack zero, the default) this emits nothing and the statement is
+        byte-identical to the unbounded contract. On, the witness must start
+        inside ``[hour_floor(root_start) - slack, hour_ceil(root_end) + slack)``
+        where ``[root_start, root_end]`` is the interval of roots the calling
+        statement can publish. Every root it publishes therefore keeps any
+        witness within ``slack`` of itself, and the hour alignment matches the
+        immutable ``toStartOfHour`` primary-key prefix the bound prunes on.
+
+        The bound is spelled exactly like the sibling root-population subquery
+        in the same CTE - epoch microseconds through
+        ``fromUnixTimestamp64Micro`` - rather than as a datetime literal, so
+        neither bound depends on how the driver or the server resolves a
+        timezone. Because both ends are whole hours this is identical in
+        meaning to the measured shape, which additionally spelled the
+        hour-aligned prefix out.
+
+        This narrows candidacy only. The exact latest-state classifier is a
+        separate statement and stays unbounded, so a published row is still an
+        exact any-span match; the envelope can only omit a trace whose sole
+        witness lies outside it. Physical versions and tombstones still
+        participate - the CTE deliberately carries no ``is_deleted`` filter -
+        so this bounds *when* a witness row starts, never which versions count.
+        """
+
+        slack = self._short_text_seed_witness_slack()
+        if not slack:
+            return "", {}
+        witness_start = _floor_hour(root_start) - slack
+        witness_end = _ceil_hour(root_end) + slack
+        fragment = (
+            "\n              AND start_time >= "
+            "fromUnixTimestamp64Micro(%(filter_witness_start_us)s)"
+            "\n              AND start_time < "
+            "fromUnixTimestamp64Micro(%(filter_witness_end_us)s)"
+        )
+        return fragment, {
+            # The datetime pair is bound for the orchestration contract only,
+            # exactly as ``filter_slice_start``/``_end`` are; SQL reads the
+            # microsecond pair so a boundary microsecond cannot be rounded off.
+            "filter_witness_start": witness_start,
+            "filter_witness_end": witness_end,
+            "filter_witness_start_us": _unix_microseconds(witness_start),
+            "filter_witness_end_us": _unix_microseconds(witness_end),
+        }
 
     def recommended_filter_classify_batch_size(self) -> int | None:
         if self._uses_attribute_coordinate_replay():
@@ -731,7 +849,15 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
             if values and all(isinstance(value, str) for value in values):
                 yield plan, witness, values
 
-    def _public_long_text_candidate_seed_plan(self):
+    @property
+    def _long_text_candidate_seed_plan(self):
+        """Memoize the long-text plan against the inputs that decided it."""
+
+        return self._seed_plan_cached(
+            "long_text", self._compute_long_text_candidate_seed_plan
+        )
+
+    def _compute_long_text_candidate_seed_plan(self):
         """Find a selective, compiler-proven necessary typed-string witness.
 
         Long positive text filters otherwise classify hundreds of unrelated
@@ -769,7 +895,15 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
             )
         return None
 
-    def _public_short_text_candidate_seed_plan(self):
+    @property
+    def _short_text_candidate_seed_plan(self):
+        """Memoize the short-text plan against the inputs that decided it."""
+
+        return self._seed_plan_cached(
+            "short_text", self._compute_short_text_candidate_seed_plan
+        )
+
+    def _compute_short_text_candidate_seed_plan(self):
         """Seed short exact strings from the compiler's own typed value bloom.
 
         Selectivity policy for positive typed-string acquisition. A seed is
@@ -834,6 +968,14 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
                 return plan
         return None
 
+    def _public_long_text_candidate_seed_plan(self):
+        """Stable seam over the once-compiled long-text plan."""
+        return self._long_text_candidate_seed_plan
+
+    def _public_short_text_candidate_seed_plan(self):
+        """Stable seam over the once-compiled short-text plan."""
+        return self._short_text_candidate_seed_plan
+
     def _public_text_candidate_seed_plan(self):
         """Either typed-string regime, whichever value index is available."""
         return (
@@ -841,13 +983,90 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
             or self._public_short_text_candidate_seed_plan()
         )
 
-    def _uses_short_text_candidate_seed(self) -> bool:
-        """True when the short exact-string lane is the active seed plan."""
+    @property
+    def _short_text_candidate_seed_lane(self) -> bool:
+        """Compile the three seed plans once per input shape, not per hook call.
+
+        Deciding this recompiles ``_partition_trace_filter_plans`` several
+        times over, and the bounded-witness hooks
+        (``_scalar_candidate_witness_envelope`` ->
+        ``_short_text_seed_witness_slack`` -> here) ask for it on every
+        statement and twice inside ``filter_seed_width_policy``.
+
+        The cache is keyed on the inputs that decide the answer, NOT held for
+        the life of the builder. An earlier revision of this memo asserted that
+        ``filters`` is assigned in ``__init__`` and never rebound; that premise
+        is false. ``tracer/selectors/eval_tasks/row_resolver.py`` rebinds
+        ``builder.filters`` after construction on a production path, and at
+        least five test modules do the same. That rebind is harmless today only
+        because its builder carries ``bounded_identity_only=True``, which forces
+        every text seed plan below ``_uses_scalar_coordinate_replay`` to None
+        whatever the filters say - a coincidence of the current call sites, not
+        an invariant. A lane-changing rebind against a life-of-builder cache
+        would serve a stale plan, and a stale plan here means a seed statement
+        restricted by a predicate the caller has removed: an under-inclusive
+        page that silently drops rows.
+
+        So ``_seed_plan_cache_key`` freezes every input the three plans read -
+        filters, search, sort params, project scope, project version and the
+        ``_bounded_*`` flags - and any change to them recomputes. Only the
+        plans are cached: the slack setting and the width policy are still read
+        per statement, so an operator change still takes effect on the next
+        read.
+        """
+        return self._seed_plan_cached("lane", self._compute_short_text_seed_lane)
+
+    def _compute_short_text_seed_lane(self) -> bool:
         return (
             super()._public_scalar_candidate_seed_plan() is None
             and self._public_long_text_candidate_seed_plan() is None
             and self._public_short_text_candidate_seed_plan() is not None
         )
+
+    def _seed_plan_cache_key(self) -> tuple[str, ...]:
+        """Freeze every input the three text seed plans read.
+
+        ``repr`` rather than a hash: the filter leaves carry datetimes, UUIDs
+        and nested dicts, and an equal-valued rebind whose dicts were built in
+        a different insertion order only costs a recompute, never a wrong
+        answer. Anything that is not read here must not be able to change the
+        plans.
+        """
+
+        return (
+            repr(self.filters),
+            repr(self.search),
+            repr(self.sort_params),
+            repr(getattr(self, "project_id", None)),
+            repr(getattr(self, "project_ids", None)),
+            repr(self.project_version_id),
+            repr(
+                (
+                    self._bounded_identity_only,
+                    self._bounded_internal_scan,
+                    self._bounded_bulk_scan,
+                    self._bounded_population_proof,
+                    self._bounded_sampling_rate,
+                )
+            ),
+        )
+
+    def _seed_plan_cached(self, name: str, compute: Callable[[], Any]) -> Any:
+        """Return ``compute()`` memoized for as long as the inputs hold still."""
+
+        key = self._seed_plan_cache_key()
+        cached = getattr(self, "_seed_plan_memo", None)
+        if cached is None or cached[0] != key:
+            cached = (key, {})
+            self._seed_plan_memo = cached
+        values = cached[1]
+        if name not in values:
+            values[name] = compute()
+        return values[name]
+
+    def _uses_short_text_candidate_seed(self) -> bool:
+        """True when the short exact-string lane is the active seed plan."""
+        return self._short_text_candidate_seed_lane
 
     def _public_boolean_candidate_seed_plan(self):
         leaves = self._active_non_time_filters()
