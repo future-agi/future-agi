@@ -12,6 +12,7 @@ from unittest import mock
 import pytest
 from clickhouse_driver import Client
 
+from conftest import require_live_clickhouse
 from tracer.selectors.trace_filter_reads import read_bounded_filter_page
 from tracer.services.clickhouse.attribute_reads import (
     _STRATIFIED_CANDIDATE_SQL,
@@ -58,6 +59,7 @@ def _unix_microseconds(value: datetime) -> int:
 
 @pytest.fixture(scope="module")
 def ch_client():
+    require_live_clickhouse()
     client = Client(
         host=CH_HOST,
         port=CH_NATIVE_PORT,

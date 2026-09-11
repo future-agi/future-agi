@@ -10,6 +10,8 @@ import pytest
 from django.conf import settings
 from django.test import override_settings
 
+from conftest import require_live_clickhouse
+
 _CH_TABLES_TO_TRUNCATE = [
     "spans",
     "traces",
@@ -61,6 +63,7 @@ def ch_client():
     The wrapper exposes a ``.command()`` method so the rest of the suite can
     pretend it's talking to the clickhouse_connect HTTP client.
     """
+    require_live_clickhouse()
     try:
         from clickhouse_driver import Client
     except ImportError:
