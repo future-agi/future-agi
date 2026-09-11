@@ -89,6 +89,10 @@ def picker_leaves(width: int = 1, *, operation: str = "in", **kwargs):
     )
 
 
+# Pinned at the legacy slack of zero: this test asserts the UNBOUNDED witness
+# CTE, one start_time pair and no envelope. The default is now one hour, whose
+# extra pair is asserted by the bounded-witness tests further down.
+@override_settings(FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS=0)
 @pytest.mark.parametrize("width", [1, 2, 5, 10])
 @pytest.mark.parametrize(
     "make",
@@ -356,9 +360,20 @@ def test_short_text_declares_a_row_budget_and_the_other_lanes_do_not():
 
     policy = picker_leaves(2).filter_seed_width_policy()
     assert policy is not None
-    assert policy.initial_width == timedelta(hours=4)
-    assert policy.min_width == timedelta(hours=4)
+    # The default is now the bounded-witness mode, whose floor is one hour:
+    # there the statement's cost really is linear in the envelope's hours, so
+    # a narrower slice really is a cheaper statement.
+    assert policy.initial_width == timedelta(hours=1)
+    assert policy.min_width == timedelta(hours=1)
+    # The unprobed/unsignalled cap does not move with the mode: it is the
+    # fixed ceiling the budget replaced, in both modes.
     assert policy.unsignalled_cap == timedelta(hours=4)
+    assert policy.unprobed_cap == timedelta(hours=4)
+    with override_settings(FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS=0):
+        legacy = picker_leaves(2).filter_seed_width_policy()
+    assert legacy.initial_width == timedelta(hours=4)
+    assert legacy.min_width == timedelta(hours=4)
+    assert legacy.unsignalled_cap == timedelta(hours=4)
     assert (
         policy.target_read_rows == settings.FILTER_SELECTOR_TEXT_SEED_TARGET_READ_ROWS
     )
@@ -378,8 +393,8 @@ def test_short_text_declares_a_row_budget_and_the_other_lanes_do_not():
 @pytest.mark.parametrize(
     "window,expected",
     [
-        (timedelta(days=7), timedelta(hours=4)),
-        (timedelta(hours=2), timedelta(hours=2)),
+        (timedelta(days=7), timedelta(hours=1)),
+        (timedelta(hours=2), timedelta(hours=1)),
     ],
 )
 def test_declared_initial_width_is_the_policy_floor_clamped_to_the_request(
@@ -1131,6 +1146,8 @@ def _lane_read(
     return transport, page
 
 
+# The unbounded mode's own schedule: four-hour floor, four-hour opening width.
+@override_settings(FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS=0)
 @pytest.mark.parametrize(
     "window,statements",
     [(timedelta(days=7), 6), (timedelta(days=30), 8), (timedelta(days=365), 12)],
@@ -1165,6 +1182,7 @@ def test_the_real_lane_crosses_a_sparse_window_inside_the_seed_budget(
     assert transport.seed_widths[-2] > timedelta(hours=4)
 
 
+@override_settings(FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS=0)
 def test_the_real_lane_holds_dense_slices_at_the_floor():
     """Where the results are, the budget must not buy less than the old ceiling.
 
@@ -1191,6 +1209,7 @@ def test_the_real_lane_holds_dense_slices_at_the_floor():
     assert page.continuation_slice_end == END - timedelta(hours=24)
 
 
+@override_settings(FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS=0)
 def test_an_unmeasured_real_lane_transport_reproduces_the_ninety_six_hour_cap():
     """The negative control: the budget is only as good as the progress it reads.
 
@@ -1454,6 +1473,7 @@ def _picker_lane_read(
     return transport, page
 
 
+@override_settings(FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS=0)
 def test_the_production_picker_filter_widens_on_a_sparse_tail_and_holds_at_four_hours():
     """The whole point of the budget, on the builder and kwargs the view sends.
 
@@ -1498,6 +1518,7 @@ _ABSENT_THEN_DENSE = {
 @pytest.mark.parametrize(
     "clusters", _ABSENT_THEN_DENSE.values(), ids=_ABSENT_THEN_DENSE
 )
+@override_settings(FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS=0)
 def test_root_time_discovery_never_pins_this_lane_below_its_floor(clusters):
     """Discovery must not hand the budget a window the budget cannot leave.
 
@@ -1753,8 +1774,7 @@ def test_the_seed_statement_is_byte_identical_while_the_switch_is_off():
     difference may be the two-line envelope and its own parameters.
     """
 
-    assert settings.FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS == 0
-    sql, params = _seed()
+    sql, params = _seed(slack=0)
 
     assert sql.startswith(_head_seed_cte_prewhere())
     assert _ENVELOPE_SQL not in sql

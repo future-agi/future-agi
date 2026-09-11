@@ -632,6 +632,12 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
         Both modes keep the same ``target_read_rows`` and the same four-hour
         ``unsignalled_cap``: a transport that reports no progress justifies no
         more than the ceiling this lane started from, whichever mode is on.
+        That number is also the UNPROBED cap - the widest slice either mode may
+        issue on the strength of the previous statement alone. Anything wider
+        must be costed first by ``build_filter_seed_density_probe_query``,
+        because the doubling rule is blind to the next slice's contents and a
+        sparse tail that ends in dense history is exactly where that blindness
+        is expensive.
         The post-discovery reset follows the floor by construction - it is
         ``max(1 h, policy.min_width)`` - so it is one hour in the bounded mode
         and four in the unbounded one, with no second constant to keep in step.
@@ -1206,6 +1212,37 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
         return super().filter_candidate_seed_is_optional()
 
     def build_filter_candidate_seed_page(self, **kwargs):
+        """Acquire one slice of candidate roots. THE CONTRACT this lane obeys.
+
+        Three sentences a reviewer should be able to hold at once, because
+        every knob below is a consequence of one of them.
+
+        1. ACQUISITION ONLY. This statement produces a candidate superset. The
+           exact latest-state classifier is a separate, unbounded statement and
+           it alone decides membership; a published row is always an exact
+           any-span match. Nothing here can make a non-match appear.
+        2. A SEED STATEMENT NEVER KNOWINGLY READS MORE THAN ~THE ROW BUDGET.
+           The width of the slice is chosen from the rows the previous
+           statement read (``filter_seed_width_policy``), and any width above
+           the unprobed cap must first be costed by a density probe
+           (``build_filter_seed_density_probe_query``). A sparse tail is
+           therefore crossed at probe cost, ~1-2 MB a hop, not at slice cost.
+           Narrowing never skips: slices are contiguous and half-open, so a
+           shrunk slice defers its older part to the next adjacent one.
+        3. THE WITNESS ENVELOPE IS THE ONE PLACE CANDIDACY IS NARROWED, and it
+           is the one behaviour change a user could observe. With
+           ``FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS`` above zero (one
+           hour by default) a trace is a candidate only if a span carrying the
+           value STARTS within that slack of the roots this statement can
+           publish. A trace whose only matching span arrives more than the
+           slack after its root is omitted from a FILTERED list - it is still
+           in the unfiltered list, still fully readable, and still returned by
+           the same filter over a window that contains the span's own hour.
+           Setting the slack to zero restores the unbounded contract with no
+           deploy. A running pagination keeps the slack it started with, which
+           the signed cursor carries, so the boundary cannot move mid-page.
+        """
+
         # A long-text witness starts with the requested root population, not
         # every retained trace in the project. The child history is unbounded
         # in time; the root interval only selects necessary immutable trace IDs.
