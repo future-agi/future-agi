@@ -1920,7 +1920,10 @@ def read_bounded_filter_page(
         if counted is None:
             return min(width, seed_width_policy.unprobed_cap)
         fitted = seed_width_policy.probed_width(width, counted)
-        if fitted >= width:
+        if fitted >= width or fitted <= seed_width_policy.min_width:
+            # Either the proposal stood, or the fit already reached the floor -
+            # and nothing a refinement could answer would narrow a floor-width
+            # slice, so asking would be a statement with no decision behind it.
             return fitted
         # THE REFUSAL CASE, AND THE SECOND QUESTION. ``probed_width`` divides
         # one estimate by one width, so the sub-slice it proposes is only as

@@ -1346,6 +1346,32 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
         physical version inside them. Both errors point the same way, at a
         narrower issued slice.
 
+        DO NOT "IMPROVE" THE TIME PREDICATE INTO ``toStartOfHour(start_time)``.
+        It looks like the tighter spelling of the primary-key component, and
+        it would silently break this statement in the one direction that is
+        not safe. ``spans`` carries aggregate PROJECTIONs keyed on
+        ``(project_id, toStartOfHour(start_time) AS hour, ...)`` (schema 002
+        and 007). They do not store ``start_time``, so a predicate on the raw
+        column cannot be answered from them and the estimate describes the
+        base table - which is what the production measurement of the counting
+        form showed, at 492 MB of base-table reads. Spelled as ``hour``, the
+        optimizer could route the statement to a projection instead, and
+        ``rows`` would then be that projection's AGGREGATE rows: orders of
+        magnitude smaller than the slice, an estimate far below the budget,
+        and the widest possible slice APPROVED. Raw ``start_time`` bounds are
+        also what this lane's own seed and witness emit, and the hour-aligned
+        range prunes identically through the key expression's monotonicity -
+        plus the table's ``PARTITION BY toDate(start_time)``, which bounds the
+        parts the estimate can even consider.
+
+        One consequence of the ``EXPLAIN`` prefix worth stating: the v2
+        rewrite boundary appends its required ``SETTINGS`` only to statements
+        beginning ``SELECT``/``WITH``, so this one carries none. Both settings
+        it would add are inert here - there is no ``FINAL`` for
+        ``use_skip_indexes_if_final`` to protect, and ``optimize_use_projections``
+        already defaults to on while the paragraph above keeps projections out
+        of reach.
+
         It answers a COST question only. It never decides membership, never
         prunes candidates and never reaches the published page: shrinking a
         slice defers its older part to the next contiguous slice, so the scan

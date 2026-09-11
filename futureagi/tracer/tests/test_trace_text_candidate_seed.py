@@ -2690,6 +2690,51 @@ def test_the_density_probe_asks_the_cheapest_question_that_answers_the_cost():
     _render_driver_sql(sql, params)
 
 
+def test_the_density_probe_never_lets_an_aggregate_projection_answer_it():
+    """The one edit that would break this statement in the unsafe direction.
+
+    ``spans`` carries aggregate projections keyed on ``(project_id, hour)``.
+    They store no ``start_time``, so a raw-column predicate cannot be answered
+    from them and the estimate describes the base table. Spelling the same
+    range as ``toStartOfHour(start_time)`` would let the optimizer route the
+    statement to a projection, and its aggregate row count would look like an
+    almost-empty slice - approving the widest proposal instead of refusing it.
+    """
+
+    sql, _ = picker_leaves(2).build_filter_seed_density_probe_query(
+        slice_start=END - timedelta(hours=8), slice_end=END
+    )
+
+    assert "toStartOfHour" not in sql
+    assert "start_time >= fromUnixTimestamp64Micro" in sql
+    assert "GROUP BY" not in sql
+
+
+def test_an_org_scoped_read_offers_no_density_probe_at_all():
+    """The only project predicate this statement can carry is a single id.
+
+    ``EXPLAIN`` plans around a subquery by executing it, so the probe's
+    contract forbids one. The project scope is the only predicate that could
+    ever have become one - and it cannot, because an org-scoped read does not
+    use this lane at all, so the ``project_id IN %(project_ids)s`` form never
+    reaches the probe. Pinned here so a future lane widening is made to answer
+    this question rather than inherit it.
+    """
+
+    org_scoped = TraceListQueryBuilderV2(
+        project_id=None,
+        project_ids=[PROJECT, "00000000-0000-4000-8000-00000000000f"],
+        filters=picker_leaves(2).filters,
+        page_size=25,
+    )
+
+    assert org_scoped.supports_filter_seed_density_probe() is False
+    with pytest.raises(ValueError, match="density probe is unavailable"):
+        org_scoped.build_filter_seed_density_probe_query(
+            slice_start=END - timedelta(hours=8), slice_end=END
+        )
+
+
 def test_the_density_probe_reads_its_own_estimate_table_back():
     """The lane that emits the statement is the one that reduces its result.
 
