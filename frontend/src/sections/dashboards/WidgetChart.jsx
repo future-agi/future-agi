@@ -8,6 +8,7 @@ import { useDashboardQuery } from "src/hooks/useDashboards";
 import { format } from "date-fns";
 import {
   escapeHtml,
+  formatDistributionCount,
   formatValueWithConfig,
   fromAxisConfigPayload,
   getAutoDecimals,
@@ -92,6 +93,7 @@ function getApexType(chartType) {
     bar: "bar",
     stacked_bar: "bar",
     pie: "pie",
+    distribution: "bar",
   };
   return map[chartType] || "line";
 }
@@ -174,6 +176,7 @@ export default function WidgetChart({
   const isPie = chartType === "pie";
   const isTable = chartType === "table";
   const isMetricCard = chartType === "metric";
+  const isDistribution = chartType === "distribution";
   const isLineChart = apexType === "line";
   const connectsAcrossMissingBuckets =
     shouldConnectAcrossMissingBuckets(apexType);
@@ -469,8 +472,11 @@ export default function WidgetChart({
       : null;
   const result = renderableSnapshot?.result;
   const { renderableMetrics, series } = useMemo(
-    () => getDashboardMetricSeriesState(result?.metrics),
-    [result?.metrics],
+    () =>
+      getDashboardMetricSeriesState(result?.metrics, {
+        distribution: isDistribution,
+      }),
+    [result?.metrics, isDistribution],
   );
   const hasRunnableQuery = Boolean(queryConfig?.metrics?.length);
   // Until a complete renderable snapshot exists, the query is unresolved—not empty. This
@@ -745,6 +751,86 @@ export default function WidgetChart({
             );
           })}
         </Stack>
+      </Box>
+    );
+  }
+
+  if (isDistribution) {
+    const categories = chartSeries[0]?.data?.map((point) => point.x) || [];
+    const distributionOptions = {
+      chart: {
+        type: "bar",
+        toolbar: { show: false },
+        animations: { enabled: false },
+      },
+      plotOptions: {
+        bar: {
+          horizontal: false,
+          columnWidth: "55%",
+          borderRadius: 3,
+        },
+      },
+      dataLabels: {
+        enabled: true,
+        formatter: formatDistributionCount,
+        style: { colors: [theme.palette.text.primary] },
+      },
+      xaxis: {
+        type: "category",
+        categories,
+        labels: {
+          show: axisConfig?.xAxis?.visible !== false,
+          rotate: -35,
+          trim: true,
+          style: { colors: theme.palette.text.secondary, fontSize: "11px" },
+        },
+        title: axisConfig?.xAxis?.label
+          ? {
+              text: axisConfig.xAxis.label,
+              style: { fontSize: "12px", color: theme.palette.text.secondary },
+            }
+          : undefined,
+      },
+      yaxis: {
+        show: axisConfig?.leftY?.visible !== false,
+        labels: {
+          style: { colors: theme.palette.text.secondary, fontSize: "11px" },
+          formatter: formatDistributionCount,
+        },
+      },
+      tooltip: {
+        y: { formatter: formatDistributionCount },
+      },
+      colors: chartSeries.map((s) => colorFor(s.name)),
+      legend: { show: false },
+      grid: { borderColor: theme.palette.divider, strokeDashArray: 3 },
+    };
+
+    return (
+      <Box
+        ref={containerRef}
+        sx={{
+          width: "100%",
+          height: "100%",
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        <QueryReadStatus
+          unavailable={readUnavailable}
+          hasSnapshot={Boolean(renderableSnapshot)}
+          retryUnavailable={retryUnavailable}
+          pollingPaused={pollingPaused}
+        />
+        <Box sx={{ flex: 1, minHeight: 0 }}>
+          <ReactApexChart
+            options={distributionOptions}
+            series={plottedChartSeries}
+            type="bar"
+            height={chartHeight}
+          />
+        </Box>
       </Box>
     );
   }

@@ -2,7 +2,82 @@ import { getExactAggregationReadState } from "src/utils/queryReadState";
 
 export const DEFAULT_DECIMALS = 2;
 
-export const getDashboardMetricSeriesState = (metrics = []) => {
+export const isDistributionChart = (chartType) => chartType === "distribution";
+
+const DISTRIBUTION_OUTPUT_TYPES = new Set(["SCORE", "NUMERIC"]);
+
+const normalizeDistributionOutputType = (outputType) =>
+  String(outputType || "SCORE")
+    .replaceAll("/", "_")
+    .replaceAll(" ", "_")
+    .toUpperCase();
+
+export const isDistributionMetric = (metric) => {
+  const outputType = normalizeDistributionOutputType(
+    metric?.output_type || metric?.outputType,
+  );
+  const source = metric?.source || "traces";
+  const type = metric?.type || metric?.category;
+  return (
+    ["eval_metric", "evalMetric"].includes(type) &&
+    ["traces", "both", "all"].includes(source) &&
+    DISTRIBUTION_OUTPUT_TYPES.has(outputType)
+  );
+};
+
+export const getDistributionConfigError = (metrics = [], breakdowns = []) => {
+  if (metrics.length !== 1) {
+    return "Distribution charts require exactly one numeric eval metric.";
+  }
+  if (!isDistributionMetric(metrics[0])) {
+    return "Distribution charts require a numeric trace eval metric.";
+  }
+  if (breakdowns.some((breakdown) => breakdown?.id || breakdown?.name)) {
+    return "Distribution charts do not support breakdowns.";
+  }
+  return null;
+};
+
+export const buildDistributionQueryConfig = (queryConfig) => ({
+  ...queryConfig,
+  query_mode: "distribution",
+  metrics: (queryConfig.metrics || []).map((metric) => ({
+    ...metric,
+    aggregation: "count",
+  })),
+});
+
+const formatBucketBoundary = (value) => {
+  if (
+    value === null ||
+    value === undefined ||
+    (typeof value === "string" && value.trim() === "")
+  ) {
+    return "";
+  }
+  const number = Number(value);
+  return Number.isFinite(number)
+    ? number.toLocaleString(undefined, { maximumFractionDigits: 6 })
+    : "";
+};
+
+export const formatDistributionBucketLabel = (point) => {
+  const start = formatBucketBoundary(point?.bucket_start);
+  const end = formatBucketBoundary(point?.bucket_end);
+  return start && end ? `${start} - ${end}` : "Unknown range";
+};
+
+export const formatDistributionCount = (value) => {
+  const count = Number(value);
+  return Number.isFinite(count)
+    ? count.toLocaleString(undefined, { maximumFractionDigits: 0 })
+    : "-";
+};
+
+export const getDashboardMetricSeriesState = (
+  metrics = [],
+  { distribution = false } = {},
+) => {
   const metricReadStates = (Array.isArray(metrics) ? metrics : []).map(
     (metric) => ({
       metric,
@@ -45,8 +120,14 @@ export const getDashboardMetricSeriesState = (metrics = []) => {
         unit: metric.unit ?? "",
         breakdownName: metricSeries.name,
         data: (metricSeries.data || []).map((point) => ({
-          x: new Date(point.timestamp).getTime(),
+          x: distribution
+            ? formatDistributionBucketLabel(point)
+            : new Date(point.timestamp).getTime(),
           y: point.value != null ? Number(point.value) : null,
+          ...(distribution && {
+            bucketStart: point.bucket_start,
+            bucketEnd: point.bucket_end,
+          }),
         })),
       });
     }
