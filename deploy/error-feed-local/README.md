@@ -135,6 +135,32 @@ recovered and Kafka was restarted; the current stack's migrations through
 
 ### Current-stack verification
 
+**Latest result, September 12: one live-model synthetic collector-to-Feed check
+passed on the existing stack.** Trace
+`793bda8f-5add-4f66-88c5-7bd040790bf9` produced report
+`052cd421-8f74-43bd-9fd2-dbe33c4fe8e4` and Feed cluster `S-654E2333`.
+Omega read both spans, correctly identified USD 5 refunded against a USD 10
+requirement, and cited the child operation and root outcome. Existing clustering
+completed, and the authenticated Feed API returned the persisted issue with one
+trace and one occurrence. Six Gemini 3.8 Flash calls used 17,179 input and 2,894
+output tokens; gateway-reported cost was **$0.023737**. The tenant-pinned durable
+receipt retained that cost. Billing delivery was skipped for this non-cloud local
+deployment; no customer charge was emitted. This is an integration smoke result,
+not a precision/recall benchmark, browser test, or production-readiness claim.
+
+The successful worker includes local Omega commit `bc3614dc`. Its input guard
+counts the serialized gateway HTTP body, not the full runtime request containing
+duplicated, unsent agent metadata. All 21 focused worker tests passed. The byte
+guard remains an approximation, not an exact tokenizer limit. The first failed
+run below did not retain its cause, so this fix does not establish that cause.
+
+Docker was restarted inside Colima with explicit approval; containers and volumes
+were preserved. An intermediate replay incorrectly reused span IDs with changed
+start times, leaving two CH rows per ID even under FINAL. The worker rejected that
+fixture before inference (zero calls/cost); those records remain intact. Use fresh
+trace/span IDs for a new fixture, or preserve original timestamps for a genuine
+retry. The successful run used fresh IDs in the same marked project.
+
 `current_stack_e2e.py` defaults to a read-only prerequisite report. Its opt-in run
 creates one marked synthetic Observe project, enables Omega only there, ingests
 through the real collector, and checks the durable notification, report, existing
@@ -143,7 +169,7 @@ remain disabled. It uses the fixed-operation `verify_omega_current_stack` bootst
 command; ad-hoc Django shell execution remains forbidden. API-key files must be
 private and outside the repository. Run `--help` for required scope and paths.
 
-The September 12 current-stack attempt is **not E2E-passed**: authentication,
+The initial September 12 current-stack attempt **did not pass E2E**: authentication,
 project creation/configuration and both synthetic spans in ClickHouse were
 verified. The initial Kafka handoff failed because KafkaJS lacked the collector's
 Snappy codec. Adding and image-testing the pinned decoder allowed the retained
