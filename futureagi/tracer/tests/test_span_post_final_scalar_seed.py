@@ -143,7 +143,7 @@ def test_range_values_are_only_outside_final_and_probe_stays_key_only():
     target = builder()
     sql, params = seed(target)
     before, after = sql.split(") AS latest_seed_spans", 1)
-    assert "SELECT * FROM spans FINAL" in before
+    assert "argMax(tuple(" in before and "FINAL" not in before
     assert "SELECT DISTINCT project_id" in before
     assert "has(attrs_number.keys," in before
     assert "latest_filter_param_" not in before
@@ -155,13 +155,16 @@ def test_range_values_are_only_outside_final_and_probe_stays_key_only():
     assert params["latest_filter_param_0_low"] == 1.0
     assert params["latest_filter_param_0_high"] == 3.0
     for setting in (
-        "use_skip_indexes_if_final = 0",
         "optimize_move_to_prewhere = 0",
-        "optimize_move_to_prewhere_if_final = 0",
-        "enable_optimize_predicate_expression_to_final_subquery = 0",
         "query_plan_merge_expressions = 0",
     ):
         assert setting in sql
+    # The FINAL-only suppressions went with the FINAL sources they guarded.
+    for retired in (
+        "optimize_move_to_prewhere_if_final = 0",
+        "enable_optimize_predicate_expression_to_final_subquery = 0",
+    ):
+        assert retired not in sql
     old = builder(cls=KeyOnlyV2)
     old_sql, _ = seed(old)
     assert before == old_sql.split(") AS latest_seed_spans", 1)[0]

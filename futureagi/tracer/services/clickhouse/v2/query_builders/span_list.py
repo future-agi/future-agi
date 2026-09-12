@@ -13,6 +13,7 @@ table on the CH25 connection; `build_annotation_query` retains its own source.
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 
 from tracer.services.clickhouse.query_builders.filters import normalize_filter_op
@@ -27,6 +28,92 @@ from tracer.services.clickhouse.query_builders.span_list import (
 from tracer.services.clickhouse.v2.query_builders._rewrite import V2RewriteMixin
 from tracer.services.clickhouse.v2.query_builders.filters import (
     ClickHouseFilterBuilderV2,
+    rewrite_v1_sql_to_v2,
+)
+
+# Every stored CH25 ``spans`` column, in the declared order of
+# ``v2/schema/002_spans_v2.sql`` — that is, exactly the set an ordinary
+# ``SELECT *`` returns (MATERIALIZED and ALIAS columns are excluded; no later
+# schema file adds a stored column). The latest-state collapse that replaced
+# ``FROM spans FINAL`` projects this set verbatim, so no consumer of the former
+# source loses a column. ``test_span_latest_state_argmax`` pins it against the
+# schema files; a stored column added there must be added here too.
+_PHYSICAL_SPAN_COLUMNS = (
+    "project_id",
+    "observation_type",
+    "service_name",
+    "start_time",
+    "trace_id",
+    "id",
+    "parent_span_id",
+    "name",
+    "end_time",
+    "latency_ms",
+    "org_id",
+    "project_version_id",
+    "end_user_id",
+    "trace_session_id",
+    "prompt_version_id",
+    "prompt_label_id",
+    "custom_eval_config_id",
+    "status",
+    "status_message",
+    "model",
+    "provider",
+    "gen_ai_system",
+    "gen_ai_operation",
+    "operation_name",
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+    "cost",
+    "attrs_string",
+    "attrs_number",
+    "attrs_bool",
+    "attributes_extra",
+    "resource_attrs",
+    "metadata",
+    "input",
+    "output",
+    "input_gcs_url",
+    "output_gcs_url",
+    "tags",
+    "span_events",
+    "eval_status",
+    "semconv_source",
+    "created_at",
+    "updated_at",
+    "is_deleted",
+    "_version",
+)
+
+# The deployed ReplacingMergeTree sorting key, in its declared order. The hour
+# is a key *expression*, so it is grouped rather than selected; the other five
+# are plain key columns and pass through the collapse unchanged.
+_PHYSICAL_SPAN_KEY_COLUMNS = (
+    "project_id",
+    "observation_type",
+    "service_name",
+    "trace_id",
+    "id",
+)
+_PHYSICAL_SPAN_GROUP_BY_SQL = (
+    "project_id, observation_type, service_name, "
+    "toStartOfHour(start_time), trace_id, id"
+)
+
+# Every consumer of a latest-state source fences on the request/slice window,
+# excludes tombstones and carries the version, and the cursor orders on the
+# full identity. Project that floor unconditionally; every other stored column
+# is projected only when the consuming statement names it, so the collapse
+# reads no more than the ``SELECT * FROM spans FINAL`` it replaced (ClickHouse
+# prunes unused columns out of a ``SELECT *`` subquery, but cannot prune a
+# column that an aggregate names).
+_PHYSICAL_SPAN_FLOOR_COLUMNS = frozenset(
+    {*_PHYSICAL_SPAN_KEY_COLUMNS, "start_time", "is_deleted", "_version"}
+)
+_PHYSICAL_SPAN_COLUMN_REFERENCE_RE = re.compile(
+    r"\b(" + "|".join(_PHYSICAL_SPAN_COLUMNS) + r")\b"
 )
 
 
@@ -60,14 +147,14 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
         "observation_type",
         "service_name",
     )
+    # The two ``*_final`` suppressions this clause used to carry are gone with
+    # the FINAL sources they guarded; they are no-ops on a plain aggregation.
+    # The remaining two still hold: PREWHERE controls alone do not stop outer
+    # exact-time predicates being merged into the source and pruning a
+    # corrected replacement. The boundary-hour RMT fixture covers this CH25
+    # optimizer behavior.
     _FILTER_READ_SETTINGS = (
-        "SETTINGS optimize_move_to_prewhere = 0, "
-        "optimize_move_to_prewhere_if_final = 0, "
-        # PREWHERE controls alone do not stop outer exact-time predicates
-        # being merged into the source and pruning a corrected replacement.
-        # The boundary-hour RMT fixture covers this CH25 optimizer behavior.
-        "enable_optimize_predicate_expression_to_final_subquery = 0, "
-        "query_plan_merge_expressions = 0"
+        "SETTINGS optimize_move_to_prewhere = 0, query_plan_merge_expressions = 0"
     )
     CONTENT_IDENTITY_FIELDS = (
         "project_id",
@@ -84,7 +171,7 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
         A latest matching span must have a physical timestamp in this raw
         population. Stale versions/tombstones only add false positives. Only
         compiler-proven necessary raw witnesses may narrow this proof;
-        project-version, deletion and post-FINAL-only predicates must not.
+        project-version, deletion and latest-state-only predicates must not.
         Positive Score seeds already cover their requested window efficiently.
         """
         start, end = self._bounded_request_window
@@ -168,7 +255,7 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
             and not self._filter_population_plans()
         ):
             # The hourly raw population is a complete superset of the sampled
-            # task population without loading rows through FINAL.
+            # task population without collapsing rows to latest state.
             return end - start
         return (
             end - start
@@ -442,7 +529,7 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
 
     def _filter_seed_plan_predicate(self, plan, *, ordinary_seed):
         # This outer WHERE runs after all versions in each physical hour have
-        # crossed FINAL. Do not substitute it into raw prefix/time discovery,
+        # been collapsed. Do not substitute it into raw prefix/time discovery,
         # whose necessary key witnesses and complete replay remain unchanged.
         if ordinary_seed and plan.post_final_scalar_seed_predicate is not None:
             return f"({plan.post_final_scalar_seed_predicate})"
@@ -451,31 +538,110 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
     def _filter_population_plan_predicate(self, plan, *, ordinary_seed):
         # Equality/IN already have a typed raw value witness. Other scalar
         # leaves retain compiler key-only/absent metadata, never a promoted
-        # post-FINAL predicate. Prefix and time discovery share this policy.
+        # latest-state predicate. Prefix and time discovery share this policy.
         if ordinary_seed and plan.raw_key_witness_predicate:
             return plan.raw_witness_predicate
         return super()._filter_population_plan_predicate(
             plan, ordinary_seed=ordinary_seed
         )
 
-    def _filter_seed_source_sql(self, *, raw_key_predicate=""):
-        # A raw timestamp is not an order bound for its replacement. Resolve
-        # the complete boundary hours before applying slice/keyset/LIMIT or
-        # mutable predicates. Only immutable key restrictions enter FINAL.
-        return self._latest_window_source_sql(
-            "filter_slice", raw_key_predicate=raw_key_predicate
+    @staticmethod
+    def _latest_state_packed_columns(consumer_sql):
+        """The stored columns one latest-state winner tuple carries.
+
+        ``argMax(tuple(<packed columns>), _version)`` elects ONE stored row per
+        ReplacingMergeTree key, so no published field can come from a different
+        version than its neighbours. Equal versions have no storage winner at
+        all; packing the columns into a single tuple still forbids assembling a
+        row out of two tied versions, which is the property the engine's FINAL
+        merge provided and on which the shared compiler's per-column ``argMax``
+        aggregates downstream depend.
+
+        The set is the invariant floor plus every stored column ``consumer_sql``
+        names, so an aggregate never pins a fat payload column the consuming
+        statement does not read. The shared compiler emits legacy column tokens
+        that only reach CH25 names at the rewrite boundary, so resolve those
+        names here before reading the reference set; the rewritten copy is used
+        for that decision alone and never emitted.
+        """
+        referenced = set(
+            _PHYSICAL_SPAN_COLUMN_REFERENCE_RE.findall(
+                rewrite_v1_sql_to_v2(consumer_sql)
+            )
+        )
+        return tuple(
+            column
+            for column in _PHYSICAL_SPAN_COLUMNS
+            if column not in _PHYSICAL_SPAN_KEY_COLUMNS
+            and (column in _PHYSICAL_SPAN_FLOOR_COLUMNS or column in referenced)
         )
 
-    def _filter_anchor_source_sql(self):
-        return self._latest_window_source_sql("filter_anchor")
+    def _latest_state_source_sql(self, alias, *, scope_sql, consumer_sql):
+        """Latest state for every identity the scope admits, as a FROM source.
 
-    def _latest_window_source_sql(self, prefix, *, raw_key_predicate=""):
+        ``scope_sql`` may restrict only immutable primary-key coordinates: all
+        versions of an admitted identity share them, so the collapse input is
+        complete and a stale value or tombstone can only add work, never a
+        public match. Mutable predicates (deletion, exact timestamps, attribute
+        values) stay in the caller's outer scope, where they see latest state.
+
+        ``GROUP BY`` is the deployed sorting key in its declared order, so the
+        ``optimize_aggregation_in_order`` the v2 settings boundary appends can
+        stream the collapse in primary-key order rather than buffering the
+        scope. This replaces ``SELECT * FROM spans FINAL``: predicates,
+        ordering and keysets are unchanged, and the projection covers exactly
+        the columns that source's consumers read.
+
+        The winner tuple is unpacked ONE LEVEL ABOVE the aggregate that builds
+        it. Unpacking it in the same SELECT would alias ``_physical_winner.N``
+        to the name of a column that ``argMax(tuple(...))`` itself names, and
+        the ClickHouse 25.3 analyzer rejects that alias cycle with
+        UNKNOWN_IDENTIFIER before it reads a byte. The trace lane's root replay
+        (``v2/query_builders/trace_list.py``) nests for the same reason.
+        """
+        packed = self._latest_state_packed_columns(consumer_sql)
+        keys_sql = ", ".join(_PHYSICAL_SPAN_KEY_COLUMNS)
+        unpacked_sql = ",\n                   ".join(
+            f"_physical_winner.{position} AS {column}"
+            for position, column in enumerate(packed, start=1)
+        )
+        return f"""(
+            SELECT {keys_sql},
+                   {unpacked_sql}
+            FROM (
+                SELECT {keys_sql},
+                       argMax(tuple({", ".join(packed)}), _version) AS _physical_winner
+                FROM {self.TABLE}
+                PREWHERE {scope_sql}
+                GROUP BY {_PHYSICAL_SPAN_GROUP_BY_SQL}
+            ) AS replayed_{alias}
+        ) AS {alias}"""
+
+    def _filter_seed_source_sql(self, *, raw_key_predicate="", consumer_sql=""):
+        # A raw timestamp is not an order bound for its replacement. Resolve
+        # the complete boundary hours before applying slice/keyset/LIMIT or
+        # mutable predicates. Only immutable key restrictions enter the
+        # latest-state collapse.
+        return self._latest_window_source_sql(
+            "filter_slice",
+            raw_key_predicate=raw_key_predicate,
+            consumer_sql=consumer_sql,
+        )
+
+    def _filter_anchor_source_sql(self, *, consumer_sql=""):
+        return self._latest_window_source_sql(
+            "filter_anchor", consumer_sql=consumer_sql
+        )
+
+    def _latest_window_source_sql(
+        self, prefix, *, raw_key_predicate="", consumer_sql=""
+    ):
         population_scope = ""
         if raw_key_predicate:
             # A latest matching span must have a raw version satisfying these
             # compiler-proven necessary raw witnesses. Select
             # immutable primary prefixes, then replay ALL versions in each
-            # selected prefix with FINAL. Never filter mutable values, deletion
+            # selected prefix. Never filter mutable values, deletion
             # or exact timestamps out of the replacement input. A stale value
             # or tombstone only adds work; it cannot become a public match.
             # Prefixes (rather than every matching ID) also keep the IN set
@@ -491,21 +657,23 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
                   WHERE {raw_key_predicate}
               )
             """
-        return f"""(
-            SELECT * FROM {self.TABLE} FINAL
-            PREWHERE {self.project_filter_sql()}
+        return self._latest_state_source_sql(
+            "latest_seed_spans",
+            scope_sql=f"""{self.project_filter_sql()}
               AND toStartOfHour(start_time) >= toStartOfHour(fromUnixTimestamp64Micro(%({prefix}_start_us)s))
               AND toStartOfHour(start_time) <= toStartOfHour(fromUnixTimestamp64Micro(%({prefix}_end_us)s - 1))
-              {population_scope}
-        ) AS latest_seed_spans"""
+              {population_scope}""",
+            consumer_sql=consumer_sql,
+        )
 
-    def _normal_span_source_sql(self):
-        return f"""(
-            SELECT * FROM {self.TABLE} FINAL
-            PREWHERE {self.project_filter_sql()}
+    def _normal_span_source_sql(self, *, consumer_sql=""):
+        return self._latest_state_source_sql(
+            "latest_list_spans",
+            scope_sql=f"""{self.project_filter_sql()}
               AND toStartOfHour(start_time) >= toStartOfHour(toDateTime64(%(start_date)s, 6, 'UTC'))
-              AND toStartOfHour(start_time) <= toStartOfHour(toDateTime64(%(end_date)s, 6, 'UTC'))
-        ) AS latest_list_spans"""
+              AND toStartOfHour(start_time) <= toStartOfHour(toDateTime64(%(end_date)s, 6, 'UTC'))""",
+            consumer_sql=consumer_sql,
+        )
 
     def _normal_span_identity_extra_sql(self):
         return ", service_name, _version"
@@ -543,15 +711,17 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
               ) IN %(candidate_span_identities)s
         """
 
-    def _filter_match_source_sql(self, candidate_scope):
-        # FINAL chooses a single complete row, including NULLs and conflicting
-        # equal-version payloads, before the shared compiler's aggregates run.
-        return f"""(
-            SELECT * FROM {self.TABLE} FINAL
-            PREWHERE {self.project_filter_sql()}
+    def _filter_match_source_sql(self, candidate_scope, *, consumer_sql=""):
+        # The collapse yields one complete row per identity, including NULLs
+        # and conflicting equal-version payloads, before the shared compiler's
+        # per-column aggregates run over it.
+        return self._latest_state_source_sql(
+            "latest_candidate_spans",
+            scope_sql=f"""{self.project_filter_sql()}
               AND id IN %(candidate_span_ids)s
-              {candidate_scope}
-        ) AS latest_candidate_spans"""
+              {candidate_scope}""",
+            consumer_sql=consumer_sql,
+        )
 
     def _filter_match_outer_scope_sql(self, candidate_scope):
         return ""
@@ -596,12 +766,18 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
             project_version = "AND project_version_id = %(project_version_id)s"
         # Exact identities are immutable full-hour coordinates. Do not reuse
         # an exact timestamp or a request +/- day filter before replacement.
+        content_columns_sql = (
+            "project_id, trace_id, id, start_time, observation_type, "
+            "service_name, _version, input, output, attributes_extra, "
+            "attrs_string, attrs_number, attrs_bool"
+        )
+        source = self._filter_match_source_sql(
+            scope, consumer_sql=f"{content_columns_sql} {project_version}"
+        )
         return (
             f"""
-        SELECT project_id, trace_id, id, start_time, observation_type, service_name,
-               _version, input, output, attributes_extra,
-               attrs_string, attrs_number, attrs_bool
-        FROM {self._filter_match_source_sql(scope)}
+        SELECT {content_columns_sql}
+        FROM {source}
         WHERE is_deleted = 0 {project_version}
         {self._FILTER_READ_SETTINGS}
         """,

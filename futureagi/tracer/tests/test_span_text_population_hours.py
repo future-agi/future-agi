@@ -44,7 +44,8 @@ def test_text_discovery_is_daily_timestamp_only_and_seed_retains_all_values(work
     assert all(fragment not in sql for fragment in ("attrs_", "FINAL", "is_deleted", "LIMIT", "SAMPLE"))
     assert not any(key.startswith("latest_filter_") for key in params)
     seed, bound = target.build_filter_seed_page(slice_start=START, slice_end=START + timedelta(hours=1), limit=25)
-    assert "FROM spans FINAL" in seed and "toStartOfHour(start_time)" in seed
+    assert "argMax(tuple(" in seed and "toStartOfHour(start_time)" in seed
+    assert "FINAL" not in seed
     assert "company_id" in bound.values() and "region" in bound.values()
     assert "latest_filter_param_0" in seed and "latest_filter_param_1" in seed
     assert bound["latest_filter_param_0"] == (("wanted", "kelvin") if op == "in" else "wanted")
