@@ -14,8 +14,7 @@ git submodule update --init --recursive
 #### Quick Start
 
 ```bash
-# One-time setup
-make install-mypy
+# Create or refresh the baseline
 make mypy-baseline
 
 # Before every commit
@@ -24,7 +23,7 @@ make mypy
 
 **🔥 CI will reject PRs with new type errors!**
 
-📚 **[Read the Full Guide](MYPY_SETUP_GUIDE.md)** | **[Detailed Docs](docs/MYPY_TYPE_CHECKING.md)**
+📚 **[Read the type-checking conventions](../CONTRIBUTING.md#code-style)**
 
 ### Pre-commit Hooks
 
@@ -63,10 +62,10 @@ make mypy               # Check types (baseline-driven)
 
 #### Having issues?
 
-- See [Pre-commit Setup Guide](docs/PRE_COMMIT_SETUP.md)
-- See [Quick Reference](docs/PRE_COMMIT_QUICK_REFERENCE.md)
-- See [MyPy Setup Guide](MYPY_SETUP_GUIDE.md)
-- Run `./scripts/verify-team-setup.sh` to diagnose issues
+- See the [git hooks setup guide](../CONTRIBUTING.md#3-install-git-hooks)
+- See the [git hooks reference](../TESTING.md#git-hooks)
+- See the [type-checking conventions](../CONTRIBUTING.md#code-style)
+- Run `./bin/verify-team-setup.sh` to diagnose issues
 
 ### Common Commands
 
@@ -80,8 +79,8 @@ make check-all           # Run all quality checks
 
 # Testing
 make test                # Run all tests
-make test-coverage       # Tests with coverage
-make test-backend-only   # Backend tests only
+make test-unit           # Run unit tests
+make test-integration    # Run integration tests
 
 # Django
 python manage.py runserver    # Start dev server
@@ -98,14 +97,14 @@ Before submitting a PR:
 3. Run `make test` to ensure tests pass
 4. Follow the [PR template](.github/PULL_REQUEST_TEMPLATE.md)
 
-See [Contributing Guide](CONTRIBUTING.md) for more details.
+See the [Contributing Guide](../CONTRIBUTING.md) for more details.
 
 ### Documentation
 
-- 📚 [Pre-commit Setup Guide](docs/PRE_COMMIT_SETUP.md)
-- 📋 [Onboarding Checklist](docs/ONBOARDING_CHECKLIST.md)
-- 🔍 [Quick Reference](docs/PRE_COMMIT_QUICK_REFERENCE.md)
-- 📖 [Testing Guide](TESTING.md)
+- 📚 [Development Setup](../CONTRIBUTING.md#development-setup)
+- 🔧 [Git Hooks Setup](../CONTRIBUTING.md#3-install-git-hooks)
+- 🔍 [Git Hooks Reference](../TESTING.md#git-hooks)
+- 📖 [Testing Guide](../TESTING.md)
 
 ---
 
@@ -127,7 +126,7 @@ pip install -r requirements.txt
 make pre-commit-install
 
 # Verify setup
-./scripts/verify-team-setup.sh
+./bin/verify-team-setup.sh
 
 # Start developing!
 ```
@@ -138,7 +137,7 @@ This project uses pre-commit hooks to ensure code quality. They run automaticall
 
 **Setup (one-time):** `make pre-commit-install`
 
-**Documentation:** [Pre-commit Guide](docs/PRE_COMMIT_SETUP.md)
+**Documentation:** [Git Hooks Setup](../CONTRIBUTING.md#3-install-git-hooks)
 
 ---
 
@@ -181,9 +180,9 @@ make pre-commit-all
 | `make pre-commit-all` | Run on all files |
 | `make format` | Auto-format code (black + isort) |
 | `make lint` | Run linters (ruff, black, isort) |
-| `make check-secrets` | Check for secrets |
+| `make mypy` | Run baseline-driven type checks |
 | `make check-all` | Run all quality checks |
-| `make fix` | Auto-fix common issues |
+| `make test` | Run all backend tests |
 
 ## Quick Fixes
 
@@ -245,7 +244,7 @@ pre-commit clean
 pre-commit install --install-hooks
 
 # Update hooks to latest versions
-make pre-commit-update
+pre-commit autoupdate
 
 # Run with verbose output
 pre-commit run --all-files --verbose
@@ -253,6 +252,6 @@ pre-commit run --all-files --verbose
 
 ## Help
 
-- 📚 [Full Setup Guide](PRE_COMMIT_SETUP.md)
+- 📚 [Git Hooks Setup](../CONTRIBUTING.md#3-install-git-hooks)
 - 🔧 [Configuration](.pre-commit-config.yaml)
 - 💬 Ask in team Slack channel
