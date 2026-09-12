@@ -27,4 +27,6 @@ class SdkConfig(AppConfig):
         from tracer.models import trace_annotation  # noqa: F401
         from tracer.models import trace_error_analysis  # noqa: F401
         from tracer.models import trace_error_analysis_task  # noqa: F401
+        from tracer.models import trace_investigation  # noqa: F401
+        from tracer.models import trace_scan  # noqa: F401
         from tracer.models import trace_session  # noqa: F401

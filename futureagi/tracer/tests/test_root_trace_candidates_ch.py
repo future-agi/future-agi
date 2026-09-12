@@ -35,8 +35,11 @@ def reader():
     if host == "clickhouse":
         host = "localhost"
     port = int(os.environ.get("CH25_HTTP_PORT") or os.environ.get("CH_HTTP_PORT") or 18123)
+    password = os.environ.get("CH25_PASSWORD") or os.environ.get("CH_PASSWORD") or ""
     try:
-        admin = clickhouse_connect.get_client(host=host, port=port, username="default", password="")
+        admin = clickhouse_connect.get_client(
+            host=host, port=port, username="default", password=password
+        )
         admin.query("SELECT 1")
     except Exception:
         pytest.skip("ClickHouse not available for integration tests")
@@ -55,7 +58,7 @@ def reader():
         ) ENGINE = MergeTree() ORDER BY (project_id, trace_id)
         """
     )
-    rdr = CHSpanReader(host=host, port=port, database=_TEST_DB)
+    rdr = CHSpanReader(host=host, port=port, password=password, database=_TEST_DB)
     rdr._admin = admin  # for inserts in tests
     yield rdr
     rdr.close()
@@ -137,3 +140,27 @@ class TestRootTraceCandidates:
         )
         got = reader.root_trace_candidates(str(pid), lower, upper)
         assert got == [("D", first)]
+
+    def test_bounded_page_uses_created_at_and_trace_id_cursor(self, reader):
+        pid = uuid.uuid4()
+        now = datetime(2026, 6, 24, 12, 0, 0, tzinfo=_UTC)
+        lower, upper = now - timedelta(hours=1), now
+        shared = now - timedelta(minutes=20)
+        _insert(
+            reader,
+            [
+                _row(pid, "A", ca=shared),
+                _row(pid, "B", ca=shared),
+                _row(pid, "C", ca=now - timedelta(minutes=10)),
+            ],
+        )
+
+        first = reader.root_trace_candidates_page(
+            str(pid), lower, upper, limit=2
+        )
+        second = reader.root_trace_candidates_page(
+            str(pid), lower, upper, after=(first[-1][1], first[-1][0]), limit=2
+        )
+
+        assert first == [("A", shared), ("B", shared)]
+        assert second == [("C", now - timedelta(minutes=10))]

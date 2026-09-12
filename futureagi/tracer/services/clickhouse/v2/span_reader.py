@@ -1673,6 +1673,64 @@ class CHSpanReader:
         # against the tz-aware watermark without a naive/aware TypeError.
         return [(r[0], r[1] if r[1].tzinfo else r[1].replace(tzinfo=UTC)) for r in rows]
 
+    def root_trace_candidates_page(
+        self,
+        project_id: str,
+        lower: datetime,
+        upper: datetime,
+        *,
+        after: tuple[datetime, str] | None = None,
+        limit: int,
+    ) -> list[tuple[str, datetime]]:
+        """Return one stable, bounded page of root traces ordered by ingest time.
+
+        ``created_at`` is the server-side ingest cursor, so late exports remain
+        discoverable. The tuple cursor prevents traces sharing the same timestamp
+        from being skipped and lets callers persist progress after each PG commit.
+        """
+        if lower > upper:
+            return []
+        if not 1 <= limit <= 1000:
+            raise ValueError("root trace candidate page limit must be 1..1000")
+
+        start_floor = lower - self._CANDIDATE_START_FLOOR
+        params: dict[str, Any] = {
+            "p": str(project_id),
+            "lower": lower,
+            "upper": upper,
+            "start_floor": start_floor,
+            "limit": limit,
+        }
+        having = ""
+        if after is not None:
+            after_created_at, after_trace_id = after
+            params.update(
+                {
+                    "after_created_at": after_created_at,
+                    "after_trace_id": str(after_trace_id),
+                }
+            )
+            having = (
+                "HAVING ca > %(after_created_at)s "
+                "OR (ca = %(after_created_at)s AND tid > %(after_trace_id)s) "
+            )
+
+        rows = self._client.query(
+            "SELECT toString(trace_id) AS tid, min(created_at) AS ca FROM spans "
+            "WHERE project_id = %(p)s AND parent_span_id = '' "
+            "  AND is_deleted = 0 "
+            "  AND start_time >= %(start_floor)s "
+            "  AND created_at >= %(lower)s AND created_at <= %(upper)s "
+            "GROUP BY tid "
+            f"{having}"
+            "ORDER BY ca, tid LIMIT %(limit)s",
+            parameters=params,
+        ).result_rows
+        return [
+            (row[0], row[1] if row[1].tzinfo else row[1].replace(tzinfo=UTC))
+            for row in rows
+        ]
+
     # ─── Distinct end_users per trace (feed user-count rollup) ────────────────
     def distinct_end_users_by_trace_ids(
         self, trace_ids: list[str], project_ids: list[str] | None = None
