@@ -225,10 +225,11 @@ export const CustomTreeNode = ({
 
 CustomTreeNode.propTypes = {
   node: PropTypes.object.isRequired,
-  depth: PropTypes.number.isRequired,
-  isSelected: PropTypes.bool.isRequired,
-  isExpanded: PropTypes.bool.isRequired,
-  hasChildren: PropTypes.bool.isRequired,
+  depth: PropTypes.number,
+  isSelected: PropTypes.bool,
+  isExpanded: PropTypes.bool,
+  hasChildren: PropTypes.bool,
   onSelect: PropTypes.func.isRequired,
-  onToggle: PropTypes.func.isRequired,
+  onToggle: PropTypes.func,
 };
+

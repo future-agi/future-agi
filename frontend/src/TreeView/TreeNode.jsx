@@ -33,7 +33,7 @@ export const TreeNode = ({
   onToggleExpand,
   customNodeComponent: CustomNodeComponent,
 }) => {
-  const hasChildren = node.children && node.children.length > 0;
+  const hasChildren = Boolean(node.children && node.children.length > 0);
   const isSelected = selectedId === node.id;
   const isExpanded = expandedIds.has(node.id);
 
