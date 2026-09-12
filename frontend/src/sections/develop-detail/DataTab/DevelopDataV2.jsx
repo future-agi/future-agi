@@ -52,6 +52,7 @@ import {
 const EditColumnName = lazy(() => import("./EditColumnName"));
 const EditColumnType = lazy(() => import("./EditColumnType"));
 const ConfirmDeleteColumn = lazy(() => import("./DeleteColumn"));
+const RerunDependentColumns = lazy(() => import("./RerunDependentColumns"));
 const AddEvaluationFeeback = lazy(
   () => import("./AddEvaluationFeeback/AddEvaluationFeeback"),
 );
@@ -1374,6 +1375,7 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
       <Suspense fallback={null}>
         <EditColumnName />
         <EditColumnType />
+        <RerunDependentColumns dataset={dataset} />
         <ConfirmDeleteColumn dataset={dataset} />
         <AddEvaluationFeeback />
         <ImprovePrompt />
