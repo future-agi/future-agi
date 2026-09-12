@@ -1,8 +1,20 @@
-import { alpha, Box, IconButton, Typography, useTheme } from "@mui/material";
+import {
+  alpha,
+  Box,
+  CircularProgress,
+  IconButton,
+  Tooltip,
+  Typography,
+  useTheme,
+} from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useRef, useEffect } from "react";
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
+import {
+  RefreshStatus,
+  StatusTypes,
+} from "src/sections/common/DevelopCellRenderer/CellRenderers/cellRendererHelper";
 
 export const CustomDevelopDetailColumn = (props) => {
   const { displayName, showColumnMenu, col, hideMenu, eGridHeader, api } =
@@ -117,6 +129,55 @@ export const CustomDevelopDetailColumn = (props) => {
     }
   };
 
+  const renderStatusIndicator = () => {
+    const status = col?.status;
+    if (!status) return null;
+
+    const isQueued = status === "NotStarted";
+    const isRunning = RefreshStatus.includes(status) && !isQueued;
+    const isError = status?.toLowerCase() === StatusTypes.ERROR;
+
+    if (isQueued) {
+      return (
+        <Box
+          data-testid="column-status-queued"
+          sx={{ display: "flex", alignItems: "center", ml: 0.5 }}
+        >
+          <Iconify
+            icon="material-symbols:schedule"
+            sx={{ width: 16, height: 16, color: "text.disabled" }}
+          />
+        </Box>
+      );
+    }
+    if (isRunning) {
+      return (
+        <Box
+          data-testid="column-status-running"
+          sx={{ display: "flex", alignItems: "center", ml: 0.5 }}
+        >
+          <CircularProgress size={14} sx={{ color: "info.main" }} />
+        </Box>
+      );
+    }
+    if (isError) {
+      return (
+        <Tooltip title="This column failed to run. Open the column menu to retry.">
+          <Box
+            data-testid="column-status-error"
+            sx={{ display: "flex", alignItems: "center", ml: 0.5 }}
+          >
+            <Iconify
+              icon="material-symbols:error-outline"
+              sx={{ width: 16, height: 16, color: "error.main" }}
+            />
+          </Box>
+        </Tooltip>
+      );
+    }
+    return null;
+  };
+
   const getBackgroundColor = (originType) => {
     const isDark = theme.palette.mode === "dark";
     if (
@@ -155,6 +216,7 @@ export const CustomDevelopDetailColumn = (props) => {
         <Typography fontWeight={500} fontSize="14px" color={"text.secondary"}>
           {displayName}
         </Typography>
+        {renderStatusIndicator()}
       </Box>
       {!hideMenu && (
         <IconButton size="small" ref={refButton} onClick={onMenuClicked}>
