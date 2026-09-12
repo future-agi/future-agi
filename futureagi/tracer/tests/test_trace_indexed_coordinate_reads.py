@@ -267,25 +267,33 @@ def _conjunction(*leaves, **kwargs):
     ],
 )
 @pytest.mark.parametrize(
-    "kind,operation,value",
+    "kind,operation,value,cursor_seed",
     [
-        ("text", "equals", "001234"),
-        ("text", "contains", "long" * 600),
-        ("text", "not_equals", "absent"),
-        ("number", "greater_than", 0.01),
-        ("boolean", "equals", False),
+        ("text", "equals", "001234", 200),
+        ("text", "contains", "long" * 600, 200),
+        # A negative and a Boolean have no scalar candidate-witness predicate,
+        # so the base builder mints no cursor seed batch for them. The widening
+        # must not invent one: cursor seed batching is an acquisition decision
+        # and reads the base gate, not the widened one.
+        ("text", "not_equals", "absent", None),
+        ("number", "greater_than", 0.01, 200),
+        ("boolean", "equals", False, None),
     ],
 )
 def test_a_native_span_column_leaf_keeps_the_prefix_prune_and_the_batch(
-    native, kind, operation, value
+    native, kind, operation, value, cursor_seed
 ):
     subject = _conjunction(
         _attribute_filter("attribute_0", value, filter_type=kind, operation=operation),
         _native_column_filter(native),
     )
     assert subject._uses_attribute_coordinate_replay()
+    assert not subject._replays_only_typed_attribute_coordinates()
     assert subject.recommended_filter_classify_batch_size() == 200
-    assert subject.recommended_filter_cursor_seed_batch_size() == 200
+    assert subject.recommended_filter_cursor_seed_batch_size() == cursor_seed
+    assert subject.recommended_filter_cursor_seed_batch_size() == (
+        TraceListQueryBuilder.recommended_filter_cursor_seed_batch_size(subject)
+    )
     assert (
         subject.recommended_filter_candidate_witness_fallback_classify_batch_size()
         == 200
@@ -449,3 +457,419 @@ def test_two_aggregates_are_never_a_native_column_plan():
         scope="any",
     )
     assert not _replays_native_any_span_column(plan)
+
+
+# --- The hook matrix, generated rather than written --------------------------
+#
+# Every routing hook the widened coordinate-replay regime can touch, for every
+# named grid shape, at this head AND at the branch point. ``_BASE_HOOKS`` was
+# produced by running ``_render_hooks`` against a ``git archive`` of the base
+# commit 4954a80c4 in a detached tree under the same guard env, NOT by reading
+# the diff: a claim about what the previous revision did has to come from that
+# revision. ``_HEAD_HOOKS`` is pinned here, so the published matrix cannot
+# drift from the code, and ``test_the_widening_never_moves_an_anchored_shape``
+# turns the one invariant that matters into an assertion instead of a table.
+
+_LONG_EXACT = "a" * 40
+_LONG_BODY = "long" * 600
+
+
+def _window(days=None, hours=None):
+    span = timedelta(days=days) if days else timedelta(hours=hours)
+    return _time_filter(END - span, END)
+
+
+_MATRIX_SHAPES = {
+    "short exact attr alone": lambda: [
+        _window(days=365),
+        _attribute_filter("attribute_0", "001234"),
+    ],
+    "long exact text attr alone": lambda: [
+        _window(days=365),
+        _attribute_filter("attribute_0", _LONG_EXACT),
+    ],
+    "long contains attr alone": lambda: [
+        _window(days=365),
+        _attribute_filter("attribute_0", _LONG_BODY, operation="contains"),
+    ],
+    "numeric attr alone": lambda: [
+        _window(days=365),
+        _attribute_filter(
+            "attribute_0", 0.01, filter_type="number", operation="greater_than"
+        ),
+    ],
+    "boolean attr alone": lambda: [
+        _window(days=365),
+        _attribute_filter("attribute_0", False, filter_type="boolean"),
+    ],
+    "short exact attr AND model": lambda: [
+        _window(days=365),
+        _attribute_filter("attribute_0", "001234"),
+        _native_column_filter("model"),
+    ],
+    "long exact text attr AND model": lambda: [
+        _window(days=365),
+        _attribute_filter("attribute_0", _LONG_EXACT),
+        _native_column_filter("model"),
+    ],
+    "long contains attr AND model": lambda: [
+        _window(days=365),
+        _attribute_filter("attribute_0", _LONG_BODY, operation="contains"),
+        _native_column_filter("model"),
+    ],
+    "numeric attr AND model": lambda: [
+        _window(days=365),
+        _attribute_filter(
+            "attribute_0", 0.01, filter_type="number", operation="greater_than"
+        ),
+        _native_column_filter("model"),
+    ],
+    "boolean attr AND model": lambda: [
+        _window(days=365),
+        _attribute_filter("attribute_0", False, filter_type="boolean"),
+        _native_column_filter("model"),
+    ],
+    "status=error AND short exact attr (30d)": lambda: [
+        _window(days=30),
+        _attribute_filter("attribute_0", "001234"),
+        _native_column_filter("status", "error"),
+    ],
+    "status=error AND short exact attr (1h)": lambda: [
+        _window(hours=1),
+        _attribute_filter("attribute_0", "001234"),
+        _native_column_filter("status", "error"),
+    ],
+    "status=error AND long contains attr (30d)": lambda: [
+        _window(days=30),
+        _attribute_filter("attribute_0", _LONG_BODY, operation="contains"),
+        _native_column_filter("status", "error"),
+    ],
+    "status=error AND numeric attr (30d)": lambda: [
+        _window(days=30),
+        _attribute_filter(
+            "attribute_0", 0.01, filter_type="number", operation="greater_than"
+        ),
+        _native_column_filter("status", "error"),
+    ],
+    "long exact text attr AND status=error (30d)": lambda: [
+        _window(days=30),
+        _attribute_filter("attribute_0", _LONG_EXACT),
+        _native_column_filter("status", "error"),
+    ],
+    "status=error alone (30d)": lambda: [
+        _window(days=30),
+        _native_column_filter("status", "error"),
+    ],
+    "model alone": lambda: [_window(days=365), _native_column_filter("model")],
+    "model AND status=error (30d)": lambda: [
+        _window(days=30),
+        _native_column_filter("model"),
+        _native_column_filter("status", "error"),
+    ],
+    "short exact attr AND has_eval": lambda: [
+        _window(days=365),
+        _attribute_filter("attribute_0", "001234"),
+        {
+            "column_id": "has_eval",
+            "filter_config": {
+                "filter_type": "boolean",
+                "filter_op": "equals",
+                "filter_value": True,
+            },
+        },
+    ],
+}
+
+_MATRIX_HOOKS = (
+    "attr_coord",
+    "classify",
+    "fallback_classify",
+    "cursor_seed",
+    "anchor_probe_initial",
+    "witness_probe_first",
+    "prune",
+)
+
+_BASE_HOOKS = {
+    "short exact attr alone": {
+        "attr_coord": True,
+        "classify": 64,
+        "fallback_classify": 200,
+        "cursor_seed": 200,
+        "anchor_probe_initial": False,
+        "witness_probe_first": False,
+        "prune": True,
+    },
+    "long exact text attr alone": {
+        "attr_coord": True,
+        "classify": 200,
+        "fallback_classify": 200,
+        "cursor_seed": 200,
+        "anchor_probe_initial": False,
+        "witness_probe_first": False,
+        "prune": True,
+    },
+    "long contains attr alone": {
+        "attr_coord": True,
+        "classify": 200,
+        "fallback_classify": 200,
+        "cursor_seed": 200,
+        "anchor_probe_initial": False,
+        "witness_probe_first": False,
+        "prune": True,
+    },
+    "numeric attr alone": {
+        "attr_coord": True,
+        "classify": 200,
+        "fallback_classify": 200,
+        "cursor_seed": 200,
+        "anchor_probe_initial": False,
+        "witness_probe_first": False,
+        "prune": True,
+    },
+    "boolean attr alone": {
+        "attr_coord": True,
+        "classify": 200,
+        "fallback_classify": 200,
+        "cursor_seed": 200,
+        "anchor_probe_initial": False,
+        "witness_probe_first": False,
+        "prune": True,
+    },
+    "short exact attr AND model": {
+        "attr_coord": False,
+        "classify": 10,
+        "fallback_classify": 10,
+        "cursor_seed": 200,
+        "anchor_probe_initial": False,
+        "witness_probe_first": True,
+        "prune": False,
+    },
+    "long exact text attr AND model": {
+        "attr_coord": False,
+        "classify": 10,
+        "fallback_classify": 10,
+        "cursor_seed": 200,
+        "anchor_probe_initial": True,
+        "witness_probe_first": True,
+        "prune": False,
+    },
+    "long contains attr AND model": {
+        "attr_coord": False,
+        "classify": 10,
+        "fallback_classify": 10,
+        "cursor_seed": 200,
+        "anchor_probe_initial": False,
+        "witness_probe_first": True,
+        "prune": False,
+    },
+    "numeric attr AND model": {
+        "attr_coord": False,
+        "classify": 10,
+        "fallback_classify": 10,
+        "cursor_seed": 200,
+        "anchor_probe_initial": False,
+        "witness_probe_first": True,
+        "prune": False,
+    },
+    "boolean attr AND model": {
+        "attr_coord": False,
+        "classify": 10,
+        "fallback_classify": 10,
+        "cursor_seed": None,
+        "anchor_probe_initial": False,
+        "witness_probe_first": False,
+        "prune": False,
+    },
+    "status=error AND short exact attr (30d)": {
+        "attr_coord": False,
+        "classify": 10,
+        "fallback_classify": 10,
+        "cursor_seed": 200,
+        "anchor_probe_initial": True,
+        "witness_probe_first": True,
+        "prune": False,
+    },
+    "status=error AND short exact attr (1h)": {
+        "attr_coord": False,
+        "classify": 10,
+        "fallback_classify": 10,
+        "cursor_seed": None,
+        "anchor_probe_initial": False,
+        "witness_probe_first": False,
+        "prune": False,
+    },
+    "status=error AND long contains attr (30d)": {
+        "attr_coord": False,
+        "classify": 10,
+        "fallback_classify": 10,
+        "cursor_seed": 200,
+        "anchor_probe_initial": True,
+        "witness_probe_first": True,
+        "prune": False,
+    },
+    "status=error AND numeric attr (30d)": {
+        "attr_coord": False,
+        "classify": 10,
+        "fallback_classify": 10,
+        "cursor_seed": 200,
+        "anchor_probe_initial": True,
+        "witness_probe_first": True,
+        "prune": False,
+    },
+    "long exact text attr AND status=error (30d)": {
+        "attr_coord": False,
+        "classify": 10,
+        "fallback_classify": 10,
+        "cursor_seed": 200,
+        "anchor_probe_initial": True,
+        "witness_probe_first": True,
+        "prune": False,
+    },
+    "status=error alone (30d)": {
+        "attr_coord": False,
+        "classify": 80,
+        "fallback_classify": 80,
+        "cursor_seed": None,
+        "anchor_probe_initial": True,
+        "witness_probe_first": False,
+        "prune": False,
+    },
+    "model alone": {
+        "attr_coord": False,
+        "classify": 80,
+        "fallback_classify": 80,
+        "cursor_seed": None,
+        "anchor_probe_initial": False,
+        "witness_probe_first": False,
+        "prune": False,
+    },
+    "model AND status=error (30d)": {
+        "attr_coord": False,
+        "classify": 80,
+        "fallback_classify": 80,
+        "cursor_seed": None,
+        "anchor_probe_initial": True,
+        "witness_probe_first": False,
+        "prune": False,
+    },
+    "short exact attr AND has_eval": {
+        "attr_coord": False,
+        "classify": 10,
+        "fallback_classify": 10,
+        "cursor_seed": 200,
+        "anchor_probe_initial": False,
+        "witness_probe_first": True,
+        "prune": False,
+    },
+}
+
+_HEAD_HOOKS = {
+    **_BASE_HOOKS,
+    # The widened regime, and the only rows that move: one typed-attribute
+    # leaf beside a native any-span column, with no global anchor to lose.
+    "short exact attr AND model": {
+        "attr_coord": True,
+        "classify": 200,
+        "fallback_classify": 200,
+        "cursor_seed": 200,
+        "anchor_probe_initial": False,
+        "witness_probe_first": False,
+        "prune": True,
+    },
+    "long contains attr AND model": {
+        "attr_coord": True,
+        "classify": 200,
+        "fallback_classify": 200,
+        "cursor_seed": 200,
+        "anchor_probe_initial": False,
+        "witness_probe_first": False,
+        "prune": True,
+    },
+    "numeric attr AND model": {
+        "attr_coord": True,
+        "classify": 200,
+        "fallback_classify": 200,
+        "cursor_seed": 200,
+        "anchor_probe_initial": False,
+        "witness_probe_first": False,
+        "prune": True,
+    },
+    "boolean attr AND model": {
+        "attr_coord": True,
+        "classify": 200,
+        "fallback_classify": 200,
+        "cursor_seed": None,
+        "anchor_probe_initial": False,
+        "witness_probe_first": False,
+        "prune": True,
+    },
+}
+
+
+def _render_hooks(subject) -> dict:
+    return {
+        "attr_coord": subject._uses_attribute_coordinate_replay(),
+        "classify": subject.recommended_filter_classify_batch_size(),
+        "fallback_classify": (
+            subject.recommended_filter_candidate_witness_fallback_classify_batch_size()
+        ),
+        "cursor_seed": subject.recommended_filter_cursor_seed_batch_size(),
+        "anchor_probe_initial": (
+            subject.allow_filter_anchor_probe_for_initial_continuation()
+        ),
+        "witness_probe_first": subject.prefer_filter_candidate_witness_probe_first(),
+        "prune": bool(subject._filter_classifier_coordinate_predicate()),
+    }
+
+
+def render_hook_matrix() -> str:
+    """The published before/after table, rendered from the code that decides it."""
+
+    header = "| shape | " + " | ".join(_MATRIX_HOOKS) + " |"
+    rule = "|---" * (len(_MATRIX_HOOKS) + 1) + "|"
+    rows = [header, rule]
+    for name, leaves in _MATRIX_SHAPES.items():
+        head = _render_hooks(
+            TraceListQueryBuilderV2(project_id=PROJECT, filters=leaves(), page_size=25)
+        )
+        cells = []
+        for hook in _MATRIX_HOOKS:
+            before, after = _BASE_HOOKS[name][hook], head[hook]
+            cell = str(after) if before == after else f"**{before} -> {after}**"
+            cells.append(cell)
+        rows.append(f"| {name} | " + " | ".join(cells) + " |")
+    return "\n".join(rows)
+
+
+@pytest.mark.parametrize("shape", sorted(_MATRIX_SHAPES))
+def test_the_hook_matrix_is_pinned_for_every_named_shape(shape):
+    subject = TraceListQueryBuilderV2(
+        project_id=PROJECT, filters=_MATRIX_SHAPES[shape](), page_size=25
+    )
+    assert _render_hooks(subject) == _HEAD_HOOKS[shape]
+
+
+@pytest.mark.parametrize("shape", sorted(_MATRIX_SHAPES))
+def test_the_widening_never_moves_an_anchored_shape(shape):
+    """A global anchor is an indexed read the base builder chose deliberately.
+
+    The widened regime turns ``allow_filter_anchor_probe_for_initial_
+    continuation`` off, so a shape that carries one must stay on the base
+    routing entirely - every hook, not just that one - until somebody measures
+    the trade. Anchor PLAN existence is the gate, so the regime cannot change
+    part-way through a request the way the window-and-probe-state predicates
+    ``_uses_global_*_anchor`` would.
+    """
+
+    subject = TraceListQueryBuilderV2(
+        project_id=PROJECT, filters=_MATRIX_SHAPES[shape](), page_size=25
+    )
+    anchored = (
+        subject._selective_error_status_anchor_plan() is not None
+        or subject._selective_exact_text_anchor_plan() is not None
+    )
+    if not anchored:
+        return
+    assert subject._attribute_coordinate_replay_regime() in ("", "typed")
+    assert _render_hooks(subject) == _BASE_HOOKS[shape]

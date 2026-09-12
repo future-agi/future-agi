@@ -108,6 +108,12 @@ _BOUNDED_WITNESS_SEED_FLOOR = timedelta(hours=1)
 # alias of the same column compile to exactly this - and a compiler that
 # changes the spelling stops matching, which returns those shapes to the
 # ordered walk they run today rather than granting them anything.
+#
+# The set holds COLUMN names, not request keys, so the extra ``_SPAN_COLUMNS``
+# keys ``id`` and ``name`` - which map onto the same ``id`` / ``name`` columns -
+# collapse into it. Harmless either way: those keys resolve against
+# ``_TRACE_ROOT_COLUMNS`` first and compile to ``scope="root"``, which this
+# any-scope matcher never sees, and the prune carries no leaf regardless.
 _NATIVE_ANY_SPAN_COLUMNS = frozenset(
     column for column, _, _ in _TRACE_ANY_SPAN_COLUMNS.values()
 )
@@ -588,25 +594,38 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
     # (end_users, etc.) instead of the dropped legacy CDC tables.
     _FILTER_BUILDER_CLS = ClickHouseFilterBuilderV2
 
-    def _uses_attribute_coordinate_replay(self) -> bool:
-        """Prune public typed-attribute replay by complete immutable prefixes.
+    def _attribute_coordinate_replay_regime(self) -> str:
+        """Which coordinate-replay regime this read is in, or ``""`` for none.
 
-        At least one any-scope leaf must replay a typed attribute Map, because
-        that replay is what the prefix harvest exists to keep off whole
-        partitions. The remaining any-scope leaves may be native span columns
-        (``model``, ``provider``, ``status``, ``span_name``, ``service_name``,
-        ``span_id``, ``span_kind``/``node_type``): the harvest selects every
-        ``(observation_type, service_name, hour, trace_id)`` coordinate of the
-        candidate trace IDs, carries no leaf predicate and applies no limit, so
-        it cannot hide a span whichever column the classifier later compares.
-        Demoting such a conjunction cost it the prune AND the batch - one
-        ``model`` leaf beside an attribute leaf classified 200 seeded roots ten
-        at a time, twenty statements against a budget of forty-eight.
+        ``"typed"`` is the regime this builder has always had: EVERY any-scope
+        leaf replays a typed attribute Map or the JSON overflow. Every hook
+        that decides candidate acquisition reads exactly this, so its answer is
+        the base builder's answer on every shape.
 
-        Only the classifier's chunking and prefix prune follow from this hook.
-        Seed lane selection follows ``_uses_scalar_coordinate_replay``, which
-        still requires EVERY any-scope leaf to be a typed Map, so no
-        conjunction gains or loses a candidate seed here.
+        ``"native"`` is the widened regime. At least one any-scope leaf still
+        replays a typed attribute Map - that replay is what the prefix harvest
+        exists to keep off whole partitions - and the remaining any-scope
+        leaves are native span columns (``model``, ``provider``, ``status``,
+        ``span_name``, ``service_name``, ``span_id``, ``span_kind``/
+        ``node_type``). The harvest selects every ``(observation_type,
+        service_name, hour, trace_id)`` coordinate of the candidate trace IDs,
+        carries no leaf predicate and applies no limit, so it cannot hide a
+        span whichever column the classifier later compares. Demoting such a
+        conjunction cost it the prune AND the batch - one ``model`` leaf beside
+        an attribute leaf classifies 200 seeded roots ten at a time.
+
+        A conjunction that carries a GLOBAL ANCHOR stays out of the widened
+        regime and keeps every base routing decision, because the widened
+        regime's hooks would take that anchor away:
+        ``allow_filter_anchor_probe_for_initial_continuation`` is False on this
+        regime, and the anchor probe is an indexed, deliberately sparse read
+        the base builder chose for exactly these shapes. The gate is the anchor
+        PLAN's existence, not ``_uses_global_error_status_anchor`` /
+        ``_uses_global_selective_exact_text_anchor``: those also read the
+        request window and the in-flight ``_bounded_anchor_probe``, so gating
+        on them would change the regime part-way through one request. Plan
+        existence is a pure function of the filters. Bringing anchored shapes
+        onto the widened regime needs a measurement this lane does not have.
 
         A leaf the compiler routes to ``residual`` - ``has_eval``,
         ``has_annotation``, ``annotator``, ``end_user_id``, native ``tags``,
@@ -627,25 +646,56 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
             or self.search
             or self.sort_params
         ):
-            return False
+            return ""
         plans, residual = self._partition_trace_filter_plans(self._bounded_filters())
         any_plans = [plan for plan in plans if plan.scope == "any"]
         if residual or not any_plans:
-            return False
-        return any(_replays_typed_attributes(plan) for plan in any_plans) and all(
+            return ""
+        if all(_replays_typed_attributes(plan) for plan in any_plans):
+            return "typed"
+        if not any(_replays_typed_attributes(plan) for plan in any_plans) or not all(
             _replays_typed_attributes(plan) or _replays_native_any_span_column(plan)
             for plan in any_plans
+        ):
+            return ""
+        if (
+            self._selective_error_status_anchor_plan() is not None
+            or self._selective_exact_text_anchor_plan() is not None
+        ):
+            return ""
+        return "native"
+
+    def _uses_attribute_coordinate_replay(self) -> bool:
+        """Prune public typed-attribute replay by complete immutable prefixes."""
+
+        return bool(self._attribute_coordinate_replay_regime())
+
+    def _replays_only_typed_attribute_coordinates(self) -> bool:
+        """The base gate: every any-scope leaf replays a typed attribute Map.
+
+        The hooks that choose HOW candidates are acquired read this rather than
+        the widened predicate, so the widening is a classifier-cost change and
+        cannot move an acquisition decision.
+
+        A narrowing of ``_uses_attribute_coordinate_replay``, and spelled as
+        one: the widened predicate stays the single place a subclass can turn
+        the whole coordinate lane off.
+        """
+
+        return (
+            self._uses_attribute_coordinate_replay()
+            and self._attribute_coordinate_replay_regime() == "typed"
         )
 
     def _uses_scalar_coordinate_replay(self) -> bool:
         # Numeric raw-witness accelerators retain their scalar-only contract,
         # and every seed lane below is gated on it: a native span column beside
         # an attribute leaf keeps the coordinate prune but chooses no seed.
-        if not self._uses_attribute_coordinate_replay():
+        if not self._replays_only_typed_attribute_coordinates():
             return False
         plans, _ = self._partition_trace_filter_plans(self._bounded_filters())
         return all(
-            _replays_typed_attributes(plan) and "JSON" not in " ".join(plan.aggregates)
+            "JSON" not in " ".join(plan.aggregates)
             for plan in plans
             if plan.scope == "any"
         )
@@ -743,6 +793,19 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
         never take the unbounded schedule below: its four-hour floor would be a
         NARROWING of today's full-width slice, which is a behaviour change no
         setting asked for.
+
+        Declaring a policy also moves
+        ``recommended_filter_initial_slice_width``: above zero the wide lanes
+        open at ONE HOUR clamped to the request instead of the full request
+        window. That is a cost change beyond the seed statement, because the
+        slice width is the width of the ORDERED WALK as well - so on a shape
+        whose numeric seed is optional and may be abandoned
+        (``filter_candidate_seed_is_optional``, e.g. numeric beside ``model``,
+        or a version-pinned numeric), enabling the setting narrows the walk
+        that runs when the seed is skipped, trading bytes per statement for
+        statements per page. Exact either way - the cursor resumes the rest of
+        the window - but it belongs in the measurement, not only in the seed's
+        own budget.
 
         The short lane has two width schedules because it has two cost shapes,
         and ``FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS`` selects between
@@ -1026,12 +1089,18 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
         return super().recommended_filter_classify_batch_size()
 
     def recommended_filter_cursor_seed_batch_size(self) -> int | None:
-        if self._uses_attribute_coordinate_replay():
+        if self._replays_only_typed_attribute_coordinates():
             # Harvest one ordered root prefix before indexed exact replay.
             # Twenty-six-root seeds repeatedly reread the same narrow primary
             # index ranges for sparse/zero-default/negative scalar predicates.
             # Batching changes only working-set size, never predicates, order,
             # publication or the existing request/statement safety budgets.
+            #
+            # The base gate, not the widened one: cursor seed batching is an
+            # acquisition decision. A Boolean attribute beside ``model`` has no
+            # scalar candidate-witness predicate, so the base builder mints no
+            # cursor seed batch at all there, and the widening must not invent
+            # one for a working set nothing measured.
             return 200
         return super().recommended_filter_cursor_seed_batch_size()
 
