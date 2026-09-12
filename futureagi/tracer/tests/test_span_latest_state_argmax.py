@@ -14,13 +14,21 @@ Three contracts are pinned here.
 3. **Equivalence.** On a synthetic multi-version population the collapse elects
    the same whole physical row as a ``FINAL`` twin, and for equal-version ties —
    where no storage winner exists — it still elects one whole row rather than a
-   mixture. The group keys and packed column order are read back out of the
-   rendered SQL, so the model is checked against the builder rather than a
-   restatement of it.
+   mixture. The keys and packed columns that model uses are the literals
+   ``EXPECTED_GROUP_KEYS`` and ``EXPECTED_SEED_PACKED_COLUMNS`` below, owned by
+   this module. A separate assertion pins the rendered SQL to those literals, so
+   a builder drift breaks the pin instead of quietly redefining what the
+   equivalence model compares — the earlier version read both back out of the
+   rendered string and could only ever agree with it.
 
 The window-wide oracle statement and its ``FINAL`` twin (``oracle_sql``) are the
 reference digest recipe for the read-only production replay; the twin exists
 only here, never on the read path.
+
+Nothing in this module executes SQL, so nothing in it can see a
+``Code: 47 UNKNOWN_IDENTIFIER``. The engine proof — all twenty statements run on
+a real ClickHouse 25.3 and compared row-for-row against the ``FINAL`` shape they
+replaced — is ``test_span_latest_state_engine_ch25``.
 """
 
 import re
@@ -189,32 +197,46 @@ def rendered_statements():
     return {name: sql for name, (sql, _params) in statements.items()}
 
 
+# The collapse is two nested SELECTs: the aggregate elects one packed winner
+# per key, and the level above it unpacks that tuple back into column names.
+# The two levels are not optional — unpacking in the aggregate's own SELECT
+# aliases ``_physical_winner.N`` to a name the tuple already carries, and the
+# CH 25.3 analyzer rejects that alias cycle with UNKNOWN_IDENTIFIER.
 COLLAPSE_RE = re.compile(
-    r"SELECT (project_id,.*?AS _physical_winner.*?)\s*FROM spans\s*"
-    r"(PREWHERE.*?GROUP BY [^\n]*)\s*\) AS (latest_\w+)",
+    r"\(\s*SELECT (?P<unpacked>project_id,.*?)\s*"
+    r"FROM \(\s*SELECT (?P<grouped>project_id,.*?)"
+    r"argMax\(tuple\((?P<packed>.*?)\), _version\) AS _physical_winner\s*"
+    r"FROM spans\s*(?P<scope>PREWHERE.*?GROUP BY [^\n]*)\s*"
+    r"\) AS replayed_(?P<alias>latest_\w+)\s*\) AS (?P=alias)",
     re.DOTALL,
 )
 
 
+class Collapse:
+    """One rendered latest-state source, split into the parts under test."""
+
+    def __init__(self, match):
+        self.whole = match.group(0)
+        self.unpacked = match.group("unpacked")
+        self.grouped = match.group("grouped")
+        self.scope = match.group("scope")
+        self.alias = match.group("alias")
+        self.packed = tuple(
+            column.strip() for column in match.group("packed").split(",")
+        )
+        self.projected = set(_PHYSICAL_SPAN_KEY_COLUMNS) | set(
+            re.findall(r"_physical_winner\.\d+ AS (\w+)", self.unpacked)
+        )
+        self.group_keys = tuple(
+            key.strip()
+            for key in re.search(r"GROUP BY ([^\n]+)", self.scope).group(1).split(",")
+        )
+
+
 def collapse_sources(sql):
-    """Each latest-state source in *sql* as (projection, scope) text pairs."""
+    """Every latest-state source in *sql*."""
 
-    return [(match.group(1), match.group(2)) for match in COLLAPSE_RE.finditer(sql)]
-
-
-def group_by_keys(scope_sql):
-    keys = re.search(r"GROUP BY ([^\n]+)", scope_sql).group(1)
-    return [key.strip() for key in keys.split(",")]
-
-
-def projected_columns(projection_sql):
-    aliases = re.findall(r"_physical_winner\.\d+ AS (\w+)", projection_sql)
-    return set(_PHYSICAL_SPAN_KEY_COLUMNS) | set(aliases)
-
-
-def packed_columns(projection_sql):
-    packed = re.search(r"argMax\(tuple\((.*?)\), _version\)", projection_sql, re.DOTALL)
-    return tuple(column.strip() for column in packed.group(1).split(","))
+    return [Collapse(match) for match in COLLAPSE_RE.finditer(sql)]
 
 
 @pytest.mark.unit
@@ -261,52 +283,117 @@ def test_no_span_statement_reads_through_final():
         assert SPANS_FINAL_RE.search(sql) is None, name
 
 
+# Owned by this module, not read back out of the builder or its output: the
+# deployed ReplacingMergeTree sorting key, in its declared order.
+EXPECTED_GROUP_KEYS = (
+    "project_id",
+    "observation_type",
+    "service_name",
+    "toStartOfHour(start_time)",
+    "trace_id",
+    "id",
+)
+# The default filtered seed's packed winner. Nine distinct stored columns reach
+# the seed in total: these four plus the five plain key columns.
+EXPECTED_SEED_PACKED_COLUMNS = ("start_time", "attrs_string", "is_deleted", "_version")
+EXPECTED_KEY_COLUMNS = tuple(key for key in EXPECTED_GROUP_KEYS if "(" not in key)
+EXPECTED_SEED_STORED_COLUMN_COUNT = 9
+
+
 @pytest.mark.unit
 def test_every_collapse_packs_one_winner_grouped_by_the_sorting_key():
     for name, sql in rendered_statements().items():
         sources = collapse_sources(sql)
         assert sources, name
-        for projection, scope in sources:
+        for source in sources:
             # One packed winner per source: independent per-column aggregates
             # could assemble a row out of two equal-version rows.
-            assert projection.count("argMax(") == 1, name
-            assert projection.count("argMax(tuple(") == 1, name
-            assert f"GROUP BY {_PHYSICAL_SPAN_GROUP_BY_SQL}" in scope, name
+            assert source.grouped.count("argMax(") == 0, name
+            assert source.whole.count("argMax(tuple(") == 1, name
+            # The key list this module owns is the one the builder renders.
+            assert source.group_keys == EXPECTED_GROUP_KEYS, (name, source.group_keys)
             # Grouping on the declared sorting key lets the appended
             # optimize_aggregation_in_order stream the collapse in key order.
             assert "optimize_aggregation_in_order = 1" in sql, name
-            packed = packed_columns(projection)
-            assert len(set(packed)) == len(packed), name
-            assert not set(packed) & set(_PHYSICAL_SPAN_KEY_COLUMNS), name
+            assert len(set(source.packed)) == len(source.packed), name
+            assert not set(source.packed) & set(_PHYSICAL_SPAN_KEY_COLUMNS), name
+
+
+@pytest.mark.unit
+def test_the_builders_group_by_constant_is_the_deployed_sorting_key():
+    assert _PHYSICAL_SPAN_GROUP_BY_SQL == ", ".join(EXPECTED_GROUP_KEYS)
+    assert _PHYSICAL_SPAN_KEY_COLUMNS == tuple(
+        key for key in EXPECTED_GROUP_KEYS if "(" not in key
+    )
+
+
+@pytest.mark.unit
+def test_the_winner_tuple_is_unpacked_above_the_select_that_builds_it():
+    """The alias cycle CH 25.3 rejects, pinned offline.
+
+    ``_physical_winner.N AS start_time`` in the same SELECT as
+    ``argMax(tuple(start_time, ...), _version) AS _physical_winner`` is an
+    indirect alias cycle; the analyzer fails to resolve ``_physical_winner``
+    itself and rejects the statement with ``Code: 47 UNKNOWN_IDENTIFIER``
+    before reading a byte. One colliding name is enough, and the invariant
+    floor always packs ``start_time``, ``is_deleted`` and ``_version`` under
+    their own names, so this is a property of every span collapse.
+    """
+
+    for name, sql in rendered_statements().items():
+        sources = collapse_sources(sql)
+        # A same-SELECT unpack does not match the nested shape at all, so an
+        # empty source list is the defect, never a pass.
+        assert sources, name
+        for source in sources:
+            # The aggregate's own SELECT list never mentions the tuple it
+            # builds, and the level above it never rebuilds one.
+            assert "_physical_winner" not in source.grouped, name
+            assert "argMax(" not in source.unpacked, name
+            unpacked_names = re.findall(
+                r"_physical_winner\.(\d+) AS (\w+)", source.unpacked
+            )
+            assert [name_ for _, name_ in unpacked_names] == list(source.packed), name
+            assert [int(position) for position, _ in unpacked_names] == list(
+                range(1, len(source.packed) + 1)
+            ), name
 
 
 @pytest.mark.unit
 def test_collapse_projects_every_stored_column_its_consumer_reads():
     for name, sql in rendered_statements().items():
-        for projection, scope in collapse_sources(sql):
-            available = projected_columns(projection)
-            consumer = sql.replace(projection, " ").replace(scope, " ")
+        sources = collapse_sources(sql)
+        assert sources, name
+        for source in sources:
+            consumer = sql
+            for other in sources:
+                consumer = consumer.replace(other.whole, " ")
             referenced = {
                 column
                 for column in _PHYSICAL_SPAN_COLUMNS
                 if re.search(rf"\b{column}\b", consumer)
             }
-            assert not referenced - available, (name, sorted(referenced - available))
+            missing = referenced - source.projected
+            assert not missing, (name, sorted(missing))
 
 
 @pytest.mark.unit
 def test_collapse_omits_payload_columns_no_consumer_reads():
     statements = rendered_statements()
-    projection, _scope = collapse_sources(statements["seed"])[0]
-    assert projected_columns(projection) == _PHYSICAL_SPAN_FLOOR_COLUMNS | {
-        "attrs_string"
-    }
+    seed = collapse_sources(statements["seed"])[0]
+    assert seed.packed == EXPECTED_SEED_PACKED_COLUMNS
+    assert seed.projected == _PHYSICAL_SPAN_FLOOR_COLUMNS | {"attrs_string"}
+    # Nine distinct stored columns, not six: the five plain key columns plus
+    # the four the winner tuple carries. The read-amplification prediction in
+    # the PR is stated against this count.
+    assert len(seed.projected) == EXPECTED_SEED_STORED_COLUMN_COUNT
+    assert len(_PHYSICAL_SPAN_FLOOR_COLUMNS) == 8
     for column in PAYLOAD_COLUMNS:
-        assert column not in projection
+        assert column not in seed.whole
     # Content is the one statement that does read the payload.
-    content_projection, _ = collapse_sources(statements["content"])[0]
+    content = collapse_sources(statements["content"])[0]
     for column in ("input", "output", "attributes_extra"):
-        assert column in packed_columns(content_projection)
+        assert column in content.packed
 
 
 # ── window-wide oracle ────────────────────────────────────────────────────────
@@ -467,13 +554,13 @@ def final_twin(rows, keys):
 
 @pytest.mark.unit
 def test_collapse_elects_the_same_whole_row_as_a_final_twin():
-    projection, scope = collapse_sources(
-        builder().build_filter_seed_page(
-            slice_start=START, slice_end=START + timedelta(hours=2), limit=26
-        )[0]
-    )[0]
-    keys = group_by_keys(scope)
-    packed = packed_columns(projection) + _PHYSICAL_SPAN_KEY_COLUMNS
+    # Keys and packed columns are this module's literals. What ties them to the
+    # builder is test_every_collapse_packs_one_winner_grouped_by_the_sorting_key
+    # and test_collapse_omits_payload_columns_no_consumer_reads, which assert
+    # the rendered SQL equals them; a drift breaks those instead of silently
+    # re-deriving the model from whatever was rendered.
+    keys = list(EXPECTED_GROUP_KEYS)
+    packed = EXPECTED_SEED_PACKED_COLUMNS + EXPECTED_KEY_COLUMNS
     rows = [row for row in population() if row["project_id"] == PROJECT]
 
     collapsed = collapse(rows, keys, packed)
@@ -522,84 +609,5 @@ def test_a_four_key_collapse_would_merge_distinct_physical_spans():
     keys = ["project_id", "trace_id", "id", "toStartOfHour(start_time)"]
     rows = [row for row in population() if row["project_id"] == PROJECT]
     packed = ("start_time", "is_deleted", "attrs_string", "_version")
-    six_key = collapse(
-        rows,
-        [key.strip() for key in _PHYSICAL_SPAN_GROUP_BY_SQL.split(",")],
-        packed + _PHYSICAL_SPAN_KEY_COLUMNS,
-    )
+    six_key = collapse(rows, list(EXPECTED_GROUP_KEYS), packed + EXPECTED_KEY_COLUMNS)
     assert len(collapse(rows, keys, packed)) < len(six_key)
-
-
-@pytest.mark.integration
-def test_engine_collapse_and_final_twin_return_the_same_rows(tmp_path):
-    """The authoritative cross-check, on a real ReplacingMergeTree."""
-
-    pytest.importorskip("chdb", reason="optional isolated ClickHouse engine")
-    from chdb.session import Session
-
-    session = Session(str(tmp_path / "span-argmax"))
-    try:
-        session.query("""CREATE TABLE spans (
-            project_id UUID, observation_type LowCardinality(String),
-            service_name LowCardinality(String), start_time DateTime64(6, 'UTC'),
-            trace_id String, id String,
-            attrs_string Map(String, String),
-            is_deleted UInt8 DEFAULT 0, _version UInt64
-        ) ENGINE = ReplacingMergeTree(_version, is_deleted)
-          PARTITION BY toDate(start_time)
-          PRIMARY KEY (project_id, observation_type, service_name,
-                       toStartOfHour(start_time))
-          ORDER BY (project_id, observation_type, service_name,
-                    toStartOfHour(start_time), trace_id, id)""")
-        session.query("SYSTEM STOP MERGES spans")
-        for row in population():
-            session.query(
-                "INSERT INTO spans (project_id, observation_type, service_name, "
-                "start_time, trace_id, id, attrs_string, is_deleted, _version) "
-                f"VALUES ('{row['project_id']}', '{row['observation_type']}', "
-                f"'{row['service_name']}', "
-                f"toDateTime64('{row['start_time'].isoformat(sep=' ')}', 6, 'UTC'), "
-                f"'{row['trace_id']}', '{row['id']}', "
-                f"{{'account_id': '{row['attrs_string']['account_id']}'}}, "
-                f"{row['is_deleted']}, {row['_version']})"
-            )
-
-        def identities(sql):
-            return sorted(
-                str(session.query(sql, "CSV")).strip().splitlines(),
-            )
-
-        scope = (
-            f"project_id = toUUID('{PROJECT}') "
-            f"AND start_time >= toDateTime64('{START.isoformat(sep=' ')}', 6, 'UTC') "
-            "AND start_time < toDateTime64("
-            f"'{(START + timedelta(hours=3)).isoformat(sep=' ')}', 6, 'UTC')"
-        )
-        select = (
-            "trace_id, id, observation_type, service_name, "
-            "toStartOfHour(start_time), start_time, attrs_string['account_id']"
-        )
-        twin = identities(
-            f"SELECT {select} FROM spans FINAL PREWHERE {scope} WHERE is_deleted = 0"
-        )
-        collapsed = identities(f"""
-            SELECT {select} FROM (
-                SELECT project_id, observation_type, service_name, trace_id, id,
-                       argMax(tuple(start_time, attrs_string, is_deleted, _version),
-                              _version) AS _physical_winner,
-                       _physical_winner.1 AS start_time,
-                       _physical_winner.2 AS attrs_string,
-                       _physical_winner.3 AS is_deleted,
-                       _physical_winner.4 AS _version
-                FROM spans
-                PREWHERE {scope}
-                GROUP BY {_PHYSICAL_SPAN_GROUP_BY_SQL}
-            ) WHERE is_deleted = 0
-        """)
-        tied_value = "'tied'"
-        assert [row for row in twin if tied_value not in row] == [
-            row for row in collapsed if tied_value not in row
-        ]
-        assert len([row for row in collapsed if tied_value in row]) == 1
-    finally:
-        session.close()
