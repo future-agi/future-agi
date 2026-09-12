@@ -3,6 +3,7 @@
 from datetime import timedelta
 
 import pytest
+from django.test import override_settings
 
 from tracer.services.clickhouse.query_builders.trace_list import TraceListQueryBuilder
 from tracer.services.clickhouse.v2.query_builders.trace_list import (
@@ -277,3 +278,60 @@ def test_page_keyset_does_not_limit_the_necessary_child_witness():
     assert "filter_before" not in cte
     assert "filter_before_start_us" in roots
     assert params["filter_before_id"] == "previous"
+
+
+def test_the_long_text_lane_is_byte_identical_while_its_slack_setting_is_zero():
+    """The default keeps the unbounded, full-width statement this lane ships."""
+
+    subject = builder(value=LONG_TEXT)
+    start = END - timedelta(days=365)
+    assert subject._uses_wide_candidate_seed()
+    assert subject.filter_seed_width_policy() is None
+    assert not subject.supports_filter_seed_density_probe()
+    assert subject.filter_seed_witness_slack_hours() is None
+    assert subject.recommended_filter_initial_slice_width() == timedelta(days=365)
+    sql, params = subject.build_filter_candidate_seed_page(
+        slice_start=start, slice_end=END, limit=50
+    )
+    assert "filter_witness_start_us" not in sql
+    assert "filter_witness_start" not in params
+
+
+@override_settings(FILTER_SELECTOR_NUMERIC_LONG_TEXT_SEED_WITNESS_SLACK_HOURS=1)
+def test_the_long_text_lane_takes_the_bounded_schedule_once_its_slack_is_set():
+    """The ngram anchor and the envelope bound the same witness together."""
+
+    subject = builder(value=LONG_TEXT)
+    policy = subject.filter_seed_width_policy()
+    assert policy is not None
+    assert policy.min_width == timedelta(hours=1)
+    assert subject.supports_filter_seed_density_probe()
+    assert subject.filter_seed_witness_slack_hours() == 1
+    assert subject.recommended_filter_initial_slice_width() == timedelta(hours=1)
+    slice_start = END - timedelta(hours=1)
+    sql, params = subject.build_filter_candidate_seed_page(
+        slice_start=slice_start, slice_end=END, limit=50
+    )
+    cte = sql.split("SELECT trace_id, id AS root_span_id", 1)[0]
+    assert "indexHint(arrayStringConcat(" in cte
+    assert "filter_witness_start_us" in cte
+    assert params["filter_witness_start"] == slice_start - timedelta(hours=1)
+    assert params["filter_witness_end"] == END + timedelta(hours=1)
+    _render_driver_sql(sql, params)
+
+
+@override_settings(FILTER_SELECTOR_NUMERIC_LONG_TEXT_SEED_WITNESS_SLACK_HOURS=4)
+def test_the_short_text_lane_keeps_its_own_approved_slack():
+    """Each lane reads its own setting; the two contracts never cross."""
+
+    subject = builder(value="001234")
+    assert subject._uses_short_text_candidate_seed()
+    assert not subject._uses_wide_candidate_seed()
+    assert subject.filter_seed_witness_slack_hours() == 1
+    assert subject.filter_seed_width_policy().min_width == timedelta(hours=1)
+    # And the short lane's absent-field behaviour is untouched by the wide
+    # lanes' chain rule: it writes its own slack into every cursor it mints,
+    # including zero, so an absent field there is only a pre-field token and
+    # returns the builder to its own approved setting, as it always has.
+    subject.pin_filter_seed_witness_slack_hours(None)
+    assert subject.filter_seed_witness_slack_hours() == 1

@@ -3018,7 +3018,7 @@ def test_only_the_row_budgeted_lane_offers_a_density_probe():
 def test_the_lane_publishes_the_slack_a_cursor_must_carry():
     builder = picker_leaves(2)
     assert builder.filter_seed_witness_slack_hours() == 1
-    assert builder._short_text_seed_witness_slack() == timedelta(hours=1)
+    assert builder._candidate_seed_witness_slack() == timedelta(hours=1)
 
 
 @override_settings(FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS=1)
@@ -3039,7 +3039,7 @@ def test_a_pinned_slack_outranks_a_mid_pagination_setting_change(pinned):
     builder.pin_filter_seed_witness_slack_hours(pinned)
 
     assert builder.filter_seed_witness_slack_hours() == pinned
-    assert builder._short_text_seed_witness_slack() == timedelta(hours=pinned)
+    assert builder._candidate_seed_witness_slack() == timedelta(hours=pinned)
     fragment, params = builder._scalar_candidate_witness_envelope(
         root_start=END - timedelta(hours=2), root_end=END
     )
@@ -3130,6 +3130,7 @@ def test_the_seed_plan_cache_key_covers_every_input_the_plans_read():
         "_compute_long_text_candidate_seed_plan",
         "_compute_short_text_candidate_seed_plan",
         "_compute_short_text_seed_lane",
+        "_compute_wide_seed_lane",
     ]
     while frontier:
         name = frontier.pop()
