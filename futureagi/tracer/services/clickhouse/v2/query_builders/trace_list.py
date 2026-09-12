@@ -928,19 +928,24 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
         setting is deliberately runtime-tunable.
 
         So a continuation carries the slack it was minted with and pins it
-        here. ``None`` clears the pin and returns the builder to the runtime
-        setting, which is both the legacy behaviour and what a cursor minted
-        before this field carried resolves to.
+        here. ``None`` is a token that carries no slack FIELD, which each lane
+        resolves by what such a token can mean on it - see
+        ``_candidate_seed_witness_slack``. It is not "no pin": this method
+        records that a continuation applied one, because only a continuation
+        reaches it (the caller returns early without a cursor), so a fresh
+        page one keeps reading the live setting.
         """
 
         if hours is None:
             self._pinned_witness_slack_hours = None
+            self._witness_slack_pin_applied = True
             return
         if isinstance(hours, bool) or not isinstance(hours, int):
             raise ValueError("pinned witness slack must be whole hours")
         if not 0 <= hours <= _MAX_WITNESS_SLACK_HOURS:
             raise ValueError("pinned witness slack is outside the supported range")
         self._pinned_witness_slack_hours = hours
+        self._witness_slack_pin_applied = True
 
     def filter_seed_witness_slack_hours(self) -> int | None:
         """The slack this read will use, for the cursor to carry forward.
@@ -980,17 +985,37 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
         value the cursor was minted with so a mid-flight change cannot skip or
         duplicate rows. One pin serves whichever lane is active because the
         filters that choose the lane are fixed for the life of a cursor.
+
+        The wide lanes emit no slack field at their default, so a continuation
+        of a chain minted there arrives with the pin APPLIED and EMPTY. That is
+        not an absence of information: the only way those lanes mint a token
+        without the field is by running unbounded, so an absent field on a wide
+        lane pins the legacy any-span witness - slack zero - for the rest of
+        the chain. A pagination started with the lane off therefore finishes
+        with it off even when an operator enables it mid-flight, which is the
+        safe direction and the one transition a value-only pin would miss. A
+        token minted before the field existed resolves the same way, because it
+        was minted by the same unbounded statement.
+
+        The short exact-string lane keeps its inherited behaviour, where an
+        absent field returns the builder to the setting: that lane always
+        writes its own slack, including zero, so it reaches this only for a
+        pre-field token, and that token's own read used the setting too.
         """
 
         if self._uses_short_text_candidate_seed():
             setting = settings.FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS
+            absent_field_pin = None
         elif self._uses_wide_candidate_seed():
             setting = (
                 settings.FILTER_SELECTOR_NUMERIC_LONG_TEXT_SEED_WITNESS_SLACK_HOURS
             )
+            absent_field_pin = 0
         else:
             return timedelta(0)
         pinned = getattr(self, "_pinned_witness_slack_hours", None)
+        if pinned is None and getattr(self, "_witness_slack_pin_applied", False):
+            pinned = absent_field_pin
         hours = pinned if pinned is not None else int(setting)
         return timedelta(hours=min(max(hours, 0), _MAX_WITNESS_SLACK_HOURS))
 

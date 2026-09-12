@@ -329,3 +329,9 @@ def test_the_short_text_lane_keeps_its_own_approved_slack():
     assert not subject._uses_wide_candidate_seed()
     assert subject.filter_seed_witness_slack_hours() == 1
     assert subject.filter_seed_width_policy().min_width == timedelta(hours=1)
+    # And the short lane's absent-field behaviour is untouched by the wide
+    # lanes' chain rule: it writes its own slack into every cursor it mints,
+    # including zero, so an absent field there is only a pre-field token and
+    # returns the builder to its own approved setting, as it always has.
+    subject.pin_filter_seed_witness_slack_hours(None)
+    assert subject.filter_seed_witness_slack_hours() == 1

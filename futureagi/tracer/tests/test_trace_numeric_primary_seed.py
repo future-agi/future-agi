@@ -1091,13 +1091,51 @@ def test_a_numeric_continuation_keeps_the_slack_its_cursor_was_minted_with():
     )
     assert "filter_witness_start_us" in sql
     assert params["filter_witness_end"] == end + timedelta(hours=3)
-    # A legacy token carries no slack, which returns the lane to the setting.
+    # A token that carries no slack field was minted by an unbounded statement,
+    # so the rest of that chain stays unbounded.
     builder.pin_filter_seed_witness_slack_hours(None)
     assert builder.filter_seed_witness_slack_hours() is None
     sql, _ = builder.build_filter_candidate_seed_page(
         slice_start=start, slice_end=end, limit=26
     )
     assert "filter_witness_start_us" not in sql
+
+
+@override_settings(FILTER_SELECTOR_NUMERIC_LONG_TEXT_SEED_WITNESS_SLACK_HOURS=2)
+def test_a_wide_lane_chain_started_before_the_switch_finishes_unbounded():
+    """The 0 -> N enabling transition, which is the one an owner will make.
+
+    At the default the wide lanes emit no slack field, so a cursor minted
+    before the switch carries none. That absence is information - only an
+    unbounded statement mints it - so the continuation pins slack zero rather
+    than resolving to the now-live setting. Without this, enabling the setting
+    mid-pagination would move candidacy between two hops of one cursor.
+    """
+
+    # Absent field on a continuation: the chain stays unbounded.
+    resumed = subject()
+    start, end = resumed._bounded_request_window
+    resumed.pin_filter_seed_witness_slack_hours(None)
+    assert resumed._candidate_seed_witness_slack() == timedelta(0)
+    assert resumed.filter_seed_witness_slack_hours() is None
+    assert resumed._scalar_candidate_witness_envelope(
+        root_start=start, root_end=end
+    ) == ("", {})
+    sql, _ = resumed.build_filter_candidate_seed_page(
+        slice_start=start, slice_end=end, limit=26
+    )
+    assert "filter_witness_start_us" not in sql
+
+    # Never pinned - a fresh page one - reads the live setting.
+    fresh = subject()
+    assert fresh._candidate_seed_witness_slack() == timedelta(hours=2)
+    assert fresh.filter_seed_witness_slack_hours() == 2
+
+    # A present field still outranks the setting in both directions.
+    for pinned, expected in ((0, timedelta(0)), (5, timedelta(hours=5))):
+        held = subject()
+        held.pin_filter_seed_witness_slack_hours(pinned)
+        assert held._candidate_seed_witness_slack() == expected
 
 
 @override_settings(FILTER_SELECTOR_NUMERIC_LONG_TEXT_SEED_WITNESS_SLACK_HOURS=2)
