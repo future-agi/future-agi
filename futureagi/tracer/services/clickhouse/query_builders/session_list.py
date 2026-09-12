@@ -925,9 +925,12 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         knob does, so a token minted while the lane was OFF carries no slack,
         is indistinguishable from a token minted before the field existed, and
         resolves to the current setting. If that setting has since been turned
-        on, the remaining hops seed. That can only narrow candidacy - the same
-        omission the envelope contract already permits, never a duplicated
-        row - and turning the knob back off likewise only widens it.
+        on, the remaining hops seed. That can only narrow candidacy, never
+        admit or duplicate a row - but the narrowing is the cross-hop omission
+        class ``_seed_witness_identity_gate`` documents, which is wider than a
+        within-request envelope, so such a flip can drop a session the already
+        published hops would have carried. Turning the knob back off only
+        widens candidacy again.
         """
 
         if not (
@@ -981,16 +984,48 @@ class SessionListQueryBuilder(BaseQueryBuilder):
 
         Exactness. The witness is a necessary condition of a match (the same
         property ``build_filter_anchor_probe`` rests on), so with an unbounded
-        envelope this removes only sessions the classifier would have rejected.
-        With one, a session reaches the page through the slice that holds the
-        root of the trace its witness sits on: the published order key is
-        ``min`` over the session's live roots, so that slice is at or before
-        the session's own publication rank and the walk has not passed it yet.
-        The envelope can then omit only a session whose every witness lies more
-        than the slack away from its own trace's root.
-        ``build_filter_match_query`` stays unbounded and remains the authority
-        on what is published, so nothing the current contract rejects can be
-        admitted.
+        envelope this removes only sessions the classifier would have
+        rejected. A bounded envelope omits more than that, and more than the
+        trace lane's contract does, because a session is *discovered* by any
+        of its roots and *ranked* by its oldest one.
+
+        Inside one request the min-over-roots argument holds: the walk starts
+        at the request window's end, so every live root is still reachable and
+        the session is seeded from the slice holding the root of the trace its
+        witness sits on, which is at or before its own publication rank. A
+        continuation hop does not start there. It resumes at the rank the
+        previous page last published, ``C`` - its first slice is
+        ``[C - width, C]`` - and descends, so every root above ``C`` is out of
+        reach on that hop and every envelope the hop emits ends at or below
+        ``hour_ceil(C) + slack``. Because the published order key is ``min``
+        over the live roots, a session due on that hop has its own rank at or
+        below ``C``, so the only root it is guaranteed to reach it by is its
+        oldest - while its witness may sit on a far newer trace.
+
+        The omission class is therefore: a session is dropped when no
+        witnessing span of it starts inside the envelope of any slice of that
+        hop that holds one of its roots - which, under the contract that puts
+        a witness within the slack of its own trace's root, is exactly the
+        case where every witness-bearing trace of the session is rooted above
+        the rank the page resumed from. The governing distance is the
+        session's root-to-root spread, not the witness-to-its-own-root
+        distance, and that spread can be as wide as the request window, so no
+        slack short of the window closes it. The lower edge
+        ``hour_floor(slice_start) - slack`` stays sound: a witness-bearing
+        root at or below ``C`` is reached by this hop's own descent, and the
+        contract puts its witness within the slack of it. The repair,
+        deliberately not taken here, is an asymmetric upper edge of
+        ``hour_ceil(request_end) + slack``, which widens as the walk descends
+        and costs an unmeasured share of the pruning this lane exists for.
+
+        ``test_session_seed_witness_gate.py`` pins both halves through the
+        real ``read_bounded_filter_page``: a multi-root session whose only
+        witness sits on its newest trace survives a single request, and is
+        lost by a two-hop continuation at slack 1 while slack 0 and a slack
+        wider than its root spread keep it. ``build_filter_match_query`` stays
+        unbounded and remains the authority on what is published, so nothing
+        the current contract rejects can be admitted; the gate only narrows
+        candidacy.
 
         Physical versions and tombstones deliberately participate: the
         subquery carries no ``_peerdb_is_deleted`` guard, so it bounds *when* a

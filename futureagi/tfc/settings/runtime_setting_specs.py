@@ -487,10 +487,17 @@ INTERACTIVE_READ_SETTING_SPECS = {
             #
             # ABOVE ZERO additionally requires the witness to start inside
             #     [hour_floor(slice_start) - slack, hour_ceil(slice_end) + slack)
-            # which is the bounded-witness contract. On sessions that contract
-            # is NOT approved yet: it can omit a session whose sole witness lies
-            # outside every such envelope, so it needs the owner's decision
-            # before a deployment moves off the default.
+            # On sessions this is WEAKER than the trace list's bounded-witness
+            # contract and is NOT approved. A session is discovered by any of
+            # its roots but ranked by its oldest, and a continuation hop
+            # resumes at the rank the previous page last published, C, so every
+            # envelope that hop emits ends at or below hour_ceil(C) + slack. A
+            # session is therefore dropped when every trace of it that carries
+            # a witnessing span is rooted above C: the loss is governed by the
+            # session's root-to-root spread, which can be as wide as the
+            # request window, so no slack short of the window closes it. Zero
+            # stays exact. Needs the owner's decision before a deployment moves
+            # off the default.
             ("SESSION_LIST_FILTER_SEED_WITNESS_SLACK_HOURS", -1, -1, 168),
             ("SESSION_LIST_FILTER_MAX_SEED_ATTEMPTS", 24, 1, 512),
             ("SESSION_LIST_FILTER_MAX_QUERIES", 48, 1, 1_024),
