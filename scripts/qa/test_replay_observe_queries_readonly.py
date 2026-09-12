@@ -1,12 +1,15 @@
 """Offline guards only. Never connect to a DB or initialize Django in tests."""
 
 import unittest
+import hashlib
+import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
+from uuid import UUID
 import time
 
 import replay_observe_filters as replay
@@ -245,7 +248,8 @@ class UsersRemapCertificateTests(unittest.TestCase):
         project, user, foreign = (str(UUID(int=i)) for i in (1, 2, 3))
         reader = object.__new__(queries.ReadOnlyExecutor)
         reader.client, reader._users_certificate = object(), None
-        reader._users_context = queries._UsersRemapContext((project,), (project,), "bindings", "scope")
+        reader._users_context = queries._UsersRemapContext(
+            (project,), (project,), "bindings", "scope", 26)
         origin = SimpleNamespace(row_count=1, columns=["end_user_id", "project_id"],
                                  data=[{"end_user_id": user, "project_id": project}])
         reader._users_result(origin, origin=True, certificate=None, query_id="actual-origin")
@@ -263,6 +267,419 @@ class UsersRemapCertificateTests(unittest.TestCase):
         origin.data[0]["project_id"] = foreign
         with self.assertRaisesRegex(replay.ReplayError, "USERS_REMAP_ORIGIN_RESULT_INVALID"):
             reader._users_result(origin, origin=True, certificate=None, query_id="bad-origin")
+
+
+class UsersSourcePinTests(unittest.TestCase):
+    """The pins are sha256 of the imported module's FILE BYTES, nothing else."""
+
+    def test_pin_computation_hashes_the_imported_module_file_bytes(self):
+        name = "tracer.services.users_list_manager"
+        with TemporaryDirectory() as tmp:
+            source = Path(tmp) / "users_list_manager.py"
+            source.write_bytes(b"USER_LIST_CANDIDATE_BATCH_SIZE = 25\n")
+            digest = hashlib.sha256(source.read_bytes()).hexdigest()
+            module = SimpleNamespace(__file__=str(source))
+            with (
+                patch.dict(queries._USERS_SOURCE_PINS, {name: digest}, clear=True),
+                patch.object(queries, "import_module", return_value=module) as imported,
+            ):
+                self.assertTrue(queries._users_sources_current())
+                imported.assert_called_once_with(name)
+                # One byte of drift is enough; the harness must not certify it.
+                source.write_bytes(b"USER_LIST_CANDIDATE_BATCH_SIZE = 26\n")
+                self.assertFalse(queries._users_sources_current())
+            with (
+                patch.dict(queries._USERS_SOURCE_PINS, {name: "not-a-digest"}, clear=True),
+                patch.object(queries, "import_module", return_value=module),
+            ):
+                self.assertFalse(queries._users_sources_current())
+
+    def test_pins_match_the_checked_in_users_read_path(self):
+        root = Path(queries.__file__).resolve().parents[2] / "futureagi"
+        for name, digest in queries._USERS_SOURCE_PINS.items():
+            with self.subTest(module=name):
+                source = root.joinpath(*name.split(".")).with_suffix(".py")
+                self.assertTrue(source.is_file(), source)
+                self.assertEqual(
+                    hashlib.sha256(source.read_bytes()).hexdigest(), digest,
+                    f"stale _USERS_SOURCE_PINS entry for {name}; re-pin it",
+                )
+
+
+class UsersOriginBatchTests(unittest.TestCase):
+    def test_origin_limit_follows_the_managers_own_first_batch(self):
+        manager_module = SimpleNamespace(
+            USER_LIST_CANDIDATE_BATCH_SIZE=25,
+            USER_LIST_ATTRIBUTE_WITNESS_BATCH_SIZE=64,
+        )
+        modules = {"tracer.services.users_list_manager": manager_module}
+        with patch.dict(sys.modules, modules):
+            self.assertEqual(
+                queries._users_origin_limit(SimpleNamespace(attribute_exact_text_filters=[])), 26)
+            self.assertEqual(
+                queries._users_origin_limit(
+                    SimpleNamespace(attribute_exact_text_filters=[("attr", ("a", "b"))])), 65)
+            manager_module.USER_LIST_ATTRIBUTE_WITNESS_BATCH_SIZE = 0
+            with self.assertRaisesRegex(replay.ReplayError, "USERS_REMAP_ORIGIN_LIMIT_INVALID"):
+                queries._users_origin_limit(
+                    SimpleNamespace(attribute_exact_text_filters=[("attr", ("a",))]))
+
+    def test_origin_result_cap_is_per_origin_not_a_constant_26(self):
+        from uuid import UUID
+
+        project = str(UUID(int=1))
+        rows = [{"end_user_id": str(UUID(int=i + 10)), "project_id": project} for i in range(65)]
+        for origin_limit, size, ok in ((65, 65, True), (65, 66, False),
+                                       (26, 26, True), (26, 27, False)):
+            with self.subTest(origin_limit=origin_limit, size=size):
+                reader = object.__new__(queries.ReadOnlyExecutor)
+                reader.client, reader._users_certificate = object(), None
+                reader._users_context = queries._UsersRemapContext(
+                    (project,), (project,), "bindings", "scope", origin_limit)
+                data = [dict(row) for row in rows[:size]]
+                while len(data) < size:
+                    data.append({"end_user_id": str(UUID(int=len(data) + 500)),
+                                 "project_id": project})
+                result = SimpleNamespace(row_count=size,
+                                         columns=["end_user_id", "project_id"], data=data)
+                if ok:
+                    reader._users_result(result, origin=True, certificate=None, query_id="origin")
+                    self.assertEqual(len(reader._users_certificate.ids), size)
+                else:
+                    with self.assertRaisesRegex(
+                        replay.ReplayError, "USERS_REMAP_ORIGIN_RESULT_INVALID"
+                    ):
+                        reader._users_result(result, origin=True, certificate=None,
+                                             query_id="origin")
+
+
+class UsersOriginCanonicalSqlTests(unittest.TestCase):
+    """Pin the canonicaliser itself: value-list arity, and nothing else.
+
+    Pure string work -- no builder, no Django, no connection. The point of the
+    canonical form is that a statement's digest stops depending on how many
+    values a filter selected or what letters they contain, while every other
+    byte keeps de-certifying the read.
+    """
+
+    UNTYPED = "latest_filter_index_0"
+    LEGACY = "latest_filter_legacy_index_0"
+    TYPED = "latest_filter_index_0_string"
+
+    def _run(self, stem, count, *, separator=", "):
+        return (
+            "[" + separator.join(f"%({stem}_{index})s" for index in range(count)) + "]"
+        )
+
+    def test_only_the_arity_of_a_value_list_collapses(self):
+        for stem in (self.UNTYPED, self.LEGACY, self.TYPED):
+            canonical = f"[%({stem}_*)s]"
+            for count in (1, 2, 3, 10, 11, 40):
+                with self.subTest(stem=stem, count=count):
+                    self.assertEqual(
+                        queries._canonical_origin_sql(self._run(stem, count)),
+                        canonical,
+                    )
+
+    def test_a_value_list_is_collapsed_in_place_inside_a_statement(self):
+        sql = (
+            "SELECT 1 WHERE indexHint(hasAny(arrayMap(x -> lowerUTF8(x), "
+            f"mapValues(span_attr_str)), {self._run(self.UNTYPED, 3)}))"
+        )
+        self.assertEqual(
+            queries._canonical_origin_sql(sql),
+            sql.replace(self._run(self.UNTYPED, 3), f"[%({self.UNTYPED}_*)s]"),
+        )
+
+    def test_canonicalisation_is_idempotent(self):
+        once = queries._canonical_origin_sql(self._run(self.LEGACY, 4))
+        self.assertEqual(queries._canonical_origin_sql(once), once)
+
+    def test_the_attribute_key_list_is_not_a_value_list(self):
+        """``latest_filter_key_0``'s trailing index is a FILTER index."""
+
+        for untouched in (
+            "[%(latest_filter_key_0)s]",
+            "[%(latest_filter_key_0)s, %(latest_filter_key_1)s]",
+            "[%(latest_filter_param_0)s]",
+            "[%(limit)s]",
+        ):
+            with self.subTest(text=untouched):
+                self.assertEqual(queries._canonical_origin_sql(untouched), untouched)
+
+    def test_a_renamed_or_reshaped_placeholder_still_de_certifies(self):
+        for mutant in (
+            # Renamed family.
+            "[%(latest_filter_idx_0_0)s, %(latest_filter_idx_0_1)s]",
+            # Two different filters' lists must never merge into one token.
+            "[%(latest_filter_index_0_0)s, %(latest_filter_index_1_0)s]",
+            # Non-consecutive value indexes are not an arity the builder emits.
+            "[%(latest_filter_index_0_0)s, %(latest_filter_index_0_2)s]",
+            # Out of order.
+            "[%(latest_filter_index_0_1)s, %(latest_filter_index_0_0)s]",
+            # A non-canonical decimal is a byte change, not an arity change.
+            "[%(latest_filter_index_0_00)s]",
+            # Separator changes are byte changes.
+            "[%(latest_filter_index_0_0)s,%(latest_filter_index_0_1)s]",
+            # A mixed list keeps its exact text.
+            "[%(latest_filter_index_0_0)s, %(latest_filter_key_0)s]",
+            # No value index at all.
+            "[%(latest_filter_index_0)s]",
+        ):
+            with self.subTest(mutant=mutant):
+                self.assertEqual(queries._canonical_origin_sql(mutant), mutant)
+                self.assertNotEqual(
+                    queries._users_origin_digest(mutant),
+                    queries._users_origin_digest(f"[%({self.UNTYPED}_*)s]"),
+                )
+
+    def test_any_other_byte_change_moves_the_digest(self):
+        base = (
+            "SELECT 1 WHERE hasAny(arrayMap(x -> lowerUTF8(x), "
+            f"mapValues(span_attr_str)), {self._run(self.UNTYPED, 2)})"
+        )
+        for mutant in (
+            base.replace("lowerUTF8", "lower"),
+            base.replace("span_attr_str", "span_attr_num"),
+            base.replace("hasAny", "hasAll"),
+            base.replace("SELECT 1", "SELECT 2"),
+            base.replace(self.UNTYPED, self.TYPED),
+        ):
+            with self.subTest(mutant=mutant[:60]):
+                self.assertNotEqual(
+                    queries._users_origin_digest(mutant),
+                    queries._users_origin_digest(base),
+                )
+
+    def test_the_digest_normalizes_exactly_what_validate_select_does(self):
+        statement = "WITH x AS (SELECT 1) SELECT * FROM x"
+        digest = queries._users_origin_digest(statement)
+        for variant in (statement, statement + ";", f"\n  {statement};\n"):
+            with self.subTest(variant=variant):
+                self.assertEqual(queries._users_origin_digest(variant), digest)
+        # A statement with no value list at all is digested verbatim.
+        self.assertEqual(digest, hashlib.sha256(statement.encode()).hexdigest())
+
+
+class UsersOriginCanonicalDevControlTests(unittest.TestCase):
+    """The canonical pin is the builder's own statement, on this tree.
+
+    ``_USERS_ORIGIN_SHA`` is a literal, so a literal-versus-literal assertion
+    would prove nothing. These cases build the statement with the recipe
+    documented next to the pin and then ask the harness whether it is pinned.
+    On this tree no attribute witness qualifies, so canonicalisation is a
+    *no-op* here and every shape -- including the value texts whose bloom-hint
+    fan-out breaks a raw-text pin elsewhere in the stack -- is one statement.
+    Pure string construction: no connection and no ``django.setup()``; these
+    cases skip where Django is not configured.
+    """
+
+    ORGANIZATION = str(UUID(int=11))
+    PROJECT = str(UUID(int=12))
+    WINDOW_START = datetime(2026, 9, 3, 0, 0, tzinfo=timezone.utc)
+    WINDOW_END = datetime(2026, 9, 3, 4, 0, tzinfo=timezone.utc)
+
+    def _builder_class(self):
+        try:
+            from tracer.services.clickhouse.v2.query_builders.user_list import (
+                UserListQueryBuilderV2,
+            )
+        except Exception as exc:  # pragma: no cover - Django not configured here
+            self.skipTest(f"UserListQueryBuilderV2 unavailable: {exc}")
+        return UserListQueryBuilderV2
+
+    def _statement(self, attribute_config=None):
+        filters = [
+            {
+                "column_id": "created_at",
+                "filter_config": {
+                    "filter_type": "datetime",
+                    "filter_op": "between",
+                    "filter_value": [
+                        self.WINDOW_START.isoformat(),
+                        self.WINDOW_END.isoformat(),
+                    ],
+                },
+            }
+        ]
+        if attribute_config is not None:
+            filters.append(
+                {
+                    "column_id": "attr_a",
+                    "filter_config": {
+                        "col_type": "SPAN_ATTRIBUTE",
+                        **attribute_config,
+                    },
+                }
+            )
+        builder = self._builder_class()(
+            organization_id=self.ORGANIZATION,
+            project_ids=[self.PROJECT],
+            filters=filters,
+            search="",
+            empty_scope=False,
+        )
+        # ``limit`` is a binding: 26 and 65 are the same statement text.
+        sql, _ = builder.build_dimension_candidate_query(
+            limit=26,
+            window_start=self.WINDOW_START,
+            window_end=self.WINDOW_END,
+        )
+        return sql
+
+    def _shapes(self):
+        def equals(value):
+            return {
+                "filter_type": "text",
+                "filter_op": "equals",
+                "filter_value": value,
+            }
+
+        def picker(values, typed):
+            config = {
+                "filter_type": "text",
+                "filter_op": "in",
+                "filter_value": list(values),
+            }
+            if typed:
+                config["attribute_value_types"] = ["string"] * len(values)
+            return config
+
+        shapes = [("unseeded", None)]
+        # Values whose letters ``k`` fan the legacy ASCII bloom hint out, and
+        # a list whose lowercased values collide: the shapes a raw-text pin
+        # cannot hold once a text witness qualifies.
+        for value in ("value-a", "kid", "kayak", "token", "ok", "OK", "k" * 9):
+            shapes.append((f"equals {value!r}", equals(value)))
+        for count in (1, 2, 3, 5, 10, 11, 12):
+            values = [f"value-{index}" for index in range(count)]
+            shapes.append((f"in {count} untyped", picker(values, False)))
+            shapes.append((f"in {count} typed", picker(values, True)))
+        for values in (["kid"], ["kid", "box"], ["Yes", "yes"], ["a", "a", "b"]):
+            shapes.append((f"in {values!r} untyped", picker(values, False)))
+            shapes.append((f"in {values!r} typed", picker(values, True)))
+        return shapes
+
+    def test_every_reviewed_shape_is_the_one_pinned_statement(self):
+        for label, attribute in self._shapes():
+            with self.subTest(shape=label):
+                sql = self._statement(attribute)
+                self.assertEqual(
+                    queries._users_origin_digest(sql), queries._USERS_ORIGIN_SHA
+                )
+
+    def test_canonicalisation_is_a_no_op_on_this_tree(self):
+        """No witness qualifies here, so no value list is emitted at all."""
+
+        for label, attribute in self._shapes():
+            with self.subTest(shape=label):
+                sql = self._statement(attribute).strip().rstrip(";")
+                self.assertEqual(queries._canonical_origin_sql(sql), sql)
+                self.assertEqual(
+                    queries._USERS_ORIGIN_SHA,
+                    hashlib.sha256(sql.encode()).hexdigest(),
+                )
+
+    def test_a_changed_statement_fails_closed(self):
+        sql = self._statement(None)
+        self.assertNotEqual(
+            queries._users_origin_digest(sql + " LIMIT 1"),
+            queries._USERS_ORIGIN_SHA,
+        )
+
+
+class ChUserAssertTests(unittest.TestCase):
+    def test_cli_default_off(self):
+        with patch.object(queries.argparse.ArgumentParser, "parse_args", autospec=True,
+                          side_effect=RuntimeError("stop-before-io")) as parse:
+            with self.assertRaisesRegex(RuntimeError, "stop-before-io"):
+                queries.main()
+        parser = parse.call_args.args[0]
+        self.assertIs(parser.get_default("user_assert"), False)
+        action = next(a for a in parser._actions if a.dest == "user_assert")
+        self.assertEqual(action.option_strings, ["--user-assert"])
+        self.assertIs(action.const, True)
+
+    def test_unset_env_keeps_default_only_while_the_assert_is_off(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop(queries._CH_USER_ENV, None)
+            self.assertEqual(queries.observe_ch_user(SimpleNamespace()), "default")
+            self.assertEqual(
+                queries.observe_ch_user(SimpleNamespace(user_assert=False)), "default")
+            with self.assertRaisesRegex(replay.ReplayError, "CH_USER_NOT_CONFIGURED"):
+                queries.observe_ch_user(SimpleNamespace(user_assert=True))
+            # No identity to compare against is itself a hard failure.
+            with self.assertRaisesRegex(replay.ReplayError, "CH_USER_NOT_CONFIGURED"):
+                queries.assert_ch_identity(SimpleNamespace(user_assert=True), "default")
+
+    def test_empty_env_keeps_its_pre_flag_meaning_with_the_assert_off(self):
+        """An env var set to "" is a misconfiguration, not a request for ``default``.
+
+        ``os.environ.get(_CH_USER_ENV, "default")`` is the resolution this
+        script had before ``--user-assert`` existed: only an *unset* variable
+        falls back. Resolving "" to ``default`` would silently connect as the
+        one account this harness must never use.
+        """
+        with patch.dict(os.environ, {queries._CH_USER_ENV: ""}):
+            self.assertEqual(queries.observe_ch_user(SimpleNamespace()), "")
+            self.assertEqual(
+                queries.observe_ch_user(SimpleNamespace(user_assert=False)), ""
+            )
+            with self.assertRaisesRegex(replay.ReplayError, "CH_USER_NOT_CONFIGURED"):
+                queries.observe_ch_user(SimpleNamespace(user_assert=True))
+
+    def test_identity_mismatch_fails_fast_and_match_passes(self):
+        with patch.dict(os.environ, {queries._CH_USER_ENV: "observe_readonly"}):
+            args = SimpleNamespace(user_assert=True)
+            self.assertEqual(queries.observe_ch_user(args), "observe_readonly")
+            queries.assert_ch_identity(args, "observe_readonly")
+            for actual in ("default", "", None, b"observe_readonly"):
+                with self.subTest(actual=actual):
+                    with self.assertRaisesRegex(
+                        replay.ReplayError, "CH_USER_IDENTITY_MISMATCH"
+                    ):
+                        queries.assert_ch_identity(args, actual)
+            # Off means off: a silent 'default' run is still possible without it.
+            queries.assert_ch_identity(SimpleNamespace(user_assert=False), "default")
+            queries.assert_ch_identity(SimpleNamespace(), "default")
+
+    def test_executor_identity_is_answered_by_the_server_not_by_our_own_argument(self):
+        """The executor's own connection must be proven, not restated."""
+        with patch.dict(os.environ, {queries._CH_USER_ENV: "observe_readonly"}):
+            for rows, fails in (
+                ([("observe_readonly",)], False),
+                ([("default",)], True),
+                ([], True),
+                ([()], True),
+                ([(b"observe_readonly",)], True),
+            ):
+                with self.subTest(rows=rows):
+                    reader = object.__new__(queries.ReadOnlyExecutor)
+                    reader.args = SimpleNamespace(user_assert=True)
+                    reader.prefix = "observe-local-replay-deadbeef"
+                    reader.client = Mock()
+                    reader.client.execute.return_value = rows
+                    if fails:
+                        with self.assertRaisesRegex(
+                            replay.ReplayError, "CH_USER_IDENTITY_MISMATCH"
+                        ):
+                            reader._assert_server_side_identity()
+                    else:
+                        reader._assert_server_side_identity()
+                    (statement,) = reader.client.execute.call_args.args
+                    self.assertEqual(statement, "SELECT currentUser()")
+                    self.assertEqual(
+                        reader.client.execute.call_args.kwargs,
+                        {
+                            "query_id": "observe-local-replay-deadbeef-identity",
+                            "settings": {"readonly": 2, "max_execution_time": 3},
+                        },
+                    )
+            # Flag off spends nothing: no statement, no identity claim.
+            reader = object.__new__(queries.ReadOnlyExecutor)
+            reader.args, reader.client = SimpleNamespace(), Mock()
+            reader._assert_server_side_identity()
+            reader.client.execute.assert_not_called()
 
 
 class PreviewReferenceGateTests(unittest.TestCase):
