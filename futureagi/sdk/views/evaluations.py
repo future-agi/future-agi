@@ -22,8 +22,6 @@ from model_hub.models.error_localizer_model import ErrorLocalizerStatus
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.models.evaluation import Evaluation
 from sdk.serializers.contracts import (
-    ConfigureEvaluationsRequestSerializer,
-    SDKConfigureEvaluationsResponseSerializer,
     SDKErrorResponseSerializer,
     SDKEvalTemplateResponseSerializer,
     SDKGetEvalsResponseSerializer,
@@ -45,10 +43,6 @@ from sdk.utils.evaluations import (
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
-from tracer.models.external_eval_config import (
-    ExternalEvalConfig,
-    StatusChoices,
-)
 
 logger = structlog.get_logger(__name__)
 
@@ -502,66 +496,3 @@ class GetEvalsView(APIView):
                 get_error_message("FAILED_TO_GET_EVALS")
             )
 
-
-class ConfigureEvaluationsView(APIView):
-    _gm = GeneralMethods()
-    authentication_classes = [APIKeyAuthentication]
-    permission_classes = [IsAuthenticated]
-    parser_classes = (JSONParser,)
-
-    @validated_request(
-        request_serializer=ConfigureEvaluationsRequestSerializer,
-        responses={
-            200: SDKConfigureEvaluationsResponseSerializer,
-            400: SDKErrorResponseSerializer,
-            500: SDKErrorResponseSerializer,
-        },
-        validation_error_response=sdk_validation_error_response,
-        serializer_context=lambda request: {"request": request},
-    )
-    def post(self, request, *args, **kwargs):
-        try:
-            user_organization = (
-                getattr(request, "organization", None) or request.user.organization
-            )
-            eval_config = request.validated_data.get("eval_config")
-            platform = request.validated_data.get("platform")
-            custom_eval_name = request.validated_data.get("custom_eval_name")
-
-            credentials = request.data.copy()
-            credentials.pop("eval_config", None)
-            credentials.pop("platform", None)
-            credentials.pop("custom_eval_name", None)
-
-            serializer = ConfigureEvaluationsSerializer(
-                data=eval_config, context={"request": request}
-            )
-            if not serializer.is_valid():
-                return sdk_validation_error_response(serializer.errors)
-
-            eval_template = EvalTemplate.objects.get(
-                name=serializer.validated_data.get("eval_templates")
-            )
-
-            ExternalEvalConfig.objects.create(
-                organization=user_organization,
-                eval_template=eval_template,
-                name=custom_eval_name,
-                config=serializer.validated_data.get("config", {}),
-                mapping=serializer.validated_data.get("inputs", {}),
-                model=serializer.validated_data.get("model_name"),
-                platform=platform,
-                credentials=credentials,
-                status=StatusChoices.PENDING,
-            )
-
-            return self._gm.success_response({"message": "Configuration is valid."})
-
-        except ValidationError as e:
-            return self._gm.bad_request(e.message_dict)
-
-        except Exception as e:
-            logger.exception(f"Error in configuring evaluations: {str(e)}")
-            return self._gm.internal_server_error_response(
-                "Failed to configure evaluations."
-            )

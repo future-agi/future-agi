@@ -8,7 +8,6 @@ from sdk.serializers.analytics import (
     ExecutionMetricsSerializer,
     ExecutionRunsSerializer,
 )
-from sdk.serializers.evaluations import ConfigureEvaluationsSerializer
 
 
 class SDKErrorResponseSerializer(serializers.Serializer):
@@ -19,32 +18,6 @@ class SDKErrorResponseSerializer(serializers.Serializer):
         child=serializers.ListField(child=serializers.CharField()),
         required=False,
     )
-
-
-class ConfigureEvaluationsRequestSerializer(serializers.Serializer):
-    eval_config = ConfigureEvaluationsSerializer()
-    platform = serializers.CharField()
-    custom_eval_name = serializers.CharField(
-        required=False, allow_blank=True, allow_null=True
-    )
-
-    class Meta:
-        ref_name = "SDKConfigureEvaluationsRequest"
-        swagger_schema_fields = {
-            "additional_properties": openapi.Schema(
-                type=openapi.TYPE_OBJECT,
-                description="Provider-specific credential fields accepted at top level.",
-            )
-        }
-
-
-class SDKMessageResultSerializer(serializers.Serializer):
-    message = serializers.CharField()
-
-
-class SDKConfigureEvaluationsResponseSerializer(serializers.Serializer):
-    status = serializers.BooleanField()
-    result = SDKMessageResultSerializer()
 
 
 class SDKStandaloneEvalInputSerializer(serializers.Serializer):
@@ -272,10 +245,8 @@ __all__ = [
     "AnalyticsResponseSerializer",
     "CallMetricsSerializer",
     "CallRunDetailSerializer",
-    "ConfigureEvaluationsRequestSerializer",
     "SDKCICDEvaluationRunAcceptedResponseSerializer",
     "SDKCICDEvaluationRunsResponseSerializer",
-    "SDKConfigureEvaluationsResponseSerializer",
     "SDKEvalTemplateResponseSerializer",
     "SDKErrorResponseSerializer",
     "SDKGetEvalsResponseSerializer",

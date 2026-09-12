@@ -4,8 +4,8 @@
  * Users complained that task error logs weren't actionable — raw strings like
  * "Error during evaluation: Required attribute 'output' for key 'result' not
  * found for span <uuid>" give them no idea what to fix. This module maps the
- * known error strings the backend produces (see `tracer/utils/eval.py` and
- * `tracer/utils/external_eval.py`) into structured categories with a title,
+ * known error strings the backend produces (see `tracer/utils/eval.py`)
+ * into structured categories with a title,
  * a severity, a normalized message, and actionable hints.
  *
  * The backend (`tracer/views/eval_task.py::get_eval_task_logs`) now pre-
@@ -83,8 +83,7 @@ const CATEGORIES = [
   },
   {
     id: "quota_exceeded",
-    // external_eval.py:58, eval.py:135 — "Usage limit exceeded" (or a
-    // custom reason from check_usage)
+    // eval.py — "Usage limit exceeded" (or a custom reason from check_usage)
     match: /Usage limit exceeded|quota.{0,20}exceed|free[\s-]?tier/i,
     title: "Usage limit exceeded",
     icon: "solar:wallet-money-linear",

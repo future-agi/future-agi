@@ -5,11 +5,7 @@ This module re-exports all tasks from the new organized structure.
 Import tasks directly from tracer.tasks submodules for new code.
 
 Example:
-    # Old way (still works for backward compatibility)
-    from tracer.tasks import process_external_evals
-
-    # New way (preferred)
-    from tracer.tasks.external_eval import process_external_evals
+    # Preferred
     from tracer.tasks.error_analysis import check_and_process_trace_errors
 """
 
@@ -41,7 +37,6 @@ from model_hub.models.develop_dataset import Cell, Column, Row
 from model_hub.models.prompt_label import PromptLabel
 from model_hub.models.run_prompt import PromptVersion
 from tfc.temporal import temporal_activity
-from tracer.models.external_eval_config import ExternalEvalConfig, StatusChoices
 from tracer.models.observation_span import EndUser, ObservationSpan, Project, Trace
 from tracer.models.trace import TraceErrorAnalysisStatus, TraceSession
 from tracer.models.trace_error_analysis import TraceErrorAnalysis
@@ -55,7 +50,6 @@ from tracer.queries.helpers import get_default_workspace_for_project
 
 # Re-export everything from the tasks package
 from tracer.tasks import *  # noqa: F401, F403
-from tracer.utils.external_eval import run_external_eval_config
 from tracer.utils.helper import get_default_project_session_config
 from tracer.utils.otel import SpanAttributes, convert_otel_span_to_observation_span
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
