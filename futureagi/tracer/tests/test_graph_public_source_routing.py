@@ -132,6 +132,26 @@ class RecordingAnalytics:
         return SimpleNamespace(data=[], columns=COLUMNS, query_time_ms=1)
 
 
+class SeedAdmittingAnalytics(RecordingAnalytics):
+    """Answer the seed probe with a selective estimate instead of nothing.
+
+    ``RecordingAnalytics`` returns ``data=[]`` for every statement, so its
+    candidate is always rejected and every ``direct()`` case below exercises
+    the UNSEEDED graph statement. This variant admits the candidate so the
+    seeded SQL is covered on the same public route.
+    """
+
+    def execute_ch_query(self, query, params, **kwargs):
+        self.calls.append((query, dict(params), kwargs))
+        if "EXPLAIN ESTIMATE" in query:
+            return SimpleNamespace(
+                data=[{"rows": 1_600_000, "marks": 259}],
+                columns=["parts", "rows", "marks"],
+                query_time_ms=1,
+            )
+        return SimpleNamespace(data=[], columns=COLUMNS, query_time_ms=1)
+
+
 def direct(filters, observe_type):
     analytics = RecordingAnalytics()
     result = dispatch.fetch_system_metric_graph_ch(
@@ -144,10 +164,45 @@ def direct(filters, observe_type):
     )
     assert result["query_complete"] is True
     # A filtered trace graph may first spend bounded EXPLAIN ESTIMATE probes
-    # choosing a candidate seed. The graph statement is always the last one.
+    # choosing a candidate seed. The graph statement is always the last one,
+    # and a span graph never probes at all.
+    if observe_type == "span":
+        assert len(analytics.calls) == 1
     assert all("EXPLAIN ESTIMATE" in call[0] for call in analytics.calls[:-1])
     assert "EXPLAIN ESTIMATE" not in analytics.calls[-1][0]
     return analytics.calls[-1]
+
+
+@pytest.mark.parametrize("key", RAW_NAMES)
+def test_public_dispatch_admitted_seed_prunes_with_a_plain_trace_set(key):
+    """An ADMITTED candidate keeps the raw map routing inside the seed too."""
+    analytics = SeedAdmittingAnalytics()
+    result = dispatch.fetch_system_metric_graph_ch(
+        analytics=analytics,
+        project_id=PROJECT,
+        filters=public([window(), leaf(key, "raw-value")]),
+        interval="day",
+        metric_id="traffic",
+        observe_type="trace",
+    )
+    assert result["query_complete"] is True
+    assert result["query_count"] == 2
+    assert len(analytics.calls) == 2
+    probe_query, _, _ = analytics.calls[0]
+    query, params, _ = analytics.calls[1]
+    assert "EXPLAIN ESTIMATE" in probe_query
+    assert "trace_id IN (" in query
+    assert "FROM spans AS graph_seed_spans" in query
+    assert "GLOBAL IN" not in query
+    assert "cluster(" not in query
+    assert f"attrs_string['{key}']" in query
+    assert "spans_hourly_rollup" not in query
+    assert "tracer_eval_logger" not in query
+    assert "model_hub_score" not in query
+    # The seed only prunes: the outer read still classifies every candidate.
+    assert "graph_match_0 = 1" in query
+    assert "FINAL" not in query.upper()
+    assert any(value == "raw-value" for value in params.values())
 
 
 @pytest.mark.parametrize("key", RAW_NAMES)
