@@ -12,13 +12,19 @@ import (
 
 // Agent represents a configured external A2A agent.
 type Agent struct {
-	Name        string   `json:"name"`
-	URL         string   `json:"url"`
-	Auth        A2AAuth  `json:"-"`
-	Card        *AgentCard `json:"card,omitempty"`
-	Description string   `json:"description,omitempty"`
-	Skills      []Skill  `json:"skills,omitempty"`
+	Name        string  `json:"name"`
+	URL         string  `json:"url"`
+	Auth        A2AAuth `json:"-"`
+	Description string  `json:"description,omitempty"`
+	Skills      []Skill `json:"skills,omitempty"`
+	card        atomic.Pointer[AgentCard]
 	healthy     atomic.Bool
+}
+
+// Card returns the last fetched agent card, if any.
+// Safe for concurrent use with FetchCards.
+func (a *Agent) Card() *AgentCard {
+	return a.card.Load()
 }
 
 // Healthy returns whether this agent is reachable.
@@ -138,7 +144,7 @@ func (r *Registry) FetchCards(ctx context.Context) {
 				return
 			}
 
-			a.Card = &card
+			a.card.Store(&card)
 			a.healthy.Store(true)
 			slog.Info("a2a: fetched agent card", "agent", a.Name, "skills", len(card.Skills))
 		}(agent)
