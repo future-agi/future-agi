@@ -41,12 +41,12 @@ class ClickhouseDatatypes(Enum):
     def get_data_type(value):
         if isinstance(value, str):
             return ClickhouseDatatypes.STRING
+        elif isinstance(value, bool):
+            return ClickhouseDatatypes.BOOLEAN
         elif isinstance(value, int):
             return ClickhouseDatatypes.INTEGER
         elif isinstance(value, float):
             return ClickhouseDatatypes.FLOAT
-        elif isinstance(value, bool):
-            return ClickhouseDatatypes.BOOLEAN
         elif isinstance(value, datetime):
             return ClickhouseDatatypes.DATE
         elif isinstance(value, list):

@@ -297,15 +297,17 @@ func evalOp(op string, resolved interface{}, expected interface{}, re *regexp.Re
 		}
 		return re.MatchString(fmt.Sprint(resolved))
 	case OpGt:
-		return compareNumeric(resolved, expected) > 0
+		cmp, ok := compareNumeric(resolved, expected)
+		return ok && cmp > 0
 	case OpLt:
-		return compareNumeric(resolved, expected) < 0
+		cmp, ok := compareNumeric(resolved, expected)
+		return ok && cmp < 0
 	case OpGte:
-		cmp := compareNumeric(resolved, expected)
-		return cmp >= 0
+		cmp, ok := compareNumeric(resolved, expected)
+		return ok && cmp >= 0
 	case OpLte:
-		cmp := compareNumeric(resolved, expected)
-		return cmp <= 0
+		cmp, ok := compareNumeric(resolved, expected)
+		return ok && cmp <= 0
 	case OpExists:
 		exists := resolved != nil
 		if b, ok := expected.(bool); ok {
@@ -363,20 +365,20 @@ func inSlice(resolved interface{}, expected interface{}) bool {
 }
 
 // compareNumeric converts both values to float64 and returns -1, 0, or 1.
-// Returns -2 on conversion failure (which makes all comparisons false).
-func compareNumeric(a, b interface{}) int {
+// Returns ok=false on conversion failure (ensuring all comparisons evaluate to false).
+func compareNumeric(a, b interface{}) (int, bool) {
 	af, aOk := toFloat64(a)
 	bf, bOk := toFloat64(b)
 	if !aOk || !bOk {
-		return -2
+		return 0, false
 	}
 	if af < bf {
-		return -1
+		return -1, true
 	}
 	if af > bf {
-		return 1
+		return 1, true
 	}
-	return 0
+	return 0, true
 }
 
 // toFloat64 attempts to convert a value to float64.
