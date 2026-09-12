@@ -136,6 +136,16 @@ def test_download_document_from_url_fails_fast_on_ssrf_blocked():
     mock_sleep.assert_not_called()
 
 
+def test_download_document_from_url_fails_fast_on_body_limit():
+    with patch(
+        "tfc.utils.storage.safe_fetch",
+        side_effect=ValueError("URL body exceeds 104857600 byte limit."),
+    ), patch("tfc.utils.storage.time.sleep") as mock_sleep:
+        with pytest.raises(ValueError, match="byte limit"):
+            download_document_from_url("https://example.com/huge.pdf", max_retries=5)
+    mock_sleep.assert_not_called()
+
+
 def test_download_image_from_url_passes_explicit_max_bytes():
     """Regression: download_image_from_url must pass MAX_IMAGE_FILE_SIZE so it
     doesn't silently truncate at safe_fetch's 25 MiB default.

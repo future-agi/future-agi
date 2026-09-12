@@ -24,6 +24,10 @@ import Iconify from "src/components/iconify";
 import FormTextFieldV2 from "../../../../components/FormTextField/FormTextFieldV2";
 import { enqueueSnackbar } from "notistack";
 import { getFileIcon } from "../../../knowledge-base/sheet-view/icons";
+import {
+  isDocumentWebAddress,
+  NOT_A_WEB_ADDRESS_MESSAGE,
+} from "./editHelper";
 
 const tabItems = [
   { label: "Upload", value: "upload" },
@@ -98,9 +102,15 @@ export default function ReplaceMediaDialog({
   const onSubmit = (data) => {
     if (currentTab === "upload") {
       onUpload(data?.file?.[0]);
-    } else {
-      onUpload(data?.link);
+      handleClose();
+      return;
     }
+    const link = String(data?.link ?? "").trim();
+    if (!isDocumentWebAddress(link)) {
+      enqueueSnackbar(NOT_A_WEB_ADDRESS_MESSAGE, { variant: "error" });
+      return;
+    }
+    onUpload(link);
     handleClose();
   };
 
