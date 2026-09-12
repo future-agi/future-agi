@@ -75,4 +75,6 @@ catalog:
     topic: ""
 
 admin:
-  addr: ":9464" # /healthz and /metrics
+  # Internal-only admin listener, loopback by default. Override via FI_ADMIN_ADDR
+  # (compose sets ":9464" so published container ports still bind the wire).
+  addr: "127.0.0.1:9464" # /healthz and /metrics
