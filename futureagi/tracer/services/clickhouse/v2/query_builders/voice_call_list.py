@@ -287,6 +287,52 @@ class VoiceCallListQueryBuilderV2(V2RewriteMixin, VoiceCallListQueryBuilder):
             return super().recommended_filter_classify_batch_size()
         return delegate.recommended_filter_classify_batch_size()
 
+    def recommended_filter_max_query_count(self) -> int | None:
+        """Leave the density probe the headroom it is paid from.
+
+        The inherited hook forwards the candidate-WITNESS delegate's answer,
+        which reserves the whole 128-statement read contract for the sparse
+        exact-value fallback. On this lane that reservation is not merely
+        unused, it is disabling: the selector funds density probes from
+        ``query_contract_limit - max_query_count``, so reserving the contract
+        leaves an allowance of zero, every probe is refused before it reaches
+        the transport, and a width the probe alone can approve is pinned at the
+        unprobed four-hour cap for the whole request. Measured offline with the
+        product's own budget defaults on an empty 365-day window: 0 probes and
+        24 slices of 4 h covering 4 days, against 11 probes and 12 slices
+        widening 4 h to 4096 h covering all 365 once the headroom exists.
+
+        Voice does not take the witness-probe path on this shape either -
+        ``prefer_filter_candidate_witness_probe_first()`` is False here - so
+        the delegate's own answer is the right one, and it is the trace list's:
+        no reservation, leaving the selector its 48-statement default and 48
+        probes, 96 of the 128 the contract allows. Every off-lane voice shape
+        keeps the inherited answer unchanged.
+        """
+
+        delegate = self._short_text_candidate_delegate()
+        if delegate is None:
+            return super().recommended_filter_max_query_count()
+        return delegate.recommended_filter_max_query_count()
+
+    def recommended_filter_query_timeout_ms(self) -> int | None:
+        """Give one seed statement a share of the wall, not the whole wall.
+
+        The inherited answer is the entire voice-list request deadline, so a
+        statement that overruns takes the request with it: the selector's
+        recovery for a slow slice is to halve it and retry, and that recovery
+        cannot fire when the per-statement timeout and the request deadline are
+        the same number. This lane may issue up to 24 seed statements plus
+        their classifiers, which is exactly the shape that recovery exists for,
+        so it takes the delegate's answer - the trace list's 9.5 s share on the
+        identical filters. Off-lane voice reads keep the whole wall.
+        """
+
+        delegate = self._short_text_candidate_delegate()
+        if delegate is None:
+            return super().recommended_filter_query_timeout_ms()
+        return delegate.recommended_filter_query_timeout_ms()
+
     def supports_filter_candidate_seed_page(self) -> bool:
         return bool(
             super().supports_filter_candidate_seed_page()

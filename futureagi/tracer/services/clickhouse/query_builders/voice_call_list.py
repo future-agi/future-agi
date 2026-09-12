@@ -407,11 +407,16 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         voice-list request, so one slow statement can consume it and return 503
         with nothing published and no continuation minted - the selector halves
         a slice that overruns its per-statement timeout, and that recovery is
-        unreachable when the two budgets are the same number. The trace list
-        gives one statement a 9.5 s share instead. This docstring claimed that
-        share for voice as well and did not implement it; lowering the value is
-        a behaviour change on every voice filtered read and is left to be
-        measured and shipped on its own.
+        unreachable when the two budgets are the same number. An earlier
+        revision of this docstring claimed the trace list's 9.5 s share here
+        and did not implement it.
+
+        The share is now implemented where the statements that need it are
+        issued: ``VoiceCallListQueryBuilderV2`` forwards this hook to its
+        short exact-string seed delegate, which answers with the trace list's
+        9.5 s. Every other voice filtered read - every shape off that lane,
+        and the internal consumers below - keeps the whole wall, because
+        lowering it there is a behaviour change with no measurement behind it.
         """
 
         if not self._bounded_internal_scan and not self._bounded_identity_only:
