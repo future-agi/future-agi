@@ -1,27 +1,70 @@
 import { JsonViewer } from "@textea/json-viewer";
-import React from "react";
+import React, { useState } from "react";
 import PropTypes from "prop-types";
-import { useTheme } from "@mui/material";
+import { useTheme, Dialog, DialogContent } from "@mui/material";
 import { defineDataType } from "@textea/json-viewer";
+import { InlineAudio } from "src/components/inline-audio/inline-row-audio";
+import { sanitizeSrc, isImageValue, isAudioValue } from "src/components/custom-json-viewer/media-utils";
 
-const MiniImageRender = ({ value }) => (
-  <img
-    width={150}
-    src={value}
-    alt="Base64 Preview"
-    style={{ display: "inline-block" }}
-  />
-);
+const MiniImageRender = ({ value }) => {
+  const [open, setOpen] = useState(false);
+  const safeSrc = sanitizeSrc(value);
+
+  if (!safeSrc) return <span>{value}</span>;
+
+  return (
+    <>
+      <img
+        width={150}
+        src={safeSrc}
+        alt="Preview"
+        style={{ display: "inline-block", cursor: "pointer" }}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen(true);
+        }}
+      />
+      <Dialog open={open} onClose={() => setOpen(false)} maxWidth="lg">
+        <DialogContent
+          sx={{
+            bgcolor: "background.paper",
+          }}
+        >
+          <img src={safeSrc} alt="full" style={{ width: "100%" }} />
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+};
 
 MiniImageRender.propTypes = {
   value: PropTypes.string,
 };
 
+const MiniAudioRender = ({ value }) => {
+  const safeSrc = sanitizeSrc(value);
+
+  if (!safeSrc) return <span>{value}</span>;
+
+  return (
+    <div onClick={(e) => e.stopPropagation()}>
+      <InlineAudio src={safeSrc} />
+    </div>
+  );
+};
+
+MiniAudioRender.propTypes = {
+  value: PropTypes.string,
+};
+
 const imageType = defineDataType({
-  is: (value) => {
-    return typeof value === "string" && value.startsWith("data:image");
-  },
+  is: (value) => isImageValue(value) && !!sanitizeSrc(value),
   Component: MiniImageRender,
+});
+
+const audioType = defineDataType({
+  is: (value) => isAudioValue(value) && !!sanitizeSrc(value),
+  Component: MiniAudioRender,
 });
 
 const CustomJsonViewer = ({ object, ...rest }) => {
@@ -70,7 +113,7 @@ const CustomJsonViewer = ({ object, ...rest }) => {
         groupArraysAfterLength={10}
         highlightUpdates={false}
         editable={false}
-        valueTypes={[imageType]}
+        valueTypes={[imageType, audioType]}
         // Disable copy functionality
         enableClipboard={false}
         quotesOnKeys={false}
