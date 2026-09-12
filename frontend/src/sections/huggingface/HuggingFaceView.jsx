@@ -92,7 +92,7 @@ const HuggingFaceView = () => {
     ? HuggingFaceDatasetValidationSchema2
     : HuggingFaceDatasetValidationSchema1;
 
-  const { control, handleSubmit, watch, reset } = useForm({
+  const { control, handleSubmit, watch, reset, getValues, setValue } = useForm({
     defaultValues: getDefaultValue(),
     resolver: zodResolver(validationSchema),
   });
@@ -1203,7 +1203,8 @@ const HuggingFaceView = () => {
         <HuggingFaceDetailDrawer
           show={show}
           setShow={setShow}
-          reset={reset}
+          getValues={getValues}
+          setValue={setValue}
           control={control}
           huggingFaceDetail={huggingFaceDetail?.data?.result?.dataset}
           watch={watch}
