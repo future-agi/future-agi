@@ -788,9 +788,9 @@ def test_the_view_helpers_read_and_pin_the_witness_slack_they_are_given():
     a no-op rather than an error.
     """
 
-    from tracer.views.trace import (
-        _pin_cursor_filter_seed_witness_slack,
-        _read_filter_seed_witness_slack,
+    from tracer.services.clickhouse.list_cursor import (
+        pin_filter_seed_witness_slack,
+        read_filter_seed_witness_slack,
     )
 
     class _WithEnvelope:
@@ -804,29 +804,23 @@ def test_the_view_helpers_read_and_pin_the_witness_slack_they_are_given():
             self.pinned = hours
 
     builder = _WithEnvelope()
-    assert _read_filter_seed_witness_slack(builder) == 2
+    assert read_filter_seed_witness_slack(builder) == 2
 
     # No cursor: a first hop must not pin anything.
-    _pin_cursor_filter_seed_witness_slack(builder, None)
+    pin_filter_seed_witness_slack(builder, None)
     assert builder.pinned == "unset"
 
-    _pin_cursor_filter_seed_witness_slack(
-        builder, SimpleNamespace(witness_slack_hours=1)
-    )
+    pin_filter_seed_witness_slack(builder, SimpleNamespace(witness_slack_hours=1))
     assert builder.pinned == 1
 
     # A legacy token clears the pin back to the runtime setting.
-    _pin_cursor_filter_seed_witness_slack(
-        builder, SimpleNamespace(witness_slack_hours=None)
-    )
+    pin_filter_seed_witness_slack(builder, SimpleNamespace(witness_slack_hours=None))
     assert builder.pinned is None
 
     # A builder with no envelope answers nothing and is never pinned.
     indifferent = SimpleNamespace()
-    assert _read_filter_seed_witness_slack(indifferent) is None
-    _pin_cursor_filter_seed_witness_slack(
-        indifferent, SimpleNamespace(witness_slack_hours=1)
-    )
+    assert read_filter_seed_witness_slack(indifferent) is None
+    pin_filter_seed_witness_slack(indifferent, SimpleNamespace(witness_slack_hours=1))
 
 
 def _short_text_lane_builder(*, window_start, window_end):
@@ -892,9 +886,9 @@ def test_a_minted_cursor_carries_its_slack_through_the_codec_into_the_next_hops_
     built on cannot move when an operator turns the runtime knob mid-chain.
     """
 
-    from tracer.views.trace import (
-        _pin_cursor_filter_seed_witness_slack,
-        _read_filter_seed_witness_slack,
+    from tracer.services.clickhouse.list_cursor import (
+        pin_filter_seed_witness_slack,
+        read_filter_seed_witness_slack,
     )
 
     window_start = datetime(2026, 1, 1, tzinfo=UTC)
@@ -904,7 +898,7 @@ def test_a_minted_cursor_carries_its_slack_through_the_codec_into_the_next_hops_
         window_start=window_start, window_end=window_end
     )
     assert first_hop.supports_filter_candidate_seed_page()
-    slack = _read_filter_seed_witness_slack(first_hop)
+    slack = read_filter_seed_witness_slack(first_hop)
     assert slack == 1
 
     token, values = _token(
@@ -928,7 +922,7 @@ def test_a_minted_cursor_carries_its_slack_through_the_codec_into_the_next_hops_
             window_start=window_start, window_end=window_end
         )
         unpinned = _seed_witness_params(second_hop, window_end=window_end)
-        _pin_cursor_filter_seed_witness_slack(second_hop, cursor)
+        pin_filter_seed_witness_slack(second_hop, cursor)
         assert second_hop.filter_seed_witness_slack_hours() == 1
         pinned = _seed_witness_params(second_hop, window_end=window_end)
 
@@ -950,7 +944,9 @@ def test_a_cursor_minted_before_the_field_existed_falls_back_to_the_setting():
     runtime setting, exactly as that token's own pagination did before.
     """
 
-    from tracer.views.trace import _pin_cursor_filter_seed_witness_slack
+    from tracer.services.clickhouse.list_cursor import (
+        pin_filter_seed_witness_slack,
+    )
 
     window_start = datetime(2026, 1, 1, tzinfo=UTC)
     window_end = datetime(2026, 8, 1, tzinfo=UTC)
@@ -966,7 +962,7 @@ def test_a_cursor_minted_before_the_field_existed_falls_back_to_the_setting():
     assert cursor.witness_slack_hours is None
 
     builder = _short_text_lane_builder(window_start=window_start, window_end=window_end)
-    _pin_cursor_filter_seed_witness_slack(builder, cursor)
+    pin_filter_seed_witness_slack(builder, cursor)
 
     assert builder.filter_seed_witness_slack_hours() == 4
     params = _seed_witness_params(builder, window_end=window_end)

@@ -115,6 +115,8 @@ from tracer.services.clickhouse.list_cursor import (
     exact_total_explicitly_required,
     frozen_window_filter,
     list_cursor_boundary_fingerprint,
+    pin_filter_seed_witness_slack,
+    read_filter_seed_witness_slack,
     snapshot_cursor_supported,
 )
 from tracer.services.clickhouse.list_request_deadline import bounded_list_request
@@ -358,36 +360,6 @@ def _collect_trace_enrichment_futures(
             user_degradation = ("TimeoutError", None)
 
     return results, user_degradation
-
-
-def _read_filter_seed_witness_slack(builder) -> int | None:
-    """The witness slack this read used, for its continuation to carry.
-
-    ``None`` for every builder and every request shape that has no witness
-    envelope, which keeps their cursors byte-identical to the ones minted
-    before the field existed.
-    """
-
-    read = getattr(builder, "filter_seed_witness_slack_hours", None)
-    return read() if callable(read) else None
-
-
-def _pin_cursor_filter_seed_witness_slack(builder, cursor_state) -> None:
-    """Finish a pagination under the slack its first hop was minted with.
-
-    The slack decides candidacy, so an operator turning the runtime knob
-    between two hops of one cursor would move the boundary under a
-    half-published page - duplicating rows that stop being candidates and
-    losing rows that start being them. A legacy token carries no slack; the
-    pin then clears and the builder falls back to the current setting, which
-    is exactly what that token got before.
-    """
-
-    if cursor_state is None:
-        return
-    pin = getattr(builder, "pin_filter_seed_witness_slack_hours", None)
-    if callable(pin):
-        pin(cursor_state.witness_slack_hours)
 
 
 def _decode_trace_list_cursor_order(
@@ -4673,7 +4645,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             annotation_label_ids=annotation_label_ids,
             annotation_label_ids_by_project=annotation_label_ids_by_project,
         )
-        _pin_cursor_filter_seed_witness_slack(builder, cursor_state)
+        pin_filter_seed_witness_slack(builder, cursor_state)
         requires_cursor = builder.requires_cursor_for_long_filtered_read()
         if requires_cursor and not cursor_supported:
             # A long filtered request must never escape to the legacy broad
@@ -5532,7 +5504,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 org_scope=org_scope,
             )
             next_cursor = encode_list_cursor(
-                witness_slack_hours=_read_filter_seed_witness_slack(builder),
+                witness_slack_hours=read_filter_seed_witness_slack(builder),
                 resource="observe_traces",
                 scope=cursor_scope,
                 query=cursor_query,
@@ -5786,7 +5758,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             remove_simulation_calls=sim_flag,
             annotation_label_ids=annotation_label_ids,
         )
-        _pin_cursor_filter_seed_witness_slack(builder, cursor_state)
+        pin_filter_seed_witness_slack(builder, cursor_state)
         voice_request_start, voice_request_end = builder.parse_time_range(filters)
         requires_cursor = long_filtered_read_requires_cursor(
             filters,
@@ -6399,7 +6371,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         ):
             window_start, window_end = builder.parse_time_range(filters)
             next_cursor = encode_list_cursor(
-                witness_slack_hours=_read_filter_seed_witness_slack(builder),
+                witness_slack_hours=read_filter_seed_witness_slack(builder),
                 resource="voice_calls",
                 scope=cursor_scope,
                 query=cursor_query,
