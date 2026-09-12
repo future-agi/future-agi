@@ -337,6 +337,7 @@ class AgentccGatewayViewSet(ViewSet):
                     "base_url",
                     "api_format",
                     "models_list",
+                    "extra_config",
                     "is_active",
                     "default_timeout_seconds",
                     "max_concurrent",
@@ -346,12 +347,14 @@ class AgentccGatewayViewSet(ViewSet):
             )
             providers_map = {}
             for p in providers:
+                extra_config = p.get("extra_config") or {}
                 providers_map[p["provider_name"]] = {
                     "id": str(p["id"]),
                     "name": p["provider_name"],
                     "display_name": p["display_name"] or p["provider_name"],
                     "base_url": p["base_url"],
                     "api_format": p["api_format"],
+                    "api_path_prefix": extra_config.get("api_path_prefix", "/v1"),
                     "models": p["models_list"] or [],
                     "is_active": p["is_active"],
                     "default_timeout": p["default_timeout_seconds"],
@@ -541,6 +544,7 @@ class AgentccGatewayViewSet(ViewSet):
                         "base_url",
                         "api_format",
                         "models",
+                        "display_name",
                         "default_timeout",
                         "default_timeout_seconds",
                         "max_concurrent",

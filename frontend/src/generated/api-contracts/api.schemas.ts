@@ -2620,6 +2620,7 @@ export interface GatewayConfigProviderApi {
   base_url: string;
   /** Gateway protocol adapter name. This intentionally remains a string because self-hosted/custom providers may register adapters outside the built-in openai/anthropic/gemini/google set. */
   api_format: string;
+  api_path_prefix?: string;
   models: GatewayConfigProviderApiModelsItem[];
   is_active: boolean;
   default_timeout: number;

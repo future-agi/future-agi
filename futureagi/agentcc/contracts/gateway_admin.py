@@ -37,6 +37,7 @@ class ProviderConfig(GatewayAdminContractModel):
     api_key: str | None = Field(None, validation_alias=AliasChoices('api_key', 'apiKey'))
     base_url: str | None = Field(None, validation_alias=AliasChoices('base_url', 'baseUrl', 'baseURL'))
     api_format: str | None = Field(None, validation_alias=AliasChoices('api_format', 'apiFormat'))
+    api_path_prefix: str | None = Field(None, validation_alias=AliasChoices('api_path_prefix', 'apiPathPrefix'))
     models: list[str] | None = None
     timeout: int | None = None
     weight: float | None = None

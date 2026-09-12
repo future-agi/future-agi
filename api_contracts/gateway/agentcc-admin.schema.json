@@ -12,6 +12,7 @@
         "api_key": { "type": "string" },
         "base_url": { "type": "string" },
         "api_format": { "type": "string" },
+        "api_path_prefix": { "type": "string" },
         "models": { "type": "array", "items": { "type": "string" } },
         "timeout": { "type": "integer" },
         "weight": { "type": "number" },

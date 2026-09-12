@@ -76,6 +76,28 @@
 - the stored explanation is exactly the verdict the judge prompt dictated, with the span's mapped attribute substituted in, and the result carries the mock LLM's token usage
 - the Pass verdict is parsed out of the model response into output_bool = true
 
+## gateway
+
+### GW-E2E-001 — custom provider keeps an explicitly empty API path prefix
+
+**Goal:** A user configures a custom OpenAI-compatible provider without an API version prefix  
+**Spec:** `flows/gateway/provider-path-prefix.spec.ts:30`  
+**Tags:** @smoke
+
+**User steps:**
+
+1. seed a custom provider for the current organization
+2. open Gateway provider configuration
+3. edit the provider and clear its API path prefix
+4. save and reopen the provider
+5. see that the empty prefix was preserved
+
+**Backend state verified:**
+
+- the provider credential API returns api_path_prefix as an explicit empty string
+- the Django gateway config returns api_path_prefix as an explicit empty string
+- the organization config pushed to the Go gateway retains api_path_prefix as an explicit empty string
+
 ## observe
 
 ### OBS-E2E-001 — SDK trace appears in Observe with coherent backend state
