@@ -156,3 +156,25 @@
 - first create returns 200 and persists the view
 - second create with the same (project, user, name) returns 400, not a silent upsert
 - renaming another view onto the taken name returns 400
+
+## settings
+
+### SET-E2E-001 — admin restricts MCP tool groups for connected clients
+
+**Goal:** An admin restricts which MCP tool groups are available to connected clients  
+**Spec:** `flows/settings/mcp-tool-groups.spec.ts:19`  
+**Tags:** @smoke
+
+**User steps:**
+
+1. open Settings MCP Server
+2. expand Tool Groups
+3. turn off Datasets & Knowledge Bases
+4. save the selection
+
+**Backend state verified:**
+
+- GET /mcp/config/tool-groups/ omits datasets from enabled_groups
+- PG mcp_server_mcptoolgroupconfig.enabled_groups matches that selection for the actor org
+- GET /mcp/internal/tools/ still lists whoami and no longer lists list_datasets
+- POST /mcp/internal/tool-call/ list_datasets returns 403 while whoami still succeeds

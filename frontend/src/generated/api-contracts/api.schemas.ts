@@ -5584,8 +5584,29 @@ export interface MCPToolCallResponseApi {
   session_id: string;
 }
 
+export interface MCPToolParameterApi {
+  /** @minLength 1 */
+  readonly name?: string;
+  /** @minLength 1 */
+  readonly type?: string;
+  readonly description?: string;
+  readonly required?: boolean;
+}
+
+export type MCPToolDiscoveryItemApiInputSchema = { [key: string]: unknown };
+
+export interface MCPToolDiscoveryItemApi {
+  /** @minLength 1 */
+  readonly name?: string;
+  /** @minLength 1 */
+  readonly category?: string;
+  readonly description?: string;
+  readonly parameters?: readonly MCPToolParameterApi[];
+  readonly input_schema?: MCPToolDiscoveryItemApiInputSchema;
+}
+
 export interface MCPToolListResultApi {
-  tools: ToolDiscoveryItemApi[];
+  tools: MCPToolDiscoveryItemApi[];
   total: number;
   session_id: string;
 }
@@ -9493,10 +9514,25 @@ export interface DatasetMultipleStaticColumnsRequestApi {
   columns: DatasetMultipleStaticColumnsRequestApiColumnsItem[];
 }
 
-export type DatasetAddRowsRequestApiRowsItem = { [key: string]: unknown };
+/**
+ * Any valid JSON value.
+ */
+export type DatasetRowCellRequestApiValue = { [key: string]: unknown };
+
+export interface DatasetRowCellRequestApi {
+  /** @minLength 1 */
+  column_name: string;
+  /** Any valid JSON value. */
+  value?: DatasetRowCellRequestApiValue;
+}
+
+export interface DatasetRowRequestApi {
+  id?: string;
+  cells?: DatasetRowCellRequestApi[];
+}
 
 export interface DatasetAddRowsRequestApi {
-  rows: DatasetAddRowsRequestApiRowsItem[];
+  rows: DatasetRowRequestApi[];
 }
 
 export type DatasetAddRowsFromExistingRequestApiColumnMapping = {
@@ -13900,6 +13936,131 @@ export interface DerivedVariableDetailResponseApi {
   result: DerivedVariableDetailApi;
 }
 
+export type PromptTemplatePatchApiVariableNames = { [key: string]: unknown };
+
+export type PromptTemplatePatchApiPlaceholders = { [key: string]: unknown };
+
+export interface PromptTemplatePatchApi {
+  readonly id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 2000
+   */
+  name?: string;
+  description?: string;
+  variable_names?: PromptTemplatePatchApiVariableNames;
+  readonly organization?: string;
+  prompt_folder?: string;
+  placeholders?: PromptTemplatePatchApiPlaceholders;
+  readonly created_by?: string;
+}
+
+export interface PromptRunStatusResultApi {
+  /** @minLength 1 */
+  status: string;
+  error_message: string;
+  executions_result: PromptHistoryExecutionApi;
+}
+
+export interface PromptRunStatusResponseApi {
+  status: boolean;
+  result: PromptRunStatusResultApi;
+}
+
+export type PromptRunRequestApiVariableNames = {
+  [key: string]: { [key: string]: unknown };
+};
+
+/**
+ * Any valid JSON value.
+ */
+export type PromptRunRequestApiPlaceholders = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type PromptRunRequestApiEvaluationConfigsItem = {
+  [key: string]: unknown;
+};
+
+/**
+ * Any valid JSON value.
+ */
+export type PromptRunRequestApiIsRun = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type PromptRunModelConfigurationApiToolsItem = {
+  [key: string]: unknown;
+};
+
+/**
+ * Any valid JSON value.
+ */
+export type PromptRunModelConfigurationApiModelDetail = {
+  [key: string]: unknown;
+};
+
+/**
+ * String or JSON object.
+ */
+export type PromptRunModelConfigurationApiResponseFormat =
+  | string
+  | { [key: string]: unknown };
+
+/**
+ * String or JSON object.
+ */
+export type PromptRunModelConfigurationApiModel =
+  | string
+  | { [key: string]: unknown };
+
+export interface PromptRunModelConfigurationApi {
+  tool_choice?: string;
+  template_format?: string;
+  tools?: PromptRunModelConfigurationApiToolsItem[];
+  output_format?: string;
+  model_type?: string;
+  /** Any valid JSON value. */
+  model_detail?: PromptRunModelConfigurationApiModelDetail;
+  voice_id?: string;
+  temperature?: number;
+  max_tokens?: number;
+  top_p?: number;
+  frequency_penalty?: number;
+  presence_penalty?: number;
+  /** String or JSON object. */
+  response_format?: PromptRunModelConfigurationApiResponseFormat;
+  /** String or JSON object. */
+  model?: PromptRunModelConfigurationApiModel;
+  [key: string]: unknown;
+}
+
+export interface PromptRunConfigurationApi {
+  messages?: MessageItemApi[];
+  configuration?: PromptRunModelConfigurationApi;
+}
+
+export interface PromptRunRequestApi {
+  /** @minLength 1 */
+  name?: string;
+  /** @minLength 1 */
+  version?: string;
+  prompt_config?: PromptRunConfigurationApi[];
+  variable_names?: PromptRunRequestApiVariableNames;
+  /** Any valid JSON value. */
+  placeholders?: PromptRunRequestApiPlaceholders;
+  evaluation_configs?: PromptRunRequestApiEvaluationConfigsItem[];
+  /** @minLength 1 */
+  source?: string;
+  /** Any valid JSON value. */
+  is_run?: PromptRunRequestApiIsRun;
+  is_sdk?: boolean;
+  /** @minimum 0 */
+  run_index?: number;
+}
+
 export type PromptDerivedVariablesResultApiDerivedVariables = {
   [key: string]: string[];
 };
@@ -14305,6 +14466,9 @@ export type TestEvalTemplateApiChoices = { [key: string]: string };
 
 export type TestEvalTemplateApiInputDataTypes = { [key: string]: unknown };
 
+/**
+ * Any valid JSON value.
+ */
 export type TestEvalTemplateApiVariableKeys = { [key: string]: unknown };
 
 export type TestEvalTemplateApiMapping = { [key: string]: unknown };
@@ -14345,6 +14509,7 @@ export interface TestEvalTemplateApi {
   error_localizer?: boolean;
   reason_column?: boolean;
   optional_keys?: string[];
+  /** Any valid JSON value. */
   variable_keys?: TestEvalTemplateApiVariableKeys;
   run_prompt_column?: boolean;
   template_name?: string;
@@ -21663,8 +21828,14 @@ export interface DashboardQueryApiResponseApi {
   result: DashboardQueryResultApi;
 }
 
+/**
+ * Saved query in the same shape as the dashboard query request: time_range and metrics are required once any metric is set, with optional workflow, project_ids, granularity, filters, and breakdowns.
+ */
 export type DashboardWidgetApiQueryConfig = { [key: string]: unknown };
 
+/**
+ * Chart presentation. chart_type must be one of line, stacked_line, column, stacked_column, bar, stacked_bar, pie, table, or metric.
+ */
 export type DashboardWidgetApiChartConfig = { [key: string]: unknown };
 
 export interface DashboardWidgetApi {
@@ -21690,7 +21861,9 @@ export interface DashboardWidgetApi {
    * @maximum 2147483647
    */
   height?: number;
+  /** Saved query in the same shape as the dashboard query request: time_range and metrics are required once any metric is set, with optional workflow, project_ids, granularity, filters, and breakdowns. */
   query_config?: DashboardWidgetApiQueryConfig;
+  /** Chart presentation. chart_type must be one of line, stacked_line, column, stacked_column, bar, stacked_bar, pie, table, or metric. */
   chart_config?: DashboardWidgetApiChartConfig;
   readonly created_by?: string;
   readonly created_at?: string;
@@ -28337,21 +28510,13 @@ export type AgentccAnalyticsModelComparison200 = {
 };
 
 export type AgentccAnalyticsOverviewParams = {
+  start?: string;
+  end?: string;
   /**
-   * A page number within the paginated result set.
+   * @minLength 1
    */
-  page?: number;
-  /**
-   * Number of results to return per page.
-   */
-  limit?: number;
-};
-
-export type AgentccAnalyticsOverview200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: AgentccRequestLogApi[];
+  granularity?: string;
+  api_key_id?: string;
 };
 
 export type AgentccAnalyticsUsageTimeseriesParams = {
@@ -28576,13 +28741,53 @@ export type AgentccProviderCredentialsList200 = {
 
 export type AgentccRequestLogsListParams = {
   /**
-   * A page number within the paginated result set.
+   * @minimum 1
    */
   page?: number;
   /**
-   * Number of results to return per page.
+   * @minimum 1
    */
   limit?: number;
+  user_id?: string;
+  session_id?: string;
+  api_key_id?: string;
+  request_id?: string;
+  /**
+   * Comma-separated model names.
+   * @minLength 1
+   */
+  model?: string;
+  /**
+   * Comma-separated provider names.
+   * @minLength 1
+   */
+  provider?: string;
+  /**
+   * Comma-separated HTTP status codes.
+   * @minLength 1
+   */
+  status_code?: string;
+  min_status_code?: number;
+  max_status_code?: number;
+  is_error?: boolean;
+  cache_hit?: boolean;
+  fallback_used?: boolean;
+  guardrail_triggered?: boolean;
+  is_stream?: boolean;
+  started_after?: string;
+  started_before?: string;
+  min_latency?: number;
+  max_latency?: number;
+  min_cost?: number;
+  max_cost?: number;
+  min_tokens?: number;
+  max_tokens?: number;
+  q?: string;
+  search?: string;
+  /**
+   * @minLength 1
+   */
+  ordering?: string;
 };
 
 export type AgentccRequestLogsList200 = {
@@ -29129,12 +29334,15 @@ export type ModelHubApiKeysListParams = {
 };
 
 export type ModelHubDatasetOptimizationListParams = {
+  dataset_id?: string;
+  column_id?: string;
+  develop_id?: string;
   /**
-   * A page number within the paginated result set.
+   * @minimum 1
    */
   page?: number;
   /**
-   * Number of results to return per page.
+   * @minimum 1
    */
   limit?: number;
 };
@@ -29204,6 +29412,19 @@ export const ModelHubDevelopsGetEvalStructureReadEvalType = {
   previously_configured: "previously_configured",
 } as const;
 
+export type ModelHubDevelopsGetEvalsListListParams = {
+  /**
+   * Use user to list evaluations attached to this dataset, including their runnable IDs.
+   */
+  eval_type?: string;
+  search_text?: string;
+  eval_categories?: string;
+  eval_tags?: string[];
+  use_cases?: string[];
+  experiment_id?: string;
+  order?: string;
+};
+
 export type ModelHubDevelopsGetExperimentDatasetTableListParams = {
   /**
    * @minimum 1
@@ -29217,14 +29438,15 @@ export type ModelHubDevelopsGetExperimentDatasetTableListParams = {
 };
 
 export type ModelHubEvalGroupsListParams = {
+  name?: string;
   /**
-   * A page number within the paginated result set.
+   * @minimum 0
    */
-  page?: number;
+  page_number?: number;
   /**
-   * Number of results to return per page.
+   * @minimum 1
    */
-  limit?: number;
+  page_size?: number;
 };
 
 export type ModelHubEvalGroupsList200 = {
@@ -29232,6 +29454,10 @@ export type ModelHubEvalGroupsList200 = {
   next?: string;
   previous?: string;
   results: EvalGroupApi[];
+};
+
+export type ModelHubEvalGroupsReadParams = {
+  name?: string;
 };
 
 export type ModelHubEvalTemplatesUsageListParams = {
@@ -29921,6 +30147,7 @@ export type ModelHubPromptTemplatesListParams = {
    * Number of results to return per page.
    */
   limit?: number;
+  modality?: string[];
 };
 
 export type ModelHubPromptTemplatesList200 = {
@@ -29957,6 +30184,21 @@ export type ModelHubPromptTemplatesGetTemplateByName200 = {
   next?: string;
   previous?: string;
   results: PromptTemplateApi[];
+};
+
+export type ModelHubPromptTemplatesGetRunStatusParams = {
+  template_version?: string;
+};
+
+export type ModelHubPromptTemplatesVersionsParams = {
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   */
+  limit?: number;
 };
 
 export type ModelHubPromptMetricsListParams = {
@@ -30513,6 +30755,19 @@ export const SimulateApiRunTestsListSimulationType = {
   prompt: "prompt",
 } as const;
 
+export type SimulateApiTestExecutionsListParams = {
+  search?: string;
+  status?: string;
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   */
+  limit?: number;
+};
+
 export type SimulateExportReadParams = {
   /**
    * Export source type.
@@ -30739,24 +30994,6 @@ export type TracerCustomEvalConfigListCustomEvalConfigs200 = {
   results: CustomEvalConfigApi[];
 };
 
-export type TracerDashboardListParams = {
-  /**
-   * A page number within the paginated result set.
-   */
-  page?: number;
-  /**
-   * Number of results to return per page.
-   */
-  limit?: number;
-};
-
-export type TracerDashboardList200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: DashboardApi[];
-};
-
 export type TracerDashboardFilterValuesParams = {
   /**
    * Stable namespaced property identity returned by the metrics catalog. Legacy metric_name/metric_type remain accepted during migration.
@@ -30905,24 +31142,6 @@ export const TracerDashboardMetricsSource = {
 
 export type TracerDashboardQueryParams = {
   refresh?: boolean;
-};
-
-export type TracerDashboardSimulationAgentsParams = {
-  /**
-   * A page number within the paginated result set.
-   */
-  page?: number;
-  /**
-   * Number of results to return per page.
-   */
-  limit?: number;
-};
-
-export type TracerDashboardSimulationAgents200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: DashboardApi[];
 };
 
 export type TracerDashboardWidgetsListParams = {
@@ -31498,14 +31717,6 @@ export type TracerObservationSpanListSpansParams = {
 };
 
 export type TracerObservationSpanListSpansObserveParams = {
-  /**
-   * A page number within the paginated result set.
-   */
-  page?: number;
-  /**
-   * Number of results to return per page.
-   */
-  limit?: number;
   project_id?: string;
   user_id?: string;
   /**
@@ -31655,15 +31866,29 @@ export type TracerProjectVersionListRuns200 = {
 };
 
 export type TracerProjectListParams = {
+  name?: string;
+  project_type?: string;
+  tags?: string;
+  filters?: string;
+  sort_by?: string;
+  sort_direction?: TracerProjectListSortDirection;
   /**
-   * A page number within the paginated result set.
+   * @minimum 0
    */
-  page?: number;
+  page_number?: number;
   /**
-   * Number of results to return per page.
+   * @minimum 1
    */
-  limit?: number;
+  page_size?: number;
 };
+
+export type TracerProjectListSortDirection =
+  (typeof TracerProjectListSortDirection)[keyof typeof TracerProjectListSortDirection];
+
+export const TracerProjectListSortDirection = {
+  asc: "asc",
+  desc: "desc",
+} as const;
 
 export type TracerProjectList200 = {
   count: number;
@@ -31939,14 +32164,6 @@ export type TracerTraceSessionGetTraceSessionExportDataParams = {
 };
 
 export type TracerTraceSessionListSessionsParams = {
-  /**
-   * A page number within the paginated result set.
-   */
-  page?: number;
-  /**
-   * Number of results to return per page.
-   */
-  limit?: number;
   project_id?: string;
   user_id?: string;
   bookmarked?: boolean;
@@ -32161,14 +32378,6 @@ export type TracerTraceListTracesParams = {
 };
 
 export type TracerTraceListTracesOfSessionParams = {
-  /**
-   * A page number within the paginated result set.
-   */
-  page?: number;
-  /**
-   * Number of results to return per page.
-   */
-  limit?: number;
   project_id?: string;
   project_version_id?: string;
   session_id?: string;

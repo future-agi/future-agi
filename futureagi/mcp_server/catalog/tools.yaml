@@ -1,0 +1,532 @@
+version: 1
+expected_tool_count: 100
+
+tools:
+  # context
+  - name: whoami
+    group: context
+    description: Return the authenticated user, organization, and workspace context.
+    operation: {method: GET, path: "/accounts/user-info/"}
+    access: read
+  - name: list_workspaces
+    group: context
+    description: List workspaces available to the authenticated user.
+    operation: {method: GET, path: "/accounts/workspaces/"}
+    access: read
+  - name: get_workspace
+    group: context
+    description: Return a workspace by its identifier.
+    operation: {method: GET, path: "/accounts/workspaces/{workspace_id}/"}
+    access: read
+  # users
+  - name: list_org_members
+    group: users
+    description: List members of the current organization.
+    operation: {method: GET, path: "/accounts/organization/members/"}
+    access: read
+  - name: invite_org_member
+    group: users
+    description: Invite a user to the current organization by email and role.
+    operation: {method: POST, path: "/accounts/organization/invite/"}
+    access: write
+  - name: list_api_keys
+    group: users
+    description: List API keys for the current organization.
+    operation: {method: GET, path: "/accounts/key/get_secret_keys/"}
+    access: read
+  - name: create_api_key
+    group: users
+    description: Create a named API key for the current organization.
+    operation: {method: POST, path: "/accounts/key/generate_secret_key/"}
+    access: write
+  - name: create_workspace
+    group: users
+    description: Create a workspace in the current organization.
+    operation: {method: POST, path: "/accounts/workspaces/"}
+    access: write
+  - name: list_workspace_members
+    group: users
+    description: List members of a workspace.
+    operation: {method: GET, path: "/accounts/workspaces/{workspace_id}/members/"}
+    access: read
+  - name: update_workspace
+    group: users
+    description: Update a workspace name or settings.
+    operation: {method: PUT, path: "/accounts/workspaces/{workspace_id}/"}
+    access: write
+  # datasets
+  - name: list_datasets
+    group: datasets
+    description: List datasets available in the current workspace.
+    operation: {method: GET, path: "/model-hub/develops/get-datasets/"}
+    access: read
+  - name: get_dataset
+    group: datasets
+    description: Return the rows, columns, and metadata for a dataset.
+    operation: {method: GET, path: "/model-hub/develops/{dataset_id}/get-dataset-table/"}
+    access: read
+  - name: get_dataset_eval_stats
+    group: datasets
+    description: Return evaluation statistics for a dataset.
+    operation: {method: GET, path: "/model-hub/dataset/{dataset_id}/eval-stats/"}
+    access: read
+  - name: create_dataset
+    group: datasets
+    description: Create an empty dataset in the current workspace. Use create_dataset_column before add_dataset_rows.
+    operation: {method: POST, path: "/model-hub/develops/create-empty-dataset/"}
+    access: write
+  - name: add_dataset_rows
+    group: datasets
+    description: Add rows to an existing dataset using cells with column_name and value. Column names must already exist in the dataset.
+    operation: {method: POST, path: "/model-hub/develops/{dataset_id}/add_rows/"}
+    access: write
+  - name: run_dataset_evals
+    group: datasets
+    description: Start the configured evaluations for a dataset.
+    operation: {method: POST, path: "/model-hub/develops/{dataset_id}/start_evals_process/"}
+    access: write
+    open_world: true
+  - name: create_dataset_column
+    group: datasets
+    description: Create a named static input column before adding dataset rows. Supply column_type using the API schema.
+    operation: {method: POST, path: "/model-hub/develops/{dataset_id}/add_static_column/"}
+    access: write
+  - name: rename_dataset_column
+    group: datasets
+    description: Rename an existing dataset column. This does not change its type or cell values.
+    operation: {method: PUT, path: "/model-hub/develops/{dataset_id}/update_column_name/{column_id}/"}
+    access: write
+  - name: configure_dataset_evaluation
+    group: datasets
+    description: Attach an evaluation template to a dataset with a lowercase name (letters, digits, hyphens or underscores; no spaces) and config.mapping column mappings. Set run=false for setup only; run=true marks it for processing. Use list_dataset_evaluations to discover the attached evaluation ID.
+    operation: {method: POST, path: "/model-hub/develops/{dataset_id}/add_user_eval/"}
+    access: write
+  - name: list_dataset_evaluations
+    group: datasets
+    description: List evaluations attached to a dataset by supplying eval_type=user, including their IDs, configuration and status. These IDs, not template IDs, are used by run_dataset_evals. Without eval_type=user, the API lists available evaluation templates.
+    operation: {method: GET, path: "/model-hub/develops/{dataset_id}/get_evals_list/"}
+    access: read
+  - name: add_dataset_prompt
+    group: datasets
+    description: Create a dataset prompt output column and immediately schedule processing of dataset rows. This can incur model usage charges. Supply dataset_id, name and config; this is separate from workbench run_prompt.
+    operation: {method: POST, path: "/model-hub/develops/add_run_prompt_column/"}
+    access: write
+  - name: update_dataset_prompt
+    group: datasets
+    description: Update a dataset prompt column using dataset_id, column_id and config. This can schedule processing and incur model usage charges.
+    operation: {method: POST, path: "/model-hub/develops/edit_run_prompt_column/"}
+    access: write
+  - name: run_dataset_prompts
+    group: datasets
+    description: Queue configured dataset prompts by run_prompt_ids. Supply row_ids for selected rows, or selected_all_rows=true for all rows; with selected_all_rows=true, row_ids are EXCLUDED. Poll get_dataset for cell results and status.
+    operation: {method: POST, path: "/model-hub/run-prompt-for-rows/"}
+    access: write
+    open_world: true
+  - name: get_dataset_prompt_stats
+    group: datasets
+    description: Return dataset prompt IDs and token, cost and timing statistics. This is not execution status; use get_dataset for cell outputs and status.
+    operation: {method: GET, path: "/model-hub/dataset/{dataset_id}/run-prompt-stats/"}
+    access: read
+  # prompts
+  - name: list_prompt_templates
+    group: prompts
+    description: List prompt templates available in the current workspace.
+    operation: {method: GET, path: "/model-hub/prompt-templates/"}
+    access: read
+  - name: get_prompt_template
+    group: prompts
+    description: Open a prompt template by its identifier, creating its workbench draft if needed.
+    operation: {method: GET, path: "/model-hub/prompt-templates/{id}/"}
+    access: write
+  - name: list_prompt_versions
+    group: prompts
+    description: List versions of a prompt template.
+    operation: {method: GET, path: "/model-hub/prompt-templates/{id}/versions/"}
+    access: read
+  - name: create_prompt_template
+    group: prompts
+    description: Create a prompt template in the current workspace.
+    operation: {method: POST, path: "/model-hub/prompt-templates/"}
+    access: write
+  - name: update_prompt_template
+    group: prompts
+    description: Update selected fields on an existing prompt template.
+    operation: {method: PATCH, path: "/model-hub/prompt-templates/{id}/"}
+    access: write
+  - name: run_prompt
+    group: prompts
+    description: Run a configured prompt version by supplying version and is_run="prompt". Optionally replace prompt_config or variable_names. Returns an asynchronous receipt; read get_prompt_run with template_version for status and output.
+    operation: {method: POST, path: "/model-hub/prompt-templates/{id}/run_template/"}
+    access: write
+    open_world: true
+  - name: get_prompt_run
+    group: prompts
+    description: Read workbench prompt execution status and outputs. Supply template_version matching the version returned by run_prompt to read that version, otherwise the API chooses the default/latest version.
+    operation: {method: GET, path: "/model-hub/prompt-templates/{id}/get-run-status/"}
+    access: read
+  # evaluations
+  - name: list_eval_templates
+    group: evaluations
+    description: List evaluation templates using the supplied filters.
+    operation: {method: POST, path: "/model-hub/eval-templates/list/"}
+    access: read
+  - name: get_eval_template
+    group: evaluations
+    description: Return an evaluation template by its identifier.
+    operation: {method: GET, path: "/model-hub/eval-templates/{template_id}/detail/"}
+    access: read
+  - name: create_eval_template
+    group: evaluations
+    description: Create an evaluation template.
+    operation: {method: POST, path: "/model-hub/eval-templates/create-v2/"}
+    access: write
+  - name: update_eval_template
+    group: evaluations
+    description: Update an existing evaluation template.
+    operation: {method: PUT, path: "/model-hub/eval-templates/{template_id}/update/"}
+    access: write
+  - name: list_eval_groups
+    group: evaluations
+    description: List evaluation groups in the current workspace.
+    operation: {method: GET, path: "/model-hub/eval-groups/"}
+    access: read
+  - name: get_eval_group
+    group: evaluations
+    description: Return an evaluation group by its identifier.
+    operation: {method: GET, path: "/model-hub/eval-groups/{id}/"}
+    access: read
+  - name: test_evaluation
+    group: evaluations
+    description: Execute an evaluation template against supplied test inputs.
+    operation: {method: POST, path: "/model-hub/test-evaluation/"}
+    access: write
+    open_world: true
+  # observability
+  - name: list_projects
+    group: observability
+    description: List tracing projects available in the current workspace.
+    operation: {method: GET, path: "/tracer/project/"}
+    access: read
+  - name: get_project
+    group: observability
+    description: Return a tracing project by its identifier.
+    operation: {method: GET, path: "/tracer/project/{id}/"}
+    access: read
+  - name: search_traces
+    group: observability
+    description: Search traces using project, time range, status, and attribute filters.
+    operation: {method: GET, path: "/tracer/trace/list_traces_of_session/"}
+    access: read
+  - name: get_trace
+    group: observability
+    description: Return a trace by its identifier.
+    operation: {method: GET, path: "/tracer/trace/{id}/"}
+    access: read
+  - name: list_spans
+    group: observability
+    description: List observation spans using the supplied filters.
+    operation: {method: GET, path: "/tracer/observation-span/list_spans_observe/"}
+    access: read
+  - name: get_span
+    group: observability
+    description: Return an observation span by its identifier.
+    operation: {method: GET, path: "/tracer/observation-span/{id}/"}
+    access: read
+  - name: list_sessions
+    group: observability
+    description: List trace sessions using the supplied filters.
+    operation: {method: GET, path: "/tracer/trace-session/list_sessions/"}
+    access: read
+  - name: get_session
+    group: observability
+    description: Return a trace session by its identifier.
+    operation: {method: GET, path: "/tracer/trace-session/{id}/query/"}
+    access: read
+  - name: get_trace_error_analysis
+    group: observability
+    description: Return the recorded error analysis for a trace.
+    operation: {method: GET, path: "/tracer/trace-error-analysis/{trace_id}/"}
+    access: read
+  - name: list_eval_tasks
+    group: observability
+    description: List online evaluation tasks in the current workspace.
+    operation: {method: GET, path: "/tracer/eval-task/list_eval_tasks/"}
+    access: read
+  - name: get_eval_task
+    group: observability
+    description: Return an online evaluation task by its identifier.
+    operation: {method: GET, path: "/tracer/eval-task/{id}/"}
+    access: read
+  - name: create_eval_task
+    group: observability
+    description: Create an online evaluation task.
+    operation: {method: POST, path: "/tracer/eval-task/"}
+    access: write
+    open_world: true
+  - name: update_eval_task
+    group: observability
+    description: Update and rerun an online evaluation task using eval_task_id and edit_type. Pause a running task first. edit_rerun preserves existing results; fresh_run DELETES previous results and starts again. May incur evaluation charges.
+    operation: {method: PATCH, path: "/tracer/eval-task/update_eval_task/"}
+    access: destructive
+    idempotent: false
+    open_world: true
+  - name: pause_eval_task
+    group: observability
+    description: Pause a running online evaluation task by eval_task_id. Already-launched evaluations may finish before the worker stops.
+    operation: {method: POST, path: "/tracer/eval-task/pause_eval_task/"}
+    access: write
+  - name: resume_eval_task
+    group: observability
+    description: Resume a paused online evaluation task by eval_task_id, scheduling remaining evaluations. May incur evaluation charges.
+    operation: {method: POST, path: "/tracer/eval-task/unpause_eval_task/"}
+    access: write
+    open_world: true
+  # error_feed
+  - name: list_error_clusters
+    group: error_feed
+    description: List grouped error issues detected in project traces.
+    operation: {method: GET, path: "/tracer/feed/issues/"}
+    access: read
+  - name: get_error_cluster
+    group: error_feed
+    description: Return an error issue and its grouped trace information.
+    operation: {method: GET, path: "/tracer/feed/issues/{cluster_id}/"}
+    access: read
+  # annotations
+  - name: list_annotation_queues
+    group: annotations
+    description: List annotation queues in the current workspace.
+    operation: {method: GET, path: "/model-hub/annotation-queues/"}
+    access: read
+  - name: get_annotation_queue
+    group: annotations
+    description: Return an annotation queue by its identifier.
+    operation: {method: GET, path: "/model-hub/annotation-queues/{id}/"}
+    access: read
+  - name: list_annotation_queue_items
+    group: annotations
+    description: List items belonging to an annotation queue.
+    operation: {method: GET, path: "/model-hub/annotation-queues/{queue_id}/items/"}
+    access: read
+  - name: submit_annotation
+    group: annotations
+    description: Submit annotation values for an item in an annotation queue.
+    operation: {method: POST, path: "/model-hub/annotation-queues/{queue_id}/items/{id}/annotations/submit/"}
+    access: write
+  # experiments
+  - name: list_experiments
+    group: experiments
+    description: List experiments in the current workspace.
+    operation: {method: GET, path: "/model-hub/experiments/v2/list/"}
+    access: read
+  - name: get_experiment
+    group: experiments
+    description: Return an experiment by its identifier.
+    operation: {method: GET, path: "/model-hub/experiments/v2/{experiment_id}/"}
+    access: read
+  - name: create_experiment
+    group: experiments
+    description: Create and start an experiment.
+    operation: {method: POST, path: "/model-hub/experiments/v2/"}
+    access: write
+    open_world: true
+  # optimization
+  - name: list_optimization_runs
+    group: optimization
+    description: List dataset optimization runs.
+    operation: {method: GET, path: "/model-hub/dataset-optimization/"}
+    access: read
+  - name: get_optimization_run
+    group: optimization
+    description: Return a dataset optimization run by its identifier.
+    operation: {method: GET, path: "/model-hub/dataset-optimization/{id}/"}
+    access: read
+  - name: create_optimization_run
+    group: optimization
+    description: Create a dataset optimization run.
+    operation: {method: POST, path: "/model-hub/dataset-optimization/"}
+    access: write
+    open_world: true
+  # agents (same tools the legacy `agents` category exposed on dev; the rest of
+  # the simulate surface stays under `simulation`)
+  - name: list_agents
+    group: agents
+    description: List agent definitions in the current workspace.
+    operation: {method: GET, path: "/simulate/agent-definitions/"}
+    access: read
+  - name: get_agent
+    group: agents
+    description: Return an agent definition by its identifier.
+    operation: {method: GET, path: "/simulate/agent-definitions/{agent_id}/"}
+    access: read
+  - name: list_scenarios
+    group: agents
+    description: List simulation scenarios in the current workspace.
+    operation: {method: GET, path: "/simulate/scenarios/"}
+    access: read
+  - name: list_test_executions
+    group: agents
+    description: List simulation test executions.
+    operation: {method: GET, path: "/simulate/api/test-executions/"}
+    access: read
+  - name: get_test_execution
+    group: agents
+    description: Return a simulation test execution by its identifier.
+    operation: {method: GET, path: "/simulate/test-executions/{test_execution_id}/"}
+    access: read
+  - name: run_simulation
+    group: agents
+    description: Start a saved simulation test asynchronously. Omit scenario_ids to run all configured scenarios. Uses existing provider/worker infrastructure and can incur usage charges. Poll get_test_execution with the returned execution_id, then read get_test_execution_analytics.
+    operation: {method: POST, path: "/simulate/run-tests/{run_test_id}/execute/"}
+    access: write
+    open_world: true
+  # simulation
+  - name: get_scenario
+    group: simulation
+    description: Return a simulation scenario by its identifier.
+    operation: {method: GET, path: "/simulate/scenarios/{scenario_id}/"}
+    access: read
+  - name: get_test_execution_analytics
+    group: simulation
+    description: Return aggregated analytics for a simulation test execution.
+    operation: {method: GET, path: "/simulate/test-executions/{test_execution_id}/analytics/"}
+    access: read
+  - name: create_agent
+    group: simulation
+    description: Create a text or voice agent definition and its first active version. Supply agent_name, agent_type and commit_message plus the configuration required for the chosen provider.
+    operation: {method: POST, path: "/simulate/agent-definitions/create/"}
+    access: write
+  - name: update_agent
+    group: simulation
+    description: Edit an agent definition. To use changed configuration in a versioned simulation, subsequently call create_agent_version, or supply the changes directly to create_agent_version.
+    operation: {method: PUT, path: "/simulate/agent-definitions/{agent_id}/edit/"}
+    access: write
+  - name: create_agent_version
+    group: simulation
+    description: Snapshot agent configuration into a new version and activate it. Can also update agent configuration. Use the returned version when creating a simulation test; existing tests may remain pinned to an older version.
+    operation: {method: POST, path: "/simulate/agent-definitions/{agent_id}/versions/create/"}
+    access: write
+  - name: create_scenario
+    group: simulation
+    description: Create an agent or prompt simulation scenario of kind dataset, script or graph. Generation is asynchronous and may incur usage charges; poll get_scenario until ready before running tests. Requires the applicable plan entitlement.
+    operation: {method: POST, path: "/simulate/scenarios/create/"}
+    access: write
+  - name: update_scenario
+    group: simulation
+    description: Edit supported scenario fields such as name, description, graph or prompt. This is not a dataset-row editor or a simulation execution.
+    operation: {method: PUT, path: "/simulate/scenarios/{scenario_id}/edit/"}
+    access: write
+  - name: list_simulation_tests
+    group: simulation
+    description: List saved simulation test configurations. A test configuration is distinct from its executions; use list_test_executions to inspect runs.
+    operation: {method: GET, path: "/simulate/run-tests/"}
+    access: read
+  - name: get_simulation_test
+    group: simulation
+    description: Read a saved simulation test configuration, its agent/version and scenarios.
+    operation: {method: GET, path: "/simulate/run-tests/{run_test_id}/"}
+    access: read
+  - name: create_simulation_test
+    group: simulation
+    description: Save a simulation test using name, agent_definition_id and scenario_ids, optionally agent_version and evaluations_config. Does not execute it; pass the returned test ID to run_simulation.
+    operation: {method: POST, path: "/simulate/run-tests/create/"}
+    access: write
+  # gateway
+  - name: list_gateways
+    group: gateway
+    description: List configured AI gateways.
+    operation: {method: GET, path: "/agentcc/gateways/"}
+    access: read
+  - name: get_gateway_config
+    group: gateway
+    description: Return the effective configuration for an AI gateway.
+    operation: {method: GET, path: "/agentcc/gateways/{id}/config/"}
+    access: read
+  - name: list_gateway_request_logs
+    group: gateway
+    description: List request logs recorded by the AI gateway.
+    operation: {method: GET, path: "/agentcc/request-logs/"}
+    access: read
+  - name: get_gateway_analytics
+    group: gateway
+    description: Return overview usage, latency, error, and cost analytics for the AI gateway.
+    operation: {method: GET, path: "/agentcc/analytics/overview/"}
+    access: read
+  # datasets
+  - name: list_knowledge_bases
+    group: datasets
+    description: List knowledge bases in the current workspace.
+    operation: {method: GET, path: "/model-hub/kb/"}
+    access: read
+  - name: get_knowledge_base
+    group: datasets
+    description: Return a knowledge base and its configuration.
+    operation: {method: GET, path: "/model-hub/kb/{id}/"}
+    access: read
+  # dashboards
+  - name: list_dashboards
+    group: dashboards
+    description: List dashboards in the current workspace with their widget counts.
+    operation: {method: GET, path: "/tracer/dashboard/"}
+    access: read
+  - name: get_dashboard
+    group: dashboards
+    description: Return a dashboard and its widgets by identifier.
+    operation: {method: GET, path: "/tracer/dashboard/{id}/"}
+    access: read
+  - name: create_dashboard
+    group: dashboards
+    description: Create an empty dashboard in the current workspace; add widgets with create_dashboard_widget.
+    operation: {method: POST, path: "/tracer/dashboard/"}
+    access: write
+  - name: update_dashboard
+    group: dashboards
+    description: Update the name or description of an existing dashboard.
+    operation: {method: PATCH, path: "/tracer/dashboard/{id}/"}
+    access: write
+  - name: list_dashboard_widgets
+    group: dashboards
+    description: List the widgets on a dashboard.
+    operation: {method: GET, path: "/tracer/dashboard/{dashboard_pk}/widgets/"}
+    access: read
+  - name: get_dashboard_widget
+    group: dashboards
+    description: Return a dashboard widget, including its query_config and chart_config.
+    operation: {method: GET, path: "/tracer/dashboard/{dashboard_pk}/widgets/{id}/"}
+    access: read
+  - name: create_dashboard_widget
+    group: dashboards
+    description: Add a widget to a dashboard. query_config uses the query_dashboard_metrics request shape (time_range plus metrics); discover metric names with list_dashboard_metrics.
+    operation: {method: POST, path: "/tracer/dashboard/{dashboard_pk}/widgets/"}
+    access: write
+  - name: update_dashboard_widget
+    group: dashboards
+    description: Update selected fields on a dashboard widget, such as its query_config, chart_config, or layout.
+    operation: {method: PATCH, path: "/tracer/dashboard/{dashboard_pk}/widgets/{id}/"}
+    access: write
+  - name: query_dashboard_widget
+    group: dashboards
+    description: Execute a saved widget's query and return its chart data.
+    operation: {method: POST, path: "/tracer/dashboard/{dashboard_pk}/widgets/{id}/query/"}
+    access: read
+  - name: query_dashboard_metrics
+    group: dashboards
+    description: Run an ad-hoc dashboard query (time_range and metrics, with optional filters and breakdowns) and return chart data without saving a widget.
+    operation: {method: POST, path: "/tracer/dashboard/query/"}
+    access: read
+  - name: list_dashboard_metrics
+    group: dashboards
+    description: List the metrics available to dashboard queries across traces, datasets, and simulations.
+    operation: {method: GET, path: "/tracer/dashboard/metrics/"}
+    access: read
+  - name: get_dashboard_filter_values
+    group: dashboards
+    description: List the distinct values of a metric or attribute for use in dashboard filters.
+    operation: {method: GET, path: "/tracer/dashboard/filter_values/"}
+    access: read
+  # usage
+  - name: get_usage_overview
+    group: usage
+    description: Return the current organization's usage and cost overview.
+    operation: {method: GET, path: "/usage/v2/usage-overview/"}
+    access: read

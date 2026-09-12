@@ -3545,7 +3545,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             503: ApiErrorResponseSerializer,
         },
     )
-    @action(detail=False, methods=["get", "post"])
+    @action(detail=False, methods=["get", "post"], pagination_class=None)
     def list_traces_of_session(self, request, *args, **kwargs):
         """
         List traces filtered by project ID with optimized queries.

@@ -39,7 +39,7 @@ TOOL_GROUPS = {
     },
     "agents": {
         "name": "Agents & Simulation",
-        "description": "Manage agents, versions, scenarios, test executions, and call results",
+        "description": "Browse agents, scenarios and test executions, and run saved simulation tests",
     },
     "simulation": {
         "name": "Simulation",
@@ -57,9 +57,13 @@ TOOL_GROUPS = {
         "name": "Usage & Costs",
         "description": "Cost analytics and billing information",
     },
-    "docs": {
-        "name": "Docs & Guides",
-        "description": "Search and query Future AGI documentation, setup guides, and API references",
+    "gateway": {
+        "name": "AI Gateway",
+        "description": "Gateway configuration, request logs, and analytics",
+    },
+    "dashboards": {
+        "name": "Dashboards",
+        "description": "Dashboards, widgets, metric discovery, and chart data queries",
     },
 }
 
@@ -77,26 +81,9 @@ DEFAULT_TOOL_GROUPS = [
     "prompts",
     "users",
     "usage",
-    "docs",
+    "gateway",
+    "dashboards",
 ]
-
-# Maps ai_tools category → MCP tool group
-CATEGORY_TO_GROUP = {
-    "context": "context",
-    "evaluations": "evaluations",
-    "datasets": "datasets",
-    "annotations": "annotations",
-    "optimization": "optimization",
-    "tracing": "observability",
-    "error_feed": "error_feed",
-    "experiments": "experiments",
-    "agents": "agents",
-    "simulation": "simulation",
-    "prompts": "prompts",
-    "users": "users",
-    "usage": "usage",
-    "docs": "docs",
-}
 
 RATE_LIMITS = {
     "free": {"per_minute": 200, "per_day": 5000, "concurrent_sessions": 5},

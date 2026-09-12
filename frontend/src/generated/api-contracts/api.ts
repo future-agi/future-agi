@@ -124,7 +124,6 @@ import type {
   AgentccAnalyticsLatencyStatsParams,
   AgentccAnalyticsModelComparison200,
   AgentccAnalyticsModelComparisonParams,
-  AgentccAnalyticsOverview200,
   AgentccAnalyticsOverviewParams,
   AgentccAnalyticsUsageTimeseries200,
   AgentccAnalyticsUsageTimeseriesParams,
@@ -160,6 +159,7 @@ import type {
   AgentccProviderCredentialApi,
   AgentccProviderCredentialsList200,
   AgentccProviderCredentialsListParams,
+  AgentccRequestLogApi,
   AgentccRequestLogDetailApi,
   AgentccRequestLogsExport200,
   AgentccRequestLogsExportParams,
@@ -316,6 +316,7 @@ import type {
   CustomMetricTestResponseApi,
   CustomPaymentCheckoutRequestApi,
   CustomerInvoicesResponseApi,
+  DashboardApi,
   DashboardCreateUpdateApi,
   DashboardDetailApi,
   DashboardFilterValuesResponseApi,
@@ -706,12 +707,14 @@ import type {
   ModelHubDevelopsGetDatasetTableListParams,
   ModelHubDevelopsGetDatasetsListParams,
   ModelHubDevelopsGetEvalStructureReadParams,
+  ModelHubDevelopsGetEvalsListListParams,
   ModelHubDevelopsGetExperimentDatasetTableListParams,
   ModelHubEmptyRequestApi,
   ModelHubErrorResponseApi,
   ModelHubEvalConfigResponseApi,
   ModelHubEvalGroupsList200,
   ModelHubEvalGroupsListParams,
+  ModelHubEvalGroupsReadParams,
   ModelHubEvalTemplatesUsageListParams,
   ModelHubExperimentDetailList200,
   ModelHubExperimentDetailListParams,
@@ -765,10 +768,12 @@ import type {
   ModelHubPromptLabelsTemplateLabelsParams,
   ModelHubPromptMetricsListParams,
   ModelHubPromptSpanMetricsListParams,
+  ModelHubPromptTemplatesGetRunStatusParams,
   ModelHubPromptTemplatesGetTemplateByName200,
   ModelHubPromptTemplatesGetTemplateByNameParams,
   ModelHubPromptTemplatesList200,
   ModelHubPromptTemplatesListParams,
+  ModelHubPromptTemplatesVersionsParams,
   ModelHubResponseSchemaList200,
   ModelHubResponseSchemaListParams,
   ModelHubScoresForSourceParams,
@@ -893,11 +898,14 @@ import type {
   PromptLabelApi,
   PromptMetricsEmptyScreenResponseApi,
   PromptMetricsResponseApi,
+  PromptRunRequestApi,
+  PromptRunStatusResponseApi,
   PromptSimulationListResponseApi,
   PromptSimulationRunResponseApi,
   PromptSimulationScenariosResponseApi,
   PromptSimulationUpdateRequestApi,
   PromptTemplateApi,
+  PromptTemplatePatchApi,
   ProviderStatusResponseApi,
   PublicConfigResponseApi,
   QueueAddItemsResponseApi,
@@ -1073,6 +1081,7 @@ import type {
   SimulateApiPersonasWorkspacePersonas200,
   SimulateApiPersonasWorkspacePersonasParams,
   SimulateApiRunTestsListParams,
+  SimulateApiTestExecutionsListParams,
   SimulateExportReadParams,
   SimulatePromptTemplatesSimulationsListParams,
   SimulateRunTestsEvalSummaryComparisonListParams,
@@ -1188,12 +1197,8 @@ import type {
   TracerCustomEvalConfigListCustomEvalConfigsParams,
   TracerCustomEvalConfigListParams,
   TracerDashboardFilterValuesParams,
-  TracerDashboardList200,
-  TracerDashboardListParams,
   TracerDashboardMetricsParams,
   TracerDashboardQueryParams,
-  TracerDashboardSimulationAgents200,
-  TracerDashboardSimulationAgentsParams,
   TracerDashboardWidgetsExecuteQueryParams,
   TracerDashboardWidgetsList200,
   TracerDashboardWidgetsListParams,
@@ -11639,7 +11644,7 @@ export const agentccAnalyticsModelComparison = async (
 };
 
 export type agentccAnalyticsOverviewResponse200 = {
-  data: AgentccAnalyticsOverview200;
+  data: AgentccRequestLogApi[];
   status: 200;
 };
 
@@ -36214,16 +36219,36 @@ export type modelHubDevelopsGetEvalsListListResponse =
   | modelHubDevelopsGetEvalsListListResponseSuccess
   | modelHubDevelopsGetEvalsListListResponseError;
 
-export const getModelHubDevelopsGetEvalsListListUrl = (datasetId: string) => {
-  return `/model-hub/develops/${datasetId}/get_evals_list/`;
+export const getModelHubDevelopsGetEvalsListListUrl = (
+  datasetId: string,
+  params?: ModelHubDevelopsGetEvalsListListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/model-hub/develops/${datasetId}/get_evals_list/?${stringifiedParams}`
+    : `/model-hub/develops/${datasetId}/get_evals_list/`;
 };
 
 export const modelHubDevelopsGetEvalsListList = async (
   datasetId: string,
+  params?: ModelHubDevelopsGetEvalsListListParams,
   options?: RequestInit,
 ): Promise<modelHubDevelopsGetEvalsListListResponse> => {
   return apiMutator<modelHubDevelopsGetEvalsListListResponse>(
-    getModelHubDevelopsGetEvalsListListUrl(datasetId),
+    getModelHubDevelopsGetEvalsListListUrl(datasetId, params),
     {
       ...options,
       method: "GET",
@@ -37481,8 +37506,27 @@ export type modelHubEvalGroupsReadResponse =
   | modelHubEvalGroupsReadResponseSuccess
   | modelHubEvalGroupsReadResponseError;
 
-export const getModelHubEvalGroupsReadUrl = (id: string) => {
-  return `/model-hub/eval-groups/${id}/`;
+export const getModelHubEvalGroupsReadUrl = (
+  id: string,
+  params?: ModelHubEvalGroupsReadParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/model-hub/eval-groups/${id}/?${stringifiedParams}`
+    : `/model-hub/eval-groups/${id}/`;
 };
 
 /**
@@ -37490,10 +37534,11 @@ export const getModelHubEvalGroupsReadUrl = (id: string) => {
  */
 export const modelHubEvalGroupsRead = async (
   id: string,
+  params?: ModelHubEvalGroupsReadParams,
   options?: RequestInit,
 ): Promise<modelHubEvalGroupsReadResponse> => {
   return apiMutator<modelHubEvalGroupsReadResponse>(
-    getModelHubEvalGroupsReadUrl(id),
+    getModelHubEvalGroupsReadUrl(id, params),
     {
       ...options,
       method: "GET",
@@ -50500,7 +50545,7 @@ export const modelHubPromptTemplatesUpdate = async (
 };
 
 export type modelHubPromptTemplatesPartialUpdateResponse200 = {
-  data: PromptTemplateApi;
+  data: PromptTemplatePatchApi;
   status: 200;
 };
 
@@ -50528,7 +50573,7 @@ export const getModelHubPromptTemplatesPartialUpdateUrl = (id: string) => {
 
 export const modelHubPromptTemplatesPartialUpdate = async (
   id: string,
-  promptTemplateApi: NonReadonly<PromptTemplateApi>,
+  promptTemplatePatchApi: NonReadonly<PromptTemplatePatchApi>,
   options?: RequestInit,
 ): Promise<modelHubPromptTemplatesPartialUpdateResponse> => {
   return apiMutator<modelHubPromptTemplatesPartialUpdateResponse>(
@@ -50537,7 +50582,7 @@ export const modelHubPromptTemplatesPartialUpdate = async (
       ...options,
       method: "PATCH",
       headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(promptTemplateApi),
+      body: JSON.stringify(promptTemplatePatchApi),
     },
   );
 };
@@ -50938,30 +50983,80 @@ export const modelHubPromptTemplatesGetNextVersion = async (
 };
 
 export type modelHubPromptTemplatesGetRunStatusResponse200 = {
-  data: PromptTemplateApi;
+  data: PromptRunStatusResponseApi;
   status: 200;
+};
+
+export type modelHubPromptTemplatesGetRunStatusResponse400 = {
+  data: ModelHubErrorResponseApi;
+  status: 400;
+};
+
+export type modelHubPromptTemplatesGetRunStatusResponse403 = {
+  data: ModelHubErrorResponseApi;
+  status: 403;
+};
+
+export type modelHubPromptTemplatesGetRunStatusResponse404 = {
+  data: ModelHubErrorResponseApi;
+  status: 404;
+};
+
+export type modelHubPromptTemplatesGetRunStatusResponse409 = {
+  data: ModelHubErrorResponseApi;
+  status: 409;
+};
+
+export type modelHubPromptTemplatesGetRunStatusResponse500 = {
+  data: ModelHubErrorResponseApi;
+  status: 500;
 };
 
 export type modelHubPromptTemplatesGetRunStatusResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
 };
 
 export type modelHubPromptTemplatesGetRunStatusResponseSuccess =
   modelHubPromptTemplatesGetRunStatusResponse200 & {
     headers: Headers;
   };
-export type modelHubPromptTemplatesGetRunStatusResponseError =
-  modelHubPromptTemplatesGetRunStatusResponseDefault & {
-    headers: Headers;
-  };
+export type modelHubPromptTemplatesGetRunStatusResponseError = (
+  | modelHubPromptTemplatesGetRunStatusResponse400
+  | modelHubPromptTemplatesGetRunStatusResponse403
+  | modelHubPromptTemplatesGetRunStatusResponse404
+  | modelHubPromptTemplatesGetRunStatusResponse409
+  | modelHubPromptTemplatesGetRunStatusResponse500
+  | modelHubPromptTemplatesGetRunStatusResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type modelHubPromptTemplatesGetRunStatusResponse =
   | modelHubPromptTemplatesGetRunStatusResponseSuccess
   | modelHubPromptTemplatesGetRunStatusResponseError;
 
-export const getModelHubPromptTemplatesGetRunStatusUrl = (id: string) => {
-  return `/model-hub/prompt-templates/${id}/get-run-status/`;
+export const getModelHubPromptTemplatesGetRunStatusUrl = (
+  id: string,
+  params?: ModelHubPromptTemplatesGetRunStatusParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/model-hub/prompt-templates/${id}/get-run-status/?${stringifiedParams}`
+    : `/model-hub/prompt-templates/${id}/get-run-status/`;
 };
 
 /**
@@ -50969,10 +51064,11 @@ export const getModelHubPromptTemplatesGetRunStatusUrl = (id: string) => {
  */
 export const modelHubPromptTemplatesGetRunStatus = async (
   id: string,
+  params?: ModelHubPromptTemplatesGetRunStatusParams,
   options?: RequestInit,
 ): Promise<modelHubPromptTemplatesGetRunStatusResponse> => {
   return apiMutator<modelHubPromptTemplatesGetRunStatusResponse>(
-    getModelHubPromptTemplatesGetRunStatusUrl(id),
+    getModelHubPromptTemplatesGetRunStatusUrl(id, params),
     {
       ...options,
       method: "GET",
@@ -51074,7 +51170,7 @@ export const modelHubPromptTemplatesRunEvalsOnMultipleVersions = async (
 };
 
 export type modelHubPromptTemplatesRunTemplateResponse201 = {
-  data: PromptTemplateApi;
+  data: PromptRunRequestApi;
   status: 201;
 };
 
@@ -51105,7 +51201,7 @@ export const getModelHubPromptTemplatesRunTemplateUrl = (id: string) => {
  */
 export const modelHubPromptTemplatesRunTemplate = async (
   id: string,
-  promptTemplateApi: NonReadonly<PromptTemplateApi>,
+  promptRunRequestApi: PromptRunRequestApi,
   options?: RequestInit,
 ): Promise<modelHubPromptTemplatesRunTemplateResponse> => {
   return apiMutator<modelHubPromptTemplatesRunTemplateResponse>(
@@ -51114,7 +51210,7 @@ export const modelHubPromptTemplatesRunTemplate = async (
       ...options,
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(promptTemplateApi),
+      body: JSON.stringify(promptRunRequestApi),
     },
   );
 };
@@ -51368,16 +51464,36 @@ export type modelHubPromptTemplatesVersionsResponse =
   | modelHubPromptTemplatesVersionsResponseSuccess
   | modelHubPromptTemplatesVersionsResponseError;
 
-export const getModelHubPromptTemplatesVersionsUrl = (id: string) => {
-  return `/model-hub/prompt-templates/${id}/versions/`;
+export const getModelHubPromptTemplatesVersionsUrl = (
+  id: string,
+  params?: ModelHubPromptTemplatesVersionsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/model-hub/prompt-templates/${id}/versions/?${stringifiedParams}`
+    : `/model-hub/prompt-templates/${id}/versions/`;
 };
 
 export const modelHubPromptTemplatesVersions = async (
   id: string,
+  params?: ModelHubPromptTemplatesVersionsParams,
   options?: RequestInit,
 ): Promise<modelHubPromptTemplatesVersionsResponse> => {
   return apiMutator<modelHubPromptTemplatesVersionsResponse>(
-    getModelHubPromptTemplatesVersionsUrl(id),
+    getModelHubPromptTemplatesVersionsUrl(id, params),
     {
       ...options,
       method: "GET",
@@ -60222,8 +60338,26 @@ export type simulateApiTestExecutionsListResponse =
   | simulateApiTestExecutionsListResponseSuccess
   | simulateApiTestExecutionsListResponseError;
 
-export const getSimulateApiTestExecutionsListUrl = () => {
-  return `/simulate/api/test-executions/`;
+export const getSimulateApiTestExecutionsListUrl = (
+  params?: SimulateApiTestExecutionsListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/test-executions/?${stringifiedParams}`
+    : `/simulate/api/test-executions/`;
 };
 
 /**
@@ -60235,10 +60369,11 @@ Query Parameters:
 - page: page number (default: 1)
  */
 export const simulateApiTestExecutionsList = async (
+  params?: SimulateApiTestExecutionsListParams,
   options?: RequestInit,
 ): Promise<simulateApiTestExecutionsListResponse> => {
   return apiMutator<simulateApiTestExecutionsListResponse>(
-    getSimulateApiTestExecutionsListUrl(),
+    getSimulateApiTestExecutionsListUrl(params),
     {
       ...options,
       method: "GET",
@@ -65761,7 +65896,7 @@ export const tracerCustomEvalConfigDelete = async (
 };
 
 export type tracerDashboardListResponse200 = {
-  data: TracerDashboardList200;
+  data: DashboardApi[];
   status: 200;
 };
 
@@ -65783,39 +65918,17 @@ export type tracerDashboardListResponse =
   | tracerDashboardListResponseSuccess
   | tracerDashboardListResponseError;
 
-export const getTracerDashboardListUrl = (
-  params?: TracerDashboardListParams,
-) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (Array.isArray(value)) {
-      value
-        .filter((item) => item !== undefined && item !== null)
-        .forEach((item) => normalizedParams.append(key, item.toString()));
-    } else if (value !== undefined && value !== null) {
-      normalizedParams.append(key, value.toString());
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/tracer/dashboard/?${stringifiedParams}`
-    : `/tracer/dashboard/`;
+export const getTracerDashboardListUrl = () => {
+  return `/tracer/dashboard/`;
 };
 
 export const tracerDashboardList = async (
-  params?: TracerDashboardListParams,
   options?: RequestInit,
 ): Promise<tracerDashboardListResponse> => {
-  return apiMutator<tracerDashboardListResponse>(
-    getTracerDashboardListUrl(params),
-    {
-      ...options,
-      method: "GET",
-    },
-  );
+  return apiMutator<tracerDashboardListResponse>(getTracerDashboardListUrl(), {
+    ...options,
+    method: "GET",
+  });
 };
 
 export type tracerDashboardCreateResponse201 = {
@@ -66118,7 +66231,7 @@ export const tracerDashboardQuery = async (
 };
 
 export type tracerDashboardSimulationAgentsResponse200 = {
-  data: TracerDashboardSimulationAgents200;
+  data: DashboardApi[];
   status: 200;
 };
 
@@ -66140,37 +66253,18 @@ export type tracerDashboardSimulationAgentsResponse =
   | tracerDashboardSimulationAgentsResponseSuccess
   | tracerDashboardSimulationAgentsResponseError;
 
-export const getTracerDashboardSimulationAgentsUrl = (
-  params?: TracerDashboardSimulationAgentsParams,
-) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (Array.isArray(value)) {
-      value
-        .filter((item) => item !== undefined && item !== null)
-        .forEach((item) => normalizedParams.append(key, item.toString()));
-    } else if (value !== undefined && value !== null) {
-      normalizedParams.append(key, value.toString());
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/tracer/dashboard/simulation-agents/?${stringifiedParams}`
-    : `/tracer/dashboard/simulation-agents/`;
+export const getTracerDashboardSimulationAgentsUrl = () => {
+  return `/tracer/dashboard/simulation-agents/`;
 };
 
 /**
  * Return simulation agents with their observability project links.
  */
 export const tracerDashboardSimulationAgents = async (
-  params?: TracerDashboardSimulationAgentsParams,
   options?: RequestInit,
 ): Promise<tracerDashboardSimulationAgentsResponse> => {
   return apiMutator<tracerDashboardSimulationAgentsResponse>(
-    getTracerDashboardSimulationAgentsUrl(params),
+    getTracerDashboardSimulationAgentsUrl(),
     {
       ...options,
       method: "GET",
