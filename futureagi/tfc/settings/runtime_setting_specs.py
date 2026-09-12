@@ -463,6 +463,19 @@ INTERACTIVE_READ_SETTING_SPECS = {
             ("VOICE_FILTER_EXPENSIVE_CLASSIFIER_CHUNKS", 4, 1, 64),
             ("VOICE_FILTER_LIGHT_CLASSIFIER_CHUNKS", 8, 1, 64),
             ("VOICE_FILTER_PUBLIC_MAX_PAGE_SIZE", 512, 1, 5_000),
+            # Voice's own witness slack for the short exact-string seed lane,
+            # read instead of FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS.
+            # The default is ZERO - today's contract - because a voice call
+            # writes its ``call.*`` attributes on the span that CLOSES the
+            # call, so a long conversation's only matching witness can start
+            # many hours after its root and the trace list's approved one-hour
+            # envelope would drop it from a filtered page. Above zero the seed
+            # additionally requires a witness to start inside
+            #     [hour_floor(slice_start) - slack, hour_ceil(slice_end) + slack)
+            # which is candidacy only: the unbounded latest-state classifier
+            # still decides membership. Raise it per install only after
+            # measuring that tenant's voice child-witness lag.
+            ("VOICE_FILTER_TEXT_SEED_WITNESS_SLACK_HOURS", 0, 0, 168),
             ("SESSION_LIST_READ_MAX_THREADS", 2, 1, 16),
             ("SESSION_LIST_MAX_RESULT_BYTES", 32 * 1024**2, 64 * 1024, 512 * 1024**2),
             ("SESSION_LIST_ATTRIBUTE_MAX_RESULT_ROWS", 50_000, 1, 1_000_000),
