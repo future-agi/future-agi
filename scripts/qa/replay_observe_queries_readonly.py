@@ -482,6 +482,82 @@ _USERS_SOURCE_PINS = {
 _CH_USER_ENV = "OBSERVE_CH_USER"
 
 
+# Origin statements are digested in a CANONICAL form, not as raw text: every
+# bracketed run of value-list placeholders collapses to a single token, and
+# nothing else changes. The Users read path spells ONE placeholder per selected
+# value in two companion bloom index hints built in
+# ``tracer/services/clickhouse/query_builders/latest_filter_predicates.py`` --
+# ``hasAny(arrayMap(x -> lowerUTF8(x), mapValues(span_attr_str)),
+# [%(latest_filter_index_0_0)s, ...])`` and, for all-ASCII values, the legacy
+# ``lower()`` companion ``[%(latest_filter_legacy_index_0_0)s, ...]``, whose
+# placeholder count is 2 ** (number of letters ``k`` in the values),
+# deduplicated. The raw statement text therefore fans out on BOTH the value
+# count AND the value text: ``equals "kid"``, ``equals "token"``, ``equals
+# "ok"`` and any selected-value list whose lowercased values collide are each a
+# different statement at the SAME cardinality, including cardinality 1.
+# Collapsing the ARITY of those two placeholder families -- and only theirs --
+# makes the digest depend on the statement's SHAPE: which witness qualified and
+# whether the legacy hint was emitted. Every other byte still enters the
+# digest: whitespace, keywords, columns, structure, the placeholder NAMES, and
+# the attribute-KEY list ``[%(latest_filter_key_0)s]`` whose trailing index is a
+# FILTER index rather than a value index. A builder change still fails closed.
+#
+# A bracketed, ``", "``-separated run of ``%(name)s`` placeholders, which is
+# exactly how the builder spells both hint lists.
+_ORIGIN_PLACEHOLDER_LIST_RE = re.compile(
+    r"\[%\([A-Za-z0-9_]+\)s(?:, %\([A-Za-z0-9_]+\)s)*\]"
+)
+_ORIGIN_PLACEHOLDER_NAME_RE = re.compile(r"%\(([A-Za-z0-9_]+)\)s")
+# The two parameter families the builder derives from a filter's value list:
+# ``latest_filter_index_<filter suffix>_<value index>`` and its legacy
+# companion. The value index is a canonical decimal, so ``_00`` is not ``_0``
+# and a renamed placeholder matches nothing and is left alone.
+_ORIGIN_VALUE_PARAM_RE = re.compile(
+    r"^(?P<stem>latest_filter_(?:legacy_)?index_[A-Za-z0-9_]*[A-Za-z0-9])"
+    r"_(?P<value_index>0|[1-9][0-9]*)$"
+)
+
+
+def _collapse_origin_value_list(match):
+    """Collapse one placeholder run iff it is a whole filter value list.
+
+    Every member must belong to the same value-list family and stem, and the
+    value indexes must be exactly ``0 .. n-1`` in order -- which is how the
+    builder emits them. Anything else is returned untouched, so an unexpected
+    list keeps its exact text and still fails the pin.
+    """
+
+    names = _ORIGIN_PLACEHOLDER_NAME_RE.findall(match.group(0))
+    parsed = [_ORIGIN_VALUE_PARAM_RE.match(name) for name in names]
+    if any(item is None for item in parsed):
+        return match.group(0)
+    stems = {item.group("stem") for item in parsed}
+    indexes = [int(item.group("value_index")) for item in parsed]
+    if len(stems) != 1 or indexes != list(range(len(indexes))):
+        return match.group(0)
+    return "[%(" + stems.pop() + "_*)s]"
+
+
+def _canonical_origin_sql(sql):
+    """Return the statement with value-list ARITY collapsed, nothing else."""
+
+    return _ORIGIN_PLACEHOLDER_LIST_RE.sub(_collapse_origin_value_list, sql)
+
+
+def _users_origin_digest(sql):
+    """Digest the canonical form of an origin statement.
+
+    ``.strip().rstrip(";")`` is exactly the normalization ``validate_select``
+    applies before the statement runs, so one digest covers both check sites:
+    the qualification check that selects the shape and the execute-time check
+    that re-verifies the statement actually handed to the driver.
+    """
+
+    return hashlib.sha256(
+        _canonical_origin_sql(sql.strip().rstrip(";")).encode()
+    ).hexdigest()
+
+
 def _users_sources_current():
     return all(hashlib.sha256(Path(import_module(name).__file__).read_bytes()).hexdigest() == digest
                for name, digest in _USERS_SOURCE_PINS.items())
@@ -494,7 +570,7 @@ def _users_origin_sha(sql):
     actually executed is re-checked against the SAME pin, not merely against
     set membership a second time.
     """
-    digest = hashlib.sha256(sql.strip().rstrip(";").encode()).hexdigest()
+    digest = _users_origin_digest(sql)
     if digest not in _USERS_ORIGIN_SHAS:
         raise replay.ReplayError("USERS_REMAP_ORIGIN_NOT_QUALIFIED")
     return digest
@@ -728,9 +804,11 @@ class ReadOnlyExecutor:
                 raise
             self._validate_users_remap(query, params, pending)
             sql, certified = query, pending
+        # Same canonical digest as the shape the qualification check selected.
+        # The raw ``sql_sha256`` recorded below stays the exact executed text,
+        # so the ledger still carries the byte-for-byte statement that ran.
         if origin and (
-            hashlib.sha256(sql.encode()).hexdigest()
-            != self._users_context.origin_sql_sha256
+            _users_origin_digest(sql) != self._users_context.origin_sql_sha256
             or replay.digest(safe_json(params)) != self._users_context.origin_bindings
         ):
             raise replay.ReplayError("USERS_REMAP_ORIGIN_BINDINGS_CHANGED")
