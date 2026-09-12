@@ -528,6 +528,27 @@ def test_fresh_authoring_archive_contains_contract_and_scenarios_only(tmp_path):
         ]
 
 
+def test_fresh_authoring_archive_carries_generic_certification_sidecars(tmp_path):
+    scenario = tmp_path / "scenarios" / "one"
+    scenario.mkdir(parents=True)
+    (tmp_path / "contract.json").write_text('{"agent":"ride"}', encoding="utf-8")
+    (scenario / "scenario.json").write_text('{"name":"one"}', encoding="utf-8")
+    (tmp_path / "runtime-validation.json").write_text(
+        '{"status":"certified"}', encoding="utf-8"
+    )
+    evidence = tmp_path / "generic-harness"
+    evidence.mkdir()
+    (evidence / "certification.json").write_text(
+        '{"status":"certified"}', encoding="utf-8"
+    )
+
+    body = pack_authoring_archive(tmp_path)
+
+    with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
+        assert "runtime-validation.json" in archive.getnames()
+        assert "generic-harness/certification.json" in archive.getnames()
+
+
 def test_fresh_authoring_archive_rejects_missing_scenarios(tmp_path):
     (tmp_path / "contract.json").write_text("{}", encoding="utf-8")
 

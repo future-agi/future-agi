@@ -2779,11 +2779,12 @@ def _authoring_archive_for(job: HostedHarnessJob) -> bytes | None:
         "collections.json",
         "contract.json",
         "simulator_prompt.md",
+        "runtime-validation.json",
     ):
         path = bundle_dir / name
         if path.is_file() and not path.is_symlink():
             files.append(path)
-    for directory_name in ("scenarios", "handlers"):
+    for directory_name in ("scenarios", "handlers", "generic-harness"):
         directory = bundle_dir / directory_name
         if directory.is_dir() and not directory.is_symlink():
             files.extend(
@@ -2887,11 +2888,12 @@ def pack_authoring_archive(authoring_root: Path) -> bytes:
         "collections.json",
         "contract.json",
         "simulator_prompt.md",
+        "runtime-validation.json",
     ):
         path = authoring_root / name
         if path.is_file() and not path.is_symlink():
             files.append(path)
-    for directory_name in ("scenarios", "handlers"):
+    for directory_name in ("scenarios", "handlers", "generic-harness"):
         directory = authoring_root / directory_name
         if directory.is_dir() and not directory.is_symlink():
             files.extend(
