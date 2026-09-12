@@ -202,21 +202,27 @@ def execute_with_concurrent_future_pool(func, args_list, pool_size=50):
     - pool_size: The number of threads in the thread pool (default: 50).
 
     Returns:
-    - A list of results returned by the function.
+    - A list of results in the same order as ``args_list``. Each position
+      holds the return value for that input, or ``None`` if it raised.
     """
-    results = []
+    # Pre-allocate one slot per input so results stay in input order and every
+    # input keeps a slot, even when tasks finish out of order or raise.
+    results = [None] * len(args_list)
 
     # Initialize the thread pool with the specified number of threads
     with ThreadPoolExecutor(max_workers=pool_size) as executor:
-        # Submit tasks to the executor
-        future_to_args = {executor.submit(func, *args): args for args in args_list}
-        # Collect results as they complete
-        for future in as_completed(future_to_args):
+        # Submit tasks, keeping each future mapped to its input index
+        future_to_index = {
+            executor.submit(func, *args): i for i, args in enumerate(args_list)
+        }
+        # Write each result back to its original position as it completes
+        for future in as_completed(future_to_index):
+            index = future_to_index[future]
             try:
-                result = future.result()
-                results.append(result)
+                results[index] = future.result()
             except Exception as e:
-                logger.exception(f"Error retrieving result: {e}")
+                logger.exception(f"Error retrieving result at index {index}: {e}")
+                results[index] = None
 
     return results
 
