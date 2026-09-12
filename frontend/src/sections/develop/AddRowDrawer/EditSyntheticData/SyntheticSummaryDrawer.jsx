@@ -15,7 +15,10 @@ import { useEditSyntheticDataStore } from "./state";
 import SvgColor from "../../../../components/svg-color";
 import PropTypes from "prop-types";
 import EachColumnSummary from "../CreateSyntheticData/Summary/EachColumnSummary";
-import { transformColumnPayload } from "../CreateSyntheticData/common";
+import {
+  buildSyntheticDatasetPayload,
+  transformColumnPayload,
+} from "../CreateSyntheticData/common";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { useNavigate, useParams } from "react-router";
@@ -290,7 +293,10 @@ export default function SyntheticSummaryDrawer() {
 
   const handleRegenerate = useCallback(() => {
     if (!dataset) return;
-    updateSyntheticData({ ...data, regenerate: true });
+    updateSyntheticData({
+      ...buildSyntheticDatasetPayload(data),
+      regenerate: true,
+    });
   }, [data, dataset, updateSyntheticData]);
 
   const _onEditSuccessCallback = useCallback(() => {
