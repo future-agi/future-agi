@@ -5,9 +5,9 @@ import pytest
 from accounts.models.organization import Organization
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.workspace import Workspace, WorkspaceMembership
+from agentcc.models.provider_credential import AgentccProviderCredential
 from conftest import WorkspaceAwareAPIClient
 from integrations.services.credentials import CredentialManager
-from agentcc.models.provider_credential import AgentccProviderCredential
 from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
 
@@ -125,6 +125,7 @@ class TestAgentccProviderCredentialOrganizationIsolation:
             provider_name="openai",
             display_name="Org B OpenAI",
             encrypted_credentials=CredentialManager.encrypt({"api_key": "sk-org-b"}),
+            base_url="https://api.org-b.example/v1",
             api_format="openai",
         )
 
@@ -134,15 +135,68 @@ class TestAgentccProviderCredentialOrganizationIsolation:
         ) as mock_fetch:
             response = secondary_org_client.post(
                 "/agentcc/provider-credentials/fetch_models/",
-                {"provider_name": "openai"},
+                {
+                    "provider_name": "openai",
+                    "base_url": "https://attacker.example",
+                    "api_key": "attacker-key",
+                    "api_format": "google",
+                },
                 format="json",
             )
 
         assert response.status_code == 200, response.json()
-        args, _ = mock_fetch.call_args
-        # Signature: (provider_name, base_url, api_key, api_format)
-        assert args[0] == "openai"
-        assert args[2] == "sk-org-b"
+        mock_fetch.assert_called_once_with(
+            "openai",
+            "https://api.org-b.example/v1",
+            "sk-org-b",
+            "openai",
+        )
+
+    def test_fetch_models_rejects_missing_saved_credential(
+        self, secondary_org_context, secondary_org_client
+    ):
+        with patch(
+            "agentcc.views.provider_credential.AgentccProviderCredentialViewSet._fetch_models_from_provider",
+        ) as mock_fetch:
+            response = secondary_org_client.post(
+                "/agentcc/provider-credentials/fetch_models/",
+                {
+                    "provider_name": "missing",
+                    "base_url": "https://attacker.example",
+                    "api_key": "attacker-key",
+                    "api_format": "google",
+                },
+                format="json",
+            )
+
+        assert response.status_code == 400, response.json()
+        assert "No saved credential found" in response.json()["message"]
+        mock_fetch.assert_not_called()
+
+    def test_fetch_models_forwards_raw_values_without_provider_name(
+        self, secondary_org_client
+    ):
+        with patch(
+            "agentcc.views.provider_credential.AgentccProviderCredentialViewSet._fetch_models_from_provider",
+            return_value=["gemini-custom"],
+        ) as mock_fetch:
+            response = secondary_org_client.post(
+                "/agentcc/provider-credentials/fetch_models/",
+                {
+                    "base_url": "https://models.example.com/",
+                    "api_key": "custom-key",
+                    "api_format": "google",
+                },
+                format="json",
+            )
+
+        assert response.status_code == 200, response.json()
+        mock_fetch.assert_called_once_with(
+            None,
+            "https://models.example.com",
+            "custom-key",
+            "google",
+        )
 
     def test_fetch_models_returns_bad_request_when_saved_credential_cannot_decrypt(
         self, secondary_org_context, secondary_org_client
@@ -187,9 +241,7 @@ class TestAgentccProviderCredentialOrganizationIsolation:
             api_format="openai",
         )
 
-        response = secondary_org_client.get(
-            f"/agentcc/provider-credentials/{cred.id}/"
-        )
+        response = secondary_org_client.get(f"/agentcc/provider-credentials/{cred.id}/")
 
         assert response.status_code == 200, response.json()
         data = response.json()["result"]
@@ -215,9 +267,7 @@ class TestAgentccProviderCredentialOrganizationIsolation:
             api_format="openai",
         )
 
-        response = secondary_org_client.get(
-            f"/agentcc/provider-credentials/{cred.id}/"
-        )
+        response = secondary_org_client.get(f"/agentcc/provider-credentials/{cred.id}/")
         assert response.status_code == 404
 
     def test_update_writes_safe_fields_and_pushes_config(
@@ -228,7 +278,9 @@ class TestAgentccProviderCredentialOrganizationIsolation:
             organization=org_b,
             provider_name="openai",
             display_name="Old Display",
-            encrypted_credentials=CredentialManager.encrypt({"api_key": "sk-untouched"}),
+            encrypted_credentials=CredentialManager.encrypt(
+                {"api_key": "sk-untouched"}
+            ),
             api_format="openai",
             models_list=["gpt-4o-mini"],
         )
