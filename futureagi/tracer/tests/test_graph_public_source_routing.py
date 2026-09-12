@@ -205,6 +205,73 @@ def test_public_dispatch_admitted_seed_prunes_with_a_plain_trace_set(key):
     assert any(value == "raw-value" for value in params.values())
 
 
+CLUSTER_ROUTING_SHAPES = [
+    *[
+        ({"key": key, "value": value, "kind": kind}, 1)
+        for key in RAW_NAMES
+        for kind, value in (("text", "raw-value"), ("number", 0.01), ("boolean", True))
+    ],
+    *[
+        ({"key": key, "value": value, "op": op}, probes)
+        for key in ("created_at", "start_time")
+        for op, value, probes in (
+            ("equals", "clock", 1),
+            # Negative/exclusion witnesses are not candidates, so these shapes
+            # issue no probe at all - on this release and on the previous one.
+            ("not_equals", "clock", 0),
+            ("is_null", None, 0),
+        )
+    ],
+]
+
+
+@pytest.mark.parametrize(
+    "shape,expected_probes",
+    CLUSTER_ROUTING_SHAPES,
+    ids=[
+        f"{shape['key']}-{shape.get('kind', 'text')}-{shape.get('op', 'equals')}"
+        for shape, _ in CLUSTER_ROUTING_SHAPES
+    ],
+)
+def test_cluster_env_routing_shapes_keep_the_prior_release_schedule(
+    monkeypatch,
+    shape,
+    expected_probes,
+):
+    """Un-gating the seed moves nothing on a deployment that already seeds.
+
+    These are the 27 trace-mode shapes the ``direct()`` cases below cover,
+    replayed with ``DASHBOARD_TRACE_REPLICA_SHARD_CLUSTER`` set - the path this
+    PR does not un-gate. The probe count, the per-probe grant and the rendered
+    statement must equal what the previous release produced for each shape:
+    one probe at ``min(1500, 2500)`` ms for a positive scalar witness, none
+    for an exclusion witness, and the ``cluster(...)`` + ``GLOBAL IN``
+    rendering whenever a candidate is admitted.
+    """
+    monkeypatch.setattr(
+        dispatch.settings,
+        "DASHBOARD_TRACE_REPLICA_SHARD_CLUSTER",
+        "all-sharded",
+    )
+    analytics = SeedAdmittingAnalytics()
+    result = dispatch.fetch_system_metric_graph_ch(
+        analytics=analytics,
+        project_id=PROJECT,
+        filters=public([window(), leaf(**shape)]),
+        interval="day",
+        metric_id="traffic",
+        observe_type="trace",
+    )
+
+    probes = [call for call in analytics.calls if "EXPLAIN ESTIMATE" in call[0]]
+    assert len(probes) == expected_probes
+    assert all(call[2]["timeout_ms"] == 1_500 for call in probes)
+    query = analytics.calls[-1][0]
+    assert ("trace_id GLOBAL IN (" in query) is bool(expected_probes)
+    assert "cluster('all-sharded'" in query
+    assert result["query_count"] == expected_probes + 1
+
+
 @pytest.mark.parametrize("key", RAW_NAMES)
 @pytest.mark.parametrize(
     "kind,value,column",

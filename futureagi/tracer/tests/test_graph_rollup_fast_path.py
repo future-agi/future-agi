@@ -557,9 +557,136 @@ def test_seed_probe_leaves_the_main_read_a_wall_floor(monkeypatch):
     assert response["query_count"] == 2
 
 
+def _prior_release_probe_grants(
+    timeout_ms: int,
+    probe_cost_ms: int,
+    candidates: int,
+) -> list[int]:
+    """The probe schedule this surface ran wherever the seed was already live.
+
+    Transcribed from the pre-ungate release: a total budget of
+    ``min(2500, wall - 25)`` ms, a probe launched while at least 100 ms of that
+    budget is left, and a per-probe grant of ``min(1500, remaining)``. The
+    oracle is written out here on purpose - deriving it from the production
+    constants would make the test agree with whatever the code does.
+    """
+
+    budget_ms = max(0, min(2_500, timeout_ms - 25))
+    if budget_ms < 100:
+        return []
+    grants: list[int] = []
+    elapsed_ms = 0
+    for _ in range(candidates):
+        remaining_ms = budget_ms - elapsed_ms
+        if remaining_ms < 100:
+            break
+        grants.append(min(1_500, remaining_ms))
+        elapsed_ms += probe_cost_ms
+    return grants
+
+
+_SELECTIVE_ESTIMATE = {"rows": 1_600_000, "marks": 259}
+_DENSE_ESTIMATE = {"rows": 106_000_000, "marks": 14_612}
+
+
 @pytest.mark.unit
-def test_rejected_probes_stay_inside_the_seed_wall_share(monkeypatch):
-    """Probe spend is capped, and query_count is 1 + probes, not always 2."""
+@pytest.mark.parametrize(
+    "timeout_ms,probe_cost_ms,estimates,expected_grants",
+    [
+        # A: three candidates, 600 ms probes, only the third selective.
+        (
+            30_000,
+            600,
+            [_DENSE_ESTIMATE, _DENSE_ESTIMATE, _SELECTIVE_ESTIMATE],
+            [1_500, 1_500, 1_300],
+        ),
+        # B: a wall short enough that a tenth of it would disable the probe.
+        (900, 0, [_SELECTIVE_ESTIMATE], [875]),
+        (30_000, 0, [_SELECTIVE_ESTIMATE], [1_500]),
+        (5_000, 0, [_SELECTIVE_ESTIMATE], [1_500]),
+    ],
+)
+def test_cluster_env_keeps_the_prior_release_probe_schedule(
+    monkeypatch,
+    timeout_ms,
+    probe_cost_ms,
+    estimates,
+    expected_grants,
+):
+    """Un-gating the seed may not move the read where the seed was already live.
+
+    With the shard cluster set this surface probed before this change, so the
+    schedule, the per-probe grant and the graph statement's requested timeout
+    must stay exactly what that install runs today: no whole-cap launch rule
+    (which would drop a third-candidate seed) and no wall floor (which would
+    change a kwarg the install already receives).
+    """
+    monkeypatch.setattr(
+        graph_dispatch.settings,
+        "DASHBOARD_TRACE_REPLICA_SHARD_CLUSTER",
+        "all-sharded",
+    )
+    clock = [1_000.0]
+    monkeypatch.setattr(graph_dispatch, "monotonic", lambda: clock[0])
+    analytics = mock.Mock()
+    remaining_estimates = list(estimates)
+
+    def _probe(query, params, **kwargs):
+        if "EXPLAIN ESTIMATE" in query:
+            clock[0] += probe_cost_ms / 1000
+            row = remaining_estimates.pop(0) if remaining_estimates else _DENSE_ESTIMATE
+            return mock.Mock(data=[row], columns=["rows", "marks"])
+        return _empty_graph_query_result()
+
+    analytics.execute_ch_query.side_effect = _probe
+    filters = [
+        _date_filter("2026-07-01T00:00:00Z", "2026-08-01T00:00:00Z"),
+        *[
+            _span_attribute_filter(f"attr_{index}", filter_type="text", value="value")
+            for index in range(len(estimates))
+        ],
+    ]
+
+    response = graph_dispatch._fetch_direct_raw_system_metric_graph(
+        analytics=analytics,
+        project_id=PROJECT_ID,
+        filters=filters,
+        interval="day",
+        metric_id="latency",
+        observe_type="trace",
+        timeout_ms=timeout_ms,
+    )
+
+    calls = analytics.execute_ch_query.call_args_list
+    probe_calls = [call for call in calls if "EXPLAIN ESTIMATE" in call.args[0]]
+    assert [call.kwargs["timeout_ms"] for call in probe_calls] == expected_grants
+    assert expected_grants == _prior_release_probe_grants(
+        timeout_ms,
+        probe_cost_ms,
+        len(estimates),
+    )
+    graph_call = calls[-1]
+    # The selective candidate is the last probed one in every case above, so
+    # the seed is admitted and the cluster rendering is the one that ships.
+    assert "trace_id GLOBAL IN (" in graph_call.args[0]
+    assert "cluster('all-sharded'" in graph_call.args[0]
+    # The plain remainder, not a floor: the same kwarg the install gets today.
+    assert graph_call.kwargs["timeout_ms"] == max(
+        1, timeout_ms - len(expected_grants) * probe_cost_ms
+    )
+    assert response["query_count"] == len(expected_grants) + 1
+
+
+@pytest.mark.unit
+def test_single_node_probe_spend_stays_inside_the_seed_budget(monkeypatch):
+    """Honoured probe grants keep spend inside the budget, and the read keeps
+    its floor.
+
+    Six rejected candidates against probes that stop at the timeout they are
+    handed: the grants are ``min(1500, remaining)``, so the third probe is cut
+    to 500 ms and total spend lands exactly on the 2,500 ms budget. The graph
+    statement is then asked for the 27,500 ms floor rather than the leftover.
+    """
     monkeypatch.setattr(
         graph_dispatch.settings,
         "DASHBOARD_TRACE_REPLICA_SHARD_CLUSTER",
@@ -569,13 +696,13 @@ def test_rejected_probes_stay_inside_the_seed_wall_share(monkeypatch):
     monkeypatch.setattr(graph_dispatch, "monotonic", lambda: clock[0])
     analytics = mock.Mock()
 
-    def _slow_dense_probe(query, params, **kwargs):
+    def _honouring_dense_probe(query, params, **kwargs):
         if "EXPLAIN ESTIMATE" in query:
-            clock[0] += 1.0
-            return mock.Mock(data=[{"rows": 106_000_000, "marks": 14_612}], columns=[])
+            clock[0] += min(1.0, kwargs["timeout_ms"] / 1000)
+            return mock.Mock(data=[_DENSE_ESTIMATE], columns=["rows", "marks"])
         return _empty_graph_query_result()
 
-    analytics.execute_ch_query.side_effect = _slow_dense_probe
+    analytics.execute_ch_query.side_effect = _honouring_dense_probe
     filters = [
         _date_filter("2026-07-01T00:00:00Z", "2026-08-01T00:00:00Z"),
         *[
@@ -600,19 +727,16 @@ def test_rejected_probes_stay_inside_the_seed_wall_share(monkeypatch):
         for call in analytics.execute_ch_query.call_args_list
         if "EXPLAIN ESTIMATE" in call.args[0]
     ]
-    # Each launched probe carries the full 1.5 s cap, so only two of the six
-    # candidates fit the 2.5 s budget once probes run at 1 s each.
-    assert len(probe_calls) == 2
-    assert all(call.kwargs["timeout_ms"] == 1_500 for call in probe_calls)
-    assert (clock[0] - started) * 1000 <= 2_500
+    assert [call.kwargs["timeout_ms"] for call in probe_calls] == [1_500, 1_500, 500]
+    assert (clock[0] - started) * 1000 == 2_500
     graph_call = analytics.execute_ch_query.call_args_list[-1]
     assert "trace_id IN (" not in graph_call.args[0]
-    # Spend stayed inside the budget, so the plain remainder is already above
-    # the floor the previous test pins.
-    assert graph_call.kwargs["timeout_ms"] == 28_000
-    assert graph_call.kwargs["timeout_ms"] >= 27_500
+    # 30 s wall minus the 2.5 s budget, floored rather than 27,500 by accident:
+    # the plain remainder here is the same number, and the previous test pins
+    # the floor against a probe that ignores its grant entirely.
+    assert graph_call.kwargs["timeout_ms"] == 27_500
     # A rejected multi-candidate shape publishes 1 + probes, not 2.
-    assert response["query_count"] == 3
+    assert response["query_count"] == 4
 
 
 @pytest.mark.unit

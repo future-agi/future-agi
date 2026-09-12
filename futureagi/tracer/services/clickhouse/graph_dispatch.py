@@ -91,20 +91,22 @@ _GRAPH_SEED_ESTIMATE_MAX_CANDIDATES = 10
 _GRAPH_SEED_MAX_ESTIMATED_ROWS = 10_000_000
 _GRAPH_SEED_MAX_ESTIMATED_MARKS = 4_096
 _GRAPH_SEED_SCALAR_FILTER_TYPES = frozenset({"boolean", "number", "string", "text"})
-# Optional pruning may never spend the read's wall. Probes are capped at a
-# tenth of the caller's budget (and at _GRAPH_SEED_ESTIMATE_WALL_MS overall),
-# no probe is launched unless its whole per-probe cap still fits in that
-# budget, and the main statement's requested timeout is floored at the
-# remainder - so a filtered trace graph asks for at least
-# (1 - 1/_GRAPH_SEED_PROBE_WALL_SHARE) of the wall it asks for unseeded. The
-# floor repays the main read; it cannot shrink a driver that overruns the
-# per-probe timeout it was given, and the interactive caller resolves
-# timeout_ms once (views/trace.py -> graph_action_remaining_ms) with nothing
-# re-clamping below it - so an overrunning probe leaves the graph statement
-# asking for the floor rather than for the wall the request really has left,
-# by exactly that overrun. Blowing the wall is the probe's doing either way;
-# this chooses to keep the real read's budget stated instead of collapsing it.
-_GRAPH_SEED_PROBE_WALL_SHARE = 10
+# Optional pruning may never spend the read's wall. The probe schedule is the
+# one this surface has already run wherever the seed was live: a total budget
+# of min(_GRAPH_SEED_ESTIMATE_WALL_MS, wall - 25), a probe launched while at
+# least 100 ms of that budget is left, and a per-probe grant of
+# min(_GRAPH_SEED_ESTIMATE_QUERY_MS, remaining) - so probes that honour the
+# grant they are handed cannot spend more than the budget. On the single-node
+# path, where this surface issued no probe at all before, the graph
+# statement's requested timeout is additionally floored at wall - budget: that
+# floor is arithmetic, so optional pruning cannot hand the real read a 1 ms
+# timeout however long its probes actually took. The interactive caller
+# resolves timeout_ms once (views/trace.py -> graph_action_remaining_ms) and
+# nothing re-clamps it per statement, so a probe that overruns its grant
+# leaves the graph statement asking for the floor rather than for the wall the
+# request really has left, by exactly that overrun. Blowing the wall is the
+# probe's doing either way; this keeps the real read's budget stated instead
+# of collapsing it.
 _GRAPH_BASE_READ_SETTINGS = {
     # The retained hourly rollup is already row-reduced. Four workers keep the
     # interactive scan parallel without leaving concurrency unbounded on the
@@ -226,13 +228,18 @@ def _raw_trace_seed_candidates(
 
 
 def _graph_seed_probe_budget_ms(timeout_ms: int) -> int:
-    """Total wall the optional seed probes may spend for one graph read."""
+    """Total wall the optional seed probes may spend for one graph read.
+
+    This is the rule the seed already ran under wherever it was live, kept
+    unchanged so un-gating it cannot move the probe schedule on a cluster
+    install: the single-node floor below is derived from the same number.
+    """
 
     return max(
         0,
         min(
             _GRAPH_SEED_ESTIMATE_WALL_MS,
-            int(timeout_ms) // _GRAPH_SEED_PROBE_WALL_SHARE,
+            int(timeout_ms) - 25,
         ),
     )
 
@@ -259,7 +266,16 @@ def _select_raw_trace_seed_candidate(
     different sources. What holds unconditionally is the shape: the seed
     groups by ``trace_id`` over the rows it reads.
 
-    Probe spend is bounded by :func:`_graph_seed_probe_budget_ms`.
+    Probe spend is bounded by :func:`_graph_seed_probe_budget_ms`. The
+    per-probe ``timeout_ms`` and the 32-row/64 KB result caps below are
+    *requested* values: the shipped services drop them (``execute_ch_query``
+    passes ``timeout_ms=None`` to the client and ``application_read_settings``
+    zeroes ``max_execution_time``/``max_result_rows``/``max_result_bytes``),
+    which is why ``supports_bounded_speculative_reads`` is ``False`` there.
+    It is tolerable for this probe only because ``EXPLAIN ESTIMATE`` is
+    answered from part metadata and reads no column data; the wall bound is
+    therefore best-effort per probe, and the graph statement's floor - not the
+    probe's own timeout - is what protects the main read.
     """
 
     candidates = _raw_trace_seed_candidates(filters)
@@ -267,15 +283,12 @@ def _select_raw_trace_seed_candidate(
     if not candidates or total_budget_ms < 100:
         return None, 0
 
-    probe_timeout_ms = min(_GRAPH_SEED_ESTIMATE_QUERY_MS, total_budget_ms)
     estimate_started = monotonic()
     probe_count = 0
     for candidate in candidates[:_GRAPH_SEED_ESTIMATE_MAX_CANDIDATES]:
         elapsed_ms = int((monotonic() - estimate_started) * 1000)
         remaining_ms = total_budget_ms - elapsed_ms
-        # Launch a probe only when its whole cap still fits in the budget, so
-        # honoured per-probe timeouts keep total probe spend under it.
-        if remaining_ms < probe_timeout_ms:
+        if remaining_ms < 100:
             break
         estimate_params = {
             "graph_seed_project_id": project_id,
@@ -299,7 +312,7 @@ def _select_raw_trace_seed_candidate(
             result = analytics.execute_ch_query(
                 estimate_query,
                 estimate_params,
-                timeout_ms=probe_timeout_ms,
+                timeout_ms=min(_GRAPH_SEED_ESTIMATE_QUERY_MS, remaining_ms),
                 settings={
                     **GRAPH_READ_SETTINGS,
                     "max_threads": 1,
@@ -1307,6 +1320,7 @@ def _fetch_direct_raw_system_metric_graph(
     )
     seed_candidate: _GraphRawTraceCandidate | None = None
     seed_probe_count = 0
+    shard_cluster = settings.DASHBOARD_TRACE_REPLICA_SHARD_CLUSTER
     # Seed admission is a cost decision taken from ClickHouse estimates, not a
     # deployment topology decision: a single-node install pays the same
     # full-window scan a sharded one does. The builder still renders the
@@ -1326,7 +1340,7 @@ def _fetch_direct_raw_system_metric_graph(
         interval=interval,
         exact_snapshot=True,
         resolve_span_versions=False,
-        raw_replica_shard_cluster=settings.DASHBOARD_TRACE_REPLICA_SHARD_CLUSTER,
+        raw_replica_shard_cluster=shard_cluster,
         raw_replica_shard_count=settings.DASHBOARD_TRACE_REPLICA_SHARD_COUNT,
         observe_type=observe_type,
         start_date=start_date,
@@ -1347,12 +1361,15 @@ def _fetch_direct_raw_system_metric_graph(
     else:
         query, params = builder.build()
         elapsed_ms = int((monotonic() - started) * 1000)
-        # Probe spend never shrinks the main statement below the wall minus
-        # the probe budget, so optional pruning cannot hand the real read a
-        # 1 ms timeout. With no probe this is the plain remainder.
+        # On the single-node path, where this surface issued no probe at all
+        # before, probe spend never shrinks the main statement below the wall
+        # minus the probe budget: optional pruning cannot hand the real read a
+        # 1 ms timeout. Where the seed was already live the schedule and this
+        # kwarg stay exactly what that install runs today - the plain
+        # remainder - so un-gating moves nothing there.
         seed_probe_floor_ms = (
             int(timeout_ms) - _graph_seed_probe_budget_ms(timeout_ms)
-            if seed_probe_count
+            if seed_probe_count and not shard_cluster
             else 1
         )
         result = analytics.execute_ch_query(
