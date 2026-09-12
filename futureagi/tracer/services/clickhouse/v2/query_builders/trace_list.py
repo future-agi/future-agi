@@ -1080,8 +1080,10 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
         the unforgeable ``_eval_task_trace_root`` marker, the same marker the
         latest-state compiler already demands before it will read that column
         as a root predicate at all. That leaf is structural, not a user filter:
-        it cannot arrive from a request (the filter serializer rejects both the
-        unknown item key and the ``INTERNAL_ROOT_METRIC`` column type), it is
+        it cannot arrive from a request (``col_type`` is an unconstrained
+        request string, but the filter serializer rejects the item key itself
+        as unknown and the latest-state compiler above requires that key to be
+        ``True``, so the column type alone reaches no plan), it is
         re-applied by the seed's own root predicate, and it is applied a third
         time by the unbounded latest-state classifier that decides membership.
         So it is excluded from the counted shape here, exactly as
