@@ -207,6 +207,12 @@ def test_no_sampling_projects_short_circuits_before_clickhouse():
         patch.object(sweep, "TraceScanConfig", cfg),
     ):
         _run()
+    cfg.no_workspace_objects.filter.assert_called_once_with(
+        enabled=True,
+        engine=sweep.TraceScanEngine.LEGACY,
+        sampling_rate__gt=0,
+        project__trace_type="observe",
+    )
     mock_reader.assert_not_called()  # no CH round-trip when nothing samples
 
 

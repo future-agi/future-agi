@@ -115,8 +115,10 @@ def _seed_severity(category: str, brief: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def get_unclustered_issues(project_id: str) -> List[ClusterableIssue]:
-    """Fetch TraceScanIssues that haven't been assigned to a cluster yet."""
+def get_unclustered_issues(
+    project_id: str, issue_ids: list[str] | None = None
+) -> List[ClusterableIssue]:
+    """Fetch unclustered issues, optionally bounded to an explicit ID set."""
     issues = (
         TraceScanIssue.objects.filter(
             scan_result__project_id=project_id,
@@ -125,6 +127,8 @@ def get_unclustered_issues(project_id: str) -> List[ClusterableIssue]:
         .select_related("scan_result")
         .order_by("created_at")
     )
+    if issue_ids is not None:
+        issues = issues.filter(id__in=issue_ids)
 
     result = []
     for issue in issues:
@@ -554,11 +558,19 @@ def assign_to_cluster(
     # scan over a trace updates the issue row it already owns, and matches the
     # junction row it already has.
     TraceScanIssue.objects.filter(id=issue.issue_id).update(cluster=cluster)
-    ErrorClusterTraces.objects.get_or_create(
+    membership, created = ErrorClusterTraces.objects.get_or_create(
         cluster=cluster,
         trace_id=issue.trace_id,
         defaults={"scan_issue_id": issue.issue_id},
     )
+    if not created and str(membership.scan_issue_id or "") != issue.issue_id:
+        # Scanner membership is unique per (cluster, trace). A newer scan issue
+        # for the same trace therefore replaces the provenance pointer rather
+        # than creating a second row. This is also what lets Omega stage a new
+        # finding while the old UI projection remains live, then retire only
+        # the old issue without deleting the current membership.
+        membership.scan_issue_id = issue.issue_id
+        membership.save(update_fields=["scan_issue", "updated_at"])
 
     # Both membership counts are DERIVED from the rows above, never incremented.
     # An increment is not idempotent while the writes it counts are, so a re-scan

@@ -20,6 +20,11 @@ class ScanIssueConfidence(models.TextChoices):
     LOW = "L"
 
 
+class TraceScanEngine(models.TextChoices):
+    LEGACY = "legacy"
+    OMEGA = "omega"
+
+
 class TraceScanConfig(BaseModel):
     """Per-project scanning configuration."""
 
@@ -33,7 +38,15 @@ class TraceScanConfig(BaseModel):
         default=0, help_text="0.0-1.0, fraction of traces to scan"
     )
     enabled = models.BooleanField(default=True)
+    engine = models.CharField(
+        max_length=20,
+        choices=TraceScanEngine.choices,
+        default=TraceScanEngine.LEGACY,
+    )
     scan_version = models.CharField(max_length=20, default="v7.2")
+    omega_memory = models.JSONField(default=list, blank=True)
+    omega_limits = models.JSONField(default=dict, blank=True)
+    omega_last_claimed_at = models.DateTimeField(null=True, blank=True, db_index=True)
     last_swept_at = models.DateTimeField(
         null=True,
         blank=True,

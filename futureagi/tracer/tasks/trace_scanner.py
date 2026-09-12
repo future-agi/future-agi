@@ -16,7 +16,7 @@ from django.db.models import F
 
 from tfc.temporal.drop_in import temporal_activity
 from tracer.models.trace_error_analysis import TraceErrorGroup
-from tracer.models.trace_scan import TraceScanConfig
+from tracer.models.trace_scan import TraceScanConfig, TraceScanEngine
 from tracer.queries.trace_scanner import (
     filter_already_scanned,
     is_trace_sampled,
@@ -210,6 +210,7 @@ def sweep_scannable_traces():
     configs = list(
         TraceScanConfig.no_workspace_objects.filter(
             enabled=True,
+            engine=TraceScanEngine.LEGACY,
             sampling_rate__gt=0,
             project__trace_type="observe",
         )
