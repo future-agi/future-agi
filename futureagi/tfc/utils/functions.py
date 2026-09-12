@@ -173,12 +173,15 @@ def _calculate_numeric_choices_average(cells, multi_choice, numeric_choices):
         # Calculate percentiles using existing function
         percentiles = calculate_percentiles(numeric_values)
 
+        extrema_scale = 100 if is_percentage_range else 1
+        extrema = _score_extrema(numeric_values, scale=extrema_scale)
         return {
             "average": average,
             "valid_rows": valid_rows,
             "success_rate": success_rate,
             "percentiles": percentiles,
             "is_numeric_eval_percentage": is_percentage_range,
+            **extrema,
         }
 
     except Exception as e:
@@ -410,6 +413,18 @@ def get_numeric_choices_score_format(
         return None
 
 
+def _score_extrema(values, scale=1.0):
+    """Min, max, and median of numeric values, optionally scaled (e.g. *100 for %)."""
+    if not values:
+        return {"min": None, "max": None, "median": None}
+    scaled = [float(v) * scale for v in values]
+    return {
+        "min": round(min(scaled), 2),
+        "max": round(max(scaled), 2),
+        "median": round(float(np.median(scaled)), 2),
+    }
+
+
 def calculate_column_average(column_id, row_ids=None):
     """
     Calculate average for a column based on its data type and output format.
@@ -503,6 +518,7 @@ def calculate_column_average(column_id, row_ids=None):
                         ]
                         percentiles = calculate_percentiles(pass_values)
                         stats["percentiles"] = percentiles
+                        stats.update(_score_extrema(pass_values, scale=100))
 
                     elif output_type in ["score", "numeric"]:
                         # Handle score and numeric type evaluations
@@ -559,6 +575,7 @@ def calculate_column_average(column_id, row_ids=None):
 
                             percentiles = calculate_percentiles(valid_scores)
                             stats["percentiles"] = percentiles
+                            stats.update(_score_extrema(valid_scores, scale=100))
 
                     elif output_type in ["reason", "choices"]:
                         # TEMPORARY FIX: Check if this is a user-created numeric choices eval
@@ -600,6 +617,7 @@ def calculate_column_average(column_id, row_ids=None):
                                 1 if value == "pass" else 0 for value in all_cells
                             ]
                             stats["percentiles"] = calculate_percentiles(pass_values)
+                            stats.update(_score_extrema(pass_values, scale=100))
 
                             stats["success_rate"] = stats["average"]
 
