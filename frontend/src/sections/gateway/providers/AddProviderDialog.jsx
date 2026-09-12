@@ -790,7 +790,6 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
             <Autocomplete
               multiple
               freeSolo
-              autoSelect
               disableCloseOnSelect
               size="small"
               sx={{
