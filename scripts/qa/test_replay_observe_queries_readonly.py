@@ -4,11 +4,12 @@ import unittest
 import hashlib
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
+from uuid import UUID
 import time
 
 import replay_observe_filters as replay
@@ -350,6 +351,241 @@ class UsersOriginBatchTests(unittest.TestCase):
                     ):
                         reader._users_result(result, origin=True, certificate=None,
                                              query_id="origin")
+
+
+class UsersOriginCanonicalSqlTests(unittest.TestCase):
+    """Pin the canonicaliser itself: value-list arity, and nothing else.
+
+    Pure string work -- no builder, no Django, no connection. The point of the
+    canonical form is that a statement's digest stops depending on how many
+    values a filter selected or what letters they contain, while every other
+    byte keeps de-certifying the read.
+    """
+
+    UNTYPED = "latest_filter_index_0"
+    LEGACY = "latest_filter_legacy_index_0"
+    TYPED = "latest_filter_index_0_string"
+
+    def _run(self, stem, count, *, separator=", "):
+        return (
+            "[" + separator.join(f"%({stem}_{index})s" for index in range(count)) + "]"
+        )
+
+    def test_only_the_arity_of_a_value_list_collapses(self):
+        for stem in (self.UNTYPED, self.LEGACY, self.TYPED):
+            canonical = f"[%({stem}_*)s]"
+            for count in (1, 2, 3, 10, 11, 40):
+                with self.subTest(stem=stem, count=count):
+                    self.assertEqual(
+                        queries._canonical_origin_sql(self._run(stem, count)),
+                        canonical,
+                    )
+
+    def test_a_value_list_is_collapsed_in_place_inside_a_statement(self):
+        sql = (
+            "SELECT 1 WHERE indexHint(hasAny(arrayMap(x -> lowerUTF8(x), "
+            f"mapValues(span_attr_str)), {self._run(self.UNTYPED, 3)}))"
+        )
+        self.assertEqual(
+            queries._canonical_origin_sql(sql),
+            sql.replace(self._run(self.UNTYPED, 3), f"[%({self.UNTYPED}_*)s]"),
+        )
+
+    def test_canonicalisation_is_idempotent(self):
+        once = queries._canonical_origin_sql(self._run(self.LEGACY, 4))
+        self.assertEqual(queries._canonical_origin_sql(once), once)
+
+    def test_the_attribute_key_list_is_not_a_value_list(self):
+        """``latest_filter_key_0``'s trailing index is a FILTER index."""
+
+        for untouched in (
+            "[%(latest_filter_key_0)s]",
+            "[%(latest_filter_key_0)s, %(latest_filter_key_1)s]",
+            "[%(latest_filter_param_0)s]",
+            "[%(limit)s]",
+        ):
+            with self.subTest(text=untouched):
+                self.assertEqual(queries._canonical_origin_sql(untouched), untouched)
+
+    def test_a_renamed_or_reshaped_placeholder_still_de_certifies(self):
+        for mutant in (
+            # Renamed family.
+            "[%(latest_filter_idx_0_0)s, %(latest_filter_idx_0_1)s]",
+            # Two different filters' lists must never merge into one token.
+            "[%(latest_filter_index_0_0)s, %(latest_filter_index_1_0)s]",
+            # Non-consecutive value indexes are not an arity the builder emits.
+            "[%(latest_filter_index_0_0)s, %(latest_filter_index_0_2)s]",
+            # Out of order.
+            "[%(latest_filter_index_0_1)s, %(latest_filter_index_0_0)s]",
+            # A non-canonical decimal is a byte change, not an arity change.
+            "[%(latest_filter_index_0_00)s]",
+            # Separator changes are byte changes.
+            "[%(latest_filter_index_0_0)s,%(latest_filter_index_0_1)s]",
+            # A mixed list keeps its exact text.
+            "[%(latest_filter_index_0_0)s, %(latest_filter_key_0)s]",
+            # No value index at all.
+            "[%(latest_filter_index_0)s]",
+        ):
+            with self.subTest(mutant=mutant):
+                self.assertEqual(queries._canonical_origin_sql(mutant), mutant)
+                self.assertNotEqual(
+                    queries._users_origin_digest(mutant),
+                    queries._users_origin_digest(f"[%({self.UNTYPED}_*)s]"),
+                )
+
+    def test_any_other_byte_change_moves_the_digest(self):
+        base = (
+            "SELECT 1 WHERE hasAny(arrayMap(x -> lowerUTF8(x), "
+            f"mapValues(span_attr_str)), {self._run(self.UNTYPED, 2)})"
+        )
+        for mutant in (
+            base.replace("lowerUTF8", "lower"),
+            base.replace("span_attr_str", "span_attr_num"),
+            base.replace("hasAny", "hasAll"),
+            base.replace("SELECT 1", "SELECT 2"),
+            base.replace(self.UNTYPED, self.TYPED),
+        ):
+            with self.subTest(mutant=mutant[:60]):
+                self.assertNotEqual(
+                    queries._users_origin_digest(mutant),
+                    queries._users_origin_digest(base),
+                )
+
+    def test_the_digest_normalizes_exactly_what_validate_select_does(self):
+        statement = "WITH x AS (SELECT 1) SELECT * FROM x"
+        digest = queries._users_origin_digest(statement)
+        for variant in (statement, statement + ";", f"\n  {statement};\n"):
+            with self.subTest(variant=variant):
+                self.assertEqual(queries._users_origin_digest(variant), digest)
+        # A statement with no value list at all is digested verbatim.
+        self.assertEqual(digest, hashlib.sha256(statement.encode()).hexdigest())
+
+
+class UsersOriginCanonicalDevControlTests(unittest.TestCase):
+    """The canonical pin is the builder's own statement, on this tree.
+
+    ``_USERS_ORIGIN_SHA`` is a literal, so a literal-versus-literal assertion
+    would prove nothing. These cases build the statement with the recipe
+    documented next to the pin and then ask the harness whether it is pinned.
+    On this tree no attribute witness qualifies, so canonicalisation is a
+    *no-op* here and every shape -- including the value texts whose bloom-hint
+    fan-out breaks a raw-text pin elsewhere in the stack -- is one statement.
+    Pure string construction: no connection and no ``django.setup()``; these
+    cases skip where Django is not configured.
+    """
+
+    ORGANIZATION = str(UUID(int=11))
+    PROJECT = str(UUID(int=12))
+    WINDOW_START = datetime(2026, 9, 3, 0, 0, tzinfo=timezone.utc)
+    WINDOW_END = datetime(2026, 9, 3, 4, 0, tzinfo=timezone.utc)
+
+    def _builder_class(self):
+        try:
+            from tracer.services.clickhouse.v2.query_builders.user_list import (
+                UserListQueryBuilderV2,
+            )
+        except Exception as exc:  # pragma: no cover - Django not configured here
+            self.skipTest(f"UserListQueryBuilderV2 unavailable: {exc}")
+        return UserListQueryBuilderV2
+
+    def _statement(self, attribute_config=None):
+        filters = [
+            {
+                "column_id": "created_at",
+                "filter_config": {
+                    "filter_type": "datetime",
+                    "filter_op": "between",
+                    "filter_value": [
+                        self.WINDOW_START.isoformat(),
+                        self.WINDOW_END.isoformat(),
+                    ],
+                },
+            }
+        ]
+        if attribute_config is not None:
+            filters.append(
+                {
+                    "column_id": "attr_a",
+                    "filter_config": {
+                        "col_type": "SPAN_ATTRIBUTE",
+                        **attribute_config,
+                    },
+                }
+            )
+        builder = self._builder_class()(
+            organization_id=self.ORGANIZATION,
+            project_ids=[self.PROJECT],
+            filters=filters,
+            search="",
+            empty_scope=False,
+        )
+        # ``limit`` is a binding: 26 and 65 are the same statement text.
+        sql, _ = builder.build_dimension_candidate_query(
+            limit=26,
+            window_start=self.WINDOW_START,
+            window_end=self.WINDOW_END,
+        )
+        return sql
+
+    def _shapes(self):
+        def equals(value):
+            return {
+                "filter_type": "text",
+                "filter_op": "equals",
+                "filter_value": value,
+            }
+
+        def picker(values, typed):
+            config = {
+                "filter_type": "text",
+                "filter_op": "in",
+                "filter_value": list(values),
+            }
+            if typed:
+                config["attribute_value_types"] = ["string"] * len(values)
+            return config
+
+        shapes = [("unseeded", None)]
+        # Values whose letters ``k`` fan the legacy ASCII bloom hint out, and
+        # a list whose lowercased values collide: the shapes a raw-text pin
+        # cannot hold once a text witness qualifies.
+        for value in ("value-a", "kid", "kayak", "token", "ok", "OK", "k" * 9):
+            shapes.append((f"equals {value!r}", equals(value)))
+        for count in (1, 2, 3, 5, 10, 11, 12):
+            values = [f"value-{index}" for index in range(count)]
+            shapes.append((f"in {count} untyped", picker(values, False)))
+            shapes.append((f"in {count} typed", picker(values, True)))
+        for values in (["kid"], ["kid", "box"], ["Yes", "yes"], ["a", "a", "b"]):
+            shapes.append((f"in {values!r} untyped", picker(values, False)))
+            shapes.append((f"in {values!r} typed", picker(values, True)))
+        return shapes
+
+    def test_every_reviewed_shape_is_the_one_pinned_statement(self):
+        for label, attribute in self._shapes():
+            with self.subTest(shape=label):
+                sql = self._statement(attribute)
+                self.assertEqual(
+                    queries._users_origin_digest(sql), queries._USERS_ORIGIN_SHA
+                )
+
+    def test_canonicalisation_is_a_no_op_on_this_tree(self):
+        """No witness qualifies here, so no value list is emitted at all."""
+
+        for label, attribute in self._shapes():
+            with self.subTest(shape=label):
+                sql = self._statement(attribute).strip().rstrip(";")
+                self.assertEqual(queries._canonical_origin_sql(sql), sql)
+                self.assertEqual(
+                    queries._USERS_ORIGIN_SHA,
+                    hashlib.sha256(sql.encode()).hexdigest(),
+                )
+
+    def test_a_changed_statement_fails_closed(self):
+        sql = self._statement(None)
+        self.assertNotEqual(
+            queries._users_origin_digest(sql + " LIMIT 1"),
+            queries._USERS_ORIGIN_SHA,
+        )
 
 
 class ChUserAssertTests(unittest.TestCase):

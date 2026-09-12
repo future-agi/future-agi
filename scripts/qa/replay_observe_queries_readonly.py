@@ -354,11 +354,26 @@ def diagnostic_read_settings(
     return limits
 
 
-# SQL pins: sha256 of the statement text the deployed builders emit for the
-# qualified origin shape (no user_id label witness, no numeric scalar witness).
-# ``limit`` is a *binding* (``LIMIT %(limit)s``), so one origin pin covers every
-# first-batch size. Recompute by building the same two statements against the
-# checked-in builders and hashing ``sql.strip().rstrip(";")``.
+# SQL pin: the canonical digest of the statement the deployed builders emit for
+# the qualified origin shape (no user_id label witness, no numeric scalar
+# witness). On this tree no attribute witness qualifies at all, so every
+# reviewed first-page filter shape is the SAME statement and one pin holds them.
+#
+# Recompute offline against the checked-in builders -- no connection, no
+# production access. From ``futureagi/`` with ``PYTHONPATH=.`` and every
+# DB/CH/Redis port pointed at a dead port, after ``django.setup()`` only::
+#
+#     b = UserListQueryBuilderV2(organization_id=str(UUID(int=11)),
+#                                project_ids=[str(UUID(int=12))],
+#                                filters=FILTERS, search="", empty_scope=False)
+#     sql, _ = b.build_dimension_candidate_query(
+#         limit=26, window_start=datetime(2026, 9, 3, 0, 0, tzinfo=timezone.utc),
+#         window_end=datetime(2026, 9, 3, 4, 0, tzinfo=timezone.utc))
+#     _users_origin_digest(sql)
+#
+# Organization, projects, window, ``limit`` and the attribute key AND value are
+# all *bindings*, so none of them enters the digest: limit 26 and limit 65 hash
+# identically, and so do two different attribute keys or values.
 _USERS_ORIGIN_SHA = "7120eaf17118a7ae3708911c7a61e88f46e8a2df1d59753463e5d99e0aacbeb9"
 _USERS_REMAP_SHA = "090df268267944b22e713077c59d4836e4046fadb60bfbb78116f3a43af46676"
 # Source pins: sha256 of the *file bytes* backing each imported module, i.e.
@@ -372,6 +387,82 @@ _USERS_SOURCE_PINS = {
     "tracer.services.clickhouse.v2.id_remap_sql": "56903f382c0f8dc40099e5ebfda45a8ab853c0b8f7ec16b5712f9c11092fe24a",
 }
 _CH_USER_ENV = "OBSERVE_CH_USER"
+
+
+# Origin statements are digested in a CANONICAL form, not as raw text: every
+# bracketed run of value-list placeholders collapses to a single token, and
+# nothing else changes. The Users read path spells ONE placeholder per selected
+# value in two companion bloom index hints built in
+# ``tracer/services/clickhouse/query_builders/latest_filter_predicates.py`` --
+# ``hasAny(arrayMap(x -> lowerUTF8(x), mapValues(span_attr_str)),
+# [%(latest_filter_index_0_0)s, ...])`` and, for all-ASCII values, the legacy
+# ``lower()`` companion ``[%(latest_filter_legacy_index_0_0)s, ...]``, whose
+# placeholder count is 2 ** (number of letters ``k`` in the values),
+# deduplicated. The raw statement text therefore fans out on BOTH the value
+# count AND the value text: ``equals "kid"``, ``equals "token"``, ``equals
+# "ok"`` and any selected-value list whose lowercased values collide are each a
+# different statement at the SAME cardinality, including cardinality 1.
+# Collapsing the ARITY of those two placeholder families -- and only theirs --
+# makes the digest depend on the statement's SHAPE: which witness qualified and
+# whether the legacy hint was emitted. Every other byte still enters the
+# digest: whitespace, keywords, columns, structure, the placeholder NAMES, and
+# the attribute-KEY list ``[%(latest_filter_key_0)s]`` whose trailing index is a
+# FILTER index rather than a value index. A builder change still fails closed.
+#
+# A bracketed, ``", "``-separated run of ``%(name)s`` placeholders, which is
+# exactly how the builder spells both hint lists.
+_ORIGIN_PLACEHOLDER_LIST_RE = re.compile(
+    r"\[%\([A-Za-z0-9_]+\)s(?:, %\([A-Za-z0-9_]+\)s)*\]"
+)
+_ORIGIN_PLACEHOLDER_NAME_RE = re.compile(r"%\(([A-Za-z0-9_]+)\)s")
+# The two parameter families the builder derives from a filter's value list:
+# ``latest_filter_index_<filter suffix>_<value index>`` and its legacy
+# companion. The value index is a canonical decimal, so ``_00`` is not ``_0``
+# and a renamed placeholder matches nothing and is left alone.
+_ORIGIN_VALUE_PARAM_RE = re.compile(
+    r"^(?P<stem>latest_filter_(?:legacy_)?index_[A-Za-z0-9_]*[A-Za-z0-9])"
+    r"_(?P<value_index>0|[1-9][0-9]*)$"
+)
+
+
+def _collapse_origin_value_list(match):
+    """Collapse one placeholder run iff it is a whole filter value list.
+
+    Every member must belong to the same value-list family and stem, and the
+    value indexes must be exactly ``0 .. n-1`` in order -- which is how the
+    builder emits them. Anything else is returned untouched, so an unexpected
+    list keeps its exact text and still fails the pin.
+    """
+
+    names = _ORIGIN_PLACEHOLDER_NAME_RE.findall(match.group(0))
+    parsed = [_ORIGIN_VALUE_PARAM_RE.match(name) for name in names]
+    if any(item is None for item in parsed):
+        return match.group(0)
+    stems = {item.group("stem") for item in parsed}
+    indexes = [int(item.group("value_index")) for item in parsed]
+    if len(stems) != 1 or indexes != list(range(len(indexes))):
+        return match.group(0)
+    return "[%(" + stems.pop() + "_*)s]"
+
+
+def _canonical_origin_sql(sql):
+    """Return the statement with value-list ARITY collapsed, nothing else."""
+
+    return _ORIGIN_PLACEHOLDER_LIST_RE.sub(_collapse_origin_value_list, sql)
+
+
+def _users_origin_digest(sql):
+    """Digest the canonical form of an origin statement.
+
+    ``.strip().rstrip(";")`` is exactly the normalization ``validate_select``
+    applies before the statement runs, so one digest covers both check sites:
+    the qualification check that selects the shape and the execute-time check
+    that re-verifies the statement actually handed to the driver.
+    """
+
+    return hashlib.sha256(
+        _canonical_origin_sql(sql.strip().rstrip(";")).encode()
+    ).hexdigest()
 
 
 def _users_sources_current():
@@ -536,7 +627,7 @@ class ReadOnlyExecutor:
             limit=origin_limit, window_start=replay.utc(case["window"]["start"]),
             window_end=replay.utc(case["window"]["end"]),
         )
-        if hashlib.sha256(sql.strip().rstrip(";").encode()).hexdigest() != _USERS_ORIGIN_SHA:
+        if _users_origin_digest(sql) != _USERS_ORIGIN_SHA:
             raise replay.ReplayError("USERS_REMAP_ORIGIN_NOT_QUALIFIED")
         self._users_context = _UsersRemapContext(
             tuple(_user_uuid(p) for p in projects), tuple(map(str, self.projects)),
@@ -606,9 +697,16 @@ class ReadOnlyExecutor:
                 raise
             self._validate_users_remap(query, params, pending)
             sql, certified = query, pending
-        if origin and (hashlib.sha256(sql.encode()).hexdigest() != _USERS_ORIGIN_SHA
-                       or replay.digest(safe_json(params)) != self._users_context.origin_bindings):
-            raise replay.ReplayError("USERS_REMAP_ORIGIN_BINDINGS_CHANGED")
+        # Same canonical digest as the qualification check above. The raw
+        # ``sql_sha256`` recorded below stays the exact executed text, so the
+        # ledger still carries the byte-for-byte statement that ran.
+        if origin:
+            bindings_digest = replay.digest(safe_json(params))
+            if (
+                _users_origin_digest(sql) != _USERS_ORIGIN_SHA
+                or bindings_digest != self._users_context.origin_bindings
+            ):
+                raise replay.ReplayError("USERS_REMAP_ORIGIN_BINDINGS_CHANGED")
         remaining = self.remaining_read_ms()
         if remaining <= 0:
             raise ReadDeadlineExceeded("diagnostic_safety_wall")
