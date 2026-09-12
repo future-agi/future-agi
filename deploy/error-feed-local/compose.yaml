@@ -1,0 +1,99 @@
+name: error-feed-local
+
+# Uses prebuilt LOCAL images. It never builds, pulls, publishes or starts the
+# application's databases. The backend image must contain this branch's code.
+x-maintenance: &maintenance
+  image: ${OMEGA_BACKEND_IMAGE:?set a prebuilt local backend image}
+  pull_policy: never
+  profiles: [omega]
+  init: true
+  read_only: true
+  working_dir: /app/backend
+  env_file: ${OMEGA_BACKEND_ENV_FILE:?set an absolute backend runtime env-file path}
+  environment: &maintenance-environment
+    ERROR_FEED_OMEGA_ENABLED: "true"
+    SERVICE_TYPE: bootstrap
+    STARTUP_DB_MUTATION_MODE: operator
+    NO_STARTUP_DB_MUTATIONS: "false"
+    FAST_STARTUP: "true"
+    PYTHONDONTWRITEBYTECODE: "1"
+    PYTHONUNBUFFERED: "1"
+    FUTURE_AGI_TELEMETRY_DISABLED: "true"
+  entrypoint: [/bin/sh, -ec]
+  tmpfs:
+    - /tmp:rw,nosuid,noexec,size=268435456,mode=1777
+  networks: [application]
+  restart: unless-stopped
+  stop_grace_period: 30s
+  cpus: 1.0
+  mem_limit: 2g
+  pids_limit: 128
+
+services:
+  omega:
+    image: ${OMEGA_WORKER_IMAGE:-omega-error-feed:local}
+    pull_policy: never
+    profiles: [omega]
+    init: true
+    read_only: true
+    env_file: ${OMEGA_WORKER_ENV_FILE:?set an absolute worker runtime env-file path}
+    environment:
+      OMEGA_REPORT_SPOOL: /var/lib/omega/reports
+      OMEGA_SCRATCH_DIR: /var/lib/omega/scratch
+    volumes:
+      - reports:/var/lib/omega/reports
+      - scratch:/var/lib/omega/scratch
+      - type: bind
+        source: ${OMEGA_WORKER_SECRETS_DIR:?set the worker-only secret directory}
+        target: /run/omega-secrets
+        read_only: true
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /tmp:rw,nosuid,noexec,size=67108864,mode=1777
+    networks: [application]
+    restart: unless-stopped
+    stop_grace_period: 30s
+    cpus: 2.0
+    mem_limit: 2g
+    pids_limit: 128
+
+  reconciliation:
+    <<: *maintenance
+    command:
+      - |
+        while true; do
+          python manage.py reconcile_omega_investigations --project-limit 100 --page-size 100 --max-pages-per-project 2 --skip-checks
+          sleep 60
+        done
+
+  grouping:
+    <<: *maintenance
+    command:
+      - |
+        while true; do
+          python manage.py publish_omega_investigation_groups --report-limit 25 --skip-checks
+          sleep 5
+        done
+
+  usage:
+    <<: *maintenance
+    environment:
+      <<: *maintenance-environment
+      # Keep enqueueing off until the real usage consumer's event-ID dedup is verified.
+      ERROR_FEED_OMEGA_BILLING_EMIT_ENABLED: ${ERROR_FEED_OMEGA_BILLING_EMIT_ENABLED:-false}
+    command:
+      - |
+        while true; do
+          python manage.py emit_omega_investigation_usage --receipt-limit 100 --skip-checks
+          sleep 30
+        done
+
+networks:
+  application:
+    external: true
+    name: ${OMEGA_APPLICATION_NETWORK:?set the existing application network}
+
+volumes:
+  reports:
+  scratch:

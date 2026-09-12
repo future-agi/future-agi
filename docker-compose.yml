@@ -702,6 +702,10 @@ services:
       FI_PROPERTY_CATALOG_REVISION_FENCE_FILE: /var/lib/fi-collector/property-catalog/revision-fence-v2.json
       FI_PROPERTY_CATALOG_KAFKA_BROKERS: property-catalog-kafka:9092
       FI_PROPERTY_CATALOG_KAFKA_TOPIC: ${PROPERTY_CATALOG_CANDIDATE_KAFKA_TOPIC:-futureagi.oss.property-catalog.candidates.v1}
+      # Opt-in Error Feed notifications use the existing broker, after trace writes.
+      FI_ERROR_FEED_ENABLED: ${FI_ERROR_FEED_ENABLED:-false}
+      FI_ERROR_FEED_KAFKA_BROKERS: ${FI_ERROR_FEED_KAFKA_BROKERS:-property-catalog-kafka:9092}
+      FI_ERROR_FEED_KAFKA_TOPIC: ${FI_ERROR_FEED_KAFKA_TOPIC:-error-feed.trace-available.v1}
       # Point at the same ClickHouse the backend uses (HTTP port 8123).
       FI_CH_URL: http://clickhouse:8123
       FI_CH_DATABASE: ${FI_CH_DATABASE:-${CH25_DATABASE:-${CH_DATABASE:-default}}}
