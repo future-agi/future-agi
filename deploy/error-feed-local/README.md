@@ -61,6 +61,14 @@ Node a dedicated SELECT-only CH account. It does not receive PostgreSQL credenti
 or Django's env file. Backend grouping also needs the existing embedding service
 and centroid-write CH configuration, in addition to its PostgreSQL connection.
 
+Current account-profile compatibility is unresolved: ClickHouse `readonly=1`
+rejects changes to the query's execution/result limits, while `readonly=2`
+rejects the worker's explicit `readonly=1` override. Both failures were reproduced
+on local ClickHouse 25.3 using read-only probes. The existing query guard remains
+unchanged. Before changing it, obtain explicit approval and verify the dedicated
+account's SELECT-only grants and read-only profile; do not give Node a writable
+account to bypass this check. No database accounts or settings were changed.
+
 ## Start and stop
 
 From the repository root:
