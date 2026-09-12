@@ -1,0 +1,18 @@
+{
+  "verified_at": "2026-09-12",
+  "status": "passed",
+  "trace_id": "08f213fa-a113-41b5-a91c-7c70d46afbf1",
+  "report_id": "84b62606-8ee7-4ca6-bd7e-f8b72601aaaa",
+  "real_services": ["Kafka 4.1", "ClickHouse 25.3", "Omega", "Django", "Postgres 16"],
+  "scripted_boundary": "gateway/model HTTP response",
+  "outcome": "failure",
+  "model_calls": 4,
+  "fixture_reported_cost_usd": 0.0004,
+  "actual_inference_cost_usd": 0,
+  "occurrences": 1,
+  "grouping_status": "pending",
+  "active_projection_updated": true,
+  "duplicate_publication_did_not_repeat_inference": true,
+  "postgres_row_independently_checked": true,
+  "not_exercised": ["collector OTLP ingestion", "live model accuracy", "clustering consumer", "production billing"]
+}
