@@ -770,6 +770,14 @@ def publish_investigation(
             grouping_status=grouping_status,
             active_projection_updated=active,
         )
+        # Persist cost attribution in the same transaction as every report,
+        # including late/cancelled attempts. Pricing and enqueueing happen in a
+        # separate gated drain, so publication performs no billing-system I/O.
+        from tracer.services.trace_investigation_billing import (
+            record_trace_investigation_usage,
+        )
+
+        record_trace_investigation_usage(report)
         if active:
             existing_projection = (
                 TraceScanResult.no_workspace_objects.select_for_update()

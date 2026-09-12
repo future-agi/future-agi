@@ -38,15 +38,7 @@ def get_redis() -> redis.Redis:
     return _redis_client
 
 
-def emit(event: UsageEvent) -> None:
-    """Emit a usage event to the Redis Stream.
-
-    This is the ONLY way to record usage in the system.
-    Non-blocking, fire-and-forget. ~0.5ms.
-
-    On Redis failure: logs the error, does NOT raise.
-    The user's action must not fail because metering failed.
-    """
+def _start_consumer_best_effort() -> None:
     # Lazy-start the consumer workflow on first emit (singleton, non-blocking)
     global _consumer_started
     if not _consumer_started:
@@ -72,19 +64,44 @@ def emit(event: UsageEvent) -> None:
         except Exception:
             logger.debug("usage_consumer_start_deferred")
 
+
+def _stream_data(event: UsageEvent) -> dict[str, str]:
+    data = {}
+    dumped = event.model_dump(mode="json")
+    for key, value in dumped.items():
+        if isinstance(value, dict):
+            import json
+
+            data[key] = json.dumps(value)
+        elif value is not None:
+            data[key] = str(value)
+    return data
+
+
+def emit_confirmed(event: UsageEvent) -> str | bytes:
+    """Enqueue an event and propagate Redis failures to durable callers.
+
+    Callers must persist a deterministic ``event_id`` before invoking this.
+    A crash after ``XADD`` may enqueue the same ID again; the usage consumer is
+    responsible for idempotency. Ordinary request paths should keep using
+    :func:`emit`, whose fire-and-forget behavior is unchanged.
+    """
+    _start_consumer_best_effort()
+    return get_redis().xadd(
+        STREAM_KEY,
+        _stream_data(event),
+        maxlen=STREAM_MAXLEN,
+    )
+
+
+def emit(event: UsageEvent) -> None:
+    """Emit a usage event to the Redis Stream.
+
+    This is the default fire-and-forget path. On Redis failure it logs but does
+    not raise, so user actions are never failed by metering.
+    """
     try:
-        # Serialize to flat string dict for Redis Stream
-        data = {}
-        dumped = event.model_dump(mode="json")
-        for key, value in dumped.items():
-            if isinstance(value, dict):
-                import json
-
-                data[key] = json.dumps(value)
-            elif value is not None:
-                data[key] = str(value)
-
-        get_redis().xadd(STREAM_KEY, data, maxlen=STREAM_MAXLEN)
+        emit_confirmed(event)
     except Exception:
         # Fire-and-forget billing: a failure here is permanently lost usage,
         # otherwise invisible. The structured log already reaches Sentry via the

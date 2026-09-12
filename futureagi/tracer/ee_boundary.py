@@ -7,13 +7,25 @@ Each function is a no-op / passthrough when ee is absent.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
+from decimal import Decimal
 from typing import TYPE_CHECKING
+
+from tfc.ee_gating import is_oss
 
 if TYPE_CHECKING:
     from tracer.types.eval_cluster_types import ClusterableEvalResult, EvalClusterMeta
     from tracer.types.scan_types import ClusterableIssue
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class TraceInvestigationUsagePricing:
+    applicable: bool
+    credit_amount: Decimal | None
+    reason: str
+
 
 _ee_available: bool
 try:
@@ -135,3 +147,42 @@ def attribute_key_moments(
     except Exception:
         logger.warning("attribute_key_moments_failed", exc_info=True)
         return key_moments
+
+
+def price_trace_investigation_usage(
+    raw_cost_usd: Decimal,
+) -> TraceInvestigationUsagePricing:
+    """Resolve cloud AI credits without exposing billing internals to tracer."""
+    if is_oss():
+        return TraceInvestigationUsagePricing(False, None, "billing_unavailable")
+    try:
+        from ee.usage.deployment import DeploymentMode
+        from ee.usage.services.config import BillingConfig
+    except ImportError:
+        return TraceInvestigationUsagePricing(False, None, "billing_unavailable")
+
+    if not DeploymentMode.is_cloud():
+        return TraceInvestigationUsagePricing(False, None, "non_cloud_deployment")
+    amount = Decimal(str(BillingConfig.get().calculate_ai_credits(raw_cost_usd)))
+    if not amount.is_finite() or amount < 0:
+        raise ValueError("billing configuration produced an invalid credit amount")
+    return TraceInvestigationUsagePricing(True, amount, "")
+
+
+def enqueue_trace_investigation_usage(event_payload: dict) -> None:
+    """Strictly enqueue one already-pinned cloud usage event.
+
+    Unlike the normal request-path emitter, this propagates Redis failures so
+    the durable report outbox can retry the same event ID.
+    """
+    if is_oss():
+        raise RuntimeError("cloud usage emitter is unavailable")
+    try:
+        from ee.usage.deployment import DeploymentMode
+        from ee.usage.schemas.events import UsageEvent
+        from ee.usage.services.emitter import emit_confirmed
+    except ImportError as error:
+        raise RuntimeError("cloud usage emitter is unavailable") from error
+    if not DeploymentMode.is_cloud():
+        raise RuntimeError("cloud usage emission is not applicable")
+    emit_confirmed(UsageEvent.model_validate(event_payload))
