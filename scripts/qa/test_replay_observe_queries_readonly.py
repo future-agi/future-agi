@@ -376,6 +376,22 @@ class ChUserAssertTests(unittest.TestCase):
             with self.assertRaisesRegex(replay.ReplayError, "CH_USER_NOT_CONFIGURED"):
                 queries.assert_ch_identity(SimpleNamespace(user_assert=True), "default")
 
+    def test_empty_env_keeps_its_pre_flag_meaning_with_the_assert_off(self):
+        """An env var set to "" is a misconfiguration, not a request for ``default``.
+
+        ``os.environ.get(_CH_USER_ENV, "default")`` is the resolution this
+        script had before ``--user-assert`` existed: only an *unset* variable
+        falls back. Resolving "" to ``default`` would silently connect as the
+        one account this harness must never use.
+        """
+        with patch.dict(os.environ, {queries._CH_USER_ENV: ""}):
+            self.assertEqual(queries.observe_ch_user(SimpleNamespace()), "")
+            self.assertEqual(
+                queries.observe_ch_user(SimpleNamespace(user_assert=False)), ""
+            )
+            with self.assertRaisesRegex(replay.ReplayError, "CH_USER_NOT_CONFIGURED"):
+                queries.observe_ch_user(SimpleNamespace(user_assert=True))
+
     def test_identity_mismatch_fails_fast_and_match_passes(self):
         with patch.dict(os.environ, {queries._CH_USER_ENV: "observe_readonly"}):
             args = SimpleNamespace(user_assert=True)
