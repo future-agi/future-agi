@@ -315,32 +315,40 @@ class UsersOriginShaSetTests(unittest.TestCase):
         for digest in queries._USERS_ORIGIN_SHAS:
             with self.subTest(digest=digest):
                 self.assertRegex(digest, r"^[0-9a-f]{64}$")
-        # The unseeded page and the exact-equals text page are two different
-        # statements; one scalar pin cannot hold them.
-        self.assertEqual(len(queries._USERS_ORIGIN_SHAS_SCALAR), 2)
-        # The picker family is enumerated by value count, 1 .. MAX, and each
-        # cardinality is two statements: untyped and typed.
-        self.assertEqual(queries._USERS_PICKER_MAX_VALUES, 10)
+        # One pin per SHAPE, not per cardinality: no witness, the scalar
+        # ``equals`` witness, and the untyped/typed pickers, each with and
+        # without the legacy ASCII bloom companion.
         self.assertEqual(
-            sorted(queries._USERS_PICKER_SHAS),
-            list(range(1, queries._USERS_PICKER_MAX_VALUES + 1)),
+            sorted(queries._USERS_ORIGIN_SHAPES),
+            [
+                "equals_hint_declined",
+                "equals_legacy_hint",
+                "in_typed_hint_declined",
+                "in_typed_legacy_hint",
+                "in_untyped_hint_declined",
+                "in_untyped_legacy_hint",
+                "no_text_witness",
+            ],
         )
-        picker = [
-            digest for pair in queries._USERS_PICKER_SHAS.values() for digest in pair
-        ]
-        self.assertTrue(
-            all(len(pair) == 2 for pair in queries._USERS_PICKER_SHAS.values())
-        )
-        self.assertEqual(len(picker), 2 * queries._USERS_PICKER_MAX_VALUES)
-        # Every pin is distinct, and the exported set is exactly their union.
+        # Every pin is distinct, and the exported set is exactly their values.
+        self.assertEqual(len(queries._USERS_ORIGIN_SHAS), 7)
         self.assertEqual(
-            len(set(picker) | queries._USERS_ORIGIN_SHAS_SCALAR),
-            len(picker) + len(queries._USERS_ORIGIN_SHAS_SCALAR),
+            len(set(queries._USERS_ORIGIN_SHAPES.values())),
+            len(queries._USERS_ORIGIN_SHAPES),
         )
         self.assertEqual(
             queries._USERS_ORIGIN_SHAS,
-            queries._USERS_ORIGIN_SHAS_SCALAR | frozenset(picker),
+            frozenset(queries._USERS_ORIGIN_SHAPES.values()),
         )
+        # The per-cardinality enumeration this replaced is gone for good: a
+        # value-count boundary is not a property of the statement any more.
+        for retired in (
+            "_USERS_PICKER_SHAS",
+            "_USERS_PICKER_MAX_VALUES",
+            "_USERS_ORIGIN_SHAS_SCALAR",
+        ):
+            with self.subTest(retired=retired):
+                self.assertFalse(hasattr(queries, retired))
 
     def test_origin_sha_selects_a_pinned_shape_and_fails_closed_otherwise(self):
         statement = "WITH x AS (SELECT 1) SELECT * FROM x"
@@ -361,19 +369,25 @@ class UsersOriginShaSetTests(unittest.TestCase):
 class UsersOriginShaDerivationTests(unittest.TestCase):
     """Derive every pinned first-page digest from the checked-in builder.
 
-    The pins above are literals, so a literal-versus-literal assertion would
-    prove nothing. These cases build the statement with the recipe documented
-    next to ``_USERS_ORIGIN_SHAS`` and then ask ``_users_origin_sha`` whether
-    that statement is pinned, so a builder change that moves any shape fails
-    here instead of failing closed in a run. Pure string construction: no
-    connection and no ``django.setup()`` -- the harness's own test environment
-    configures Django, and these cases skip where it does not.
+    The pins are literals, so a literal-versus-literal assertion would prove
+    nothing. These cases build the statement with the recipe documented next to
+    ``_USERS_ORIGIN_SHAPES`` and then ask ``_users_origin_sha`` whether that
+    statement is pinned, so a builder change that moves any shape fails here
+    instead of failing closed in a run. They also pin the SHAPE TABLE itself:
+    each family must collapse to exactly one digest across value counts and
+    value texts, and the seven families must account for the whole pin set.
+    Pure string construction: no connection and no ``django.setup()`` -- the
+    harness's own test environment configures Django, and these cases skip
+    where it does not.
     """
 
     ORGANIZATION = str(UUID(int=11))
     PROJECT = str(UUID(int=12))
     WINDOW_START = datetime(2026, 9, 3, 0, 0, tzinfo=timezone.utc)
     WINDOW_END = datetime(2026, 9, 3, 4, 0, tzinfo=timezone.utc)
+    # Nine letters ``k`` push the legacy ASCII bloom enumeration past its 256
+    # variant ceiling, so the hint declines and the page is a shape of its own.
+    HINT_DECLINED_VALUE = "k" * 9
 
     def _builder_class(self):
         try:
@@ -397,12 +411,14 @@ class UsersOriginShaDerivationTests(unittest.TestCase):
             },
         }
 
-    def _statement(self, attribute_config=None):
+    def _statement(self, *attribute_configs):
         filters = [self._date_filter()]
-        if attribute_config is not None:
+        for position, attribute_config in enumerate(attribute_configs):
+            if attribute_config is None:
+                continue
             filters.append(
                 {
-                    "column_id": "attr_a",
+                    "column_id": f"attr_{position}",
                     "filter_config": {
                         "col_type": "SPAN_ATTRIBUTE",
                         **attribute_config,
@@ -424,6 +440,16 @@ class UsersOriginShaDerivationTests(unittest.TestCase):
         )
         return sql
 
+    def _equals_config(self, value, typed=False, filter_type="text"):
+        config = {
+            "filter_type": filter_type,
+            "filter_op": "equals",
+            "filter_value": value,
+        }
+        if typed:
+            config["attribute_value_types"] = ["string"]
+        return config
+
     def _picker_config(self, values, typed):
         config = {
             "filter_type": "text",
@@ -434,55 +460,217 @@ class UsersOriginShaDerivationTests(unittest.TestCase):
             config["attribute_value_types"] = ["string"] * len(values)
         return config
 
-    def test_the_scalar_pins_are_the_builders_own_statements(self):
-        for label, attribute in (
-            ("unseeded", None),
+    def _shape_table(self):
+        """Every reviewed case, labelled with the shape it must land on.
+
+        Covers what the raw-text pin could not: the value COUNT (1 .. 40, past
+        the retired boundary of 10), and the value TEXT -- values containing
+        the letter ``k``, which fans the legacy ASCII bloom hint out by
+        2 ** (count of ``k``), and selected lists whose lowercased values
+        collide, which shrinks it.
+        """
+
+        cases = [
+            ("no_text_witness", "unseeded", (None,)),
+            ("no_text_witness", "non-ASCII equals", (self._equals_config("café"),)),
             (
-                "equals",
-                {
-                    "filter_type": "text",
-                    "filter_op": "equals",
-                    "filter_value": "value-a",
-                },
+                "no_text_witness",
+                "typed equals",
+                (self._equals_config("value-a", typed=True),),
             ),
-        ):
-            with self.subTest(shape=label):
-                sql = self._statement(attribute)
-                digest = hashlib.sha256(sql.strip().rstrip(";").encode()).hexdigest()
-                self.assertEqual(queries._users_origin_sha(sql), digest)
-                self.assertIn(digest, queries._USERS_ORIGIN_SHAS_SCALAR)
-
-    def test_every_pinned_picker_cardinality_is_the_builders_own_statement(self):
-        for count in range(1, queries._USERS_PICKER_MAX_VALUES + 1):
-            values = [f"value-{index}" for index in range(count)]
-            for position, typed in ((0, False), (1, True)):
-                with self.subTest(values=count, typed=typed):
-                    sql = self._statement(self._picker_config(values, typed))
-                    # The witness is what fans the statement out per value.
-                    self.assertIn("scalar_witness_identities AS", sql)
-                    self.assertEqual(
-                        queries._users_origin_sha(sql),
-                        queries._USERS_PICKER_SHAS[count][position],
-                    )
-
-    def test_one_value_more_than_the_pinned_maximum_fails_closed(self):
-        values = [
-            f"value-{index}" for index in range(queries._USERS_PICKER_MAX_VALUES + 1)
+            (
+                "no_text_witness",
+                "contains",
+                (
+                    {
+                        "filter_type": "text",
+                        "filter_op": "contains",
+                        "filter_value": "value-a",
+                    },
+                ),
+            ),
+            (
+                "no_text_witness",
+                "non-ASCII picker",
+                (self._picker_config(["café", "x"], False),),
+            ),
+            (
+                "no_text_witness",
+                "type-list length mismatch",
+                (
+                    {
+                        "filter_type": "text",
+                        "filter_op": "in",
+                        "filter_value": ["value-a", "value-b"],
+                        "attribute_value_types": ["string"],
+                    },
+                ),
+            ),
+            (
+                "equals_hint_declined",
+                "equals, hint declined",
+                (self._equals_config(self.HINT_DECLINED_VALUE),),
+            ),
+            (
+                "in_untyped_hint_declined",
+                "picker, hint declined",
+                (self._picker_config([self.HINT_DECLINED_VALUE], False),),
+            ),
+            (
+                "in_typed_hint_declined",
+                "typed picker, hint declined",
+                (self._picker_config([self.HINT_DECLINED_VALUE], True),),
+            ),
         ]
+        for filter_type in ("text", "string"):
+            cases.append(
+                (
+                    "equals_legacy_hint",
+                    f"equals value-a, filter_type {filter_type}",
+                    (self._equals_config("value-a", filter_type=filter_type),),
+                )
+            )
+        # Values whose letters ``k`` moved the raw statement text.
+        for value in ("kid", "kayak", "token", "ok", "OK", "sk-token"):
+            cases.append(
+                ("equals_legacy_hint", f"equals {value}", (self._equals_config(value),))
+            )
+        for count in (1, 2, 3, 5, 10, 11, 12, 40):
+            values = [f"value-{index}" for index in range(count)]
+            cases.append(
+                (
+                    "in_untyped_legacy_hint",
+                    f"picker {count} values untyped",
+                    (self._picker_config(values, False),),
+                )
+            )
+            cases.append(
+                (
+                    "in_typed_legacy_hint",
+                    f"picker {count} values typed",
+                    (self._picker_config(values, True),),
+                )
+            )
+        # Selected lists whose LOWERCASED values collide, so the legacy hint
+        # holds fewer placeholders than the list holds values.
+        for values in (
+            ["kid"],
+            ["kid", "box"],
+            ["Yes", "yes"],
+            ["a", "a", "b"],
+            ["a", "a", "a"],
+        ):
+            cases.append(
+                (
+                    "in_untyped_legacy_hint",
+                    f"picker {values!r} untyped",
+                    (self._picker_config(values, False),),
+                )
+            )
+            cases.append(
+                (
+                    "in_typed_legacy_hint",
+                    f"picker {values!r} typed",
+                    (self._picker_config(values, True),),
+                )
+            )
+        # Conjunctions land on the first exact-text filter's own shape.
+        cases += [
+            (
+                "equals_legacy_hint",
+                "equals + equals",
+                (self._equals_config("value-a"), self._equals_config("value-b")),
+            ),
+            (
+                "equals_legacy_hint",
+                "equals + picker",
+                (
+                    self._equals_config("kid"),
+                    self._picker_config(["Yes", "yes"], False),
+                ),
+            ),
+            (
+                "in_untyped_legacy_hint",
+                "picker + picker untyped",
+                (
+                    self._picker_config(["a", "b"], False),
+                    self._picker_config(["c", "d", "e"], False),
+                ),
+            ),
+            (
+                "in_typed_legacy_hint",
+                "picker + picker typed",
+                (
+                    self._picker_config(["a", "b"], True),
+                    self._picker_config(["c", "d", "e"], True),
+                ),
+            ),
+        ]
+        return cases
+
+    def test_every_reviewed_case_lands_on_its_pinned_shape(self):
+        for shape, label, configs in self._shape_table():
+            with self.subTest(shape=shape, case=label):
+                sql = self._statement(*configs)
+                self.assertEqual(
+                    queries._users_origin_sha(sql),
+                    queries._USERS_ORIGIN_SHAPES[shape],
+                )
+
+    def test_each_shape_is_exactly_one_digest_and_the_pins_are_only_these(self):
+        observed = {}
+        for shape, _label, configs in self._shape_table():
+            observed.setdefault(shape, set()).add(
+                queries._users_origin_digest(self._statement(*configs))
+            )
+        for shape, digests in observed.items():
+            with self.subTest(shape=shape):
+                self.assertEqual(len(digests), 1, digests)
+        self.assertEqual(sorted(observed), sorted(queries._USERS_ORIGIN_SHAPES))
+        self.assertEqual(
+            {digest for digests in observed.values() for digest in digests},
+            set(queries._USERS_ORIGIN_SHAS),
+        )
+
+    def test_the_witness_is_what_fans_the_statement_out_per_value(self):
         for typed in (False, True):
             with self.subTest(typed=typed):
-                sql = self._statement(self._picker_config(values, typed))
-                self.assertNotIn(
-                    hashlib.sha256(sql.strip().rstrip(";").encode()).hexdigest(),
-                    queries._USERS_ORIGIN_SHAS,
+                sql = self._statement(
+                    self._picker_config(["value-0", "value-1"], typed)
                 )
-                with self.assertRaisesRegex(
-                    replay.ReplayError, "USERS_REMAP_ORIGIN_NOT_QUALIFIED"
-                ):
-                    queries._users_origin_sha(sql)
+                canonical = queries._canonical_origin_sql(sql)
+                self.assertIn("scalar_witness_identities AS", sql)
+                # The raw text carries one placeholder per selected value;
+                # only the canonical form the pin is taken over does not.
+                stem = (
+                    "latest_filter_index_0_string" if typed else "latest_filter_index_0"
+                )
+                self.assertIn(f"%({stem}_0)s, %({stem}_1)s", sql)
+                self.assertNotIn(f"%({stem}_1)s", canonical)
+                self.assertIn(f"%({stem}_*)s", canonical)
+
+    def test_value_count_and_value_text_no_longer_move_the_pin(self):
+        """The retired ``_USERS_PICKER_MAX_VALUES`` boundary is really gone."""
+
+        baseline = queries._users_origin_digest(
+            self._statement(self._picker_config(["value-0"], False))
+        )
+        for count in (2, 10, 11, 12, 40):
+            with self.subTest(values=count):
+                sql = self._statement(
+                    self._picker_config(
+                        [f"value-{index}" for index in range(count)], False
+                    )
+                )
+                self.assertEqual(queries._users_origin_digest(sql), baseline)
+        for values in (["kid"], ["Yes", "yes"], ["ok", "token", "key"]):
+            with self.subTest(values=values):
+                sql = self._statement(self._picker_config(values, False))
+                self.assertEqual(queries._users_origin_digest(sql), baseline)
 
     def test_a_length_mismatched_type_list_lands_on_the_unseeded_pin(self):
         """No witness qualifies, so the page is the plain unseeded statement."""
+
         config = {
             "filter_type": "text",
             "filter_op": "in",
@@ -495,6 +683,58 @@ class UsersOriginShaDerivationTests(unittest.TestCase):
             queries._users_origin_sha(sql),
             queries._users_origin_sha(self._statement(None)),
         )
+
+    # Why the pin must be canonical: on this tree the RAW text fans out. The
+    # branch that introduced the exact-text witnesses also introduced two
+    # companion bloom index hints whose placeholder COUNT follows the filter's
+    # value list -- one placeholder per selected value for the UTF-8 hint, and
+    # 2 ** (letters ``k`` in the values), deduplicated, for the legacy ASCII
+    # one. The cases below measure that fan-out on the builder itself, so the
+    # reason a raw-text digest cannot be the pin is measured, not asserted.
+    def test_the_raw_text_moves_with_the_value_text_at_one_value(self):
+        """``equals "kid"`` is a different statement from ``equals "value-a"``."""
+
+        baseline = self._statement(self._equals_config("value-a"))
+        baseline_raw = hashlib.sha256(baseline.strip().rstrip(";").encode()).hexdigest()
+        for value in ("kid", "kayak", "token", "ok", "OK", "sk-token"):
+            with self.subTest(value=value):
+                sql = self._statement(self._equals_config(value))
+                raw = hashlib.sha256(sql.strip().rstrip(";").encode()).hexdigest()
+                self.assertNotEqual(raw, baseline_raw)
+                # ... and the canonical digest is the same pinned shape.
+                self.assertEqual(
+                    queries._users_origin_digest(sql),
+                    queries._USERS_ORIGIN_SHAPES["equals_legacy_hint"],
+                )
+
+    def test_the_raw_text_moves_with_a_lowercase_collision_at_one_count(self):
+        """Two selected values, one legacy placeholder: ``["Yes", "yes"]``."""
+
+        plain = self._statement(self._picker_config(["yes", "no"], False))
+        collide = self._statement(self._picker_config(["Yes", "yes"], False))
+        self.assertNotEqual(
+            hashlib.sha256(plain.strip().rstrip(";").encode()).hexdigest(),
+            hashlib.sha256(collide.strip().rstrip(";").encode()).hexdigest(),
+        )
+        self.assertEqual(
+            queries._users_origin_digest(plain),
+            queries._users_origin_digest(collide),
+        )
+
+    def test_the_shape_table_collapses_many_raw_statements_onto_seven(self):
+        raw = set()
+        canonical = set()
+        for _shape, _label, configs in self._shape_table():
+            sql = self._statement(*configs)
+            raw.add(hashlib.sha256(sql.strip().rstrip(";").encode()).hexdigest())
+            canonical.add(queries._users_origin_digest(sql))
+        # Both numbers are the pin: the table is fixed above, so a builder
+        # change that adds or removes a fan-out axis moves one of them. 47
+        # reviewed cases spell 33 different statements and 7 different shapes.
+        self.assertEqual(len(self._shape_table()), 47)
+        self.assertEqual(len(raw), 33)
+        self.assertEqual(len(canonical), 7)
+        self.assertEqual(canonical, set(queries._USERS_ORIGIN_SHAS))
 
 
 class UsersOriginBatchTests(unittest.TestCase):
@@ -656,133 +896,6 @@ class UsersOriginCanonicalSqlTests(unittest.TestCase):
                 self.assertEqual(queries._users_origin_digest(variant), digest)
         # A statement with no value list at all is digested verbatim.
         self.assertEqual(digest, hashlib.sha256(statement.encode()).hexdigest())
-
-
-class UsersOriginCanonicalDevControlTests(unittest.TestCase):
-    """The canonical pin is the builder's own statement, on this tree.
-
-    ``_USERS_ORIGIN_SHA`` is a literal, so a literal-versus-literal assertion
-    would prove nothing. These cases build the statement with the recipe
-    documented next to the pin and then ask the harness whether it is pinned.
-    On this tree no attribute witness qualifies, so canonicalisation is a
-    *no-op* here and every shape -- including the value texts whose bloom-hint
-    fan-out breaks a raw-text pin elsewhere in the stack -- is one statement.
-    Pure string construction: no connection and no ``django.setup()``; these
-    cases skip where Django is not configured.
-    """
-
-    ORGANIZATION = str(UUID(int=11))
-    PROJECT = str(UUID(int=12))
-    WINDOW_START = datetime(2026, 9, 3, 0, 0, tzinfo=timezone.utc)
-    WINDOW_END = datetime(2026, 9, 3, 4, 0, tzinfo=timezone.utc)
-
-    def _builder_class(self):
-        try:
-            from tracer.services.clickhouse.v2.query_builders.user_list import (
-                UserListQueryBuilderV2,
-            )
-        except Exception as exc:  # pragma: no cover - Django not configured here
-            self.skipTest(f"UserListQueryBuilderV2 unavailable: {exc}")
-        return UserListQueryBuilderV2
-
-    def _statement(self, attribute_config=None):
-        filters = [
-            {
-                "column_id": "created_at",
-                "filter_config": {
-                    "filter_type": "datetime",
-                    "filter_op": "between",
-                    "filter_value": [
-                        self.WINDOW_START.isoformat(),
-                        self.WINDOW_END.isoformat(),
-                    ],
-                },
-            }
-        ]
-        if attribute_config is not None:
-            filters.append(
-                {
-                    "column_id": "attr_a",
-                    "filter_config": {
-                        "col_type": "SPAN_ATTRIBUTE",
-                        **attribute_config,
-                    },
-                }
-            )
-        builder = self._builder_class()(
-            organization_id=self.ORGANIZATION,
-            project_ids=[self.PROJECT],
-            filters=filters,
-            search="",
-            empty_scope=False,
-        )
-        # ``limit`` is a binding: 26 and 65 are the same statement text.
-        sql, _ = builder.build_dimension_candidate_query(
-            limit=26,
-            window_start=self.WINDOW_START,
-            window_end=self.WINDOW_END,
-        )
-        return sql
-
-    def _shapes(self):
-        def equals(value):
-            return {
-                "filter_type": "text",
-                "filter_op": "equals",
-                "filter_value": value,
-            }
-
-        def picker(values, typed):
-            config = {
-                "filter_type": "text",
-                "filter_op": "in",
-                "filter_value": list(values),
-            }
-            if typed:
-                config["attribute_value_types"] = ["string"] * len(values)
-            return config
-
-        shapes = [("unseeded", None)]
-        # Values whose letters ``k`` fan the legacy ASCII bloom hint out, and
-        # a list whose lowercased values collide: the shapes a raw-text pin
-        # cannot hold once a text witness qualifies.
-        for value in ("value-a", "kid", "kayak", "token", "ok", "OK", "k" * 9):
-            shapes.append((f"equals {value!r}", equals(value)))
-        for count in (1, 2, 3, 5, 10, 11, 12):
-            values = [f"value-{index}" for index in range(count)]
-            shapes.append((f"in {count} untyped", picker(values, False)))
-            shapes.append((f"in {count} typed", picker(values, True)))
-        for values in (["kid"], ["kid", "box"], ["Yes", "yes"], ["a", "a", "b"]):
-            shapes.append((f"in {values!r} untyped", picker(values, False)))
-            shapes.append((f"in {values!r} typed", picker(values, True)))
-        return shapes
-
-    def test_every_reviewed_shape_is_the_one_pinned_statement(self):
-        for label, attribute in self._shapes():
-            with self.subTest(shape=label):
-                sql = self._statement(attribute)
-                self.assertEqual(
-                    queries._users_origin_digest(sql), queries._USERS_ORIGIN_SHA
-                )
-
-    def test_canonicalisation_is_a_no_op_on_this_tree(self):
-        """No witness qualifies here, so no value list is emitted at all."""
-
-        for label, attribute in self._shapes():
-            with self.subTest(shape=label):
-                sql = self._statement(attribute).strip().rstrip(";")
-                self.assertEqual(queries._canonical_origin_sql(sql), sql)
-                self.assertEqual(
-                    queries._USERS_ORIGIN_SHA,
-                    hashlib.sha256(sql.encode()).hexdigest(),
-                )
-
-    def test_a_changed_statement_fails_closed(self):
-        sql = self._statement(None)
-        self.assertNotEqual(
-            queries._users_origin_digest(sql + " LIMIT 1"),
-            queries._USERS_ORIGIN_SHA,
-        )
 
 
 class ChUserAssertTests(unittest.TestCase):

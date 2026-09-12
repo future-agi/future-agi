@@ -354,10 +354,11 @@ def diagnostic_read_settings(
     return limits
 
 
-# SQL pins: sha256 of the statement text the deployed builders emit for each
-# REVIEWED first-page origin shape. The Users read path emits more than one
-# shape, so this is a set of reviewed statements, never a blanket exemption for
-# Users queries: the run stays bound to the one shape it actually selected.
+# SQL pins: the canonical digest of the statement the deployed builders emit
+# for each REVIEWED first-page origin SHAPE. The Users read path emits more
+# than one shape, so this is a set of reviewed statements, never a blanket
+# exemption for Users queries: the run stays bound to the one shape it actually
+# selected.
 #
 # Recompute offline against the checked-in builders -- no connection, no
 # production access. From ``futureagi/`` with ``PYTHONPATH=.`` and every
@@ -369,105 +370,48 @@ def diagnostic_read_settings(
 #     sql, _ = b.build_dimension_candidate_query(
 #         limit=26, window_start=datetime(2026, 9, 3, 0, 0, tzinfo=timezone.utc),
 #         window_end=datetime(2026, 9, 3, 4, 0, tzinfo=timezone.utc))
-#     hashlib.sha256(sql.strip().rstrip(";").encode()).hexdigest()
+#     _users_origin_digest(sql)
 #
-# ``.strip().rstrip(";")`` is exactly the normalization ``validate_select``
-# applies before the statement runs, so one digest covers both check sites.
-# Organization, projects, window, ``limit`` and the attribute key AND value are
-# all *bindings*, so none of them enters the digest: limit 26 and limit 65 hash
-# identically, and so do two different attribute keys or values.
-_USERS_ORIGIN_SHAS_SCALAR = frozenset(
-    {
-        # FILTERS = a ``created_at`` between filter only (unseeded first page).
-        # Post immutable-hour replay this statement carries no
-        # ``candidate_span_identities`` CTE.
-        "ba51ea62b5e2f3831b6d9d1e4ab345283c068af90f1795bb7b7082526cd4d4e5",
-        # FILTERS = the same date filter plus ONE exact-text attribute filter
-        # (``col_type`` SPAN_ATTRIBUTE, ``filter_type`` text or string,
-        # ``filter_op`` equals, a single non-empty ASCII value). That qualifies
-        # a scalar text witness, so ``scalar_witness_identities`` is present and
-        # the manager's own first batch is 65 rows.
-        "7b8c40bf16c6d1a869f19c75d26304d755298c7016ac451233958599369f3f51",
-    }
-)
-# The multi-value text picker family, ENUMERATED rather than normalized.
+# Organization, projects, window, ``limit``, the attribute key, the attribute
+# VALUES and -- since the digest is canonical -- HOW MANY values the filter
+# selected are all outside the digest. What remains is the statement's shape:
+# which witness qualified, and whether the legacy ASCII bloom hint was emitted
+# alongside the UTF-8 one. Measured on this tree, 51 filter cases spanning
+# ``equals`` and ``in`` at 1, 2, 3, 5, 10, 11, 12 and 40 values, typed and
+# untyped, ASCII and non-ASCII, values containing the letter ``k``, selected
+# lists whose lowercased values collide, and two-filter conjunctions, produce
+# exactly these SEVEN statements and no others.
 #
-# The same date filter plus ONE SPAN_ATTRIBUTE ``in`` filter over N non-empty
-# ASCII values. ``filter_type`` text and string are the same statement
-# (measured); each row is (untyped, typed), where typed is the same filter plus
-# ``attribute_value_types`` ["string"] * N.
-#
-# Why one digest per cardinality instead of one digest for the family: the
-# semantic comparison already binds the whole value list as ONE parameter
-# (``... IN %(latest_filter_param_0)s``), but the companion bloom index hint
-# spells one placeholder per value --
-# ``indexHint(hasAny(arrayMap(x -> lowerUTF8(x), mapValues(span_attr_str)),
-# [%(latest_filter_index_0_0)s, ...]))`` -- so the statement text, and its
-# digest, changes with every value count. That hint is built in
-# ``tracer/services/clickhouse/query_builders/latest_filter_predicates.py``
-# (the untyped path, the typed path and ``_legacy_ascii_lower_bloom_predicate``),
-# a module shared by the trace-list, graph and dashboard reads whose parameter
-# NAMES are themselves asserted by three tracer contract tests. Binding that
-# list as a single array parameter would therefore rewrite the SQL of every
-# trace ``in`` filter in the product, so this harness enumerates the Users
-# cardinalities it certifies instead.
-#
-# A picker with MORE than ``_USERS_PICKER_MAX_VALUES`` values is deliberately
-# not pinned: those reads fail closed with USERS_REMAP_ORIGIN_NOT_QUALIFIED, as
-# do the user_id label witness, the search shape and the numeric witness. A
-# picker whose ``attribute_value_types`` length does not match its value count
-# qualifies no witness at all and lands on the unseeded pin above (measured).
-#
-# For the record, at origin/dev every one of these text shapes collapsed to the
-# single no-witness statement 7120eaf1..., because no text witness qualified
-# there; the fan-out is a consequence of the scalar text witness this branch
-# adds, and these pins are what keeps the picker certifiable across it.
-_USERS_PICKER_MAX_VALUES = 10
-_USERS_PICKER_SHAS = {
-    1: (
-        "b99fe9116aba205e3d4e36a2251630e9772307622759e970b98f4648db2f95bf",
-        "40aca43c4986c4b67e5d8b99ae753c347c7101d29735d7edf9f3de139ef97c95",
-    ),
-    2: (
-        "0dc77973b3a9c7c3eacb2c37943e439c709ee35232bc30d271e63aeed7154612",
-        "f5a13c045c337014fa21e57d139d9b380c4a7fedbc05402f93d5c2be3b39faa2",
-    ),
-    3: (
-        "849a7f0a2542c64882bdcf00bccc889e1c62b27f7729fdead328559eddce8c98",
-        "e8beb9b5daeec8b5699804ec9c5802ed82c2c787d251d24a648bd38f5950cf77",
-    ),
-    4: (
-        "1efb0c5477807208646d7f2ceac40a946c32d6e25f03a10ad656a188aabea757",
-        "a49a6e4670afbd28f106c037c26452043a576d8241c97d645c9d38adcfb28649",
-    ),
-    5: (
-        "77bc55de75b83e45413285a8fb1116b3bcf6bd79362fcfc6f2f485fd1d616595",
-        "764dc8e78cd590e2e1cf15434f24d95c1578dadee001e2efc50283f736556029",
-    ),
-    6: (
-        "7a15dab679985e9ff39a471cf93dba4ae11a1a23ac323fb62c613fb057316b2e",
-        "e7ad782d0f84c7c11a3ec7556ad2f42e35bbb82bbe967e4c4d3a21f27f2eecf2",
-    ),
-    7: (
-        "e5f6ff0c215b731cb99b42841f751d37ff290ff26080f500be93f347b884b6a1",
-        "fa1acd4cdf2b8a24776bf5d0d115eb362f3eda09be1a889996b9599826b18720",
-    ),
-    8: (
-        "bc89dbc689fbfde1cc8fa4b48b33a15c5b774bb4982af066f231c74b8282ec31",
-        "fc2a73b32fff7c1929e319b8b04cda789a82511a268c59766f7df7f8cf552566",
-    ),
-    9: (
-        "c9ec1b9af50206dd0f92d7973b256eb1a51125096ad2a0a231584b456f58ebdd",
-        "bcd08b1074c104d87f26f1d00aeca0b9eccdb76a4a735385531b7e0a9e8a0f42",
-    ),
-    10: (
-        "ccafa8e0b5b60fb920ba1cfed07ddab9068218fe4e07581a249141883694f97d",
-        "baa699f10ef1657a6682fa4df1709e46a7871bfba4f2056edd126e32d14f4c1d",
-    ),
+# The user_id label witness, the search shape and the numeric witness are still
+# unpinned and still fail closed with USERS_REMAP_ORIGIN_NOT_QUALIFIED.
+_USERS_ORIGIN_SHAPES = {
+    # A ``created_at`` between filter only, or any attribute filter that
+    # qualifies no exact-text witness at all: a non-ASCII value, a typed
+    # ``equals``, ``contains``, or an ``attribute_value_types`` list whose
+    # length does not match the value count (all measured). Post immutable-hour
+    # replay this statement carries no ``candidate_span_identities`` CTE.
+    "no_text_witness": "ba51ea62b5e2f3831b6d9d1e4ab345283c068af90f1795bb7b7082526cd4d4e5",
+    # ONE exact-text ``equals`` attribute filter (``col_type`` SPAN_ATTRIBUTE,
+    # ``filter_type`` text or string, a single non-empty ASCII value). That
+    # qualifies a scalar text witness, so ``scalar_witness_identities`` is
+    # present and the manager's own first batch is 65 rows.
+    "equals_legacy_hint": "2ed448d2766b8c308fa1b0444e60ecb3f8e029b271d16d8213c273962071efff",
+    # The same ``equals`` page where the legacy ASCII bloom companion declines:
+    # its Kelvin-sign enumeration would exceed 256 variants, which happens from
+    # nine letters ``k`` in the value upward.
+    "equals_hint_declined": "7c0d4b58ce47ec327a81c24823fc244c2ea53db321a6a300c7047c51812e0e41",
+    # ONE SPAN_ATTRIBUTE ``in`` filter over N non-empty ASCII values, no
+    # ``attribute_value_types``: the multi-value text picker.
+    "in_untyped_legacy_hint": "2425607883cc46c175bfc90c2d8ee893197652689efa820aa35e2c6d47118459",
+    # The same picker page with the legacy companion declined.
+    "in_untyped_hint_declined": "c13be35214e3ee409cbe1c507b3bf14b0ec70b8f77415a3e71194b2bcea8e535",
+    # The typed picker: the same filter plus ``attribute_value_types``
+    # ["string"] * N, which spells its own parameter suffix.
+    "in_typed_legacy_hint": "c9548fd80a39b70b7fd03bc9278882030d38a8311f5477d79bdade711f49930a",
+    # The typed picker with the legacy companion declined.
+    "in_typed_hint_declined": "d52ec8b85ceeef5d29812a48840542ab692634367dafc777caea629be1a97352",
 }
-_USERS_ORIGIN_SHAS = _USERS_ORIGIN_SHAS_SCALAR | frozenset(
-    digest for pair in _USERS_PICKER_SHAS.values() for digest in pair
-)
+_USERS_ORIGIN_SHAS = frozenset(_USERS_ORIGIN_SHAPES.values())
 _USERS_REMAP_SHA = "090df268267944b22e713077c59d4836e4046fadb60bfbb78116f3a43af46676"
 # Source pins: sha256 of the *file bytes* backing each imported module, i.e.
 # ``sha256(Path(import_module(name).__file__).read_bytes())``. Re-pin with
