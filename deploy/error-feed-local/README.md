@@ -155,7 +155,9 @@ gateway calls ($0.013232, 10,288 input / 1,471 output tokens), but the harness
 returned `execution_status=failed`, `outcome=unknown`, with no findings. That is
 an execution failure, not a detection benchmark result. Report
 `3f74a9f7-55b2-4e82-b365-d3fa608b787e` is retained. Safe stage/budget diagnostics
-were added before a bounded replay; publication and Feed readback remain unproven.
+were added for a bounded replay, but Docker image inspection/replacement stalled
+before the diagnostic image could be deployed. The pending replay launcher was
+canceled, so that replay did not run. Publication and Feed readback remain unproven.
 Gateway reports the routed name `gemini-3.8-flash`, distinct from the requested
 alias `vertex_ai/gemini-3.8-flash`; use the routed name for `--expected-model`.
 The synthetic project is retained as
