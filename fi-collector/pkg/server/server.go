@@ -30,6 +30,7 @@ import (
 	"github.com/future-agi/future-agi/fi-collector/pkg/chwriter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/curatedwriter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/propertycatalog"
+	"github.com/future-agi/future-agi/fi-collector/pkg/traceavailable"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -53,6 +54,7 @@ type Config struct {
 // the only difference: gRPC uses the generated stub; HTTP accepts
 // `application/x-protobuf` and `application/json` per the OTLP/HTTP spec.
 type Server struct {
+	traceNotifier   TraceNotifier
 	cfg             Config
 	writer          *chwriter.Writer
 	curated         *curatedwriter.Writer  // CH-derived dimensions dual-write (P3b step2 HALF 2)
@@ -81,6 +83,7 @@ type Server struct {
 	pend         []map[string]any
 	pendCurated  *curatedwriter.Batch
 	pendProperty []propertycatalog.ScopedSpan
+	pendRoots    []traceavailable.Root
 	pendCh       chan struct{}
 
 	stopCh chan struct{}
@@ -89,11 +92,19 @@ type Server struct {
 
 // Option configures optional Server dependencies.
 type Option struct {
+	traceNotifier   TraceNotifier
 	log             *slog.Logger
 	pricer          chexp.Pricer
 	catalog         AttributeCatalogWriter
 	propertyCatalog PropertyCatalogWriter
 }
+
+// TraceNotifier receives ended roots only after their canonical batch is stored.
+type TraceNotifier interface {
+	EnqueueRoots([]traceavailable.Root) error
+}
+
+func WithTraceNotifier(n TraceNotifier) Option { return Option{traceNotifier: n} }
 
 // WithLogger sets the server's logger.
 func WithLogger(l *slog.Logger) Option { return Option{log: l} }
@@ -152,7 +163,11 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 	var pricer chexp.Pricer
 	var catalog AttributeCatalogWriter
 	var propertyCatalogWriter PropertyCatalogWriter
+	var traceNotifier TraceNotifier
 	for _, o := range opts {
+		if o.traceNotifier != nil {
+			traceNotifier = o.traceNotifier
+		}
 		if o.log != nil {
 			log = o.log
 		}
@@ -168,6 +183,7 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 	}
 
 	s := &Server{
+		traceNotifier:   traceNotifier,
 		cfg:             cfg,
 		writer:          writer,
 		auth:            authenticator,
@@ -551,6 +567,9 @@ func (s *Server) enqueueScoped(
 	}
 	s.pendMu.Lock()
 	s.pend = append(s.pend, rows...)
+	if s.traceNotifier != nil {
+		s.pendRoots = append(s.pendRoots, traceavailable.ExtractRoots(rows, organizationID, workspaceID, workspaceProjectIDs)...)
+	}
 	if s.propertyCatalog != nil && organizationID != "" && workspaceID != "" {
 		for _, row := range rows {
 			projectID, _ := row["project_id"].(string)
@@ -609,14 +628,21 @@ func (s *Server) drainNow(ctx context.Context) {
 	batch := s.pend
 	curated := s.pendCurated
 	property := s.pendProperty
+	roots := s.pendRoots
 	s.pend = nil
 	s.pendCurated = nil
 	s.pendProperty = nil
+	s.pendRoots = nil
 	s.pendMu.Unlock()
 	if len(batch) == 0 {
 		return
 	}
 	spanErr := s.writer.Insert(ctx, batch)
+	if spanErr == nil && s.traceNotifier != nil && len(roots) > 0 {
+		if err := s.traceNotifier.EnqueueRoots(roots); err != nil {
+			s.log.Warn("error feed stored-root notification gap", "error", err)
+		}
+	}
 	// Insert returns an error on dead-letter; the writer already persisted
 	// the rows + bumped stats. We swallow here because the flusher's job
 	// is to make progress, not propagate per-batch failures. /healthz

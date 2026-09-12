@@ -39,6 +39,7 @@ import (
 	"github.com/future-agi/future-agi/fi-collector/pkg/pricing"
 	"github.com/future-agi/future-agi/fi-collector/pkg/propertycatalog"
 	"github.com/future-agi/future-agi/fi-collector/pkg/server"
+	"github.com/future-agi/future-agi/fi-collector/pkg/traceavailable"
 	"github.com/redis/go-redis/v9"
 	"gopkg.in/yaml.v3"
 )
@@ -282,6 +283,18 @@ func main() {
 		log.Error("unsupported property catalog mode", "mode", propertyMode)
 		os.Exit(1)
 	}
+	if os.Getenv("FI_ERROR_FEED_ENABLED") == "true" && cfg.Writer.AsyncInsert {
+		log.Error("Error Feed stored-root notifications require synchronous ClickHouse inserts")
+		os.Exit(1)
+	}
+	traceNotifications, err := traceavailable.FromEnv(log)
+	if err != nil {
+		log.Error("Error Feed notification configuration failed", "error", err)
+		os.Exit(1)
+	}
+	if traceNotifications != nil {
+		opts = append(opts, server.WithTraceNotifier(traceNotifications))
+	}
 	srv := server.New(cfg.Server, writer, authenticator, usageEmitter, metering, opts...)
 	var catalogReplayDone chan struct{}
 	if catalogWAL != nil {
@@ -313,6 +326,13 @@ func main() {
 		"ch_url", cfg.Writer.URL,
 	)
 	runErr := srv.Run(ctx)
+	if traceNotifications != nil {
+		drainCtx, stopDrain := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := traceNotifications.Shutdown(drainCtx); err != nil {
+			log.Warn("Error Feed notification shutdown requires reconciliation", "error", err)
+		}
+		stopDrain()
+	}
 	unexpectedExit := runErr != nil && ctx.Err() == nil
 	if unexpectedExit {
 		log.Error("server exited with error; draining catalog lifecycle", "err", runErr)
