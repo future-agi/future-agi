@@ -88,6 +88,12 @@ _TRACE_ROLLUP_RESULT_COLUMNS = frozenset(
 _GRAPH_SEED_ESTIMATE_WALL_MS = 2_500
 _GRAPH_SEED_ESTIMATE_QUERY_MS = 1_500
 _GRAPH_SEED_ESTIMATE_MAX_CANDIDATES = 10
+# Twice _GRAPH_SEED_ESTIMATE_WALL_MS: the shortest wall on which spending the
+# whole probe budget still leaves the main read a floor of at least that
+# budget. Below it the single-node path does not probe at all rather than
+# floor the main read at wall - min(2500, wall - 25), which collapses to 25 ms
+# for every wall at or below 2,525 ms.
+_GRAPH_SEED_SINGLE_NODE_MIN_WALL_MS = 2 * _GRAPH_SEED_ESTIMATE_WALL_MS
 _GRAPH_SEED_MAX_ESTIMATED_ROWS = 10_000_000
 _GRAPH_SEED_MAX_ESTIMATED_MARKS = 4_096
 _GRAPH_SEED_SCALAR_FILTER_TYPES = frozenset({"boolean", "number", "string", "text"})
@@ -1325,7 +1331,15 @@ def _fetch_direct_raw_system_metric_graph(
     # deployment topology decision: a single-node install pays the same
     # full-window scan a sharded one does. The builder still renders the
     # topology-appropriate source and set operator for the selected candidate.
-    if start_date < end_date and observe_type == "trace":
+    # Where the seed was already live the wall plays no part in admission, so
+    # the gate stays exactly what that install runs. On the single-node path a
+    # wall too short to leave the main read a real floor is not probed at all:
+    # timeout_ms is the wall the caller already resolved and almost nothing has
+    # elapsed here, so the gate is a stated threshold rather than a racing one.
+    seed_wall_admits = bool(shard_cluster) or (
+        int(timeout_ms) >= _GRAPH_SEED_SINGLE_NODE_MIN_WALL_MS
+    )
+    if start_date < end_date and observe_type == "trace" and seed_wall_admits:
         seed_candidate, seed_probe_count = _select_raw_trace_seed_candidate(
             analytics=analytics,
             project_id=project_id,
@@ -1364,7 +1378,10 @@ def _fetch_direct_raw_system_metric_graph(
         # On the single-node path, where this surface issued no probe at all
         # before, probe spend never shrinks the main statement below the wall
         # minus the probe budget: optional pruning cannot hand the real read a
-        # 1 ms timeout. Where the seed was already live the schedule and this
+        # 1 ms timeout. The launch threshold above keeps that floor at
+        # _GRAPH_SEED_ESTIMATE_WALL_MS or more, since a wall short enough for
+        # the floor to collapse toward 25 ms is never probed.
+        # Where the seed was already live the schedule and this
         # kwarg stay exactly what that install runs today - the plain
         # remainder - so un-gating moves nothing there.
         seed_probe_floor_ms = (

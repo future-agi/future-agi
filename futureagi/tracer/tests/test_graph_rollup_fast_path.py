@@ -745,6 +745,80 @@ def test_single_node_probe_spend_stays_inside_the_seed_budget(monkeypatch):
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    "timeout_ms,expected_probes,expected_main_timeout_ms",
+    [
+        # Below the 5,000 ms threshold the wall floor would be
+        # wall - min(2500, wall - 25), i.e. 25 ms for any wall at or under
+        # 2,525 ms. Rather than hand the real read that, the single-node path
+        # does not probe: one statement, the full wall, exactly as it read
+        # before the seed was un-gated.
+        (900, 0, 900),
+        (2_000, 0, 2_000),
+        (2_525, 0, 2_525),
+        (4_999, 0, 4_999),
+        # At and above the threshold the floor is worth having: 5,000 - 2,500.
+        (5_000, 1, 2_500),
+        (30_000, 1, 27_500),
+    ],
+)
+def test_single_node_short_walls_are_not_probed_at_all(
+    monkeypatch,
+    timeout_ms,
+    expected_probes,
+    expected_main_timeout_ms,
+):
+    """A short single-node wall keeps the whole wall instead of a 25 ms floor.
+
+    The floor is ``wall - min(2500, wall - 25)``, which collapses to 25 ms for
+    every wall at or below 2,525 ms, so on those walls an optional probe could
+    cost the real read almost everything it had. The launch threshold is the
+    safe direction: below it the read behaves exactly as it did before the
+    seed was un-gated - no probe, unseeded, the full wall - and at or above it
+    the floor is at least the probe budget itself.
+    """
+    monkeypatch.setattr(
+        graph_dispatch.settings,
+        "DASHBOARD_TRACE_REPLICA_SHARD_CLUSTER",
+        "",
+    )
+    clock = [1_000.0]
+    monkeypatch.setattr(graph_dispatch, "monotonic", lambda: clock[0])
+    analytics = mock.Mock()
+
+    def _overrunning_probe(query, params, **kwargs):
+        if "EXPLAIN ESTIMATE" in query:
+            clock[0] += 31.0
+            return mock.Mock(data=[_DENSE_ESTIMATE], columns=["rows", "marks"])
+        return _empty_graph_query_result()
+
+    analytics.execute_ch_query.side_effect = _overrunning_probe
+    filters = [
+        _date_filter("2026-07-01T00:00:00Z", "2026-08-01T00:00:00Z"),
+        _span_attribute_filter("account_id", filter_type="text", value="acct-1"),
+    ]
+
+    response = graph_dispatch._fetch_direct_raw_system_metric_graph(
+        analytics=analytics,
+        project_id=PROJECT_ID,
+        filters=filters,
+        interval="day",
+        metric_id="latency",
+        observe_type="trace",
+        timeout_ms=timeout_ms,
+    )
+
+    calls = analytics.execute_ch_query.call_args_list
+    probe_calls = [call for call in calls if "EXPLAIN ESTIMATE" in call.args[0]]
+    assert len(probe_calls) == expected_probes
+    graph_call = calls[-1]
+    assert "EXPLAIN ESTIMATE" not in graph_call.args[0]
+    assert "trace_id IN (" not in graph_call.args[0]
+    assert graph_call.kwargs["timeout_ms"] == expected_main_timeout_ms
+    assert response["query_count"] == expected_probes + 1
+
+
+@pytest.mark.unit
 def test_dense_scalar_witness_keeps_one_pass_trace_query(monkeypatch):
     monkeypatch.setattr(
         graph_dispatch.settings,
