@@ -30,7 +30,9 @@ Two engines, tried in this order:
 ``docker``
     A fresh ``clickhouse/clickhouse-server:25.3-alpine`` container started with
     ``--network none``, driven by ``docker exec clickhouse-client``. The image
-    is never pulled — when it is not already present there is no engine.
+    is never pulled — when it is not already present there is no engine. It is
+    the image ``docker-compose.test.yml`` pins for the test ClickHouse, so on a
+    machine that has brought those services up it is present already.
 
 When neither engine is available the module skips.
 
@@ -407,6 +409,18 @@ def attr_filter():
     }
 
 
+def number_attr_filter():
+    return {
+        "column_id": "account_id",
+        "filter_config": {
+            "col_type": "SPAN_ATTRIBUTE",
+            "filter_type": "number",
+            "filter_op": "equals",
+            "filter_value": 1,
+        },
+    }
+
+
 def column_filter():
     return {
         "column_id": "model",
@@ -458,6 +472,11 @@ def statements():
     so its 18 rejected shapes are all here; ``normal_list_eu`` is the
     nineteenth, which that harness could not reach for want of the id-remap
     table this module creates.
+
+    NOT covered here: the annotation/eval classifier variants. Those join the
+    annotation and score CDC mirrors, whose DDL this module would also have to
+    stand up; their ``spans`` source is the same collapse the twenty-two
+    statements below exercise, but the joined statement itself is unrun.
     """
 
     plain = builder([time_filter()])
@@ -472,6 +491,12 @@ def statements():
         "seed_native_col": builder(
             [time_filter(), column_filter()]
         ).build_filter_seed_page(**SLICE),
+        "seed_numeric": builder(
+            [time_filter(), number_attr_filter()]
+        ).build_filter_seed_page(**SLICE),
+        "match_numeric": builder(
+            [time_filter(), number_attr_filter()]
+        ).build_filter_match_query_from_seed_rows(seed_rows()),
         "seed_org": SpanListQueryBuilderV2(
             project_ids=[PROJECT],
             filters=[time_filter(), attr_filter()],
