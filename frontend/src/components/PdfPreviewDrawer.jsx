@@ -10,6 +10,7 @@ import { LoadingScreen } from "src/components/loading-screen";
 import React, { useState, useEffect, useRef } from "react";
 import { Viewer, Worker } from "@react-pdf-viewer/core";
 import { defaultLayoutPlugin } from "@react-pdf-viewer/default-layout";
+import pdfjsWorkerUrl from "pdfjs-dist/build/pdf.worker.min.js?url";
 import { usePdfPreviewStoreShallow } from "src/utils/CommonStores/pdfPreviewStore";
 import Iconify from "./iconify";
 import SvgColor from "./svg-color";
@@ -114,7 +115,7 @@ const PdfPreviewDrawer = () => {
       case "pdf":
         return (
           <Box sx={{ height: "100%", backgroundColor: "background.paper" }}>
-            <Worker workerUrl="https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js">
+            <Worker workerUrl={pdfjsWorkerUrl}>
               <Viewer
                 fileUrl={fileUrl}
                 plugins={[defaultLayoutPluginInstance]}
