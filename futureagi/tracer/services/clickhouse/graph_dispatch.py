@@ -91,6 +91,16 @@ _GRAPH_SEED_ESTIMATE_MAX_CANDIDATES = 10
 _GRAPH_SEED_MAX_ESTIMATED_ROWS = 10_000_000
 _GRAPH_SEED_MAX_ESTIMATED_MARKS = 4_096
 _GRAPH_SEED_SCALAR_FILTER_TYPES = frozenset({"boolean", "number", "string", "text"})
+# Optional pruning may never spend the read's wall. Probes are capped at a
+# tenth of the caller's budget (and at _GRAPH_SEED_ESTIMATE_WALL_MS overall),
+# no probe is launched unless its whole per-probe cap still fits in that
+# budget, and the main statement's requested timeout is floored at the
+# remainder - so a filtered trace graph asks for at least
+# (1 - 1/_GRAPH_SEED_PROBE_WALL_SHARE) of the wall it asks for unseeded. The
+# floor repays the main read; it cannot shrink a driver that overruns the
+# per-probe timeout it was given, and on the interactive path the shared
+# ReadDeadline still clamps the floored request to the wall actually left.
+_GRAPH_SEED_PROBE_WALL_SHARE = 10
 _GRAPH_BASE_READ_SETTINGS = {
     # The retained hourly rollup is already row-reduced. Four workers keep the
     # interactive scan parallel without leaving concurrency unbounded on the
@@ -211,6 +221,18 @@ def _raw_trace_seed_candidates(
     return sorted(candidates, key=lambda item: (item.rank, item.filter_index))
 
 
+def _graph_seed_probe_budget_ms(timeout_ms: int) -> int:
+    """Total wall the optional seed probes may spend for one graph read."""
+
+    return max(
+        0,
+        min(
+            _GRAPH_SEED_ESTIMATE_WALL_MS,
+            int(timeout_ms) // _GRAPH_SEED_PROBE_WALL_SHARE,
+        ),
+    )
+
+
 def _select_raw_trace_seed_candidate(
     *,
     analytics: Any,
@@ -222,26 +244,34 @@ def _select_raw_trace_seed_candidate(
 ) -> tuple[_GraphRawTraceCandidate | None, int]:
     """Use bounded ClickHouse estimates to reject dense witness subqueries.
 
-    ``_GRAPH_SEED_MAX_ESTIMATED_ROWS`` is also the admitted set-cardinality
-    ceiling: the seed subquery groups by ``trace_id`` over the rows it reads,
-    so the resulting IN set can never hold more identities than the estimate
-    the candidate was admitted on.
+    ``_GRAPH_SEED_MAX_ESTIMATED_ROWS`` is the plan-time set-cardinality
+    ceiling on a single node only, and bounds nothing that is written after
+    the probe: the estimate is a granule count taken before the main read, so
+    rows inserted between the two are uncounted. The link is also
+    source-dependent - this probe reads ``spans`` directly, while the seed
+    subquery the builder renders reads ``cluster(<env>, currentDatabase(),
+    spans)`` with a ``shardNum()`` predicate whenever the shard-cluster
+    setting is non-empty, so on that path estimate and set are taken over
+    different sources. What holds unconditionally is the shape: the seed
+    groups by ``trace_id`` over the rows it reads.
+
+    Probe spend is bounded by :func:`_graph_seed_probe_budget_ms`.
     """
 
     candidates = _raw_trace_seed_candidates(filters)
-    total_budget_ms = min(
-        _GRAPH_SEED_ESTIMATE_WALL_MS,
-        max(0, int(timeout_ms) - 25),
-    )
+    total_budget_ms = _graph_seed_probe_budget_ms(timeout_ms)
     if not candidates or total_budget_ms < 100:
         return None, 0
 
+    probe_timeout_ms = min(_GRAPH_SEED_ESTIMATE_QUERY_MS, total_budget_ms)
     estimate_started = monotonic()
     probe_count = 0
     for candidate in candidates[:_GRAPH_SEED_ESTIMATE_MAX_CANDIDATES]:
         elapsed_ms = int((monotonic() - estimate_started) * 1000)
         remaining_ms = total_budget_ms - elapsed_ms
-        if remaining_ms < 100:
+        # Launch a probe only when its whole cap still fits in the budget, so
+        # honoured per-probe timeouts keep total probe spend under it.
+        if remaining_ms < probe_timeout_ms:
             break
         estimate_params = {
             "graph_seed_project_id": project_id,
@@ -265,7 +295,7 @@ def _select_raw_trace_seed_candidate(
             result = analytics.execute_ch_query(
                 estimate_query,
                 estimate_params,
-                timeout_ms=min(_GRAPH_SEED_ESTIMATE_QUERY_MS, remaining_ms),
+                timeout_ms=probe_timeout_ms,
                 settings={
                     **GRAPH_READ_SETTINGS,
                     "max_threads": 1,
@@ -273,9 +303,13 @@ def _select_raw_trace_seed_candidate(
                     "max_result_bytes": 64 * 1024,
                 },
             )
-        except Exception as exc:
-            if not (is_read_budget_error(exc) or is_clickhouse_query_error(exc)):
-                raise
+        except Exception:
+            # Pruning is optional, so a failed probe must mean "no candidate",
+            # never a failed request: the unseeded statement is still correct.
+            # Classifying the failure here would propagate ClickHouse codes
+            # the narrow read-budget/transport helpers deliberately reject
+            # (type mismatch, unknown identifier, no common type) out of a
+            # request that succeeds without any probe at all.
             continue
 
         estimate_rows = list(result.data or [])
@@ -1309,10 +1343,18 @@ def _fetch_direct_raw_system_metric_graph(
     else:
         query, params = builder.build()
         elapsed_ms = int((monotonic() - started) * 1000)
+        # Probe spend never shrinks the main statement below the wall minus
+        # the probe budget, so optional pruning cannot hand the real read a
+        # 1 ms timeout. With no probe this is the plain remainder.
+        seed_probe_floor_ms = (
+            int(timeout_ms) - _graph_seed_probe_budget_ms(timeout_ms)
+            if seed_probe_count
+            else 1
+        )
         result = analytics.execute_ch_query(
             query,
             params,
-            timeout_ms=max(1, int(timeout_ms) - elapsed_ms),
+            timeout_ms=max(1, seed_probe_floor_ms, int(timeout_ms) - elapsed_ms),
             settings=GRAPH_READ_SETTINGS,
         )
         rows = list(result.data or [])
