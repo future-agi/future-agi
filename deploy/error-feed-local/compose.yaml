@@ -22,6 +22,8 @@ x-maintenance: &maintenance
   entrypoint: [/bin/sh, -ec]
   tmpfs:
     - /tmp:rw,nosuid,noexec,size=268435456,mode=1777
+    # Django initializes its rotating file handler even for management commands.
+    - /app/backend/tfc/logs:rw,nosuid,noexec,size=134217728,mode=1777
   networks: [application]
   restart: unless-stopped
   stop_grace_period: 30s
