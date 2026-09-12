@@ -100024,6 +100024,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           "x-nullable": true,
         },
+        api_path_prefix: {
+          title: "Api path prefix",
+          type: "string",
+          "x-nullable": true,
+        },
         models: {
           type: "array",
           items: {
