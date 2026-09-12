@@ -604,6 +604,11 @@ _DENSE_ESTIMATE = {"rows": 106_000_000, "marks": 14_612}
         (900, 0, [_SELECTIVE_ESTIMATE], [875]),
         (30_000, 0, [_SELECTIVE_ESTIMATE], [1_500]),
         (5_000, 0, [_SELECTIVE_ESTIMATE], [1_500]),
+        # A probe that ignores its grant and spends the whole wall: this path
+        # still hands the graph statement the bare remainder, the way the
+        # prior release did. It is the single-node floor, not this one, that
+        # turns that 1 ms into 27,500 ms.
+        (30_000, 31_000, [_SELECTIVE_ESTIMATE], [1_500]),
     ],
 )
 def test_cluster_env_keeps_the_prior_release_probe_schedule(
