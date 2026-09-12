@@ -1,11 +1,19 @@
 import { Box } from "@mui/material";
-import React, { useCallback, useRef, useState, useEffect } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import PropTypes from "prop-types";
 import { AgentGraph } from "src/components/AgentGraph";
 import { START_ID, END_ID } from "src/components/AgentGraph/layoutUtils";
 import useResolvedExecution from "../../hooks/useResolvedExecution";
 import { useWorkflowRunStoreShallow } from "../../store";
 import NodeOutputDetail from "./NodeOutputDetail";
+import NodeOutputListView from "./NodeOutputListView";
+import { buildNodeOutputTree } from "./common";
 import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
 import PanelErrorBoundary from "../../components/PanelErrorBoundary";
 
@@ -22,6 +30,10 @@ export default function RunAgentPanel({
   const [isResizing, setIsResizing] = useState(false);
   const isRunning = useWorkflowRunStoreShallow((s) => s.isRunning);
   const [selectedNodeId, setSelectedNodeId] = useState(null);
+  const nodeOutputTree = useMemo(
+    () => buildNodeOutputTree(executionData?.nodes),
+    [executionData?.nodes],
+  );
 
   // Reset selected node when a new execution starts
   useEffect(() => {
@@ -148,26 +160,41 @@ export default function RunAgentPanel({
         }}
       />
       <ResizablePanels
-        initialLeftWidth={50}
+        initialLeftWidth={25}
         minLeftWidth={15}
-        maxLeftWidth={80}
+        maxLeftWidth={40}
         leftPanel={
-          <AgentGraph
-            executionData={executionData}
-            onNodeClick={handleGraphNodeClick}
+          <NodeOutputListView
+            currentAgent={executionData?.agent}
+            nodes={nodeOutputTree}
             selectedNodeId={selectedNodeId}
+            onNodeSelect={setSelectedNodeId}
           />
         }
         rightPanel={
-          <PanelErrorBoundary
-            name="NodeOutputDetail"
-            onRetry={() => setSelectedNodeId(null)}
-          >
-            <NodeOutputDetail
-              executionId={resolvedExecutionId}
-              nodeExecutionId={selectedNodeExecutionId}
-            />
-          </PanelErrorBoundary>
+          <ResizablePanels
+            initialLeftWidth={50}
+            minLeftWidth={20}
+            maxLeftWidth={80}
+            leftPanel={
+              <AgentGraph
+                executionData={executionData}
+                onNodeClick={handleGraphNodeClick}
+                selectedNodeId={selectedNodeId}
+              />
+            }
+            rightPanel={
+              <PanelErrorBoundary
+                name="NodeOutputDetail"
+                onRetry={() => setSelectedNodeId(null)}
+              >
+                <NodeOutputDetail
+                  executionId={resolvedExecutionId}
+                  nodeExecutionId={selectedNodeExecutionId}
+                />
+              </PanelErrorBoundary>
+            }
+          />
         }
       />
     </Box>
