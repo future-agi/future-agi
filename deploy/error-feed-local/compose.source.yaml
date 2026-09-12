@@ -1,0 +1,27 @@
+# Local development only: reuse an existing backend dependency image without
+# building or publishing another image. Never mount Omega's source checkout.
+services:
+  reconciliation:
+    volumes:
+      - type: bind
+        source: ${OMEGA_BACKEND_SOURCE:?set the absolute futureagi directory}
+        target: /app/backend
+        read_only: true
+        bind:
+          create_host_path: false
+  grouping:
+    volumes:
+      - type: bind
+        source: ${OMEGA_BACKEND_SOURCE:?set the absolute futureagi directory}
+        target: /app/backend
+        read_only: true
+        bind:
+          create_host_path: false
+  usage:
+    volumes:
+      - type: bind
+        source: ${OMEGA_BACKEND_SOURCE:?set the absolute futureagi directory}
+        target: /app/backend
+        read_only: true
+        bind:
+          create_host_path: false
