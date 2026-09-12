@@ -383,20 +383,31 @@ _USERS_ORIGIN_SHAS = frozenset(
         # ``candidate_span_identities`` CTE.
         "ba51ea62b5e2f3831b6d9d1e4ab345283c068af90f1795bb7b7082526cd4d4e5",
         # FILTERS = the same date filter plus ONE exact-text attribute filter
-        # (``col_type`` SPAN_ATTRIBUTE, ``filter_type`` text, ``filter_op``
-        # equals, a single non-empty ASCII value). That qualifies a scalar text
-        # witness, so ``scalar_witness_identities`` is present and the
-        # manager's own first batch is 65 rows.
+        # (``col_type`` SPAN_ATTRIBUTE, ``filter_type`` text or string,
+        # ``filter_op`` equals, a single non-empty ASCII value). That qualifies
+        # a scalar text witness, so ``scalar_witness_identities`` is present and
+        # the manager's own first batch is 65 rows.
         "7b8c40bf16c6d1a869f19c75d26304d755298c7016ac451233958599369f3f51",
+        # The same filter as a one-value picker, ``filter_op`` ``in`` with
+        # ``filter_value`` ["<ascii>"] and no ``attribute_value_types``.
+        "b99fe9116aba205e3d4e36a2251630e9772307622759e970b98f4648db2f95bf",
+        # ... and the typed one-value picker, the same plus
+        # ``attribute_value_types`` ["string"].
+        "40aca43c4986c4b67e5d8b99ae753c347c7101d29735d7edf9f3de139ef97c95",
     }
 )
-# Deliberately NOT pinned: a multi-value picker (``filter_op`` ``in`` with N
-# values) also reaches the 65-row batch, but it binds one parameter per value,
-# so its statement text -- and its digest -- changes with N; pinning any single
-# N would certify one cardinality and silently reject the rest. Those reads, the
-# user_id label witness, the search shape and the numeric witness all fail
-# closed with USERS_REMAP_ORIGIN_NOT_QUALIFIED until a lane reviews and pins
-# them here, which is the safe direction.
+# Deliberately NOT pinned, measured rather than assumed: a picker with N > 1
+# values binds one parameter per value, so its statement text -- and its digest
+# -- changes with EVERY cardinality (2 untyped, 2 typed, 3 ... are all distinct
+# statements). A digest set cannot enumerate that, so those reads fail closed
+# with USERS_REMAP_ORIGIN_NOT_QUALIFIED, as do the user_id label witness, the
+# search shape and the numeric witness. Closing the N > 1 hole needs a pin that
+# is normalized over the value count, not more digests; until then the Users
+# certificate covers the unseeded page and single-value exact-text acquisition.
+# For the record, at origin/dev every one of these text shapes collapsed to the
+# single no-witness statement 7120eaf1..., because no text witness qualified
+# there; the fan-out is a consequence of the scalar text witness, and the pins
+# above are what keeps the single-value cases certifiable across it.
 _USERS_REMAP_SHA = "090df268267944b22e713077c59d4836e4046fadb60bfbb78116f3a43af46676"
 # Source pins: sha256 of the *file bytes* backing each imported module, i.e.
 # ``sha256(Path(import_module(name).__file__).read_bytes())``. Re-pin with

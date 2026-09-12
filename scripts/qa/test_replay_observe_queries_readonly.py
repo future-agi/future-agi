@@ -308,18 +308,21 @@ class UsersSourcePinTests(unittest.TestCase):
 class UsersOriginShaSetTests(unittest.TestCase):
     """The Users read path emits several shapes; one scalar pin cannot cover it."""
 
-    def test_pin_set_holds_the_two_reviewed_first_page_shapes(self):
+    def test_pin_set_holds_the_reviewed_first_page_shapes(self):
         self.assertIsInstance(queries._USERS_ORIGIN_SHAS, frozenset)
         for digest in queries._USERS_ORIGIN_SHAS:
             with self.subTest(digest=digest):
                 self.assertRegex(digest, r"^[0-9a-f]{64}$")
-        # Unseeded and ASCII-exact-text acquisition are different statements.
+        # The unseeded page and the three single-value exact-text shapes are
+        # four different statements; one scalar pin cannot hold them.
         self.assertEqual(
             queries._USERS_ORIGIN_SHAS,
             frozenset(
                 {
                     "ba51ea62b5e2f3831b6d9d1e4ab345283c068af90f1795bb7b7082526cd4d4e5",
                     "7b8c40bf16c6d1a869f19c75d26304d755298c7016ac451233958599369f3f51",
+                    "b99fe9116aba205e3d4e36a2251630e9772307622759e970b98f4648db2f95bf",
+                    "40aca43c4986c4b67e5d8b99ae753c347c7101d29735d7edf9f3de139ef97c95",
                 }
             ),
         )
