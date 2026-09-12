@@ -335,6 +335,11 @@ class _SessionWorld:
         self.classified: list[str] = []
         self.seed_statements = 0
         self.gated_seed_statements = 0
+        # Every ``[filter_witness_start, filter_witness_end)`` the gate asked
+        # for, in the order the statements were issued, and the tail of that
+        # list a multi-hop walk attributes to its last hop.
+        self.witness_envelopes: list[tuple[datetime, datetime]] = []
+        self.hop_two_envelopes: list[tuple[datetime, datetime]] = []
 
     def execute_ch_query(self, query, params, *, timeout_ms=None, settings=None):
         del timeout_ms, settings
@@ -347,6 +352,10 @@ class _SessionWorld:
         gated = "witness_spans" in query
         if gated:
             self.gated_seed_statements += 1
+            if params.get("filter_witness_start") is not None:
+                self.witness_envelopes.append(
+                    (params["filter_witness_start"], params["filter_witness_end"])
+                )
         rows = []
         for session_id, (roots, witnesses) in self.sessions.items():
             in_slice = [
@@ -496,6 +505,7 @@ def _two_hops(slack: int) -> tuple[list[str], list[str], datetime, _SessionWorld
         assert first.complete is True
         assert first.has_more is True
         last = first.rows[-1]
+        before_second = len(world.witness_envelopes)
         second = _walk(
             world,
             cursor_start_time=last["start_time"],
@@ -506,6 +516,7 @@ def _two_hops(slack: int) -> tuple[list[str], list[str], datetime, _SessionWorld
             continuation_before_id=first.continuation_before_id,
         )
         assert second.complete is True
+    world.hop_two_envelopes = world.witness_envelopes[before_second:]
     return (
         [str(row["session_id"]) for row in first.rows],
         [str(row["session_id"]) for row in second.rows],
@@ -544,9 +555,14 @@ def test_a_continuation_hop_drops_the_session_its_newest_trace_witnesses() -> No
     """The documented omission class, across a real page boundary.
 
     A session is discovered by any of its roots but ranked by its oldest, and
-    hop two resumes at the rank hop one last published, ``C``, so every
-    envelope it emits ends at or below ``hour_ceil(C) + slack``. A session
-    whose only witness-bearing trace is rooted above that is never re-seeded.
+    hop two resumes at the rank hop one last published, ``C``, its first slice
+    ending at ``C + 1us`` so that ``C`` itself is included. Every envelope it
+    emits therefore ends at or below ``hour_ceil(C + 1us) + slack``, and a
+    session whose only witness-bearing trace is rooted above that is never
+    re-seeded. The ceiling is asserted by equality against the bounds hop
+    two's own statements carry, so the ``+ 1us`` is pinned rather than
+    assumed: this population resumes exactly on an hour, the one case where
+    ``hour_ceil(C)`` and ``hour_ceil(C + 1us)`` differ.
     Slack zero (no envelope) and a slack wider than the population's root
     spread both keep it; nothing is ever admitted or duplicated.
 
@@ -570,7 +586,12 @@ def test_a_continuation_hop_drops_the_session_its_newest_trace_witnesses() -> No
     dropped = set(open_first + open_second) - set(lost_first + lost_second)
     assert len(dropped) == 1
     (dropped_id,) = dropped
-    envelope_ceiling = ceil_hour(resume_rank) + timedelta(hours=1)
+    envelope_ceiling = ceil_hour(resume_rank + timedelta(microseconds=1)) + timedelta(
+        hours=1
+    )
+    assert max(end for _, end in lost_world.hop_two_envelopes) == envelope_ceiling, (
+        "hop two never asks for a witness above the hour holding its resume rank"
+    )
     roots, witnesses = lost_world.sessions[dropped_id]
     assert min(witnesses) >= envelope_ceiling
     assert max(roots) > resume_rank >= min(roots)

@@ -994,13 +994,14 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         the session is seeded from the slice holding the root of the trace its
         witness sits on, which is at or before its own publication rank. A
         continuation hop does not start there. It resumes at the rank the
-        previous page last published, ``C`` - its first slice is
-        ``[C - width, C]`` - and descends, so every root above ``C`` is out of
-        reach on that hop and every envelope the hop emits ends at or below
-        ``hour_ceil(C) + slack``. Because the published order key is ``min``
-        over the live roots, a session due on that hop has its own rank at or
-        below ``C``, so the only root it is guaranteed to reach it by is its
-        oldest - while its witness may sit on a far newer trace.
+        previous page last published, ``C`` - its first slice ends at
+        ``C + 1us``, inclusive of ``C`` itself - and descends, so every root
+        above ``C`` is out of reach on that hop and every envelope the hop
+        emits ends at or below ``hour_ceil(C + 1us) + slack``: the end of the
+        hour holding ``C``, plus the slack. Because the published order key is
+        ``min`` over the live roots, a session due on that hop has its own rank
+        at or below ``C``, so the only root it is guaranteed to reach it by is
+        its oldest - while its witness may sit on a far newer trace.
 
         The omission class is therefore: a session is dropped when no
         witnessing span of it starts inside the envelope of any slice of that

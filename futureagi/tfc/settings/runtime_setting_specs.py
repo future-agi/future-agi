@@ -491,7 +491,8 @@ INTERACTIVE_READ_SETTING_SPECS = {
             # contract and is NOT approved. A session is discovered by any of
             # its roots but ranked by its oldest, and a continuation hop
             # resumes at the rank the previous page last published, C, so every
-            # envelope that hop emits ends at or below hour_ceil(C) + slack. A
+            # envelope that hop emits ends at or below the end of the hour
+            # holding C plus the slack (its first slice ends at C + 1us). A
             # session is therefore dropped when every trace of it that carries
             # a witnessing span is rooted above C: the loss is governed by the
             # session's root-to-root spread, which can be as wide as the
