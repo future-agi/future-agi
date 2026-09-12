@@ -34,6 +34,7 @@ from agent_playground.models.choices import (
 from agent_playground.services.engine.output_sink import get_sink
 from tfc.temporal.agent_playground.activities import ALL_ACTIVITIES
 from tfc.temporal.agent_playground.types import (
+    DEFAULT_MAX_CONCURRENT_NODES,
     ExecuteGraphInput,
     ExecuteNodeStandaloneInput,
     OutputSinkConfig,
@@ -85,7 +86,7 @@ def _child_executions_exist(graph_version):
 # =============================================================================
 
 
-async def run_workflow(env, graph_version, input_payload=None, max_concurrent_nodes=10):
+async def run_workflow(env, graph_version, input_payload=None, max_concurrent_nodes=DEFAULT_MAX_CONCURRENT_NODES):
     """Helper to run the GraphExecutionWorkflow and return its result."""
     if input_payload is None:
         input_payload = {}
@@ -514,7 +515,7 @@ async def run_workflow_with_sinks(
     primary_output_sink=None,
     output_sinks=None,
     node_sink_overrides=None,
-    max_concurrent_nodes=10,
+    max_concurrent_nodes=DEFAULT_MAX_CONCURRENT_NODES,
 ):
     """Helper to run the GraphExecutionWorkflow with output sink configs."""
     if input_payload is None:

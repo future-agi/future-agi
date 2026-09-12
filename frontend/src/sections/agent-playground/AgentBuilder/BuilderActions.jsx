@@ -12,6 +12,7 @@ import {
   useTemplateLoadingStoreShallow,
 } from "../store";
 import StopTemplateLoadingDialog from "../components/StopTemplateLoadingDialog";
+import StepConcurrencyControl from "../components/StepConcurrencyControl";
 import useWorkflowExecution from "../hooks/useWorkflowExecution";
 import useCanEditAgent from "../hooks/useCanEditAgent";
 import { validateGraphForSave } from "../utils/workflowValidation";
@@ -169,6 +170,8 @@ export default function BuilderActions({ width, hasNodes = true }) {
         )}
 
         {/* Run Button - Show when has nodes, not loading, and not running */}
+        {hasNodes && !isLoadingTemplate && <StepConcurrencyControl />}
+
         {hasNodes && !isLoadingTemplate && !isRunning && (
           <CustomTooltip
             show={!canEditAgent}
