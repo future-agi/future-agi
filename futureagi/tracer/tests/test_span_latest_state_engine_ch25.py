@@ -21,11 +21,11 @@ Two engines, tried in this order:
     An isolated ClickHouse the caller opts into with ``FI_LIVE_CH_TESTS=1``.
     This repo has no shared ``require_live_clickhouse()`` helper, so the opt-in
     is defined here; no workflow sets it yet, so this path does not gate in CI
-    today. The opt-in is required rather than inferred because port 19000 on a
-    developer box is a *production* port-forward: an unguarded default there
-    once wrote test tables into production. The target must be loopback and its
-    database must be a throwaway ``test_*`` one, which this module creates and
-    drops.
+    today. The opt-in is required rather than inferred, and the port must be
+    named explicitly: a loopback ClickHouse port on a developer box is often a
+    forward to a shared cluster, and an unguarded default once wrote test
+    tables through one. The target must be loopback and its database must be a
+    throwaway ``test_*`` one, which this module creates and drops.
 
 ``docker``
     A fresh ``clickhouse/clickhouse-server:25.3-alpine`` container started with
@@ -284,21 +284,30 @@ class LiveEngine:
     def __init__(self):
         self.database = f"test_span_engine_{uuid.uuid4().hex[:8]}"
         self.host = os.environ.get("CH25_HOST") or "127.0.0.1"
-        self.port = int(
-            os.environ.get("CH25_NATIVE_PORT")
-            or os.environ.get("CH25_TCP_PORT")
-            or 19000
-        )
+        # No default port. Guessing one is how a test suite ends up writing
+        # through somebody's port-forward; the caller names it or there is no
+        # live engine.
+        self.port = int(self._nominated_port())
         self._client = None
         self._admin = None
 
     @staticmethod
-    def available():
+    def _nominated_port():
+        for name in ("CH25_NATIVE_PORT", "CH25_TCP_PORT"):
+            value = (os.environ.get(name) or "").strip()
+            if value.isdigit():
+                return value
+        return ""
+
+    @classmethod
+    def available(cls):
         if os.environ.get("FI_LIVE_CH_TESTS", "").strip().lower() not in (
             "1",
             "true",
             "yes",
         ):
+            return False
+        if not cls._nominated_port():
             return False
         host = os.environ.get("CH25_HOST") or "127.0.0.1"
         # Loopback only. A remote target is never nominated implicitly.
