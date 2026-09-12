@@ -44,6 +44,7 @@ OPERATOR_STARTUP_MUTATION_COMMANDS = frozenset(
         "backfill_score_tracer_project",
         "createcachetable",
         "drop_legacy_observation_span",
+        "emit_omega_investigation_usage",
         "migrate",
         "publish_omega_investigation_groups",
         "reconcile_omega_investigations",

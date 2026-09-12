@@ -30,6 +30,13 @@ class TraceInvestigationGroupingStatus(models.TextChoices):
     FAILED = "failed"
 
 
+class TraceInvestigationUsageStatus(models.TextChoices):
+    PENDING = "pending"
+    EMITTED = "emitted"
+    UNPRICED = "unpriced"
+    SKIPPED = "skipped"
+
+
 class TraceInvestigationFeedbackType(models.TextChoices):
     CONFIRM_FINDING = "confirm_finding"
     FALSE_POSITIVE = "false_positive"
@@ -200,6 +207,58 @@ class TraceInvestigationReport(BaseModel):
                 fields=["project", "grouping_status", "created_at"],
                 name="trace_inv_report_group_idx",
             )
+        ]
+
+
+class TraceInvestigationUsageReceipt(BaseModel):
+    """Durable, tenant-pinned outbox for one immutable Omega report's cost."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    report = models.OneToOneField(
+        TraceInvestigationReport,
+        on_delete=models.CASCADE,
+        related_name="usage_receipt",
+    )
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
+    workspace = models.ForeignKey(
+        Workspace, on_delete=models.CASCADE, null=True, blank=True
+    )
+    project = models.ForeignKey(Project, on_delete=models.CASCADE)
+    event_id = models.UUIDField(unique=True)
+    raw_cost_usd = models.DecimalField(
+        max_digits=30,
+        decimal_places=18,
+        null=True,
+        blank=True,
+    )
+    credit_amount = models.DecimalField(
+        max_digits=30,
+        decimal_places=18,
+        null=True,
+        blank=True,
+    )
+    event_properties = models.JSONField(default=dict)
+    event_payload = models.JSONField(default=dict)
+    status = models.CharField(
+        max_length=20,
+        choices=TraceInvestigationUsageStatus.choices,
+        default=TraceInvestigationUsageStatus.PENDING,
+    )
+    status_reason = models.CharField(max_length=64, blank=True)
+    delivery_attempts = models.PositiveIntegerField(default=0)
+    emitted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "tracer_trace_investigation_usage_receipt"
+        indexes = [
+            models.Index(
+                fields=["status", "updated_at"],
+                name="trace_inv_usage_pending_idx",
+            ),
+            models.Index(
+                fields=["organization", "created_at"],
+                name="trace_inv_usage_org_idx",
+            ),
         ]
 
 

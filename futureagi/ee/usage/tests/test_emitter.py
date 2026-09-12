@@ -91,6 +91,40 @@ class TestEmitter:
 
 
 class TestEmitterErrorHandling:
+    def test_confirmed_emit_propagates_redis_failure(self):
+        from ee.usage.services.emitter import emit_confirmed
+
+        with (
+            patch("ee.usage.services.emitter._start_consumer_best_effort"),
+            patch("ee.usage.services.emitter.get_redis") as mock_redis,
+        ):
+            mock_redis.return_value.xadd.side_effect = ConnectionError("Redis down")
+            with pytest.raises(ConnectionError, match="Redis down"):
+                emit_confirmed(UsageEvent(org_id="org-1", event_type="test"))
+
+    def test_confirmed_emit_preserves_deterministic_event_id(self):
+        from ee.usage.services.emitter import STREAM_KEY, emit_confirmed
+
+        event_id = "ad7855e4-159e-5f21-b855-1c1ab4ff1072"
+        with (
+            patch("ee.usage.services.emitter._start_consumer_best_effort"),
+            patch("ee.usage.services.emitter.get_redis") as mock_redis,
+        ):
+            mock_redis.return_value.xadd.return_value = "1-0"
+            result = emit_confirmed(
+                UsageEvent(
+                    event_id=event_id,
+                    org_id="org-1",
+                    event_type="trace_error_analysis",
+                    amount=0.2,
+                )
+            )
+
+        assert result == "1-0"
+        stream, data = mock_redis.return_value.xadd.call_args.args
+        assert stream == STREAM_KEY
+        assert data["event_id"] == event_id
+
     def test_does_not_raise_on_redis_failure(self):
         from ee.usage.services.emitter import emit
 
