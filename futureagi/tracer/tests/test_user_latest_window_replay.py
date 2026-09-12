@@ -47,7 +47,9 @@ def builder(workspace=False):
     )
 
 
-def assert_window_replay(sql, params, latest_cte="latest_candidate_spans"):
+def assert_window_replay(
+    sql, params, latest_cte="latest_candidate_spans", *, unseeded=False
+):
     latest = cte(sql, latest_cte)
     scan = latest.split("PREWHERE", 1)[1].split("GROUP BY", 1)[0]
     # Exact mutable timestamp predicates belong after version collapse. The
@@ -57,7 +59,12 @@ def assert_window_replay(sql, params, latest_cte="latest_candidate_spans"):
     assert "latest_is_deleted = 0" not in scan
     assert "end_user_id IN" not in scan
     assert "toStartOfHour(start_time)" in scan
-    assert "candidate_span_identities" in scan
+    if unseeded:
+        assert "candidate_span_identities" not in sql
+        assert "toStartOfHour(start_time) >= toStartOfHour(" in scan
+        assert "toStartOfHour(start_time) < fromUnixTimestamp64Micro(" in scan
+    else:
+        assert "candidate_span_identities" in scan
     assert "argMax(start_time, _version) AS latest_start_time" in latest
     assert "latest_start_time >= fromUnixTimestamp64Micro(" in sql
     assert "latest_start_time < fromUnixTimestamp64Micro(" in sql

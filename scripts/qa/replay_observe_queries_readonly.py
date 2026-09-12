@@ -354,10 +354,11 @@ def diagnostic_read_settings(
     return limits
 
 
-# SQL pin: the canonical digest of the statement the deployed builders emit for
-# the qualified origin shape (no user_id label witness, no numeric scalar
-# witness). On this tree no attribute witness qualifies at all, so every
-# reviewed first-page filter shape is the SAME statement and one pin holds them.
+# SQL pins: the canonical digest of the statement the deployed builders emit
+# for each REVIEWED first-page origin SHAPE. The Users read path emits more
+# than one shape, so this is a set of reviewed statements, never a blanket
+# exemption for Users queries: the run stays bound to the one shape it actually
+# selected.
 #
 # Recompute offline against the checked-in builders -- no connection, no
 # production access. From ``futureagi/`` with ``PYTHONPATH=.`` and every
@@ -371,10 +372,46 @@ def diagnostic_read_settings(
 #         window_end=datetime(2026, 9, 3, 4, 0, tzinfo=timezone.utc))
 #     _users_origin_digest(sql)
 #
-# Organization, projects, window, ``limit`` and the attribute key AND value are
-# all *bindings*, so none of them enters the digest: limit 26 and limit 65 hash
-# identically, and so do two different attribute keys or values.
-_USERS_ORIGIN_SHA = "7120eaf17118a7ae3708911c7a61e88f46e8a2df1d59753463e5d99e0aacbeb9"
+# Organization, projects, window, ``limit``, the attribute key, the attribute
+# VALUES and -- since the digest is canonical -- HOW MANY values the filter
+# selected are all outside the digest. What remains is the statement's shape:
+# which witness qualified, and whether the legacy ASCII bloom hint was emitted
+# alongside the UTF-8 one. Measured on this tree, 51 filter cases spanning
+# ``equals`` and ``in`` at 1, 2, 3, 5, 10, 11, 12 and 40 values, typed and
+# untyped, ASCII and non-ASCII, values containing the letter ``k``, selected
+# lists whose lowercased values collide, and two-filter conjunctions, produce
+# exactly these SEVEN statements and no others.
+#
+# The user_id label witness, the search shape and the numeric witness are still
+# unpinned and still fail closed with USERS_REMAP_ORIGIN_NOT_QUALIFIED.
+_USERS_ORIGIN_SHAPES = {
+    # A ``created_at`` between filter only, or any attribute filter that
+    # qualifies no exact-text witness at all: a non-ASCII value, a typed
+    # ``equals``, ``contains``, or an ``attribute_value_types`` list whose
+    # length does not match the value count (all measured). Post immutable-hour
+    # replay this statement carries no ``candidate_span_identities`` CTE.
+    "no_text_witness": "ba51ea62b5e2f3831b6d9d1e4ab345283c068af90f1795bb7b7082526cd4d4e5",
+    # ONE exact-text ``equals`` attribute filter (``col_type`` SPAN_ATTRIBUTE,
+    # ``filter_type`` text or string, a single non-empty ASCII value). That
+    # qualifies a scalar text witness, so ``scalar_witness_identities`` is
+    # present and the manager's own first batch is 65 rows.
+    "equals_legacy_hint": "2ed448d2766b8c308fa1b0444e60ecb3f8e029b271d16d8213c273962071efff",
+    # The same ``equals`` page where the legacy ASCII bloom companion declines:
+    # its Kelvin-sign enumeration would exceed 256 variants, which happens from
+    # nine letters ``k`` in the value upward.
+    "equals_hint_declined": "7c0d4b58ce47ec327a81c24823fc244c2ea53db321a6a300c7047c51812e0e41",
+    # ONE SPAN_ATTRIBUTE ``in`` filter over N non-empty ASCII values, no
+    # ``attribute_value_types``: the multi-value text picker.
+    "in_untyped_legacy_hint": "2425607883cc46c175bfc90c2d8ee893197652689efa820aa35e2c6d47118459",
+    # The same picker page with the legacy companion declined.
+    "in_untyped_hint_declined": "c13be35214e3ee409cbe1c507b3bf14b0ec70b8f77415a3e71194b2bcea8e535",
+    # The typed picker: the same filter plus ``attribute_value_types``
+    # ["string"] * N, which spells its own parameter suffix.
+    "in_typed_legacy_hint": "c9548fd80a39b70b7fd03bc9278882030d38a8311f5477d79bdade711f49930a",
+    # The typed picker with the legacy companion declined.
+    "in_typed_hint_declined": "d52ec8b85ceeef5d29812a48840542ab692634367dafc777caea629be1a97352",
+}
+_USERS_ORIGIN_SHAS = frozenset(_USERS_ORIGIN_SHAPES.values())
 _USERS_REMAP_SHA = "090df268267944b22e713077c59d4836e4046fadb60bfbb78116f3a43af46676"
 # Source pins: sha256 of the *file bytes* backing each imported module, i.e.
 # ``sha256(Path(import_module(name).__file__).read_bytes())``. Re-pin with
@@ -382,7 +419,7 @@ _USERS_REMAP_SHA = "090df268267944b22e713077c59d4836e4046fadb60bfbb78116f3a43af4
 # ``UsersSourcePinTests`` fails the moment these drift from the tree again.
 _USERS_SOURCE_PINS = {
     "tracer.services.users_list_manager": "b5da3657a94ab71710a8db384990e018269929e80c2f651cf8a25b02df3eb831",
-    "tracer.services.clickhouse.query_builders.user_list": "b0c34215bee82ac898c2c05272e95a8a1b6f4552c30515364e3c810467782e7f",
+    "tracer.services.clickhouse.query_builders.user_list": "94ab7ca8a68c391a3dd147b6a43d2d9cae6f134c2b4a022033d9cb77aef11bf5",
     "tracer.services.clickhouse.v2.query_builders.user_list": "d5024fe5a46b7cbdf2621d04dfd02027c17816f7250f84120c920a0dd3c9908e",
     "tracer.services.clickhouse.v2.id_remap_sql": "56903f382c0f8dc40099e5ebfda45a8ab853c0b8f7ec16b5712f9c11092fe24a",
 }
@@ -470,6 +507,19 @@ def _users_sources_current():
                for name, digest in _USERS_SOURCE_PINS.items())
 
 
+def _users_origin_sha(sql):
+    """Return the pinned digest of this origin statement, or fail closed.
+
+    The selected shape travels on the remap context so the statement that is
+    actually executed is re-checked against the SAME pin, not merely against
+    set membership a second time.
+    """
+    digest = _users_origin_digest(sql)
+    if digest not in _USERS_ORIGIN_SHAS:
+        raise replay.ReplayError("USERS_REMAP_ORIGIN_NOT_QUALIFIED")
+    return digest
+
+
 def _users_origin_limit(manager):
     """Mirror the manager's own first-batch size instead of assuming 25 + 1.
 
@@ -532,6 +582,7 @@ class _UsersRemapContext:
     origin_bindings: str
     binding: str
     origin_limit: int
+    origin_sql_sha256: str
 
 
 @dataclass(frozen=True)
@@ -627,13 +678,13 @@ class ReadOnlyExecutor:
             limit=origin_limit, window_start=replay.utc(case["window"]["start"]),
             window_end=replay.utc(case["window"]["end"]),
         )
-        if _users_origin_digest(sql) != _USERS_ORIGIN_SHA:
-            raise replay.ReplayError("USERS_REMAP_ORIGIN_NOT_QUALIFIED")
+        origin_sha = _users_origin_sha(sql)
         self._users_context = _UsersRemapContext(
             tuple(_user_uuid(p) for p in projects), tuple(map(str, self.projects)),
             replay.digest(safe_json(bindings)),
             replay.digest({"case": case, "scope": scope, "plan_id": plan_id, "projects": projects}),
             origin_limit,
+            origin_sha,
         )
         self._users_origin_expected = True
 
@@ -697,16 +748,14 @@ class ReadOnlyExecutor:
                 raise
             self._validate_users_remap(query, params, pending)
             sql, certified = query, pending
-        # Same canonical digest as the qualification check above. The raw
-        # ``sql_sha256`` recorded below stays the exact executed text, so the
-        # ledger still carries the byte-for-byte statement that ran.
-        if origin:
-            bindings_digest = replay.digest(safe_json(params))
-            if (
-                _users_origin_digest(sql) != _USERS_ORIGIN_SHA
-                or bindings_digest != self._users_context.origin_bindings
-            ):
-                raise replay.ReplayError("USERS_REMAP_ORIGIN_BINDINGS_CHANGED")
+        # Same canonical digest as the shape the qualification check selected.
+        # The raw ``sql_sha256`` recorded below stays the exact executed text,
+        # so the ledger still carries the byte-for-byte statement that ran.
+        if origin and (
+            _users_origin_digest(sql) != self._users_context.origin_sql_sha256
+            or replay.digest(safe_json(params)) != self._users_context.origin_bindings
+        ):
+            raise replay.ReplayError("USERS_REMAP_ORIGIN_BINDINGS_CHANGED")
         remaining = self.remaining_read_ms()
         if remaining <= 0:
             raise ReadDeadlineExceeded("diagnostic_safety_wall")
@@ -739,7 +788,7 @@ class ReadOnlyExecutor:
             record["scope_certificate"] = {
                 "kind": "finite_users_remap_certificate.v1",
                 "origin_query_id": certified.origin_query_id,
-                "origin_sql_sha256": _USERS_ORIGIN_SHA,
+                "origin_sql_sha256": certified.context.origin_sql_sha256,
                 "source_sha256": replay.digest(_USERS_SOURCE_PINS),
                 "scope_binding_sha256": certified.context.binding,
                 "candidate_count": len(certified.ids), "candidate_ids_sha256": replay.digest(certified.ids),

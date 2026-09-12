@@ -56,7 +56,7 @@ def test_exact_candidate_population_window_order_and_scope(workspace, days):
     )
     assert "span_user_rollup" not in sql
     assert "FROM spans AS sp FINAL" not in sql
-    assert_window_replay(sql, params)
+    assert_window_replay(sql, params, unseeded=True)
     assert "count() OVER()" not in sql
     assert params["limit"] == 26
     assert params["before_activity_us"] + 1 == params["user_window_end_us"]
@@ -118,7 +118,7 @@ def test_native_user_id_witness_is_after_latest_replay_before_candidate_limit(
     assert params["candidate_user_label_0"] == (
         ("guest-a",) if op == "equals" else ("guest-a", "guest-b")
     )
-    assert_window_replay(sql, params)
+    assert_window_replay(sql, params, unseeded=True)
 
 
 @pytest.mark.parametrize(
@@ -187,7 +187,7 @@ def test_scalar_witness_narrows_groups_not_activity_or_replacement(workspace):
         raw_filter("equals", 0),
         raw_filter("less_than", 1),
         raw_filter("equals", False, "boolean"),
-        raw_filter("equals", "1", "text"),
+        raw_filter("equals", "true", "text"),
         {
             "column_id": "total_cost",
             "filter_config": {
