@@ -98,8 +98,12 @@ _GRAPH_SEED_SCALAR_FILTER_TYPES = frozenset({"boolean", "number", "string", "tex
 # remainder - so a filtered trace graph asks for at least
 # (1 - 1/_GRAPH_SEED_PROBE_WALL_SHARE) of the wall it asks for unseeded. The
 # floor repays the main read; it cannot shrink a driver that overruns the
-# per-probe timeout it was given, and on the interactive path the shared
-# ReadDeadline still clamps the floored request to the wall actually left.
+# per-probe timeout it was given, and the interactive caller resolves
+# timeout_ms once (views/trace.py -> graph_action_remaining_ms) with nothing
+# re-clamping below it - so an overrunning probe leaves the graph statement
+# asking for the floor rather than for the wall the request really has left,
+# by exactly that overrun. Blowing the wall is the probe's doing either way;
+# this chooses to keep the real read's budget stated instead of collapsing it.
 _GRAPH_SEED_PROBE_WALL_SHARE = 10
 _GRAPH_BASE_READ_SETTINGS = {
     # The retained hourly rollup is already row-reduced. Four workers keep the
