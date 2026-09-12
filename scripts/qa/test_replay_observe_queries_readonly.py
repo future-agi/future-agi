@@ -4,11 +4,12 @@ import unittest
 import hashlib
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
+from uuid import UUID
 import time
 
 import replay_observe_filters as replay
@@ -248,7 +249,8 @@ class UsersRemapCertificateTests(unittest.TestCase):
         reader = object.__new__(queries.ReadOnlyExecutor)
         reader.client, reader._users_certificate = object(), None
         reader._users_context = queries._UsersRemapContext(
-            (project,), (project,), "bindings", "scope", 26, "origin-sha")
+            (project,), (project,), "bindings", "scope", 26, "origin-sha"
+        )
         origin = SimpleNamespace(row_count=1, columns=["end_user_id", "project_id"],
                                  data=[{"end_user_id": user, "project_id": project}])
         reader._users_result(origin, origin=True, certificate=None, query_id="actual-origin")
@@ -313,18 +315,31 @@ class UsersOriginShaSetTests(unittest.TestCase):
         for digest in queries._USERS_ORIGIN_SHAS:
             with self.subTest(digest=digest):
                 self.assertRegex(digest, r"^[0-9a-f]{64}$")
-        # The unseeded page and the three single-value exact-text shapes are
-        # four different statements; one scalar pin cannot hold them.
+        # The unseeded page and the exact-equals text page are two different
+        # statements; one scalar pin cannot hold them.
+        self.assertEqual(len(queries._USERS_ORIGIN_SHAS_SCALAR), 2)
+        # The picker family is enumerated by value count, 1 .. MAX, and each
+        # cardinality is two statements: untyped and typed.
+        self.assertEqual(queries._USERS_PICKER_MAX_VALUES, 10)
+        self.assertEqual(
+            sorted(queries._USERS_PICKER_SHAS),
+            list(range(1, queries._USERS_PICKER_MAX_VALUES + 1)),
+        )
+        picker = [
+            digest for pair in queries._USERS_PICKER_SHAS.values() for digest in pair
+        ]
+        self.assertTrue(
+            all(len(pair) == 2 for pair in queries._USERS_PICKER_SHAS.values())
+        )
+        self.assertEqual(len(picker), 2 * queries._USERS_PICKER_MAX_VALUES)
+        # Every pin is distinct, and the exported set is exactly their union.
+        self.assertEqual(
+            len(set(picker) | queries._USERS_ORIGIN_SHAS_SCALAR),
+            len(picker) + len(queries._USERS_ORIGIN_SHAS_SCALAR),
+        )
         self.assertEqual(
             queries._USERS_ORIGIN_SHAS,
-            frozenset(
-                {
-                    "ba51ea62b5e2f3831b6d9d1e4ab345283c068af90f1795bb7b7082526cd4d4e5",
-                    "7b8c40bf16c6d1a869f19c75d26304d755298c7016ac451233958599369f3f51",
-                    "b99fe9116aba205e3d4e36a2251630e9772307622759e970b98f4648db2f95bf",
-                    "40aca43c4986c4b67e5d8b99ae753c347c7101d29735d7edf9f3de139ef97c95",
-                }
-            ),
+            queries._USERS_ORIGIN_SHAS_SCALAR | frozenset(picker),
         )
 
     def test_origin_sha_selects_a_pinned_shape_and_fails_closed_otherwise(self):
@@ -341,6 +356,145 @@ class UsersOriginShaSetTests(unittest.TestCase):
                 replay.ReplayError, "USERS_REMAP_ORIGIN_NOT_QUALIFIED"
             ):
                 queries._users_origin_sha(statement + " LIMIT 1")
+
+
+class UsersOriginShaDerivationTests(unittest.TestCase):
+    """Derive every pinned first-page digest from the checked-in builder.
+
+    The pins above are literals, so a literal-versus-literal assertion would
+    prove nothing. These cases build the statement with the recipe documented
+    next to ``_USERS_ORIGIN_SHAS`` and then ask ``_users_origin_sha`` whether
+    that statement is pinned, so a builder change that moves any shape fails
+    here instead of failing closed in a run. Pure string construction: no
+    connection and no ``django.setup()`` -- the harness's own test environment
+    configures Django, and these cases skip where it does not.
+    """
+
+    ORGANIZATION = str(UUID(int=11))
+    PROJECT = str(UUID(int=12))
+    WINDOW_START = datetime(2026, 9, 3, 0, 0, tzinfo=timezone.utc)
+    WINDOW_END = datetime(2026, 9, 3, 4, 0, tzinfo=timezone.utc)
+
+    def _builder_class(self):
+        try:
+            from tracer.services.clickhouse.v2.query_builders.user_list import (
+                UserListQueryBuilderV2,
+            )
+        except Exception as exc:  # pragma: no cover - Django not configured here
+            self.skipTest(f"UserListQueryBuilderV2 unavailable: {exc}")
+        return UserListQueryBuilderV2
+
+    def _date_filter(self):
+        return {
+            "column_id": "created_at",
+            "filter_config": {
+                "filter_type": "datetime",
+                "filter_op": "between",
+                "filter_value": [
+                    self.WINDOW_START.isoformat(),
+                    self.WINDOW_END.isoformat(),
+                ],
+            },
+        }
+
+    def _statement(self, attribute_config=None):
+        filters = [self._date_filter()]
+        if attribute_config is not None:
+            filters.append(
+                {
+                    "column_id": "attr_a",
+                    "filter_config": {
+                        "col_type": "SPAN_ATTRIBUTE",
+                        **attribute_config,
+                    },
+                }
+            )
+        builder = self._builder_class()(
+            organization_id=self.ORGANIZATION,
+            project_ids=[self.PROJECT],
+            filters=filters,
+            search="",
+            empty_scope=False,
+        )
+        # ``limit`` is a binding: 26 and 65 are the same statement text.
+        sql, _ = builder.build_dimension_candidate_query(
+            limit=26,
+            window_start=self.WINDOW_START,
+            window_end=self.WINDOW_END,
+        )
+        return sql
+
+    def _picker_config(self, values, typed):
+        config = {
+            "filter_type": "text",
+            "filter_op": "in",
+            "filter_value": list(values),
+        }
+        if typed:
+            config["attribute_value_types"] = ["string"] * len(values)
+        return config
+
+    def test_the_scalar_pins_are_the_builders_own_statements(self):
+        for label, attribute in (
+            ("unseeded", None),
+            (
+                "equals",
+                {
+                    "filter_type": "text",
+                    "filter_op": "equals",
+                    "filter_value": "value-a",
+                },
+            ),
+        ):
+            with self.subTest(shape=label):
+                sql = self._statement(attribute)
+                digest = hashlib.sha256(sql.strip().rstrip(";").encode()).hexdigest()
+                self.assertEqual(queries._users_origin_sha(sql), digest)
+                self.assertIn(digest, queries._USERS_ORIGIN_SHAS_SCALAR)
+
+    def test_every_pinned_picker_cardinality_is_the_builders_own_statement(self):
+        for count in range(1, queries._USERS_PICKER_MAX_VALUES + 1):
+            values = [f"value-{index}" for index in range(count)]
+            for position, typed in ((0, False), (1, True)):
+                with self.subTest(values=count, typed=typed):
+                    sql = self._statement(self._picker_config(values, typed))
+                    # The witness is what fans the statement out per value.
+                    self.assertIn("scalar_witness_identities AS", sql)
+                    self.assertEqual(
+                        queries._users_origin_sha(sql),
+                        queries._USERS_PICKER_SHAS[count][position],
+                    )
+
+    def test_one_value_more_than_the_pinned_maximum_fails_closed(self):
+        values = [
+            f"value-{index}" for index in range(queries._USERS_PICKER_MAX_VALUES + 1)
+        ]
+        for typed in (False, True):
+            with self.subTest(typed=typed):
+                sql = self._statement(self._picker_config(values, typed))
+                self.assertNotIn(
+                    hashlib.sha256(sql.strip().rstrip(";").encode()).hexdigest(),
+                    queries._USERS_ORIGIN_SHAS,
+                )
+                with self.assertRaisesRegex(
+                    replay.ReplayError, "USERS_REMAP_ORIGIN_NOT_QUALIFIED"
+                ):
+                    queries._users_origin_sha(sql)
+
+    def test_a_length_mismatched_type_list_lands_on_the_unseeded_pin(self):
+        """No witness qualifies, so the page is the plain unseeded statement."""
+        config = {
+            "filter_type": "text",
+            "filter_op": "in",
+            "filter_value": ["value-a", "value-b"],
+            "attribute_value_types": ["string"],
+        }
+        sql = self._statement(config)
+        self.assertNotIn("scalar_witness_identities AS", sql)
+        self.assertEqual(
+            queries._users_origin_sha(sql),
+            queries._users_origin_sha(self._statement(None)),
+        )
 
 
 class UsersOriginBatchTests(unittest.TestCase):
@@ -372,7 +526,11 @@ class UsersOriginBatchTests(unittest.TestCase):
                 reader = object.__new__(queries.ReadOnlyExecutor)
                 reader.client, reader._users_certificate = object(), None
                 reader._users_context = queries._UsersRemapContext(
-                    (project,), (project,), "bindings", "scope", origin_limit,
+                    (project,),
+                    (project,),
+                    "bindings",
+                    "scope",
+                    origin_limit,
                     "origin-sha",
                 )
                 data = [dict(row) for row in rows[:size]]

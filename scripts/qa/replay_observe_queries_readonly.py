@@ -376,7 +376,7 @@ def diagnostic_read_settings(
 # Organization, projects, window, ``limit`` and the attribute key AND value are
 # all *bindings*, so none of them enters the digest: limit 26 and limit 65 hash
 # identically, and so do two different attribute keys or values.
-_USERS_ORIGIN_SHAS = frozenset(
+_USERS_ORIGIN_SHAS_SCALAR = frozenset(
     {
         # FILTERS = a ``created_at`` between filter only (unseeded first page).
         # Post immutable-hour replay this statement carries no
@@ -388,26 +388,86 @@ _USERS_ORIGIN_SHAS = frozenset(
         # a scalar text witness, so ``scalar_witness_identities`` is present and
         # the manager's own first batch is 65 rows.
         "7b8c40bf16c6d1a869f19c75d26304d755298c7016ac451233958599369f3f51",
-        # The same filter as a one-value picker, ``filter_op`` ``in`` with
-        # ``filter_value`` ["<ascii>"] and no ``attribute_value_types``.
-        "b99fe9116aba205e3d4e36a2251630e9772307622759e970b98f4648db2f95bf",
-        # ... and the typed one-value picker, the same plus
-        # ``attribute_value_types`` ["string"].
-        "40aca43c4986c4b67e5d8b99ae753c347c7101d29735d7edf9f3de139ef97c95",
     }
 )
-# Deliberately NOT pinned, measured rather than assumed: a picker with N > 1
-# values binds one parameter per value, so its statement text -- and its digest
-# -- changes with EVERY cardinality (2 untyped, 2 typed, 3 ... are all distinct
-# statements). A digest set cannot enumerate that, so those reads fail closed
-# with USERS_REMAP_ORIGIN_NOT_QUALIFIED, as do the user_id label witness, the
-# search shape and the numeric witness. Closing the N > 1 hole needs a pin that
-# is normalized over the value count, not more digests; until then the Users
-# certificate covers the unseeded page and single-value exact-text acquisition.
+# The multi-value text picker family, ENUMERATED rather than normalized.
+#
+# The same date filter plus ONE SPAN_ATTRIBUTE ``in`` filter over N non-empty
+# ASCII values. ``filter_type`` text and string are the same statement
+# (measured); each row is (untyped, typed), where typed is the same filter plus
+# ``attribute_value_types`` ["string"] * N.
+#
+# Why one digest per cardinality instead of one digest for the family: the
+# semantic comparison already binds the whole value list as ONE parameter
+# (``... IN %(latest_filter_param_0)s``), but the companion bloom index hint
+# spells one placeholder per value --
+# ``indexHint(hasAny(arrayMap(x -> lowerUTF8(x), mapValues(span_attr_str)),
+# [%(latest_filter_index_0_0)s, ...]))`` -- so the statement text, and its
+# digest, changes with every value count. That hint is built in
+# ``tracer/services/clickhouse/query_builders/latest_filter_predicates.py``
+# (the untyped path, the typed path and ``_legacy_ascii_lower_bloom_predicate``),
+# a module shared by the trace-list, graph and dashboard reads whose parameter
+# NAMES are themselves asserted by three tracer contract tests. Binding that
+# list as a single array parameter would therefore rewrite the SQL of every
+# trace ``in`` filter in the product, so this harness enumerates the Users
+# cardinalities it certifies instead.
+#
+# A picker with MORE than ``_USERS_PICKER_MAX_VALUES`` values is deliberately
+# not pinned: those reads fail closed with USERS_REMAP_ORIGIN_NOT_QUALIFIED, as
+# do the user_id label witness, the search shape and the numeric witness. A
+# picker whose ``attribute_value_types`` length does not match its value count
+# qualifies no witness at all and lands on the unseeded pin above (measured).
+#
 # For the record, at origin/dev every one of these text shapes collapsed to the
 # single no-witness statement 7120eaf1..., because no text witness qualified
-# there; the fan-out is a consequence of the scalar text witness, and the pins
-# above are what keeps the single-value cases certifiable across it.
+# there; the fan-out is a consequence of the scalar text witness this branch
+# adds, and these pins are what keeps the picker certifiable across it.
+_USERS_PICKER_MAX_VALUES = 10
+_USERS_PICKER_SHAS = {
+    1: (
+        "b99fe9116aba205e3d4e36a2251630e9772307622759e970b98f4648db2f95bf",
+        "40aca43c4986c4b67e5d8b99ae753c347c7101d29735d7edf9f3de139ef97c95",
+    ),
+    2: (
+        "0dc77973b3a9c7c3eacb2c37943e439c709ee35232bc30d271e63aeed7154612",
+        "f5a13c045c337014fa21e57d139d9b380c4a7fedbc05402f93d5c2be3b39faa2",
+    ),
+    3: (
+        "849a7f0a2542c64882bdcf00bccc889e1c62b27f7729fdead328559eddce8c98",
+        "e8beb9b5daeec8b5699804ec9c5802ed82c2c787d251d24a648bd38f5950cf77",
+    ),
+    4: (
+        "1efb0c5477807208646d7f2ceac40a946c32d6e25f03a10ad656a188aabea757",
+        "a49a6e4670afbd28f106c037c26452043a576d8241c97d645c9d38adcfb28649",
+    ),
+    5: (
+        "77bc55de75b83e45413285a8fb1116b3bcf6bd79362fcfc6f2f485fd1d616595",
+        "764dc8e78cd590e2e1cf15434f24d95c1578dadee001e2efc50283f736556029",
+    ),
+    6: (
+        "7a15dab679985e9ff39a471cf93dba4ae11a1a23ac323fb62c613fb057316b2e",
+        "e7ad782d0f84c7c11a3ec7556ad2f42e35bbb82bbe967e4c4d3a21f27f2eecf2",
+    ),
+    7: (
+        "e5f6ff0c215b731cb99b42841f751d37ff290ff26080f500be93f347b884b6a1",
+        "fa1acd4cdf2b8a24776bf5d0d115eb362f3eda09be1a889996b9599826b18720",
+    ),
+    8: (
+        "bc89dbc689fbfde1cc8fa4b48b33a15c5b774bb4982af066f231c74b8282ec31",
+        "fc2a73b32fff7c1929e319b8b04cda789a82511a268c59766f7df7f8cf552566",
+    ),
+    9: (
+        "c9ec1b9af50206dd0f92d7973b256eb1a51125096ad2a0a231584b456f58ebdd",
+        "bcd08b1074c104d87f26f1d00aeca0b9eccdb76a4a735385531b7e0a9e8a0f42",
+    ),
+    10: (
+        "ccafa8e0b5b60fb920ba1cfed07ddab9068218fe4e07581a249141883694f97d",
+        "baa699f10ef1657a6682fa4df1709e46a7871bfba4f2056edd126e32d14f4c1d",
+    ),
+}
+_USERS_ORIGIN_SHAS = _USERS_ORIGIN_SHAS_SCALAR | frozenset(
+    digest for pair in _USERS_PICKER_SHAS.values() for digest in pair
+)
 _USERS_REMAP_SHA = "090df268267944b22e713077c59d4836e4046fadb60bfbb78116f3a43af46676"
 # Source pins: sha256 of the *file bytes* backing each imported module, i.e.
 # ``sha256(Path(import_module(name).__file__).read_bytes())``. Re-pin with
@@ -668,8 +728,11 @@ class ReadOnlyExecutor:
                 raise
             self._validate_users_remap(query, params, pending)
             sql, certified = query, pending
-        if origin and (hashlib.sha256(sql.encode()).hexdigest() != self._users_context.origin_sql_sha256
-                       or replay.digest(safe_json(params)) != self._users_context.origin_bindings):
+        if origin and (
+            hashlib.sha256(sql.encode()).hexdigest()
+            != self._users_context.origin_sql_sha256
+            or replay.digest(safe_json(params)) != self._users_context.origin_bindings
+        ):
             raise replay.ReplayError("USERS_REMAP_ORIGIN_BINDINGS_CHANGED")
         remaining = self.remaining_read_ms()
         if remaining <= 0:
