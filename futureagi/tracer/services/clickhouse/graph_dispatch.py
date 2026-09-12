@@ -103,16 +103,33 @@ _GRAPH_SEED_SCALAR_FILTER_TYPES = frozenset({"boolean", "number", "string", "tex
 # least 100 ms of that budget is left, and a per-probe grant of
 # min(_GRAPH_SEED_ESTIMATE_QUERY_MS, remaining) - so probes that honour the
 # grant they are handed cannot spend more than the budget. On the single-node
-# path, where this surface issued no probe at all before, the graph
-# statement's requested timeout is additionally floored at wall - budget: that
-# floor is arithmetic, so optional pruning cannot hand the real read a 1 ms
-# timeout however long its probes actually took. The interactive caller
-# resolves timeout_ms once (views/trace.py -> graph_action_remaining_ms) and
-# nothing re-clamps it per statement, so a probe that overruns its grant
-# leaves the graph statement asking for the floor rather than for the wall the
-# request really has left, by exactly that overrun. Blowing the wall is the
-# probe's doing either way; this keeps the real read's budget stated instead
-# of collapsing it.
+# path, where this surface issued no probe at all before, two rules keep the
+# real read whole rather than merely non-zero:
+#
+#   1. no probe is launched at all below _GRAPH_SEED_SINGLE_NODE_MIN_WALL_MS,
+#      so a short wall reads exactly the way it read before this seed was
+#      un-gated - unseeded, one statement, the full wall; and
+#   2. above that threshold the graph statement's requested timeout is floored
+#      at wall - budget, which the threshold keeps at or above
+#      _GRAPH_SEED_ESTIMATE_WALL_MS, so optional pruning can never hand the
+#      real read a 1 ms timeout however long its probes actually took.
+#
+# Where that floor is the value the service sees is narrower than the floor
+# itself. The interactive caller resolves timeout_ms once (views/trace.py ->
+# graph_action_remaining_ms) and fetch_system_metric_graph_ch then wraps the
+# analytics in _DeadlineBoundGraphAnalytics, which re-clamps EVERY statement
+# to ReadDeadline.remaining_ms(...) and raises ReadDeadlineExceeded once fewer
+# than 25 ms of the wall are left. So on that route the floor is never what
+# reaches the service - the deadline's own remainder is smaller and wins, or
+# the deadline raises before the graph statement is issued at all - and the
+# request cannot exceed its wall by a probe's overrun. The floor is the value
+# that reaches the service only on the unwrapped lane, where
+# _fetch_direct_raw_system_metric_graph is called with a raw analytics service
+# (tracer/tasks/exact_aggregation.py, wall settings.GRAPH_BACKGROUND_WALL_MS);
+# there an overrunning probe does leave the graph statement asking for the
+# floor rather than for the wall the request really has left. Blowing the wall
+# is the probe's doing either way; this keeps the real read's budget stated
+# instead of collapsing it.
 _GRAPH_BASE_READ_SETTINGS = {
     # The retained hourly rollup is already row-reduced. Four workers keep the
     # interactive scan parallel without leaving concurrency unbounded on the
@@ -280,8 +297,14 @@ def _select_raw_trace_seed_candidate(
     which is why ``supports_bounded_speculative_reads`` is ``False`` there.
     It is tolerable for this probe only because ``EXPLAIN ESTIMATE`` is
     answered from part metadata and reads no column data; the wall bound is
-    therefore best-effort per probe, and the graph statement's floor - not the
-    probe's own timeout - is what protects the main read.
+    therefore best-effort per probe. What protects the main read is not the
+    probe's own timeout but, on the interactive route, the per-statement
+    re-clamp in :class:`_DeadlineBoundGraphAnalytics` (every statement is
+    asked for ``ReadDeadline.remaining_ms(...)``, and the deadline raises
+    below 25 ms) and, on the unwrapped background lane, the graph statement's
+    arithmetic floor. Single-node walls too short for that floor to be worth
+    anything do not reach this function at all - see
+    ``_GRAPH_SEED_SINGLE_NODE_MIN_WALL_MS``.
     """
 
     candidates = _raw_trace_seed_candidates(filters)
@@ -1380,10 +1403,13 @@ def _fetch_direct_raw_system_metric_graph(
         # minus the probe budget: optional pruning cannot hand the real read a
         # 1 ms timeout. The launch threshold above keeps that floor at
         # _GRAPH_SEED_ESTIMATE_WALL_MS or more, since a wall short enough for
-        # the floor to collapse toward 25 ms is never probed.
-        # Where the seed was already live the schedule and this
-        # kwarg stay exactly what that install runs today - the plain
-        # remainder - so un-gating moves nothing there.
+        # the floor to collapse toward 25 ms is never probed. On the
+        # interactive route this kwarg is re-clamped per statement by
+        # _DeadlineBoundGraphAnalytics, so the floor is an upper bound there
+        # rather than the value the service sees; it is the value the service
+        # sees on the unwrapped background lane. Where the seed was already
+        # live the schedule and this kwarg stay exactly what that install runs
+        # today - the plain remainder - so un-gating moves nothing there.
         seed_probe_floor_ms = (
             int(timeout_ms) - _graph_seed_probe_budget_ms(timeout_ms)
             if seed_probe_count and not shard_cluster
