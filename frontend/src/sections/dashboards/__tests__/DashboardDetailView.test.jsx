@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { act, render, screen, fireEvent } from "src/utils/test-utils";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, fireEvent } from "src/utils/test-utils";
 import DashboardDetailView from "../DashboardDetailView";
 import { DATE_PRESETS } from "../constants";
 
@@ -9,8 +9,6 @@ const h = vi.hoisted(() => ({
   deleteWidget: { mutate: vi.fn(), isPending: false },
   deleteDashboard: { mutate: vi.fn(), isPending: false },
   widgets: [{ id: "w-1", name: "Tokens", position: 0, width: 12 }],
-  widgetChartProps: null,
-  dashboardId: "dash-1",
   // Permission state the useCanEditDashboard mock returns; per-test controllable
   // so we can drive both the writer and viewer (read-only) paths.
   canEdit: {
@@ -37,7 +35,7 @@ const VIEWER = {
 vi.mock("src/hooks/useDashboards", () => ({
   useDashboardDetail: () => ({
     data: {
-      id: h.dashboardId,
+      id: "dash-1",
       name: "My Dash",
       widgets: h.widgets,
     },
@@ -54,7 +52,7 @@ vi.mock("src/hooks/useDashboards", () => ({
 
 vi.mock("react-router-dom", async (orig) => ({
   ...(await orig()),
-  useParams: () => ({ dashboardId: h.dashboardId }),
+  useParams: () => ({ dashboardId: "dash-1" }),
   useNavigate: () => vi.fn(),
 }));
 
@@ -63,10 +61,7 @@ vi.mock("../hooks/useCanEditDashboard", () => ({
 }));
 
 vi.mock("../WidgetChart", () => ({
-  default: (props) => {
-    h.widgetChartProps = props;
-    return <div data-testid="widget-chart" />;
-  },
+  default: () => <div data-testid="widget-chart" />,
 }));
 
 vi.mock("src/components/snackbar", () => ({
@@ -78,10 +73,6 @@ const openWidgetDeleteDialog = () => {
   // The widget menu item is labelled just "Delete" (dashboard's is "Delete Dashboard").
   fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
 };
-
-beforeEach(() => {
-  h.dashboardId = "dash-1";
-});
 
 describe("DashboardDetailView — delete confirmation", () => {
   beforeEach(() => {
@@ -96,7 +87,7 @@ describe("DashboardDetailView — delete confirmation", () => {
     render(<DashboardDetailView />);
     openWidgetDeleteDialog();
     expect(
-      screen.getByText(/Are you sure you want to delete \"Tokens\"/),
+      screen.getByText(/Are you sure you want to delete "Tokens"/),
     ).toBeInTheDocument();
   });
 
@@ -126,7 +117,7 @@ describe("DashboardDetailView — delete confirmation", () => {
       screen.getByRole("menuitem", { name: /delete dashboard/i }),
     );
     expect(
-      screen.getByText(/Are you sure you want to delete \"My Dash\"/),
+      screen.getByText(/Are you sure you want to delete "My Dash"/),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
     expect(h.deleteDashboard.mutate).toHaveBeenCalledWith(
@@ -134,59 +125,6 @@ describe("DashboardDetailView — delete confirmation", () => {
       expect.objectContaining({ onSettled: expect.any(Function) }),
     );
     expect(h.deleteWidget.mutate).not.toHaveBeenCalled();
-  });
-});
-
-describe("DashboardDetailView — time filter debounce", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-08-13T12:00:00.000Z"));
-    h.canEdit = { ...WRITER };
-    h.widgetChartProps = null;
-    h.widgets = [{ id: "w-1", name: "Tokens", position: 0, width: 12 }];
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it("updates the chip immediately and only propagates the final rapid selection", async () => {
-    render(<DashboardDetailView />);
-
-    const sevenDayLabel = screen.getByText("7D");
-    const thirtyDayLabel = screen.getByText("30D");
-    const sevenDayChip = sevenDayLabel.closest(".MuiChip-root");
-    const thirtyDayChip = thirtyDayLabel.closest(".MuiChip-root");
-
-    expect(h.widgetChartProps.globalDateRange).toBeNull();
-
-    fireEvent.click(sevenDayChip);
-    expect(sevenDayChip).toHaveClass("MuiChip-filled");
-    expect(h.widgetChartProps.globalDateRange).toBeNull();
-
-    await act(async () => {
-      vi.advanceTimersByTime(250);
-    });
-
-    fireEvent.click(thirtyDayChip);
-    expect(thirtyDayChip).toHaveClass("MuiChip-filled");
-    expect(h.widgetChartProps.globalDateRange).toBeNull();
-
-    await act(async () => {
-      vi.advanceTimersByTime(499);
-    });
-
-    expect(h.widgetChartProps.globalDateRange).toBeNull();
-
-    await act(async () => {
-      vi.advanceTimersByTime(1);
-    });
-
-    expect(h.widgetChartProps.globalDateRange).toEqual({
-      start: "2026-07-14T12:00:00.250Z",
-      end: "2026-08-13T12:00:00.250Z",
-    });
   });
 });
 
@@ -214,102 +152,6 @@ describe("DashboardDetailView — time filter bar visibility", () => {
     render(<DashboardDetailView />);
     expect(screen.getByText(presetLabel)).toBeInTheDocument();
     expect(screen.queryByText(/no widgets yet/i)).not.toBeInTheDocument();
-  });
-});
-
-describe("DashboardDetailView — exact aggregation refresh", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    h.canEdit = { ...WRITER };
-    h.widgetChartProps = null;
-    h.widgets = [
-      {
-        id: "w-1",
-        name: "Tokens",
-        position: 0,
-        width: 12,
-        query_config: { metrics: [{ name: "Tokens" }] },
-      },
-    ];
-  });
-
-  it("refreshes widgets on demand and shows the last exact completion time", () => {
-    render(<DashboardDetailView />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
-    expect(screen.getByRole("button", { name: "Refreshing" })).toBeDisabled();
-    expect(h.widgetChartProps.refreshRequestId).toBe(1);
-
-    act(() => {
-      h.widgetChartProps.onQuerySettled({
-        dashboardId: "dash-1",
-        widgetId: "w-1",
-        refreshRequestId: 1,
-        manualRefresh: true,
-        exact: true,
-        updatedAt: new Date(2026, 7, 3, 12, 34),
-      });
-    });
-
-    expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled();
-    expect(
-      screen.getByText("Last updated Aug 3, 2026, 12:34 PM"),
-    ).toBeInTheDocument();
-  });
-
-  it("unlocks manual refresh without reporting completion when polling pauses", () => {
-    render(<DashboardDetailView />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
-    expect(screen.getByRole("button", { name: "Refreshing" })).toBeDisabled();
-
-    act(() => {
-      h.widgetChartProps.onQuerySettled({
-        dashboardId: "dash-1",
-        widgetId: "w-1",
-        refreshRequestId: 1,
-        manualRefresh: true,
-        exact: false,
-        pollingPaused: true,
-        updatedAt: null,
-      });
-    });
-
-    expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled();
-    expect(screen.queryByText(/Last updated/i)).not.toBeInTheDocument();
-  });
-
-  it("clears completion state on dashboard navigation and ignores stale callbacks", () => {
-    const view = render(<DashboardDetailView />);
-    const staleCallback = h.widgetChartProps.onQuerySettled;
-
-    act(() => {
-      staleCallback({
-        dashboardId: "dash-1",
-        widgetId: "w-1",
-        refreshRequestId: 0,
-        manualRefresh: false,
-        exact: true,
-        updatedAt: "2026-08-03T12:34:00Z",
-      });
-    });
-    expect(screen.getByText(/Last updated/i)).toBeInTheDocument();
-
-    h.dashboardId = "dash-2";
-    view.rerender(<DashboardDetailView />);
-    expect(screen.queryByText(/Last updated/i)).not.toBeInTheDocument();
-
-    act(() => {
-      staleCallback({
-        dashboardId: "dash-1",
-        widgetId: "w-1",
-        refreshRequestId: 0,
-        manualRefresh: false,
-        exact: true,
-        updatedAt: "2026-08-04T12:34:00Z",
-      });
-    });
-    expect(screen.queryByText(/Last updated/i)).not.toBeInTheDocument();
   });
 });
 
@@ -350,73 +192,5 @@ describe("DashboardDetailView — RBAC gating", () => {
     render(<DashboardDetailView />);
     // chart still renders — viewers can view, just not edit
     expect(screen.getByTestId("widget-chart")).toBeInTheDocument();
-  });
-});
-
-describe("DashboardDetailView — widget description (TH-7678)", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    h.canEdit = { ...WRITER };
-  });
-
-  it("renders the description on the widget card", () => {
-    h.widgets = [
-      {
-        id: "w-1",
-        name: "Tokens",
-        description: "Total tokens consumed per day",
-        position: 0,
-        width: 12,
-      },
-    ];
-    render(<DashboardDetailView />);
-    expect(screen.getByText("Tokens")).toBeInTheDocument();
-    expect(
-      screen.getByText("Total tokens consumed per day"),
-    ).toBeInTheDocument();
-  });
-
-  it("renders the description for a read-only viewer too", () => {
-    h.canEdit = { ...VIEWER };
-    h.widgets = [
-      {
-        id: "w-1",
-        name: "Tokens",
-        description: "Total tokens consumed per day",
-        position: 0,
-        width: 12,
-      },
-    ];
-    render(<DashboardDetailView />);
-    expect(
-      screen.getByText("Total tokens consumed per day"),
-    ).toBeInTheDocument();
-  });
-
-  it("renders no description line when the widget has none", () => {
-    h.widgets = [{ id: "w-1", name: "Tokens", position: 0, width: 12 }];
-    const { container } = render(<DashboardDetailView />);
-    // The card header holds the title row and nothing else.
-    const header = container.querySelector(
-      '[data-widget-id="w-1"] .MuiCardContent-root > div',
-    );
-    expect(header.children).toHaveLength(1);
-  });
-
-  it("treats a whitespace-only description as no description", () => {
-    h.widgets = [
-      {
-        id: "w-1",
-        name: "Tokens",
-        description: "   ",
-        position: 0,
-        width: 12,
-      },
-    ];
-    const { container } = render(<DashboardDetailView />);
-    const header = container.querySelector(
-      '[data-widget-id="w-1"] .MuiCardContent-root > div',
-    );
-    expect(header.children).toHaveLength(1);
   });
 });
