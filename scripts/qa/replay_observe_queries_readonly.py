@@ -463,12 +463,16 @@ def _users_origin_limit(manager):
 
 def observe_ch_user(args):
     """Resolve the ClickHouse user; ``--user-assert`` bars the silent fallback."""
-    user = os.environ.get(_CH_USER_ENV)
     if getattr(args, "user_assert", False):
+        user = os.environ.get(_CH_USER_ENV)
         if not user:
             raise replay.ReplayError("CH_USER_NOT_CONFIGURED")
         return user
-    return user or "default"
+    # Flag off resolves EXACTLY as it did before this flag existed: only an
+    # *unset* variable falls back to ``default``. A variable set to the empty
+    # string keeps resolving to the empty string, so a misconfigured identity
+    # fails at connect instead of silently running as the ``default`` account.
+    return os.environ.get(_CH_USER_ENV, "default")
 
 
 def assert_ch_identity(args, actual):
