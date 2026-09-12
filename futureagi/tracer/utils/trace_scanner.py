@@ -22,7 +22,6 @@ except ImportError:
 from tracer.ee_boundary import distill_scan_briefs
 from tracer.models.trace_error_analysis import TraceErrorGroup
 from tracer.queries.scan_clustering import (
-    merge_duplicate_clusters,
     assign_to_cluster,
     create_cluster,
     delete_centroid,
@@ -48,7 +47,7 @@ logger = structlog.get_logger(__name__)
 
 # Scan + write in sub-chunks of this many traces so partial progress survives an
 # activity timeout (the scanner makes one LLM call per trace, serially).
-_SCAN_WRITE_CHUNK = 5
+_SCAN_WRITE_CHUNK = 1
 
 
 def scan_and_write(
@@ -98,7 +97,7 @@ def scan_and_write(
         logger.warning("no_trace_data_found", trace_ids=trace_ids)
         return []
 
-    # Scan + write in small sub-chunks so partial progress is persisted even if
+    # Scan + write in single-trace sub-chunks so partial progress is persisted even if
     # the surrounding activity hits its time limit mid-batch. Writing only after
     # scanning the whole batch (the old behavior) meant a large/slow batch that
     # exceeded the activity time_limit wrote NOTHING — silent data loss under

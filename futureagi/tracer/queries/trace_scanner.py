@@ -10,6 +10,7 @@ import json
 import re
 
 import structlog
+from django.db import transaction
 
 from tracer.models.trace_scan import TraceScanConfig, TraceScanResult
 from tracer.types.scan_types import ScanConfig, SpanData, TraceData
@@ -176,7 +177,7 @@ def fetch_trace_data(trace_ids: list[str], project_id: str) -> list[TraceData]:
         all_spans = reader.list_by_trace_ids(
             [str(t) for t in trace_ids],
             project_id=str(project_id),
-            include_heavy=False,
+            include_heavy=True,
         )
 
     # Group CH spans by trace_id while preserving CH's start_time order.
@@ -236,7 +237,14 @@ def _ch_span_to_span(span) -> SpanData:
         except (json.JSONDecodeError, TypeError):
             metadata = {}
 
-    attrs: dict[str, object] = {}
+    from tracer.services.clickhouse.v2.span_reader import merge_span_attributes
+
+    attrs = merge_span_attributes(
+        span.attrs_string,
+        span.attrs_number,
+        span.attrs_bool,
+        span.attributes_extra,
+    )
     if span.input:
         attrs["input.value"] = span.input
     if span.output:
@@ -295,6 +303,17 @@ def _ch_span_to_span(span) -> SpanData:
         duration=duration,
         status_code=status,
         span_attributes=attrs,
+        captured_context={
+            "parent_span_id": span.parent_span_id,
+            "start_time": span.start_time.isoformat() if span.start_time else None,
+            "end_time": span.end_time.isoformat() if span.end_time else None,
+            "recorded_status": span.status,
+            "status_message": span.status_message,
+            "metadata": span.metadata,
+            "span_events": span.span_events,
+            "resource_attrs": span.resource_attrs,
+            "attributes_extra": span.attributes_extra,
+        },
     )
 
 
@@ -312,7 +331,7 @@ def write_scan_results(
     Write scanner results to DB. Returns count of successfully written results.
 
     Creates TraceScanResult + TraceScanIssue per trace.
-    Failed writes still create a FAILED TraceScanResult to prevent re-scanning.
+    Parent and issue writes are atomic. A failed write stays eligible for retry.
     """
 
     from tracer.models.trace_scan import (
@@ -351,55 +370,47 @@ def write_scan_results(
                 "tools_available": result.meta.tools_available,
                 "turn_count": result.meta.turn_count,
             }
+            if getattr(result, "investigation", None):
+                meta["outcome"] = result.outcome
+                meta["investigation"] = result.investigation
 
-            scan_result = TraceScanResult.objects.create(
-                trace_id=result.trace_id,
-                project_id=project_id,
-                status=(
-                    TraceScanStatus.FAILED
-                    if result.error
-                    else TraceScanStatus.COMPLETED
-                ),
-                has_issues=result.has_issues,
-                key_moments=key_moments,
-                meta=meta,
-                scan_version=scan_version,
-                error_message=result.error,
-            )
-
-            if result.issues:
-                TraceScanIssue.objects.bulk_create(
-                    [
-                        TraceScanIssue(
-                            scan_result=scan_result,
-                            category=issue.category,
-                            group=issue.group,
-                            fix_layer=issue.fix_layer,
-                            confidence=issue.confidence,
-                            brief=issue.brief,
-                        )
-                        for issue in result.issues
-                    ]
+            with transaction.atomic():
+                scan_result = TraceScanResult.objects.create(
+                    trace_id=result.trace_id,
+                    project_id=project_id,
+                    status=(
+                        TraceScanStatus.FAILED
+                        if result.error
+                        else TraceScanStatus.COMPLETED
+                    ),
+                    has_issues=result.has_issues,
+                    key_moments=key_moments,
+                    meta=meta,
+                    scan_version=getattr(result, "scan_version", scan_version),
+                    error_message=result.error,
                 )
+                if result.issues:
+                    TraceScanIssue.objects.bulk_create(
+                        [
+                            TraceScanIssue(
+                                scan_result=scan_result,
+                                category=issue.category,
+                                group=issue.group,
+                                fix_layer=issue.fix_layer,
+                                confidence=issue.confidence,
+                                brief=issue.brief,
+                            )
+                            for issue in result.issues
+                        ]
+                    )
 
             written += 1
 
         except Exception as e:
-            logger.error(
+            logger.exception(
                 "scan_result_write_failed",
                 trace_id=result.trace_id,
-                error=str(e),
+                error_type=type(e).__name__,
             )
-            try:
-                TraceScanResult.objects.create(
-                    trace_id=result.trace_id,
-                    project_id=project_id,
-                    status=TraceScanStatus.FAILED,
-                    has_issues=False,
-                    scan_version=scan_version,
-                    error_message=f"Write failed: {e}",
-                )
-            except Exception:
-                pass
 
     return written

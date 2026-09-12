@@ -34,8 +34,9 @@ class SpanData:
     span_name: str
     duration: str
     status_code: str
-    span_attributes: Dict[str, str] = field(default_factory=dict)
+    span_attributes: Dict[str, object] = field(default_factory=dict)
     child_spans: list = field(default_factory=list)
+    captured_context: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass
@@ -55,6 +56,7 @@ class TraceData:
                 "duration": span.duration,
                 "status_code": span.status_code,
                 "span_attributes": span.span_attributes,
+                **span.captured_context,
                 "child_spans": [_span_to_dict(c) for c in span.child_spans],
             }
 

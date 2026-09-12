@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 
 from tracer.queries.trace_scanner import is_trace_sampled
 from tracer.tasks import trace_scanner as sweep
+from tracer.utils import trace_ingestion
 
 # Undecorated function: skip the activity wrapper's close_old_connections (DB).
 _run = sweep.sweep_scannable_traces._original_func
@@ -94,6 +95,34 @@ def _update(r):
     return r.cfg.no_workspace_objects.filter.return_value.update
 
 
+def test_inline_trigger_dispatches_one_trace_per_activity():
+    spans = [
+        SimpleNamespace(
+            parent_span_id=None,
+            end_time=_NOW,
+            project_id="p1",
+            trace_id=f"t{i}",
+        )
+        for i in range(3)
+    ]
+    projects = MagicMock()
+    projects.values_list.return_value = ["p1"]
+    with (
+        patch.object(trace_ingestion.Project.objects, "filter", return_value=projects),
+        patch.object(trace_ingestion, "scan_traces_task") as task,
+    ):
+        trace_ingestion._trigger_trace_scanner(spans)
+
+    assert task.apply_async.call_count == 3
+    assert sorted(
+        call.kwargs["args"][0][0] for call in task.apply_async.call_args_list
+    ) == ["t0", "t1", "t2"]
+    assert all(
+        len(call.kwargs["args"][0]) == sweep.SCAN_TASK_TRACE_LIMIT
+        for call in task.apply_async.call_args_list
+    )
+
+
 def test_dispatches_in_batches_and_parks_watermark_on_oldest_pending():
     cands = _candidates(20)
     r = _run_sweep(
@@ -103,10 +132,11 @@ def test_dispatches_in_batches_and_parks_watermark_on_oldest_pending():
 
     # last_swept_at None → cold-start floor is the lower bound.
     r.reader.root_trace_candidates.assert_called_once_with("p1", _COLD_FLOOR, _UPPER)
-    # 20 ids → batches of _SWEEP_BATCH_SIZE (15) → 2 dispatches (15 + 5).
-    assert r.task.apply_async.call_count == 2
+    # V2 scans one trace per activity so a slow full-context investigation does
+    # not consume the deadline for unrelated traces in the same serial batch.
+    assert r.task.apply_async.call_count == 20
     batches = [c.kwargs["args"][0] for c in r.task.apply_async.call_args_list]
-    assert [len(b) for b in batches] == [sweep._SWEEP_BATCH_SIZE, 5]
+    assert [len(b) for b in batches] == [sweep.SCAN_TASK_TRACE_LIMIT] * 20
     assert all(c.kwargs["args"][1] == "p1" for c in r.task.apply_async.call_args_list)
     # Watermark parks on the OLDEST candidate's created_at, NOT `upper` — the
     # cursor must not pass traces whose scan hasn't durably landed yet (that was
@@ -131,8 +161,11 @@ def test_already_scanned_filtered_before_dispatch():
         rows=[{"project_id": "p1", "sampling_rate": 1.0, "last_swept_at": None}],
         unscanned=["t1", "t3"],  # filter_already_scanned returns the UNSCANNED subset
     )
-    assert r.task.apply_async.call_count == 1
-    assert r.task.apply_async.call_args.kwargs["args"][0] == ["t1", "t3"]
+    assert r.task.apply_async.call_count == 2
+    assert [c.kwargs["args"][0] for c in r.task.apply_async.call_args_list] == [
+        ["t1"],
+        ["t3"],
+    ]
 
 
 def test_sampled_out_traces_are_not_dispatched_and_dont_pin_cursor():
@@ -142,8 +175,11 @@ def test_sampled_out_traces_are_not_dispatched_and_dont_pin_cursor():
         rows=[{"project_id": "p1", "sampling_rate": 0.5, "last_swept_at": None}],
         sampled=lambda tid, rate: tid in {"t0", "t2"},
     )
-    assert r.task.apply_async.call_count == 1
-    assert r.task.apply_async.call_args.kwargs["args"][0] == ["t0", "t2"]
+    assert r.task.apply_async.call_count == 2
+    assert [c.kwargs["args"][0] for c in r.task.apply_async.call_args_list] == [
+        ["t0"],
+        ["t2"],
+    ]
     # Cursor parks on the oldest *sampled-in* trace (t0). A sampled-out trace has
     # no marker; if it pinned the cursor it would re-roll forever.
     _update(r).assert_called_once_with(last_swept_at=dict(cands)["t0"])

@@ -12,6 +12,7 @@ from typing import Callable, List, Optional, Tuple
 
 import structlog
 from django.db import IntegrityError, transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
@@ -689,10 +690,19 @@ def get_trace_input_data(trace_ids: List[str], project_id: str) -> List[TraceInp
     fallback.
     """
     # has_issues from TraceScanResult. Only scanned traces pass the filter below.
-    scan_results = TraceScanResult.objects.filter(
-        trace_id__in=trace_ids,
-        project_id=project_id,
-    ).values_list("trace_id", "has_issues")
+    scan_results = (
+        TraceScanResult.objects.filter(
+            trace_id__in=trace_ids,
+            project_id=project_id,
+            status="completed",
+        )
+        .filter(
+            Q(has_issues=True)
+            | Q(meta__outcome="satisfied")
+            | ~Q(meta__has_key="outcome")
+        )
+        .values_list("trace_id", "has_issues")
+    )
     has_issues_map = {str(tid): hi for tid, hi in scan_results}
 
     scanned_trace_ids = [tid for tid in trace_ids if tid in has_issues_map]
