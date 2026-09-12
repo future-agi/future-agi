@@ -132,6 +132,26 @@ class RecordingAnalytics:
         return SimpleNamespace(data=[], columns=COLUMNS, query_time_ms=1)
 
 
+class SeedAdmittingAnalytics(RecordingAnalytics):
+    """Answer the seed probe with a selective estimate instead of nothing.
+
+    ``RecordingAnalytics`` returns ``data=[]`` for every statement, so its
+    candidate is always rejected and every ``direct()`` case below exercises
+    the UNSEEDED graph statement. This variant admits the candidate so the
+    seeded SQL is covered on the same public route.
+    """
+
+    def execute_ch_query(self, query, params, **kwargs):
+        self.calls.append((query, dict(params), kwargs))
+        if "EXPLAIN ESTIMATE" in query:
+            return SimpleNamespace(
+                data=[{"rows": 1_600_000, "marks": 259}],
+                columns=["parts", "rows", "marks"],
+                query_time_ms=1,
+            )
+        return SimpleNamespace(data=[], columns=COLUMNS, query_time_ms=1)
+
+
 def direct(filters, observe_type):
     analytics = RecordingAnalytics()
     result = dispatch.fetch_system_metric_graph_ch(
@@ -143,8 +163,113 @@ def direct(filters, observe_type):
         observe_type=observe_type,
     )
     assert result["query_complete"] is True
-    assert len(analytics.calls) == 1
-    return analytics.calls[0]
+    # A filtered trace graph may first spend bounded EXPLAIN ESTIMATE probes
+    # choosing a candidate seed. The graph statement is always the last one,
+    # and a span graph never probes at all.
+    if observe_type == "span":
+        assert len(analytics.calls) == 1
+    assert all("EXPLAIN ESTIMATE" in call[0] for call in analytics.calls[:-1])
+    assert "EXPLAIN ESTIMATE" not in analytics.calls[-1][0]
+    return analytics.calls[-1]
+
+
+@pytest.mark.parametrize("key", RAW_NAMES)
+def test_public_dispatch_admitted_seed_prunes_with_a_plain_trace_set(key):
+    """An ADMITTED candidate keeps the raw map routing inside the seed too."""
+    analytics = SeedAdmittingAnalytics()
+    result = dispatch.fetch_system_metric_graph_ch(
+        analytics=analytics,
+        project_id=PROJECT,
+        filters=public([window(), leaf(key, "raw-value")]),
+        interval="day",
+        metric_id="traffic",
+        observe_type="trace",
+    )
+    assert result["query_complete"] is True
+    assert result["query_count"] == 2
+    assert len(analytics.calls) == 2
+    probe_query, _, _ = analytics.calls[0]
+    query, params, _ = analytics.calls[1]
+    assert "EXPLAIN ESTIMATE" in probe_query
+    assert "trace_id IN (" in query
+    assert "FROM spans AS graph_seed_spans" in query
+    assert "GLOBAL IN" not in query
+    assert "cluster(" not in query
+    assert f"attrs_string['{key}']" in query
+    assert "spans_hourly_rollup" not in query
+    assert "tracer_eval_logger" not in query
+    assert "model_hub_score" not in query
+    # The seed only prunes: the outer read still classifies every candidate.
+    assert "graph_match_0 = 1" in query
+    assert "FINAL" not in query.upper()
+    assert any(value == "raw-value" for value in params.values())
+
+
+CLUSTER_ROUTING_SHAPES = [
+    *[
+        ({"key": key, "value": value, "kind": kind}, 1)
+        for key in RAW_NAMES
+        for kind, value in (("text", "raw-value"), ("number", 0.01), ("boolean", True))
+    ],
+    *[
+        ({"key": key, "value": value, "op": op}, probes)
+        for key in ("created_at", "start_time")
+        for op, value, probes in (
+            ("equals", "clock", 1),
+            # Negative/exclusion witnesses are not candidates, so these shapes
+            # issue no probe at all - on this release and on the previous one.
+            ("not_equals", "clock", 0),
+            ("is_null", None, 0),
+        )
+    ],
+]
+
+
+@pytest.mark.parametrize(
+    "shape,expected_probes",
+    CLUSTER_ROUTING_SHAPES,
+    ids=[
+        f"{shape['key']}-{shape.get('kind', 'text')}-{shape.get('op', 'equals')}"
+        for shape, _ in CLUSTER_ROUTING_SHAPES
+    ],
+)
+def test_cluster_env_routing_shapes_keep_the_prior_release_schedule(
+    monkeypatch,
+    shape,
+    expected_probes,
+):
+    """Un-gating the seed moves nothing on a deployment that already seeds.
+
+    These are the 27 trace-mode shapes the ``direct()`` cases below cover,
+    replayed with ``DASHBOARD_TRACE_REPLICA_SHARD_CLUSTER`` set - the path this
+    PR does not un-gate. The probe count, the per-probe grant and the rendered
+    statement must equal what the previous release produced for each shape:
+    one probe at ``min(1500, 2500)`` ms for a positive scalar witness, none
+    for an exclusion witness, and the ``cluster(...)`` + ``GLOBAL IN``
+    rendering whenever a candidate is admitted.
+    """
+    monkeypatch.setattr(
+        dispatch.settings,
+        "DASHBOARD_TRACE_REPLICA_SHARD_CLUSTER",
+        "all-sharded",
+    )
+    analytics = SeedAdmittingAnalytics()
+    result = dispatch.fetch_system_metric_graph_ch(
+        analytics=analytics,
+        project_id=PROJECT,
+        filters=public([window(), leaf(**shape)]),
+        interval="day",
+        metric_id="traffic",
+        observe_type="trace",
+    )
+
+    probes = [call for call in analytics.calls if "EXPLAIN ESTIMATE" in call[0]]
+    assert len(probes) == expected_probes
+    assert all(call[2]["timeout_ms"] == 1_500 for call in probes)
+    query = analytics.calls[-1][0]
+    assert ("trace_id GLOBAL IN (" in query) is bool(expected_probes)
+    assert "cluster('all-sharded'" in query
+    assert result["query_count"] == expected_probes + 1
 
 
 @pytest.mark.parametrize("key", RAW_NAMES)

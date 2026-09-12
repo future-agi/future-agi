@@ -10,6 +10,7 @@ Comprehensive tests covering:
 - Base query builder utilities
 """
 
+import re
 from datetime import datetime
 from unittest import mock
 
@@ -2999,6 +3000,65 @@ class TestTimeSeriesQueryBuilder:
         assert "argMax(" not in query
         assert params["graph_seed_customer"] == "customer-42"
         assert params["graph_replica_shard_count"] == 3
+
+    def test_single_node_raw_trace_graph_prunes_with_a_plain_candidate_set(self):
+        """Without a shard cluster the witness is a plain, index-usable set."""
+        from datetime import UTC, datetime
+
+        from tracer.services.clickhouse.query_builders import TimeSeriesQueryBuilder
+
+        def build(**seed):
+            return TimeSeriesQueryBuilder(
+                project_id="test-project-id",
+                filters=[
+                    {
+                        "column_id": "account_id",
+                        "filter_config": {
+                            "filter_type": "text",
+                            "filter_op": "equals",
+                            "filter_value": "acct-1",
+                            "col_type": "SPAN_ATTRIBUTE",
+                        },
+                    }
+                ],
+                interval="day",
+                exact_snapshot=True,
+                resolve_span_versions=False,
+                observe_type="trace",
+                start_date=datetime(2026, 7, 1, tzinfo=UTC),
+                end_date=datetime(2026, 8, 1, tzinfo=UTC),
+                **seed,
+            ).build()
+
+        query, params = build(
+            raw_trace_candidate_predicate=(
+                "has(span_attr_str.values, %(graph_seed_account)s)"
+            ),
+            raw_trace_candidate_params={"graph_seed_account": "acct-1"},
+        )
+
+        assert "trace_id IN (" in query
+        assert "GLOBAL IN" not in query
+        assert "cluster(" not in query
+        assert "FROM spans AS graph_seed_spans" in query
+        assert "has(span_attr_str.values, %(graph_seed_account)s)" in query
+        assert params["graph_seed_account"] == "acct-1"
+        # Exactness: the seed only adds a candidate set. Every other clause,
+        # including the per-trace classify fold, is byte-identical to the
+        # unseeded statement.
+        assert "max(graph_bucket_match_0) AS graph_match_0" in query
+        assert "graph_match_0 = 1" in query
+        assert "FINAL" not in query.upper()
+        unseeded, _ = build()
+        assert (
+            re.sub(
+                r"\n +AND trace_id IN \(.*?\n +\)",
+                "",
+                query,
+                flags=re.DOTALL,
+            )
+            == unseeded
+        )
 
     def test_exact_trace_graph_keeps_structured_witnesses_in_output_window(self):
         """Scalar witnesses are adjacent; array/map witnesses stay exact-window."""
