@@ -40,7 +40,7 @@ variables in your shell; paths must be absolute:
 The worker env file needs these values:
 
 ```dotenv
-OMEGA_DJANGO_URL=http://backend:8000
+OMEGA_DJANGO_URL=http://backend:80
 OMEGA_INTERNAL_API_SECRET_FILE=/run/omega-secrets/internal-api-key
 OMEGA_KAFKA_BROKERS=kafka:9092
 OMEGA_ENGINE_VERSION=omega-v1
@@ -61,13 +61,13 @@ Node a dedicated SELECT-only CH account. It does not receive PostgreSQL credenti
 or Django's env file. Backend grouping also needs the existing embedding service
 and centroid-write CH configuration, in addition to its PostgreSQL connection.
 
-Current account-profile compatibility is unresolved: ClickHouse `readonly=1`
-rejects changes to the query's execution/result limits, while `readonly=2`
-rejects the worker's explicit `readonly=1` override. Both failures were reproduced
-on local ClickHouse 25.3 using read-only probes. The existing query guard remains
-unchanged. Before changing it, obtain explicit approval and verify the dedicated
-account's SELECT-only grants and read-only profile; do not give Node a writable
-account to bypass this check. No database accounts or settings were changed.
+Use a dedicated account with SELECT only on the intended spans table and a
+`readonly=2` profile. This allows bounded query limits without granting writes;
+the worker must not override the account's read-only mode. Before starting Node,
+verify its identity, SELECT-only grants, absent INSERT/ALTER/DROP/CREATE grants,
+and a bounded empty-scope read. These checks passed on the current stack before
+the explicitly approved query adjustment. A `readonly=1` profile also locks query
+settings and rejects these limits. Do not use a writable account to bypass it.
 
 ## Start and stop
 
@@ -85,7 +85,12 @@ to this checkout's absolute `futureagi` directory and add
 `-f deploy/error-feed-local/compose.source.yaml` to each command. That override
 mounts only Django source read-only into the three maintenance containers; it does
 not mount any source into Node. The image must still supply compatible Python
-dependencies. It is not a deployable image release.
+dependencies, including the NLTK resources used by existing clustering imports.
+An older image without these resources cannot run read-only. For this local run,
+the current backend's existing NLTK cache was copied once into a read-only shared
+runtime volume; no replacement model or clustering implementation was used.
+The bounded `/app/backend/tfc/logs` mount supports Django's rotating file handler
+without making application source writable. It is not a deployable image release.
 
 Reconciliation runs a bounded page every 60 seconds after the previous cycle.
 Grouping drains up to 25 pending reports, then waits five seconds. A command
@@ -123,7 +128,40 @@ futureagi/.venv/bin/python -m unittest discover -s deploy/error-feed-local -p 't
 The Node image was tested as UID 1000 with a read-only root filesystem: a synced
 synthetic report survived container replacement on a separate ext4 test directory.
 The default local Docker data disk was full, so its named-volume write returned
-`ENOSPC`. This setup does not repair or prune existing Docker storage.
+`ENOSPC`. With explicit approval, three unused untagged images were subsequently
+removed. Existing containers and persistent volumes were preserved. PostgreSQL
+recovered and Kafka was restarted; the current stack's migrations through
+`tracer.0103` were applied explicitly. This Compose setup never prunes storage.
+
+### Current-stack verification
+
+`current_stack_e2e.py` defaults to a read-only prerequisite report. Its opt-in run
+creates one marked synthetic Observe project, enables Omega only there, ingests
+through the real collector, and checks the durable notification, report, existing
+grouping, Feed API and tenant-pinned gateway cost receipt. Billing emission must
+remain disabled. It uses the fixed-operation `verify_omega_current_stack` bootstrap
+command; ad-hoc Django shell execution remains forbidden. API-key files must be
+private and outside the repository. Run `--help` for required scope and paths.
+
+The September 12 current-stack attempt is **not E2E-passed**: authentication,
+project creation/configuration and both synthetic spans in ClickHouse were
+verified. The initial Kafka handoff failed because KafkaJS lacked the collector's
+Snappy codec. Adding and image-testing the pinned decoder allowed the retained
+notification to create one durable admission and investigation. Docker's socket
+forward also needed recovery after `unexpected EOF`.
+
+The first real investigation read both spans and completed four Gemini 3.8 Flash
+gateway calls ($0.013232, 10,288 input / 1,471 output tokens), but the harness
+returned `execution_status=failed`, `outcome=unknown`, with no findings. That is
+an execution failure, not a detection benchmark result. Report
+`3f74a9f7-55b2-4e82-b365-d3fa608b787e` is retained. Safe stage/budget diagnostics
+were added before a bounded replay; publication and Feed readback remain unproven.
+Gateway reports the routed name `gemini-3.8-flash`, distinct from the requested
+alias `vertex_ai/gemini-3.8-flash`; use the routed name for `--expected-model`.
+The synthetic project is retained as
+`0e3e3849-7b48-4fb4-bda3-c947ffb2025a`, trace
+`cd0f49c4-8d5c-4857-b240-45ad06b12872`; do not create another fixture merely to
+repeat read-only diagnostics.
 
 This is local integration wiring, not production readiness. Still verify provider
 accuracy for the file-tool engine, collector-to-Feed execution, gateway tenant

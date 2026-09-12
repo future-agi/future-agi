@@ -95,6 +95,16 @@ def test_operator_bootstrap_authorizes_only_explicit_commands(monkeypatch, comma
     assert operator_startup_mutation_authorized(["manage.py", command]) is True
 
 
+def test_omega_verification_requires_bootstrap_and_keeps_shell_forbidden(monkeypatch):
+    command = ["manage.py", "verify_omega_current_stack"]
+    assert guarded_management_command(command) == "verify_omega_current_stack"
+    assert operator_startup_mutation_authorized(command) is False
+    monkeypatch.setenv("SERVICE_TYPE", "bootstrap")
+    monkeypatch.setenv("STARTUP_DB_MUTATION_MODE", "operator")
+    assert operator_startup_mutation_authorized(command) is True
+    assert operator_startup_mutation_authorized(["manage.py", "shell"]) is False
+
+
 @pytest.mark.parametrize("command", ["createcachetable", "migrate"])
 def test_local_entrypoint_authorizes_explicit_database_commands(monkeypatch, command):
     monkeypatch.setenv("ENV_TYPE", "development")

@@ -70,6 +70,10 @@ class LocalRuntimeConfigTests(unittest.TestCase):
             self.assertEqual(job["entrypoint"], ["/bin/sh", "-ec"])
             self.assertEqual(job["environment"]["SERVICE_TYPE"], "bootstrap")
             self.assertEqual(job["environment"]["STARTUP_DB_MUTATION_MODE"], "operator")
+            self.assertIn(
+                "/app/backend/tfc/logs:rw,nosuid,noexec,size=134217728,mode=1777",
+                job["tmpfs"],
+            )
 
     @unittest.skipUnless(shutil.which("docker-compose"), "Compose CLI unavailable")
     def test_compose_renders_without_reading_runtime_secrets(self):

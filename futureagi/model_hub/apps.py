@@ -50,6 +50,7 @@ OPERATOR_STARTUP_MUTATION_COMMANDS = frozenset(
         "reconcile_omega_investigations",
         "register_temporal_schedules",
         "seed_system_evals",
+        "verify_omega_current_stack",
     }
 )
 OPERATOR_STARTUP_MUTATION_MODE = "operator"
