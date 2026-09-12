@@ -13,7 +13,9 @@ The same statements are then executed a second time with the three latest-state
 sources replaced by the ``SELECT * FROM spans FINAL`` shape they replaced, and
 the two arms must return the same rows over a synthetic multi-version
 population (three versions of one key, tombstones, a revival, an in-hour
-timestamp correction, one that crosses the hour, and an equal-``_version`` tie).
+timestamp correction, one that crosses the hour, and an equal-``_version`` tie)
+— **in the same order** for every statement whose outermost ``SELECT`` carries
+an ``ORDER BY``, so a page that keeps its row set but reorders it fails here.
 
 Two engines, tried in this order:
 
@@ -676,16 +678,64 @@ def test_every_latest_state_statement_parses_and_runs(engine, name):
 
 
 def _rows(text):
-    return sorted(line for line in text.splitlines() if line.strip())
+    """The result rows in the order the server returned them."""
+
+    return [line for line in text.splitlines() if line.strip()]
+
+
+def _top_level_order_by(sql):
+    """True when the outermost ``SELECT`` carries an ``ORDER BY``.
+
+    An ``ORDER BY`` inside a subquery does not decide a statement's result
+    order, so only a depth-zero one makes row order part of the contract.
+    Quotes are honoured and ``--`` comments are dropped first.
+    """
+
+    text = _strip_sql_comments(sql)
+    depth, quoted, index = 0, False, 0
+    while index < len(text):
+        char = text[index]
+        if char == "'":
+            quoted = not quoted
+        elif quoted:
+            pass
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        elif depth == 0 and text[index : index + 8].upper() == "ORDER BY":
+            return True
+        index += 1
+    return False
+
+
+# The statements whose row ORDER is part of their contract — every one except
+# the two content statements and the unfiltered anchor probe, which order
+# nothing at all. Module-owned, and pinned per statement against the rendered
+# SQL below, so a statement that loses its ``ORDER BY`` cannot quietly
+# downgrade its twin comparison to set equality.
+UNORDERED_STATEMENTS = ("content", "content_v1style", "unfiltered_anchor")
+EXPECTED_ORDERED_STATEMENTS = frozenset(
+    name for name in STATEMENT_NAMES if name not in UNORDERED_STATEMENTS
+)
 
 
 @pytest.mark.parametrize("name", STATEMENT_NAMES)
 def test_collapse_returns_the_same_rows_as_the_final_twin(engine, name):
-    """Latest state by collapse == latest state by the engine's own merge."""
+    """Latest state by collapse == latest state by the engine's own merge.
+
+    Ordered, not set-equal: for the statements that carry a top-level
+    ``ORDER BY`` the rows are compared position by position, because the order
+    is what the page shows. A collapse that returned the right rows in the
+    wrong order would pass a sorted comparison and fail this one.
+    """
 
     head_sql, head_params = statements()[name]
     twin_sql, twin_params = twin_statements()[name]
     assert "spans FINAL" in twin_sql, name
+    ordered = name in EXPECTED_ORDERED_STATEMENTS
+    assert _top_level_order_by(head_sql) is ordered, name
+    assert _top_level_order_by(twin_sql) is ordered, name
 
     head = _rows(engine.execute(bind(head_sql, head_params)))
     twin = _rows(engine.execute(bind(twin_sql, twin_params)))
@@ -696,9 +746,14 @@ def test_collapse_returns_the_same_rows_as_the_final_twin(engine, name):
     # The equal-version identity has no storage winner: FINAL keeps the last
     # row in selection order, argMax the first one it meets. Both arms must
     # still publish exactly one whole row for it — never a mixture, never two.
+    # It is dropped from the ordered comparison for that reason: its value, and
+    # so its position, may legitimately differ between the arms.
     head_tied = [row for row in head if TIED_ID in row]
     twin_tied = [row for row in twin if TIED_ID in row]
     assert len(head_tied) == len(twin_tied) <= 1, (name, head_tied, twin_tied)
-    assert [row for row in head if TIED_ID not in row] == [
-        row for row in twin if TIED_ID not in row
-    ], name
+
+    head_rest = [row for row in head if TIED_ID not in row]
+    twin_rest = [row for row in twin if TIED_ID not in row]
+    if not ordered:
+        head_rest, twin_rest = sorted(head_rest), sorted(twin_rest)
+    assert head_rest == twin_rest, name
