@@ -59,8 +59,18 @@ def voice_builder(*, days=365, leaves=None, page_size=25, **kwargs):
     )
 
 
+ESTIMATE_COLUMNS = ("database", "table", "parts", "rows", "marks")
+
+
 class RecordingTransport:
-    """Return nothing for every statement and record the slices requested."""
+    """An empty history that reports NO native progress and no estimate table.
+
+    This is the conservative end of the contract and it is deliberately kept
+    as its own transport: with no ``read_rows`` the selector may not widen a
+    slice past the lane's unprobed cap, and with no estimate columns the lane's
+    own reducer reads every probe as "unknown". Tests about widening must use
+    ``ProgressTransport``; this one pins the floor.
+    """
 
     supports_bounded_speculative_reads = False
 
@@ -85,8 +95,50 @@ class RecordingTransport:
         ]
 
 
-def walk(builder, *, max_seed_attempts=24, page_size=25):
-    transport = RecordingTransport()
+class ProgressTransport(RecordingTransport):
+    """The same empty history as reported by the production transport.
+
+    ``execute_ch_query`` returns the server's own rows-read counter and the
+    ``EXPLAIN ESTIMATE`` column set, so the two signals the width budget reads
+    are both present: a completed statement that read zero rows, and an
+    estimate table that named no part. Only together do they let an empty
+    estimate be believed as a zero and a widening be approved.
+    """
+
+    def execute_ch_query(self, query, params, *, timeout_ms, settings):
+        if query.lstrip().upper().startswith("EXPLAIN"):
+            self.probes.append(query)
+            return QueryResult(
+                data=[],
+                row_count=0,
+                backend_used="clickhouse",
+                query_time_ms=1,
+                columns=list(ESTIMATE_COLUMNS),
+                read_rows=0,
+            )
+        if "filter_slice_start_us" in params:
+            self.seeds.append((query, dict(params)))
+        return QueryResult(
+            data=[],
+            row_count=0,
+            backend_used="clickhouse",
+            query_time_ms=1,
+            read_rows=0,
+        )
+
+
+def walk(builder, *, transport=None, max_seed_attempts=24, page_size=25):
+    """Read one page with the PRODUCT's own budget defaults.
+
+    ``max_query_count`` is deliberately not passed: the view does not pass it
+    either, so the builder's own ``recommended_filter_max_query_count`` is what
+    decides the acquisition budget and therefore the probe allowance the
+    selector funds from the headroom the budget leaves. Passing 128 here - an
+    earlier revision of this helper did - zeroes that allowance and hides
+    whether the lane can widen at all.
+    """
+
+    transport = RecordingTransport() if transport is None else transport
     page = read_bounded_filter_page(
         builder=builder,
         analytics=transport,
@@ -95,7 +147,6 @@ def walk(builder, *, max_seed_attempts=24, page_size=25):
         page_number=0,
         page_size=page_size,
         deadline_ms=30_000,
-        max_query_count=128,
         max_seed_attempts=max_seed_attempts,
     )
     return transport, page
@@ -125,6 +176,19 @@ def test_short_text_voice_filter_reaches_the_trace_lane_hooks():
         == reference.recommended_filter_classify_batch_size()
     )
     assert builder.recommended_filter_max_slice_width() == timedelta(days=365)
+    # The two budget hooks the width policy is useless without: a statement
+    # budget that leaves the density probe its allowance, and a per-statement
+    # timeout that is a share of the request wall rather than the whole wall.
+    assert builder.recommended_filter_max_query_count() is None
+    assert (
+        builder.recommended_filter_max_query_count()
+        == reference.recommended_filter_max_query_count()
+    )
+    assert builder.recommended_filter_query_timeout_ms() == 9_500
+    assert (
+        builder.recommended_filter_query_timeout_ms()
+        == reference.recommended_filter_query_timeout_ms()
+    )
 
 
 @pytest.mark.parametrize(
@@ -274,12 +338,109 @@ def test_an_unusable_voice_slack_pin_is_refused_at_the_pin(hours):
 
 
 def test_a_twelve_month_voice_page_no_longer_scans_a_fortnight_per_statement():
-    transport, _ = walk(voice_builder())
+    """The floor holds even for a transport that reports no progress at all.
+
+    ``RecordingTransport`` signals neither read rows nor an estimate table, so
+    this is the one case where the budget may not widen: the lane opens at its
+    floor and stays there. The claim is only that the fortnight-per-statement
+    inflation is gone; completeness on such a transport is asserted separately.
+    """
+
+    transport, page = walk(voice_builder())
     widths = transport.slice_widths
     assert widths, "the seed lane must issue at least one statement"
     assert widths[0] == timedelta(hours=4)
     # The measured defect: all twenty-four slices were exactly 365 h wide.
     assert timedelta(hours=365) not in widths
+    # A progress-less transport cannot justify a wider slice, so twenty-four
+    # floor slices do not reach the start of a twelve-month window. This is the
+    # shared selector's unprobed cap, and the merged trace list answers the
+    # same way on the same arguments.
+    assert set(widths) == {timedelta(hours=4)}
+    assert page.complete is False
+    assert page.error_code == "scan_budget_exceeded"
+
+
+@pytest.mark.parametrize("days", [365, 30, 7])
+def test_an_empty_long_window_voice_page_is_complete_and_covers_the_window(days):
+    """A filter that matches nothing returns an empty COMPLETE page.
+
+    The width budget is only sound if it reaches the start of the request
+    window, and it reaches it by widening: the density probe approves each
+    doubling, so an empty window is crossed logarithmically instead of in
+    equal floor-width steps. Before the lane had probe headroom this page
+    returned ``scan_budget_exceeded`` after twenty-four four-hour slices -
+    four days of the twelve months asked for.
+    """
+
+    builder = voice_builder(days=days)
+    transport, page = walk(builder, transport=ProgressTransport())
+    request_start, request_end = builder.parse_time_range(builder.filters)
+    assert page.complete is True
+    assert page.error_code is None
+    assert page.rows == []
+    assert sum(transport.slice_widths, timedelta()) == request_end - request_start
+    assert max(transport.slice_widths) > timedelta(hours=4)
+    # Crossed by doubling, not in equal floor-width steps: the window is
+    # covered inside the twenty-four-attempt cap with budget left over.
+    assert len(transport.slice_widths) < 24
+
+
+def test_the_voice_lane_widens_only_on_an_approving_probe():
+    """Every slice wider than the unprobed cap is bought by a probe.
+
+    The cap is the widest slice the lane may issue on the previous statement's
+    read rows alone; past it the selector must first ask the index what the
+    candidate slice holds. So a widening is not merely correlated with a probe,
+    it is caused by one, and the probe's own recorded answer is the number the
+    width was chosen from.
+    """
+
+    transport, page = walk(voice_builder(), transport=ProgressTransport())
+    widths = transport.slice_widths
+    assert transport.probes, "the lane must be able to issue a density probe"
+    assert [round(w / timedelta(hours=1)) for w in widths[:5]] == [4, 8, 16, 32, 64]
+    probes = [a for a in page.attempts if a.kind == "seed_density_probe"]
+    assert len(probes) == len(transport.probes)
+    # An empty estimate corroborated by a completed zero-row statement reads as
+    # a zero, which is inside the row budget and approves the proposal.
+    assert {attempt.probe_rows for attempt in probes} == {0}
+    # One probe buys one widening: as many probes as widened slices.
+    assert len(probes) == sum(1 for w in widths if w > timedelta(hours=4))
+
+
+@pytest.mark.parametrize(
+    ("leaves", "inherited_max_query_count"),
+    [
+        ([attribute_filter(values=LONG_VALUES)], 128),
+        ([attribute_filter(operation="not_in")], None),
+        (
+            [
+                attribute_filter(
+                    operation="greater_than", values=3, filter_type="number"
+                )
+            ],
+            128,
+        ),
+        ([], None),
+    ],
+)
+def test_voice_shapes_off_the_lane_keep_their_statement_budget_and_wall(
+    leaves, inherited_max_query_count
+):
+    """Only the lane shape takes the trace list's budget and per-statement wall.
+
+    Both hooks are reservations every voice filtered read depends on, so the
+    change is scoped to the shape that declared the width policy: off the lane
+    the inherited answers are returned unchanged, whether that is the
+    candidate-witness delegate's whole-contract reservation or no answer at
+    all.
+    """
+
+    builder = voice_builder(leaves=leaves)
+    assert builder.filter_seed_width_policy() is None
+    assert builder.recommended_filter_max_query_count() == inherited_max_query_count
+    assert builder.recommended_filter_query_timeout_ms() == 30_000
 
 
 def test_a_voice_shape_off_the_seed_lane_keeps_its_numbered_inflation_exactly():
