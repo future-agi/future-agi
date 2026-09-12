@@ -546,45 +546,34 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
         )
 
     @staticmethod
-    def _latest_state_projection_sql(consumer_sql):
-        """Project one whole stored row per physical identity, without FINAL.
+    def _latest_state_packed_columns(consumer_sql):
+        """The stored columns one latest-state winner tuple carries.
 
-        ``argMax(tuple(<projected non-key columns>), _version)`` elects ONE
-        stored row per ReplacingMergeTree key, so no published field can come
-        from a different version than its neighbours. Equal versions have no
-        storage winner at all; packing the columns into a single tuple still
-        forbids assembling a row out of two tied versions, which is the
-        property the engine's FINAL merge provided and on which the shared
-        compiler's per-column ``argMax`` aggregates downstream depend.
+        ``argMax(tuple(<packed columns>), _version)`` elects ONE stored row per
+        ReplacingMergeTree key, so no published field can come from a different
+        version than its neighbours. Equal versions have no storage winner at
+        all; packing the columns into a single tuple still forbids assembling a
+        row out of two tied versions, which is the property the engine's FINAL
+        merge provided and on which the shared compiler's per-column ``argMax``
+        aggregates downstream depend.
 
-        The projection is the invariant floor plus every stored column
-        ``consumer_sql`` names, so an aggregate never pins a fat payload column
-        the consuming statement does not read. The shared compiler emits legacy
-        column tokens that only reach CH25 names at the rewrite boundary, so
-        resolve those names here before reading the reference set; the rewritten
-        copy is used for that decision alone and never emitted.
+        The set is the invariant floor plus every stored column ``consumer_sql``
+        names, so an aggregate never pins a fat payload column the consuming
+        statement does not read. The shared compiler emits legacy column tokens
+        that only reach CH25 names at the rewrite boundary, so resolve those
+        names here before reading the reference set; the rewritten copy is used
+        for that decision alone and never emitted.
         """
         referenced = set(
             _PHYSICAL_SPAN_COLUMN_REFERENCE_RE.findall(
                 rewrite_v1_sql_to_v2(consumer_sql)
             )
         )
-        packed = [
+        return tuple(
             column
             for column in _PHYSICAL_SPAN_COLUMNS
             if column not in _PHYSICAL_SPAN_KEY_COLUMNS
             and (column in _PHYSICAL_SPAN_FLOOR_COLUMNS or column in referenced)
-        ]
-        unpacked = [
-            f"_physical_winner.{position} AS {column}"
-            for position, column in enumerate(packed, start=1)
-        ]
-        return ",\n                   ".join(
-            [
-                *_PHYSICAL_SPAN_KEY_COLUMNS,
-                f"argMax(tuple({', '.join(packed)}), _version) AS _physical_winner",
-                *unpacked,
-            ]
         )
 
     def _latest_state_source_sql(self, alias, *, scope_sql, consumer_sql):
@@ -602,12 +591,30 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
         scope. This replaces ``SELECT * FROM spans FINAL``: predicates,
         ordering and keysets are unchanged, and the projection covers exactly
         the columns that source's consumers read.
+
+        The winner tuple is unpacked ONE LEVEL ABOVE the aggregate that builds
+        it. Unpacking it in the same SELECT would alias ``_physical_winner.N``
+        to the name of a column that ``argMax(tuple(...))`` itself names, and
+        the ClickHouse 25.3 analyzer rejects that alias cycle with
+        UNKNOWN_IDENTIFIER before it reads a byte. The trace lane's root replay
+        (``v2/query_builders/trace_list.py``) nests for the same reason.
         """
+        packed = self._latest_state_packed_columns(consumer_sql)
+        keys_sql = ", ".join(_PHYSICAL_SPAN_KEY_COLUMNS)
+        unpacked_sql = ",\n                   ".join(
+            f"_physical_winner.{position} AS {column}"
+            for position, column in enumerate(packed, start=1)
+        )
         return f"""(
-            SELECT {self._latest_state_projection_sql(consumer_sql)}
-            FROM {self.TABLE}
-            PREWHERE {scope_sql}
-            GROUP BY {_PHYSICAL_SPAN_GROUP_BY_SQL}
+            SELECT {keys_sql},
+                   {unpacked_sql}
+            FROM (
+                SELECT {keys_sql},
+                       argMax(tuple({", ".join(packed)}), _version) AS _physical_winner
+                FROM {self.TABLE}
+                PREWHERE {scope_sql}
+                GROUP BY {_PHYSICAL_SPAN_GROUP_BY_SQL}
+            ) AS replayed_{alias}
         ) AS {alias}"""
 
     def _filter_seed_source_sql(self, *, raw_key_predicate="", consumer_sql=""):
