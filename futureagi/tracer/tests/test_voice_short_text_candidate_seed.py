@@ -3,6 +3,8 @@
 from datetime import datetime, timedelta
 
 import pytest
+from clickhouse_driver.errors import Error as ClickHouseError
+from clickhouse_driver.errors import ErrorCodes
 
 from tracer.selectors.filter_seed_width import FilterSeedWidthPolicy
 from tracer.selectors.trace_filter_reads import read_bounded_filter_page
@@ -176,19 +178,17 @@ def test_short_text_voice_filter_reaches_the_trace_lane_hooks():
         == reference.recommended_filter_classify_batch_size()
     )
     assert builder.recommended_filter_max_slice_width() == timedelta(days=365)
-    # The two budget hooks the width policy is useless without: a statement
-    # budget that leaves the density probe its allowance, and a per-statement
-    # timeout that is a share of the request wall rather than the whole wall.
+    # The budget hook the width policy is useless without: a statement budget
+    # that leaves the density probe its allowance.
     assert builder.recommended_filter_max_query_count() is None
     assert (
         builder.recommended_filter_max_query_count()
         == reference.recommended_filter_max_query_count()
     )
-    assert builder.recommended_filter_query_timeout_ms() == 9_500
-    assert (
-        builder.recommended_filter_query_timeout_ms()
-        == reference.recommended_filter_query_timeout_ms()
-    )
+    # The delegate's per-statement timeout is the one answer this lane does
+    # NOT take. Voice keeps the whole request wall; see the dedicated test.
+    assert reference.recommended_filter_query_timeout_ms() == 9_500
+    assert builder.recommended_filter_query_timeout_ms() == 30_000
 
 
 @pytest.mark.parametrize(
@@ -409,6 +409,75 @@ def test_the_voice_lane_widens_only_on_an_approving_probe():
     assert len(probes) == sum(1 for w in widths if w > timedelta(hours=4))
 
 
+class EnforcingProgressTransport(ProgressTransport):
+    """A transport that honours ``timeout_ms`` as a statement deadline.
+
+    The production voice transport does not - ``AnalyticsQueryService`` calls
+    the client with ``timeout_ms=None`` and ``application_read_settings``
+    zeroes ``max_execution_time`` - so this is the pessimistic deployment: the
+    designated seed statement needs twelve seconds and is aborted with
+    ClickHouse ``TIMEOUT_EXCEEDED`` when its statement timeout is smaller.
+    """
+
+    def __init__(self, *, slow_seed_index=1, slow_ms=12_000):
+        super().__init__()
+        self.slow_seed_index = slow_seed_index
+        self.slow_ms = slow_ms
+
+    def execute_ch_query(self, query, params, *, timeout_ms, settings):
+        is_seed = not query.lstrip().upper().startswith("EXPLAIN") and (
+            "filter_slice_start_us" in params
+        )
+        if (
+            is_seed
+            and len(self.seeds) == self.slow_seed_index
+            and timeout_ms is not None
+            and timeout_ms < self.slow_ms
+        ):
+            self.seeds.append((query, dict(params)))
+            error = ClickHouseError("statement timeout")
+            error.code = ErrorCodes.TIMEOUT_EXCEEDED
+            raise error
+        return super().execute_ch_query(
+            query, params, timeout_ms=timeout_ms, settings=settings
+        )
+
+
+def test_the_voice_seed_lane_keeps_the_whole_request_wall_per_statement():
+    """The lane forwards the delegate's budget but NOT its 9.5 s timeout.
+
+    An earlier revision of this lane forwarded
+    ``recommended_filter_query_timeout_ms`` too, on the rationale that a
+    per-statement share makes the selector's halve-and-retry recovery
+    reachable. It does not: that recovery is gated on
+    ``retry_wide_read_budget``, which the voice list view never passes. On
+    this endpoint's transport the number is discarded outright, so it buys
+    nothing; where a transport does enforce it, a seed statement that would
+    have finished inside the request wall is aborted instead and the view
+    answers 503. This test pins the cheaper answer by exercising the
+    expensive transport: twelve seconds on one seed must still produce the
+    complete page.
+    """
+
+    builder = voice_builder()
+    # Not a share of the wall - the wall, which is what every other voice
+    # filtered read already answers.
+    assert builder.recommended_filter_query_timeout_ms() == 30_000
+    assert (
+        builder.recommended_filter_query_timeout_ms()
+        == voice_builder(
+            leaves=[attribute_filter(operation="not_in")]
+        ).recommended_filter_query_timeout_ms()
+    )
+
+    transport, page = walk(builder, transport=EnforcingProgressTransport())
+    request_start, request_end = builder.parse_time_range(builder.filters)
+    assert page.complete is True
+    assert page.error_code is None
+    assert [a.error_code for a in page.attempts] == [None] * len(page.attempts)
+    assert sum(transport.slice_widths, timedelta()) == request_end - request_start
+
+
 @pytest.mark.parametrize(
     ("leaves", "inherited_max_query_count"),
     [
@@ -428,13 +497,14 @@ def test_the_voice_lane_widens_only_on_an_approving_probe():
 def test_voice_shapes_off_the_lane_keep_their_statement_budget_and_wall(
     leaves, inherited_max_query_count
 ):
-    """Only the lane shape takes the trace list's budget and per-statement wall.
+    """Only the lane shape takes the trace list's statement budget.
 
-    Both hooks are reservations every voice filtered read depends on, so the
+    That hook is a reservation every voice filtered read depends on, so the
     change is scoped to the shape that declared the width policy: off the lane
-    the inherited answers are returned unchanged, whether that is the
+    the inherited answer is returned unchanged, whether that is the
     candidate-witness delegate's whole-contract reservation or no answer at
-    all.
+    all. The per-statement wall is unchanged everywhere, on the lane included,
+    which is why every row here expects the same 30 000 ms.
     """
 
     builder = voice_builder(leaves=leaves)

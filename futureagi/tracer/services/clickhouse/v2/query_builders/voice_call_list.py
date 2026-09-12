@@ -162,6 +162,13 @@ class VoiceCallListQueryBuilderV2(V2RewriteMixin, VoiceCallListQueryBuilder):
         hooks below forward to it so the bounded selector reaches them by its
         normal duck typing, with no voice branch in the selector.
 
+        One delegate answer is deliberately NOT forwarded:
+        ``recommended_filter_query_timeout_ms``. See that method on
+        ``VoiceCallListQueryBuilder`` - a smaller per-statement number is
+        measurably inert on this read path and costs a page wherever a
+        statement deadline is enforced, so the whole request wall stays the
+        answer for this lane too.
+
         ``_uses_short_text_candidate_seed`` is the whole admission test: it is
         true only when no legacy scalar, long-text, end-user or relational seed
         plan applies, which is exactly the set this delegate must not displace.
@@ -314,24 +321,6 @@ class VoiceCallListQueryBuilderV2(V2RewriteMixin, VoiceCallListQueryBuilder):
         if delegate is None:
             return super().recommended_filter_max_query_count()
         return delegate.recommended_filter_max_query_count()
-
-    def recommended_filter_query_timeout_ms(self) -> int | None:
-        """Give one seed statement a share of the wall, not the whole wall.
-
-        The inherited answer is the entire voice-list request deadline, so a
-        statement that overruns takes the request with it: the selector's
-        recovery for a slow slice is to halve it and retry, and that recovery
-        cannot fire when the per-statement timeout and the request deadline are
-        the same number. This lane may issue up to 24 seed statements plus
-        their classifiers, which is exactly the shape that recovery exists for,
-        so it takes the delegate's answer - the trace list's 9.5 s share on the
-        identical filters. Off-lane voice reads keep the whole wall.
-        """
-
-        delegate = self._short_text_candidate_delegate()
-        if delegate is None:
-            return super().recommended_filter_query_timeout_ms()
-        return delegate.recommended_filter_query_timeout_ms()
 
     def supports_filter_candidate_seed_page(self) -> bool:
         return bool(
