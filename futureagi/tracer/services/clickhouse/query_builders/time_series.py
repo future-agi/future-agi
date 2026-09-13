@@ -104,8 +104,11 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         super().__init__(project_id, **kwargs)
         self.filters = filters or []
         self.interval = interval
-        # Rewritten by whichever ``_build_*`` method produces the statement, so
-        # the published statistic can never drift from the emitted SQL.
+        # Every method that emits a statement rewrites this, so a published
+        # statistic cannot drift from the SQL that produced it. The default
+        # is what the paths that publish without emitting any statement carry
+        # (a degenerate window publishes an empty series it computed from
+        # nothing), and it is the statistic every row-level read answers.
         self.latency_statistic = self.LATENCY_STATISTIC_MEAN
         self.system_metric_filters = system_metric_filters or {}
         self.exact_snapshot = bool(exact_snapshot)
@@ -764,6 +767,9 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             scan_end_param="graph_trace_scan_end",
             candidate_trace_ids_param="graph_candidate_trace_ids",
         )
+        # Additive ``latency_sum`` over the batch; the caller divides by
+        # ``traffic_count``, so this statement contributes to a true mean.
+        self.latency_statistic = self.LATENCY_STATISTIC_MEAN
         bucket_fn = self.time_bucket_expr(self.interval)
         query = f"""
         SELECT
@@ -903,6 +909,9 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             scan_end_param="graph_partition_end",
             candidate_span_predicate=candidate_predicate,
         )
+        # Additive ``latency_sum`` over the partition; merged partitions are
+        # divided by ``traffic_count``, so this statement too means the mean.
+        self.latency_statistic = self.LATENCY_STATISTIC_MEAN
         bucket_fn = self.time_bucket_expr(self.interval)
         query = f"""
         SELECT

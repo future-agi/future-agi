@@ -1049,12 +1049,16 @@ def test_non_latency_metric_statistic_is_the_same_on_both_sources(metric_id, sta
 
 @pytest.mark.unit
 def test_exact_snapshot_latency_graph_also_names_its_statistic():
-    """The background refresh serves this same reader, so it must declare too.
+    """The third successful exit must name its statistic too.
 
-    ``tasks/exact_aggregation.py`` dispatches the ``observe-system-graph``
-    namespace straight to ``_fetch_direct_raw_system_metric_graph``, so the
-    cached ``exact_snapshot`` payload is built here and cannot be the one
-    response shape that stays silent about its statistic.
+    The shape built here is the degenerate window (``start_date >= end_date``):
+    the reader publishes ``exact_snapshot`` without emitting any statement, so
+    the statistic is the builder's ``__init__`` default rather than one written
+    beside the SQL. ``tasks/exact_aggregation.py`` dispatches the
+    ``observe-system-graph`` namespace straight back to
+    ``_fetch_direct_raw_system_metric_graph``, so a background refresh over a
+    real window takes the ``bounded_candidates`` path covered above; either way
+    this reader cannot be the one response shape that stays silent.
     """
 
     analytics = mock.Mock()

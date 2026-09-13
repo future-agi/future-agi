@@ -1237,6 +1237,24 @@ class ObserveGraphDataResultSerializer(serializers.Serializer):
     query_sampling_strata_completed = serializers.IntegerField(
         required=False, min_value=0
     )
+    metric_statistic = serializers.ChoiceField(
+        choices=(
+            "count",
+            "hourly_tdigest_p50_proxy_for_average",
+            "mean",
+            "percentage",
+            "sum",
+        ),
+        required=False,
+        help_text=(
+            "Which statistic the published series actually is. One metric_name "
+            "can carry two: latency is a true mean on every row-level read and "
+            "an hourly t-digest median on the unfiltered rollup fast path "
+            "(hourly_tdigest_p50_proxy_for_average). Absent on envelopes that "
+            "publish no series and on payloads cached before this field "
+            "existed, so consumers must treat absence as unknown."
+        ),
+    )
 
     def validate(self, attrs):
         attrs = super().validate(attrs)

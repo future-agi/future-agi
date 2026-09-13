@@ -4694,6 +4694,68 @@ def test_graph_response_contract_distinguishes_sampled_from_degraded():
 
 
 @pytest.mark.unit
+def test_graph_response_contract_declares_every_published_metric_statistic():
+    """The statistic disclosure has to reach typed clients, not just the wire.
+
+    ``metric_statistic`` is published by both system-metric graph dispatch
+    sites. Unless the response serializer declares it, it is absent from
+    swagger and from the generated TypeScript/zod client and survives only
+    because response validation is non-strict.
+    """
+
+    from tracer.serializers.filters import (
+        ObserveGraphDataErrorResultSerializer,
+        ObserveGraphDataResultSerializer,
+    )
+    from tracer.services.clickhouse.query_builders import TimeSeriesQueryBuilder
+
+    declared = set(
+        ObserveGraphDataResultSerializer().fields["metric_statistic"].choices
+    )
+    emitted = set(TimeSeriesQueryBuilder._METRIC_STATISTICS.values()) | {
+        TimeSeriesQueryBuilder.LATENCY_STATISTIC_MEAN,
+        TimeSeriesQueryBuilder.LATENCY_STATISTIC_ROLLUP_MEDIAN,
+    }
+    assert emitted <= declared
+
+    def _complete(**extra):
+        return {
+            "metric_name": "latency",
+            "data": [],
+            "query_complete": True,
+            "query_status": "complete",
+            **extra,
+        }
+
+    for statistic in sorted(emitted):
+        published = ObserveGraphDataResultSerializer(
+            data=_complete(metric_statistic=statistic)
+        )
+        assert published.is_valid(), published.errors
+        assert published.validated_data["metric_statistic"] == statistic
+
+    undeclared = ObserveGraphDataResultSerializer(
+        data=_complete(metric_statistic="p95")
+    )
+    assert not undeclared.is_valid()
+    assert "metric_statistic" in undeclared.errors
+
+    # Optional on purpose: payloads cached before the field existed, and every
+    # degraded or pending envelope, carry no statistic and must still validate.
+    absent = ObserveGraphDataResultSerializer(
+        data={"metric_name": "latency", "data": [], "query_status": "pending"}
+    )
+    assert absent.is_valid(), absent.errors
+    assert "metric_statistic" not in absent.validated_data
+
+    inherited = ObserveGraphDataErrorResultSerializer(
+        data=_complete(metric_statistic="mean", message="read failed")
+    )
+    assert inherited.is_valid(), inherited.errors
+    assert inherited.validated_data["metric_statistic"] == "mean"
+
+
+@pytest.mark.unit
 def test_graph_contract_empties_sampled_points_without_full_stratum_coverage():
     response = graph_dispatch.enforce_exact_graph_data_contract(
         {
