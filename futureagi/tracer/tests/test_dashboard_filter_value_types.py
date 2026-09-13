@@ -259,13 +259,13 @@ def test_the_exact_read_lane_keeps_the_combination_reachable_from_the_boundary()
 
         @staticmethod
         def build_metric_query(_metric):
-            raise InvalidMetricCombinationError("'Anno-Star' holds numbers")
+            raise InvalidMetricCombinationError("'rating' holds numbers")
 
     with pytest.raises(DashboardExactReadError) as excinfo:
         DashboardViewSet._prepare_metric_queries(_Builder())
 
     cause = _invalid_metric_combination_cause(excinfo.value)
-    assert str(cause) == "'Anno-Star' holds numbers"
+    assert str(cause) == "'rating' holds numbers"
 
 
 @pytest.mark.unit

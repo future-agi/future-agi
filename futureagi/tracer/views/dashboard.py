@@ -354,8 +354,10 @@ def _invalid_metric_combination_cause(
     """Return the invalid metric/filter combination behind *exc*, if any.
 
     The exact-read lane wraps a per-metric combination failure in a
-    ``DashboardExactReadError``, so the cause chain is walked rather than the
-    outermost type alone.
+    ``DashboardExactReadError``, so the explicit ``raise ... from`` chain is
+    walked rather than the outermost type alone.  Only ``__cause__`` is
+    followed: an unrelated failure raised while one of these was being handled
+    is not this failure.
     """
 
     seen: set[int] = set()
@@ -364,7 +366,7 @@ def _invalid_metric_combination_cause(
         if isinstance(current, InvalidMetricCombinationError):
             return current
         seen.add(id(current))
-        current = current.__cause__ or current.__context__
+        current = current.__cause__
     return None
 
 
