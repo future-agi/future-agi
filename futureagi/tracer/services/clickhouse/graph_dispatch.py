@@ -1231,6 +1231,7 @@ def _fetch_rollup_system_metric_graph(
         {
             "query_provenance": "materialized_rollup",
             "query_exact": False,
+            "metric_statistic": builder.metric_statistic(metric_id),
         }
     )
     return enforce_exact_graph_data_contract(response)
@@ -1337,6 +1338,7 @@ def _fetch_direct_raw_system_metric_graph(
                 "exact_snapshot" if empty_window else "bounded_candidates"
             ),
             "query_exact": empty_window,
+            "metric_statistic": builder.metric_statistic(metric_id),
         }
     )
     return enforce_exact_graph_data_contract(response)

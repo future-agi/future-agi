@@ -61,6 +61,28 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
     # Denormalized raw table (for filtered queries)
     RAW_TABLE = "spans"
 
+    # Statistic actually computed for the ``latency`` series. Every row-level
+    # source answers the true mean; ``spans_hourly_rollup`` stores a t-digest
+    # of latency and no latency sum, so the unfiltered fast path can only
+    # answer the median. The value name is the one the dashboard already
+    # publishes for the same substitution (``views/dashboard.py``).
+    LATENCY_STATISTIC_MEAN = "mean"
+    LATENCY_STATISTIC_ROLLUP_MEDIAN = "hourly_tdigest_p50_proxy_for_average"
+
+    # Statistic per metric key for every source this builder emits. Latency is
+    # absent because it is the only one that depends on the physical source.
+    _METRIC_STATISTICS: dict[str, str] = {
+        "traffic": "count",
+        "tokens": "sum",
+        "total_tokens": "sum",
+        "prompt_tokens": "sum",
+        "input_tokens": "sum",
+        "completion_tokens": "sum",
+        "output_tokens": "sum",
+        "cost": "mean",
+        "error_rate": "percentage",
+    }
+
     def __init__(
         self,
         project_id: str,
@@ -82,6 +104,9 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         super().__init__(project_id, **kwargs)
         self.filters = filters or []
         self.interval = interval
+        # Rewritten by whichever ``_build_*`` method produces the statement, so
+        # the published statistic can never drift from the emitted SQL.
+        self.latency_statistic = self.LATENCY_STATISTIC_MEAN
         self.system_metric_filters = system_metric_filters or {}
         self.exact_snapshot = bool(exact_snapshot)
         self.observe_type = str(observe_type or "span").strip().lower()
@@ -326,6 +351,16 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             "error_rate": error_rate_data,
         }
 
+    def metric_statistic(self, metric_id: str) -> str:
+        """Name the statistic the built statement computes for ``metric_id``.
+
+        Unknown keys resolve to the latency statistic, matching the metric
+        fallback in ``graph_dispatch.format_system_metric_graph``.
+        """
+
+        key = str(metric_id or "latency").strip().lower()
+        return self._METRIC_STATISTICS.get(key, self.latency_statistic)
+
     # ------------------------------------------------------------------
     # Private query builders
     # ------------------------------------------------------------------
@@ -342,9 +377,11 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         bucket_fn = self.time_bucket_expr(self.interval)
 
         # quantilesTDigestMerge returns a Tuple; index [1] is the 0.5 (median).
-        # The v2 rollup stores 3 quantiles (0.5, 0.95, 0.99) vs the legacy 4
-        # (0.5, 0.9, 0.95, 0.99) — we still surface the median as avg_latency
-        # to preserve the dashboard contract.
+        # The rollup carries no latency sum, so this statement cannot compute
+        # the mean that every row-level statement returns under the same
+        # ``avg_latency`` alias. The substitution is therefore declared on the
+        # builder and published by the caller instead of being left implicit.
+        self.latency_statistic = self.LATENCY_STATISTIC_ROLLUP_MEDIAN
         query = f"""
         SELECT
             {bucket_fn}(hour) AS time_bucket,
@@ -369,6 +406,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
 
     def _build_raw_query(self, extra_where: str) -> tuple[str, dict[str, Any]]:
         """Build a query against the raw ``spans`` table with filters applied."""
+        self.latency_statistic = self.LATENCY_STATISTIC_MEAN
         bucket_fn = self.time_bucket_expr(self.interval)
 
         query = f"""
@@ -919,6 +957,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         """
 
         assert self.start_date is not None and self.end_date is not None
+        self.latency_statistic = self.LATENCY_STATISTIC_MEAN
         if not (
             len(row_predicates) == len(output_window_only) == len(required_matches)
         ):
