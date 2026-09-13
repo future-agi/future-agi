@@ -2267,14 +2267,19 @@ class UserListQueryBuilder(BaseQueryBuilder):
     def native_span_dimension(cls, item: dict[str, Any]) -> str | None:
         """Return the span column backing a native Users system filter.
 
-        Identity rules follow ``_is_output_filter``: a raw attribute sharing
-        the name keeps its own SPAN_ATTRIBUTE compiler, eval/annotation leaves
+        Identity rules follow ``_is_output_filter``, plus the registry rule
+        ``is_native_user_id_filter`` states: a raw attribute sharing the name
+        keeps its own SPAN_ATTRIBUTE compiler whether it declares that through
+        ``col_type`` or only through ``property_id``, eval/annotation leaves
         keep the relation path, and a per-user output column wins outright.
         """
 
         if cls._filter_col_type(item) == "SPAN_ATTRIBUTE" or cls._is_relation_filter(
             item
         ):
+            return None
+        property_id = str(item.get("property_id") or item.get("propertyId") or "")
+        if property_id and not property_id.startswith("system_attribute:"):
             return None
         column_id = str(item.get("column_id") or item.get("columnId") or "")
         if column_id in cls.OUTPUT_FILTER_MAP:

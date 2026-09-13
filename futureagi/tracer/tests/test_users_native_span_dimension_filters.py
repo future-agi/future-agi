@@ -75,6 +75,26 @@ def test_raw_attribute_of_the_same_name_keeps_its_attribute_identity():
     assert manager.native_dimension_filters == {}
 
 
+@pytest.mark.parametrize("column_id", ["status", "model", "name"])
+def test_a_custom_attribute_identity_wins_without_a_col_type(column_id):
+    # FilterItemField checks property_id against col_type only when col_type is
+    # given, so a raw-attribute leaf can reach the manager declaring its
+    # identity through property_id alone.
+    raw = {
+        "column_id": column_id,
+        "property_id": f"custom_attribute:{column_id}",
+        "filter_config": {
+            "filter_type": "text",
+            "filter_op": "equals",
+            "filter_value": "x",
+        },
+    }
+    manager = manager_for(raw)
+    assert UserListQueryBuilderV2.native_span_dimension(raw) is None
+    assert manager.attribute_keys == (column_id,)
+    assert manager.native_dimension_filters == {}
+
+
 @pytest.mark.parametrize(
     ("operation", "value", "expected"),
     [
