@@ -40,6 +40,13 @@ dependencies = [
     "django-filter",
     "pyjwt",
     "stripe",
+    "daytona==0.207.0",
+    # daytona 0.207.0 transitively needs httpx-ws (which uses
+    # anyio.AsyncContextManagerMixin, absent from the pinned anyio) and
+    # urllib3>=2.1 (PoolKey.key_ca_cert_data). Constrain both so the resolved
+    # image can import the sync Daytona client.
+    "httpx-ws==0.7.2",
+    "urllib3>=2.1,<3",
     # OpenTelemetry core
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",

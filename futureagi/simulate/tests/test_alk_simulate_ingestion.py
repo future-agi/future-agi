@@ -19,10 +19,12 @@ from unittest.mock import patch
 import pytest
 
 from model_hub.models.choices import StatusType
+from model_hub.models.evals_metric import EvalTemplate
 from simulate.models import (
     AgentDefinition,
     RunTest,
     Scenarios,
+    SimulateEvalConfig,
     SimulatorAgent,
 )
 from simulate.models.test_execution import (
@@ -180,7 +182,12 @@ class TestProvisionRunTest:
             auth_client,
             name="sdk-e2e",
             personas=[
-                {"name": "Sam", "situation": "refund please", "outcome": "refunded"}
+                {
+                    "name": "Sam",
+                    "scenario_name": "Resolve a late refund",
+                    "situation": "refund please",
+                    "outcome": "refunded",
+                }
             ],
         )
         assert resp.status_code == 200, resp.content
@@ -194,11 +201,13 @@ class TestProvisionRunTest:
         )
         assert run_test.scenarios.count() == 1
         scenario = Scenarios.objects.get(id=result["scenario_ids"][0])
+        assert scenario.name == "Resolve a late refund"
+        assert not scenario.name.startswith(run_test.name)
         assert scenario.status == StatusType.COMPLETED.value
         assert scenario.metadata["persona"]["name"] == "Sam"
 
-        # A real 1-row persona dataset backs the scenario so it renders with a
-        # row and the {{persona}}/{{situation}} placeholders resolve.
+        # A real persona dataset backs the scenario so it renders with a row
+        # and the {{persona}}/{{situation}} placeholders resolve.
         from model_hub.models.develop_dataset import Cell, Row
 
         assert scenario.dataset_id is not None
@@ -211,6 +220,89 @@ class TestProvisionRunTest:
         assert cell_values["situation"] == "refund please"
         assert cell_values["outcome"] == "refunded"
         assert json.loads(cell_values["persona"])["name"] == "Sam"
+
+    def test_provision_groups_personas_as_rows_in_one_dataset(self, auth_client):
+        resp = self._provision(
+            auth_client,
+            name="refund-suite",
+            personas=[
+                {
+                    "name": "Sam",
+                    "scenario_name": "Late refund",
+                    "situation": "My refund is late",
+                    "outcome": "Explain the status",
+                },
+                {
+                    "name": "Avery",
+                    "scenario_name": "Duplicate charge",
+                    "situation": "I was charged twice",
+                    "outcome": "Reverse the duplicate",
+                },
+            ],
+        )
+        assert resp.status_code == 200, resp.content
+        result = resp.json()["result"]
+        assert len(result["scenario_ids"]) == 1
+
+        run_test = RunTest.objects.get(id=result["run_test_id"])
+        scenario = run_test.scenarios.get()
+        assert scenario.name == "refund-suite"
+        assert scenario.metadata["origin"] == "alk_sdk_ingestion_grouped"
+        assert scenario.metadata["persona_count"] == 2
+
+        from model_hub.models.develop_dataset import Cell, Dataset, Row
+
+        assert Dataset.objects.filter(id=scenario.dataset_id).count() == 1
+        rows = list(Row.objects.filter(dataset=scenario.dataset).order_by("order"))
+        assert len(rows) == 2
+        situations = [
+            Cell.objects.get(row=row, column__name="situation").value for row in rows
+        ]
+        assert situations == ["My refund is late", "I was charged twice"]
+
+        _test_execution_id, call_ids = _start_and_batch(auth_client, run_test)
+        assert len(call_ids) == 2
+        assert set(
+            CallExecution.objects.filter(id__in=call_ids).values_list(
+                "row_id", flat=True
+            )
+        ) == {row.id for row in rows}
+
+    def test_provision_voice_preserves_voice_call_type(self, auth_client):
+        resp = self._provision(
+            auth_client,
+            name="sdk-voice-e2e",
+            modality="voice",
+            personas=[{"name": "Avery", "situation": "book a ride"}],
+        )
+        assert resp.status_code == 200, resp.content
+        run_test = RunTest.objects.get(id=resp.json()["result"]["run_test_id"])
+        assert (
+            run_test.agent_definition.agent_type
+            == AgentDefinition.AgentTypeChoices.VOICE
+        )
+
+        _test_execution_id, call_ids = _start_and_batch(auth_client, run_test)
+        call = CallExecution.objects.get(id=call_ids[0])
+        assert call.simulation_call_type == CallExecution.SimulationCallType.VOICE
+
+    def test_provision_accepts_alk_chat_alias_as_text(self, auth_client):
+        resp = self._provision(
+            auth_client,
+            name="sdk-chat-e2e",
+            modality="chat",
+            personas=[{"name": "Mina", "situation": "check account status"}],
+        )
+        assert resp.status_code == 200, resp.content
+        run_test = RunTest.objects.get(id=resp.json()["result"]["run_test_id"])
+        assert (
+            run_test.agent_definition.agent_type
+            == AgentDefinition.AgentTypeChoices.TEXT
+        )
+
+        _test_execution_id, call_ids = _start_and_batch(auth_client, run_test)
+        call = CallExecution.objects.get(id=call_ids[0])
+        assert call.simulation_call_type == CallExecution.SimulationCallType.TEXT
 
     def test_provisioned_run_test_batches_one_call_per_persona(self, auth_client):
         resp = self._provision(
@@ -317,6 +409,49 @@ class TestStartTestExecution:
         )
         assert resp.status_code == 404
         assert resp.json()["status"] is False
+
+    def test_scenario_selectors_preserve_runner_order_for_saved_run(
+        self, auth_client, run_test, scenario
+    ):
+        scenario.metadata = {
+            "origin": "alk_sdk_ingestion",
+            "persona": {"scenario_key": "case-a", "persona": {"name": "A"}},
+        }
+        scenario.save(update_fields=["metadata"])
+        second = Scenarios.objects.create(
+            name="Second saved case",
+            source="second",
+            scenario_type=Scenarios.ScenarioTypes.DATASET,
+            organization=run_test.organization,
+            workspace=run_test.workspace,
+            agent_definition=run_test.agent_definition,
+            status=StatusType.COMPLETED.value,
+            metadata={
+                "origin": "alk_sdk_ingestion",
+                "persona": {
+                    "scenario_key": "case-b",
+                    "persona": {"name": "B"},
+                },
+            },
+        )
+        run_test.scenarios.add(second)
+
+        resp = auth_client.post(
+            f"{ALK_BASE}/run-tests/{run_test.id}/test-executions/",
+            {
+                "scenario_selectors": [
+                    {"scenario_key": "case-b", "persona_name": "B"},
+                    {"scenario_key": "case-a", "persona_name": "A"},
+                ]
+            },
+            format="json",
+        )
+
+        assert resp.status_code == 200, resp.content
+        assert resp.json()["result"]["scenario_ids"] == [
+            str(second.id),
+            str(scenario.id),
+        ]
 
     def test_scenario_not_on_run_test_returns_400(self, auth_client, run_test):
         other = "11111111-1111-4111-8111-111111111111"
@@ -584,6 +719,126 @@ class TestMixedResultRollup:
 @pytest.mark.api
 @pytest.mark.django_db
 class TestResultIngest:
+    def test_sealed_result_retry_is_idempotent_and_conflicting_digest_is_rejected(
+        self, auth_client, run_test
+    ):
+        _, call_ids = _start_and_batch(auth_client, run_test)
+        endpoint = f"{ALK_BASE}/call-executions/{call_ids[0]}/result/"
+        body = {
+            "status": "completed",
+            "transcript": _transcript_payload(),
+            "result_digest": "sha256:" + "a" * 64,
+            "artifact_manifest_digest": "sha256:" + "b" * 64,
+        }
+
+        first = auth_client.patch(endpoint, body, format="json")
+        retry = auth_client.patch(endpoint, body, format="json")
+        conflict = auth_client.patch(
+            endpoint,
+            {**body, "result_digest": "sha256:" + "c" * 64},
+            format="json",
+        )
+
+        assert first.status_code == 200, first.content
+        assert retry.status_code == 200, retry.content
+        assert conflict.status_code == 400
+        assert "conflicts" in str(conflict.json()).lower()
+        call = CallExecution.objects.get(id=call_ids[0])
+        assert call.call_metadata["alk_result_digest"] == "sha256:" + "a" * 64
+        assert (
+            call.call_metadata["alk_artifact_manifest_digest"] == "sha256:" + "b" * 64
+        )
+
+    def test_harness_checks_complete_external_parent_without_platform_eval_wait(
+        self, auth_client, run_test
+    ):
+        test_execution_id, call_ids = _start_and_batch(auth_client, run_test)
+        resp = auth_client.patch(
+            f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+            {
+                "status": "completed",
+                "transcript": _transcript_payload(),
+                "call_metadata": {
+                    "harness_evaluations": [{"name": "ride_booked", "passed": False}]
+                },
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.content
+
+        call = CallExecution.objects.get(id=call_ids[0])
+        execution = SimTestExecution.objects.get(id=test_execution_id)
+        assert call.call_metadata["eval_started"] is True
+        assert call.call_metadata["eval_completed"] is True
+        assert len(call.eval_outputs) == 1
+        direct_result = next(iter(call.eval_outputs.values()))
+        assert direct_result == {
+            "name": "ride_booked",
+            "output": "Failed",
+            "output_type": "Pass/Fail",
+            "reason": "",
+            "status": "completed",
+            "source": "harness",
+            "kind": "checkpoint",
+            "platform_template": "",
+        }
+        assert execution.status == SimTestExecution.ExecutionStatus.COMPLETED
+        assert execution.completed_at is not None
+        assert execution.total_calls == 1
+        assert execution.completed_calls == 1
+        assert execution.failed_calls == 0
+
+    def test_platform_judgement_is_linked_to_run_eval_config_and_output(
+        self, auth_client, run_test
+    ):
+        template = EvalTemplate.objects.create(
+            name="alk-platform-check",
+            organization=run_test.organization,
+            workspace=run_test.workspace,
+            owner="user",
+            eval_type="llm",
+            output_type_normalized="pass_fail",
+        )
+        _, call_ids = _start_and_batch(auth_client, run_test)
+
+        resp = auth_client.patch(
+            f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+            {
+                "status": "completed",
+                "transcript": _transcript_payload(),
+                "call_metadata": {
+                    "harness_evaluations": [
+                        {
+                            "name": "response_wording",
+                            "kind": "eval",
+                            "passed": True,
+                            "reason": "matched the required response",
+                            "platform_template": template.name,
+                        }
+                    ]
+                },
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.content
+
+        config = SimulateEvalConfig.objects.get(
+            run_test=run_test,
+            eval_template=template,
+            name="response_wording",
+        )
+        call = CallExecution.objects.get(id=call_ids[0])
+        assert call.eval_outputs[str(config.id)] == {
+            "name": "response_wording",
+            "output": "Passed",
+            "output_type": "Pass/Fail",
+            "reason": "matched the required response",
+            "status": "completed",
+            "source": "harness",
+            "kind": "eval",
+            "platform_template": template.name,
+        }
+
     def test_ingest_computes_metrics_and_duration(self, auth_client, run_test):
         _, call_ids = _start_and_batch(auth_client, run_test)
         call_id = call_ids[0]
@@ -902,8 +1157,102 @@ class TestRecordingUpload:
         result = resp.json()["result"]
         assert result["recording_url"].endswith(".wav")
         assert result["object_key"].startswith("alk-sim/recordings/")
+        call = CallExecution.objects.get(id=call_id)
+        assert call.recording_url == result["recording_url"]
+        assert call.recording_available is True
         # Bytes were written to the upload bucket via the storage client.
         fake_client.put_object.assert_called_once()
+
+    def test_recording_checksum_is_verified_and_duplicate_upload_is_idempotent(
+        self, auth_client, run_test
+    ):
+        import hashlib
+        from unittest.mock import MagicMock
+
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        _, call_ids = _start_and_batch(auth_client, run_test)
+        endpoint = f"{ALK_BASE}/call-executions/{call_ids[0]}/recording/"
+        content = b"RIFFdurable-audio-evidence"
+        digest = hashlib.sha256(content).hexdigest()
+        fake_client = MagicMock()
+        with (
+            patch(
+                "simulate.services.alk_simulate_ingestion.get_storage_client",
+                return_value=fake_client,
+            ),
+            patch(
+                "simulate.services.alk_simulate_ingestion.get_object_url",
+                return_value="https://storage.example.com/recording.wav",
+            ),
+        ):
+            first = auth_client.post(
+                endpoint,
+                {
+                    "file": SimpleUploadedFile("call.wav", content),
+                    "filename": "call.wav",
+                    "sha256": digest,
+                },
+                format="multipart",
+            )
+            retry = auth_client.post(
+                endpoint,
+                {
+                    "file": SimpleUploadedFile("call.wav", content),
+                    "filename": "call.wav",
+                    "sha256": "sha256:" + digest,
+                },
+                format="multipart",
+            )
+
+        assert first.status_code == retry.status_code == 200
+        assert first.json()["result"] == retry.json()["result"]
+        fake_client.put_object.assert_called_once()
+        call = CallExecution.objects.get(id=call_ids[0])
+        assert (
+            call.call_metadata["alk_recording_artifacts"]["combined"]["sha256"]
+            == digest
+        )
+
+        stereo_content = b"RIFFdifferent-stereo-evidence"
+        stereo_digest = hashlib.sha256(stereo_content).hexdigest()
+        with (
+            patch(
+                "simulate.services.alk_simulate_ingestion.get_storage_client",
+                return_value=fake_client,
+            ),
+            patch(
+                "simulate.services.alk_simulate_ingestion.get_object_url",
+                return_value="https://storage.example.com/stereo.wav",
+            ),
+        ):
+            stereo = auth_client.post(
+                endpoint,
+                {
+                    "file": SimpleUploadedFile("stereo.wav", stereo_content),
+                    "sha256": stereo_digest,
+                    "kind": "stereo",
+                },
+                format="multipart",
+            )
+        assert stereo.status_code == 200
+        call.refresh_from_db()
+        assert call.stereo_recording_url == "https://storage.example.com/stereo.wav"
+        assert (
+            call.call_metadata["alk_recording_artifacts"]["stereo"]["sha256"]
+            == stereo_digest
+        )
+
+        mismatch = auth_client.post(
+            endpoint,
+            {
+                "file": SimpleUploadedFile("call.wav", b"different"),
+                "sha256": digest,
+            },
+            format="multipart",
+        )
+        assert mismatch.status_code == 400
+        assert "sha256" in str(mismatch.json()).lower()
 
     def test_missing_file_returns_400(self, auth_client, run_test):
         _, call_ids = _start_and_batch(auth_client, run_test)
@@ -4960,8 +5309,28 @@ class TestAlkVoiceCsatScoring:
 
         call.refresh_from_db()
         assert call.conversation_metrics_data["csat_score"] == 8.0
+        assert call.call_metadata["csat_status"] == "completed"
         # eval-derived overall_score must not be clobbered
         assert call.overall_score == 3.0
+
+    def test_scores_the_recording_at_an_address_a_server_can_fetch(
+        self, auth_client, run_test
+    ):
+        """An unreachable URL is sniffed as text, so the judge scores a link, not the call."""
+        from simulate.tasks import alk_sim
+
+        call = self._completed_voice_call(auth_client, run_test)
+
+        with (
+            patch("simulate.tasks.alk_sim.close_old_connections"),
+            patch.object(
+                alk_sim, "server_reachable_url", return_value="http://minio:9000/rec.wav"
+            ),
+            patch.object(alk_sim, "_run_agent_csat", return_value=8.0) as scorer,
+        ):
+            alk_sim.calculate_alk_voice_csat_score._original_func(str(call.id))
+
+        scorer.assert_called_once_with("http://minio:9000/rec.wav")
 
     def test_idempotent_on_existing_csat_score(self, auth_client, run_test):
         from simulate.tasks import alk_sim
@@ -4979,6 +5348,7 @@ class TestAlkVoiceCsatScoring:
         scorer.assert_not_called()
         call.refresh_from_db()
         assert call.conversation_metrics_data["csat_score"] == 6.0
+        assert call.call_metadata["csat_status"] == "completed"
 
     def test_seeds_overall_score_when_unset(self, auth_client, run_test):
         from simulate.tasks import alk_sim
@@ -4995,6 +5365,49 @@ class TestAlkVoiceCsatScoring:
         call.refresh_from_db()
         assert call.conversation_metrics_data["csat_score"] == 7.0
         assert call.overall_score == 7.0
+        assert call.call_metadata["csat_status"] == "completed"
+
+    def test_failed_scorer_is_durable_and_retryable(self, auth_client, run_test):
+        from simulate.tasks import alk_sim
+
+        call = self._completed_voice_call(auth_client, run_test)
+        with (
+            patch("simulate.tasks.alk_sim.close_old_connections"),
+            patch.object(alk_sim, "_run_agent_csat", return_value=None),
+            pytest.raises(RuntimeError, match="returned no result"),
+        ):
+            alk_sim.calculate_alk_voice_csat_score._original_func(str(call.id))
+
+        call.refresh_from_db()
+        assert call.call_metadata["csat_status"] == "failed"
+        assert "returned no result" in call.call_metadata["csat_error"]
+        assert not (call.conversation_metrics_data or {}).get("csat_score")
+
+    def test_text_call_falls_back_to_call_transcript(self, auth_client, run_test):
+        from simulate.tasks import alk_sim
+
+        call = self._completed_voice_call(auth_client, run_test)
+        call.simulation_call_type = CallExecution.SimulationCallType.TEXT
+        call.recording_url = None
+        call.save(update_fields=["simulation_call_type", "recording_url"])
+        CallTranscript.objects.create(
+            call_execution=call,
+            speaker_role=CallTranscript.SpeakerRole.USER,
+            content="Thanks, that resolved my issue.",
+            start_time_ms=0,
+            end_time_ms=1000,
+        )
+
+        with (
+            patch("simulate.tasks.alk_sim.close_old_connections"),
+            patch.object(alk_sim, "_run_agent_csat", return_value=9.0) as scorer,
+        ):
+            alk_sim.calculate_alk_voice_csat_score._original_func(str(call.id))
+
+        scorer.assert_called_once_with("Customer: Thanks, that resolved my issue.")
+        call.refresh_from_db()
+        assert call.conversation_metrics_data["csat_score"] == 9.0
+        assert call.overall_score == 9.0
 
 
 def test_alk_sim_task_module_registered_for_worker():

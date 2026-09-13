@@ -166,6 +166,7 @@ const ChatTranscriptView = ({ data }) => {
         hideTalkRatioPercentages
         talkRatioLegendAlign="left"
         hideSilenceMarkers
+        enableTemporalFeatures={false}
       />
     </Box>
   );

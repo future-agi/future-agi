@@ -1,5 +1,67 @@
 # Changelog
 
+## [1.37.2](https://github.com/future-agi/future-agi/compare/v1.37.1...v1.37.2) (2026-09-10)
+
+
+### Bug Fixes
+
+* **marketplace:** make the consumer heartbeat, follow Google's state, and type usage per metric ([de70acf](https://github.com/future-agi/future-agi/commit/de70acfc87adf60030badfeb4864cf22b832beac))
+* **marketplace:** make the consumer heartbeat, follow Google's state, and type usage per metric [TH-7731] ([ab66aea](https://github.com/future-agi/future-agi/commit/ab66aea398056db402f11489e5cbc4a9e98a9819))
+* **tests:** give the marketplace reconcile subscriptions a tier ([32e5cc4](https://github.com/future-agi/future-agi/commit/32e5cc49e736c854e987facd31f47e9a60029660))
+
+## [1.37.1](https://github.com/future-agi/future-agi/compare/v1.37.0...v1.37.1) (2026-09-09)
+
+
+### Bug Fixes
+
+* **accounts:** fix Marketplace runtime errors that escaped review ([cae3a2b](https://github.com/future-agi/future-agi/commit/cae3a2b58a39c97123fc36950ecccb97e4679a58))
+
+## [1.37.0](https://github.com/future-agi/future-agi/compare/v1.36.1...v1.37.0) (2026-09-09)
+
+
+### Features
+
+* **accounts:** GCP Marketplace integration [TH-7731] ([c4157b7](https://github.com/future-agi/future-agi/commit/c4157b7647fd2aaaff78b544230e7eed34d388d4))
+
+
+### Bug Fixes
+
+* **accounts:** harden Marketplace failure paths [TH-7731] ([cb68f0b](https://github.com/future-agi/future-agi/commit/cb68f0b4f42dcd405b49c54e9a89e3732f5d50ad))
+* **accounts:** resolve latest Marketplace review findings [TH-7731] ([b364723](https://github.com/future-agi/future-agi/commit/b364723f1aa6717941ebedd895237a92d38fa332))
+* **deps:** repin restrictedpython and regenerate requirements.txt for linux/py3.11 ([c24443f](https://github.com/future-agi/future-agi/commit/c24443ff85308ba4bdd87df64eeee0786ff5eff1))
+* **tracer:** apply ground truth to Observe simple evals (TH-7896) ([1f788ef](https://github.com/future-agi/future-agi/commit/1f788ef2a610a81f84916ec03c5c00af11a888ad))
+* **tracer:** apply ground truth to Observe simple evals (TH-7896) ([4c0389d](https://github.com/future-agi/future-agi/commit/4c0389d9a7cba2f4410beb85d859294e99c5e175))
+* **tracer:** unblock bin/test migrations and format the ground truth tests ([e21ff4a](https://github.com/future-agi/future-agi/commit/e21ff4ab3bba8cd62f79380328650e026f3d1842))
+
+## [1.36.1](https://github.com/future-agi/future-agi/compare/v1.36.0...v1.36.1) (2026-09-08)
+
+
+### Bug Fixes
+
+* **observe:** consolidate filtering and query optimizations ([83ffe21](https://github.com/future-agi/future-agi/commit/83ffe21dbe9a692469597ebdc42e28493a271b83))
+
+## [1.36.0](https://github.com/future-agi/future-agi/compare/v1.35.0...v1.36.0) (2026-09-08)
+
+
+### Features
+
+* **tracer:** poll Retell for voice observability instead of webhooks ([51d3edf](https://github.com/future-agi/future-agi/commit/51d3edfbec2c746a0a3e8974a995c894ceed77be))
+
+
+### Bug Fixes
+
+* **alerts:** carry the fired issue's window and filters into View Trace [TH-7792] ([aebed6c](https://github.com/future-agi/future-agi/commit/aebed6c41def527a8ac63918dc9aa488a5b298b2))
+* **catalog:** recover snapshot startup and revision ordering ([#2593](https://github.com/future-agi/future-agi/issues/2593)) ([8bf5d70](https://github.com/future-agi/future-agi/commit/8bf5d7053502bb610cba51944a149bed38f67b09))
+* **ci:** repair the disposable-domains refresh, and block two new domains ([#2584](https://github.com/future-agi/future-agi/issues/2584)) ([b269142](https://github.com/future-agi/future-agi/commit/b2691423ff699a7ea5167a2b167ec675f127a586))
+* **gateway:** harden the provider dialog and show full session IDs ([#2595](https://github.com/future-agi/future-agi/issues/2595)) ([b5b10ec](https://github.com/future-agi/future-agi/commit/b5b10ecbbb0cdd86b2364138260650d214c48214))
+* **models:** carry the region pin into the final fallback path ([ea61285](https://github.com/future-agi/future-agi/commit/ea6128560dc32c0d2397a0d801ff37c8e5b8fee5))
+* **models:** pin gemini-3.5-flash to its serving region on the direct path ([874f419](https://github.com/future-agi/future-agi/commit/874f419831e77006624e85dd1c57c5bde5703dae))
+* **tracer:** enforce the Retell deadline inside a page; never complete a bootstrap without coverage ([a61f41e](https://github.com/future-agi/future-agi/commit/a61f41e5794082f26f74882710dbf94ff32be0cb))
+* **tracer:** page-level checkpointing and bounded hydration for the Retell poll ([9315485](https://github.com/future-agi/future-agi/commit/931548504cb2ff8436f55396bd54f0e1449d3900))
+* **tracer:** poll Retell for voice observability instead of webhooks (cherry-pick of [#2556](https://github.com/future-agi/future-agi/issues/2556)) ([7de3803](https://github.com/future-agi/future-agi/commit/7de3803360339d54c9a93621878aed845f01c618))
+* **tracer:** renumber the poll_state migration to follow 0097 on main ([0a7f04c](https://github.com/future-agi/future-agi/commit/0a7f04cf51c341551f05a7f972142c7f69e29731))
+* **traces:** scope the deep-link guard to the link's own param [TH-7792] ([4f98c72](https://github.com/future-agi/future-agi/commit/4f98c72fbf12831a53a71e1c0a3be7cd5af35ce1))
+
 ## [1.35.0](https://github.com/future-agi/future-agi/compare/v1.34.1...v1.35.0) (2026-09-04)
 
 

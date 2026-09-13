@@ -1,0 +1,93 @@
+{
+  "note": "Evals the hosted harness may offer a guest. Absent from this list means never offered, whatever exists in the database. \"visible\": false means deliberately withheld, and the entry stays so the decision is visible. Unrelated to the EvalTemplate.visible_ui column. Each name must match a definition under model_hub/system_evals/.",
+  "evals": [
+    {
+      "name": "advice_authority_boundary",
+      "visible": true
+    },
+    {
+      "name": "claim_intake_accuracy",
+      "visible": true
+    },
+    {
+      "name": "conversation_hallucination",
+      "visible": false,
+      "why": "needs a context variable, and a call has no retrieval context to bind it to"
+    },
+    {
+      "name": "customer_agent_clarification_seeking",
+      "visible": true
+    },
+    {
+      "name": "customer_agent_context_retention",
+      "visible": true
+    },
+    {
+      "name": "customer_agent_conversation_quality",
+      "visible": true
+    },
+    {
+      "name": "customer_agent_human_escalation",
+      "visible": true
+    },
+    {
+      "name": "customer_agent_interruption_handling",
+      "visible": true
+    },
+    {
+      "name": "customer_agent_language_handling",
+      "visible": true
+    },
+    {
+      "name": "customer_agent_loop_detection",
+      "visible": true
+    },
+    {
+      "name": "customer_agent_objection_handling",
+      "visible": true
+    },
+    {
+      "name": "customer_agent_prompt_conformance",
+      "visible": true
+    },
+    {
+      "name": "customer_agent_query_handling",
+      "visible": true
+    },
+    {
+      "name": "customer_agent_task_completion",
+      "visible": true
+    },
+    {
+      "name": "customer_agent_termination_handling",
+      "visible": true
+    },
+    {
+      "name": "dead_air_detection",
+      "visible": false,
+      "why": "measures the recording, not the agent: silence is mostly the caller thinking and transport latency"
+    },
+    {
+      "name": "intake_field_accuracy",
+      "visible": true
+    },
+    {
+      "name": "lead_qualification_completeness",
+      "visible": true
+    },
+    {
+      "name": "no_misselling",
+      "visible": true
+    },
+    {
+      "name": "voice_mail_detection",
+      "visible": false,
+      "why": "judges a premise a suite need not contain"
+    },
+    {
+      "name": "voicemail_handling",
+      "visible": false,
+      "why": "judges a premise a suite need not contain"
+    }
+  ]
+}

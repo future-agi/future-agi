@@ -15,6 +15,8 @@ on:
       push-latest: { required: false, type: boolean, default: false }
       free-disk:   { required: false, type: boolean, default: false }
       cache-scope: { required: true, type: string }
+      build-args:  { required: false, type: string, default: '' }   # newline-separated KEY=VALUE
+      timeout-minutes: { required: false, type: number, default: 60 }
     secrets:
       dockerhub-username: { required: true }
       dockerhub-token:    { required: true }
@@ -26,6 +28,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     environment: production
+    timeout-minutes: ${{ inputs.timeout-minutes }}
     steps:
       - name: Free up disk space
         if: inputs.free-disk
@@ -44,10 +47,16 @@ jobs:
           submodules: false
       - name: Resolve version & minor
         id: version
+        shell: bash
+        env:
+          RAW_VERSION: ${{ inputs.version }}
         run: |
           set -eu
-          v="${{ inputs.version }}"
-          if ! printf '%s' "$v" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$'; then
+          # Read the caller input from env (never ${{ }}-inlined into this script)
+          # and match with a whole-string bash regex: a crafted version can then
+          # neither inject shell here nor smuggle a newline into GITHUB_OUTPUT.
+          v="$RAW_VERSION"
+          if [[ ! "$v" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]]; then
             echo "::error::Version '$v' does not match vX.Y.Z[-suffix]"
             exit 1
           fi
@@ -55,20 +64,24 @@ jobs:
           { echo "version=$v"; echo "minor=${base%.*}"; } >> "$GITHUB_OUTPUT"
       - name: Compose tag list
         id: tags
+        env:
+          IMAGE: ${{ inputs.image }}
+          VERSION: ${{ steps.version.outputs.version }}
+          MINOR: ${{ steps.version.outputs.minor }}
+          PUSH_LATEST: ${{ inputs.push-latest }}
         run: |
           set -eu
-          version="${{ steps.version.outputs.version }}"
-          tags="${{ inputs.image }}:${version}"
-          case "$version" in
+          tags="${IMAGE}:${VERSION}"
+          case "$VERSION" in
             *-*)
               echo "Prerelease tag detected; shared minor/latest aliases will not move."
               ;;
             *)
               tags="$tags
-          ${{ inputs.image }}:${{ steps.version.outputs.minor }}"
-              if [ "${{ inputs.push-latest }}" = "true" ]; then
+          ${IMAGE}:${MINOR}"
+              if [ "$PUSH_LATEST" = "true" ]; then
                 tags="$tags
-          ${{ inputs.image }}:latest"
+          ${IMAGE}:latest"
               fi
               ;;
           esac
@@ -87,6 +100,7 @@ jobs:
           platforms: ${{ inputs.platforms }}
           push: true
           provenance: false
+          build-args: ${{ inputs.build-args }}
           tags: ${{ steps.tags.outputs.tags }}
           cache-from: type=gha,scope=${{ inputs.cache-scope }}
           cache-to: type=gha,scope=${{ inputs.cache-scope }},mode=max

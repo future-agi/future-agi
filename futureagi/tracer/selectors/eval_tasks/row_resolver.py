@@ -1248,6 +1248,7 @@ def _resolve_bounded_historical_span_ids(
             read_settings=bounded_read_settings,
             classify_read_settings=bounded_classify_read_settings,
             workflow_exact=workflow_exact,
+            exact_population_time_discovery=row_type == RowType.SPANS,
             query_timeout_ms=_EVAL_TASK_FILTER_CLASSIFY_QUERY_TIMEOUT_MS,
         )
     except (TypeError, ValueError):

@@ -1013,6 +1013,37 @@ class RunTestExecutionView(APIView):
             if gate_response is not None:
                 return gate_response
 
+            # A repository-backed ALK run owns its complete environment lifecycle. Running it
+            # again from the simulation header must therefore return to the saved harness job;
+            # the generic hosted runner can execute calls, but cannot recreate/reset that job's
+            # Compose/process environment or seeded world.
+            repository_execution = _latest_repository_harness_execution(run_test)
+            if repository_execution is not None:
+                if set(map(str, final_scenario_ids)) != set(
+                    map(str, repository_execution.scenario_ids or [])
+                ):
+                    return self.gm.bad_request(
+                        "Repository harness reruns currently require the complete saved scenario "
+                        "suite so the recreated environment and seeded worlds remain aligned."
+                    )
+                queued = _dispatch_repository_harness_rerun(
+                    repository_execution, environment_values={}
+                )
+                return Response(
+                    {
+                        "message": (
+                            "Saved harness environment restart and full simulation rerun queued"
+                        ),
+                        "execution_id": str(repository_execution.id),
+                        "run_test_id": str(run_test.id),
+                        "status": queued.get("status", {}).get("stage", "queued"),
+                        "total_scenarios": len(final_scenario_ids),
+                        "total_calls": 0,
+                        "scenario_ids": [str(value) for value in final_scenario_ids],
+                    },
+                    status=status.HTTP_200_OK,
+                )
+
             # Route to the hosted runner (released SDK) when enabled and the run
             # is eligible; otherwise fall through to the native Temporal/Celery
             # paths. Default off — existing flows are unaffected.
@@ -2513,15 +2544,23 @@ class TestExecutionDetailView(APIView):
                 test_execution.save(update_fields=["execution_metadata"])
 
             evaluated_eval_ids = set()
+            harness_eval_outputs = {}
             for eo in CallExecution.objects.filter(
                 test_execution=test_execution
             ).values_list("eval_outputs", flat=True):
                 if isinstance(eo, dict):
                     evaluated_eval_ids.update(eo.keys())
+                    for eval_id, eval_output in eo.items():
+                        if (
+                            isinstance(eval_output, dict)
+                            and eval_output.get("source") == "harness"
+                        ):
+                            harness_eval_outputs.setdefault(str(eval_id), eval_output)
             column_order, eval_columns_changed = reconcile_eval_column_order(
                 column_order=column_order,
                 eval_configs=eval_configs,
                 evaluated_eval_ids=evaluated_eval_ids,
+                harness_eval_outputs=harness_eval_outputs,
             )
             if eval_columns_changed:
                 test_execution.execution_metadata["column_order"] = column_order
@@ -2569,6 +2608,24 @@ class TestExecutionDetailView(APIView):
                     # Update test_execution's column_order with the missing columns
                     test_execution.execution_metadata["column_order"] = column_order
                     test_execution.save(update_fields=["execution_metadata"])
+
+            # CSAT is the user-facing meaning of overall_score for simulation
+            # calls.  Older executions persisted this column as hidden and
+            # labelled "Overall Score", which made completed hosted CSAT look
+            # absent even though the value was present on every call.
+            csat_column_changed = False
+            for col in column_order:
+                if not isinstance(col, dict) or col.get("id") != "overall_score":
+                    continue
+                if col.get("column_name") != "CSAT":
+                    col["column_name"] = "CSAT"
+                    csat_column_changed = True
+                if col.get("visible") is not True:
+                    col["visible"] = True
+                    csat_column_changed = True
+            if csat_column_changed:
+                test_execution.execution_metadata["column_order"] = column_order
+                test_execution.save(update_fields=["execution_metadata"])
 
             # Ensure voice executions always expose per-call system metric columns.
             if agent_type == AgentDefinition.AgentTypeChoices.VOICE:
@@ -2827,6 +2884,7 @@ class TestExecutionDetailView(APIView):
                 for col in column_order
                 if col.get("type") != "evaluation"
                 or str(col.get("id")) in eval_configs_map
+                or str(col.get("id")) in harness_eval_outputs
             ]
             response_data["error_messages"] = error_messages
             response_data["status"] = test_execution.status
@@ -6663,6 +6721,64 @@ def _hosted_execution_eligible(
     return False
 
 
+def _repository_harness_job_id(test_execution) -> str | None:
+    """Return the ALK job owning this repository-backed execution, if any.
+
+    The HostedHarnessJob relation is authoritative. Metadata is retained for
+    detached/read-model compatibility, and the strict name fallback keeps
+    already-created development runs rerunnable without redirecting native or
+    provider-only simulations.
+    """
+
+    from simulate.models import HostedHarnessJob
+
+    related_job_id = (
+        HostedHarnessJob.no_workspace_objects.filter(
+            test_execution_id=test_execution.id
+        )
+        .values_list("id", flat=True)
+        .first()
+    )
+    if related_job_id:
+        return str(related_job_id)
+
+    metadata = test_execution.execution_metadata or {}
+    explicit = str(metadata.get("harness_job_id") or "").strip()
+    if re.fullmatch(r"[0-9a-fA-F-]{36}", explicit):
+        return explicit
+    match = re.fullmatch(
+        r"harness-([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+        r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12})",
+        str(test_execution.run_test.name or ""),
+    )
+    return match.group(1) if match else None
+
+
+def _latest_repository_harness_execution(run_test):
+    """Return the newest execution belonging to a saved repository harness job."""
+
+    for execution in run_test.executions.order_by("-started_at"):
+        if _repository_harness_job_id(execution):
+            return execution
+    return None
+
+
+def _dispatch_repository_harness_rerun(
+    test_execution, *, environment_values: dict[str, str]
+) -> dict:
+    from simulate.services.harness_provider import get_harness_provider
+
+    job_id = _repository_harness_job_id(test_execution)
+    if not job_id:
+        raise ValueError("execution has no saved repository harness job")
+    return get_harness_provider().rerun_saved(
+        job_id,
+        organization=test_execution.run_test.organization,
+        workspace=test_execution.run_test.workspace,
+        environment_values=environment_values,
+    )
+
+
 def _dispatch_hosted_rerun(test_execution, call_execution_ids=None) -> str:
     """Re-dispatch a hosted execution's rerun via the simulation runner, reusing
     the existing TestExecution id. The reset CallExecution rows (PENDING, cleared
@@ -6717,6 +6833,7 @@ class CallExecutionRerunView(APIView):
         request_serializer=CallExecutionRerunSerializer,
         responses={
             200: RerunCallsResponseSerializer,
+            202: RerunCallsResponseSerializer,
             400: ErrorResponseSerializer,
             404: ErrorResponseSerializer,
             500: ErrorResponseSerializer,
@@ -6772,8 +6889,15 @@ class CallExecutionRerunView(APIView):
                 test_execution.run_test, test_execution
             )
 
-            # Validate CHAT/TEXT agents can only use eval_only rerun type.
-            if rerun_type != "eval_only" and test_execution.run_test.agent_definition:
+
+            repository_job_id = _repository_harness_job_id(test_execution)
+
+            # Validate native CHAT/TEXT agents can only use eval_only rerun type.
+            if (
+                rerun_type != "eval_only"
+                and not repository_job_id
+                and test_execution.run_test.agent_definition
+            ):
                 from simulate.services.hosted_runner import agent_field_for_run
 
                 # Same pinned version is_hosted just resolved, not the column,
@@ -6830,6 +6954,51 @@ class CallExecutionRerunView(APIView):
             if not call_executions.exists():
                 return self._gm.bad_request(
                     "No call executions found that can be rerun."
+                )
+
+            # A repository-backed ALK execution owns the target environment lifecycle. Its rerun
+            # must go back through that saved session so Compose/processes, seed/reset, agent,
+            # calls, grading and cleanup happen together. The generic hosted voice path below is
+            # intentionally retained for native/connect-only/Vapi/Retell runs.
+            if rerun_type == "call_and_eval" and repository_job_id:
+                if not select_all or call_execution_ids:
+                    return self._gm.bad_request(
+                        "Repository harness reruns currently require select_all=true so the "
+                        "saved scenario suite and isolated environment remain aligned."
+                    )
+                try:
+                    queued = _dispatch_repository_harness_rerun(
+                        test_execution,
+                        environment_values=request.validated_data.get(
+                            "environment_values", {}
+                        ),
+                    )
+                except Exception as dispatch_error:
+                    logger.exception(
+                        "repository_harness_rerun_dispatch_failed",
+                        test_execution_id=str(test_execution.id),
+                        harness_job_id=repository_job_id,
+                    )
+                    return self._gm.bad_request(
+                        f"Saved harness environment could not be restarted: {dispatch_error}"
+                    )
+                return Response(
+                    {
+                        "message": (
+                            "Saved harness environment restart and full simulation rerun queued"
+                        ),
+                        "test_execution_id": str(test_execution.id),
+                        "rerun_type": rerun_type,
+                        "total_processed": 0,
+                        "harness_job_id": repository_job_id,
+                        "harness_status": queued.get("status", {}),
+                        "successful_reruns": [],
+                        "failed_reruns": [],
+                        "success_count": 0,
+                        "failure_count": 0,
+                        "dispatch_error": None,
+                    },
+                    status=status.HTTP_202_ACCEPTED,
                 )
 
             # Process each call execution
@@ -7378,12 +7547,17 @@ class TestExecutionRerunView(APIView):
             select_all = request.validated_data.get("select_all", False)
             test_execution_ids = request.validated_data.get("test_execution_ids", [])
 
-            # Hosted executions re-run through the simulation runner (call_and_eval
-            # only); native ones keep the RerunCoordinatorWorkflow path.
-            is_hosted = _hosted_execution_eligible(run_test)
+            # Repository-uploaded agents carry their authoritative modality in
+            # the saved ALK contract. Do not apply the native AgentDefinition
+            # TEXT guard to that durable harness execution.
+            repository_execution = _latest_repository_harness_execution(run_test)
 
-            # Validate CHAT/TEXT agents can only use eval_only rerun type.
-            if rerun_type != "eval_only" and run_test.agent_definition:
+            # Validate native CHAT/TEXT agents can only use eval_only rerun type.
+            if (
+                rerun_type != "eval_only"
+                and repository_execution is None
+                and run_test.agent_definition
+            ):
                 from simulate.services.hosted_runner import agent_field_for_run
 
                 agent_type = agent_field_for_run(
@@ -7428,6 +7602,59 @@ class TestExecutionRerunView(APIView):
                     "No test executions found that can be rerun. "
                     "Executions in pending, running, or cancelling status cannot be rerun."
                 )
+
+            # The simulation-grid rerun action is a second UI route to the same operation as
+            # "Run test" above. Keep repository jobs on their saved ALK lifecycle instead of
+            # clearing their rows and dispatching the connector-only Temporal workflow.
+            if rerun_type == "call_and_eval":
+                repository_executions = [
+                    execution
+                    for execution in test_executions.order_by("-started_at")
+                    if _repository_harness_job_id(execution)
+                ]
+                if repository_executions:
+                    source_execution = repository_executions[0]
+                    try:
+                        queued = _dispatch_repository_harness_rerun(
+                            source_execution, environment_values={}
+                        )
+                    except Exception as dispatch_error:
+                        logger.exception(
+                            "repository_harness_bulk_rerun_dispatch_failed",
+                            test_execution_id=str(source_execution.id),
+                            harness_job_id=_repository_harness_job_id(source_execution),
+                        )
+                        return self._gm.bad_request(
+                            "Saved harness environment could not be restarted: "
+                            f"{dispatch_error}"
+                        )
+                    execution_ids = [
+                        str(execution.id) for execution in repository_executions
+                    ]
+                    return Response(
+                        {
+                            "message": (
+                                "Saved harness environment restart and full simulation rerun queued"
+                            ),
+                            "run_test_id": str(run_test_id),
+                            "rerun_type": rerun_type,
+                            "total_test_executions": len(execution_ids),
+                            "results": [
+                                {
+                                    "test_execution_id": str(source_execution.id),
+                                    "success_count": len(execution_ids),
+                                    "failure_count": 0,
+                                    "successful_reruns": execution_ids,
+                                    "failed_reruns": [],
+                                    "dispatch_error": None,
+                                    "harness_status": queued.get("status", {}),
+                                }
+                            ],
+                            "overall_success_count": len(execution_ids),
+                            "overall_failure_count": 0,
+                        },
+                        status=status.HTTP_200_OK,
+                    )
 
             from simulate.temporal.client import rerun_call_executions
 

@@ -1,5 +1,6 @@
 import { sentryVitePlugin } from "@sentry/vite-plugin";
 /* eslint-env node */
+import fs from "fs";
 import path from "path";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
@@ -78,6 +79,16 @@ export default defineConfig({
   },
   server: {
     port: 3031,
+    // In a git worktree, node_modules is a symlink to the main tree.
+    // Resolve the real path so Vite's FS security allows serving from it.
+    fs: {
+      allow: [
+        ".",
+        ...(fs.existsSync("node_modules") && fs.lstatSync("node_modules").isSymbolicLink()
+          ? [fs.realpathSync("node_modules")]
+          : []),
+      ],
+    },
     hmr: {
       overlay: false,
     },
