@@ -23329,13 +23329,18 @@ export interface ObserveGraphDataPointApi {
   primary_traffic?: number;
 }
 
+/**
+ * Which read produced this series; it determines query_exact.
+ */
 export type ObserveGraphDataResultApiQueryProvenance =
   (typeof ObserveGraphDataResultApiQueryProvenance)[keyof typeof ObserveGraphDataResultApiQueryProvenance];
 
 export const ObserveGraphDataResultApiQueryProvenance = {
-  materialized_rollup: "materialized_rollup",
   bounded_candidates: "bounded_candidates",
+  empty_window: "empty_window",
   exact_snapshot: "exact_snapshot",
+  materialized_rollup: "materialized_rollup",
+  server_read_policy_unavailable: "server_read_policy_unavailable",
 } as const;
 
 export type ObserveGraphDataResultApiQueryStatus =
@@ -23378,8 +23383,11 @@ export interface ObserveGraphDataResultApi {
   name?: string;
   /** Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points. */
   data: ObserveGraphDataPointApi[];
+  /** The read covered the whole requested window; nothing was truncated by a budget. */
   query_complete?: boolean;
+  /** The published values were computed from the latest physical state of every contributing span. True only for these provenances: empty_window, exact_snapshot. The live read paths answer the whole window without collapsing physical span versions, so a complete series is routinely inexact. */
   query_exact?: boolean;
+  /** Which read produced this series; it determines query_exact. */
   query_provenance?: ObserveGraphDataResultApiQueryProvenance;
   query_status?: ObserveGraphDataResultApiQueryStatus;
   query_error_code?: ObserveGraphDataResultApiQueryErrorCode;
@@ -25041,13 +25049,18 @@ export type ObserveGraphDataErrorResponseApiDetails = {
   [key: string]: string[];
 };
 
+/**
+ * Which read produced this series; it determines query_exact.
+ */
 export type ObserveGraphDataErrorResultApiQueryProvenance =
   (typeof ObserveGraphDataErrorResultApiQueryProvenance)[keyof typeof ObserveGraphDataErrorResultApiQueryProvenance];
 
 export const ObserveGraphDataErrorResultApiQueryProvenance = {
-  materialized_rollup: "materialized_rollup",
   bounded_candidates: "bounded_candidates",
+  empty_window: "empty_window",
   exact_snapshot: "exact_snapshot",
+  materialized_rollup: "materialized_rollup",
+  server_read_policy_unavailable: "server_read_policy_unavailable",
 } as const;
 
 export type ObserveGraphDataErrorResultApiQueryStatus =
@@ -25090,8 +25103,11 @@ export interface ObserveGraphDataErrorResultApi {
   name?: string;
   /** Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points. */
   data: ObserveGraphDataPointApi[];
+  /** The read covered the whole requested window; nothing was truncated by a budget. */
   query_complete?: boolean;
+  /** The published values were computed from the latest physical state of every contributing span. True only for these provenances: empty_window, exact_snapshot. The live read paths answer the whole window without collapsing physical span versions, so a complete series is routinely inexact. */
   query_exact?: boolean;
+  /** Which read produced this series; it determines query_exact. */
   query_provenance?: ObserveGraphDataErrorResultApiQueryProvenance;
   query_status?: ObserveGraphDataErrorResultApiQueryStatus;
   query_error_code?: ObserveGraphDataErrorResultApiQueryErrorCode;
@@ -31352,7 +31368,7 @@ export type TracerObservationSpanGetEvaluationDetails200 = {
 
 export type TracerObservationSpanGetGraphMethodsParams = {
   /**
-   * Deprecated compatibility parameter. Observe graphs always return complete exact data or a retryable error.
+   * Deprecated compatibility parameter. Observe graphs always return a complete series or a retryable error; whether that series is exact is declared per response by query_exact.
    */
   allow_sampled?: boolean;
   /**
@@ -31725,7 +31741,7 @@ export type TracerProjectGetUserGraphDataParams = {
 
 export type TracerProjectGetUsersAggregateGraphDataParams = {
   /**
-   * Deprecated compatibility parameter. Observe graphs always return complete exact data or a retryable error.
+   * Deprecated compatibility parameter. Observe graphs always return a complete series or a retryable error; whether that series is exact is declared per response by query_exact.
    */
   allow_sampled?: boolean;
   /**
@@ -31885,7 +31901,7 @@ export const TracerTraceSessionGetSessionFilterValuesColumn = {
 
 export type TracerTraceSessionGetSessionGraphDataParams = {
   /**
-   * Deprecated compatibility parameter. Observe graphs always return complete exact data or a retryable error.
+   * Deprecated compatibility parameter. Observe graphs always return a complete series or a retryable error; whether that series is exact is declared per response by query_exact.
    */
   allow_sampled?: boolean;
   /**
@@ -32062,7 +32078,7 @@ export type TracerTraceGetEvalNames200 = {
 
 export type TracerTraceGetGraphMethodsParams = {
   /**
-   * Deprecated compatibility parameter. Observe graphs always return complete exact data or a retryable error.
+   * Deprecated compatibility parameter. Observe graphs always return a complete series or a retryable error; whether that series is exact is declared per response by query_exact.
    */
   allow_sampled?: boolean;
   /**

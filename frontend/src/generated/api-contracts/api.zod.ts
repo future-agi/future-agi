@@ -52374,7 +52374,7 @@ export const TracerObservationSpanGetGraphMethodsQueryParams = zod.object({
     .boolean()
     .default(tracerObservationSpanGetGraphMethodsQueryAllowSampledDefault)
     .describe(
-      "Deprecated compatibility parameter. Observe graphs always return complete exact data or a retryable error.",
+      "Deprecated compatibility parameter. Observe graphs always return a complete series or a retryable error; whether that series is exact is declared per response by query_exact.",
     ),
   refresh: zod
     .boolean()
@@ -52519,11 +52519,28 @@ export const TracerObservationSpanGetGraphMethodsResponse = zod.object({
       .describe(
         "Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points.",
       ),
-    query_complete: zod.boolean().optional(),
-    query_exact: zod.boolean().optional(),
+    query_complete: zod
+      .boolean()
+      .optional()
+      .describe(
+        "The read covered the whole requested window; nothing was truncated by a budget.",
+      ),
+    query_exact: zod
+      .boolean()
+      .optional()
+      .describe(
+        "The published values were computed from the latest physical state of every contributing span. True only for these provenances: empty_window, exact_snapshot. The live read paths answer the whole window without collapsing physical span versions, so a complete series is routinely inexact.",
+      ),
     query_provenance: zod
-      .enum(["materialized_rollup", "bounded_candidates", "exact_snapshot"])
-      .optional(),
+      .enum([
+        "bounded_candidates",
+        "empty_window",
+        "exact_snapshot",
+        "materialized_rollup",
+        "server_read_policy_unavailable",
+      ])
+      .optional()
+      .describe("Which read produced this series; it determines query_exact."),
     query_status: zod
       .enum(["complete", "sampled", "degraded", "pending"])
       .optional(),
@@ -55279,7 +55296,7 @@ export const TracerProjectGetUsersAggregateGraphDataQueryParams = zod.object({
     .boolean()
     .default(tracerProjectGetUsersAggregateGraphDataQueryAllowSampledDefault)
     .describe(
-      "Deprecated compatibility parameter. Observe graphs always return complete exact data or a retryable error.",
+      "Deprecated compatibility parameter. Observe graphs always return a complete series or a retryable error; whether that series is exact is declared per response by query_exact.",
     ),
   refresh: zod
     .boolean()
@@ -55430,11 +55447,28 @@ export const TracerProjectGetUsersAggregateGraphDataResponse = zod.object({
       .describe(
         "Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points.",
       ),
-    query_complete: zod.boolean().optional(),
-    query_exact: zod.boolean().optional(),
+    query_complete: zod
+      .boolean()
+      .optional()
+      .describe(
+        "The read covered the whole requested window; nothing was truncated by a budget.",
+      ),
+    query_exact: zod
+      .boolean()
+      .optional()
+      .describe(
+        "The published values were computed from the latest physical state of every contributing span. True only for these provenances: empty_window, exact_snapshot. The live read paths answer the whole window without collapsing physical span versions, so a complete series is routinely inexact.",
+      ),
     query_provenance: zod
-      .enum(["materialized_rollup", "bounded_candidates", "exact_snapshot"])
-      .optional(),
+      .enum([
+        "bounded_candidates",
+        "empty_window",
+        "exact_snapshot",
+        "materialized_rollup",
+        "server_read_policy_unavailable",
+      ])
+      .optional()
+      .describe("Which read produced this series; it determines query_exact."),
     query_status: zod
       .enum(["complete", "sampled", "degraded", "pending"])
       .optional(),
@@ -57539,7 +57573,7 @@ export const TracerTraceSessionGetSessionGraphDataQueryParams = zod.object({
     .boolean()
     .default(tracerTraceSessionGetSessionGraphDataQueryAllowSampledDefault)
     .describe(
-      "Deprecated compatibility parameter. Observe graphs always return complete exact data or a retryable error.",
+      "Deprecated compatibility parameter. Observe graphs always return a complete series or a retryable error; whether that series is exact is declared per response by query_exact.",
     ),
   refresh: zod
     .boolean()
@@ -57684,11 +57718,28 @@ export const TracerTraceSessionGetSessionGraphDataResponse = zod.object({
       .describe(
         "Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points.",
       ),
-    query_complete: zod.boolean().optional(),
-    query_exact: zod.boolean().optional(),
+    query_complete: zod
+      .boolean()
+      .optional()
+      .describe(
+        "The read covered the whole requested window; nothing was truncated by a budget.",
+      ),
+    query_exact: zod
+      .boolean()
+      .optional()
+      .describe(
+        "The published values were computed from the latest physical state of every contributing span. True only for these provenances: empty_window, exact_snapshot. The live read paths answer the whole window without collapsing physical span versions, so a complete series is routinely inexact.",
+      ),
     query_provenance: zod
-      .enum(["materialized_rollup", "bounded_candidates", "exact_snapshot"])
-      .optional(),
+      .enum([
+        "bounded_candidates",
+        "empty_window",
+        "exact_snapshot",
+        "materialized_rollup",
+        "server_read_policy_unavailable",
+      ])
+      .optional()
+      .describe("Which read produced this series; it determines query_exact."),
     query_status: zod
       .enum(["complete", "sampled", "degraded", "pending"])
       .optional(),
@@ -58734,7 +58785,7 @@ export const TracerTraceGetGraphMethodsQueryParams = zod.object({
     .boolean()
     .default(tracerTraceGetGraphMethodsQueryAllowSampledDefault)
     .describe(
-      "Deprecated compatibility parameter. Observe graphs always return complete exact data or a retryable error.",
+      "Deprecated compatibility parameter. Observe graphs always return a complete series or a retryable error; whether that series is exact is declared per response by query_exact.",
     ),
   refresh: zod
     .boolean()
@@ -58877,11 +58928,28 @@ export const TracerTraceGetGraphMethodsResponse = zod.object({
       .describe(
         "Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points.",
       ),
-    query_complete: zod.boolean().optional(),
-    query_exact: zod.boolean().optional(),
+    query_complete: zod
+      .boolean()
+      .optional()
+      .describe(
+        "The read covered the whole requested window; nothing was truncated by a budget.",
+      ),
+    query_exact: zod
+      .boolean()
+      .optional()
+      .describe(
+        "The published values were computed from the latest physical state of every contributing span. True only for these provenances: empty_window, exact_snapshot. The live read paths answer the whole window without collapsing physical span versions, so a complete series is routinely inexact.",
+      ),
     query_provenance: zod
-      .enum(["materialized_rollup", "bounded_candidates", "exact_snapshot"])
-      .optional(),
+      .enum([
+        "bounded_candidates",
+        "empty_window",
+        "exact_snapshot",
+        "materialized_rollup",
+        "server_read_policy_unavailable",
+      ])
+      .optional()
+      .describe("Which read produced this series; it determines query_exact."),
     query_status: zod
       .enum(["complete", "sampled", "degraded", "pending"])
       .optional(),
