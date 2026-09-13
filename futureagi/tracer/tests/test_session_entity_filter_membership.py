@@ -244,6 +244,31 @@ def test_relational_leaves_have_independent_session_membership_and_keep_all_root
     assert "candidate_relational_trace_ids AS" in sql
 
 
+@pytest.mark.parametrize("org", [False, True])
+@pytest.mark.parametrize(
+    ("operation", "matches"), [("is_null", False), ("is_not_null", True)]
+)
+def test_relational_presence_operator_needs_no_candidate_scan(org, operation, matches):
+    # has_annotation is derived per row and never NULL, so a presence operator
+    # compiles to a constant. The session classifier must admit it: it reads no
+    # table, so it needs no finite candidate guard.
+    builder = _builder(
+        _filter(
+            "has_annotation",
+            None,
+            kind="boolean",
+            operation=operation,
+            source="SYSTEM_METRIC",
+        ),
+        org=org,
+    )
+    sql, _ = builder.build_filter_match_query([SESSION])
+    membership = _cte(sql, "matching_relational_sessions")
+    assert ("1 = 1" if matches else "0 = 1") in membership
+    assert "model_hub_score" not in membership
+    assert "candidate_relational_trace_ids" not in sql
+
+
 @pytest.mark.parametrize("has_second_leaf", [True, False])
 def test_fixture_cross_trace_intersection_uses_the_generated_session_grain(
     has_second_leaf,

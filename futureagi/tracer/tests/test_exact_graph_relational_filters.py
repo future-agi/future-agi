@@ -218,6 +218,65 @@ def test_has_annotation_with_no_configured_labels_is_exact(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("column_id", ["has_eval", "has_annotation", "my_annotations"])
+@pytest.mark.parametrize(
+    ("filter_op", "expected"), [("is_null", "0 = 1"), ("is_not_null", "1 = 1")]
+)
+def test_boolean_meta_presence_operators_compile_a_total_flag(
+    column_id,
+    filter_op,
+    expected,
+):
+    # These flags are derived per row and never NULL, so the graph compiles a
+    # constant instead of rejecting the leaf as an unsupported shape.
+    leaf = {
+        "column_id": column_id,
+        "filter_config": {
+            "col_type": "SYSTEM_METRIC",
+            "filter_type": "boolean",
+            "filter_op": filter_op,
+            "filter_value": None,
+        },
+    }
+    plan = compile_exact_graph_row_predicates(
+        [_time_filter(), leaf],
+        project_id=PROJECT_ID,
+        observe_type="trace",
+        annotation_label_ids=[ANNOTATION_LABEL_ID, SECOND_ANNOTATION_LABEL_ID],
+    )
+
+    assert plan.predicates == (expected,)
+    assert plan.match_condition_groups == (((0, True),),)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("wants_complete", [True, False])
+def test_has_annotation_not_equals_negates_the_requested_completeness(wants_complete):
+    leaf = {
+        "column_id": "has_annotation",
+        "filter_config": {
+            "col_type": "SYSTEM_METRIC",
+            "filter_type": "boolean",
+            "filter_op": "not_equals",
+            "filter_value": wants_complete,
+        },
+    }
+    plan = compile_exact_graph_row_predicates(
+        [_time_filter(), leaf],
+        project_id=PROJECT_ID,
+        observe_type="trace",
+        annotation_label_ids=[ANNOTATION_LABEL_ID, SECOND_ANNOTATION_LABEL_ID],
+    )
+
+    negated = not wants_complete
+    assert plan.required_matches == (negated, negated)
+    if negated:
+        assert plan.match_condition_groups == (((0, True),), ((1, True),))
+    else:
+        assert plan.match_condition_groups == (((0, False), (1, False)),)
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize("observe_type", ["trace", "span"])
 def test_has_annotation_incomplete_renders_or_of_missing_labels(observe_type):
     has_annotation = {

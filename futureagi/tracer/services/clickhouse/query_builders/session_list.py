@@ -26,7 +26,9 @@ from tracer.services.clickhouse.query_builders.base import (
 )
 from tracer.services.clickhouse.query_builders.filters import (
     ClickHouseFilterBuilder,
+    boolean_meta_presence_condition,
     build_numeric_filter_predicate,
+    parse_boolean_meta_filter,
 )
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     _attribute_plan,
@@ -464,11 +466,13 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             if column_id not in allowed_keys and column_type not in allowed_types:
                 raise ValueError("unsupported relational session filter")
             if column_id == "has_annotation" and column_type != "EVAL_METRIC":
-                self._FILTER_BUILDER_CLS._parse_boolean_meta_filter(
-                    "has_annotation",
-                    config.get("filter_value", config.get("filterValue")),
-                    config.get("filter_op") or config.get("filterOp"),
-                )
+                filter_op = config.get("filter_op") or config.get("filterOp")
+                if boolean_meta_presence_condition(filter_op) is None:
+                    parse_boolean_meta_filter(
+                        "has_annotation",
+                        config.get("filter_value", config.get("filterValue")),
+                        filter_op,
+                    )
                 if self.project_ids is not None:
                     if self.annotation_label_ids_by_project is None:
                         raise ValueError(
