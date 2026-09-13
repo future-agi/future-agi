@@ -1045,3 +1045,32 @@ def test_non_latency_metric_statistic_is_the_same_on_both_sources(metric_id, sta
     assert rollup.metric_statistic(metric_id) == statistic
     assert raw.metric_statistic(metric_id) == statistic
     assert rollup.metric_statistic("latency") != raw.metric_statistic("latency")
+
+
+@pytest.mark.unit
+def test_exact_snapshot_latency_graph_also_names_its_statistic():
+    """The background refresh serves this same reader, so it must declare too.
+
+    ``tasks/exact_aggregation.py`` dispatches the ``observe-system-graph``
+    namespace straight to ``_fetch_direct_raw_system_metric_graph``, so the
+    cached ``exact_snapshot`` payload is built here and cannot be the one
+    response shape that stays silent about its statistic.
+    """
+
+    analytics = mock.Mock()
+    response = graph_dispatch._fetch_direct_raw_system_metric_graph(
+        analytics=analytics,
+        project_id=PROJECT_ID,
+        filters=[
+            _date_filter("2026-08-01T00:00:00Z", "2026-08-01T00:00:00Z"),
+            _attribute_filter(),
+        ],
+        interval="day",
+        metric_id="latency",
+        observe_type="trace",
+        timeout_ms=django_settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS,
+    )
+
+    analytics.execute_ch_query.assert_not_called()
+    assert response["query_provenance"] == "exact_snapshot"
+    assert response["metric_statistic"] == "mean"
