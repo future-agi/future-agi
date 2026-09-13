@@ -3,6 +3,8 @@ package propertycatalog
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -107,6 +109,35 @@ func TestRevisionFenceV2MatchesCanonicalPythonAssignmentBytes(t *testing.T) {
 	}
 }
 
+func TestRevisionFenceHasNoFixedWorkspaceCountCap(t *testing.T) {
+	fences := make([]RevisionFence, 300)
+	for index := range fences {
+		fence := testRevisionFence(uint64(index+1), "building")
+		fence.WorkspaceID = fmt.Sprintf("00000000-0000-4000-8000-%012x", index+1)
+		fences[index] = fence
+	}
+	raw, err := EncodeRevisionFenceFile(fences)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "fence.json")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	provider, err := NewFileRevisionProvider(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider.now = func() time.Time {
+		value, _ := time.Parse(dateTime64Layout, "2026-08-14 12:00:00.000000")
+		return value
+	}
+	got, err := provider.CurrentRevisions(context.Background())
+	if err != nil || len(got) != len(fences) {
+		t.Fatalf("fences=%d err=%v", len(got), err)
+	}
+}
+
 func TestFileRevisionProviderValidatesDrainingBoundaryAndDeadline(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "fence.json")
 	draining := testRevisionFence(17, "draining")
@@ -134,8 +165,7 @@ func TestFileRevisionProviderValidatesDrainingBoundaryAndDeadline(t *testing.T) 
 	if err := os.WriteFile(path, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := provider.CurrentRevision(context.Background(), testOrganization, testWorkspace); err == nil ||
-		!strings.Contains(err.Error(), "deadline") {
+	if _, err := provider.CurrentRevision(context.Background(), testOrganization, testWorkspace); !errors.Is(err, ErrRevisionNotAssigned) {
 		t.Fatalf("expired drain error=%v", err)
 	}
 }
@@ -186,8 +216,7 @@ func TestFileRevisionProviderRejectsExpiredTamperedAndWritableFence(t *testing.T
 		value, _ := time.Parse(dateTime64Layout, "2026-08-14 12:03:00.000000")
 		return value
 	}
-	if _, err := provider.CurrentRevision(context.Background(), testOrganization, testWorkspace); err == nil ||
-		!strings.Contains(err.Error(), "expired") {
+	if _, err := provider.CurrentRevision(context.Background(), testOrganization, testWorkspace); !errors.Is(err, ErrRevisionNotAssigned) {
 		t.Fatalf("expired error=%v", err)
 	}
 
@@ -208,5 +237,133 @@ func TestFileRevisionProviderRejectsExpiredTamperedAndWritableFence(t *testing.T
 	if _, err := provider.CurrentRevision(context.Background(), testOrganization, testWorkspace); err == nil ||
 		!strings.Contains(err.Error(), "writable") {
 		t.Fatalf("permissions error=%v", err)
+	}
+}
+
+func TestExpiredAssignmentDoesNotBlockAnotherWorkspace(t *testing.T) {
+	for _, status := range []string{"building", "draining"} {
+		t.Run(status, func(t *testing.T) {
+			expired := testRevisionFence(17, status)
+			if status == "draining" {
+				expired.DrainDeadline = expired.ExpiresAt
+				expired.FencedSequence = 1
+			}
+			active := testRevisionFence(18, "building")
+			active.WorkspaceID = "88888888-8888-4888-8888-888888888888"
+			active.ExpiresAt = "2026-08-14 12:04:00.000000"
+			raw, err := EncodeRevisionFenceFile([]RevisionFence{expired, active})
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(t.TempDir(), "fence.json")
+			if err := os.WriteFile(path, raw, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			provider, err := NewFileRevisionProvider(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			provider.now = func() time.Time {
+				value, _ := time.Parse(dateTime64Layout, expired.ExpiresAt)
+				return value
+			}
+			fences, err := provider.CurrentRevisions(context.Background())
+			if err != nil || len(fences) != 1 || fences[0].WorkspaceID != active.WorkspaceID {
+				t.Fatalf("expired tenant blocked current tenant: fences=%+v err=%v", fences, err)
+			}
+			if _, err := provider.CurrentRevision(context.Background(), expired.OrganizationID, expired.WorkspaceID); !errors.Is(err, ErrRevisionNotAssigned) {
+				t.Fatalf("expired assignment admitted: %v", err)
+			}
+			retained, err := provider.retainedRevisionFences(context.Background())
+			if err != nil || len(retained) != 2 || retained[0].WorkspaceID != expired.WorkspaceID {
+				t.Fatalf("expired safety evidence lost: %+v %v", retained, err)
+			}
+			if err := validateRevisionFence(retained[0], provider.now()); !errors.Is(err, errRevisionFenceExpired) {
+				t.Fatalf("retention changed direct expiry validation: %v", err)
+			}
+			if fence, err := provider.CurrentRevision(context.Background(), active.OrganizationID, active.WorkspaceID); err != nil || fence.CatalogRevision != active.CatalogRevision {
+				t.Fatalf("active workspace lost its assignment: %+v %v", fence, err)
+			}
+			// Even when every assignment expires, the process can remain alive
+			// without granting any tenant authority or inventing a new lease.
+			provider.now = func() time.Time {
+				value, _ := time.Parse(dateTime64Layout, active.ExpiresAt)
+				return value
+			}
+			fences, err = provider.CurrentRevisions(context.Background())
+			if err != nil || len(fences) != 0 {
+				t.Fatalf("all expired: %+v %v", fences, err)
+			}
+			if retained, err := provider.retainedRevisionFences(context.Background()); err != nil || len(retained) != 2 {
+				t.Fatalf("all-expired safety evidence lost: %+v %v", retained, err)
+			}
+			tampered := bytes.Replace(raw, []byte(`"catalog_revision":17`), []byte(`"catalog_revision":19`), 1)
+			if err := os.WriteFile(path, tampered, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := provider.CurrentRevisions(context.Background()); err == nil || !strings.Contains(err.Error(), "digest") {
+				t.Fatalf("expired assignment hid tampering: %v", err)
+			}
+			if _, err := provider.retainedRevisionFences(context.Background()); err == nil || !strings.Contains(err.Error(), "digest") {
+				t.Fatalf("retained expired assignment hid tampering: %v", err)
+			}
+		})
+	}
+}
+
+func TestRevisionFenceReadersRejectMalformedExpiredInventory(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func([]RevisionFence) []RevisionFence
+	}{
+		{"source project", func(f []RevisionFence) []RevisionFence { f[0].ProjectIDs = []string{"invalid"}; return f }},
+		{"source window", func(f []RevisionFence) []RevisionFence { f[0].SpanUntilUS = f[0].SpanSinceUS; return f }},
+		{"issued timestamp", func(f []RevisionFence) []RevisionFence { f[0].IssuedAt = "invalid"; return f }},
+		{"expiry timestamp", func(f []RevisionFence) []RevisionFence { f[0].ExpiresAt = "invalid"; return f }},
+		{"unordered timestamps", func(f []RevisionFence) []RevisionFence { f[0].ExpiresAt = f[0].IssuedAt; return f }},
+		{"building drain boundary", func(f []RevisionFence) []RevisionFence { f[0].FencedSequence = 1; return f }},
+		{"invalid drain timestamp", func(f []RevisionFence) []RevisionFence {
+			f[0].Status, f[0].DrainDeadline = "draining", "invalid"
+			return f
+		}},
+		{"overwide expired drain", func(f []RevisionFence) []RevisionFence {
+			f[0].Status, f[0].DrainDeadline = "draining", f[0].ExpiresAt
+			f[0].IssuedAt = "2026-08-14 10:00:00.000000"
+			return f
+		}},
+		{"duplicate expired scope", func(f []RevisionFence) []RevisionFence { return append(f, f[0]) }},
+		{"duplicate expired and active scope", func(f []RevisionFence) []RevisionFence { f[1].WorkspaceID = f[0].WorkspaceID; return f }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			expired, active := testRevisionFence(17, "building"), testRevisionFence(18, "building")
+			active.WorkspaceID = testWorkspaceTwo
+			active.ExpiresAt = "2026-08-14 12:04:00.000000"
+			// Recompute the digest so structural errors cannot be hidden by a
+			// checksum failure. Only the first workspace is expired.
+			raw, err := EncodeRevisionFenceFile(test.mutate([]RevisionFence{expired, active}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(t.TempDir(), "fence.json")
+			if err := os.WriteFile(path, raw, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			provider, err := NewFileRevisionProvider(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			provider.now = func() time.Time {
+				return time.Date(2026, 8, 14, 12, 3, 0, 0, time.UTC)
+			}
+			for _, read := range []func(context.Context) ([]RevisionFence, error){provider.CurrentRevisions, provider.retainedRevisionFences} {
+				fences, err := read(context.Background())
+				if err == nil || errors.Is(err, errRevisionFenceExpired) || errors.Is(err, ErrRevisionNotAssigned) || fences != nil {
+					t.Fatalf("malformed expired inventory was not fatal: %+v %v", fences, err)
+				}
+			}
+			if _, err := provider.CurrentRevision(context.Background(), active.OrganizationID, active.WorkspaceID); err == nil || errors.Is(err, ErrRevisionNotAssigned) {
+				t.Fatalf("active lookup hid malformed expired inventory: %v", err)
+			}
+		})
 	}
 }

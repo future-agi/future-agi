@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
 import pytest
@@ -212,18 +213,16 @@ def test_final_status_plan_is_typed_map_only_with_bound_key_and_value() -> None:
         plan.seed_predicate
     )
     assert (
-        "arrayMap(x -> lowerUTF8(x), mapValues(span_attr_str))"
-        in plan.seed_predicate
+        "arrayMap(x -> lowerUTF8(x), mapValues(span_attr_str))" in plan.seed_predicate
     )
-    assert "arrayMap(x -> lower(x), mapValues(span_attr_str))" not in (
-        plan.seed_predicate
-    )
+    assert "arrayMap(x -> lower(x), mapValues(span_attr_str))" in (plan.seed_predicate)
     assert "span_attributes_raw" not in plan.seed_predicate
     assert "JSON" not in plan.seed_predicate
     assert "final_status" not in plan.seed_predicate
     assert "Rejected" not in plan.seed_predicate
     assert plan.params["latest_filter_key_0"] == "final_status"
     assert plan.params["latest_filter_param_0"] == "rejected"
+    assert plan.params["latest_filter_legacy_index_0_0"] == "rejected"
 
 
 @pytest.mark.parametrize(
@@ -248,16 +247,15 @@ def test_final_status_v2_seed_respects_trace_any_span_scope(
 
     if seed_applies_attribute:
         assert "has(attrs_string.keys, %(latest_filter_key_0)s)" in sql
-        assert (
-            "arrayMap(x -> lowerUTF8(x), mapValues(attrs_string))" in sql
-        )
-        assert "arrayMap(x -> lower(x), mapValues(attrs_string))" not in sql
+        assert "arrayMap(x -> lowerUTF8(x), mapValues(attrs_string))" in sql
+        assert "arrayMap(x -> lower(x), mapValues(attrs_string))" in sql
         assert (
             "lowerUTF8(toString(attrs_string[%(latest_filter_key_0)s])) = "
             "%(latest_filter_param_0)s" in sql
         )
         assert params["latest_filter_key_0"] == "final_status"
         assert params["latest_filter_param_0"] == "rejected"
+        assert params["latest_filter_legacy_index_0_0"] == "rejected"
     else:
         assert "mapContains(attrs_string" not in sql
         assert "mapValues(attrs_string)" not in sql
@@ -368,8 +366,17 @@ def test_final_status_v2_match_classifies_latest_typed_map_state_only() -> None:
 
     sql, params = builder.build_filter_match_query(["trace-a"])
 
-    assert "argMax(mapContains(attrs_string" in sql
-    assert "argMax(attrs_string[" in sql
+    # Presence and value must come from the same complete physical winner.
+    # Independent argMax calls can choose different rows on a version tie.
+    assert re.search(
+        r"(?s)argMax\(tuple\(.*mapContains\(attrs_string.*attrs_string\[.*"
+        r"\), _version\) AS _physical_winner",
+        sql,
+    )
+    for alias in ("latest_attr_exists_0", "latest_attr_value_0"):
+        assert re.search(rf"_physical_winner\.\d+ AS {alias}\b", sql)
+    assert "argMax(mapContains(attrs_string" not in sql
+    assert "argMax(attrs_string[" not in sql
     assert "attributes_extra" not in sql
     assert "JSONType" not in sql
     assert params["candidate_trace_ids"] == ("trace-a",)

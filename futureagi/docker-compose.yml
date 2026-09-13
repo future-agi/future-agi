@@ -422,7 +422,7 @@ services:
   # ===========================================
 
   minio:
-    image: minio/minio:RELEASE.2025-02-07T23-21-09Z
+    image: quay.io/minio/minio:RELEASE.2025-02-07T23-21-09Z
     container_name: minio
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
@@ -433,20 +433,6 @@ services:
       - "${MINIO_API_PORT:-9005}:9000"
       - "${MINIO_CONSOLE_PORT:-9006}:9001"
     command: server /data --console-address ":9001"
-
-  # ===========================================
-  # Docker Proxy (for container orchestration)
-  # ===========================================
-
-  docker-proxy:
-    image: alpine/socat
-    container_name: docker-proxy
-    command: -t 900 TCP-LISTEN:2375,fork,reuseaddr UNIX-CONNECT:/var/run/docker.sock
-    ports:
-      - "2375"
-    user: root
-    volumes:
-      - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
 
   # ===========================================
   # Temporal Services
@@ -881,7 +867,7 @@ services:
     entrypoint: ["bash", "/setup.sh"]
 
   peerdb-minio:
-    image: minio/minio:latest
+    image: quay.io/minio/minio:latest
     container_name: peerdb-minio
     restart: unless-stopped
     volumes:

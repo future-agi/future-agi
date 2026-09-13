@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager
 from functools import wraps
 from typing import Any
 
@@ -16,13 +16,14 @@ from tracer.services.clickhouse.read_budget import (
     ReadDeadline,
     ReadDeadlineExceeded,
 )
+from tracer.services.postgres_read_policy import application_postgres_reads
 
 DASHBOARD_ACTION_WALL_DEADLINE_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
 logger = structlog.get_logger(__name__)
 
 
 class DashboardActionUnavailable(RuntimeError):
-    """A dashboard action exhausted its wall or PostgreSQL read budget."""
+    """A dashboard action exhausted its wall or could not complete a read."""
 
 
 def start_dashboard_action_deadline() -> ReadDeadline:
@@ -47,79 +48,26 @@ def dashboard_action_remaining_ms(
         ) from exc
 
 
-def _execute_dashboard_postgres_query_with_deadline(
-    deadline: ReadDeadline,
-    execute,
-    sql,
-    params,
-    many,
-    context,
-):
-    """Give one PostgreSQL statement only the request wall that remains."""
-
-    timeout_ms = dashboard_action_remaining_ms(deadline)
-    try:
-        context["cursor"].cursor.execute(
-            "SELECT set_config('statement_timeout', %s, true)",
-            (str(timeout_ms),),
-        )
-        result = execute(sql, params, many, context)
-    except DashboardActionUnavailable:
-        raise
-    except DatabaseError as exc:
-        if connection.in_atomic_block:
-            transaction.set_rollback(True)
-        raise DashboardActionUnavailable(
-            "Dashboard PostgreSQL read exceeded its request budget"
-        ) from exc
-    dashboard_action_remaining_ms(deadline)
-    return result
-
-
 @contextmanager
 def bounded_dashboard_postgres_reads(deadline: ReadDeadline):
-    """Bound validation, scope, config, and formatting ORM reads by one wall."""
-
-    if connection.vendor != "postgresql":
-        yield
-        dashboard_action_remaining_ms(deadline)
-        return
-
-    transaction_started = False
-    with ExitStack() as stack:
-
-        def execute_with_remaining_timeout(execute, sql, params, many, context):
-            nonlocal transaction_started
-            # Installing the execute wrapper is connection-lazy. Open an atomic
-            # block only when the first actual ORM statement arrives so invalid
-            # request validation never opens a database connection.
-            if not connection.in_atomic_block and not transaction_started:
-                try:
-                    stack.enter_context(transaction.atomic())
-                except DatabaseError as exc:
-                    raise DashboardActionUnavailable(
-                        "Dashboard PostgreSQL transaction could not start"
-                    ) from exc
-                transaction_started = True
-            return _execute_dashboard_postgres_query_with_deadline(
-                deadline,
-                execute,
-                sql,
-                params,
-                many,
-                context,
-            )
-
-        stack.enter_context(connection.execute_wrapper(execute_with_remaining_timeout))
-        try:
+    """Keep request checks separate from uncapped PostgreSQL execution."""
+    try:
+        with application_postgres_reads(
+            connection=connection,
+            atomic=transaction.atomic,
+            check_request=lambda: dashboard_action_remaining_ms(deadline),
+        ):
             yield
-            dashboard_action_remaining_ms(deadline)
-        except DashboardActionUnavailable:
-            raise
-        except (DatabaseError, ReadDeadlineExceeded) as exc:
-            raise DashboardActionUnavailable(
-                "Dashboard PostgreSQL read exceeded its request budget"
-            ) from exc
+    except DashboardActionUnavailable:
+        raise
+    except ReadDeadlineExceeded as exc:
+        raise DashboardActionUnavailable(
+            "Dashboard action request deadline exceeded"
+        ) from exc
+    except DatabaseError as exc:
+        raise DashboardActionUnavailable(
+            "Dashboard PostgreSQL read unavailable"
+        ) from exc
 
 
 def bounded_dashboard_action_request(
@@ -138,18 +86,14 @@ def bounded_dashboard_action_request(
 
             try:
                 with bounded_dashboard_postgres_reads(deadline):
-                    response = view_method(view, request, *args, **kwargs)
-                # Response-contract validation and transaction close are part
-                # of the same public action wall.
-                dashboard_action_remaining_ms(deadline)
-                return response
+                    return view_method(view, request, *args, **kwargs)
             except (
                 DashboardActionUnavailable,
                 DatabaseError,
                 ReadDeadlineExceeded,
             ) as exc:
                 logger.warning(
-                    "dashboard_action_request_deadline_exceeded",
+                    "dashboard_action_request_read_unavailable",
                     resource=resource,
                     error_type=type(exc).__name__,
                 )

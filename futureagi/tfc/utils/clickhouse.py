@@ -36,14 +36,36 @@ def _native_client_read_lock(client):
         return lock
 
 
+def _uses_application_read_policy(marker):
+    """Resolve an explicit boundary override, otherwise inherit its context."""
+
+    if marker is not None:
+        if not isinstance(marker, bool):
+            raise TypeError("application_read_policy must be bool or None")
+        return marker
+    from tracer.services.clickhouse.application_read_policy import is_application_read
+
+    return is_application_read()
+
+
 def _normalized_read_settings(
     settings=None,
     *,
     timeout_ms=None,
     max_result_rows=None,
     max_result_bytes=None,
+    application_read_policy=None,
 ):
-    """Build the finite ordinary-read envelope for the legacy native client."""
+    """Use the marked analytics policy; keep unmarked maintenance reads bounded."""
+
+    if _uses_application_read_policy(application_read_policy):
+        from tracer.services.clickhouse.application_read_policy import (
+            application_read_settings,
+        )
+
+        # Legacy timeout/result arguments are not statement abort limits for
+        # application analytics. SQL LIMIT/OFFSET still controls pagination.
+        return application_read_settings(settings)
 
     normalized = dict(settings or {})
     requested_timeout = normalized.get("max_execution_time")
@@ -146,7 +168,8 @@ class ClickHouseClientSingleton:
         self.initialize_client()
 
     def initialize_client(self):
-        # Reads clamp this client's lazy connection inside their deadline.
+        # Bounded reads clamp the lazy connection; analytics keeps its ordinary
+        # connection/idle transport failure detection, not a statement wall.
         self._client = Client(
             host=settings.CLICKHOUSE["CH_HOST"],
             port=settings.CLICKHOUSE["CH_PORT"],
@@ -155,10 +178,19 @@ class ClickHouseClientSingleton:
             database=settings.CLICKHOUSE["CH_DATABASE"],
         )
 
-    def _execute_guarded_read(self, query, params, query_settings):
-        """Run one legacy SELECT inside one admission/transport wall."""
+    def _execute_guarded_read(
+        self, query, params, query_settings, *, application_read_policy=None
+    ):
+        """Serialize all reads, applying a statement wall only to bounded reads."""
 
-        timeout_seconds = float(query_settings["max_execution_time"])
+        application_read = _uses_application_read_policy(application_read_policy)
+        # Queue admission is finite and separate from statement execution, as
+        # in the shared native client. An analytics query has no execution wall.
+        timeout_seconds = (
+            _APPLICATION_READ_TIMEOUT_MS / 1000.0
+            if application_read
+            else float(query_settings["max_execution_time"])
+        )
         deadline = time.monotonic() + timeout_seconds
         gate = _APPLICATION_READ_ADMISSION
         acquired = gate.acquire(timeout=timeout_seconds)
@@ -183,6 +215,12 @@ class ClickHouseClientSingleton:
             if remaining <= 0 or not client_lock.acquire(timeout=remaining):
                 raise TimeoutError("ClickHouse client read deadline exhausted")
             client_lock_acquired = True
+
+            if application_read:
+                # Do not narrow connect/socket timeouts or subtract queue time
+                # from the unlimited server execution setting. Leave pooled
+                # transport state unchanged for later health/maintenance reads.
+                return client.execute(query, params, settings=query_settings)
 
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -260,7 +298,9 @@ class ClickHouseClientSingleton:
                 _normalized_read_settings(
                     timeout_ms=1_000,
                     max_result_rows=1,
+                    application_read_policy=False,
                 ),
+                application_read_policy=False,
             )
             end_time = time.time()
             logger.debug(
@@ -282,14 +322,20 @@ class ClickHouseClientSingleton:
             "Could not reconnect to ClickHouse after multiple attempts"
         )
 
-    def execute(self, query, params=None, *, settings=None):
+    def execute(
+        self, query, params=None, *, settings=None, application_read_policy=None
+    ):
         logger.debug("Executing query %s", query)
         logger.debug("Params of query %s", params)
         if _is_read_statement(query):
+            application_read = _uses_application_read_policy(application_read_policy)
             return self._execute_guarded_read(
                 query,
                 params,
-                _normalized_read_settings(settings),
+                _normalized_read_settings(
+                    settings, application_read_policy=application_read
+                ),
+                application_read_policy=application_read,
             )
         start_time = time.time()
         try:
@@ -340,12 +386,19 @@ class ClickHouseClientSingleton:
         settings=None,
         max_result_rows=_APPLICATION_READ_MAX_RESULT_ROWS,
         max_result_bytes=_APPLICATION_READ_MAX_RESULT_BYTES,
+        application_read_policy=None,
     ):
-        """Execute one read with the same finite policy as analytics reads."""
+        """Read under the application context or an explicit per-call override.
+
+        ``None`` inherits the context; ``True`` opts an application boundary in;
+        ``False`` keeps a diagnostic/maintenance read bounded even inside it.
+        Ordinary scripts without a marker retain the legacy finite policy.
+        """
 
         from tracer.services.clickhouse.server_readonly import ensure_read_statement
 
         ensure_read_statement(query)
+        application_read = _uses_application_read_policy(application_read_policy)
         return self._execute_guarded_read(
             query,
             params,
@@ -354,7 +407,9 @@ class ClickHouseClientSingleton:
                 timeout_ms=timeout_ms,
                 max_result_rows=max_result_rows,
                 max_result_bytes=max_result_bytes,
+                application_read_policy=application_read,
             ),
+            application_read_policy=application_read,
         )
 
     def close(self):
@@ -371,11 +426,14 @@ class ClickHouseClientSingleton:
         """Ensure connection is closed when object is destroyed"""
         self.close()
 
-    def execute_paginated(self, query, params=None, page=1, page_size=10):
+    def execute_paginated(
+        self, query, params=None, page=1, page_size=10, *, application_read_policy=None
+    ):
         page = int(page)
         page_size = int(page_size)
         if page <= 0 or page_size <= 0:
             raise ValueError("page and page_size must be positive")
+        application_read = _uses_application_read_policy(application_read_policy)
         offset = (page - 1) * page_size
         paginated_query = f"{query} LIMIT {page_size} OFFSET {offset}"
 
@@ -385,6 +443,7 @@ class ClickHouseClientSingleton:
             count_query,
             params,
             max_result_rows=1,
+            application_read_policy=application_read,
         )[0][0]
         total_pages = -(-total_records // page_size)  # Ceiling division
 
@@ -392,5 +451,6 @@ class ClickHouseClientSingleton:
             paginated_query,
             params,
             max_result_rows=page_size,
+            application_read_policy=application_read,
         )
         return result, total_pages

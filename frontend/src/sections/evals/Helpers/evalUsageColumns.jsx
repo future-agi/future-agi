@@ -5,7 +5,7 @@ import { alpha } from "@mui/material/styles";
 import { useMemo } from "react";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
-import { PARTIAL_INPUT_WARNING_TYPE } from "src/sections/common/EvalsTasks/PartialInputWarningDetails";
+import { PARTIAL_INPUT_WARNING_TYPE } from "src/sections/common/EvalsTasks/warningTypes";
 
 export const ScoreCell = ({ value }) => {
   if (value == null)

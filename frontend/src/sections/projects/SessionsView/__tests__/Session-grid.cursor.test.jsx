@@ -6,7 +6,7 @@ const { enqueueSnackbarMock, getMock, gridState, sessionStoreState } =
   vi.hoisted(() => ({
     enqueueSnackbarMock: vi.fn(),
     getMock: vi.fn(),
-    gridState: { props: null, api: null },
+    gridState: { props: null, api: null, drawer: null },
     sessionStoreState: {
       toggledNodes: [],
       selectAll: false,
@@ -39,6 +39,7 @@ vi.mock("src/sections/develop-detail/Common/TotalRowsStatusBar", () => ({
   default: () => null,
 }));
 vi.mock("src/utils/axios", () => ({
+  readQuery: (...args) => getMock(...args),
   default: { get: (...args) => getMock(...args) },
   endpoints: {
     project: { projectSessionList: () => "/sessions/list/" },
@@ -47,7 +48,13 @@ vi.mock("src/utils/axios", () => ({
 vi.mock("notistack", () => ({
   enqueueSnackbar: (...args) => enqueueSnackbarMock(...args),
 }));
-vi.mock("../../TracesDrawer/TracesDrawer", () => ({ default: () => null }));
+vi.mock("../../TracesDrawer/TracesDrawer", () => ({ default: (props) => {
+  gridState.drawer = props;
+  return null;
+} }));
+vi.mock("src/contexts/WorkspaceContext", () => ({
+  useWorkspace: () => ({ currentWorkspaceId: "workspace-1" }),
+}));
 vi.mock("src/hooks/use-ag-theme", () => ({ useAgThemeWith: () => ({}) }));
 vi.mock("../common", () => ({
   getSessionListColumnDef: (column) => ({ field: column.id }),
@@ -109,7 +116,7 @@ const sessionResponse = ({
 
 const row = (number) => ({ session_id: `session-${number}` });
 
-const renderGrid = () =>
+const renderGrid = (props = {}) =>
   render(
     <SessionGrid
       ref={React.createRef()}
@@ -122,6 +129,7 @@ const renderGrid = () =>
       onSelectionChanged={vi.fn()}
       className=""
       onGridReady={vi.fn()}
+      {...props}
     />,
   );
 
@@ -188,6 +196,29 @@ describe("SessionGrid cursor continuation", () => {
     enqueueSnackbarMock.mockReset();
     gridState.props = null;
     gridState.api = null;
+  });
+
+  it.each(["project-1", null])("hands the successful %s list context to the drawer", async (projectId) => {
+    const filters = [{ column_id: "created_at", filter_config: { filter_type: "datetime",
+      filter_op: "between", filter_value: ["2026-07-01", "2026-08-01"] } },
+      { column_id: "company_id", property_id: "custom_attribute:company_id", source: "traces", filter_config: {
+        col_type: "SPAN_ATTRIBUTE", filter_type: "text", filter_op: "in", filter_value: [2, 5, 10],
+        attribute_value_types: ["number", "number", "number"] } }];
+    const selected = row(1);
+    getMock.mockResolvedValue(sessionResponse({ rows: [selected], hasMore: false }));
+    renderGrid({ projectId, filters, userIdForUserMode: projectId ? undefined : "public-user" });
+    await waitFor(() => expect(gridState.props).not.toBeNull());
+    const params = makeParams({ sortModel: [{ colId: "total_tokens", sort: "asc" }] });
+    await getRows(params);
+    await act(async () => gridState.props.onRowClicked({ data: params.success.mock.calls[0][0].rowData[0] }));
+    expect(gridState.drawer.navigationContext).toEqual({
+      project_id: projectId, workspace_id: "workspace-1", filters,
+      sort_params: [{ column_id: "total_tokens", direction: "asc" }],
+      cursor_mode: false,
+      ...(projectId ? {} : { user_id: "public-user" }),
+    });
+    filters[1].filter_config.filter_value[0] = 99;
+    expect(gridState.drawer.navigationContext.filters[1].filter_config.filter_value).toEqual([2, 5, 10]);
   });
 
   it("keeps cache purging enabled with a fixed row height", async () => {
@@ -696,6 +727,88 @@ describe("SessionGrid cursor continuation", () => {
       "Session data could not be loaded. Please retry.",
       { variant: "error" },
     );
+  });
+
+  it("settles cancelled session reads without releasing the replacement page loader", async () => {
+    let resolveOld;
+    let rejectCurrent;
+    getMock
+      .mockResolvedValueOnce(
+        sessionResponse({
+          rows: Array.from({ length: 25 }, (_, index) => row(index)),
+          hasMore: true,
+          nextCursor: "page-2",
+          totalRows: 26,
+        }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveOld = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectCurrent = reject;
+          }),
+      );
+    renderGrid();
+    await getRows(makeParams());
+    await userEvent.click(screen.getByRole("button", { name: "Go to page 2" }));
+    const oldParams = makeParams({ startRow: 25 });
+    const settled = vi.fn();
+    let oldRead;
+    act(() => {
+      oldRead = gridState.props.serverSideDatasource
+        .getRows(oldParams)
+        .then(settled);
+    });
+    await waitFor(() => expect(resolveOld).toBeTypeOf("function"));
+    const oldSignal = getMock.mock.calls[1][1].signal;
+    const currentParams = makeParams({
+      startRow: 25,
+      sortModel: [{ colId: "started_at", sort: "desc" }],
+    });
+    gridState.api = currentParams.api;
+    let currentRead;
+    act(() => {
+      currentRead = gridState.props.serverSideDatasource.getRows(currentParams);
+    });
+    await waitFor(() => expect(rejectCurrent).toBeTypeOf("function"));
+    try {
+      await waitFor(() => expect(settled).toHaveBeenCalledOnce());
+      expect(oldSignal.aborted).toBe(true);
+      expect(screen.getByRole("status")).toHaveTextContent("Loading page…");
+      expect(screen.getByRole("button", { name: "page 2" })).toBeDisabled();
+      expect(oldParams.success).not.toHaveBeenCalled();
+      expect(oldParams.fail).not.toHaveBeenCalled();
+      expect(currentParams.success).not.toHaveBeenCalled();
+      expect(enqueueSnackbarMock).not.toHaveBeenCalled();
+      expect(currentParams.api.showNoRowsOverlay).not.toHaveBeenCalled();
+      expect(getMock.mock.calls[2][1].params).not.toHaveProperty("cursor");
+      await act(async () => {
+        rejectCurrent(new Error("replacement transport failed"));
+        await currentRead;
+      });
+      expect(currentParams.fail).toHaveBeenCalledOnce();
+      expect(currentParams.success).not.toHaveBeenCalled();
+      expect(enqueueSnackbarMock).toHaveBeenCalledWith(
+        "Session data could not be loaded. Please retry.",
+        { variant: "error" },
+      );
+      expect(currentParams.api.showNoRowsOverlay).not.toHaveBeenCalled();
+      await waitFor(() =>
+        expect(screen.queryByText("Loading page…")).not.toBeInTheDocument(),
+      );
+    } finally {
+      await act(async () => {
+        resolveOld(sessionResponse({ rows: [row(1)] }));
+        rejectCurrent(new Error("replacement transport failed"));
+        await Promise.all([oldRead, currentRead]);
+      });
+    }
+    expect(oldParams.success).not.toHaveBeenCalled();
   });
 
   it("silently discards an in-flight response from an older sort generation", async () => {

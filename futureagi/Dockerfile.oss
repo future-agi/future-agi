@@ -1,9 +1,50 @@
 # ============================================================================
-# Future AGI — OSS backend image
+# Future AGI — OSS backend image (multi-stage)
 # Builds from a public Python base. No private registry required.
 # Build context: ./futureagi (see docker-compose.yml).
 # ============================================================================
 
+# --------------- builder stage ---------------
+FROM python:3.11-slim-bookworm AS builder
+
+# Optional extras groups to bake into the image, comma-separated, e.g.
+#   docker build --build-arg EXTRAS=audio,pii -f Dockerfile.oss .
+# Available groups (see [project.optional-dependencies] in pyproject.toml):
+#   audio, ml, voice, pii, prompt-opt, vectordb
+# Versions come from uv.lock via `uv export`, so an extras build installs the
+# exact resolution CI tests — never a fresh re-resolve against PyPI.
+ARG EXTRAS=""
+
+ENV PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    UV_TIMEOUT=900
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        git \
+        pkg-config \
+        libxml2-dev \
+        libxmlsec1-dev \
+        libxmlsec1-openssl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install uv
+
+WORKDIR /build
+# Separate COPY layers: lockfile churn must not invalidate the expensive
+# base install layer when requirements.txt itself didn't change.
+COPY requirements.txt ./
+RUN uv pip install --system -r requirements.txt --compile-bytecode --no-cache
+COPY pyproject.toml uv.lock ./
+RUN if [ -n "$EXTRAS" ]; then \
+        uv export --frozen --no-dev --no-hashes --no-emit-project \
+            $(echo "$EXTRAS" | tr ',' '\n' | grep -v '^$' | sed 's/^/--extra /' | tr '\n' ' ') \
+            -o /tmp/extras-requirements.txt \
+        && uv pip install --system -r /tmp/extras-requirements.txt \
+            --compile-bytecode --no-cache; \
+    fi
+
+# --------------- runtime stage ---------------
 FROM python:3.11-slim-bookworm
 
 ENV PYTHONUNBUFFERED=1 \
@@ -18,37 +59,28 @@ ENV PYTHONUNBUFFERED=1 \
 RUN groupadd --gid 1000 appuser && \
     useradd --uid 1000 --gid appuser --shell /bin/bash --create-home appuser
 
+# Runtime-only system packages (build-essential, libav*-dev, nginx,
+# supervisor, nodejs all dropped — see PR description for rationale).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        supervisor \
-        nginx \
-        git \
-        curl \
-        nodejs \
-        build-essential \
-        libxml2-dev \
-        libxmlsec1-dev \
-        libxmlsec1-openssl \
-        pkg-config \
-        xmlsec1 \
         ffmpeg \
-        libavformat-dev \
-        libavcodec-dev \
-        libavdevice-dev \
-        libavutil-dev \
-        libavfilter-dev \
-        libswscale-dev \
-        libswresample-dev \
+        git \
+        libxml2 \
+        libxmlsec1 \
+        libxmlsec1-openssl \
+        xmlsec1 \
         libcom-err2 \
         libkrb5-3 \
         libgssapi-krb5-2 \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
-WORKDIR $PROJECT_ROOT
-RUN pip install uv && mkdir -p media logs static && chown -R appuser:appuser /app
+# Copy installed Python packages from builder
+COPY --from=builder /usr/local/lib/python3.11/site-packages \
+                    /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
 
-COPY requirements.txt ./
-RUN uv pip install --system -r requirements.txt --compile-bytecode --no-cache --only-binary av
+WORKDIR $PROJECT_ROOT
+RUN mkdir -p media logs static && chown -R appuser:appuser /app
 
 COPY . .
 RUN python bin/install_nltk_data.py

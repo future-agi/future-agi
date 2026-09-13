@@ -1,4 +1,5 @@
 import React from "react";
+import { createTheme, ThemeProvider } from "@mui/material/styles";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, userEvent, waitFor } from "src/utils/test-utils";
 
@@ -45,6 +46,7 @@ vi.mock("src/hooks/use-ag-theme", () => ({
   },
 }));
 vi.mock("src/utils/axios", () => ({
+  readQuery: (...args) => getMock(...args),
   default: { get: (...args) => getMock(...args) },
   endpoints: {
     project: {
@@ -315,6 +317,70 @@ describe.each(["trace", "span"])("%s grid theme retention", (kind) => {
 
     expect(firstParams).toBeDefined();
     expect(themeParamReferences.at(-1)).toBe(firstParams);
+  });
+
+  const themedSubject = (subject, { color = "#123456", weight = 500, spacing = 8 } = {}) => (
+    <ThemeProvider
+      theme={createTheme({
+        palette: { text: { primary: color } },
+        typography: { fontWeightMedium: weight },
+        spacing,
+      })}
+    >
+      {subject}
+    </ThemeProvider>
+  );
+
+  it("retains parameter identity when only unrelated theme values change", () => {
+    const subject = renderGridSubject({
+      kind,
+      ref: React.createRef(),
+      props: baseProps(),
+      filters: [],
+    });
+    const { rerender } = render(themedSubject(subject));
+    const firstParams = themeParamReferences.at(-1);
+
+    rerender(themedSubject(subject, { spacing: 10 }));
+
+    expect(themeParamReferences.at(-1)).toBe(firstParams);
+  });
+
+  it("updates the parameter object when the header text color changes", () => {
+    const subject = renderGridSubject({
+      kind,
+      ref: React.createRef(),
+      props: baseProps(),
+      filters: [],
+    });
+    const { rerender } = render(themedSubject(subject));
+    const firstParams = themeParamReferences.at(-1);
+
+    rerender(themedSubject(subject, { color: "#abcdef" }));
+
+    expect(themeParamReferences.at(-1)).not.toBe(firstParams);
+    expect(themeParamReferences.at(-1).headerTextColor).toBe("#abcdef");
+  });
+
+  it("tracks font weight only for the span grid's theme-derived header", () => {
+    const subject = renderGridSubject({
+      kind,
+      ref: React.createRef(),
+      props: baseProps(),
+      filters: [],
+    });
+    const { rerender } = render(themedSubject(subject));
+    const firstParams = themeParamReferences.at(-1);
+
+    rerender(themedSubject(subject, { weight: 600 }));
+
+    if (kind === "span") {
+      expect(themeParamReferences.at(-1)).not.toBe(firstParams);
+      expect(themeParamReferences.at(-1).headerFontWeight).toBe(600);
+    } else {
+      expect(themeParamReferences.at(-1)).toBe(firstParams);
+      expect(themeParamReferences.at(-1).headerFontWeight).toBe(500);
+    }
   });
 });
 
@@ -1117,9 +1183,66 @@ describe.each(["trace", "span"])("%s grid loading lifecycle", (kind) => {
       await pendingRead;
     });
 
-    expect(params.fail).toHaveBeenCalledOnce();
+    // Reset now settles through the neutral cancellation path before late data.
+    expect(params.fail).not.toHaveBeenCalled();
     expect(params.success).not.toHaveBeenCalled();
     await waitFor(() => expect(gridState.props.loading).toBe(false));
+  });
+
+  it("settles a cancelled read even when its transport never acknowledges abort", async () => {
+    let resolveResponse;
+    getMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveResponse = resolve;
+        }),
+    );
+    const props = renderGrid(kind);
+    const params = makeParams();
+    gridState.api = params.api;
+    const settled = vi.fn();
+    let pendingRead;
+    act(() => {
+      pendingRead = gridState.props.serverSideDatasource
+        .getRows(params)
+        .then(settled);
+    });
+    await waitFor(() => expect(resolveResponse).toBeTypeOf("function"));
+    try {
+      act(() => window.dispatchEvent(new Event("observe-refresh")));
+      expect(getMock.mock.calls[0][1].signal.aborted).toBe(true);
+      await waitFor(() => expect(settled).toHaveBeenCalledOnce());
+      expect(gridState.props.loading).toBe(false);
+      expect(props.setLoading).toHaveBeenLastCalledWith(false);
+      expect(params.success).not.toHaveBeenCalled();
+      expect(params.api.showNoRowsOverlay).not.toHaveBeenCalled();
+      expect(getMock).toHaveBeenCalledTimes(1);
+
+      // Cancellation does not poison a replacement request in the new generation.
+      getMock.mockResolvedValueOnce(
+        listResponse({
+          rows: [
+            {
+              trace_id: "current",
+              span_id: "current",
+              project_id: "project-1",
+              start_time: "2026-01-01T00:00:00Z",
+            },
+          ],
+          totalRows: 1,
+        }),
+      );
+      const currentParams = makeParams();
+      await getRows(currentParams);
+      expect(currentParams.success).toHaveBeenCalledOnce();
+      expect(gridState.props.loading).toBe(false);
+    } finally {
+      await act(async () => {
+        resolveResponse(listResponse());
+        await pendingRead;
+      });
+    }
+    expect(params.success).not.toHaveBeenCalled();
   });
 
   it("shows replacement loading immediately and hands it to the first read", async () => {
@@ -1296,10 +1419,10 @@ describe("trace custom-property request pagination", () => {
     };
     const firstRows = Array.from({ length: 25 }, (_, index) => ({
       trace_id: `trace-${index + 1}`,
-      project_id: "project-whatfix",
+      project_id: "project-tertiary-fixture",
     }));
     const secondRows = [
-      { trace_id: "trace-26", project_id: "project-whatfix" },
+      { trace_id: "trace-26", project_id: "project-tertiary-fixture" },
     ];
     getMock
       .mockResolvedValueOnce(
@@ -1319,7 +1442,7 @@ describe("trace custom-property request pagination", () => {
         ref={ref}
         {...baseProps()}
         filters={[propertyFilter]}
-        projectId="project-whatfix"
+        projectId="project-tertiary-fixture"
       />,
     );
     await waitFor(() => expect(gridState.props).not.toBeNull());
@@ -1332,7 +1455,7 @@ describe("trace custom-property request pagination", () => {
     const expectedFilters = JSON.stringify([propertyFilter]);
     expect(getMock.mock.calls[0][1].params).toEqual(
       expect.objectContaining({
-        project_id: "project-whatfix",
+        project_id: "project-tertiary-fixture",
         filters: expectedFilters,
         cursor_mode: true,
         page_number: 0,
@@ -1341,7 +1464,7 @@ describe("trace custom-property request pagination", () => {
     );
     expect(getMock.mock.calls[1][1].params).toEqual(
       expect.objectContaining({
-        project_id: "project-whatfix",
+        project_id: "project-tertiary-fixture",
         filters: expectedFilters,
         cursor_mode: true,
         cursor: "signed-property-page-2",

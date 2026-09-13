@@ -2,18 +2,17 @@ from __future__ import annotations
 
 import os
 import threading
-import time
 import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from clickhouse_driver import Client
 from clickhouse_driver.errors import NetworkError, ServerException
-from tracer.services.clickhouse import trace_project_scope
-from tracer.services.clickhouse.client import ClickHouseClient
 
 from model_hub.selectors import eval_usage
 from model_hub.selectors.eval_usage import read_eval_usage
+from tracer.services.clickhouse import trace_project_scope
+from tracer.services.clickhouse.client import ClickHouseClient
 
 
 class _FakeClient:
@@ -254,7 +253,9 @@ def test_eval_usage_queries_are_project_scoped_bounded_and_page_only(monkeypatch
     assert len(fake.calls) == 3
     assert all("usage_version_ceiling" not in query for query, *_ in fake.calls)
     for query, params, timeout_ms, settings in fake.calls:
-        assert 0 < timeout_ms <= eval_usage.QUERY_TIMEOUT_MS
+        assert timeout_ms is None
+        assert settings["max_execution_time"] == settings["max_result_rows"] == 0
+        assert settings["max_bytes_to_read"] == settings["max_result_bytes"] == 0
         assert "additional_table_filters" not in settings
         assert "usage_apicalllog FINAL" not in query
         assert "PREWHERE organization_id = toUUID" in query
@@ -343,7 +344,7 @@ def test_eval_usage_heavy_12m_uses_three_full_window_statements(monkeypatch):
         for _query, call_params, _timeout, call_settings in fake.calls
     )
     assert all(
-        "max_rows_to_read" not in call_settings
+        call_settings["max_rows_to_read"] == 0
         and call_settings["max_memory_usage"] == 36 * 1024 * 1024 * 1024
         for _query, _params, _timeout, call_settings in fake.calls
     )
@@ -646,44 +647,34 @@ def test_eval_usage_normalizes_non_finite_empty_averages(monkeypatch):
 
 
 @pytest.mark.unit
-def test_eval_usage_connect_stall_returns_within_one_wall_deadline(monkeypatch):
+def test_eval_usage_checks_admission_after_client_acquisition(monkeypatch):
     fake = _FakeClient()
-    release = threading.Event()
-    lock = threading.Lock()
-    acquisitions = 0
+    clock = [0.0]
 
     def acquire_client():
-        nonlocal acquisitions
-        with lock:
-            acquisition = acquisitions
-            acquisitions += 1
-        if acquisition == 0:
-            release.wait(timeout=5)
+        clock[0] = 1.0
         return fake
 
+    monkeypatch.setattr(eval_usage.time, "monotonic", lambda: clock[0])
     monkeypatch.setattr(eval_usage, "READ_TIMEOUT_MS", 75)
     monkeypatch.setattr(eval_usage, "get_clickhouse_client", acquire_client)
     now = datetime(2026, 8, 2, tzinfo=UTC)
 
-    started = time.monotonic()
-    try:
-        with pytest.raises(eval_usage.EvalUsageReadError) as raised:
-            read_eval_usage(
-                organization_id=str(uuid.uuid4()),
-                workspace_id=str(uuid.uuid4()),
-                project_ids=[str(uuid.uuid4())],
-                template_id=str(uuid.uuid4()),
-                start_date=now - timedelta(days=1),
-                end_date=now,
-                bucket_minutes=60,
-                page=0,
-                page_size=25,
-            )
-    finally:
-        release.set()
+    with pytest.raises(eval_usage.EvalUsageReadError) as raised:
+        read_eval_usage(
+            organization_id=str(uuid.uuid4()),
+            workspace_id=str(uuid.uuid4()),
+            project_ids=[str(uuid.uuid4())],
+            template_id=str(uuid.uuid4()),
+            start_date=now - timedelta(days=1),
+            end_date=now,
+            bucket_minutes=60,
+            page=0,
+            page_size=25,
+        )
 
     assert raised.value.code == eval_usage.EvalUsageReadErrorCode.DEADLINE_EXCEEDED
-    assert time.monotonic() - started < 0.5
+    assert fake.calls == []
 
 
 @pytest.mark.unit

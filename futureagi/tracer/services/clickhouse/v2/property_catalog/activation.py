@@ -89,11 +89,8 @@ class BuildPlanSourceScope:
     span_until_us: int
 
     def __post_init__(self) -> None:
-        if (
-            not isinstance(self.project_ids, tuple)
-            or not 1 <= len(self.project_ids) <= 256
-        ):
-            raise ValueError("build source scope requires 1..256 project_ids")
+        if not isinstance(self.project_ids, tuple) or not self.project_ids:
+            raise ValueError("build source scope requires non-empty project_ids")
         projects = tuple(
             sorted(
                 canonical_uuid(project_id, field="source_scope project_id")

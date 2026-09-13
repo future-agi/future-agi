@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
+from django.test import override_settings
 
 from tfc.settings.settings import (
     PROPERTY_CATALOG_DEV_READ_ACKNOWLEDGEMENT,
     PROPERTY_CATALOG_PROD_READ_ACKNOWLEDGEMENT,
     property_catalog_read_workspace_allowlist,
+    property_catalog_reads_all_production_workspaces,
 )
 from tracer.services.clickhouse.v2.attribute_catalog_connection import (
     _validate_catalog_query,
@@ -16,6 +19,8 @@ from tracer.services.clickhouse.v2.property_catalog.connection import (
     PROPERTY_CATALOG_TABLES,
     PropertyCatalogConnectionConfig,
     PropertyCatalogReadExecutor,
+    get_property_catalog_read_client,
+    reset_property_catalog_read_client,
     validate_property_catalog_database,
     validate_property_catalog_read_admission,
 )
@@ -52,6 +57,7 @@ def _read_settings(**overrides):
         "PROPERTY_CATALOG_CH_PASSWORD": "not-logged",
         "PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST": ("workspace-1",),
         "PROPERTY_CATALOG_PROD_WORKSPACE_ALLOWLIST": (),
+        "PROPERTY_CATALOG_PROD_WORKSPACE_SCOPE_MODE": "allowlist",
         "CLICKHOUSE_V2": {"CH25_USER": "source_v2"},
         "CLICKHOUSE": {"CH_USERNAME": "source_v1"},
     }
@@ -92,6 +98,26 @@ class FakeClient:
     def execute_read(self, query, params, *, timeout_ms, settings):
         self.calls.append((query, params, timeout_ms, settings))
         return [("ok",)], [("status", "String")], None
+
+
+def test_property_catalog_client_keeps_server_readonly_and_sends_bounded_settings(
+    monkeypatch,
+):
+    from tracer.services.clickhouse.v2.property_catalog import connection
+
+    client_factory = Mock()
+    monkeypatch.setattr(connection, "ClickHouseClient", client_factory)
+    reset_property_catalog_read_client()
+    try:
+        get_property_catalog_read_client(CONFIG)
+    finally:
+        reset_property_catalog_read_client()
+
+    assert client_factory.call_args.kwargs["server_enforced_readonly"] is True
+    assert (
+        client_factory.call_args.kwargs["allow_query_settings_with_server_readonly"]
+        is True
+    )
 
 
 def test_property_catalog_table_allowlist_is_exact():
@@ -171,6 +197,43 @@ def test_property_catalog_connection_accepts_maximum_production_allowlist():
     assert PropertyCatalogConnectionConfig.from_settings(source).database == (
         "property_catalog"
     )
+
+
+def test_property_catalog_connection_accepts_global_production_workspace_scope():
+    source = _prod_settings(
+        PROPERTY_CATALOG_PROD_WORKSPACE_SCOPE_MODE="all",
+        PROPERTY_CATALOG_PROD_WORKSPACE_ALLOWLIST=(),
+        PROPERTY_CATALOG_READ_DEPLOYMENT="prod",
+    )
+
+    assert PropertyCatalogConnectionConfig.from_settings(source).database == (
+        "property_catalog"
+    )
+    assert property_catalog_reads_all_production_workspaces(source) is True
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    (
+        {
+            "PROPERTY_CATALOG_PROD_WORKSPACE_SCOPE_MODE": "all",
+            "PROPERTY_CATALOG_PROD_WORKSPACE_ALLOWLIST": ("workspace-1",),
+        },
+        {"PROPERTY_CATALOG_PROD_WORKSPACE_SCOPE_MODE": "invalid"},
+    ),
+)
+def test_property_catalog_connection_rejects_invalid_global_production_scope(
+    overrides,
+):
+    with pytest.raises(ValueError):
+        PropertyCatalogConnectionConfig.from_settings(_prod_settings(**overrides))
+
+
+def test_property_catalog_connection_rejects_global_scope_in_dev():
+    with pytest.raises(ValueError, match="production-only"):
+        PropertyCatalogConnectionConfig.from_settings(
+            _read_settings(PROPERTY_CATALOG_PROD_WORKSPACE_SCOPE_MODE="all")
+        )
 
 
 def test_property_catalog_read_workspace_allowlist_is_deployment_bound():
@@ -432,10 +495,109 @@ def test_property_catalog_executor_uses_one_shrinking_wall():
         "SELECT status FROM `property_catalog_dev_clean`.property_catalog_activations"
     )
 
-    executor.execute(query, {}, timeout_ms=2_000, settings={"max_result_rows": 1})
-    executor.execute(query, {}, timeout_ms=2_000, settings={"max_result_rows": 1})
+    executor.execute(query, {}, timeout_ms=10_000, settings={"max_result_rows": 1})
+    executor.execute(query, {}, timeout_ms=10_000, settings={"max_result_rows": 1})
 
     assert client.calls[1][2] < client.calls[0][2]
+
+
+@pytest.mark.parametrize("progress", [False, True])
+@override_settings(CLICKHOUSE_APPLICATION_READ_MAX_MEMORY_BYTES=36 * 1024**3)
+def test_public_catalog_read_has_no_statement_caps_and_restores_context(progress):
+    from tracer.services.clickhouse.application_read_policy import (
+        UNLIMITED_STATEMENT_SETTINGS,
+        is_application_read,
+    )
+
+    class ApplicationClient(FakeClient):
+        def execute_read(self, *args, **kwargs):
+            assert is_application_read()
+            return super().execute_read(*args, **kwargs)
+
+    if progress:
+
+        def execute_read_with_progress(self, *args, **kwargs):
+            return (*self.execute_read(*args, **kwargs), 25, 1024)
+
+        ApplicationClient.execute_read_with_progress = execute_read_with_progress
+
+    client = ApplicationClient()
+    # The public request has not expired even though the old catalog statement
+    # wall has. Starting one read may not reinstall that two-second ceiling.
+    ticks = iter((10.0, 15.0, 15.1, 40.0))
+    executor = PropertyCatalogReadExecutor(
+        config=CONFIG,
+        client_factory=lambda _config: client,
+        clock=lambda: next(ticks),
+        max_wall_ms=30_000,
+        application_read=True,
+    )
+    sql = (
+        "SELECT status FROM `property_catalog_dev_clean`.property_catalog_activations "
+        "LIMIT 25"
+    )
+    result = executor.execute(
+        sql,
+        {},
+        timeout_ms=1,
+        settings={
+            "max_result_rows": 1,
+            "max_result_bytes": 1,
+            "max_bytes_to_read": 1,
+            "max_memory_usage": 512 * 1024**2,
+            "max_bytes_before_external_sort": 32 * 1024**2,
+        },
+    )
+    assert client.calls[0][0] == sql
+    assert client.calls[0][2] is None
+    applied = client.calls[0][3]
+    assert all(applied[name] == 0 for name in UNLIMITED_STATEMENT_SETTINGS)
+    assert applied["max_memory_usage"] == 512 * 1024**2
+    assert applied["max_bytes_before_external_sort"] == 32 * 1024**2
+    assert result.data == [{"status": "ok"}]
+    assert result.read_rows == (25 if progress else None)
+    assert not is_application_read()
+
+
+def test_public_catalog_read_restores_context_after_error():
+    from tracer.services.clickhouse.application_read_policy import is_application_read
+
+    class BrokenClient(FakeClient):
+        def execute_read(self, *args, **kwargs):
+            assert is_application_read()
+            raise RuntimeError("test failure")
+
+    executor = PropertyCatalogReadExecutor(
+        config=CONFIG,
+        client_factory=lambda _config: BrokenClient(),
+        application_read=True,
+    )
+    with pytest.raises(RuntimeError, match="test failure"):
+        executor.execute(
+            "SELECT status FROM `property_catalog_dev_clean`.property_catalog_activations",
+            {},
+            timeout_ms=1,
+            settings={},
+        )
+    assert not is_application_read()
+
+
+@pytest.mark.parametrize("application_read", [False, True])
+def test_catalog_execution_policy_cannot_bypass_setting_allowlist(application_read):
+    client = FakeClient()
+    executor = PropertyCatalogReadExecutor(
+        config=CONFIG,
+        client_factory=lambda _config: client,
+        application_read=application_read,
+    )
+    with pytest.raises(ValueError, match="unsupported"):
+        executor.execute(
+            "SELECT status FROM `property_catalog_dev_clean`.property_catalog_activations",
+            {},
+            timeout_ms=1,
+            settings={"allow_ddl": True},
+        )
+    assert client.calls == []
 
 
 @pytest.mark.parametrize(

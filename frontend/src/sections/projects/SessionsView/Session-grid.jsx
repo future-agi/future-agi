@@ -11,9 +11,10 @@ import React, {
 import PropTypes from "prop-types";
 import { getRandomId } from "src/utils/utils";
 import TotalRowsStatusBar from "src/sections/develop-detail/Common/TotalRowsStatusBar";
-import axios, { endpoints } from "src/utils/axios";
+import { readQuery, endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "notistack";
 import TracesDrawer from "../TracesDrawer/TracesDrawer";
+import { useWorkspace } from "src/contexts/WorkspaceContext";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import {
   getSessionListColumnDef,
@@ -107,6 +108,9 @@ const SessionGrid = React.forwardRef(
   ) => {
     const [open, setOpen] = useState(false);
     const [currentRowData, setCurrentRowData] = useState(null);
+    const [navigationContext, setNavigationContext] = useState(null);
+    const rowNavigationContexts = useRef(new WeakMap());
+    const { currentWorkspaceId: workspaceId } = useWorkspace();
     const [continuationNotice, setContinuationNotice] = useState(null);
     const activeListReadsRef = useRef(0);
     const gridElementRef = useRef(null);
@@ -290,11 +294,13 @@ const SessionGrid = React.forwardRef(
       () =>
         JSON.stringify({
           projectId: projectId || null,
+          workspaceId,
+          userIdForUserMode,
           filters: toBackendFilters(filters),
           dateInterval: dateInterval || null,
           pageSize,
         }),
-      [dateInterval, filters, pageSize, projectId],
+      [dateInterval, filters, pageSize, projectId, workspaceId, userIdForUserMode],
     );
     const previousPaginationRequestKeyRef = useRef(paginationRequestKey);
     useEffect(() => {
@@ -366,7 +372,7 @@ const SessionGrid = React.forwardRef(
                     pageNumber,
                     targetRowCount: requestPageSize,
                     loadResponse: (signal) =>
-                      axios.get(endpoints.project.projectSessionList(), {
+                      readQuery(endpoints.project.projectSessionList(), {
                         params: buildParams(pageNumber),
                         signal,
                       }),
@@ -381,7 +387,7 @@ const SessionGrid = React.forwardRef(
                     isCurrent: () =>
                       cursorPagination.current.isCurrent(requestGeneration),
                     nextResponse: (_cursor, signal) =>
-                      axios.get(endpoints.project.projectSessionList(), {
+                      readQuery(endpoints.project.projectSessionList(), {
                         params: buildParams(pageNumber),
                         signal,
                       }),
@@ -506,6 +512,17 @@ const SessionGrid = React.forwardRef(
                 result: { table: rows, metadata },
               });
               if (listReadMessage) throw new Error(listReadMessage);
+              // Bind the actual successful request to its rows, not the route
+              // project or a later filter/sort render. Never lose decorated IDs.
+              const context = JSON.parse(JSON.stringify({
+                project_id: projectId || null,
+                workspace_id: workspaceId,
+                filters: backendFilters,
+                sort_params: sortParams,
+                cursor_mode: !sortParams.length && Boolean(buildParams(pageNumber).cursor_mode),
+                ...(userIdForUserMode ? { user_id: userIdForUserMode } : {}),
+              }));
+              rows.forEach((row) => rowNavigationContexts.current.set(row, context));
 
               const isLastPage = exactPage.isLastPage;
               // A terminal cursor is an exact exhaustion proof. Normalize an
@@ -674,6 +691,7 @@ const SessionGrid = React.forwardRef(
       }
 
       setCurrentRowData(event.data);
+      setNavigationContext(rowNavigationContexts.current.get(event.data) || null);
       setOpen(true);
       trackEvent(Events.observeSessionidClicked);
     };
@@ -770,10 +788,12 @@ const SessionGrid = React.forwardRef(
             />
             {currentRowData ? (
               <TracesDrawer
+                key={currentRowData?.session_id}
                 open={open}
                 onClose={handleDrawerClose}
                 rowData={currentRowData}
                 userIdForUserMode={userIdForUserMode}
+                navigationContext={navigationContext}
               />
             ) : null}
           </Box>

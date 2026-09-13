@@ -433,6 +433,27 @@ export interface UserChecksResponseApi {
   result: UserChecksResultApi;
 }
 
+export interface GCPMarketplaceSignupRequestApi {
+  /** @minLength 1 */
+  onboarding_token: string;
+  /** @minLength 1 */
+  email: string;
+  /** @minLength 1 */
+  full_name: string;
+}
+
+export interface GCPMarketplaceSignupResultApi {
+  /** @minLength 1 */
+  message: string;
+  /** @minLength 1 */
+  user_email: string;
+}
+
+export interface GCPMarketplaceSignupResponseApi {
+  status: boolean;
+  result: GCPMarketplaceSignupResultApi;
+}
+
 export interface AccountsUserProfileResponseApi {
   name: string;
   /** @minLength 1 */
@@ -16646,6 +16667,16 @@ export interface ALKSimulateResultApi {
   ended_reason?: string;
   error_message?: string;
   call_summary?: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[0-9a-f]{64}$
+   */
+  result_digest?: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[0-9a-f]{64}$
+   */
+  artifact_manifest_digest?: string;
   transcript?: ALKSimulateTranscriptSegmentApi[];
   /** @maxLength 500 */
   recording_url?: string;
@@ -16688,11 +16719,22 @@ export interface ALKSimulateStatusUpdateResponseApi {
   result: ALKSimulateStatusUpdateOutcomeApi;
 }
 
+export type ALKSimulateProvisionRunTestRequestApiModality =
+  (typeof ALKSimulateProvisionRunTestRequestApiModality)[keyof typeof ALKSimulateProvisionRunTestRequestApiModality];
+
+export const ALKSimulateProvisionRunTestRequestApiModality = {
+  text: "text",
+  chat: "chat",
+  voice: "voice",
+} as const;
+
 export type ALKSimulateProvisionPersonaApiPersona = { [key: string]: unknown };
 
 export interface ALKSimulateProvisionPersonaApi {
   /** @maxLength 255 */
   name?: string;
+  /** @maxLength 255 */
+  scenario_name?: string;
   /** @maxLength 255 */
   role?: string;
   situation?: string;
@@ -16706,6 +16748,7 @@ export interface ALKSimulateProvisionRunTestRequestApi {
    * @maxLength 255
    */
   name: string;
+  modality?: ALKSimulateProvisionRunTestRequestApiModality;
   description?: string;
   personas?: ALKSimulateProvisionPersonaApi[];
   scenario_ids?: string[];
@@ -16725,9 +16768,16 @@ export interface ALKSimulateProvisionResponseApi {
   result: ALKSimulateProvisionResultApi;
 }
 
+export type ALKSimulateStartTestExecutionRequestApiScenarioSelectorsItem = {
+  [key: string]: string;
+};
+
 export interface ALKSimulateStartTestExecutionRequestApi {
   scenario_ids?: string[];
+  /** @maxItems 100 */
+  scenario_selectors?: ALKSimulateStartTestExecutionRequestApiScenarioSelectorsItem[];
   simulator_agent_id?: string;
+  harness_job_id?: string;
 }
 
 export interface ALKSimulateStartTestExecutionResultApi {
@@ -16793,6 +16843,781 @@ export interface CallExecutionErrorResponseApi {
   error?: string;
   attr?: string;
   details?: CallExecutionErrorResponseApiDetails;
+}
+
+export type HarnessJobReadApiReceiptsItem = { [key: string]: unknown };
+
+export type HarnessJobInfoApiSource = { [key: string]: string };
+
+export type HarnessJobInfoApiMetadata = { [key: string]: string };
+
+export interface HarnessJobInfoApi {
+  job_id: string;
+  run_id: string;
+  source: HarnessJobInfoApiSource;
+  metadata: HarnessJobInfoApiMetadata;
+  run_test_id: string;
+  test_execution_id: string;
+}
+
+export type HarnessJobStatusApiFailure = { [key: string]: unknown };
+
+export interface HarnessJobStatusApi {
+  /** @minLength 1 */
+  state: string;
+  /** @minLength 1 */
+  stage: string;
+  /** @minLength 1 */
+  updated_at: string;
+  attempt: number;
+  completed_scenarios: number;
+  failed_scenarios: number;
+  total_scenarios: number;
+  /** @minLength 1 */
+  deadline_at: string;
+  failure: HarnessJobStatusApiFailure;
+}
+
+export type HarnessJobEventApiPayload = { [key: string]: unknown };
+
+export interface HarnessJobEventApi {
+  /** @minLength 1 */
+  event_id: string;
+  sequence: number;
+  /** @minLength 1 */
+  stage: string;
+  /** @minLength 1 */
+  type: string;
+  payload: HarnessJobEventApiPayload;
+  /** @minLength 1 */
+  emitted_at: string;
+}
+
+export type HarnessStageOutputApiData = { [key: string]: unknown };
+
+export interface HarnessStageOutputApi {
+  id: string;
+  /** @minLength 1 */
+  title: string;
+  summary: string;
+  /** @minLength 1 */
+  kind: string;
+  data: HarnessStageOutputApiData;
+}
+
+export interface HarnessScenarioApi {
+  /** @minLength 1 */
+  scenario_key: string;
+  scenario_id: string;
+  name: string;
+  instruction?: string;
+  use_case?: string;
+  call_execution_id?: string;
+  /** @minLength 1 */
+  status?: string;
+}
+
+export interface HarnessPlatformApi {
+  run_test_id: string;
+  test_execution_id: string;
+  /** @minLength 1 */
+  url: string;
+}
+
+export interface HarnessDiagnosticsApi {
+  /** @minLength 1 */
+  object_key?: string;
+  /** @minLength 1 */
+  sha256?: string;
+  size: number;
+  /** @minLength 1 */
+  captured_at?: string;
+  final: boolean;
+  error: string;
+}
+
+export interface HarnessRuntimeReadApi {
+  /** @minLength 1 */
+  sandbox_id?: string;
+  diagnostics?: HarnessDiagnosticsApi;
+}
+
+export interface HarnessJobReadApi {
+  job: HarnessJobInfoApi;
+  status: HarnessJobStatusApi;
+  events: HarnessJobEventApi[];
+  stage_outputs: HarnessStageOutputApi[];
+  scenarios: HarnessScenarioApi[];
+  receipts: HarnessJobReadApiReceiptsItem[];
+  platform: HarnessPlatformApi;
+  runtime?: HarnessRuntimeReadApi;
+}
+
+export type HarnessJobCreateApiSchemaVersion =
+  (typeof HarnessJobCreateApiSchemaVersion)[keyof typeof HarnessJobCreateApiSchemaVersion];
+
+export const HarnessJobCreateApiSchemaVersion = {
+  "futureagiharness-jobv1": "futureagi.harness-job.v1",
+} as const;
+
+export type HarnessJobCreateApiMetadata = { [key: string]: string };
+
+export type HarnessSourceApiKind =
+  (typeof HarnessSourceApiKind)[keyof typeof HarnessSourceApiKind];
+
+export const HarnessSourceApiKind = {
+  github: "github",
+  archive: "archive",
+  remote: "remote",
+  provider: "provider",
+} as const;
+
+export type HarnessSourceApiVisibility =
+  (typeof HarnessSourceApiVisibility)[keyof typeof HarnessSourceApiVisibility];
+
+export const HarnessSourceApiVisibility = {
+  public: "public",
+  private: "private",
+} as const;
+
+export interface HarnessSourceApi {
+  kind: HarnessSourceApiKind;
+  /**
+   * @minLength 1
+   * @pattern ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$
+   */
+  repository?: string;
+  /**
+   * @minLength 1
+   * @pattern ^[A-Za-z0-9._/-]+$
+   */
+  ref?: string;
+  /**
+   * @minLength 1
+   * @pattern ^[0-9a-fA-F]{40}$
+   */
+  commit_sha?: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  installation_id?: string;
+  archive_artifact_id?: string;
+  /** @minLength 1 */
+  endpoint?: string;
+  visibility?: HarnessSourceApiVisibility;
+}
+
+export type HarnessAgentApiConnector =
+  (typeof HarnessAgentApiConnector)[keyof typeof HarnessAgentApiConnector];
+
+export const HarnessAgentApiConnector = {
+  livekit: "livekit",
+  vapi: "vapi",
+  retell: "retell",
+  retell_chat: "retell_chat",
+  auto: "auto",
+} as const;
+
+export type HarnessAgentApiMode =
+  (typeof HarnessAgentApiMode)[keyof typeof HarnessAgentApiMode];
+
+export const HarnessAgentApiMode = {
+  connect_only: "connect_only",
+  environment_backed: "environment_backed",
+  provider_import: "provider_import",
+} as const;
+
+export type SecretReferenceApiManager =
+  (typeof SecretReferenceApiManager)[keyof typeof SecretReferenceApiManager];
+
+export const SecretReferenceApiManager = {
+  "platform-vault": "platform-vault",
+  "platform-config": "platform-config",
+} as const;
+
+export type SecretReferenceApiPurpose =
+  (typeof SecretReferenceApiPurpose)[keyof typeof SecretReferenceApiPurpose];
+
+export const SecretReferenceApiPurpose = {
+  target_provider: "target_provider",
+  simulator_provider: "simulator_provider",
+  source_checkout: "source_checkout",
+} as const;
+
+export interface SecretReferenceApi {
+  manager: SecretReferenceApiManager;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  key: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  version?: string;
+  purpose: SecretReferenceApiPurpose;
+}
+
+export type HarnessAgentApiConfig = { [key: string]: string };
+
+export type HarnessAgentApiSecretRefs = { [key: string]: SecretReferenceApi };
+
+export interface HarnessAgentApi {
+  connector: HarnessAgentApiConnector;
+  mode?: HarnessAgentApiMode;
+  config?: HarnessAgentApiConfig;
+  secret_refs?: HarnessAgentApiSecretRefs;
+}
+
+export type HarnessRuntimeApiIsolation =
+  (typeof HarnessRuntimeApiIsolation)[keyof typeof HarnessRuntimeApiIsolation];
+
+export const HarnessRuntimeApiIsolation = {
+  dedicated_vm: "dedicated_vm",
+} as const;
+
+export type HarnessRuntimeApiNetworkPolicy =
+  (typeof HarnessRuntimeApiNetworkPolicy)[keyof typeof HarnessRuntimeApiNetworkPolicy];
+
+export const HarnessRuntimeApiNetworkPolicy = {
+  live: "live",
+} as const;
+
+export interface HarnessRuntimeApi {
+  isolation?: HarnessRuntimeApiIsolation;
+  /** @minimum 1 */
+  cpu_units?: number;
+  /** @minimum 1024 */
+  memory_mb?: number;
+  /**
+   * @minimum 1
+   * @maximum 8
+   */
+  parallelism?: number;
+  /**
+   * @minimum 1
+   * @maximum 10
+   */
+  concurrency_weight?: number;
+  /**
+   * @minimum 60
+   * @maximum 86400
+   */
+  max_duration_seconds?: number;
+  network_policy?: HarnessRuntimeApiNetworkPolicy;
+}
+
+export interface HarnessSecurityApi {
+  untrusted_source?: boolean;
+  read_only_source?: boolean;
+  allow_privileged?: boolean;
+  allow_host_runtime_control?: boolean;
+  allowed_egress_domains?: string[];
+}
+
+export type HarnessRetryApiRetryableDomainsItem =
+  (typeof HarnessRetryApiRetryableDomainsItem)[keyof typeof HarnessRetryApiRetryableDomainsItem];
+
+export const HarnessRetryApiRetryableDomainsItem = {
+  infrastructure: "infrastructure",
+  connectivity: "connectivity",
+  platform_sync: "platform_sync",
+} as const;
+
+export interface HarnessRetryApi {
+  /**
+   * @minimum 1
+   * @maximum 5
+   */
+  max_infrastructure_attempts?: number;
+  /**
+   * @minimum 0
+   * @maximum 60
+   */
+  initial_backoff_seconds?: number;
+  /**
+   * @minimum 0
+   * @maximum 300
+   */
+  max_backoff_seconds?: number;
+  retryable_domains?: HarnessRetryApiRetryableDomainsItem[];
+}
+
+export type HarnessArtifactApiLevel =
+  (typeof HarnessArtifactApiLevel)[keyof typeof HarnessArtifactApiLevel];
+
+export const HarnessArtifactApiLevel = {
+  "metadata-only": "metadata-only",
+  traces: "traces",
+  "traces-and-recordings": "traces-and-recordings",
+  full: "full",
+} as const;
+
+export interface HarnessArtifactApi {
+  level: HarnessArtifactApiLevel;
+  /**
+   * @minimum 1
+   * @maximum 3650
+   */
+  retention_days?: number;
+  allow_bundle_download?: boolean;
+  /** @minimum 0 */
+  max_artifact_bytes?: number;
+}
+
+export interface HarnessJobCreateApi {
+  schema_version?: HarnessJobCreateApiSchemaVersion;
+  run_id?: string;
+  source?: HarnessSourceApi;
+  agent: HarnessAgentApi;
+  /**
+   * @minimum 1
+   * @maximum 200
+   */
+  scenario_count?: number;
+  seed?: number;
+  runtime?: HarnessRuntimeApi;
+  security?: HarnessSecurityApi;
+  retry?: HarnessRetryApi;
+  artifacts: HarnessArtifactApi;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  platform_run_id?: string;
+  metadata?: HarnessJobCreateApiMetadata;
+}
+
+export type HarnessPreflightApiSchemaVersion =
+  (typeof HarnessPreflightApiSchemaVersion)[keyof typeof HarnessPreflightApiSchemaVersion];
+
+export const HarnessPreflightApiSchemaVersion = {
+  "futureagiharness-jobv1": "futureagi.harness-job.v1",
+} as const;
+
+export type HarnessPreflightApiMetadata = { [key: string]: string };
+
+/**
+ * Target-provider values to verify live; used for this check only.
+ */
+export type HarnessPreflightApiCredentialValues = { [key: string]: string };
+
+export interface HarnessPreflightApi {
+  schema_version?: HarnessPreflightApiSchemaVersion;
+  run_id?: string;
+  source?: HarnessSourceApi;
+  agent: HarnessAgentApi;
+  /**
+   * @minimum 1
+   * @maximum 200
+   */
+  scenario_count?: number;
+  seed?: number;
+  runtime?: HarnessRuntimeApi;
+  security?: HarnessSecurityApi;
+  retry?: HarnessRetryApi;
+  artifacts: HarnessArtifactApi;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  platform_run_id?: string;
+  metadata?: HarnessPreflightApiMetadata;
+  /** Target-provider values to verify live; used for this check only. */
+  credential_values?: HarnessPreflightApiCredentialValues;
+}
+
+export interface HarnessSecretFileUploadResponseApi {
+  /**
+   * @minLength 1
+   * @pattern ^[A-Za-z_][A-Za-z0-9_]*$
+   */
+  environment_name: string;
+  secret_ref: SecretReferenceApi;
+  /** @minimum 1 */
+  size: number;
+}
+
+export type HarnessSecretValuesApiEnvironmentValues = { [key: string]: string };
+
+export interface HarnessSecretValuesApi {
+  environment_values: HarnessSecretValuesApiEnvironmentValues;
+}
+
+export interface HarnessSourceUploadResponseApi {
+  source_id: string;
+  /** @minLength 1 */
+  name: string;
+  file_count: number;
+  total_bytes: number;
+}
+
+export interface HarnessJobAdjustmentApi {
+  /**
+   * A user correction to apply at the next safe harness stage boundary.
+   * @minLength 1
+   * @maxLength 2000
+   */
+  instruction: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  client_request_id?: string;
+}
+
+export type HarnessJobActionApiReason =
+  (typeof HarnessJobActionApiReason)[keyof typeof HarnessJobActionApiReason];
+
+export const HarnessJobActionApiReason = {
+  user_canceled: "user_canceled",
+  ttl_exceeded: "ttl_exceeded",
+} as const;
+
+export interface HarnessJobActionApi {
+  reason?: HarnessJobActionApiReason;
+}
+
+export interface HarnessJobExtendApi {
+  /**
+   * How many new scenarios to add to the saved world.
+   * @minimum 1
+   * @maximum 50
+   */
+  count: number;
+  /**
+   * Optional natural-language steering for the added scenarios (e.g. 'calm first-time riders booking an airport pickup'). Existing scenarios are preserved.
+   * @maxLength 2000
+   */
+  guidance?: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  client_request_id?: string;
+}
+
+export type HarnessManifestApiSchemaVersion =
+  (typeof HarnessManifestApiSchemaVersion)[keyof typeof HarnessManifestApiSchemaVersion];
+
+export const HarnessManifestApiSchemaVersion = {
+  "futureagiharness-manifestv1": "futureagi.harness-manifest.v1",
+} as const;
+
+export interface HarnessManifestEntryApi {
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[0-9a-f]{64}$
+   */
+  artifact_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 32
+   */
+  kind: string;
+  /** @minimum 0 */
+  size: number;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  scenario_key?: string;
+}
+
+export interface HarnessManifestApi {
+  schema_version: HarnessManifestApiSchemaVersion;
+  job_id: string;
+  attempt_id: string;
+  /** @minimum 1 */
+  attempt_number: number;
+  entries: HarnessManifestEntryApi[];
+  complete: boolean;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[0-9a-f]{64}$
+   */
+  digest: string;
+}
+
+export interface HarnessAcceptedResponseApi {
+  accepted: boolean;
+  duplicate: boolean;
+}
+
+export interface HarnessArtifactUploadResponseApi {
+  /** @minLength 1 */
+  artifact_id: string;
+  duplicate: boolean;
+}
+
+export type HarnessEventBatchApiSchemaVersion =
+  (typeof HarnessEventBatchApiSchemaVersion)[keyof typeof HarnessEventBatchApiSchemaVersion];
+
+export const HarnessEventBatchApiSchemaVersion = {
+  "futureagiharness-eventv1": "futureagi.harness-event.v1",
+} as const;
+
+export type HarnessEventApiPayload = { [key: string]: unknown };
+
+export interface HarnessEventApi {
+  /**
+   * @minLength 1
+   * @pattern ^[A-Za-z0-9_-]{1,64}$
+   */
+  event_id: string;
+  job_id: string;
+  attempt_id: string;
+  /** @minimum 1 */
+  attempt_number: number;
+  /** @minimum 1 */
+  sequence: number;
+  emitted_at: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  stage: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  type: string;
+  payload: HarnessEventApiPayload;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[0-9a-f]{64}$
+   */
+  digest: string;
+}
+
+export interface HarnessEventBatchApi {
+  schema_version: HarnessEventBatchApiSchemaVersion;
+  events: HarnessEventApi[];
+}
+
+export interface HarnessEventRejectionApi {
+  /** @minLength 1 */
+  event_id: string;
+  sequence: number;
+  /** @minLength 1 */
+  code: string;
+  /** @minLength 1 */
+  message: string;
+}
+
+export interface HarnessEventBatchResponseApi {
+  acked_through_sequence: number;
+  rejected: HarnessEventRejectionApi[];
+}
+
+export interface HarnessIngressRequestApi {
+  /**
+   * @minimum 1
+   * @maximum 65535
+   */
+  port: number;
+  /**
+   * @minimum 60
+   * @maximum 86400
+   */
+  expires_in_seconds?: number;
+}
+
+export interface HarnessIngressResponseApi {
+  /** @minLength 1 */
+  url: string;
+  /**
+   * @minimum 60
+   * @maximum 86400
+   */
+  expires_in_seconds: number;
+}
+
+export type HarnessResultReceiptApiSchemaVersion =
+  (typeof HarnessResultReceiptApiSchemaVersion)[keyof typeof HarnessResultReceiptApiSchemaVersion];
+
+export const HarnessResultReceiptApiSchemaVersion = {
+  "futureagiharness-resultv1": "futureagi.harness-result.v1",
+} as const;
+
+export type HarnessResultReceiptApiStatus =
+  (typeof HarnessResultReceiptApiStatus)[keyof typeof HarnessResultReceiptApiStatus];
+
+export const HarnessResultReceiptApiStatus = {
+  passed: "passed",
+  failed: "failed",
+  errored: "errored",
+  skipped: "skipped",
+} as const;
+
+export type HarnessResultReceiptApiEvaluations = { [key: string]: unknown };
+
+export interface HarnessSubGoalApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
+  held: boolean;
+  reason?: string;
+  judged: boolean;
+}
+
+export interface HarnessCallApi {
+  started_at: string;
+  ended_at: string;
+  /** @minimum 0 */
+  duration_ms: number;
+  /** @minimum 0 */
+  turns: number;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[0-9a-f]{64}$
+   */
+  transcript_artifact?: string;
+  recording_artifacts?: string[];
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  stop_reason?: string;
+}
+
+export type HarnessFailureApiDomain =
+  (typeof HarnessFailureApiDomain)[keyof typeof HarnessFailureApiDomain];
+
+export const HarnessFailureApiDomain = {
+  agent: "agent",
+  simulator: "simulator",
+  environment: "environment",
+  connectivity: "connectivity",
+  infrastructure: "infrastructure",
+  grading: "grading",
+  platform_sync: "platform_sync",
+} as const;
+
+export interface HarnessFailureApi {
+  domain: HarnessFailureApiDomain;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  stage: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  code: string;
+  /**
+   * @minLength 1
+   * @maxLength 2000
+   */
+  message: string;
+}
+
+export interface HarnessResultReceiptApi {
+  schema_version: HarnessResultReceiptApiSchemaVersion;
+  job_id: string;
+  attempt_id: string;
+  /** @minimum 1 */
+  attempt_number: number;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  scenario_key: string;
+  scenario_id: string;
+  /**
+   * @minimum 1
+   * @maximum 2
+   */
+  scenario_attempt: number;
+  /**
+   * @minimum 0
+   * @maximum 7
+   */
+  world_index: number;
+  status: HarnessResultReceiptApiStatus;
+  sub_goals: HarnessSubGoalApi[];
+  evaluations: HarnessResultReceiptApiEvaluations;
+  call: HarnessCallApi;
+  failure: HarnessFailureApi;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[0-9a-f]{64}$
+   */
+  digest: string;
+}
+
+export type HarnessScenarioOperationApiOperation =
+  (typeof HarnessScenarioOperationApiOperation)[keyof typeof HarnessScenarioOperationApiOperation];
+
+export const HarnessScenarioOperationApiOperation = {
+  provision: "provision",
+  begin: "begin",
+} as const;
+
+export type HarnessScenarioOperationApiModality =
+  (typeof HarnessScenarioOperationApiModality)[keyof typeof HarnessScenarioOperationApiModality];
+
+export const HarnessScenarioOperationApiModality = {
+  text: "text",
+  voice: "voice",
+} as const;
+
+export type HarnessProvisionPersonaApiPersona = { [key: string]: unknown };
+
+export interface HarnessProvisionPersonaApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  scenario_key: string;
+  /** @maxLength 255 */
+  name?: string;
+  /** @maxLength 255 */
+  role?: string;
+  situation?: string;
+  outcome?: string;
+  persona?: HarnessProvisionPersonaApiPersona;
+}
+
+export interface HarnessScenarioOperationApi {
+  operation: HarnessScenarioOperationApiOperation;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name?: string;
+  modality?: HarnessScenarioOperationApiModality;
+  description?: string;
+  personas?: HarnessProvisionPersonaApi[];
+  agent_definition_id?: string;
+  /** @maxLength 255 */
+  agent_name?: string;
+  agent_prompt?: string;
+  chosen_evals?: string[];
+  run_test_id?: string;
+  scenario_keys?: string[];
+}
+
+export interface HarnessScenarioRegistrationResponseApi {
+  /** @minLength 1 */
+  scenario_key: string;
+  scenario_id: string;
+  call_execution_id?: string;
+}
+
+export interface HarnessScenarioOperationResultApi {
+  run_test_id?: string;
+  test_execution_id?: string;
+  scenarios: HarnessScenarioRegistrationResponseApi[];
+}
+
+export interface HarnessScenarioOperationResponseApi {
+  result: HarnessScenarioOperationResultApi;
 }
 
 export type LiveKitCallConfigResponseApiCallMetadata = {
@@ -19751,6 +20576,11 @@ export const CallExecutionRerunApiRerunType = {
   call_and_eval: "call_and_eval",
 } as const;
 
+/**
+ * Fresh job-scoped environment for a repository-backed harness rerun. Values are forwarded to the sandbox and are not persisted.
+ */
+export type CallExecutionRerunApiEnvironmentValues = { [key: string]: string };
+
 export interface CallExecutionRerunApi {
   /** Type of rerun: evaluation only or call plus evaluation */
   rerun_type: CallExecutionRerunApiRerunType;
@@ -19758,6 +20588,8 @@ export interface CallExecutionRerunApi {
   call_execution_ids?: string[];
   /** Whether to rerun all call executions in the test execution */
   select_all?: boolean;
+  /** Fresh job-scoped environment for a repository-backed harness rerun. Values are forwarded to the sandbox and are not persisted. */
+  environment_values?: CallExecutionRerunApiEnvironmentValues;
 }
 
 export interface FailedRerunItemApi {
@@ -22594,6 +23426,41 @@ export interface ObserveGraphDataResponseApi {
   result: ObserveGraphDataResultApi;
 }
 
+export interface TraceNavigationResultApi {
+  /** @minLength 1 */
+  next_trace_id: string;
+  /** @minLength 1 */
+  previous_trace_id: string;
+}
+
+export interface TraceNavigationResponseApi {
+  status: boolean;
+  result: TraceNavigationResultApi;
+}
+
+export interface SpanIndexQueryApi {
+  /** @minLength 1 */
+  span_id: string;
+  project_version_id: string;
+  /**
+   * JSON-encoded canonical filter list.
+   * @minLength 1
+   */
+  filters?: string;
+}
+
+export interface SpanObserveIndexQueryApi {
+  /** @minLength 1 */
+  span_id: string;
+  project_id: string;
+  user_id?: string;
+  /**
+   * JSON-encoded canonical filter list.
+   * @minLength 1
+   */
+  filters?: string;
+}
+
 /**
  * Any valid JSON value.
  */
@@ -22749,6 +23616,27 @@ export interface PageDepthExceededErrorApi {
   details?: PageDepthExceededErrorApiDetails;
 }
 
+export interface SpanListQueryApi {
+  project_version_id: string;
+  /**
+   * JSON-encoded canonical filter list. On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result.
+   * @minLength 1
+   */
+  filters?: string;
+  /**
+   * Zero-based numbered page. Pages whose required ordered work exceeds the finite read contract return HTTP 422 with code page_depth_exceeded; request an earlier page or narrow the time range.
+   * @minimum 0
+   */
+  page_number?: number;
+  /**
+   * @minimum 1
+   * @maximum 500
+   */
+  page_size?: number;
+  /** Omit for backward-compatible complete bounded pages, which may label total_rows as a lower bound. Send false to require an exact total, or true to opt in explicitly to lower-bound totals. */
+  allow_sampled?: boolean;
+}
+
 export type SpanObserveListResultApiTableItem = { [key: string]: JsonValueApi };
 
 export interface SpanObserveListResultApi {
@@ -22762,11 +23650,63 @@ export interface SpanObserveListResponseApi {
   result: SpanObserveListResultApi;
 }
 
+export interface SpanObserveListQueryApi {
+  project_id?: string;
+  user_id?: string;
+  /**
+   * JSON-encoded canonical filter list. On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result.
+   * @minLength 1
+   */
+  filters?: string;
+  /**
+   * Zero-based numbered page. Pages whose required ordered work exceeds the finite read contract return HTTP 422 with code page_depth_exceeded; request an earlier page or narrow the time range.
+   * @minimum 0
+   */
+  page_number?: number;
+  /**
+   * @minimum 1
+   * @maximum 500
+   */
+  page_size?: number;
+  /**
+   * Opaque continuation token returned by the previous page. When supplied, do not also send the numbered-page parameter.
+   * @minLength 1
+   * @maxLength 4096
+   */
+  cursor?: string;
+  cursor_mode?: boolean;
+  /** Omit for backward-compatible complete bounded pages, which may label total_rows as a lower bound. Send false to require an exact total, or true to opt in explicitly to lower-bound totals. */
+  allow_sampled?: boolean;
+}
+
 export type RootSpansResponseApiResult = { [key: string]: string };
 
 export interface RootSpansResponseApi {
   status?: boolean;
   result: RootSpansResponseApiResult;
+}
+
+export type ObservationSpanDetailResultApiObservationSpan = {
+  [key: string]: { [key: string]: unknown };
+};
+
+export type ObservationSpanDetailResultApiEvalsMetrics = {
+  [key: string]: { [key: string]: unknown };
+};
+
+export type ObservationSpanDetailResultApiEnrichment = {
+  [key: string]: { [key: string]: unknown };
+};
+
+export interface ObservationSpanDetailResultApi {
+  observation_span: ObservationSpanDetailResultApiObservationSpan;
+  evals_metrics: ObservationSpanDetailResultApiEvalsMetrics;
+  enrichment?: ObservationSpanDetailResultApiEnrichment;
+}
+
+export interface ObservationSpanDetailResponseApi {
+  status: boolean;
+  result: ObservationSpanDetailResultApi;
 }
 
 export type ProjectVersionApiMetadata = { [key: string]: unknown };
@@ -24356,6 +25296,84 @@ export interface TraceSessionListResponseApi {
   result: TraceSessionListResultApi;
 }
 
+export interface TraceSessionListQueryApi {
+  project_id?: string;
+  user_id?: string;
+  bookmarked?: boolean;
+  /**
+   * JSON-encoded canonical filter list. On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result.
+   * @minLength 1
+   */
+  filters?: string;
+  /**
+   * JSON-encoded list of sort params.
+   * @minLength 1
+   */
+  sort_params?: string;
+  /**
+   * Zero-based numbered page. Pages whose required ordered work exceeds the finite read contract return HTTP 422 with code page_depth_exceeded; request an earlier page or narrow the time range.
+   * @minimum 0
+   */
+  page_number?: number;
+  /**
+   * @minimum 1
+   * @maximum 500
+   */
+  page_size?: number;
+  /**
+   * Opaque continuation token returned by the previous page. When supplied, do not also send the numbered-page parameter.
+   * @minLength 1
+   * @maxLength 4096
+   */
+  cursor?: string;
+  cursor_mode?: boolean;
+  interval?: string;
+  /** Omit for backward-compatible complete bounded pages, which may label total_rows as a lower bound. Send false to require an exact total, or true to opt in explicitly to lower-bound totals. */
+  allow_sampled?: boolean;
+}
+
+export type TraceSessionDetailResultApiSessionMetadata = {
+  [key: string]: unknown;
+};
+
+export type TraceSessionDetailResultApiResponseItem = {
+  [key: string]: unknown;
+};
+
+export interface TraceSessionDetailResultApi {
+  session_metadata: TraceSessionDetailResultApiSessionMetadata;
+  response: TraceSessionDetailResultApiResponseItem[];
+  next: boolean;
+}
+
+export interface TraceSessionDetailResponseApi {
+  status: boolean;
+  result: TraceSessionDetailResultApi;
+}
+
+export interface TraceSessionRetrieveQueryApi {
+  /** JSON-encoded object. */
+  navigation_context?: string;
+  user_id?: string;
+  /**
+   * JSON-encoded canonical filter list.
+   * @minLength 1
+   */
+  filters?: string;
+  /**
+   * JSON-encoded list of sort params.
+   * @minLength 1
+   */
+  sort_params?: string;
+  /** @minimum 0 */
+  page_number?: number;
+  /**
+   * @minimum 1
+   * @maximum 500
+   */
+  page_size?: number;
+}
+
 export type TraceApiMetadata = { [key: string]: unknown };
 
 export type TraceApiInput = { [key: string]: unknown };
@@ -24466,9 +25484,40 @@ export interface TraceAgentGraphResponseApi {
   result: TraceAgentGraphResultApi;
 }
 
+export interface TraceAgentGraphQueryApi {
+  project_id: string;
+  /**
+   * JSON-encoded canonical filter list.
+   * @minLength 1
+   */
+  filters?: string;
+  /** Recompute and atomically replace the last exact graph snapshot. */
+  refresh?: boolean;
+}
+
 export interface TracePropertiesResponseApi {
   status?: boolean;
   result: string[];
+}
+
+export interface TraceIndexQueryApi {
+  trace_id: string;
+  project_version_id: string;
+  /**
+   * JSON-encoded canonical filter list.
+   * @minLength 1
+   */
+  filters?: string;
+}
+
+export interface TraceObserveIndexQueryApi {
+  trace_id: string;
+  project_id: string;
+  /**
+   * JSON-encoded canonical filter list.
+   * @minLength 1
+   */
+  filters?: string;
 }
 
 export type TraceObserveListMetadataApiQueryStatus =
@@ -24534,6 +25583,33 @@ export interface TracePrototypeListResponseApi {
   result: TracePrototypeListResultApi;
 }
 
+export interface TraceListQueryApi {
+  project_version_id: string;
+  trace_ids?: string;
+  /**
+   * JSON-encoded canonical filter list. On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result.
+   * @minLength 1
+   */
+  filters?: string;
+  /**
+   * JSON-encoded list of sort params.
+   * @minLength 1
+   */
+  sort_params?: string;
+  /**
+   * Zero-based numbered page. Pages whose required ordered work exceeds the finite read contract return HTTP 422 with code page_depth_exceeded; request an earlier page or narrow the time range.
+   * @minimum 0
+   */
+  page_number?: number;
+  /**
+   * @minimum 1
+   * @maximum 500
+   */
+  page_size?: number;
+  /** Omit for backward-compatible complete bounded pages, which may label total_rows as a lower bound. Send false to require an exact total, or true to opt in explicitly to lower-bound totals. */
+  allow_sampled?: boolean;
+}
+
 export type TraceObserveListResultApiTableItem = {
   [key: string]: JsonValueApi;
 };
@@ -24547,6 +25623,39 @@ export interface TraceObserveListResultApi {
 export interface TraceObserveListResponseApi {
   status: boolean;
   result: TraceObserveListResultApi;
+}
+
+export interface TraceObserveListQueryApi {
+  project_id?: string;
+  project_version_id?: string;
+  session_id?: string;
+  /**
+   * JSON-encoded canonical filter list. On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result.
+   * @minLength 1
+   */
+  filters?: string;
+  /**
+   * Zero-based numbered page. Pages whose required ordered work exceeds the finite read contract return HTTP 422 with code page_depth_exceeded; request an earlier page or narrow the time range.
+   * @minimum 0
+   */
+  page_number?: number;
+  /**
+   * @minimum 1
+   * @maximum 500
+   */
+  page_size?: number;
+  /**
+   * Opaque continuation token returned by the previous page. When supplied, do not also send the numbered-page parameter.
+   * @minLength 1
+   * @maxLength 4096
+   */
+  cursor?: string;
+  cursor_mode?: boolean;
+  /** JSON-encoded list of custom attribute keys to hydrate; only requested keys are returned. Each key resolves to its latest live span value by (start_time, span_id). Comma-separated simple keys remain supported. */
+  attribute_keys?: string;
+  /** Omit for backward-compatible complete bounded pages, which may label total_rows as a lower bound. Send false to require an exact total. Send true to opt in explicitly to lower-bound totals and, on the first page, a clearly labelled bounded partial result when the full ordered prefix cannot be proven inside the read budget. */
+  allow_sampled?: boolean;
+  interval?: string;
 }
 
 export type TraceVoiceCallListResponseApiResultsItem = {
@@ -24602,6 +25711,37 @@ export interface TraceVoiceCallListResponseApi {
   query_applied_filter_sha256?: string;
   /** @minimum 0 */
   query_applied_filter_count?: number;
+}
+
+export interface TraceVoiceCallListQueryApi {
+  project_id: string;
+  /**
+   * JSON-encoded canonical filter list.
+   * @minLength 1
+   */
+  filters?: string;
+  /** JSON-encoded list of custom attribute keys to include as CSV columns. Comma-separated simple keys remain supported. */
+  attribute_keys?: string;
+  /**
+   * One-based numbered page. Pages whose required ordered work exceeds the finite read contract return HTTP 422 with code page_depth_exceeded; request an earlier page, use the additive continuation cursor, or narrow the time range.
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 500
+   */
+  page_size?: number;
+  remove_simulation_calls?: boolean;
+  /**
+   * Opaque continuation token returned by the previous page. When supplied, do not also send the numbered-page parameter.
+   * @minLength 1
+   * @maxLength 4096
+   */
+  cursor?: string;
+  cursor_mode?: boolean;
+  /** Omit for backward-compatible complete bounded pages, which may label count as a lower bound. Send false to require an exact total. Send true to opt in explicitly to lower-bound totals and, on the first page, a clearly labelled bounded partial result when the full ordered prefix cannot be proven inside the read budget. */
+  allow_sampled?: boolean;
 }
 
 export type TraceVoiceCallDetailResultApiCostBreakdown = {
@@ -25135,6 +26275,7 @@ export type UsersResultApiQueryProvenance =
 
 export const UsersResultApiQueryProvenance = {
   span_user_rollup_end_users_candidate: "span_user_rollup_end_users_candidate",
+  physical_latest_users: "physical_latest_users",
 } as const;
 
 export type UsersResultApiApproximateFieldsItem =
@@ -25170,6 +26311,40 @@ export interface UsersResponseApi {
   result: UsersResultApi;
 }
 
+export interface UsersQueryApi {
+  project_id?: string;
+  search?: string;
+  /**
+   * @minimum 1
+   * @maximum 500
+   */
+  page_size?: number;
+  /** @minimum 0 */
+  current_page_index?: number;
+  /**
+   * JSON-encoded list of sort params.
+   * @minLength 1
+   */
+  sort_params?: string;
+  /**
+   * JSON-encoded canonical filter list.
+   * @minLength 1
+   */
+  filters?: string;
+  export?: boolean;
+  /**
+   * Opaque continuation token returned by the previous page. When supplied, do not also send the numbered-page parameter.
+   * @minLength 1
+   * @maxLength 4096
+   */
+  cursor?: string;
+  cursor_mode?: boolean;
+  /** JSON-encoded list of visible Users-table fields. Raw-derived metrics are hydrated only when explicitly requested. */
+  requested_columns?: string;
+  /** JSON-encoded list of visible custom user attribute keys. Only these keys (plus keys required by filters) are hydrated. */
+  attribute_keys?: string;
+}
+
 export interface UserCodeExampleResponseApi {
   status?: boolean;
   /** @minLength 1 */
@@ -25187,18 +26362,6 @@ export interface OTLPHealthResponseApi {
   status: OTLPHealthResponseApiStatus;
   /** @minLength 1 */
   service: string;
-}
-
-export type WebhookRequestApiCall = { [key: string]: unknown };
-
-export interface WebhookRequestApi {
-  call: WebhookRequestApiCall;
-}
-
-export interface WebhookResponseApi {
-  status?: boolean;
-  /** @minLength 1 */
-  result: string;
 }
 
 export type AdminCustomPlanResponseApiResult = { [key: string]: string };
@@ -26412,6 +27575,8 @@ export interface UsagePlansAndAddonsResultApi {
   pricing: UsagePlansAndAddonsResultApiPricing;
   isCustomPricing: boolean;
   customDetails?: UsageCustomPlanDetailsApi;
+  plan_change_locked?: boolean;
+  plan_change_locked_reason?: string;
   pending_cancel: boolean;
   /** @minLength 1 */
   cancel_at?: string;
@@ -26790,6 +27955,10 @@ export type AccountsAwsMarketplaceVerifyTokenCreateBody = {
   "x-amzn-marketplace-token": string;
   "x-amzn-marketplace-product-id"?: string;
   "x-amzn-marketplace-agreement-id"?: string;
+};
+
+export type AccountsGcpMarketplaceVerifyTokenCreateBody = {
+  "x-gcp-marketplace-token": string;
 };
 
 export type AccountsOrganizationMembersListParams = {
@@ -28975,18 +30144,22 @@ export type Saml2AuthAcsCreateBodyTwo = {
 
 export type Saml2AuthAuthCallbackListParams = {
   code?: string;
+  state?: string;
 };
 
 export type Saml2AuthAuthReadParams = {
   code?: string;
+  state?: string;
 };
 
 export type Saml2AuthGithubCallbackListParams = {
   code?: string;
+  state?: string;
 };
 
 export type Saml2AuthGithubReadParams = {
   code?: string;
+  state?: string;
 };
 
 export type Saml2AuthIdpLoginListParams = {
@@ -29054,6 +30227,7 @@ export type Saml2AuthIdpUploadsUpdateBodyTwo = {
 
 export type Saml2AuthLoginListParams = {
   provider: Saml2AuthLoginListProvider;
+  onboarding_token?: string;
 };
 
 export type Saml2AuthLoginListProvider =
@@ -29067,6 +30241,7 @@ export const Saml2AuthLoginListProvider = {
 
 export type Saml2AuthReadParams = {
   provider: Saml2AuthReadProvider;
+  onboarding_token?: string;
 };
 
 export type Saml2AuthReadProvider =
@@ -29080,10 +30255,12 @@ export const Saml2AuthReadProvider = {
 
 export type Saml2AuthMicrosoftCallbackListParams = {
   code?: string;
+  state?: string;
 };
 
 export type Saml2AuthMicrosoftReadParams = {
   code?: string;
+  state?: string;
 };
 
 export type SdkApiV1EvaluatePipelineListParams = {
@@ -29198,6 +30375,8 @@ export type SimulateApiAgentPromptOptimiserList200 = {
 export type SimulateApiAlkSimulateCallExecutionsRecordingUploadBody = {
   file: Blob;
   filename?: string;
+  sha256?: string;
+  kind?: string;
 };
 
 export type SimulateApiCallExecutionsListParams = {
@@ -29212,6 +30391,21 @@ export type SimulateApiCallExecutionsListParams = {
    * @minimum 1
    */
   limit?: number;
+};
+
+export type SimulateApiHarnessJobsSecretFileUploadBody = {
+  /** Credential file; transferred without entering job JSON. */
+  file: Blob;
+  /** Environment variable that will point to the mounted file. */
+  environment_name: string;
+};
+
+export type SimulateApiHarnessJobsSourceUploadBody = {
+  /** Repeat this field once for every source file. */
+  files: Blob;
+  /** Repeat in file order with each repository-relative path. */
+  paths: string;
+  name?: string;
 };
 
 /**
@@ -30252,13 +31446,6 @@ export type TracerObservationSpanGetTraceIdByIndexSpansAsBaseParams = {
   filters?: string;
 };
 
-export type TracerObservationSpanGetTraceIdByIndexSpansAsBase200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: ObservationSpanApi[];
-};
-
 export type TracerObservationSpanGetTraceIdByIndexSpansAsObserveParams = {
   /**
    * A page number within the paginated result set.
@@ -30278,13 +31465,6 @@ export type TracerObservationSpanGetTraceIdByIndexSpansAsObserveParams = {
    * @minLength 1
    */
   filters?: string;
-};
-
-export type TracerObservationSpanGetTraceIdByIndexSpansAsObserve200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: ObservationSpanApi[];
 };
 
 export type TracerObservationSpanListSpansParams = {
@@ -30384,6 +31564,22 @@ export type TracerObservationSpanRootSpansParams = {
   limit?: number;
   trace_ids: string[];
   project_ids?: string[];
+};
+
+export type TracerObservationSpanReadParams = {
+  project_id?: string;
+  /**
+   * @minLength 1
+   */
+  trace_id?: string;
+  start_hour?: string;
+  observation_type?: string;
+  service_name?: string;
+  expected_start_time?: string;
+  /**
+   * @minLength 1
+   */
+  expected_version?: string;
 };
 
 export type TracerProjectVersionListParams = {
@@ -30786,6 +31982,28 @@ export type TracerTraceSessionListSessionsParams = {
   allow_sampled?: boolean;
 };
 
+export type TracerTraceSessionQueryParams = {
+  navigation_context?: string;
+  user_id?: string;
+  /**
+   * @minLength 1
+   */
+  filters?: string;
+  /**
+   * @minLength 1
+   */
+  sort_params?: string;
+  /**
+   * @minimum 0
+   */
+  page_number?: number;
+  /**
+   * @minimum 1
+   * @maximum 500
+   */
+  page_size?: number;
+};
+
 export type TracerTraceListParams = {
   /**
    * A page number within the paginated result set.
@@ -30890,13 +32108,6 @@ export type TracerTraceGetTraceIdByIndexParams = {
   filters?: string;
 };
 
-export type TracerTraceGetTraceIdByIndex200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: TraceApi[];
-};
-
 export type TracerTraceGetTraceIdByIndexObserveParams = {
   /**
    * A page number within the paginated result set.
@@ -30912,13 +32123,6 @@ export type TracerTraceGetTraceIdByIndexObserveParams = {
    * @minLength 1
    */
   filters?: string;
-};
-
-export type TracerTraceGetTraceIdByIndexObserve200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: TraceApi[];
 };
 
 export type TracerTraceListTracesParams = {

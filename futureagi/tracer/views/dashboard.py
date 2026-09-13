@@ -1,6 +1,5 @@
 import json
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
@@ -23,7 +22,10 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
 from tfc.routers import uses_db
-from tfc.settings.settings import property_catalog_read_workspace_allowlist
+from tfc.settings.settings import (
+    property_catalog_read_workspace_allowlist,
+    property_catalog_reads_all_production_workspaces,
+)
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import (
     ApiErrorResponseSerializer,
@@ -174,6 +176,7 @@ from tracer.services.dashboard_metrics_catalog import (
 from tracer.services.exact_aggregation_cache import (
     read_or_schedule_exact_snapshot,
 )
+from tracer.services.postgres_read_policy import application_postgres_reads
 from tracer.utils.helper import get_annotation_labels_by_project
 from tracer.utils.property_registry import parse_property_registry_id
 from tracer.utils.workspace_scope import (
@@ -192,6 +195,10 @@ def _property_catalog_read_enabled_for_workspace(workspace) -> bool:
     if getattr(settings, "PROPERTY_CATALOG_READ_MODE", "off") != "read":
         return False
     workspace_id = getattr(workspace, "id", None)
+    if workspace_id is not None and property_catalog_reads_all_production_workspaces(
+        settings
+    ):
+        return True
     return workspace_id is not None and str(workspace_id) in set(
         property_catalog_read_workspace_allowlist(settings)
     )
@@ -277,6 +284,7 @@ def _read_property_catalog_value_page(request, query_params, *, deadline):
     }
     catalog_executor = PropertyCatalogReadExecutor(
         max_wall_ms=deadline.remaining_ms(floor_ms=1),
+        application_read=True,
     )
     reader = PropertyCatalogValueReader(
         catalog_executor,
@@ -485,66 +493,16 @@ _FINITE_NATIVE_FILTER_VALUE_MAX_RESULT_BYTES = (
 
 
 def _run_filter_value_pg_read(deadline, read):
-    """Materialize one picker metadata read inside the request-owned wall.
-
-    The process-wide middleware allows PostgreSQL statements to run for thirty
-    seconds, which is longer than the entire property-picker interaction SLA.
-    Each authoritative ORM phase therefore consumes the same configured wall
-    as ClickHouse. The transaction is explicitly read-only and never retries;
-    expiry fails closed at the public boundary instead of publishing an empty
-    vocabulary.
-    """
-
-    timeout_ms = deadline.remaining_ms(_FILTER_VALUES_INTERACTIVE_TIMEOUT_MS)
-    if connection.vendor != "postgresql":
+    """Read picker metadata with cooperative checks, not a statement timer."""
+    with application_postgres_reads(
+        connection=connection,
+        atomic=transaction.atomic,
+        check_request=lambda: deadline.remaining_ms(
+            _FILTER_VALUES_INTERACTIVE_TIMEOUT_MS
+        ),
+        read_only=True,
+    ):
         return read()
-    already_in_atomic_block = connection.in_atomic_block
-    previous_statement_timeout = None
-    try:
-        # A SELECT-only production qualifier and a normal request can both
-        # already own the outer transaction.  Opening another atomic block in
-        # that case emits SAVEPOINT/RELEASE statements and does not buy an
-        # additional timeout boundary, so run directly inside the proven outer
-        # transaction.  Only create a read-only transaction when this helper
-        # owns the boundary.
-        transaction_context = (
-            nullcontext() if already_in_atomic_block else transaction.atomic()
-        )
-        with transaction_context:
-            with connection.cursor() as cursor:
-                # A direct SELECT harness may already own a read-only outer
-                # transaction. PostgreSQL rejects SET TRANSACTION after a
-                # savepoint/prior statement, so only declare read-only when
-                # this helper owns the outer transaction.
-                if not already_in_atomic_block:
-                    cursor.execute("SET TRANSACTION READ ONLY")
-                else:
-                    # ``set_config(..., true)`` lasts until the surrounding
-                    # transaction ends. Django's TestCase and a few composed
-                    # request paths already own that transaction, so preserve
-                    # their timeout instead of leaking this picker's short SLA
-                    # into later SQL on the same connection.
-                    cursor.execute("SELECT current_setting('statement_timeout')")
-                    previous_statement_timeout = str(cursor.fetchone()[0])
-                cursor.execute(
-                    "SELECT set_config('statement_timeout', %s, true)",
-                    [str(timeout_ms)],
-                )
-            try:
-                return read()
-            finally:
-                if previous_statement_timeout is not None and not getattr(
-                    connection, "needs_rollback", False
-                ):
-                    with connection.cursor() as cursor:
-                        cursor.execute(
-                            "SELECT set_config('statement_timeout', %s, true)",
-                            [previous_statement_timeout],
-                        )
-    except DatabaseError as exc:
-        raise ReadDeadlineExceeded(
-            "Filter-value PostgreSQL read exceeded its request deadline"
-        ) from exc
 
 
 def _session_overlay_filter_value_ids(
@@ -1532,18 +1490,9 @@ def _validate_dashboard_rollup_result(result, expected_columns):
 
 
 def _decorate_dashboard_exact_payload(payload):
-    """Attest cached/worker payloads produced by the exact snapshot lane."""
+    """Copy a completed cached payload without rewriting its provenance."""
 
-    decorated = deepcopy(payload)
-    if not isinstance(decorated, dict):
-        return decorated
-    decorated["query_exact"] = True
-    decorated["query_provenance"] = "exact_snapshot"
-    for metric in decorated.get("metrics", []):
-        if isinstance(metric, dict):
-            metric["query_exact"] = True
-            metric["query_provenance"] = "exact_snapshot"
-    return decorated
+    return deepcopy(payload)
 
 
 def _dashboard_snapshot_is_renderable(payload):
@@ -1842,25 +1791,37 @@ def _read_public_dashboard_query(
     deadline=None,
     try_rollup=True,
 ):
-    """Serve cached exact data or one bounded, honest cold response."""
+    """Serve cached data or dispatch one deduplicated heavy refresh."""
 
     if deadline is None:
         deadline = ReadDeadline.start(_DASHBOARD_INTERACTIVE_TIMEOUT_MS)
+    if not try_rollup:
+        try:
+            snapshot = read_or_schedule_exact_snapshot(
+                "dashboard-query",
+                cache_identity,
+                refresh=bool(refresh),
+                pending_payload=_pending_dashboard_payload(query_config),
+            )
+        except Exception:
+            logger.exception("dashboard_exact_snapshot_schedule_failed")
+            return _dashboard_degraded_payload(
+                query_config,
+                error_code="read_budget_exceeded",
+                refresh_state={
+                    "query_refreshing": False,
+                    "query_refresh_failed": True,
+                },
+            )
+        if _dashboard_snapshot_is_renderable(snapshot):
+            return _decorate_dashboard_exact_payload(snapshot)
+        return snapshot
     try:
         # Snapshot scheduling may spend up to two seconds in Redis/Temporal.
         # Reserve that time inside the same public wall instead of beginning a
         # fresh dispatch after synchronous ClickHouse work consumed the budget.
         deadline.remaining_ms(floor_ms=2_100)
     except ReadDeadlineExceeded:
-        return _dashboard_degraded_payload(
-            query_config,
-            error_code="read_budget_exceeded",
-        )
-    if not try_rollup:
-        # This is the post-synchronous-read fallback. Starting Redis/Temporal
-        # reconciliation here would create a fresh wall after ClickHouse used
-        # most of the request budget. Background refresh remains available on
-        # the normal cold path; this response fails fast and honestly.
         return _dashboard_degraded_payload(
             query_config,
             error_code="read_budget_exceeded",
@@ -2551,9 +2512,9 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         """
         read_deadline = kwargs.pop("_dashboard_action_deadline", None)
         read_deadline = read_deadline or start_dashboard_action_deadline()
-        # Dashboard reads are interactive. Route the ad-hoc endpoint through
-        # the same synchronous executor as saved widgets so both surfaces use
-        # one optimized ClickHouse path and neither schedules Temporal work.
+        # Route ad-hoc and saved widgets through the same cache-first executor.
+        # Both try one bounded foreground read; a proven budget failure may
+        # hand the same request to the deduplicated heavy-read worker.
         try:
             query_config = {
                 **request.validated_data,
@@ -2704,6 +2665,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             try:
                 catalog_executor = PropertyCatalogReadExecutor(
                     max_wall_ms=read_deadline.remaining_ms(floor_ms=1),
+                    application_read=True,
                 )
                 catalog_page = PropertyCatalogReader(
                     catalog_executor,
@@ -2834,12 +2796,11 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 )
 
             # Deprecated compatibility shape for clients that send no paging
-            # or filtering fields. It remains protected by the same 8.5s wall.
+            # or filtering fields. A completed catalog needs no further read.
             metrics = get_cached_metrics_catalog(
                 workspace,
                 **common_catalog_args,
             )
-            read_deadline.remaining_ms(floor_ms=1)
             response = self._gm.success_response({"metrics": metrics})
             response["Deprecation"] = "true"
             return response
@@ -6816,9 +6777,12 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
 
         Routes each metric to the appropriate builder based on source.
         """
-        read_deadline = _read_deadline or ReadDeadline.start(
-            _DASHBOARD_INTERACTIVE_TIMEOUT_MS
+        statement_timeout_ms = (
+            settings.GRAPH_BACKGROUND_WALL_MS
+            if _exact_worker
+            else _DASHBOARD_EXACT_QUERY_TIMEOUT_MS
         )
+        read_deadline = _read_deadline or ReadDeadline.start(statement_timeout_ms)
         read_query_config = _canonicalize_persisted_dashboard_query_filters_for_read(
             query_config
         )
@@ -6892,17 +6856,66 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
                 code="service_unavailable",
             )
 
-        if not _exact_worker:
-            # Prefer the materialized hourly rollups for the simple shapes
-            # they can answer. Unsupported or incomplete shapes fall through
-            # to the synchronous exact executor below; no request is queued to
-            # Temporal and the caller receives one final HTTP response.
-            rollup_payload = _read_dashboard_rollup_fast_path(
+        cache_identity = (
+            deepcopy(cache_identity_override)
+            if cache_identity_override is not None
+            else {
+                "workspace_id": str(workspace.id),
+                "query_config": deepcopy(query_config),
+            }
+        )
+        if trace_metrics:
+            # Do not reuse the previous uncollapsed physical-window results.
+            # The worker receives this same identity; no cache TTL is relaxed.
+            cache_identity["trace_snapshot_semantics"] = "physical-latest-complete-series-v2"
+
+        def _schedule_heavy_dashboard_read():
+            payload = _read_public_dashboard_query(
                 query_config,
+                cache_identity=cache_identity,
+                refresh=True,
                 deadline=read_deadline,
+                try_rollup=False,
+            )
+            return self._gm.success_response(payload)
+
+        if not _exact_worker:
+            # Read cache/refresh state without creating work. This lets browser
+            # polling reuse a completed heavy result or observe one in-flight
+            # worker instead of repeating the same 30-second foreground scan.
+            try:
+                cached = read_or_schedule_exact_snapshot(
+                    "dashboard-query",
+                    cache_identity,
+                    refresh=False,
+                    pending_payload=_pending_dashboard_payload(query_config),
+                    schedule_on_miss=False,
+                )
+            except Exception:
+                logger.warning("dashboard_snapshot_probe_failed", exc_info=True)
+                cached = None
+            if _dashboard_snapshot_is_renderable(cached):
+                if not refresh or cached.get("query_refreshing") is True:
+                    return self._gm.success_response(
+                        _decorate_dashboard_exact_payload(cached)
+                    )
+            elif isinstance(cached, dict) and cached.get("query_refreshing") is True:
+                return self._gm.success_response(cached)
+
+            # Independently refreshed rollups cannot establish latest physical
+            # span state. Exact trace reads must not fall back to those values.
+            rollup_payload = (
+                None
+                if trace_metrics
+                else _read_dashboard_rollup_fast_path(
+                    query_config,
+                    deadline=read_deadline,
+                )
             )
             if _dashboard_snapshot_is_renderable(rollup_payload):
                 return self._gm.success_response(rollup_payload)
+            if refresh:
+                return _schedule_heavy_dashboard_read()
 
         # One HTTP request (or explicit background refresh) owns one wall
         # budget. Every metric statement, including later executor waves and
@@ -6921,6 +6934,11 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
                 "custom_end": window_end.isoformat(),
             },
         }
+        long_trace_window = window_end - window_start > timedelta(
+            days=settings.DASHBOARD_WEEKLY_AGGREGATION_AFTER_DAYS
+        )
+        if trace_metrics and long_trace_window:
+            query_config["granularity"] = "week"
 
         ch_client = None
         legacy_analytics = None
@@ -6928,6 +6946,7 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
         trace_analytics = None
         trace_builder = None
         trace_prepared = ()
+        trace_query_groups = ()
         dataset_builder = None
         dataset_prepared = ()
         simulation_builder = None
@@ -6936,8 +6955,8 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
             trace_config = {
                 **query_config,
                 "metrics": trace_metrics,
-                # Force raw latest-state spans instead of the independently
-                # refreshed attribute rollup for customer-visible exact totals.
+                # Disable the independently refreshed attribute rollup. The
+                # public CH25 path resolves the latest physical span state.
                 "require_versioned_snapshot": True,
             }
             project_ids = trace_config.get("project_ids", [])
@@ -6958,10 +6977,16 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
             query_config["project_ids"] = trace_config["project_ids"]
             trace_config["organization_id"] = str(workspace.organization_id)
             trace_config["workspace_id"] = str(workspace.id)
-            trace_analytics = V2AnalyticsQueryService()
+            trace_analytics = V2AnalyticsQueryService(
+                read_timeout_ceiling_ms=(
+                    statement_timeout_ms if _exact_worker else None
+                )
+            )
             trace_builder = DashboardQueryBuilderV2(trace_config)
+            trace_builder._latest_state_spans_required = True
             if project_ids:
                 trace_prepared = DashboardViewSet._prepare_metric_queries(trace_builder)
+                trace_query_groups = trace_builder.group_prepared_metric_queries(trace_prepared)
             else:
                 metric_results.extend(
                     _complete_empty_metric_results(trace_builder, "traces")
@@ -7003,8 +7028,12 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
         read_settings = dict(_DASHBOARD_TRACE_READ_SETTINGS)
         if dataset_prepared or simulation_prepared:
             ch_client = get_clickhouse_client()
-            legacy_analytics = AnalyticsQueryService()
-            legacy_analytics._ch_client = ch_client
+            legacy_analytics = AnalyticsQueryService(
+                ch_client=ch_client,
+                read_timeout_ceiling_ms=(
+                    statement_timeout_ms if _exact_worker else None
+                ),
+            )
 
         if trace_prepared:
 
@@ -7013,21 +7042,57 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
                     analytics=trace_analytics,
                     sql=sql,
                     params=params,
-                    timeout_ms=read_deadline.remaining_ms(
-                        _DASHBOARD_EXACT_QUERY_TIMEOUT_MS
-                    ),
+                    timeout_ms=read_deadline.remaining_ms(statement_timeout_ms),
                     settings=read_settings,
                 )
 
-            metric_results.extend(
-                DashboardViewSet._run_metric_queries(
-                    trace_builder,
-                    "traces",
-                    _fetch_trace_rows,
-                    max_workers=_DASHBOARD_TRACE_MAX_CONCURRENT_METRICS,
-                    prepared_queries=trace_prepared,
-                )
-            )
+            def _exec_trace_group(item):
+                indices, plan = item
+                if plan is None:
+                    return DashboardViewSet._run_metric_queries(
+                        trace_builder, "traces", _fetch_trace_rows,
+                        max_workers=1,
+                        prepared_queries=(trace_prepared[indices[0]],),
+                    )
+                grouped_started = monotonic()
+                try:
+                    grouped_rows = _fetch_trace_rows(plan.sql, plan.params)
+                    _complete, results = trace_builder.metric_group_results(plan, grouped_rows)
+                except Exception as exc:
+                    if not (is_read_budget_error(exc) or is_clickhouse_query_error(exc)):
+                        raise
+                    raise DashboardExactReadError(
+                        "dashboard metric group exceeded its read budget",
+                        error_code="read_budget_exceeded",
+                    ) from exc
+                grouped_elapsed_ms = (monotonic() - grouped_started) * 1000
+                if grouped_elapsed_ms > 10_000:
+                    logger.info(
+                        "dashboard_trace_metric_group_slow",
+                        elapsed_ms=round(grouped_elapsed_ms, 3),
+                        normal_slo_met=(grouped_elapsed_ms <= statement_timeout_ms),
+                    )
+                return results
+
+            try:
+                if len(trace_query_groups) == 1:
+                    grouped_results = [_exec_trace_group(trace_query_groups[0])]
+                else:
+                    with ThreadPoolExecutor(max_workers=min(
+                        len(trace_query_groups), _DASHBOARD_TRACE_MAX_CONCURRENT_METRICS,
+                    )) as pool:
+                        grouped_results = list(pool.map(_exec_trace_group, trace_query_groups))
+            except DashboardExactReadError:
+                if not _exact_worker:
+                    return _schedule_heavy_dashboard_read()
+                raise
+            trace_results = [None] * len(trace_prepared)
+            for (indices, _plan), results in zip(trace_query_groups, grouped_results, strict=True):
+                for index, result in zip(indices, results, strict=True):
+                    trace_results[index] = result
+            assert all(result is not None for result in trace_results)
+            metric_results.extend(trace_results)
+
 
         if dataset_prepared:
             if legacy_analytics is None:
@@ -7038,9 +7103,7 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
                     analytics=legacy_analytics,
                     sql=sql,
                     params=params,
-                    timeout_ms=read_deadline.remaining_ms(
-                        _DASHBOARD_EXACT_QUERY_TIMEOUT_MS
-                    ),
+                    timeout_ms=read_deadline.remaining_ms(statement_timeout_ms),
                     settings=read_settings,
                 )
 
@@ -7064,9 +7127,7 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
                     analytics=legacy_analytics,
                     sql=sql,
                     params=params,
-                    timeout_ms=read_deadline.remaining_ms(
-                        _DASHBOARD_EXACT_QUERY_TIMEOUT_MS
-                    ),
+                    timeout_ms=read_deadline.remaining_ms(statement_timeout_ms),
                     settings=read_settings,
                 )
 
@@ -7098,6 +7159,8 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
                 )
                 else "query_failed"
             )
+            if not _exact_worker and error_code == "read_budget_exceeded":
+                return _schedule_heavy_dashboard_read()
             raise DashboardExactReadError(
                 "one or more dashboard metrics did not complete exactly",
                 error_code=error_code,
@@ -7109,13 +7172,19 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
         try:
             read_deadline.remaining_ms(floor_ms=1)
         except ReadDeadlineExceeded as exc:
+            if not _exact_worker:
+                return _schedule_heavy_dashboard_read()
             raise DashboardExactReadError(
                 "dashboard exact read deadline exceeded",
                 error_code="read_budget_exceeded",
             ) from exc
 
         # Format using DatasetQueryBuilder (compatible format_results)
-        formatter_config = {**query_config, "workspace_id": str(workspace.id)}
+        formatter_config = {
+            **query_config,
+            "workspace_id": str(workspace.id),
+            "require_complete_series": True,
+        }
         formatter = DatasetQueryBuilder(formatter_config)
 
         if trace_metrics and not dataset_metrics and not simulation_metrics:
@@ -7132,37 +7201,29 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
         else:
             formatted = formatter.format_results(metric_results)
 
-        # Both worker and request-time executions publish an exact point-in-time
-        # snapshot. Keep the public provenance within the generated API enum;
-        # execution routing is an internal detail and must not invalidate the
-        # successful response in closed clients.
+        # Every trace statement now selects latest physical state before
+        # applying mutable predicates; budget errors never publish partial rows.
+        query_exact = True
         query_provenance = "exact_snapshot"
         formatted.update(
             {
                 "query_complete": True,
                 "query_status": "complete",
                 "query_sampled": False,
-                "query_exact": True,
+                "query_exact": query_exact,
                 "query_provenance": query_provenance,
             }
         )
         for formatted_metric in formatted.get("metrics", []):
             formatted_metric.update(
                 {
-                    "query_exact": True,
+                    "query_exact": query_exact,
                     "query_provenance": query_provenance,
                 }
             )
-        # Formatting and ORM-backed display-name hydration are part of this
-        # refresh too. A payload returned after the wall expires would still
-        # be published atomically by the exact-aggregation activity, so fence
-        # it here immediately before handing it to that publisher.
-        try:
-            read_deadline.remaining_ms(floor_ms=1)
-        except ReadDeadlineExceeded as exc:
-            raise DashboardExactReadError(
-                "dashboard exact read deadline exceeded"
-            ) from exc
+        # Every metric has completed exactly and formatting requires no more
+        # reads. Preserve this result even if formatting crossed the target
+        # wall; discarding it would repeat already completed database work.
         return self._gm.success_response(formatted)
 
     @validated_request(

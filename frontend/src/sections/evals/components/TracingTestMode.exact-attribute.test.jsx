@@ -1,6 +1,9 @@
 import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ANALYTICS_REQUEST_TIMEOUT_MS } from "src/config/runtime_limits";
+import { SPAN_REFERENCE_ERROR } from "src/sections/projects/LLMTracing/spanReadReference";
+import * as listReads from "src/sections/projects/LLMTracing/listCursorPagination";
 import { act, render, screen, userEvent, waitFor } from "src/utils/test-utils";
 import {
   ATTRIBUTE_LOOKUP_UNAVAILABLE_MESSAGE,
@@ -19,6 +22,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("src/utils/axios", () => ({
+  readQuery: mocks.get,
   default: { get: mocks.get, post: mocks.post },
   endpoints: {
     project: {
@@ -27,6 +31,7 @@ vi.mock("src/utils/axios", () => ({
       getTracesForObserveProject: () => "/traces/",
       projectSessionList: () => "/sessions/",
       getTrace: (id) => `/traces/${id}/`,
+      getObservationSpan: (id) => `/span-details/${id}/`,
       listProjects: () => "/projects/",
       traceSession: "/sessions/",
       getCallLogs: "/calls/",
@@ -56,11 +61,14 @@ vi.mock("./useExactEvalAttributeFields", async (importOriginal) => ({
   }),
 }));
 
-vi.mock("src/sections/tasks/components/TaskLivePreview", () => ({
-  buildApiFilterArray: () => [],
-}));
+vi.mock(
+  "src/sections/tasks/components/TaskLivePreview",
+  async (importOriginal) => ({
+    buildApiFilterArray: (await importOriginal()).buildApiFilterArray,
+  }),
+);
 vi.mock("src/sections/tasks/components/TaskFilterBar", () => ({
-  default: () => null,
+  default: ({ toolbarStart }) => toolbarStart || null,
 }));
 vi.mock("./DatasetTestMode", () => ({ JsonValueTree: () => null }));
 vi.mock("./SpanRowList", () => ({ default: () => null }));
@@ -89,6 +97,13 @@ vi.mock("../hooks/useCompositeEval", () => ({
 import TracingTestMode from "./TracingTestMode";
 
 const PROJECT_ID = "00000000-0000-4000-8000-000000000901";
+const SPAN_REFERENCE = {
+  project_id: PROJECT_ID,
+  start_time: "2026-09-01T12:01:02.123456Z",
+  observation_type: "SPAN",
+  service_name: "test-service",
+  _version: "18446744073709551614",
+};
 
 function renderTaskMapping(onReadyChange, extraProps = {}) {
   const queryClient = new QueryClient({
@@ -110,6 +125,234 @@ function renderTaskMapping(onReadyChange, extraProps = {}) {
 }
 
 describe("TracingTestMode exact task attribute mapping", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it.each(["spans", "traces", "sessions"])(
+    "lets a slow initial %s list finish beyond its target without running an eval",
+    async (rowType) => {
+      vi.useFakeTimers();
+      let listSignal;
+      let resolveList;
+      mocks.get.mockImplementation(async (url, { signal } = {}) => {
+        if (url === `/projects/${PROJECT_ID}`) {
+          return { data: { result: { id: PROJECT_ID, source: "api" } } };
+        }
+        if (url === `/${rowType}/`) {
+          listSignal = signal;
+          return new Promise((resolve) => {
+            resolveList = resolve;
+          });
+        }
+        throw new Error(`Unexpected GET ${url}`);
+      });
+      const view = renderTaskMapping(vi.fn(), {
+        initialRowType: rowType,
+        allowCustomFieldPath: false,
+      });
+      await act(async () => vi.advanceTimersByTimeAsync(1));
+      expect(screen.getByPlaceholderText("Loading columns...")).toBeDisabled();
+      await act(async () =>
+        vi.advanceTimersByTimeAsync(ANALYTICS_REQUEST_TIMEOUT_MS + 1),
+      );
+      expect(listSignal.aborted).toBe(false);
+      expect(
+        screen.queryByText(QUERY_FAILED_RETRY_MESSAGE),
+      ).not.toBeInTheDocument();
+      await act(async () => {
+        resolveList({
+          data: {
+            status: true,
+            result: {
+              config: [],
+              table: [],
+              metadata: { total_rows: 0, has_more: false, next_cursor: null },
+            },
+          },
+        });
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      expect(
+        screen.getByPlaceholderText("Search column..."),
+      ).not.toBeDisabled();
+      expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+      expect(
+        screen.queryByText(QUERY_FAILED_RETRY_MESSAGE),
+      ).not.toBeInTheDocument();
+      expect(mocks.post).not.toHaveBeenCalled();
+      view.unmount();
+    },
+  );
+
+  it.each(["spans", "traces", "sessions"])(
+    "resumes a timed-out %s cursor without poisoning its history or column picker",
+    async (rowType) => {
+      vi.useFakeTimers();
+      const checkpoint = `${rowType}-unconsumed`;
+      const page = (hasMore) => ({
+        data: {
+          status: true,
+          result: {
+            config: [],
+            table: [],
+            metadata: {
+              has_more: hasMore,
+              next_cursor: hasMore ? checkpoint : null,
+              total_rows: 0,
+            },
+          },
+        },
+      });
+      let listCalls = 0;
+      let continuationSignal;
+      let resolveLate;
+      mocks.get.mockImplementation(async (url, { signal } = {}) => {
+        if (url === `/projects/${PROJECT_ID}`) {
+          return { data: { result: { id: PROJECT_ID, source: "api" } } };
+        }
+        if (url === `/${rowType}/`) {
+          listCalls += 1;
+          if (listCalls === 1)
+            return new Promise((resolve) =>
+              setTimeout(() => resolve(page(true)), 10_000),
+            );
+          if (listCalls === 2) {
+            continuationSignal = signal;
+            return new Promise((resolve) => {
+              resolveLate = resolve;
+            });
+          }
+          return page(false);
+        }
+        throw new Error(`Unexpected GET ${url}`);
+      });
+      const view = renderTaskMapping(vi.fn(), {
+        initialRowType: rowType,
+        allowCustomFieldPath: false,
+      });
+      await act(async () => vi.advanceTimersByTimeAsync(10_001));
+      expect(listCalls).toBe(2);
+      await act(async () =>
+        vi.advanceTimersByTimeAsync(ANALYTICS_REQUEST_TIMEOUT_MS - 10_000 + 1),
+      );
+      expect(continuationSignal.aborted).toBe(true);
+      expect(
+        screen.getByRole("button", { name: "Continue search" }),
+      ).toBeEnabled();
+      expect(
+        screen.getByPlaceholderText("Search column..."),
+      ).not.toBeDisabled();
+      expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+      await act(async () => {
+        resolveLate(page(false));
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+      expect(listCalls).toBe(2);
+      await act(async () =>
+        screen.getByRole("button", { name: "Continue search" }).click(),
+      );
+      await act(async () => vi.advanceTimersByTimeAsync(10));
+      const requests = mocks.get.mock.calls.filter(
+        ([url]) => url === `/${rowType}/`,
+      );
+      expect(requests).toHaveLength(3);
+      expect(requests[2][1].params.cursor).toBe(checkpoint);
+      expect(
+        screen.queryByText(QUERY_FAILED_RETRY_MESSAGE),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Continue search" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByPlaceholderText("Search column..."),
+      ).not.toBeDisabled();
+      expect(mocks.post).not.toHaveBeenCalled();
+      view.unmount();
+    },
+  );
+
+  it("keeps buffered preview rows across a deadline and deduplicates the resumed page", async () => {
+    vi.useFakeTimers();
+    const defaultGet = mocks.get.getMockImplementation();
+    const firstRow = {
+      ...SPAN_REFERENCE,
+      span_id: "span-1",
+      trace_id: "trace-1",
+      input: "generic preview value",
+    };
+    const secondRow = {
+      ...SPAN_REFERENCE,
+      span_id: "span-2",
+      trace_id: "trace-2",
+    };
+    let listCalls = 0;
+    mocks.get.mockImplementation((url, config) => {
+      if (url !== "/spans/") return defaultGet(url, config);
+      listCalls += 1;
+      if (listCalls === 2) return new Promise(() => {});
+      return Promise.resolve({
+        data: {
+          status: true,
+          result: {
+            config: [],
+            table: listCalls === 1 ? [firstRow] : [secondRow, secondRow],
+            metadata: {
+              total_rows: 2,
+              has_more: listCalls === 1,
+              next_cursor: listCalls === 1 ? "buffered-unconsumed" : null,
+            },
+          },
+        },
+      });
+    });
+    const view = renderTaskMapping(vi.fn());
+    await act(async () =>
+      vi.advanceTimersByTimeAsync(ANALYTICS_REQUEST_TIMEOUT_MS + 1),
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(10));
+    expect(screen.getByText("Row 1 of 1")).toBeVisible();
+    await act(async () =>
+      screen.getByRole("button", { name: "Continue search" }).click(),
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(10));
+    expect(screen.getByText("Row 1 of 2")).toBeVisible();
+    const requests = mocks.get.mock.calls.filter(([url]) => url === "/spans/");
+    expect(requests).toHaveLength(3);
+    expect(requests[2][1].params.cursor).toBe("buffered-unconsumed");
+    expect(mocks.post).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it("still rejects a real cursor cycle without restarting the preview", async () => {
+    const defaultGet = mocks.get.getMockImplementation();
+    mocks.get.mockImplementation((url, config) => {
+      if (url !== "/spans/") return defaultGet(url, config);
+      return Promise.resolve({
+        data: {
+          status: true,
+          result: {
+            config: [],
+            table: [],
+            metadata: {
+              total_rows: 0,
+              has_more: true,
+              next_cursor: "real-cycle",
+            },
+          },
+        },
+      });
+    });
+    const view = renderTaskMapping(vi.fn());
+    expect(await screen.findByText(QUERY_FAILED_RETRY_MESSAGE)).toBeVisible();
+    expect(
+      mocks.get.mock.calls.filter(([url]) => url === "/spans/"),
+    ).toHaveLength(2);
+    expect(
+      screen.queryByRole("button", { name: "Continue search" }),
+    ).not.toBeInTheDocument();
+    expect(mocks.post).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.exactFields = ["final_status"];
@@ -129,6 +372,7 @@ describe("TracingTestMode exact task attribute mapping", () => {
               config: [],
               table: [
                 {
+                  ...SPAN_REFERENCE,
                   span_id: "span-1",
                   trace_id: "trace-1",
                   input: "generic preview value",
@@ -139,28 +383,127 @@ describe("TracingTestMode exact task attribute mapping", () => {
           },
         };
       }
-      if (url === "/traces/trace-1/") {
+      if (url === "/span-details/span-1/") {
         return {
           data: {
             status: true,
             result: {
-              trace: { trace_id: "trace-1" },
-              observation_spans: [
-                {
-                  observation_span: {
-                    id: "span-1",
-                    input: "generic preview value",
-                    span_attributes: { input: "generic preview value" },
-                  },
-                  children: [],
-                },
-              ],
+              observation_span: {
+                ...SPAN_REFERENCE,
+                trace_id: "trace-1",
+                id: "span-1",
+                input: "generic preview value",
+                span_attributes: { input: "generic preview value" },
+              },
             },
           },
         };
       }
       throw new Error(`Unexpected GET ${url}`);
     });
+  });
+
+  it("settles cancelled eval continuations without releasing replacement column loading", async () => {
+    const collect = vi.spyOn(listReads, "collectExactListRows"); // Call-through: real helper.
+    const defaultGet = mocks.get.getMockImplementation();
+    let resolveOld;
+    let resolveCurrent;
+    let oldSignal;
+    const page = (hasMore) => ({
+      data: {
+        status: true,
+        result: {
+          config: [],
+          table: [],
+          metadata: {
+            total_rows: 0,
+            has_more: hasMore,
+            next_cursor: hasMore ? "old-checkpoint" : null,
+          },
+        },
+      },
+    });
+    mocks.get.mockImplementation((url, options = {}) => {
+      if (url !== "/spans/") return defaultGet(url, options);
+      if (JSON.parse(options.params.filters).length === 0) {
+        if (!options.params.cursor) return Promise.resolve(page(true));
+        oldSignal = options.signal;
+        return new Promise((resolve) => {
+          resolveOld = resolve;
+        });
+      }
+      return new Promise((resolve) => {
+        resolveCurrent = resolve;
+      });
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const subject = (filters) => (
+      <QueryClientProvider client={queryClient}>
+        <TracingTestMode
+          templateId="eval-template-1"
+          variables={["evaluation_result"]}
+          initialProjectId={PROJECT_ID}
+          initialRowType="spans"
+          localFilters={filters}
+        />
+      </QueryClientProvider>
+    );
+    const view = render(subject([]));
+    await waitFor(() => expect(resolveOld).toBeTypeOf("function"));
+    const settled = vi.fn();
+    const oldRead = collect.mock.results[0].value.then(settled, settled);
+    const filters = [
+      {
+        column_id: "name",
+        filter_config: {
+          filter_type: "text",
+          filter_op: "equals",
+          filter_value: "current",
+        },
+      },
+    ];
+    view.rerender(subject(filters));
+    await waitFor(() => expect(resolveCurrent).toBeTypeOf("function"));
+    try {
+      await waitFor(() =>
+        expect(settled).toHaveBeenCalledWith(
+          expect.objectContaining({ name: "AbortError" }),
+        ),
+      );
+      expect(oldSignal.aborted).toBe(true);
+      expect(screen.getAllByRole("progressbar")[0]).toBeVisible();
+      expect(screen.getByPlaceholderText("Loading columns...")).toBeDisabled();
+      expect(
+        screen.queryByText("No matching spans found"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByText(QUERY_FAILED_RETRY_MESSAGE),
+      ).not.toBeInTheDocument();
+      const currentRequest = mocks.get.mock.calls
+        .filter(([url]) => url === "/spans/")
+        .at(-1)[1].params;
+      expect(JSON.parse(currentRequest.filters)).toEqual(filters);
+      expect(currentRequest).not.toHaveProperty("cursor");
+      await act(async () => resolveCurrent(await defaultGet("/spans/")));
+      await screen.findByText(/generic preview value/);
+      await waitFor(() =>
+        expect(
+          screen.getByPlaceholderText("Search column..."),
+        ).not.toBeDisabled(),
+      );
+      expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+      expect(mocks.post).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => {
+        resolveOld(page(false));
+        await oldRead;
+      });
+      view.unmount();
+      queryClient.clear();
+      collect.mockRestore();
+    }
   });
 
   it("shows a sanitized retry for an initial retained attribute error", async () => {
@@ -226,6 +569,7 @@ describe("TracingTestMode exact task attribute mapping", () => {
               config: [],
               table: [
                 {
+                  ...SPAN_REFERENCE,
                   span_id: "span-1",
                   trace_id: "trace-1",
                   input: "generic preview value",
@@ -249,6 +593,98 @@ describe("TracingTestMode exact task attribute mapping", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText("(100 matching total)")).not.toBeInTheDocument();
   });
+
+  it.each([
+    ["spans", "/spans/"],
+    ["traces", "/traces/"],
+    ["sessions", "/sessions/"],
+    ["voiceCalls", "/calls/"],
+  ])(
+    "sends the visible preview range for %s and resets it on 12M selection",
+    async (rowType, endpoint) => {
+      mocks.get.mockImplementation(async (url) => {
+        if (url === `/projects/${PROJECT_ID}`) {
+          return {
+            data: {
+              result: {
+                id: PROJECT_ID,
+                source: rowType === "voiceCalls" ? "simulator" : "api",
+              },
+            },
+          };
+        }
+        if (url === endpoint) {
+          if (rowType === "voiceCalls")
+            return {
+              data: {
+                count: 0,
+                count_is_lower_bound: false,
+                query_complete: true,
+                query_status: "complete",
+                total_pages: 0,
+                current_page: 1,
+                next: null,
+                previous: null,
+                results: [],
+                config: [],
+                has_more: false,
+                next_cursor: null,
+              },
+            };
+          return {
+            data: {
+              status: true,
+              result: {
+                config: [],
+                table: [],
+                metadata: {
+                  total_rows: 0,
+                  has_more: false,
+                  next_cursor: null,
+                },
+              },
+            },
+          };
+        }
+        throw new Error(`Unexpected GET ${url}`);
+      });
+      const view = renderTaskMapping(vi.fn(), {
+        initialRowType: rowType,
+        hostsFilter: true,
+        variables: [],
+      });
+      await screen.findByText(/No matching .* found/);
+      expect(
+        screen.getByText("Try changing the filters or date range."),
+      ).toBeVisible();
+      const calls = () =>
+        mocks.get.mock.calls.filter(([url]) => url === endpoint);
+      const first = calls().at(-1)[1].params;
+      const initial = JSON.parse(first.filters).find(
+        (f) => f.column_id === "created_at",
+      );
+      expect(initial.filter_config.filter_op).toBe("between");
+      const initialStart = new Date(initial.filter_config.filter_value[0]);
+      expect((Date.now() - initialStart.getTime()) / 86400000).toBeCloseTo(
+        30,
+        1,
+      );
+      await userEvent.click(screen.getByRole("button", { name: "Past 30D" }));
+      await userEvent.click(screen.getByRole("menuitem", { name: "Past 12M" }));
+      await waitFor(() => {
+        const latest = JSON.parse(calls().at(-1)[1].params.filters).find(
+          (f) => f.column_id === "created_at",
+        );
+        expect(
+          new Date(latest.filter_config.filter_value[0]).getTime(),
+        ).toBeLessThan(initialStart.getTime() - 300 * 86400000);
+      });
+      expect(screen.getByRole("button", { name: "Past 12M" })).toBeVisible();
+      expect(calls().at(-1)[1].params).not.toHaveProperty("cursor");
+      expect(mocks.post).not.toHaveBeenCalled();
+      view.unmount();
+    },
+  );
 
   it("keeps an arbitrary exact path as a manual free-text mapping", async () => {
     mocks.exactFields = [];
@@ -303,6 +739,7 @@ describe("TracingTestMode exact task attribute mapping", () => {
               config: [],
               table: [
                 {
+                  ...SPAN_REFERENCE,
                   span_id: "span-rare",
                   trace_id: "trace-rare",
                   input: "rare preview value",
@@ -317,21 +754,17 @@ describe("TracingTestMode exact task attribute mapping", () => {
           },
         };
       }
-      if (url === "/traces/trace-rare/") {
+      if (url === "/span-details/span-rare/") {
         return {
           data: {
             status: true,
             result: {
-              trace: { trace_id: "trace-rare" },
-              observation_spans: [
-                {
-                  observation_span: {
-                    id: "span-rare",
-                    input: "rare preview value",
-                  },
-                  children: [],
-                },
-              ],
+              observation_span: {
+                ...SPAN_REFERENCE,
+                trace_id: "trace-rare",
+                id: "span-rare",
+                input: "rare preview value",
+              },
             },
           },
         };
@@ -392,6 +825,7 @@ describe("TracingTestMode exact task attribute mapping", () => {
                   callIndex === 0
                     ? [
                         {
+                          ...SPAN_REFERENCE,
                           span_id: "span-buffered",
                           trace_id: "trace-buffered",
                           input: "proven preview value",
@@ -415,6 +849,7 @@ describe("TracingTestMode exact task attribute mapping", () => {
               config: [],
               table: [
                 {
+                  ...SPAN_REFERENCE,
                   span_id: "span-rare",
                   trace_id: "trace-rare",
                   input: "rare preview value",
@@ -429,21 +864,17 @@ describe("TracingTestMode exact task attribute mapping", () => {
           },
         };
       }
-      if (url === "/traces/trace-buffered/") {
+      if (url === "/span-details/span-buffered/") {
         return {
           data: {
             status: true,
             result: {
-              trace: { trace_id: "trace-buffered" },
-              observation_spans: [
-                {
-                  observation_span: {
-                    id: "span-buffered",
-                    input: "proven preview value",
-                  },
-                  children: [],
-                },
-              ],
+              observation_span: {
+                ...SPAN_REFERENCE,
+                trace_id: "trace-buffered",
+                id: "span-buffered",
+                input: "proven preview value",
+              },
             },
           },
         };
@@ -507,6 +938,7 @@ describe("TracingTestMode exact task attribute mapping", () => {
               config: [],
               table: [
                 {
+                  ...SPAN_REFERENCE,
                   span_id: "span-after-cold-retry",
                   trace_id: "trace-after-cold-retry",
                   input: "eval preview recovered",
@@ -517,21 +949,17 @@ describe("TracingTestMode exact task attribute mapping", () => {
           },
         };
       }
-      if (url === "/traces/trace-after-cold-retry/") {
+      if (url === "/span-details/span-after-cold-retry/") {
         return {
           data: {
             status: true,
             result: {
-              trace: { trace_id: "trace-after-cold-retry" },
-              observation_spans: [
-                {
-                  observation_span: {
-                    id: "span-after-cold-retry",
-                    input: "eval preview recovered",
-                  },
-                  children: [],
-                },
-              ],
+              observation_span: {
+                ...SPAN_REFERENCE,
+                trace_id: "trace-after-cold-retry",
+                id: "span-after-cold-retry",
+                input: "eval preview recovered",
+              },
             },
           },
         };
@@ -578,6 +1006,7 @@ describe("TracingTestMode exact task attribute mapping", () => {
               config: [],
               table: [
                 {
+                  ...SPAN_REFERENCE,
                   span_id: "span-legacy-eval",
                   trace_id: "trace-legacy-eval",
                   input: "legacy eval preview",
@@ -588,21 +1017,17 @@ describe("TracingTestMode exact task attribute mapping", () => {
           },
         };
       }
-      if (url === "/traces/trace-legacy-eval/") {
+      if (url === "/span-details/span-legacy-eval/") {
         return {
           data: {
             status: true,
             result: {
-              trace: { trace_id: "trace-legacy-eval" },
-              observation_spans: [
-                {
-                  observation_span: {
-                    id: "span-legacy-eval",
-                    input: "legacy eval preview",
-                  },
-                  children: [],
-                },
-              ],
+              observation_span: {
+                ...SPAN_REFERENCE,
+                trace_id: "trace-legacy-eval",
+                id: "span-legacy-eval",
+                input: "legacy eval preview",
+              },
             },
           },
         };
@@ -679,6 +1104,102 @@ describe("TracingTestMode exact task attribute mapping", () => {
     );
   });
 
+  it("keeps service-colliding span selections distinct and cancels stale detail", async () => {
+    const defaultGet = mocks.get.getMockImplementation();
+    const first = {
+      ...SPAN_REFERENCE,
+      span_id: "span-shared",
+      trace_id: "trace-shared",
+    };
+    const second = { ...first, service_name: "second-service" };
+    let firstSignal, resolveFirst;
+    mocks.get.mockImplementation(async (url, options = {}) => {
+      if (url === "/spans/")
+        return {
+          data: {
+            status: true,
+            result: {
+              config: [],
+              table: [first, second],
+              metadata: { total_rows: 2, has_more: false, next_cursor: null },
+            },
+          },
+        };
+      if (url === "/span-details/span-shared/") {
+        if (options.params.service_name === first.service_name) {
+          firstSignal = options.signal;
+          return new Promise((resolve) => {
+            resolveFirst = resolve;
+          });
+        }
+        return {
+          data: {
+            status: true,
+            result: {
+              observation_span: { ...second, input: "second physical span" },
+            },
+          },
+        };
+      }
+      return defaultGet(url, options);
+    });
+    renderTaskMapping(vi.fn());
+    await waitFor(() => expect(resolveFirst).toBeTypeOf("function"));
+    await userEvent.click(screen.getByRole("button", { name: "Next row" }));
+    await screen.findByText(/second physical span/);
+    expect(firstSignal.aborted).toBe(true);
+    await act(async () =>
+      resolveFirst({
+        data: {
+          status: true,
+          result: {
+            observation_span: { ...first, input: "stale physical span" },
+          },
+        },
+      }),
+    );
+    expect(screen.queryByText(/stale physical span/)).not.toBeInTheDocument();
+    expect(screen.getByText(/second physical span/)).toBeVisible();
+    expect(screen.getByText("Row 2 of 2")).toBeVisible();
+    expect(
+      mocks.get.mock.calls.some(([url]) => url.startsWith("/traces/")),
+    ).toBe(false);
+  });
+
+  it("renders a stale-winner failure instead of silently choosing a different span", async () => {
+    const defaultGet = mocks.get.getMockImplementation();
+    mocks.get.mockImplementation(async (url, options) => {
+      if (url === "/span-details/span-1/")
+        return {
+          data: {
+            status: true,
+            result: {
+              observation_span: {
+                ...SPAN_REFERENCE,
+                span_id: "span-1",
+                trace_id: "trace-1",
+                _version: "18446744073709551615",
+                input: "wrong winner must never render",
+              },
+            },
+          },
+        };
+      return defaultGet(url, options);
+    });
+    renderTaskMapping(vi.fn());
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      SPAN_REFERENCE_ERROR,
+    );
+    expect(
+      screen.queryByText(/wrong winner must never render/),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(
+      mocks.get.mock.calls.some(([url]) => url.startsWith("/traces/")),
+    ).toBe(false);
+    expect(mocks.post).not.toHaveBeenCalled();
+  });
+
   it("never renders raw infrastructure details from a failed eval test", async () => {
     const rawError =
       "Code: 159. DB::Exception: Timeout exceeded\nStack trace: SELECT secret FROM spans";
@@ -705,5 +1226,13 @@ describe("TracingTestMode exact task attribute mapping", () => {
       false,
       "Failed to run evaluation. Please retry.",
     );
+    const payload = mocks.post.mock.calls[0][1];
+    expect(payload.span_context).toMatchObject({
+      ...SPAN_REFERENCE,
+      id: "span-1",
+      trace_id: "trace-1",
+    });
+    expect(payload).not.toHaveProperty("span_id");
+    expect(payload).not.toHaveProperty("trace_id");
   });
 });

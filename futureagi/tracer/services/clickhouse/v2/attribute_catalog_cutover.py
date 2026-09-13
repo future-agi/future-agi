@@ -355,7 +355,7 @@ def _fallback(kind: str, reason: Any) -> CatalogReadAttempt:
 
 
 def _new_executor() -> _CatalogExecutor:
-    return AttributeCatalogReadExecutor()
+    return AttributeCatalogReadExecutor(application_read=True)
 
 
 def _new_reader(executor: _CatalogExecutor, **kwargs) -> AttributeCatalogReader:

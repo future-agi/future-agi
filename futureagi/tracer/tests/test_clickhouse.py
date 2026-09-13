@@ -2066,10 +2066,11 @@ class TestClickHouseFilterBuilder:
             ]
         )
 
-        assert "arrayExists(x -> x ILIKE" in where
+        assert "arrayExists(x -> positionUTF8" in where
+        assert "arrayExists(x -> startsWith" in where
         assert "JSONExtract(output_str_list, 'Array(String)')" in where
-        assert "%fear%" in params.values()
-        assert "joy%" in params.values()
+        assert "fear" in params.values()
+        assert "joy" in params.values()
 
     def test_translate_annotation_filter(self):
         """ANNOTATION filter should produce a subquery against annotation tables."""
@@ -2182,8 +2183,9 @@ class TestClickHouseFilterBuilder:
         assert where.strip().startswith("tuple(trace_id, id) IN")
         assert "SELECT DISTINCT tuple(toString(if(" in where
         assert "scored_sp.id = s.observation_span_id" in where
-        assert "lower(JSONExtractString(s.value, 'text')) IN" in where
-        assert params["ann_2"] == ("good", "bad")
+        assert "has(arrayMap(x -> lowerUTF8(x), %(ann_" in where
+        assert "lowerUTF8(JSONExtractString(s.value, 'text'))" in where
+        assert params["ann_2"] == ["Good", "Bad"]
 
     def test_translate_skips_empty_filter_config(self):
         """Filters with missing column_id or config should be skipped."""
@@ -2907,6 +2909,97 @@ class TestTimeSeriesQueryBuilder:
             2026, 8, 1, tzinfo=UTC
         ) + timedelta(days=1)
 
+    def test_direct_raw_filtered_trace_graph_is_one_sharded_scan_without_argmax(self):
+        """The interactive append-only route keeps one-pass trace semantics."""
+        from datetime import UTC, datetime
+
+        from tracer.services.clickhouse.query_builders import TimeSeriesQueryBuilder
+
+        builder = TimeSeriesQueryBuilder(
+            project_id="test-project-id",
+            filters=[
+                {
+                    "column_id": "customer_id",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "customer-42",
+                        "col_type": "SPAN_ATTRIBUTE",
+                    },
+                }
+            ],
+            interval="day",
+            exact_snapshot=True,
+            resolve_span_versions=False,
+            raw_replica_shard_cluster="all-sharded",
+            raw_replica_shard_count=3,
+            observe_type="trace",
+            start_date=datetime(2026, 7, 1, tzinfo=UTC),
+            end_date=datetime(2026, 8, 1, tzinfo=UTC),
+        )
+
+        query, params = builder.build()
+
+        assert query.count("cluster('all-sharded', currentDatabase(), spans)") == 1
+        assert "FROM spans FINAL" not in query
+        assert "argMax(" not in query
+        assert "AS graph_physical_versions" not in query
+        assert "AS graph_raw_spans" in query
+        assert "max(graph_bucket_match_0) AS graph_match_0" in query
+        assert "graph_match_0 = 1" in query
+        assert "attrs_string" in query
+        assert "modulo(toRelativeDayNum(start_time)," in query
+        assert params["graph_replica_shard_count"] == 3
+
+    def test_direct_raw_trace_graph_can_prune_with_exhaustive_candidate_witness(self):
+        """A cost-approved witness narrows IDs but leaves outer matching intact."""
+        from datetime import UTC, datetime
+
+        from tracer.services.clickhouse.query_builders import TimeSeriesQueryBuilder
+
+        builder = TimeSeriesQueryBuilder(
+            project_id="test-project-id",
+            filters=[
+                {
+                    "column_id": "customer_id",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "customer-42",
+                        "col_type": "SPAN_ATTRIBUTE",
+                    },
+                }
+            ],
+            interval="day",
+            exact_snapshot=True,
+            resolve_span_versions=False,
+            raw_replica_shard_cluster="all-sharded",
+            raw_replica_shard_count=3,
+            raw_trace_candidate_predicate=(
+                "has(span_attr_str.values, %(graph_seed_customer)s)"
+            ),
+            raw_trace_candidate_params={
+                "graph_seed_customer": "customer-42",
+            },
+            observe_type="trace",
+            start_date=datetime(2026, 7, 1, tzinfo=UTC),
+            end_date=datetime(2026, 8, 1, tzinfo=UTC),
+        )
+
+        query, params = builder.build()
+
+        assert query.count("cluster('all-sharded', currentDatabase(), spans)") == 2
+        assert "trace_id GLOBAL IN" in query
+        assert "AS graph_seed_spans" in query
+        assert "PREWHERE project_id = toUUID(%(project_id)s)" in query
+        assert "has(span_attr_str.values, %(graph_seed_customer)s)" in query
+        assert "max(graph_bucket_match_0) AS graph_match_0" in query
+        assert "graph_match_0 = 1" in query
+        assert "FINAL" not in query.upper()
+        assert "argMax(" not in query
+        assert params["graph_seed_customer"] == "customer-42"
+        assert params["graph_replica_shard_count"] == 3
+
     def test_exact_trace_graph_keeps_structured_witnesses_in_output_window(self):
         """Scalar witnesses are adjacent; array/map witnesses stay exact-window."""
         from datetime import UTC, datetime
@@ -3588,30 +3681,34 @@ class TestSessionListQueryBuilder:
         query, params = builder.build_content_query(["session-1"])
 
         assert "trace_session_id IN %(content_session_ids)s" in query
-        assert (
-            query.count("toDate(fromUnixTimestamp64Micro(%(start_date_us)s, 'UTC'))")
-            == 2
-        )
-        assert (
-            query.count("toDate(fromUnixTimestamp64Micro(%(end_date_us)s, 'UTC'))") == 2
-        )
+        # Legacy start_time is a replacement-key column: precise acquisition
+        # is safe, but native exclusions still bind only after latest replay.
         assert (
             query.count(
-                "start_time >= fromUnixTimestamp64Micro(%(start_date_us)s, 'UTC')"
+                "AND start_time >= fromUnixTimestamp64Micro(%(start_date_us)s, 'UTC')"
             )
             == 2
         )
         assert (
-            query.count("start_time < fromUnixTimestamp64Micro(%(end_date_us)s, 'UTC')")
-            == 2
+            "latest_start_time >= fromUnixTimestamp64Micro(%(start_date_us)s, 'UTC')"
+            in query
         )
-        assert query.count("session_content_time_exclusion_0_start") == 2
-        assert query.count("session_content_time_exclusion_0_end") == 2
+        assert (
+            "latest_start_time < fromUnixTimestamp64Micro(%(end_date_us)s, 'UTC')"
+            in query
+        )
+        assert query.count("build_content_query_latest_time_0_start") == 1
+        assert query.count("build_content_query_latest_time_0_end") == 1
+        latest = query.split("latest_roots AS (", 1)[1].split("resolved_roots AS (", 1)[
+            0
+        ]
+        assert "build_content_query_latest_time_0_start" not in latest
+
         assert params["content_session_ids"] == ("session-1",)
         assert params["content_start_date"] == expected_start
         assert params["content_end_date"] == expected_end
-        assert "session_content_time_exclusion_0_start" in params
-        assert "session_content_time_exclusion_0_end" in params
+        assert "build_content_query_latest_time_0_start" in params
+        assert "build_content_query_latest_time_0_end" in params
 
     def test_span_attributes_query_reuses_session_time_window(self):
         from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
@@ -3649,22 +3746,39 @@ class TestSessionListQueryBuilder:
 
         query, params = builder.build_span_attributes_query(["session-1"])
 
-        assert "s.trace_session_id IN %(attr_session_ids)s" in query
-        assert "toDate(s.start_time) BETWEEN" in query
+        assert "trace_session_id IN %(attr_session_ids)s" in query
+        assert "candidate_root_identities AS (" in query
+        assert "latest_roots AS (" in query
+        assert "AS latest_start_time" in query
         assert (
-            "s.start_time >= fromUnixTimestamp64Micro(%(start_date_us)s, 'UTC')"
+            "latest_start_time >= fromUnixTimestamp64Micro(%(start_date_us)s, 'UTC')"
             in query
         )
         assert (
-            "s.start_time < fromUnixTimestamp64Micro(%(end_date_us)s, 'UTC')" in query
+            "latest_start_time < fromUnixTimestamp64Micro(%(end_date_us)s, 'UTC')"
+            in query
         )
-        assert "s.start_time < fromUnixTimestamp64Micro(" in query
-        assert "s.start_time >= fromUnixTimestamp64Micro(" in query
+        assert "latest_is_deleted = 0" in query
+        assert query.count("session_attr_latest_time_0_start") == 1
+        assert query.count("session_attr_latest_time_0_end") == 1
+        latest = query.split("latest_roots AS (", 1)[1].split("GROUP BY", 1)[0]
+        assert "session_attr_latest_time_0_start" not in latest
+        assert (
+            query.count(
+                "AND start_time >= fromUnixTimestamp64Micro(%(start_date_us)s, 'UTC')"
+            )
+            == 2
+        )
+        assert "GROUP BY project_id, trace_id, id, start_time" in query
+        assert (
+            "argMax(_peerdb_is_deleted, _peerdb_version) AS latest_is_deleted" in query
+        )
+
         assert params["attr_session_ids"] == ("session-1",)
         assert params["attr_start_date"] == expected_start
         assert params["attr_end_date"] == expected_end
-        assert "session_attr_time_exclusion_0_start" in params
-        assert "session_attr_time_exclusion_0_end" in params
+        assert "session_attr_latest_time_0_start" in params
+        assert "session_attr_latest_time_0_end" in params
 
     def test_v2_span_attributes_query_reuses_session_time_window(self):
         from tracer.services.clickhouse.v2.query_builders.session_list import (
@@ -3702,32 +3816,40 @@ class TestSessionListQueryBuilder:
         query, params = builder.build_span_attributes_query(["session-1"])
 
         assert "trace_session_id IN %(attr_session_ids)s" in query
+        assert "candidate_root_identities AS (" in query
+        assert "latest_roots AS (" in query
+        assert "AS latest_start_time" in query
         assert (
-            query.count("toDate(fromUnixTimestamp64Micro(%(start_date_us)s, 'UTC'))")
-            == 2
+            "latest_start_time >= fromUnixTimestamp64Micro(%(start_date_us)s, 'UTC')"
+            in query
         )
         assert (
-            query.count("toDate(fromUnixTimestamp64Micro(%(end_date_us)s, 'UTC'))") == 2
+            "latest_start_time < fromUnixTimestamp64Micro(%(end_date_us)s, 'UTC')"
+            in query
         )
+        assert "latest_is_deleted = 0" in query
+        assert query.count("session_attr_latest_time_0_start") == 1
+        assert query.count("session_attr_latest_time_0_end") == 1
+        latest = query.split("latest_roots AS (", 1)[1].split("GROUP BY", 1)[0]
+        assert "session_attr_latest_time_0_start" not in latest
         assert (
             query.count(
-                "start_time >= fromUnixTimestamp64Micro(%(start_date_us)s, 'UTC')"
+                "AND start_time >= toStartOfHour(fromUnixTimestamp64Micro(%(start_date_us)s, 'UTC'))"
             )
             == 2
         )
+        assert "%(end_date_us)s - 1" in latest
         assert (
-            query.count("start_time < fromUnixTimestamp64Micro(%(end_date_us)s, 'UTC')")
-            == 2
+            "GROUP BY project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id"
+            in query
         )
-        assert query.count("session_attr_v2_time_exclusion_0_start") == 2
-        assert query.count("session_attr_v2_time_exclusion_0_end") == 2
         assert "argMax(is_deleted, _version) AS latest_is_deleted" in query
-        assert "latest_is_deleted = 0" in query
+
         assert params["attr_session_ids"] == ("session-1",)
         assert params["attr_start_date"] == expected_start
         assert params["attr_end_date"] == expected_end
-        assert "session_attr_v2_time_exclusion_0_start" in params
-        assert "session_attr_v2_time_exclusion_0_end" in params
+        assert "session_attr_latest_time_0_start" in params
+        assert "session_attr_latest_time_0_end" in params
 
     def test_build_uses_uniqExact_for_deterministic_totals(self):
         """Session trace counts are exact; approximation is not publishable."""
@@ -3797,8 +3919,8 @@ class TestSessionListQueryBuilder:
         query, params = builder.build_span_attributes_query(["session-1", "session-2"])
         assert "(parent_span_id IS NULL OR parent_span_id = '')" in query
 
-    def test_span_attributes_query_has_limit(self):
-        """Span attributes query should have a LIMIT to prevent unbounded scans."""
+    def test_span_attributes_query_is_scoped_to_exact_page(self):
+        """Hydrate the selected sessions completely without sampling their roots."""
         from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
 
         builder = SessionListQueryBuilder(
@@ -3809,7 +3931,9 @@ class TestSessionListQueryBuilder:
         )
         builder.build()
         query, params = builder.build_span_attributes_query(["session-1", "session-2"])
-        assert "LIMIT 500" in query
+        assert "IN %(attr_session_ids)s" in query
+        assert params["attr_session_ids"] == ("session-1", "session-2")
+        assert "LIMIT 500" not in query
 
     def test_span_attributes_query_empty_sessions(self):
         """Span attributes query should return empty for no sessions."""
@@ -6846,8 +6970,8 @@ class TestFilterBuilderEdgeCases:
         cases = [
             ("number", "equals", 45, ") = %(ann_", {45}),
             ("number", "between", [10, 50], " BETWEEN ", {10, 50}),
-            ("text", "equals", "good", ") = lower(%(ann_", {"good"}),
-            ("text", "not_equals", "bad", ") != lower(%(ann_", {"bad"}),
+            ("text", "equals", "good", ") = lowerUTF8(%(ann_", {"good"}),
+            ("text", "not_equals", "bad", ") != lowerUTF8(%(ann_", {"bad"}),
         ]
 
         for filter_type, filter_op, value, sql_fragment, expected_values in cases:
@@ -6972,8 +7096,8 @@ class TestFilterBuilderEdgeCases:
                     "filter_value": "needs",
                     "col_type": "ANNOTATION",
                 },
-                ["JSONExtractString", "'text'", "ILIKE"],
-                {"needs%"},
+                ["JSONExtractString", "'text'", "startsWith", "lowerUTF8"],
+                {"needs"},
             ),
             (
                 {
@@ -7002,7 +7126,7 @@ class TestFilterBuilderEdgeCases:
                     "filter_value": ["refund"],
                     "col_type": "ANNOTATION",
                 },
-                ["JSONExtract", "'selected'", "has(", "AND NOT ("],
+                ["JSONExtract", "'selected'", "has(", "AND (NOT ("],
                 {"refund"},
             ),
             (
@@ -7486,6 +7610,17 @@ class TestVoiceCallListPhase1bMigration:
     ``FINAL`` query would reintroduce the production timeout.
     """
 
+    _ROOT_IDENTITY = (
+        "00000000-0000-4000-8000-000000000001",
+        "trace-1",
+        "root-1",
+        1_785_369_600_123_456,  # 2026-07-30 00:00:00.123456 UTC
+        "conversation",
+        "svc",
+        1_785_369_600_000_000,  # Physical replacement key uses the start hour.
+        2,
+    )
+
     @staticmethod
     def _voice_list_source() -> str:
         import inspect
@@ -7514,8 +7649,10 @@ class TestVoiceCallListPhase1bMigration:
             "the Phase 1b query must read from the v2 `spans` table."
         )
         assert "builder.build_content_query(" in src
-        assert "batch_span_ids," in src
+        assert "builder.content_root_identities_for_rows(batch_rows)" in src
+        assert "[identity[2] for identity in batch_identities]" in src
         assert "root_identities=batch_identities" in src
+        assert "builder.content_root_rows_match(batch_rows, attrs_result.data)" in src
 
     def test_phase_1b_reads_v2_spans_table(self):
         """Phase 1b must resolve latest state without broad ``FINAL``."""
@@ -7525,21 +7662,21 @@ class TestVoiceCallListPhase1bMigration:
 
         src = self._voice_list_source()
         query, _ = VoiceCallListQueryBuilderV2(
-            project_id="00000000-0000-4000-8000-000000000001"
+            project_id=self._ROOT_IDENTITY[0]
         ).build_content_query(
             ["root-1"],
-            root_identities=[
-                (
-                    "00000000-0000-4000-8000-000000000001",
-                    "trace-1",
-                    "root-1",
-                    datetime(2026, 7, 30, 0, 0),
-                )
-            ],
+            root_identities=[self._ROOT_IDENTITY],
         )
         assert "FROM spans FINAL" not in src
         assert "FROM spans FINAL" not in query
-        assert "argMax(is_deleted, _version) AS latest_is_deleted" in query
+        assert "FROM spans" in query
+        assert "tracer_observation_span" not in query
+        assert query.count("argMax(") == 1
+        assert (
+            "argMax(tuple(start_time, parent_span_id, is_deleted, "
+            "project_version_id, _version,"
+        ) in query
+        assert "_root_snapshot.3 AS latest_is_deleted" in query
         assert "WHERE latest_is_deleted = 0" in query
 
     def test_phase_1b_selects_typed_map_columns_for_reconstruction(self):
@@ -7554,13 +7691,15 @@ class TestVoiceCallListPhase1bMigration:
             VoiceCallListQueryBuilderV2,
         )
 
-        query, _ = VoiceCallListQueryBuilderV2(project_id="proj-1").build_content_query(
-            ["root-1"]
+        query, _ = VoiceCallListQueryBuilderV2(
+            project_id=self._ROOT_IDENTITY[0]
+        ).build_content_query(
+            ["root-1"], root_identities=[self._ROOT_IDENTITY]
         )
         assert "AS span_attributes" in query
         assert "AS attrs_string" in query
-        assert "latest_span_attr_num AS attrs_number" in query
-        assert "latest_span_attr_bool AS attrs_bool" in query
+        assert "AS attrs_number" in query
+        assert "AS attrs_bool" in query
         assert "attributes_extra" in query
 
     def test_phase_1b_python_fallback_merges_typed_maps(self):
@@ -7593,25 +7732,31 @@ class TestVoiceCallListPhase1bMigration:
         )
 
         query, params = VoiceCallListQueryBuilderV2(
-            project_id="00000000-0000-4000-8000-000000000001"
+            project_id=self._ROOT_IDENTITY[0]
         ).build_content_query(
             ["root-1"],
-            root_identities=[
-                (
-                    "00000000-0000-4000-8000-000000000001",
-                    "trace-1",
-                    "root-1",
-                    datetime(2026, 7, 30, 0, 0, 0, 123456),
-                )
-            ],
+            root_identities=[self._ROOT_IDENTITY],
         )
         assert "project_id = %(project_id)s" in query, (
             "Phase 1b must scope by project_id so the primary key can prune."
         )
-        assert "trace_id IN %(content_trace_ids)s" in query
-        assert "toDate(start_time) IN %(content_root_dates)s" in query
-        assert "toUnixTimestamp64Micro(start_time)" in query
-        assert params["content_root_identities"][0][3] % 1_000_000 == 123456
+        assert params["project_id"] == self._ROOT_IDENTITY[0]
+        assert "IN %(content_primary_prefixes)s" in query
+        assert "IN %(content_physical_keys)s" in query
+        assert params["content_root_identities"] == (self._ROOT_IDENTITY,)
+        assert params["content_primary_prefixes"] == (
+            ("conversation", "svc", datetime(2026, 7, 30), "trace-1"),
+        )
+        assert params["content_physical_keys"] == (
+            (
+                self._ROOT_IDENTITY[0],
+                "conversation",
+                "svc",
+                datetime(2026, 7, 30),
+                "trace-1",
+                "root-1",
+            ),
+        )
         # attrs_string Map strip.
         assert "mapFilter" in query and "call_logs" in query, (
             "Phase 1b must exclude `call_logs` from attrs_string at read time."

@@ -9,17 +9,17 @@ from types import SimpleNamespace
 
 import pytest
 from clickhouse_driver import Client
+
+from model_hub.services.bulk_selection import (
+    BulkSelectionAmbiguousIdentity,
+    _resolve_span_ids_clickhouse,
+)
 from tracer.selectors.trace_filter_reads import read_bounded_filter_page
 from tracer.services.clickhouse.v2.query_builders.span_list import (
     SpanListQueryBuilderV2,
 )
 from tracer.services.clickhouse.v2.query_builders.trace_list import (
     TraceListQueryBuilderV2,
-)
-
-from model_hub.services.bulk_selection import (
-    BulkSelectionAmbiguousIdentity,
-    _resolve_span_ids_clickhouse,
 )
 
 pytestmark = pytest.mark.integration
@@ -84,8 +84,9 @@ def spans_table(ch_client):
             is_deleted UInt8,
             _version UInt64
         )
-        ENGINE = MergeTree
-        ORDER BY (project_id, start_time, id, _version)
+        ENGINE = ReplacingMergeTree(_version, is_deleted)
+        ORDER BY (project_id, observation_type, service_name,
+                  toStartOfHour(start_time), trace_id, id)
         """
     )
     try:
@@ -275,7 +276,7 @@ def test_content_hydration_preserves_microsecond_root_version_and_tombstone(
             project_id=project_id,
             project_version_id=selected_version,
             trace_id="trace-cross-version",
-            root_id="selected-root",
+            root_id="microsecond-decoy-root",
             start_time=same_second_decoy_time,
             version=3,
             input_value="wrong-microsecond-root",
@@ -347,10 +348,16 @@ def test_content_hydration_preserves_microsecond_root_version_and_tombstone(
     builder.start_date, builder.end_date = builder.parse_time_range(builder.filters)
     query, params = builder.build_content_query(
         ["trace-cross-version", "trace-tombstoned"],
-        root_identities=[
-            (project_id, "trace-cross-version", "selected-root", selected_time),
-            (project_id, "trace-tombstoned", "tombstoned-root", tombstone_time),
-        ],
+        root_identities=builder.content_root_identities_for_rows([
+            {"project_id": project_id, "trace_id": trace_id, "root_span_id": span_id,
+             "start_time": start, "_root_observation_type": "span", "_root_service_name": "",
+             "_root_start_hour": start.replace(minute=0, second=0, microsecond=0),
+             "_root_version": version}
+            for trace_id, span_id, start, version in [
+                ("trace-cross-version", "selected-root", selected_time, 2),
+                ("trace-tombstoned", "tombstoned-root", tombstone_time, 1),
+            ]
+        ]),
     )
     result = ch_client.execute(
         query,
@@ -462,7 +469,7 @@ def test_span_bulk_resolution_replays_exact_123456_microsecond_identity(
         _row(
             project_id=project_id,
             project_version_id=project_version_id,
-            trace_id="trace-shared",
+            trace_id="trace-decoy",
             root_id="span-shared",
             start_time=second + timedelta(microseconds=654321),
             version=1,
@@ -511,6 +518,7 @@ def test_span_bulk_resolution_replays_exact_123456_microsecond_identity(
                 "trace-shared",
                 "span-shared",
                 second + timedelta(microseconds=123456),
+                "span", "",
             )
         ],
     )

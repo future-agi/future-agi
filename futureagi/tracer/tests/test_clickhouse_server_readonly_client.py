@@ -48,6 +48,7 @@ def _client(
     *,
     server_enforced_readonly: bool,
     read_timeout_ceiling_ms: int | None = None,
+    allow_query_settings_with_server_readonly: bool = False,
 ) -> ClickHouseClient:
     return ClickHouseClient(
         host="clickhouse.invalid",
@@ -57,6 +58,9 @@ def _client(
         database="futureagi",
         server_enforced_readonly=server_enforced_readonly,
         read_timeout_ceiling_ms=read_timeout_ceiling_ms,
+        allow_query_settings_with_server_readonly=(
+            allow_query_settings_with_server_readonly
+        ),
     )
 
 
@@ -111,14 +115,38 @@ def test_read_timeout_ceiling_rejects_unreviewed_values(ceiling_ms):
         )
 
 
-def test_server_locked_client_sends_no_connection_settings(monkeypatch):
+@pytest.mark.parametrize("locked", [False, True])
+@pytest.mark.parametrize("timeout", [None, 7.5])
+def test_native_compression_preserves_connection_settings(monkeypatch, locked, timeout):
     driver = Mock(return_value=Mock())
     monkeypatch.setattr(client_module, "CHDriver", driver)
     monkeypatch.setattr(client_module, "CLICKHOUSE_AVAILABLE", True)
 
-    _client(server_enforced_readonly=True)._create_client()
+    client = _client(server_enforced_readonly=locked)
+    client._create_client(send_receive_timeout_seconds=timeout)
 
-    assert driver.call_args.kwargs["settings"] is None
+    assert driver.call_args.kwargs == {
+        "host": client.host,
+        "port": client.port,
+        "user": client.user,
+        "password": client.password,
+        "database": client.database,
+        "connect_timeout": client.connect_timeout,
+        "send_receive_timeout": max(client.send_timeout, client.receive_timeout)
+        if timeout is None
+        else timeout,
+        "settings": None if locked else {"use_numpy": False, "max_block_size": 100000},
+        "compression": "lz4",
+    }
+
+
+def test_native_compression_dependency_failure_does_not_retry(monkeypatch):
+    driver = Mock(side_effect=RuntimeError("missing codec"))
+    monkeypatch.setattr(client_module, "CHDriver", driver)
+    monkeypatch.setattr(client_module, "CLICKHOUSE_AVAILABLE", True)
+    with pytest.raises(RuntimeError, match="missing codec"):
+        _client(server_enforced_readonly=True)._create_client()
+    driver.assert_called_once()
 
 
 def test_server_locked_read_sends_no_query_setting_overrides(monkeypatch):
@@ -138,6 +166,42 @@ def test_server_locked_read_sends_no_query_setting_overrides(monkeypatch):
     assert columns == [("value", "String")]
     assert native.execute.call_args.kwargs["settings"] is None
     assert native.execute.call_args.args[0] == "SELECT 'ok' AS value"
+
+
+def test_server_locked_read_can_send_bounded_query_settings(monkeypatch):
+    native = Mock()
+    native.execute.return_value = ([("ok",)], [("value", "String")])
+    client = _client(
+        server_enforced_readonly=True,
+        allow_query_settings_with_server_readonly=True,
+    )
+    monkeypatch.setattr(client, "_get_client", Mock(return_value=native))
+    monkeypatch.setattr(client, "_return_client", Mock())
+
+    rows, columns, _ = client.execute_read(
+        "SELECT 'ok' AS value\nSETTINGS max_threads = 8",
+        timeout_ms=250,
+        settings={
+            "readonly": 1,
+            "max_threads": 1,
+            "max_memory_usage": 1024,
+            "max_result_rows": 2,
+            "max_result_bytes": 4096,
+        },
+    )
+
+    assert rows == [("ok",)]
+    assert columns == [("value", "String")]
+    assert native.execute.call_args.args[0] == "SELECT 'ok' AS value"
+    assert native.execute.call_args.kwargs["settings"] == {
+        "max_threads": 1,
+        "max_memory_usage": 1024,
+        "max_result_rows": 2,
+        "max_result_bytes": 4096,
+        "max_bytes_to_read": django_settings.CLICKHOUSE_APPLICATION_READ_MAX_BYTES,
+        "result_overflow_mode": "throw",
+        "max_execution_time": 0.25,
+    }
 
 
 def test_regular_read_keeps_client_side_guardrails(monkeypatch):
@@ -730,6 +794,7 @@ def test_server_locked_stream_adapter_discards_settings(monkeypatch):
     core.execute_read_block_stream.return_value = managed
     proxy = object.__new__(ServerEnforcedReadOnlyNativeClient)
     proxy._client = core
+    proxy._application_read = False
 
     stream = proxy.query_row_block_stream(
         "SELECT 1 SETTINGS max_threads = 8",

@@ -24,7 +24,6 @@ def _setting(name: str) -> Any:
 
 @dataclass(frozen=True, slots=True)
 class PropertyCatalogRuntimeLimits:
-    max_projects: int = _setting("PROPERTY_CATALOG_MAX_PROJECTS")
     max_page_size: int = _setting("PROPERTY_CATALOG_MAX_PAGE_SIZE")
     max_search_bytes: int = _setting("PROPERTY_CATALOG_MAX_SEARCH_BYTES")
     query_wall_ms: int = _setting("PROPERTY_CATALOG_QUERY_WALL_MS")

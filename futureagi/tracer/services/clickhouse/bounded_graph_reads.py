@@ -215,8 +215,7 @@ def _active_filters(filters: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         item
         for item in filters
-        if (item.get("column_id") or item.get("columnId"))
-        not in {"created_at", "start_time"}
+        if not BaseQueryBuilder.is_datetime_filter(item)
         or BaseQueryBuilder.is_datetime_complement_filter(item)
     ]
 
@@ -558,9 +557,11 @@ def _read_time_distributed_candidates(
     total_rows_lower_bound = 0
     sampling_strata_completed = 0
     sampling_error_code: str | None = None
-    probe_limits_enforced = bool(
-        getattr(analytics, "supports_per_query_read_settings", True)
+    from tracer.services.clickhouse.application_read_policy import (
+        supports_bounded_speculative_reads,
     )
+
+    probe_limits_enforced = supports_bounded_speculative_reads(analytics)
     # Freeze the outer request window into an explicit positive time leaf.
     # When the caller omits a date filter, each builder otherwise derives its
     # own ``now - 30 days`` default a few microseconds apart.  Passing the raw
@@ -1145,11 +1146,20 @@ def _read_time_distributed_candidates(
                 identity: Hashable = str(row.get("trace_id") or "")
             else:
                 identity = stratum_builder.bounded_filter_row_identity(row)
-            identity_is_valid = (
-                all(value not in (None, "") for value in identity)
-                if isinstance(identity, tuple)
-                else bool(identity)
-            )
+            if isinstance(identity, tuple):
+                # CH25's final two physical-key fields are String columns;
+                # service_name='' is a valid storage default. The builder
+                # validates their presence and project scope. Do not drop a
+                # legitimate latest span merely because its service is blank.
+                # Legacy four-part keys still require every component.
+                required = identity[:4] if len(identity) == 6 else identity
+                identity_is_valid = (
+                    bool(identity)
+                    and all(value is not None for value in identity)
+                    and all(value not in (None, "") for value in required)
+                )
+            else:
+                identity_is_valid = bool(identity)
             if identity_is_valid:
                 rows_by_id[identity] = row
 
@@ -1277,9 +1287,11 @@ def read_graph_candidates(
     window_start, window_end = builder.parse_time_range(effective_filters)
     classify_batch_size = builder.recommended_filter_classify_batch_size()
     if window_end - window_start > GRAPH_ANY_SPAN_DISTRIBUTED_AFTER:
-        probe_limits_enforced = bool(
-            getattr(analytics, "supports_per_query_read_settings", True)
+        from tracer.services.clickhouse.application_read_policy import (
+            supports_bounded_speculative_reads,
         )
+
+        probe_limits_enforced = supports_bounded_speculative_reads(analytics)
         anchor_support = getattr(builder, "supports_filter_anchor_probe", None)
         unindexed_sample_support = getattr(
             builder,

@@ -110,7 +110,7 @@ def _send_alert_email(monitor: UserAlertMonitor, message: str, alert_type: str) 
         email_helper(
             mail_subject=f"[{alert_type.upper()}] Alert Triggered: {monitor.name}",
             template_name="alert_user.html",
-            template_data={  # TODO: add link to the alert and change the template data
+            template_data={
                 "alert_name": monitor.name,
                 "alert_message": message,
                 "alert_type": alert_type,

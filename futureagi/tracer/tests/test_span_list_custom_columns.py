@@ -4,6 +4,7 @@ Regression: `build_content_query` fetched only `attributes_extra`, so custom
 columns backed by the typed maps (string/number/bool) rendered as "-". These are
 pure unit tests — no DB / no ClickHouse.
 """
+
 from __future__ import annotations
 
 import json
@@ -123,16 +124,26 @@ _MAP_ALIASES = ("attrs_string", "attrs_number", "attrs_bool")
 
 def _v1_content_sql():
     b = SpanListQueryBuilder(
-        project_id=PROJECT_ID, page_number=0, page_size=10,
-        filters=[], sort_params=[], eval_config_ids=[], annotation_label_ids=[],
+        project_id=PROJECT_ID,
+        page_number=0,
+        page_size=10,
+        filters=[],
+        sort_params=[],
+        eval_config_ids=[],
+        annotation_label_ids=[],
     )
     return b.build_content_query(span_ids=["sp1"])[0]
 
 
 def _v2_content_sql():
     b = SpanListQueryBuilderV2(
-        project_id=PROJECT_ID, page_number=0, page_size=10,
-        filters=[], sort_params=[], eval_config_ids=[], annotation_label_ids=[],
+        project_id=PROJECT_ID,
+        page_number=0,
+        page_size=10,
+        filters=[],
+        sort_params=[],
+        eval_config_ids=[],
+        annotation_label_ids=[],
     )
     return b.build_content_query(span_ids=["sp1"])[0]
 
@@ -161,18 +172,42 @@ class TestContentQuerySelectsTypedMaps:
 # --------------------------------------------------------------------------- #
 def _v1_trace_content_sql():
     b = TraceListQueryBuilder(
-        project_id=PROJECT_ID, page_number=0, page_size=10,
-        filters=[], sort_params=[], eval_config_ids=[], annotation_label_ids=[],
+        project_id=PROJECT_ID,
+        page_number=0,
+        page_size=10,
+        filters=[],
+        sort_params=[],
+        eval_config_ids=[],
+        annotation_label_ids=[],
     )
     return b.build_content_query(trace_ids=["t1"])[0]
 
 
 def _v2_trace_content_sql():
     b = TraceListQueryBuilderV2(
-        project_id=PROJECT_ID, page_number=0, page_size=10,
-        filters=[], sort_params=[], eval_config_ids=[], annotation_label_ids=[],
+        project_id=PROJECT_ID,
+        page_number=0,
+        page_size=10,
+        filters=[],
+        sort_params=[],
+        eval_config_ids=[],
+        annotation_label_ids=[],
     )
-    return b.build_content_query(trace_ids=["t1"])[0]
+    return b.build_content_query(
+        trace_ids=["t1"],
+        root_identities=[
+            (
+                PROJECT_ID,
+                "t1",
+                "sp1",
+                1785542400000000,
+                "span",
+                "fixture",
+                1785542400000000,
+                1,
+            )
+        ],
+    )[0]
 
 
 class TestTraceContentQuerySelectsAttrs:

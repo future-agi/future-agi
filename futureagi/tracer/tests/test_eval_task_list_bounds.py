@@ -22,7 +22,6 @@ from tracer.views.eval_task import (
     _ensure_eval_task_response_bounded,
     _eval_task_progress_by_id,
     _EvalTaskPageNumberPagination,
-    _execute_eval_task_query_with_deadline,
     _validate_eval_task_page_depth,
 )
 
@@ -97,45 +96,20 @@ def test_compatibility_filter_fails_closed_on_sentinel_row():
     )
 
 
-def test_each_eval_task_query_uses_the_one_remaining_wall():
-    class _Deadline:
-        def __init__(self):
-            self.remaining = iter((8_100, 7_250))
-            self.calls = []
+def test_each_eval_task_query_checks_wall_without_statement_timer(monkeypatch):
+    from tracer.tests.test_postgres_application_read_policy import FakePostgres
+    from tracer.views import eval_task
 
-        def remaining_ms(self, *, floor_ms):
-            self.calls.append(floor_ms)
-            return next(self.remaining)
-
-    class _RawCursor:
-        def __init__(self):
-            self.calls = []
-
-        def execute(self, sql, params):
-            self.calls.append((sql, params))
-
-    deadline = _Deadline()
-    raw_cursor = _RawCursor()
-    executed = []
-
-    def execute(sql, params, many, context):
-        executed.append((sql, params, many, context))
-        return "rows"
-
-    context = {"cursor": SimpleNamespace(cursor=raw_cursor)}
-    result = _execute_eval_task_query_with_deadline(
-        deadline, execute, "SELECT 1", (), False, context
-    )
-
-    assert result == "rows"
-    assert raw_cursor.calls == [
-        (
-            "SELECT set_config('statement_timeout', %s, true)",
-            ("8100ms",),
-        )
-    ]
-    assert executed == [("SELECT 1", (), False, context)]
-    assert deadline.calls == [1, 1]
+    pg = FakePostgres(outer=True)
+    checks = []
+    deadline = SimpleNamespace(remaining_ms=lambda **kw: checks.append(kw) or 8_100)
+    monkeypatch.setattr(eval_task, "connection", pg)
+    monkeypatch.setattr(eval_task, "transaction", SimpleNamespace(atomic=pg.atomic))
+    with eval_task._bounded_eval_task_read_transaction(deadline):
+        assert pg.execute("SELECT 1") == "SELECT 1"
+        assert pg.execute("SELECT 2") == "SELECT 2"
+    assert pg.query_timeouts == ["0", "0"] and pg.timeout == "750ms"
+    assert checks and all(check == {"floor_ms": 1} for check in checks)
 
 
 def test_eval_task_progress_is_batched_for_the_finite_page(monkeypatch):

@@ -165,6 +165,19 @@ class WorkEmailRequired(Exception):
         super().__init__(message)
 
 
+# Throwaway providers we have seen at signup but upstream has not picked up.
+# accounts/disposable_domains.py is regenerated wholesale every Thursday, so an
+# entry added there by hand disappears at the next refresh -- this set is the
+# durable place for them. Drop one once upstream ships it; keeping it is
+# harmless, just noise.
+EXTRA_DISPOSABLE_EMAIL_DOMAINS = frozenset(
+    {
+        "insight-travel.my.id",
+        "uberip.com",
+    }
+)
+
+
 def is_disposable_email_domain(domain):
     """True if the domain, or any parent of it, is a known throwaway provider.
 
@@ -175,7 +188,8 @@ def is_disposable_email_domain(domain):
     """
     domain_parts = domain.split(".")
     for i in range(len(domain_parts) - 1):
-        if ".".join(domain_parts[i:]) in DISPOSABLE_EMAIL_DOMAINS:
+        suffix = ".".join(domain_parts[i:])
+        if suffix in DISPOSABLE_EMAIL_DOMAINS or suffix in EXTRA_DISPOSABLE_EMAIL_DOMAINS:
             return True
     return False
 

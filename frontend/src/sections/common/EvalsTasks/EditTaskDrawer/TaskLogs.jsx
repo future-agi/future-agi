@@ -9,6 +9,57 @@ import axios, { endpoints } from "src/utils/axios";
 import { ShowComponent } from "src/components/show";
 import { format } from "date-fns";
 import { readEvalTaskLogs } from "../task_log_read";
+import {
+  warningMessage,
+  warningTypeLabel,
+} from "src/sections/common/EvalsTasks/warningTypes";
+
+const WarningGroupRow = ({ group }) => {
+  const message = warningMessage(group);
+  return (
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 0.25 }}>
+      <Box
+        sx={{
+          display: "flex",
+          gap: 0.5,
+          flexWrap: "wrap",
+          alignItems: "center",
+        }}
+      >
+        <Typography variant="caption" fontWeight={600}>
+          {warningTypeLabel(group.type)}
+        </Typography>
+        {(group.empty_keys || []).map((key) => (
+          <Chip
+            key={key}
+            label={`Missing: ${key}`}
+            color="warning"
+            variant="outlined"
+            size="small"
+            sx={{ fontSize: "10px", height: 18 }}
+          />
+        ))}
+        <Typography variant="caption" color="text.secondary">
+          {group.count} occurrence{group.count === 1 ? "" : "s"}
+        </Typography>
+      </Box>
+      {message && (
+        <Typography variant="caption" color="text.secondary">
+          {message}
+        </Typography>
+      )}
+    </Box>
+  );
+};
+
+WarningGroupRow.propTypes = {
+  group: PropTypes.shape({
+    type: PropTypes.string,
+    empty_keys: PropTypes.arrayOf(PropTypes.string),
+    message: PropTypes.string,
+    count: PropTypes.number,
+  }).isRequired,
+};
 
 const KeyValueOrChip = ({ label, value }) => {
   const chipStyle = {
@@ -211,28 +262,14 @@ const TaskLogs = ({ evalTaskId }) => {
                 color="warning.main"
               />
               <Typography fontSize="14px" fontWeight={600}>
-                Partial Inputs: {warningsCount}
+                Runs with warnings: {warningsCount}
               </Typography>
             </Box>
             {warningGroups.map((group) => (
-              <Box
+              <WarningGroupRow
                 key={`${group.type}-${(group.empty_keys || []).join(",")}`}
-                sx={{ display: "flex", gap: 0.5, flexWrap: "wrap" }}
-              >
-                {(group.empty_keys || []).map((key) => (
-                  <Chip
-                    key={key}
-                    label={`Missing: ${key}`}
-                    color="warning"
-                    variant="outlined"
-                    size="small"
-                    sx={{ fontSize: "10px", height: 18 }}
-                  />
-                ))}
-                <Typography variant="caption" color="text.secondary">
-                  {group.count} occurrence{group.count === 1 ? "" : "s"}
-                </Typography>
-              </Box>
+                group={group}
+              />
             ))}
           </Box>
         )}

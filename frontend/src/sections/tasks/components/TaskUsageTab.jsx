@@ -27,9 +27,8 @@ import { DATE_OPTION, DEFAULT_USAGE_PERIOD } from "../constants";
 import UsageChart from "src/sections/evals/components/UsageChart";
 import { JsonValueTree } from "src/sections/evals/components/DatasetTestMode";
 import { classifyTaskError } from "src/sections/common/EvalsTasks/classifyTaskError";
-import PartialInputWarningDetails, {
-  PARTIAL_INPUT_WARNING_TYPE,
-} from "src/sections/common/EvalsTasks/PartialInputWarningDetails";
+import PartialInputWarningDetails from "src/sections/common/EvalsTasks/PartialInputWarningDetails";
+import { PARTIAL_INPUT_WARNING_TYPE } from "src/sections/common/EvalsTasks/warningTypes";
 import { isEditableElement } from "src/utils/keyboardUtils";
 import { parsePythonReprIfNeeded } from "src/sections/develop-detail/DataTab/common";
 import { DATE_OPTION_TO_PERIOD } from "src/sections/evals/Helpers/evalUsageColumns";

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -15,6 +16,24 @@ from tracer.services.clickhouse.list_cursor import (
     list_cursor_boundary_fingerprint,
 )
 from tracer.services.filter_attestation import applied_filter_attestation
+
+
+def _builder_class_mock(*, return_value=mock.DEFAULT, **kwargs):
+    """Stub query construction, retaining real class-level admission policy."""
+    from tracer.services.clickhouse.v2.query_builders.session_list import (
+        SessionListQueryBuilderV2,
+    )
+
+    factory = mock.MagicMock(wraps=SessionListQueryBuilderV2, **kwargs)
+    if return_value is not mock.DEFAULT:
+
+        def construct(**params):
+            return_value.page_number = params.get("page_number", 0)
+            return_value.page_size = params.get("page_size", 30)
+            return return_value
+
+        factory.side_effect = construct
+    return factory
 
 
 def _attribute_filter() -> dict:
@@ -103,8 +122,282 @@ def _view_and_request():
     return view, request
 
 
+def _native_user_filter(operator, value=None):
+    return {
+        "column_id": "user_id",
+        "filter_config": {
+            "col_type": "SYSTEM_METRIC",
+            "filter_type": "text",
+            "filter_op": operator,
+            "filter_value": value,
+        },
+    }
+
+
+def _session_handler_resolved_filters(filters, *, user_id=None, org_scope=False):
+    """Run the public serializer and handler up to the query construction boundary."""
+    from tracer.serializers.trace_session import TraceSessionListQuerySerializer
+    from tracer.views.trace_session import TraceSessionView
+
+    view, request = _view_and_request()
+    project_id = str(uuid.uuid4())
+    project_ids = [project_id, str(uuid.uuid4())] if org_scope else None
+    data = {"filters": json.dumps(filters)}
+    if user_id is not None:
+        data["user_id"] = user_id
+    serializer = TraceSessionListQuerySerializer(data=data)
+    serializer.is_valid(raise_exception=True)
+    analytics = mock.MagicMock()
+    display_rows = mock.MagicMock()
+    display_rows.filter.return_value = display_rows
+    display_rows.values.return_value.first.return_value = None
+    with (
+        mock.patch(
+            "tracer.services.clickhouse.v2.end_user_dict_reader.resolve_end_user_ids_by_user_id",
+            side_effect=lambda value, **kwargs: {
+                "user-a": [str(uuid.UUID(int=1))],
+                "user-b": [str(uuid.UUID(int=2))],
+            }.get(value, []),
+        ) as resolve,
+        mock.patch(
+            "tracer.views.trace_session.EndUser.objects.filter",
+            return_value=display_rows,
+        ),
+        mock.patch(
+            "tracer.views.trace_session.SessionListQueryBuilderV2",
+            _builder_class_mock(
+                side_effect=RuntimeError("stop at session query boundary")
+            ),
+        ) as builder,
+        pytest.raises(RuntimeError, match="stop at session query boundary"),
+    ):
+        TraceSessionView._list_sessions_clickhouse(
+            view,
+            request,
+            project_id=project_id,
+            project=None,
+            analytics=analytics,
+            validated_data=serializer.validated_data,
+            org_project_ids=project_ids,
+        )
+    for call in resolve.call_args_list:
+        assert call.kwargs["organization_id"] == request.organization.id
+        assert call.kwargs["project_id"] == (None if org_scope else project_id)
+        assert call.kwargs["timeout_ms"] > 0
+        assert call.kwargs["settings"] is not None
+    # Repeated leaves remain separate, but reuse the same tenant-scoped lookup.
+    assert len(resolve.call_args_list) == len(
+        {call.args[0] for call in resolve.call_args_list}
+    )
+    if display_rows.filter.called:
+        display_rows.filter.assert_any_call(organization=request.organization)
+        if org_scope:
+            assert all(
+                "project_id" not in call.kwargs
+                for call in display_rows.filter.call_args_list
+            )
+        else:
+            display_rows.filter.assert_any_call(project_id=project_id)
+    assert builder.call_args.kwargs["project_id"] == (None if org_scope else project_id)
+    assert builder.call_args.kwargs["project_ids"] == project_ids
+    analytics.execute_ch_query.assert_not_called()
+    return builder.call_args.kwargs["filters"]
+
+
 @pytest.mark.unit
-def test_session_partial_page_cursor_prefers_hidden_rollup_seed_order():
+def test_session_handler_native_user_disjoint_leaves_remain_and():
+    filters = _session_handler_resolved_filters(
+        [_native_user_filter("in", ["user-a"]), _native_user_filter("in", ["user-b"])]
+    )
+
+    assert [item["column_id"] for item in filters] == ["end_user_id", "end_user_id"]
+    assert [item["filter_config"]["filter_op"] for item in filters] == ["in", "in"]
+    assert [item["filter_config"]["filter_value"] for item in filters] == [
+        [str(uuid.UUID(int=1))],
+        [str(uuid.UUID(int=2))],
+    ]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("leaves", "user_id", "org_scope", "expected"),
+    [
+        pytest.param(
+            [("in", ["user-a", "user-b", "user-a"])],
+            None,
+            False,
+            [("in", [1, 2])],
+            id="multivalue-one-leaf",
+        ),
+        pytest.param(
+            [("not_in", ["user-a", "user-b"])],
+            None,
+            False,
+            [("not_in", [1, 2])],
+            id="negative-multivalue-one-leaf",
+        ),
+        pytest.param(
+            [("equals", "user-a"), ("not_equals", "user-b")],
+            None,
+            False,
+            [("in", [1]), ("not_in", [2])],
+            id="mixed-operators-positive-first",
+        ),
+        pytest.param(
+            [("not_equals", "user-b"), ("equals", "user-a")],
+            None,
+            False,
+            [("not_in", [2]), ("in", [1])],
+            id="mixed-operators-negative-first",
+        ),
+        pytest.param(
+            [("in", ["user-a"]), ("in", ["user-a"])],
+            None,
+            False,
+            [("in", [1]), ("in", [1])],
+            id="duplicate-valid-leaves-preserved",
+        ),
+        pytest.param(
+            [("equals", "unknown"), ("equals", "user-a")],
+            None,
+            False,
+            [("in", [0]), ("in", [1])],
+            id="unknown-positive-retains-and",
+        ),
+        pytest.param(
+            [("not_equals", "unknown"), ("equals", "user-a")],
+            None,
+            False,
+            [("in", [1])],
+            id="unknown-negative-retains-other-leaf",
+        ),
+        pytest.param(
+            [("in", ["unknown", "user-a"])],
+            None,
+            False,
+            [("in", [1])],
+            id="unknown-with-known-in-one-leaf",
+        ),
+        pytest.param(
+            [("equals", "user-a"), ("is_null", None)],
+            None,
+            False,
+            [("in", [1]), ("is_null", None)],
+            id="null-after-positive",
+        ),
+        pytest.param(
+            [("is_not_null", None), ("equals", "user-a")],
+            None,
+            False,
+            [("is_not_null", None), ("in", [1])],
+            id="positive-after-not-null",
+        ),
+        pytest.param(
+            [("in", ["user-b"])],
+            "user-a",
+            True,
+            [("in", [1]), ("in", [2])],
+            id="org-query-scope-not-unioned",
+        ),
+        pytest.param(
+            [("not_equals", "user-a")],
+            "user-a",
+            True,
+            [("in", [1]), ("not_in", [1])],
+            id="org-query-scope-not-negated",
+        ),
+        pytest.param(
+            [("equals", "unknown")],
+            "user-a",
+            True,
+            [("in", [1]), ("in", [0])],
+            id="org-query-scope-and-unknown",
+        ),
+        pytest.param(
+            [("not_equals", "unknown")],
+            "user-a",
+            True,
+            [("in", [1])],
+            id="org-query-scope-survives-unknown-negative",
+        ),
+    ],
+)
+def test_session_handler_native_user_leaf_semantics(
+    leaves, user_id, org_scope, expected
+):
+    # A property named user_id is not a native identity constraint.
+    attribute = _native_user_filter("in", ["attribute-user"])
+    attribute["filter_config"]["col_type"] = "SPAN_ATTRIBUTE"
+    filters = _session_handler_resolved_filters(
+        [attribute, *(_native_user_filter(op, value) for op, value in leaves)],
+        user_id=user_id,
+        org_scope=org_scope,
+    )
+
+    assert filters == [
+        attribute,
+        *(
+            {
+                "column_id": "end_user_id",
+                "filter_config": {
+                    "col_type": "SYSTEM_METRIC",
+                    "filter_type": "text",
+                    "filter_op": op,
+                    **(
+                        {"filter_value": [str(uuid.UUID(int=value)) for value in ids]}
+                        if ids is not None
+                        else {}
+                    ),
+                },
+            }
+            for op, ids in expected
+        ),
+    ]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("unsupported_first", [False, True])
+def test_session_handler_native_user_checks_each_operator(unsupported_first):
+    from tracer.serializers.trace_session import TraceSessionListQuerySerializer
+    from tracer.views.trace_session import TraceSessionView
+
+    filters = [
+        _native_user_filter("equals", "user-a"),
+        _native_user_filter("contains", "user-b"),
+    ]
+    if unsupported_first:
+        filters.reverse()
+    serializer = TraceSessionListQuerySerializer(data={"filters": json.dumps(filters)})
+    serializer.is_valid(raise_exception=True)
+    view, request = _view_and_request()
+    analytics = mock.MagicMock()
+    with (
+        mock.patch(
+            "tracer.services.clickhouse.v2.end_user_dict_reader.resolve_end_user_ids_by_user_id",
+            return_value=[],
+        ),
+        mock.patch(
+            "tracer.views.trace_session.SessionListQueryBuilderV2",
+            _builder_class_mock(),
+        ) as builder,
+    ):
+        response = TraceSessionView._list_sessions_clickhouse(
+            view,
+            request,
+            project_id=str(uuid.uuid4()),
+            project=None,
+            analytics=analytics,
+            validated_data=serializer.validated_data,
+        )
+
+    assert response[0] == "bad_request"
+    assert "Unsupported operator 'contains' for user_id filter" in response[1]
+    builder.assert_not_called()
+    analytics.execute_ch_query.assert_not_called()
+
+
+@pytest.mark.unit
+def test_session_partial_page_cursor_uses_canonical_order_not_stale_rollup():
     from tracer.views.trace_session import _session_list_cursor_order_for_partial_page
 
     seed_start = datetime(2025, 1, 1, 0, 0)
@@ -125,7 +418,7 @@ def test_session_partial_page_cursor_prefers_hidden_rollup_seed_order():
         cursor_state=None,
     )
 
-    assert order == (seed_start, raw_session_id)
+    assert order == (exact_start, canonical_session_id)
 
 
 @pytest.mark.unit
@@ -139,7 +432,7 @@ def test_org_session_relational_collision_fails_before_id_only_hydration():
     builder.supports_candidate_first_page.return_value = False
     builder.supports_bounded_filter_scan.return_value = True
     builder.recommended_filter_classify_batch_size.return_value = 50
-    builder_cls = mock.MagicMock(return_value=builder)
+    builder_cls = _builder_class_mock(return_value=builder)
     analytics = mock.MagicMock()
     bounded = _bounded_page(
         rows=[
@@ -199,7 +492,7 @@ def test_default_org_session_collision_fails_before_id_only_hydration():
     builder = mock.MagicMock()
     builder.supports_candidate_first_page.return_value = True
     builder.build_candidate_page_query.return_value = ("candidate page", {})
-    builder_cls = mock.MagicMock(return_value=builder)
+    builder_cls = _builder_class_mock(return_value=builder)
     analytics = mock.MagicMock()
     analytics.execute_ch_query.return_value = SimpleNamespace(
         data=[
@@ -255,7 +548,7 @@ def test_org_session_view_passes_disjoint_annotation_label_sets_to_builder():
     builder.supports_candidate_first_page.return_value = True
     builder.build_candidate_page_query.return_value = ("candidate page", {})
     builder.build_candidate_count_query.return_value = ("candidate count", {})
-    builder_cls = mock.MagicMock(return_value=builder)
+    builder_cls = _builder_class_mock(return_value=builder)
     analytics = mock.MagicMock()
     analytics.execute_ch_query.side_effect = [
         SimpleNamespace(data=[]),
@@ -454,7 +747,7 @@ def test_session_end_user_dictionary_lookup_remap_is_candidate_bounded():
 
 
 @pytest.mark.unit
-def test_user_detail_reverse_lookup_keeps_transport_and_query_under_10_seconds(
+def test_user_detail_reverse_lookup_keeps_transport_safety_not_statement_caps(
     monkeypatch,
 ):
     import sys
@@ -505,14 +798,16 @@ def test_user_detail_reverse_lookup_keeps_transport_and_query_under_10_seconds(
         reader._reset_client()
 
     assert client_factory.call_args.kwargs["send_receive_timeout"] == 9.5
-    assert "settings" not in client_factory.call_args.kwargs
+    assert client_factory.call_args.kwargs["settings"]["max_execution_time"] == 0
+    assert client.timeout.read_timeout is None
+    assert client.timeout.connect_timeout == 10
     query_settings = client.query.call_args.kwargs["settings"]
-    assert query_settings["max_execution_time"] == 9.5
-    assert "max_rows_to_read" not in query_settings
+    assert query_settings["max_execution_time"] == 0
+    assert query_settings["max_rows_to_read"] == 0
     assert query_settings["max_memory_usage"] == 36 * 1024 * 1024 * 1024
-    assert query_settings["max_bytes_to_read"] == 256 * 1024 * 1024
+    assert query_settings["max_bytes_to_read"] == 0
     assert query_settings["max_threads"] == 2
-    assert query_settings["max_result_rows"] == 10_000
+    assert query_settings["max_result_rows"] == 0
 
 
 @pytest.mark.unit
@@ -595,9 +890,26 @@ def test_attribute_session_list_uses_bounded_protocol_and_page_scoped_hydration(
     builder.format_sessions.side_effect = lambda rows, columns: [
         dict(zip(columns, row, strict=True)) for row in rows
     ]
-    builder_cls = mock.MagicMock(return_value=builder)
+    builder_cls = _builder_class_mock(return_value=builder)
 
     analytics = mock.MagicMock()
+    attribute_values = {f"custom_{i}": f"value_{i}" for i in range(260)}
+    attribute_values.update({"long_text": "K" * 2048, "raw.custom": "visible"})
+    attribute_rows = [
+        {
+            "session_id": session_id,
+            "attrs_string": attribute_values,
+            "attrs_number": {"amount": 1.5},
+            "attrs_bool": {"approved": 0},
+            "span_attributes_raw": json.dumps({"structured": {"steps": [1, 2]}}),
+        },
+        {
+            "session_id": session_id,
+            "attrs_string": {"session_id": "must-not-replace-identity"},
+            "attrs_bool": {"approved": 1},
+            "span_attributes_raw": json.dumps({"structured": {"steps": [1, 2]}}),
+        },
+    ]
 
     def _execute(query, _params, **_kwargs):
         if query == "page metrics":
@@ -625,7 +937,7 @@ def test_attribute_session_list_uses_bounded_protocol_and_page_scoped_hydration(
                 ]
             )
         if query == "page attributes":
-            return SimpleNamespace(data=[])
+            return SimpleNamespace(data=attribute_rows)
         raise AssertionError(f"unexpected broad ClickHouse query: {query}")
 
     analytics.execute_ch_query.side_effect = _execute
@@ -740,6 +1052,13 @@ def test_attribute_session_list_uses_bounded_protocol_and_page_scoped_hydration(
     }
     assert payload["table"][0]["first_message"] == "first"
     assert payload["table"][0]["last_message"] == "last"
+    hydrated = payload["table"][0]
+    assert all(hydrated.get(key) == value for key, value in attribute_values.items())
+    assert hydrated["amount"] == 1.5
+    assert hydrated["approved"] == [False, True]
+    assert all(type(value) is bool for value in hydrated["approved"])
+    assert hydrated["structured"] == {"steps": [1, 2]}
+    assert hydrated["session_id"] == session_id
     assert bounded_read.call_count == 4
     bounded_kwargs = bounded_read.call_args.kwargs
     assert bounded_kwargs["key_field"] == "session_id"
@@ -763,7 +1082,7 @@ def test_candidate_first_session_list_keeps_exact_metadata():
     builder.supports_candidate_first_page.return_value = True
     builder.build_candidate_page_query.return_value = ("candidate page", {})
     builder.build_candidate_count_query.return_value = ("candidate count", {})
-    builder_cls = mock.MagicMock(return_value=builder)
+    builder_cls = _builder_class_mock(return_value=builder)
     analytics = mock.MagicMock()
 
     def _execute(query, _params, **_kwargs):
@@ -860,7 +1179,7 @@ def test_session_list_keeps_exact_page_when_end_user_label_enrichment_exhausts_b
     with (
         mock.patch(
             "tracer.views.trace_session.SessionListQueryBuilderV2",
-            return_value=builder,
+            _builder_class_mock(return_value=builder),
         ),
         mock.patch(
             "tracer.views.trace_session.AnnotationsLabels.objects.filter",
@@ -946,7 +1265,7 @@ def test_session_export_rejects_truncated_exact_first_page():
     with (
         mock.patch(
             "tracer.views.trace_session.SessionListQueryBuilderV2",
-            return_value=builder,
+            _builder_class_mock(return_value=builder),
         ),
         mock.patch(
             "tracer.views.trace_session.AnnotationsLabels.objects.filter",
@@ -984,7 +1303,7 @@ def test_incomplete_bounded_session_list_returns_sanitized_503_without_hydration
     builder = mock.MagicMock()
     builder.supports_candidate_first_page.return_value = False
     builder.supports_bounded_filter_scan.return_value = True
-    builder_cls = mock.MagicMock(return_value=builder)
+    builder_cls = _builder_class_mock(return_value=builder)
     analytics = mock.MagicMock()
 
     with (
@@ -1174,7 +1493,7 @@ def test_positive_user_cursor_uses_exact_keyset_pages_without_duplicates():
     with (
         mock.patch(
             "tracer.views.trace_session.SessionListQueryBuilderV2",
-            return_value=builder,
+            _builder_class_mock(return_value=builder),
         ),
         mock.patch(
             "tracer.views.trace_session.read_bounded_filter_page"
@@ -1335,7 +1654,7 @@ def test_sparse_session_cursor_follows_checkpoint_without_skip_or_duplicate(
     with (
         mock.patch(
             "tracer.views.trace_session.SessionListQueryBuilderV2",
-            return_value=builder,
+            _builder_class_mock(return_value=builder),
         ),
         mock.patch(
             "tracer.views.trace_session.read_bounded_filter_page",
@@ -1393,3 +1712,44 @@ def test_sparse_session_cursor_follows_checkpoint_without_skip_or_duplicate(
     assert continuation["bounded_continuation"] is True
     assert continuation["include_incomplete_rows"] is True
     assert continuation["continuation_slice_end"] == checkpoint_end
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("org", [False, True])
+@pytest.mark.parametrize("cursor", [False, True])
+@pytest.mark.parametrize("kind,preferred", [("text", True), ("mixed", True), ("number", False), ("boolean", False)])
+def test_string_page_public_dispatch_and_old_order_token(org, cursor, kind, preferred):
+    from tracer.services.clickhouse.list_cursor import encode_list_cursor
+    from tracer.tests.test_session_positive_witness_page import (
+        OTHER,
+        PROJECT,
+        START,
+        USER,
+        builder,
+        leaf,
+    )
+    from tracer.views.trace_session import TraceSessionView
+    filters = [leaf("company", ["alpha"], "text", "in")]
+    if kind in {"mixed", "number"}:
+        filters.append(leaf("other", False, "boolean") if kind == "mixed" else leaf("other", 7))
+    elif kind == "boolean":
+        filters = [leaf("flag", True, "boolean")]
+    view, request = _view_and_request()
+    analytics = SimpleNamespace(execute_ch_query=mock.Mock(return_value=SimpleNamespace(data=[])))
+    data = {"filters": builder(*filters).filters, "sort_params": [], "page_number": 0, "page_size": 2, "cursor_mode": cursor}
+    kwargs = {"project_id": None if org else PROJECT, "project": None, "analytics": analytics,
+              "org_project_ids": [PROJECT, OTHER] if org else None}
+    with mock.patch("tracer.views.trace_session._read_session_filter_page", return_value=_bounded_page()) as bounded:
+        selected = TraceSessionView._select_session_page(view, request, validated_data=data, **kwargs)
+    assert bounded.call_count == int(preferred) and analytics.execute_ch_query.call_count == int(not preferred)
+    assert selected.candidate_cursor is (cursor and not preferred)
+    assert selected.cursor_query["session_order_contract"] == "latest-root-physical-key-v2-string-page-first"
+    if cursor:
+        token = encode_list_cursor(resource="observe_sessions", scope=selected.cursor_scope,
+            query={**selected.cursor_query, "session_order_contract": "latest-root-physical-key-v1"},
+            page_size=2, window_start=START, window_end=START + timedelta(days=7), order=(START, USER), seen_rows=2)
+        analytics.execute_ch_query.reset_mock()
+        with pytest.raises(ListCursorError), mock.patch("tracer.views.trace_session._read_session_filter_page",
+                                                       side_effect=AssertionError("Old order must fail before reading")):
+            TraceSessionView._select_session_page(view, request, validated_data={**data, "cursor": token}, **kwargs)
+        analytics.execute_ch_query.assert_not_called()

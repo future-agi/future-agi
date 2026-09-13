@@ -6,6 +6,8 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
+import pytest
+
 from tracer.services.clickhouse.v2.property_catalog.codec import ZERO_UUID
 from tracer.services.clickhouse.v2.property_catalog.models import (
     PropertyCatalogEnvelope,
@@ -33,6 +35,7 @@ from tracer.services.clickhouse.v2.property_catalog.reconciler import (
     ReconcileMode,
     ReconcileRequest,
     _project_records,
+    _repair_tombstones,
     _starting_progress,
 )
 from tracer.services.clickhouse.v2.property_catalog.runtime_limits import RUNTIME_LIMITS
@@ -110,20 +113,30 @@ def test_new_stream_uses_wire_v1_zero_hash_genesis() -> None:
     )
 
 
-def test_incremental_visibility_change_tombstones_stale_binding_immediately() -> None:
+@pytest.mark.parametrize(
+    ("old_revision", "old_version", "new_revision", "new_version"),
+    [
+        (1, 1, 2, 2),
+        (3, 1787454205903148937, 4, 1788596942819481),
+        (3, 1788179167838495941, 4, 4),
+    ],
+)
+def test_incremental_visibility_change_tombstones_stale_binding_immediately(
+    old_revision: int, old_version: int, new_revision: int, new_version: int
+) -> None:
     definition = _definition()
     old = project_definition(
         organization_id=ORG,
         workspace_id=WORKSPACE,
         catalog_epoch=1,
-        catalog_revision=1,
+        catalog_revision=old_revision,
         build_token=BUILD,
         projection_version=1,
         visibility=VisibilityBinding(VisibilityScope.PROJECT, PROJECT_A),
         definition=definition,
         source_adapter=SourceAdapter.EVAL_CONFIG,
         source_entity_id="77777777-7777-4777-8777-777777777777",
-        source_version=1,
+        source_version=old_version,
         source_fingerprint=_sha("v1"),
         producer_stream_id=STREAM,
         producer_sequence=1,
@@ -152,14 +165,14 @@ def test_incremental_visibility_change_tombstones_stale_binding_immediately() ->
             workspace_id=WORKSPACE,
             project_ids=(PROJECT,),
             catalog_epoch=1,
-            catalog_revision=2,
+            catalog_revision=new_revision,
             projection_version=1,
             snapshot_cutoff=NOW,
         ),
         build_token=BUILD,
         producer_stream_id=STREAM,
         emitted_at=NOW,
-        source_version=2,
+        source_version=new_version,
     )
 
     projected, conflicts = _project_records(
@@ -173,6 +186,27 @@ def test_incremental_visibility_change_tombstones_stale_binding_immediately() ->
         (PROJECT_A, True),
         (PROJECT_B, False),
     }
+    assert all(
+        (row.catalog_revision, row.source_version) == (new_revision, new_version)
+        for row in projected
+    )
+    replayed, conflicts = _project_records(
+        snapshot=snapshot, current=projected, request=request
+    )
+    assert conflicts == 0
+    assert replayed == tuple(row for row in projected if not row.is_deleted)
+    # Losing visibility at an equal or older fence must still fail closed.
+    for stale_version in {old_version, max(1, old_version - 1)}:
+        _, conflicts = _project_records(
+            snapshot=snapshot,
+            current=(old,),
+            request=replace(
+                request,
+                context=replace(request.context, catalog_revision=old_revision),
+                source_version=stale_version,
+            ),
+        )
+        assert conflicts == 1
 
 
 class _EmptyCurrentBindings:
@@ -277,6 +311,117 @@ def _dataset_request() -> ReconcileRequest:
         emitted_at=NOW,
         source_version=2,
     )
+
+
+@pytest.fixture
+def revision_ordering_source():
+    record = _dataset_column_records(1)[0]
+    snapshot = SourceSnapshot(
+        source_adapter=record.source_adapter,
+        records=(record,),
+        next_cursor=None,
+        terminal=True,
+        source_count=1,
+        source_bytes=record.encoded_bytes,
+        source_digest=_sha("revision-ordering"),
+        page_count=1,
+    )
+    request = _dataset_request()
+    request = replace(
+        request,
+        context=replace(request.context, catalog_revision=4),
+        source_version=1788596942819481,
+    )
+    rows, conflicts = _project_records(snapshot=snapshot, current=(), request=request)
+    assert conflicts == 0
+    return snapshot, request, rows[0]
+
+
+@pytest.mark.parametrize(
+    ("old_revision", "old_version", "changed", "expected_conflicts"),
+    [
+        (3, 1787454205903148937, True, 0),
+        (3, 1788179167838495941, True, 0),
+        (4, 1788596942819482, False, 1),
+        (4, 1788596942819481, True, 1),
+        (4, 1788596942819481, False, 0),
+        (5, 4, False, 1),
+    ],
+)
+def test_projection_conflict_guard_uses_revision_then_source_version(
+    revision_ordering_source, old_revision, old_version, changed, expected_conflicts
+) -> None:
+    snapshot, request, incoming = revision_ordering_source
+    old_request = replace(
+        request,
+        context=replace(request.context, catalog_revision=old_revision),
+        source_version=old_version,
+    )
+    record = snapshot.records[0]
+    if changed:
+        record = _make_source_record(
+            source_adapter=record.source_adapter,
+            source_entity_id=record.source_entity_id,
+            source_updated_at=NOW,
+            definition=replace(record.definition, display_name="Previous definition"),
+            visibilities=record.visibilities,
+        )
+    old_rows, _ = _project_records(
+        snapshot=replace(snapshot, records=(record,)), current=(), request=old_request
+    )
+    rows, conflicts = _project_records(
+        snapshot=snapshot, current=old_rows, request=request
+    )
+    assert conflicts == expected_conflicts
+    assert rows == (incoming,)
+
+
+@pytest.mark.parametrize(
+    ("old_revision", "old_version", "new_version", "expected_conflicts"),
+    [
+        (3, 1787454205903148937, 1788596942819481, 0),
+        (3, 1788179167838495941, 4, 0),
+        (4, 1788596942819482, 1788596942819481, 1),
+        (4, 1788596942819481, 1788596942819481, 1),
+        (5, 4, 1788596942819481, 1),
+    ],
+)
+def test_full_repair_removal_orders_revisions_and_replays_safely(
+    revision_ordering_source, old_revision, old_version, new_version, expected_conflicts
+) -> None:
+    snapshot, request, _ = revision_ordering_source
+    old_rows, _ = _project_records(
+        snapshot=snapshot,
+        current=(),
+        request=replace(
+            request,
+            context=replace(request.context, catalog_revision=old_revision),
+            source_version=old_version,
+        ),
+    )
+    request = replace(
+        request, mode=ReconcileMode.FULL_REPAIR, source_version=new_version
+    )
+    kwargs = {
+        "baseline": old_rows,
+        "current_segment": (),
+        "source_digest": _sha("empty-repair"),
+        "request": request,
+    }
+    tombstones, conflicts = _repair_tombstones(current_revision=(), **kwargs)
+    assert conflicts == expected_conflicts
+    if expected_conflicts:
+        assert tombstones == ()
+        return
+    assert len(tombstones) == 1
+    tombstone = tombstones[0]
+    assert tombstone.is_deleted
+    assert tombstone.deleted_at == request.context.snapshot_cutoff
+    assert (tombstone.catalog_revision, tombstone.source_version) == (4, new_version)
+    assert tombstone.binding_id == old_rows[0].binding_id
+    assert (tombstone.organization_id, tombstone.workspace_id) == (ORG, WORKSPACE)
+    assert _repair_tombstones(current_revision=(), **kwargs) == (tombstones, 0)
+    assert _repair_tombstones(current_revision=tombstones, **kwargs) == ((), 0)
 
 
 def test_empty_relational_full_repair_persists_frozen_cutoff_watermark() -> None:

@@ -79,7 +79,6 @@ _FORBIDDEN_SQL_RE = re.compile(
     re.IGNORECASE,
 )
 _MAX_WINDOWS = RUNTIME_LIMITS.canonical_span_max_windows
-_MAX_PROJECTS = RUNTIME_LIMITS.max_projects
 # The canonical payload query is bounded by the reviewed runtime settings.
 # Standard and explicitly acknowledged initial-backfill page sizes may differ,
 # but both retain finite row, byte, memory, thread, and deadline ceilings.
@@ -225,8 +224,8 @@ class FrozenSpanSource:
                 }
             )
         )
-        if not projects or len(projects) > _MAX_PROJECTS:
-            raise ValueError(f"frozen span source requires 1..{_MAX_PROJECTS} projects")
+        if not projects:
+            raise ValueError("frozen span source requires at least one project")
         object.__setattr__(self, "project_ids", projects)
         _require_utc(self.since, "since")
         _require_utc(self.until, "until")
@@ -257,10 +256,8 @@ class SpanScanCursor:
     window_hours: int = CANONICAL_SPAN_SCAN_WINDOW_HOURS
 
     def __post_init__(self) -> None:
-        if type(self.unit_index) is not int or not 0 <= self.unit_index < (
-            _MAX_PROJECTS * _MAX_WINDOWS
-        ):
-            raise ValueError("span scan unit index is outside its bound")
+        if type(self.unit_index) is not int or self.unit_index < 0:
+            raise ValueError("span scan unit index must be a nonnegative integer")
         if not isinstance(self.source_cursor, SourceCursor):
             raise TypeError("source_cursor must be a SourceCursor")
         if (
@@ -576,15 +573,22 @@ class CanonicalSpanSourceReader:
         self, frozen: FrozenSpanSource, *, cursor: str | None = None
     ) -> SpanScanPage:
         decoded = SpanScanCursor.decode(cursor)
-        units = frozen.units
-        if decoded.unit_index >= len(units):
+        # Keep the original hourly cursor coordinates without allocating a
+        # project-by-hour tuple for the entire workspace on every page.
+        hours_per_project = math.ceil(
+            (frozen.until - frozen.since).total_seconds() / 3600
+        )
+        unit_count = len(frozen.project_ids) * hours_per_project
+        if decoded.unit_index >= unit_count:
             raise PropertyCatalogSpanSourceError("canonical-span cursor exceeds source")
         occupied_hours = self._discover_occupied_hours(frozen)
         unit_index = decoded.unit_index
         source_cursor = decoded.source_cursor
         window_hours = decoded.window_hours
-        while unit_index < len(units):
-            project_id, window_start, _hourly_window_end = units[unit_index]
+        while unit_index < unit_count:
+            project_index, hour_index = divmod(unit_index, hours_per_project)
+            project_id = frozen.project_ids[project_index]
+            window_start = frozen.since + timedelta(hours=hour_index)
             window_end = min(
                 window_start + timedelta(hours=window_hours),
                 frozen.until,
@@ -623,7 +627,7 @@ class CanonicalSpanSourceReader:
                 identities=page_identities,
             )
             next_unit = unit_index if has_more else unit_index + window_units
-            terminal = not has_more and next_unit >= len(units)
+            terminal = not has_more and next_unit >= unit_count
             next_cursor = None
             if not terminal:
                 next_cursor = SpanScanCursor(

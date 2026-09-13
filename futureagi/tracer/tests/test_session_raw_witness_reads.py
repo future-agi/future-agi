@@ -73,7 +73,9 @@ def test_session_seed_stays_root_ordered_and_exact_scalar_replay_is_bounded() ->
 
     match_sql, match_params = builder.build_filter_match_query([CANDIDATE_SESSION_ID])
     assert "candidate_scalar_span_identities AS" in match_sql
-    assert "matching_scalar_sessions AS" in match_sql
+    assert "sessions AS" in match_sql
+    assert "FROM resolved_candidate_scalar_spans" in match_sql
+    assert "AND countIf(is_root) > 0" in match_sql
     assert "HAVING countIf(latest_attr_exists_0 AND" in match_sql
     assert "lowerUTF8(toString(latest_attr_value_0)) IN" in match_sql
     assert match_params["latest_filter_param_0"] == ("rechazado",)
@@ -249,23 +251,35 @@ def test_session_match_applies_exact_all_span_filters_before_session_page() -> N
 
     sql, _ = builder.build_filter_match_query([CANDIDATE_SESSION_ID])
 
-    resolved_roots = sql.split("resolved_root_sessions AS (", 1)[1].split(
-        "\n        )", 1
-    )[0]
     scalar_spans = sql.split("latest_candidate_scalar_spans AS (", 1)[1].split(
         "resolved_candidate_scalar_spans AS (", 1
     )[0]
-    matching_traces = sql.split("matching_scalar_traces AS (", 1)[1].split(
-        "matching_scalar_sessions AS (", 1
+    resolved_scalar_spans = sql.split("resolved_candidate_scalar_spans AS (", 1)[
+        1
+    ].split("sessions AS (", 1)[0]
+    matching_sessions = sql.split("\n        sessions AS (", 1)[1].split(
+        "\n        )", 1
     )[0]
-    matching_sessions = sql.split("matching_scalar_sessions AS (", 1)[1].split(
-        "sessions AS (", 1
-    )[0]
-    sessions = sql.split("sessions AS (", 1)[1]
-    assert "latest_attr_exists_0" not in resolved_roots
+    sessions = sql.split("\n        sessions AS (", 1)[1]
     assert "latest_attr_exists_0" in scalar_spans
-    assert "lowerUTF8(toString(latest_attr_value_0)) IN" in matching_traces
-    assert "HAVING countIf(" in matching_traces
-    assert "FROM matching_scalar_traces" in matching_sessions
-    assert "FROM resolved_root_sessions" in sessions
-    assert "session_id IN (SELECT session_id FROM matching_scalar_sessions)" in sessions
+    assert "argMax(is_deleted, _version) AS latest_is_deleted" in scalar_spans
+    assert "WHERE latest_is_deleted = 0" in resolved_scalar_spans
+    assert "parent_span_id IS NULL" not in resolved_scalar_spans
+    # Each leaf is reduced over the whole session, not an intermediate trace:
+    # sibling traces may provide independent witnesses for session membership.
+    assert "matching_scalar_traces AS (" not in sql
+    assert "FROM resolved_candidate_scalar_spans" in matching_sessions
+    assert "GROUP BY project_id, session_id\n" in matching_sessions
+    assert "GROUP BY project_id, session_id, trace_id" not in matching_sessions
+    assert "HAVING countIf(latest_attr_exists_0 AND" in matching_sessions
+    assert "lowerUTF8(toString(latest_attr_value_0)) IN" in matching_sessions
+    # The fused stage keeps every live span until HAVING, requires a root, and
+    # orders by all roots' earliest time rather than a matching child's time.
+    assert "AND countIf(is_root) > 0" in matching_sessions
+    assert "minIf(latest_start_time, is_root) AS session_start" in matching_sessions
+    assert (
+        "WHERE session_id IN (SELECT session_id FROM candidate_filter_sessions)"
+        in matching_sessions
+    )
+    assert sessions.index("HAVING countIf(") < sessions.index("ORDER BY")
+    assert sessions.index("ORDER BY") < sessions.index("LIMIT %(bounded_match_limit)s")

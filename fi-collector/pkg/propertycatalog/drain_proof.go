@@ -14,7 +14,7 @@ const (
 	drainProofFormat   = "futureagi.property-catalog-drain-proof"
 	drainProofVersion  = uint16(2)
 	drainProofFileName = "producer-drain-proof-v2.json"
-	maxDrainProofBytes = 1 << 20
+	maxDrainProofBytes = 64 << 20
 )
 
 // DrainProof is the producer-owned durable side of the hot-stream handoff.
@@ -66,6 +66,12 @@ type drainProofDocument struct {
 	Proofs  []DrainProof `json:"proofs"`
 }
 
+// Only drain-safety evidence may retain expired assignments. Authorization and
+// retirement continue to use the provider's current-revision methods.
+type retainedRevisionFenceLister interface {
+	retainedRevisionFences(context.Context) ([]RevisionFence, error)
+}
+
 func (r *HotRuntime) DrainProofPath() string {
 	if r == nil {
 		return ""
@@ -80,7 +86,13 @@ func (r *HotRuntime) DrainProofs(ctx context.Context) ([]DrainProof, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	fences, err := r.revisionList.CurrentRevisions(ctx)
+	var fences []RevisionFence
+	var err error
+	if retained, ok := r.revisionList.(retainedRevisionFenceLister); ok {
+		fences, err = retained.retainedRevisionFences(ctx)
+	} else {
+		fences, err = r.revisionList.CurrentRevisions(ctx)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -314,8 +326,8 @@ func (r *HotRuntime) loadDrainSafety() error {
 	if err != nil || !bytes.Equal(canonical, body) {
 		return errors.New("propertycatalog: drain proof is not canonical JSON")
 	}
-	if document.Format != drainProofFormat || document.Version != drainProofVersion || len(document.Proofs) > maxRevisionFenceEntries {
-		return errors.New("propertycatalog: drain proof format/version/count is invalid")
+	if document.Format != drainProofFormat || document.Version != drainProofVersion {
+		return errors.New("propertycatalog: drain proof format/version is invalid")
 	}
 	seen := make(map[streamKey]struct{}, len(document.Proofs))
 	for index, proof := range document.Proofs {

@@ -21,6 +21,10 @@ from tfc.settings.settings import (
     validate_property_catalog_read_admission,
     validate_property_catalog_read_connection,
 )
+from tracer.services.clickhouse.application_read_policy import (
+    application_read_context,
+    application_read_settings,
+)
 from tracer.services.clickhouse.client import ClickHouseClient
 from tracer.services.clickhouse.v2.attribute_catalog_connection import (
     AttributeCatalogQueryPage,
@@ -93,6 +97,11 @@ class PropertyCatalogConnectionConfig:
             prod_workspace_allowlist=getattr(
                 source, "PROPERTY_CATALOG_PROD_WORKSPACE_ALLOWLIST", None
             ),
+            prod_workspace_scope_mode=getattr(
+                source,
+                "PROPERTY_CATALOG_PROD_WORKSPACE_SCOPE_MODE",
+                "allowlist",
+            ),
         )
         if deployment is None:
             raise ValueError("property catalog reads are disabled")
@@ -142,6 +151,7 @@ def get_property_catalog_read_client(
                 send_timeout=PROPERTY_CATALOG_READ_TRANSPORT_TIMEOUT_SECONDS,
                 receive_timeout=PROPERTY_CATALOG_READ_TRANSPORT_TIMEOUT_SECONDS,
                 pool_size=PROPERTY_CATALOG_READ_POOL_SIZE,
+                allow_query_settings_with_server_readonly=True,
             )
             _client_config = config
         return _client
@@ -157,7 +167,11 @@ def reset_property_catalog_read_client() -> None:
 
 
 class PropertyCatalogReadExecutor:
-    """Execute allowlisted catalog SELECTs inside one shared bounded wall."""
+    """Allowlisted catalog reads with explicit public/maintenance policies.
+
+    Public requests retain admission between statements, not statement aborts.
+    Direct maintenance callers keep the historical bounded execution policy.
+    """
 
     def __init__(
         self,
@@ -168,13 +182,19 @@ class PropertyCatalogReadExecutor:
         ] = get_property_catalog_read_client,
         clock: Callable[[], float] = monotonic,
         max_wall_ms: int = PROPERTY_CATALOG_READ_MAX_WALL_MS,
+        application_read: bool = False,
     ) -> None:
         if type(max_wall_ms) is not int or max_wall_ms < 1:
             raise ValueError("property catalog max_wall_ms must be a positive integer")
         self._config = config or PropertyCatalogConnectionConfig.from_settings()
         self._client_factory = client_factory
         self._clock = clock
-        self._max_wall_ms = min(max_wall_ms, PROPERTY_CATALOG_READ_MAX_WALL_MS)
+        self._application_read = application_read
+        self._max_wall_ms = (
+            max_wall_ms
+            if application_read
+            else min(max_wall_ms, PROPERTY_CATALOG_READ_MAX_WALL_MS)
+        )
         self._deadline = clock() + self._max_wall_ms / 1_000
         self._client: ClickHouseClient | None = None
 
@@ -202,6 +222,13 @@ class PropertyCatalogReadExecutor:
         query_settings = _bounded_query_settings(
             settings, timeout_ms=bounded_timeout_ms
         )
+        if self._application_read:
+            # Validate caller settings above before adding the code-owned policy.
+            # Preserve the catalog memory budget: its read-only identity may
+            # enforce a smaller limit than the general application ceiling.
+            # Statement caps are removed; SQL LIMIT and spilling are unchanged.
+            bounded_timeout_ms = None
+            query_settings = application_read_settings(query_settings)
         if self._client is None:
             self._client = self._client_factory(self._config)
         started_at = self._clock()
@@ -209,23 +236,24 @@ class PropertyCatalogReadExecutor:
             progress_execute = getattr(
                 type(self._client), "execute_read_with_progress", None
             )
-            if callable(progress_execute):
-                rows, columns, _, read_rows, read_bytes = progress_execute(
-                    self._client,
-                    query,
-                    params,
-                    timeout_ms=bounded_timeout_ms,
-                    settings=query_settings,
-                )
-            else:
-                rows, columns, _ = self._client.execute_read(
-                    query,
-                    params,
-                    timeout_ms=bounded_timeout_ms,
-                    settings=query_settings,
-                )
-                read_rows = None
-                read_bytes = None
+            with application_read_context(self._application_read):
+                if callable(progress_execute):
+                    rows, columns, _, read_rows, read_bytes = progress_execute(
+                        self._client,
+                        query,
+                        params,
+                        timeout_ms=bounded_timeout_ms,
+                        settings=query_settings,
+                    )
+                else:
+                    rows, columns, _ = self._client.execute_read(
+                        query,
+                        params,
+                        timeout_ms=bounded_timeout_ms,
+                        settings=query_settings,
+                    )
+                    read_rows = None
+                    read_bytes = None
         except Exception:
             if self._client_factory is get_property_catalog_read_client:
                 reset_property_catalog_read_client()

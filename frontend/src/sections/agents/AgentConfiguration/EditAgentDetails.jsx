@@ -43,11 +43,7 @@ import {
 } from "../constants";
 import { ShowComponent } from "src/components/show";
 import CustomTooltip from "src/components/tooltip";
-import { PROVIDER_CHOICES } from "../constants";
-import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
-import { copyToClipboard } from "src/utils/utils";
-import { HOST_API } from "src/config-global";
 import SvgColor from "src/components/svg-color";
 import { useMutation } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
@@ -423,49 +419,6 @@ const EditAgentDetails = ({
                 }
               }}
             />
-            <ShowComponent condition={provider === PROVIDER_CHOICES.RETELL}>
-              <Stack
-                sx={{
-                  borderRadius: 0.5,
-                  bgcolor: "blue.o10",
-                  border: "1px solid",
-                  borderColor: "blue.200",
-                  p: 1,
-                  alignItems: "center",
-                }}
-                direction={"row"}
-                gap={1}
-              >
-                <Iconify icon="ci:info" sx={{ color: "blue.400" }} width={16} />
-                <Stack direction={"row"} gap={0.5}>
-                  <Typography typography={"s2_1"} color={"blue.500"}>
-                    Please add
-                  </Typography>
-                  <Typography
-                    typography={"s2_1"}
-                    onClick={() => {
-                      copyToClipboard(`${HOST_API}/tracer/webhook`);
-                      enqueueSnackbar({
-                        message: "Copied to clipboard",
-                        variant: "success",
-                      });
-                    }}
-                    color={"blue.500"}
-                    sx={{
-                      textDecorationLine: "underline",
-                      ":hover": {
-                        cursor: "pointer",
-                      },
-                    }}
-                  >
-                    {`${HOST_API}/tracer/webhook`}
-                  </Typography>
-                  <Typography typography={"s2_1"} color={"blue.500"}>
-                    to the Agent Level Webhook URL on Retell
-                  </Typography>
-                </Stack>
-              </Stack>
-            </ShowComponent>
             <ShowComponent
               condition={
                 selectedProvider !== "others" &&

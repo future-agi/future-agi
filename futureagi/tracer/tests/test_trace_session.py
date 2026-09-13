@@ -891,8 +891,10 @@ class TestTraceSessionGraphAPI:
 
         query, _ = builder.build_filter_match_query(["trace-1"])
 
-        assert "argMax(is_deleted, _version) AS latest_is_deleted" in query
-        assert "argMax(tuple(trace_session_id), _version).1" in query
+        assert "argMax(" in query
+        assert "_physical_winner.3 AS latest_is_deleted" in query
+        assert "tuple(trace_session_id)" in query
+        assert "_physical_winner" in query
         assert "WHERE latest_is_deleted = 0" in query
         assert "HAVING countIf" in query
 

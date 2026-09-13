@@ -155,6 +155,7 @@ import {
   FILTER_FOR_ERRORS,
   FILTER_FOR_NON_ANNOTATED,
   FILTER_FOR_HAS_EVAL,
+  OBSERVE_LINK_FILTER_PARAM,
   toBackendFilters,
 } from "./common";
 import {
@@ -233,7 +234,12 @@ import {
   useUpdateSavedView,
   useCreateSavedView,
   useUpdateWorkspaceSavedView,
+  useGetSavedViews,
+  DEFAULT_VIEW_NAME,
+  findOwnDefaultView,
+  tabTypeForSelectedTab,
 } from "src/api/project/saved-views";
+import { getRequestErrorMessage } from "src/utils/errorUtils";
 import { getDefaultDateRangeForMode } from "../dateRangeDefaults";
 import { useCursorAttributeInventory } from "./useCursorAttributeInventory";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
@@ -714,7 +720,7 @@ const slotKeyFromColumnState = (columnState, fallbackSlotKey) => {
 const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   const isUserMode = mode === "user";
   const { currentWorkspaceId } = useWorkspace();
-  const { role } = useAuthContext();
+  const { role, user } = useAuthContext();
   const navigate = useNavigate();
   const [selectedGraph, setSelectedGraph] = useUrlState(
     "selectedGraph",
@@ -2632,14 +2638,56 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [displayStorageKey]);
 
+  // Seed the chip filters from a deep link. extraFilters is what the filter
+  // panel renders (ObserveToolbar treats it as its source of truth), so a link
+  // that scopes the list through this channel is visible and editable on
+  // arrival rather than silently applied. Same hydration the localStorage and
+  // saved-view paths use.
+  useEffect(() => {
+    if (activeViewTabId) return;
+    const raw = new URLSearchParams(window.location.search).get(
+      OBSERVE_LINK_FILTER_PARAM,
+    );
+    if (!raw) return;
+    try {
+      const rows = hydrateProjectFilterList(JSON.parse(raw), getRandomId);
+      if (rows.length > 0) {
+        // Leave filterChipsSaved false so the chip strip renders: unlike the
+        // localStorage restore below, a link's scope has never been saved, and
+        // the strip is what makes it visible and dismissable on arrival.
+        setExtraFiltersRaw(rows);
+      }
+    } catch {
+      // A hand-edited or truncated link should leave the list unscoped rather
+      // than break the page.
+    }
+    // Deliberately mount-only: later edits belong to the user, not the link.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Load saved filters from localStorage on mount (for default tab)
   useEffect(() => {
     if (activeViewTabId) return; // custom view tabs load from backend
+    // Read from window.location for the same reason useUrlState's setter does:
+    // it is updated synchronously by history.replaceState.
+    const urlParams = new URLSearchParams(window.location.search);
+    // A link carrying its own chip scope owns the whole restore: it was built
+    // to show one thing, and this browser's last-used default would silently
+    // widen it.
+    if (urlParams.has(OBSERVE_LINK_FILTER_PARAM)) return;
+    // The primary filter params are not intent — the trace list writes them
+    // itself through useUrlState on every filter change, so they appear on any
+    // page that has ever been filtered. All they tell us is that the URL
+    // already holds the primary rows, which is a reason to skip those rows and
+    // nothing else. Skipping the whole effect here would drop extra_filters and
+    // the compare chips, which have no URL channel and no other source.
+    const urlHoldsPrimary =
+      urlParams.has("primaryTraceFilter") || urlParams.has("primarySpanFilter");
     try {
       const raw = localStorage.getItem(filtersStorageKey);
       if (!raw) return;
       const saved = JSON.parse(raw);
-      if (saved.filters?.length > 0) {
+      if (!urlHoldsPrimary && saved.filters?.length > 0) {
         const filtersWithIds = hydrateProjectFilterList(
           saved.filters,
           getRandomId,
@@ -2705,6 +2753,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
 
   const { mutate: updateSavedView } = useUpdateSavedView(observeId);
   const { mutate: createSavedView } = useCreateSavedView(observeId);
+  // Shares the tab bar's query cache (same key) — no extra fetch.
+  const { data: savedViewsData } = useGetSavedViews(observeId);
   // Workspace-scoped update for user_detail mode — only invoked when isUserMode.
   const { mutate: updateWorkspaceSavedView } =
     useUpdateWorkspaceSavedView(USER_DETAIL_TAB_TYPE);
@@ -2945,38 +2995,80 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
 
   const handleSetDefaultView = useCallback(() => {
     const configPayload = buildViewConfig();
+    const onDone = {
+      onSuccess: () =>
+        enqueueSnackbar("View set as default for everyone", {
+          variant: "success",
+        }),
+      onError: (err) =>
+        enqueueSnackbar(
+          getRequestErrorMessage(err, "Failed to set view as default"),
+          { variant: "error" },
+        ),
+    };
 
     if (activeViewTabId) {
       updateSavedView(
         { id: activeViewTabId, visibility: "project", config: configPayload },
-        {
-          onSuccess: () =>
-            enqueueSnackbar("View set as default for everyone", {
-              variant: "success",
-            }),
-        },
+        onDone,
       );
-    } else {
-      createSavedView(
+      return;
+    }
+
+    const tabType = tabTypeForSelectedTab(selectedTab);
+
+    // Adopt the user's own default for THIS tab_type (a blind create would 400
+    // on the name). Scoped to the current user so we never overwrite a
+    // teammate's shared default, and to tab_type so a spans click can't PATCH
+    // the traces default with spans-shaped config.
+    const existingDefault = findOwnDefaultView(savedViewsData?.custom_views, {
+      tabType,
+      userId: user?.id,
+    });
+    if (existingDefault) {
+      updateSavedView(
         {
-          project_id: observeId,
-          name: "Default View",
-          tab_type: selectedTab === "trace" ? "traces" : "spans",
+          id: existingDefault.id,
           visibility: "project",
           config: configPayload,
         },
-        {
-          onSuccess: () =>
-            enqueueSnackbar("View set as default for everyone", {
-              variant: "success",
-            }),
-        },
+        onDone,
       );
+      return;
     }
+
+    createSavedView(
+      {
+        project_id: observeId,
+        name: DEFAULT_VIEW_NAME,
+        tab_type: tabType,
+        visibility: "project",
+        config: configPayload,
+      },
+      {
+        ...onDone,
+        onSuccess: (res) => {
+          // Adopt the created view as the active tab so subsequent clicks
+          // take the update-by-id branch.
+          const newId = res?.data?.result?.id;
+          if (newId && !isUserMode) {
+            navigate(
+              `/dashboard/observe/${observeId}/llm-tracing?tab=view-${newId}&selectedTab=${selectedTab}`,
+              { replace: true },
+            );
+          }
+          onDone.onSuccess();
+        },
+      },
+    );
   }, [
     activeViewTabId,
     selectedTab,
     observeId,
+    isUserMode,
+    navigate,
+    savedViewsData,
+    user,
     buildViewConfig,
     updateSavedView,
     createSavedView,
