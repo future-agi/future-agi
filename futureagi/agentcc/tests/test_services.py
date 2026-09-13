@@ -4,6 +4,8 @@ Agentcc Services Tests
 Tests for GatewayClient, auth_bridge, and log_ingestion services.
 """
 
+import re
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -423,3 +425,47 @@ class TestWebhookDelivery:
         assert event.status == AgentccWebhookEvent.PENDING
         assert event.attempts == 1
         assert event.next_retry_at is not None
+
+
+class TestEnvExampleGatewayPorts:
+    """`.env.example` must not point container-to-container traffic at the
+    host-published gateway port.
+
+    CONTRIBUTING tells new contributors to `cp futureagi/.env.example
+    futureagi/.env`, and compose loads that file via `env_file`. Because the
+    compose default is `${AGENTCC_GATEWAY_INTERNAL_URL:-http://agentcc-gateway:8080}`,
+    a wrong value in `.env.example` silently *overrides* the correct default
+    for every fresh checkout.
+    """
+
+    REPO_ROOT = Path(__file__).resolve().parents[3]
+    ENV_EXAMPLE = REPO_ROOT / "futureagi" / ".env.example"
+    COMPOSE = REPO_ROOT / "docker-compose.yml"
+
+    def _container_port(self) -> str:
+        """Container side of the agentcc-gateway port mapping in compose."""
+        text = self.COMPOSE.read_text(encoding="utf-8")
+        m = re.search(r'\$\{AGENTCC_GATEWAY_PORT:-\d+\}:(\d+)', text)
+        assert m, "agentcc-gateway port mapping not found in docker-compose.yml"
+        return m.group(1)
+
+    def _env_value(self, key: str) -> str:
+        for line in self.ENV_EXAMPLE.read_text(encoding="utf-8").splitlines():
+            if line.startswith(f"{key}="):
+                return line.split("=", 1)[1].strip()
+        pytest.fail(f"{key} not found in .env.example")
+
+    @pytest.mark.parametrize(
+        "key", ["AGENTCC_GATEWAY_INTERNAL_URL", "AGENTCC_INTERNAL_URL"]
+    )
+    def test_internal_url_uses_container_port(self, key):
+        url = self._env_value(key)
+        expected = self._container_port()
+        assert url.endswith(f":{expected}"), (
+            f"{key}={url} points at the host-published port; "
+            f"container-to-container traffic must use :{expected}"
+        )
+
+    def test_public_gateway_port_still_documented(self):
+        """The host-published port is a separate knob and must stay as-is."""
+        assert self._env_value("AGENTCC_GATEWAY_PORT") == "8090"
