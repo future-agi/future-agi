@@ -88675,6 +88675,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "integer",
           minimum: 0,
         },
+        metric_statistic: {
+          title: "Metric statistic",
+          description:
+            "Which statistic the published series actually is. One metric_name can carry two: latency is a true mean on every row-level read and an hourly t-digest median on the unfiltered rollup fast path (hourly_tdigest_p50_proxy_for_average). Absent on envelopes that publish no series and on payloads cached before this field existed, so consumers must treat absence as unknown.",
+          type: "string",
+          enum: [
+            "count",
+            "hourly_tdigest_p50_proxy_for_average",
+            "mean",
+            "percentage",
+            "sum",
+          ],
+        },
         message: {
           title: "Message",
           type: "string",
@@ -88825,6 +88838,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Query sampling strata completed",
           type: "integer",
           minimum: 0,
+        },
+        metric_statistic: {
+          title: "Metric statistic",
+          description:
+            "Which statistic the published series actually is. One metric_name can carry two: latency is a true mean on every row-level read and an hourly t-digest median on the unfiltered rollup fast path (hourly_tdigest_p50_proxy_for_average). Absent on envelopes that publish no series and on payloads cached before this field existed, so consumers must treat absence as unknown.",
+          type: "string",
+          enum: [
+            "count",
+            "hourly_tdigest_p50_proxy_for_average",
+            "mean",
+            "percentage",
+            "sum",
+          ],
         },
       },
     },
