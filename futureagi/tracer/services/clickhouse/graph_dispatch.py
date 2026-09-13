@@ -667,10 +667,19 @@ def graph_payload_is_publishable(
         if status == "sampled":
             return False
         if status == "pending":
+            # A cold exact snapshot is publishable only while it names its own
+            # refresh state: ``query_refreshing`` for work in flight, or
+            # ``query_refresh_failed`` for work that could not be started.
+            # Exactly one must be asserted -- neither leaves the client
+            # polling an endless "preparing" state for work that was never
+            # queued, and both at once is self-contradictory.
+            refresh_named = (item.get("query_refreshing") is True) != (
+                item.get("query_refresh_failed") is True
+            )
             if (
                 complete is not False
                 or item.get("query_sampled") is not False
-                or item.get("query_refreshing") is not True
+                or not refresh_named
                 or bool(item.get("data"))
             ):
                 return False
