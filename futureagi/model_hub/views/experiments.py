@@ -4,6 +4,7 @@ import io
 import json
 import uuid
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from typing import Any
 
@@ -1085,9 +1086,42 @@ class DatasetExperimentsView(APIView):
                     f"{DATASET_TABLE_EXACT_MAX_COLUMNS} columns."
                 )
 
-            # Keep global averages out of this interactive row/config path.
-            # The legacy helper materializes full columns; a bounded aggregate
-            # endpoint can populate these independently in a follow-up.
+            def get_column_averages(column):
+                stats = calculate_column_average(column) or {}
+                return {
+                    str(column.id): {
+                        "average": stats.get("average"),
+                        "min": stats.get("min"),
+                        "max": stats.get("max"),
+                        "median": stats.get("median"),
+                    }
+                }
+
+            def summary_score_fields(column_id, *, include=True):
+                if not include:
+                    return {
+                        "average_score": None,
+                        "min_score": None,
+                        "max_score": None,
+                        "median_score": None,
+                    }
+                stats = col_avgs.get(str(column_id)) or {}
+                if not isinstance(stats, dict):
+                    return {
+                        "average_score": stats,
+                        "min_score": None,
+                        "max_score": None,
+                        "median_score": None,
+                    }
+                return {
+                    "average_score": stats.get("average"),
+                    "min_score": stats.get("min"),
+                    "max_score": stats.get("max"),
+                    "median_score": stats.get("median"),
+                }
+
+            # Interactive row pages still skip global averages. column_config_only
+            # needs min/max/median/average for the pinned summary row.
             col_avgs = {}
             exp_cols_by_exp_dataset: dict[Any, Any] = {}
             all_cols = []
@@ -1131,6 +1165,14 @@ class DatasetExperimentsView(APIView):
             projected_column_ids = {
                 str(column.id) for column in [*dataset_other_columns, *all_cols]
             }
+            if column_config_only:
+                deadline.before_query()
+                futures = []
+                with ThreadPoolExecutor(max_workers=10) as executor:
+                    for column in [*dataset_other_columns, *all_cols]:
+                        futures.append(executor.submit(get_column_averages, column))
+                for future in as_completed(futures):
+                    col_avgs.update(future.result())
             if connection.vendor == "postgresql":
                 assert_dataset_table_cells_within_limits(
                     row_ids=[str(row_id) for row_id in row_ids_list],
@@ -1259,7 +1301,7 @@ class DatasetExperimentsView(APIView):
                                 else "Dataset"
                             ),
                         },
-                        "average_score": col_avgs.get(str(column.id)),
+                        **summary_score_fields(column.id),
                         "dataset_id": str(query_dataset.id),
                         "choices_map": choices_map,
                         "is_base_column": (
@@ -1476,8 +1518,8 @@ class DatasetExperimentsView(APIView):
                         ),
                         "status": col_status,
                         "group": group,
-                        "average_score": (
-                            col_avgs.get(str(column.id)) if column_config_only else None
+                        **summary_score_fields(
+                            column.id, include=bool(column_config_only)
                         ),
                         "dataset_id": str(exp_dataset.id),
                         "choices_map": choices_map,
