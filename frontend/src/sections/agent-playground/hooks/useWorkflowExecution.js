@@ -28,6 +28,7 @@ export default function useWorkflowExecution() {
     nodes,
     edges,
     versionStatus,
+    maxConcurrentNodes,
     setValidationErrorNodeIds,
     clearValidationErrors,
     clearAllExecutionStates,
@@ -35,6 +36,7 @@ export default function useWorkflowExecution() {
     nodes: state.nodes,
     edges: state.edges,
     versionStatus: state.currentAgent?.version_status,
+    maxConcurrentNodes: state.currentAgent?.max_concurrent_nodes,
     setValidationErrorNodeIds: state.setValidationErrorNodeIds,
     clearValidationErrors: state.clearValidationErrors,
     clearAllExecutionStates: state.clearAllExecutionStates,
@@ -123,7 +125,10 @@ export default function useWorkflowExecution() {
     startRun();
     setIsInitiating(false);
     try {
-      const res = await executeDataset({ graphId });
+      const res = await executeDataset({
+        graphId,
+        maxConcurrentNodes,
+      });
       const executionIds = res.data?.result?.execution_ids;
       if (executionIds?.[0]) {
         startPolling(executionIds[0]);
@@ -144,6 +149,7 @@ export default function useWorkflowExecution() {
     graphId,
     versionId,
     versionStatus,
+    maxConcurrentNodes,
     clearValidationErrors,
     clearAllExecutionStates,
     setValidationErrorNodeIds,
