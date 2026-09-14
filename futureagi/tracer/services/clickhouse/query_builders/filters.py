@@ -2775,9 +2775,8 @@ class ClickHouseFilterBuilder:
     ) -> bool:
         """Parse one boolean meta-filter without implicit operator inversion."""
 
-        # Bad client input, not a server fault: the list views already map this
-        # error to 400, while a plain ValueError reached their 500 handler.
-        # Local import — ``latest_filter_predicates`` imports this module.
+        # Bad client input, not a server fault: the list views map this error to
+        # 400, a plain ValueError to 500. Local import, ours is a cyclic parent.
         from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
             UnsupportedFilterShapeError,
         )

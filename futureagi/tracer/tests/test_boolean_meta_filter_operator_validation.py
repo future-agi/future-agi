@@ -1,9 +1,4 @@
-"""Null operators on ``has_eval``/``has_annotation`` are 400s, not 500s.
-
-Both columns model presence only, so ``is_null``/``is_not_null`` have no
-compilation. Rejecting them with a plain ``ValueError`` bypassed the trace- and
-span-list invalid-filter handler and surfaced as HTTP 500 plus a traceback.
-"""
+"""``is_null``/``is_not_null`` on ``has_eval``/``has_annotation`` must be a 400."""
 
 import pytest
 
@@ -15,7 +10,7 @@ from tracer.services.clickhouse.v2.query_builders.filters import (
     ClickHouseFilterBuilderV2,
 )
 
-# v1 compiles the trace list; v2, its subclass, compiles the span list.
+# Presence-only columns, compiled for the trace list (v1) and span list (v2).
 pytestmark = [
     pytest.mark.unit,
     pytest.mark.parametrize(
