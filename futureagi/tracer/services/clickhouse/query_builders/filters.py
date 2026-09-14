@@ -2775,15 +2775,24 @@ class ClickHouseFilterBuilder:
     ) -> bool:
         """Parse one boolean meta-filter without implicit operator inversion."""
 
+        # Bad client input, not a server fault: the list views already map this
+        # error to 400, while a plain ValueError reached their 500 handler.
+        # Local import — ``latest_filter_predicates`` imports this module.
+        from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
+            UnsupportedFilterShapeError,
+        )
+
         if normalize_filter_op(filter_op) != "equals":
-            raise ValueError(f"{column_id} supports only the equals operation")
+            raise UnsupportedFilterShapeError(
+                f"{column_id} supports only the equals operation"
+            )
         if isinstance(filter_value, bool):
             return filter_value
         if isinstance(filter_value, str):
             normalized_value = filter_value.strip().lower()
             if normalized_value in {"true", "false"}:
                 return normalized_value == "true"
-        raise ValueError(f"{column_id} requires a boolean value")
+        raise UnsupportedFilterShapeError(f"{column_id} requires a boolean value")
 
     def _build_has_eval_condition(
         self,
