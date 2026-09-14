@@ -350,13 +350,13 @@ export default function ScenarioEditor({ open, onClose, row, env, envState, onSa
             prompt={`change the checks on ${draft.name} to …`}
           />
           <LockedRow
-            label="Sub-tasks (what the runner watches)"
+            label="Sub-goals (what the runner watches)"
             value={
               draft.subTasks?.length
                 ? `${draft.subTasks.length} steps: ${draft.subTasks.map((s) => (typeof s === "string" ? s : (s?.label || s?.text || ""))).filter(Boolean).join(" → ")}`
                 : "derived from the tools + rules this scenario touches"
             }
-            prompt={`rewrite the sub-tasks on ${draft.name}`}
+            prompt={`rewrite the sub-goals on ${draft.name}`}
           />
 
           <Stack

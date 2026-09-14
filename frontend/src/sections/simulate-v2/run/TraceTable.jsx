@@ -3,7 +3,7 @@ import React, { useMemo, useState } from "react";
 import { alpha } from "@mui/material/styles";
 import {
   Box, Stack, Typography, Table, TableBody, TableCell, TableHead, TableRow,
-  Checkbox, Tooltip, Button, Menu, MenuItem, ListItemIcon, ListItemText, Divider,
+  Checkbox, Tooltip, Button, Menu, MenuItem, ListItemIcon, ListItemText, Divider, IconButton,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { interpolateColorBasedOnScore } from "src/utils/utils";
@@ -282,7 +282,7 @@ const GROUP_SORT_ORDER = {
 
 export default function TraceTable({
   tasks, evals, selected, onToggle, onToggleAll, onOpen,
-  groupBy = "useCase", columns, env,
+  groupBy = "useCase", columns, env, onRerunEval, onDeleteEval, rescoringEvalId,
 }) {
   /* Groups start collapsed. Lazy-primed with the group list once it resolves. */
   const [collapsed, setCollapsed] = useState(null);
@@ -529,9 +529,14 @@ export default function TraceTable({
 
       {showEvals && evals.map((e) => {
         const r = t.evalResults?.find((x) => x.id === e.id);
+        const rescoring = rescoringEvalId === e.id;
         return (
           <TableCell key={e.id} sx={{ ...bodyCell, p: 0, position: "relative" }} onClick={() => onOpen(t)}>
-            {r ? <Score result={r} /> : <Box sx={{ p: 2, typography: "s2", color: "text.disabled" }}>—</Box>}
+            {rescoring ? (
+              <Box sx={{ p: 2, display: "flex", justifyContent: "center" }}>
+                <Iconify icon="solar:refresh-linear" width={14} sx={{ color: "text.disabled", animation: "tt-spin 0.8s linear infinite", "@keyframes tt-spin": { to: { transform: "rotate(360deg)" } } }} />
+              </Box>
+            ) : r ? <Score result={r} /> : <Box sx={{ p: 2, typography: "s2", color: "text.disabled" }}>—</Box>}
           </TableCell>
         );
       })}
@@ -604,7 +609,14 @@ export default function TraceTable({
               {show("latency") && <TableCell sx={{ ...headCell, width: 96 }}>Latency</TableCell>}
               {show("tokens") && <TableCell sx={{ ...headCell, width: 96 }}>Tokens</TableCell>}
               {showEvals && evals.map((e) => (
-                <TableCell key={e.id} sx={{ ...headCell, width: 150 }}>{e.name}</TableCell>
+                <TableCell key={e.id} sx={{ ...headCell, width: 150 }}>
+                  <EvalHeadCell
+                    name={e.name}
+                    rescoring={rescoringEvalId === e.id}
+                    onRerun={onRerunEval ? () => onRerunEval(e) : null}
+                    onDelete={onDeleteEval ? () => onDeleteEval(e) : null}
+                  />
+                </TableCell>
               ))}
             </TableRow>
           </TableHead>
@@ -651,6 +663,9 @@ TraceTable.propTypes = {
   groupBy: PropTypes.string,
   columns: PropTypes.instanceOf(Set),
   env: PropTypes.object,
+  onRerunEval: PropTypes.func,
+  onDeleteEval: PropTypes.func,
+  rescoringEvalId: PropTypes.string,
 };
 
 /*
@@ -865,6 +880,62 @@ GroupHeaderRow.propTypes = {
   evals: PropTypes.array,
   selected: PropTypes.object,
   onToggleGroup: PropTypes.func,
+};
+
+/* Eval column header — the name plus a per-column actions menu scoped to this
+   column only: re-run just this eval (re-score its cells, no full simulation)
+   or delete the whole column. The trigger appears on hover so the header stays
+   clean. */
+function EvalHeadCell({ name, onRerun, onDelete, rescoring }) {
+  const [anchor, setAnchor] = useState(null);
+  const hasActions = !!(onRerun || onDelete);
+  return (
+    <Stack
+      direction="row" alignItems="center" spacing={0.5}
+      sx={{ "&:hover .eval-col-actions": { opacity: 1 } }}
+    >
+      <Typography noWrap sx={{ typography: "s2", fontWeight: 500, color: "text.secondary", minWidth: 0 }}>{name}</Typography>
+      {rescoring && (
+        <Iconify icon="solar:refresh-linear" width={12} sx={{ color: "text.subtitle", flexShrink: 0, animation: "tt-spin 0.8s linear infinite", "@keyframes tt-spin": { to: { transform: "rotate(360deg)" } } }} />
+      )}
+      {hasActions && (
+        <>
+          <IconButton
+            size="small"
+            className="eval-col-actions"
+            onClick={(e) => { e.stopPropagation(); setAnchor(e.currentTarget); }}
+            sx={{ p: 0.25, ml: "auto", opacity: anchor ? 1 : 0, transition: "opacity 120ms", flexShrink: 0 }}
+          >
+            <Iconify icon="solar:menu-dots-bold" width={14} sx={{ color: "text.subtitle" }} />
+          </IconButton>
+          <Menu
+            anchorEl={anchor}
+            open={!!anchor}
+            onClose={() => setAnchor(null)}
+            anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+            transformOrigin={{ vertical: "top", horizontal: "right" }}
+            slotProps={{ paper: { sx: { minWidth: 190 } } }}
+          >
+            {onRerun && (
+              <MenuItem onClick={() => { setAnchor(null); onRerun(); }} sx={{ typography: "s2", gap: 1 }}>
+                <Iconify icon="solar:refresh-linear" width={16} sx={{ flexShrink: 0 }} />
+                <Box component="span" sx={{ typography: "s2" }}>Re-run this eval</Box>
+              </MenuItem>
+            )}
+            {onDelete && (
+              <MenuItem onClick={() => { setAnchor(null); onDelete(); }} sx={{ typography: "s2", gap: 1, color: "#DC2626" }}>
+                <Iconify icon="solar:trash-bin-trash-linear" width={16} sx={{ flexShrink: 0, color: "#DC2626" }} />
+                <Box component="span" sx={{ typography: "s2", color: "#DC2626" }}>Delete column</Box>
+              </MenuItem>
+            )}
+          </Menu>
+        </>
+      )}
+    </Stack>
+  );
+}
+EvalHeadCell.propTypes = {
+  name: PropTypes.string, onRerun: PropTypes.func, onDelete: PropTypes.func, rescoring: PropTypes.bool,
 };
 
 /*

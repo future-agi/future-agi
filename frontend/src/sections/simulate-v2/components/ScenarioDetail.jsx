@@ -186,7 +186,7 @@ export default function ScenarioDetail({ row, env, envState, defaultOpen = false
             const steps = row.subTasks?.length ? row.subTasks : subTasksFor(row, env);
             if (!steps.length) return null;
             return (
-              <Section title={`Sub-tasks — the moves that settle it (${steps.length})`}>
+              <Section title={`Sub-goals — the moves that settle it (${steps.length})`}>
                 <Stack spacing={0.75}>
                   {steps.map((st, i) => (
                     <Stack key={st.id || i} direction="row" spacing={1.25} alignItems="flex-start">

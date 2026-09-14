@@ -2,7 +2,7 @@ import PropTypes from "prop-types";
 import { useMemo, useState } from "react";
 import { alpha } from "@mui/material/styles";
 import {
-  Box, Stack, Typography, Button, Grid, MenuItem, TextField, Chip, Tooltip,
+  Box, Stack, Typography, Button, Grid, Chip, Tooltip,
   IconButton,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
@@ -25,7 +25,6 @@ const SANDBOX_MOCKS = {
   gmail: GmailSandboxMock,
   salesforce: SalesforceSandboxMock,
 };
-import { DIFFICULTIES } from "../_mock/environments";
 import { packStats } from "../_mock/scenarios";
 import { effectiveEnv } from "../_mock/rlContract";
 import { contractFor } from "../_mock/contract";
@@ -164,18 +163,6 @@ export default function OverviewPanel({ buildMode, env, envState, patch, onGo, a
         <Typography sx={{ typography: "s2", color: "text.secondary", maxWidth: 820 }}>
           {env.description}
         </Typography>
-        {/* Pushed to the far edge — without this the select sits wherever the
-            description happens to end. */}
-        <Box sx={{ flex: 1, display: { xs: "none", sm: "block" } }} />
-        <TextField
-          select size="small" label="Difficulty" value={shown.difficulty}
-          onChange={(e) => patch({ difficulty: e.target.value })}
-          sx={{ minWidth: 150, flexShrink: 0, "& .MuiInputBase-input": { typography: "s2", fontWeight: 600, py: 1 } }}
-        >
-          {DIFFICULTIES.map((d) => (
-            <MenuItem key={d} value={d} sx={{ typography: "s2" }}>{d}</MenuItem>
-          ))}
-        </TextField>
       </Stack>
 
       {/* Labels, not content — a strip rather than a column of its own. */}

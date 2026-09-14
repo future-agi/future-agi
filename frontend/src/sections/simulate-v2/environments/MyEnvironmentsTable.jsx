@@ -388,7 +388,7 @@ export default function MyEnvironmentsTable({ envs, onOpen, hideStatus = false }
               sx={{ typography: "s2" }}
             >
               <ListItemIcon sx={{ minWidth: 28 }}>
-                <Iconify icon="solar:play-bold" width={16} />
+                <Iconify icon="solar:play-linear" width={16} />
               </ListItemIcon>
               <ListItemText
                 primary={(active?.buildStatus === "ready" && (state.byEnv[active?.id]?.runs?.length || 0) > 0)
@@ -438,8 +438,8 @@ export default function MyEnvironmentsTable({ envs, onOpen, hideStatus = false }
             onClick={() => deleteEnv(confirmDelete)}
             sx={{
               typography: "s2", fontWeight: 700,
-              bgcolor: "#DC2626",
-              "&:hover": { bgcolor: "#B91C1C" },
+              bgcolor: "#DC2626", color: "#fff",
+              "&:hover": { bgcolor: "#B91C1C", color: "#fff" },
             }}
           >
             Delete

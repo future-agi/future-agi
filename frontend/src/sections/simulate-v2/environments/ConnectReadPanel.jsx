@@ -201,12 +201,16 @@ export default function ConnectReadPanel({ env, probeSteps, onBuild }) {
                 </Button>
               )}
               <Box flex={1} />
-              <Button
-                size="small" onClick={skip}
-                sx={{ typography: "s2", fontWeight: 700, color: "text.subtitle" }}
-              >
-                Skip
-              </Button>
+              {/* The last question is the final ambiguity — it must be
+                  answered, so no Skip there; earlier ones can be deferred. */}
+              {!isLast && (
+                <Button
+                  size="small" onClick={skip}
+                  sx={{ typography: "s2", fontWeight: 700, color: "text.subtitle" }}
+                >
+                  Skip
+                </Button>
+              )}
               {!isLast && (
                 <Button
                   size="small" variant="outlined"
@@ -254,13 +258,22 @@ const OK = "#16A34A";
 
 function CheckingCard({ steps, onDone }) {
   const checks = useMemo(() => {
-    const list = (steps || []).map((p) => ({ label: p.label, result: p.result }));
-    return list.length ? list : [
-      { label: "Reaching the agent", result: "handshake ok" },
-      { label: "Matching declared tools", result: "8 / 8 resolved" },
-      { label: "Probing the world's responses", result: "answers as expected" },
-      { label: "Confirming the sandbox is isolated", result: "no egress" },
+    /* Whatever the probe declared, followed by the rest of the fit sequence,
+       so the check reads as a thorough diagnostic rather than three lines. */
+    const declared = (steps || []).map((p) => ({ label: p.label, result: p.result }));
+    const base = declared.length ? declared : [
+      { label: "connect()", result: "handshake ok" },
+      { label: "list_tools()", result: "8 declared" },
+      { label: "compare()", result: "6 of 8 this world uses" },
     ];
+    const rest = [
+      { label: "match_arguments()", result: "signatures line up" },
+      { label: "probe_world()", result: "every tool answers from state" },
+      { label: "check_isolation()", result: "sandbox sealed · no egress" },
+      { label: "seed_world()", result: "fixtures loaded" },
+      { label: "verify_ready()", result: "world stands up" },
+    ];
+    return [...base, ...rest];
   }, [steps]);
 
   const total = checks.length;
@@ -271,9 +284,9 @@ function CheckingCard({ steps, onDone }) {
   useEffect(() => {
     const timers = [];
     for (let i = 1; i <= total; i += 1) {
-      timers.push(setTimeout(() => setDone(i), i * 620));
+      timers.push(setTimeout(() => setDone(i), i * 460));
     }
-    timers.push(setTimeout(() => onDoneRef.current?.(), total * 620 + 450));
+    timers.push(setTimeout(() => onDoneRef.current?.(), total * 460 + 400));
     return () => timers.forEach(clearTimeout);
   }, [total]);
 

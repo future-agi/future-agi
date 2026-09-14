@@ -396,6 +396,14 @@ function handle(config) {
   m = url.match(/run-tests\/([^/]+)\/?$/);
   if (m && isProtoRun(m[1])) return runDetailPayload(m[1]);
 
+  /* The reused voice drawer's Logs tab asks for a call's raw logs. A
+     simulated call has none, so answer with an empty page rather than
+     letting the request fall through to a backend that has no such call. */
+  m = url.match(/call-executions\/([^/]+)\/logs/);
+  if (m && isPublishedCall(m[1])) {
+    return { count: 0, results: { results: [], ingestion_pending: false } };
+  }
+
   m = url.match(/call-executions\/([^/]+)\/?$/);
   if (m && isPublishedCall(m[1])) return callDetailPayload(m[1]);
 

@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { alpha, useTheme } from "@mui/material/styles";
 import {
-  Box, Stack, Typography, Button, IconButton, Tab, Checkbox, Tooltip,
+  Box, Stack, Typography, Button, IconButton, Tab, Checkbox, Tooltip, Drawer,
 } from "@mui/material";
 import SideDrawer from "../components/SideDrawer";
 import { FilterPanel } from "src/components/filter-panel";
@@ -17,9 +17,11 @@ import {
   SectionCard, ScorePill, StatusChip, StatusDot, PersonaBadge, EmptyState, neutralCheckboxSx,
 } from "../components/primitives";
 import Stage from "./stages";
-import VerifyRun from "./VerifyRun";
 import RunAnalytics from "./RunAnalytics";
 import CallDrawer from "./CallDrawer";
+import VoiceDetailDrawerV2 from "src/components/VoiceDetailDrawerV2";
+import { effectiveModality } from "../_mock/rlContract";
+import { taskToVoiceData } from "../_mock/voiceCallData";
 import AddEvalsDrawer from "../workspace/evals/AddEvalsDrawer";
 import { useEnvState } from "../store";
 import { protoRunId } from "../_mock/executionAdapter";
@@ -35,7 +37,33 @@ import FixMyAgentDrawer from "./fixmyagent/FixMyAgentDrawer";
  * and why, then verify the builder itself, then optimise. Each of
  * those is a tab rather than a separate page so the run stays one object.
  */
+/* Re-score a task's re-run eval columns to fresh, deterministic values (seeded
+   by the per-eval version bump). Only evals present in `rescore` change; the
+   rest of the task is untouched. */
+function rescoreTaskEvals(t, rescore) {
+  if (!t.evalResults?.length) return t;
+  let changed = false;
+  const evalResults = t.evalResults.map((r) => {
+    const v = rescore[r.id];
+    if (!v) return r;
+    changed = true;
+    let h = 0;
+    const key = `${t.id}:${r.id}:${v}`;
+    for (let i = 0; i < key.length; i += 1) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+    const score = Math.round((0.5 + (h % 50) / 100) * 100) / 100; // 0.50–0.99
+    return { ...r, score, passed: score >= (r.threshold ?? 0.8) };
+  });
+  return changed ? { ...t, evalResults } : t;
+}
+
 export default function RunResults({ env, runId, tasks, stats, evals, stage, seed = 7 }) {
+  /* Per-eval-column actions (from the column menu): a set of columns the user
+     deleted, and a re-score version bump per column that regenerates just that
+     column's cell values (no full simulation). */
+  const [deletedEvals, setDeletedEvals] = useState(() => new Set());
+  const [evalRescore, setEvalRescore] = useState({}); // evalId -> version
+  const [rescoringEval, setRescoringEval] = useState(null); // evalId currently re-scoring
+
   /*
     A run always measures something — a scenario can't have run without
     at least one grader firing against it. But the `evals` prop reflects
@@ -59,8 +87,20 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
         }
       });
     });
-    return byId.size ? [...byId.values()] : evals;
-  }, [tasks, evals]);
+    const all = byId.size ? [...byId.values()] : evals;
+    return all.filter((e) => !deletedEvals.has(e.id));
+  }, [tasks, evals, deletedEvals]);
+
+  const rerunEvalColumn = (e) => {
+    setRescoringEval(e.id);
+    setTimeout(() => {
+      setEvalRescore((prev) => ({ ...prev, [e.id]: (prev[e.id] || 0) + 1 }));
+      setRescoringEval(null);
+    }, 900);
+  };
+  const deleteEvalColumn = (e) => {
+    setDeletedEvals((prev) => new Set(prev).add(e.id));
+  };
   const navigate = useNavigate();
   const { envId } = useParams();
   const [params] = useSearchParams();
@@ -80,9 +120,9 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
   const [fixOptId, setFixOptId] = useState(null);
   const [tab, setTab] = useState(() => {
     const t = params.get("tab") || "tasks";
-    /* Stale deep-links to the removed "Self improvement runs" tab
-       (values `optimize` or `omega`) now land on Traces. */
-    return t === "optimize" || t === "omega" ? "tasks" : t;
+    /* Stale deep-links to removed tabs — the old "Self improvement runs"
+       (`optimize`/`omega`) and the "Verify" tab — now land on Test runs. */
+    return t === "optimize" || t === "omega" || t === "verify" ? "tasks" : t;
   });
   const [replaying, setReplaying] = useState(null);
   const [openTask, setOpenTask] = useState(null);
@@ -307,6 +347,14 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
     return true;
   });
 
+  /* Table view of the shown rows with any re-run eval columns re-scored to
+     fresh values. Only the re-run column's cells change; everything else is
+     the original run. */
+  const tableShown = useMemo(
+    () => (Object.keys(evalRescore).length ? shown.map((t) => rescoreTaskEvals(t, evalRescore)) : shown),
+    [shown, evalRescore],
+  );
+
   /* What will actually render as groups. Failure groupings (sub-goal / pattern)
      have no bucket for passed/unmeasured tasks, so they drop out — used to
      decide between the table and an explanatory empty state. */
@@ -485,7 +533,6 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
           >
             <Tab value="tasks" label={`Test runs (${stats.total})`} sx={{ minHeight: 38 }} />
             <Tab value="analytics" label="Analytics" sx={{ minHeight: 38 }} />
-            <Tab value="verify" label="Verify" sx={{ minHeight: 38 }} />
             {trialsFromRun.length > 0 && (
               <Tab value="trials" label={`Trials (${trialsFromRun.length})`} sx={{ minHeight: 38 }} />
             )}
@@ -621,7 +668,7 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
                 />
               ) : (
                 <TraceTable
-                  tasks={shown}
+                  tasks={tableShown}
                   evals={shownEvals}
                   selected={selected}
                   groupBy={groupBy}
@@ -633,6 +680,9 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
                       shown.every((t) => prev.has(t.id)) ? new Set() : new Set(shown.map((t) => t.id)))
                   }
                   onOpen={setOpenTask}
+                  onRerunEval={rerunEvalColumn}
+                  onDeleteEval={deleteEvalColumn}
+                  rescoringEvalId={rescoringEval}
                 />
               )}
             </SectionCard>
@@ -640,7 +690,6 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
 
           {tab === "analytics" && <RunAnalytics tasks={tasks} evals={shownEvals} env={env} stats={stats} />}
 
-          {tab === "verify" && <VerifyRun env={env} tasks={tasks} stats={stats} runId={runId} />}
 
           {tab === "trials" && (
             <SectionCard
@@ -756,30 +805,71 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
         }}
       />
 
-      <SideDrawer
-        open={!!openTask}
-        onClose={() => { setOpenTask(null); setFocusStep(null); }}
-        width={{ xs: "100%", md: 1080 }}
-      >
-        {openTask && (
-          <CallDrawer
-            key={`${openTask.id}-${focusStep || ""}`}
-            task={openTask}
-            focus={focusStep || undefined}
-            env={env}
-            envState={envState}
-            onClose={() => { setOpenTask(null); setFocusStep(null); }}
-            onPrev={(() => {
-              const i = shown.findIndex((t) => t.id === openTask.id);
-              return i > 0 ? () => setOpenTask(shown[i - 1]) : undefined;
-            })()}
-            onNext={(() => {
-              const i = shown.findIndex((t) => t.id === openTask.id);
-              return i > -1 && i < shown.length - 1 ? () => setOpenTask(shown[i + 1]) : undefined;
-            })()}
-          />
-        )}
-      </SideDrawer>
+      {(() => {
+        const closeTask = () => { setOpenTask(null); setFocusStep(null); };
+        const idx = openTask ? shown.findIndex((t) => t.id === openTask.id) : -1;
+        const goPrev = idx > 0 ? () => setOpenTask(shown[idx - 1]) : undefined;
+        const goNext = idx > -1 && idx < shown.length - 1 ? () => setOpenTask(shown[idx + 1]) : undefined;
+
+        /* A voice run gets the exact drawer the Observe screen uses for a
+           voice call — the real product component, fed a `data` shape by the
+           adapter, not a bespoke rebuild. Every other surface keeps the
+           existing call drawer. */
+        if (effectiveModality(env, envState) === "voice") {
+          return (
+            <Drawer
+              anchor="right"
+              open={!!openTask}
+              onClose={closeTask}
+              ModalProps={{ BackdropProps: { style: { backgroundColor: "transparent" } } }}
+              sx={{
+                zIndex: (t) => t.zIndex.modal,
+                "&& .MuiDrawer-paper": {
+                  width: "auto",
+                  maxWidth: "100vw",
+                  bgcolor: "background.paper",
+                  backgroundImage: "none",
+                  overflow: "hidden",
+                  boxShadow: "-10px 0px 100px #00000035",
+                },
+              }}
+            >
+              {openTask && (
+                <VoiceDetailDrawerV2
+                  key={openTask.id}
+                  data={taskToVoiceData(openTask, { env, voice: true })}
+                  onClose={closeTask}
+                  onPrev={goPrev}
+                  onNext={goNext}
+                  hasPrev={!!goPrev}
+                  hasNext={!!goNext}
+                  hideAnnotationTab
+                />
+              )}
+            </Drawer>
+          );
+        }
+
+        return (
+          <SideDrawer open={!!openTask} onClose={closeTask} width={{ xs: "100%", md: 1080 }}>
+            {openTask && (
+              <CallDrawer
+                key={`${openTask.id}-${focusStep || ""}`}
+                task={openTask}
+                focus={focusStep || undefined}
+                env={env}
+                envState={envState}
+                patch={patch}
+                addAgentVersion={addAgentVersion}
+                runId={runId}
+                onClose={closeTask}
+                onPrev={goPrev}
+                onNext={goNext}
+              />
+            )}
+          </SideDrawer>
+        );
+      })()}
     </Box>
   );
 }

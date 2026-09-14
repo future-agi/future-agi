@@ -85,7 +85,7 @@ export default function ScenarioTable({ rows, groups, env, onEdit, onRemove }) {
   */
   const columns = [
     "select", "#", "Scenario", "Persona", "Situation",
-    "Sub-tasks", "Ideal outcome", "",
+    "Sub-goals", "Ideal outcome", "",
   ];
   let counter = 0;
 

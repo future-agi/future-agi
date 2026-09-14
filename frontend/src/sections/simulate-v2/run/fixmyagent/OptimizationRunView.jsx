@@ -176,11 +176,26 @@ export default function OptimizationRunView({ record, env, envState, patch, task
             onRun={() => onRerun?.(result.winner.proposals || [])}
           />
 
-          {/* ── what the winner actually changed ── */}
+          {/* ── the winning trial, in full: what it changed and how it verified.
+                Kept together, directly under the winner banner, so both read as
+                the winning trial's context — not orphaned below the trials list
+                where users couldn't tell what they belonged to. ── */}
+          <Box sx={{ px: 2.5, pt: 3 }}>
+            <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.5 }}>
+              The winning trial · Trial {result.winner.n}
+            </Typography>
+            <Typography sx={{ typography: "s3", color: "text.disabled", mt: 0.25 }}>
+              What it changed, and how it held up when re-run
+            </Typography>
+          </Box>
           <WinnerChange env={env} winner={result.winner} />
+          <WinnerScenarioDiff scenarios={result.trainMeasuredTasks || []} winner={result.winner} />
 
-          {/* ── graph ── */}
-          <Box sx={{ px: 2.5, pt: 2.5 }}>
+          {/* ── the search that produced it ── */}
+          <Box sx={{ px: 2.5, pt: 3 }}>
+            <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.5, mb: 1.5 }}>
+              How the search got here
+            </Typography>
             <Typography sx={{ typography: "s2", fontWeight: 700, mb: 1 }}>Best so far</Typography>
             <Growth trials={result.trials} base={result.base} theme={theme} winner={result.winner} />
           </Box>
@@ -313,9 +328,6 @@ export default function OptimizationRunView({ record, env, envState, patch, task
               />
             </Box>
           </Box>
-
-          {/* ── scenario outcomes, before → after the winner ── */}
-          <WinnerScenarioDiff scenarios={result.trainMeasuredTasks || []} winner={result.winner} />
 
           {/* ── the winner still has to reach the agent ── */}
           <Box sx={{ px: 2.5, py: 2.5 }}>

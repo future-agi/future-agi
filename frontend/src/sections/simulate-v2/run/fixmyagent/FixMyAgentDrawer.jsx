@@ -9,7 +9,7 @@ import {
 } from "../../_mock/optimize";
 import { runSearch, splitScenarios } from "../../_mock/optimizer";
 import { nextEnvVersion, environmentVersions, nextAgentVersion } from "../../_mock/versions";
-import { optimizationId, OPT_STATUS } from "../../_mock/optimizationRuns";
+import { optimizationId, OPT_STATUS, nextOptimizationName } from "../../_mock/optimizationRuns";
 import { protoRunId } from "../../_mock/executionAdapter";
 import DiagnosisPane from "./DiagnosisPane";
 import OptimizationRunView from "./OptimizationRunView";
@@ -146,6 +146,15 @@ export default function FixMyAgentDrawer({
     setView("optimization");
     setModal(false);
   };
+
+  /* "Run Self Improvement" starts the run straight away with sensible defaults
+     (ProTeGi · Claude Opus 5 · auto-named) and drops the user into the run
+     drawer — the config step in between was an extra click nobody was tuning. */
+  const startWithDefaults = () => start({
+    name: nextOptimizationName(envState),
+    optimizerId: "protegi",
+    model: "claude-opus-5",
+  });
 
   const finish = () => {
     patch({
@@ -285,7 +294,7 @@ export default function FixMyAgentDrawer({
             onOpenTask={onOpenTask}
             onViewIssue={onViewIssue}
             runId={runId}
-            onOptimize={() => setModal(true)}
+            onOptimize={startWithDefaults}
             onHandOff={rerun}
             onCreateAgentVersion={createAgentVersion}
             onRunNewVersion={runNewVersion}

@@ -328,27 +328,26 @@ export default function CallDrawer({ task, env, envState, focus, onClose, onPrev
           )}
 
           {detail?.measured && failed.length > 0 && (
-            <Box
+            <Stack
               sx={{
-                mx: 2, mb: 1.5, borderRadius: 1, border: "1px solid",
+                mx: 2, mb: 1.5, p: 1.5, borderRadius: 1, border: "1px solid",
                 borderColor: alpha("#DC2626", 0.35),
                 bgcolor: (t) => alpha("#DC2626", t.palette.mode === "dark" ? 0.1 : 0.05),
               }}
+              spacing={1}
             >
-              <Stack sx={{ p: 1.5 }} spacing={1}>
-                {failed.map((r) => (
-                  <Stack key={r.id} direction="row" spacing={1.25} alignItems="flex-start">
-                    <Iconify icon="solar:close-circle-bold" width={15} sx={{ color: "#DC2626", flexShrink: 0, mt: "1px" }} />
-                    <Box minWidth={0}>
-                      <Typography sx={{ typography: "s2", fontWeight: 700 }}>
-                        {r.name} failed ({Math.round(r.score * 100)})
-                      </Typography>
-                      <Typography sx={{ typography: "s2", color: "text.secondary" }}>{r.reason}</Typography>
-                    </Box>
-                  </Stack>
-                ))}
-              </Stack>
-            </Box>
+              {failed.map((r) => (
+                <Stack key={r.id} direction="row" spacing={1.25} alignItems="flex-start">
+                  <Iconify icon="solar:close-circle-bold" width={15} sx={{ color: "#DC2626", flexShrink: 0, mt: "1px" }} />
+                  <Box minWidth={0}>
+                    <Typography sx={{ typography: "s2", fontWeight: 700 }}>
+                      {r.name} failed ({Math.round(r.score * 100)})
+                    </Typography>
+                    <Typography sx={{ typography: "s2", color: "text.secondary" }}>{r.reason}</Typography>
+                  </Box>
+                </Stack>
+              ))}
+            </Stack>
           )}
 
           <CustomTabs
@@ -641,14 +640,15 @@ function ActionTrace({ task, stage, at, onScrub }) {
           const active = i === index;
           const future = i > index;
           return (
+            <React.Fragment key={st.id || i}>
             <Stack
-              key={st.id || i}
               direction="row" alignItems="flex-start" spacing={1.25}
               onClick={() => onScrub(i)}
               sx={{
                 px: 1.25, py: 0.875, borderRadius: 1, cursor: "pointer",
                 border: "1px solid",
                 borderColor: active ? "primary.main" : "divider",
+                bgcolor: "transparent",
                 opacity: future ? 0.45 : 1,
                 "&:hover": { bgcolor: "action.hover" },
               }}
@@ -678,6 +678,7 @@ function ActionTrace({ task, stage, at, onScrub }) {
                 {((st.duration || 0) / 1000).toFixed(1)}s
               </Typography>
             </Stack>
+            </React.Fragment>
           );
         })}
         {steps.length === 0 && (

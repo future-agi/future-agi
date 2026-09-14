@@ -171,10 +171,12 @@ export const runSummary = (env, envState, run, index) => {
   };
 };
 
-/** Every run this environment has, oldest first, so the chart reads left to right.
- *  Synthetic build-and-fit-check rows are excluded — they represent the initial
- *  env standup, not a simulation run, and showing them made a first-simulation
- *  page read as "2 runs" when the user only ran once. */
+/** Every run this environment has, oldest first, so the chart reads left to
+ *  right. The build-and-fit-check row IS run #1 — the env stands up by running
+ *  its own scenarios end-to-end during construction — so it's included here
+ *  too, matching the runs count on the rail, the environments list and the Runs
+ *  tab. (It used to be filtered out, which left a freshly-built env showing 1
+ *  run on those surfaces but "0 runs" in the Simulations summary.) */
 /* Sort key that tolerates an in-progress run (no finishedAt yet) by falling
    back to startedAt, so a running run doesn't produce NaN comparisons that
    scramble ordinals/chip numbers. */
@@ -185,7 +187,6 @@ const runTime = (r) => {
 
 export const runSummaries = (env, envState) => {
   const ordered = [...(envState?.runs || [])]
-    .filter((r) => !r.synthetic)
     .sort((a, b) => runTime(a) - runTime(b));
   return ordered.map((r, i) => runSummary(env, envState, r, i));
 };

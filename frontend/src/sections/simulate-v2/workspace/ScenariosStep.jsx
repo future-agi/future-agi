@@ -19,62 +19,6 @@ import ScenarioTable from "./scenarios/ScenarioTable";
 import GateRejects from "./scenarios/GateRejects";
 import { PickRouteIllustration } from "./scenarios/RouteThumbs";
 
-/* The derivation kinds a scenario can belong to, matched off its id
-   (`env-…-core-0-routine`, `-rule-`, `-trap-`, `-edge-`, `-adversarial-`).
-   Drives the category filter chips above the scenarios table. */
-const KIND_CHIPS = [
-  { id: "core", label: "Core tasks" },
-  { id: "rules", label: "Rule probes" },
-  { id: "traps", label: "Data traps" },
-  { id: "edge", label: "Edge cases" },
-  { id: "adversarial", label: "Adversarial" },
-  { id: "imported", label: "Imported" },
-];
-
-function scenarioKind(r) {
-  const id = String(r?.id || "");
-  if (id.includes("-core-")) return "core";
-  if (id.includes("-rule-")) return "rules";
-  if (id.includes("-trap-")) return "traps";
-  if (id.includes("-adversarial-")) return "adversarial";
-  if (id.includes("-edge-")) return "edge";
-  if (id.includes("-ds-") || id.includes("-script-")) return "imported";
-  return "other";
-}
-
-function KindChip({ label, count, active, onClick }) {
-  return (
-    <Box
-      role="button"
-      tabIndex={0}
-      onClick={onClick}
-      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onClick(); }}
-      sx={{
-        display: "inline-flex", alignItems: "center", gap: 0.75,
-        height: 30, px: 1.5, borderRadius: 999, cursor: "pointer",
-        border: "1px solid",
-        borderColor: active ? "text.primary" : "divider",
-        bgcolor: active ? "text.primary" : "transparent",
-        color: active ? "background.paper" : "text.primary",
-        transition: "background-color 120ms, border-color 120ms",
-        "&:hover": active ? {} : { borderColor: "text.disabled" },
-      }}
-    >
-      <Typography sx={{ typography: "s2", fontWeight: 700, whiteSpace: "nowrap", color: "inherit" }}>
-        {label}
-      </Typography>
-      <Typography sx={{
-        typography: "s3", fontWeight: 700, fontVariantNumeric: "tabular-nums",
-        color: active ? "inherit" : "text.subtitle", opacity: active ? 0.75 : 1,
-      }}>
-        {count}
-      </Typography>
-    </Box>
-  );
-}
-KindChip.propTypes = {
-  label: PropTypes.string, count: PropTypes.number, active: PropTypes.bool, onClick: PropTypes.func,
-};
 
 /**
  * Scenarios.
@@ -106,21 +50,7 @@ export default function ScenariosStep({ env, envState, patch, buildMode }) {
   const [query, setQuery] = useState("");
   const [selectedUseCases, setSelectedUseCases] = useState([]);
   const [filterAnchor, setFilterAnchor] = useState(null);
-  const [kindFilter, setKindFilter] = useState("all");
   const selected = envState?.scenarios || [];
-
-  /* Counts per derivation kind — from the full list so the chips read as a
-     fixed reference the filter narrows against, not a moving total. Only
-     kinds actually present get a chip. */
-  const kindCounts = useMemo(() => {
-    const c = {};
-    selected.forEach((r) => { const k = scenarioKind(r); c[k] = (c[k] || 0) + 1; });
-    return c;
-  }, [selected]);
-  const kindChips = useMemo(
-    () => KIND_CHIPS.filter((k) => kindCounts[k.id] > 0),
-    [kindCounts],
-  );
 
   const allUseCases = useMemo(() => {
     const map = new Map();
@@ -133,14 +63,13 @@ export default function ScenariosStep({ env, envState, patch, buildMode }) {
 
   const q = query.trim().toLowerCase();
   const shown = selected.filter((r) => {
-    if (kindFilter !== "all" && scenarioKind(r) !== kindFilter) return false;
     if (selectedUseCases.length && !selectedUseCases.includes(deriveUseCase(r).id)) return false;
     if (!q) return true;
     const hay = `${r.name || ""} ${r.summary || ""} ${r.title || ""} ${r.task || ""} ${r.useCase || ""}`.toLowerCase();
     return hay.includes(q);
   });
   const shownGroups = groupScenarios(shown);
-  const anyFilter = q.length > 0 || selectedUseCases.length > 0 || kindFilter !== "all";
+  const anyFilter = q.length > 0 || selectedUseCases.length > 0;
 
   /*
     Adding scenarios in real life isn't instant — every row goes
@@ -349,7 +278,7 @@ export default function ScenariosStep({ env, envState, patch, buildMode }) {
                 </Typography>
                 <Button
                   size="small"
-                  onClick={() => { setQuery(""); setSelectedUseCases([]); setKindFilter("all"); }}
+                  onClick={() => { setQuery(""); setSelectedUseCases([]); }}
                   sx={{ typography: "s3", fontWeight: 600, color: "text.secondary" }}
                 >
                   Clear
@@ -362,29 +291,6 @@ export default function ScenariosStep({ env, envState, patch, buildMode }) {
               <Tab value="list" label="List" />
             </SegmentedTabs>
           </Stack>
-
-          {/* Category chips — filter the suite by derivation kind
-              (core / rule / trap / edge / adversarial). Counts come from the
-              full list so they stay a fixed reference the filter narrows. */}
-          {kindChips.length > 1 && (
-            <Box
-              sx={{
-                display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap",
-                px: 2.5, py: 1.25, borderBottom: "1px solid", borderColor: "divider",
-              }}
-            >
-              <KindChip
-                label="All" count={selected.length}
-                active={kindFilter === "all"} onClick={() => setKindFilter("all")}
-              />
-              {kindChips.map((k) => (
-                <KindChip
-                  key={k.id} label={k.label} count={kindCounts[k.id]}
-                  active={kindFilter === k.id} onClick={() => setKindFilter(k.id)}
-                />
-              ))}
-            </Box>
-          )}
 
           <UseCaseFilterPopover
             anchorEl={filterAnchor}

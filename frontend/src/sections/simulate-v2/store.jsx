@@ -204,36 +204,13 @@ function reducer(state, action) {
           console.warn("[store] scenario refresh skipped for", env.id, err);
         }
       });
+      /* A built env has no runs until the user clicks "Run simulation" — we no
+         longer backfill a synthetic "build & fit-check" run here. Any such run
+         left in an older cache is stripped on hydrate so counts read 0. */
       envs.forEach((env) => {
         const es = nextByEnv[env.id];
-        if (!es) return;
-        if ((es.runs || []).length > 0) return;
-        nextByEnv[env.id] = {
-          ...es,
-          runs: [
-            {
-              id: `run-build-${env.id}`,
-              label: `${env.name || env.id} · build & fit-check`,
-              status: "passed",
-              startedAt: env.adoptedAt || new Date().toISOString(),
-              finishedAt: env.adoptedAt || new Date().toISOString(),
-              total: 1,
-              passed: 1,
-              failed: 0,
-              flaky: 0,
-              unmeasured: 0,
-              agentVersion: "v1",
-              envVersion: "v1",
-              scenarioIds: [],
-              repeats: 1,
-              partial: false,
-              ordinal: 1,
-              seed: 0,
-              twinWrites: null,
-              synthetic: true,
-            },
-          ],
-        };
+        if (!es || !(es.runs || []).some((r) => r.synthetic)) return;
+        nextByEnv[env.id] = { ...es, runs: es.runs.filter((r) => !r.synthetic) };
       });
       /* `hydrated` marks that the store has loaded from the cache (or the
          seed). Screens that would otherwise render "Environment not found"
@@ -246,44 +223,14 @@ function reducer(state, action) {
       const { env } = action;
       if (state.myEnvironments.some((e) => e.id === env.id)) return state;
       /*
-        Build & fit-check IS run #1 — every env stands up by exercising
-        its own scenarios end-to-end during construction. Seed that as
-        an entry in envState.runs so the workspace's Runs step and the
-        Simulated Runs list read the same data (both show 1 run on a
-        freshly-built env, instead of the table saying 1/1 and the
-        inside saying 0). Only seeded when envState for this id is
-        fresh — a rebuild of an existing env doesn't fake an extra
-        historical run.
+        A freshly-adopted env starts with NO runs. Building the world proves
+        the scenarios, but that isn't a simulation run — the first run is only
+        created when the user clicks "Run simulation". (We used to seed a
+        synthetic "build & fit-check" run here, which made a just-built env
+        show 1 run before the user had run anything.)
       */
       const existing = state.byEnv[env.id];
-      const seededEnvState = existing
-        ? existing
-        : {
-            ...emptyEnvState(),
-            runs: [
-              {
-                id: `run-build-${env.id}`,
-                label: `${env.name || env.id} · build & fit-check`,
-                status: "passed",
-                startedAt: action.now,
-                finishedAt: action.now,
-                total: 1,
-                passed: 1,
-                failed: 0,
-                flaky: 0,
-                unmeasured: 0,
-                agentVersion: "v1",
-                envVersion: "v1",
-                scenarioIds: [],
-                repeats: 1,
-                partial: false,
-                ordinal: 1,
-                seed: 0,
-                twinWrites: null,
-                synthetic: true,
-              },
-            ],
-          };
+      const seededEnvState = existing || { ...emptyEnvState() };
       return {
         ...state,
         myEnvironments: [
