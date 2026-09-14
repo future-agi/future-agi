@@ -26,6 +26,7 @@ export default function PromptTTSInput({
   promptHasBeenImported: _promptHasBeenImported,
   handleRemovePrompt: _handleRemovePrompt,
   setOpenImportPromptModal: _setOpenImportPromptModal,
+  jinjaMode = false,
 }) {
   const quillRef = useRef(null);
   const cursorPosition = useRef(0);
@@ -142,6 +143,7 @@ export default function PromptTTSInput({
                     allowVariables={true}
                     label={true}
                     expandable={true}
+                    jinjaMode={jinjaMode}
                     sx={{
                       minHeight: "200px",
                     }}
@@ -201,6 +203,7 @@ export default function PromptTTSInput({
           allowVariables
           hideExpandedHeader={true}
           role={true}
+          jinjaMode={jinjaMode}
         />
       )}
     </>
@@ -221,4 +224,5 @@ PromptTTSInput.propTypes = {
   promptHasBeenImported: PropTypes.bool,
   handleRemovePrompt: PropTypes.func,
   setOpenImportPromptModal: PropTypes.func,
+  jinjaMode: PropTypes.bool,
 };

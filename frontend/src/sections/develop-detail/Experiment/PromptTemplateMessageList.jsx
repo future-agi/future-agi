@@ -18,6 +18,7 @@ const PromptTemplateMessageList = ({
   derivedVariables = {},
   onGeneratePrompt,
   onImprovePrompt,
+  jinjaMode = false,
 }) => {
   const [expandPrompt, setExpandPrompt] = useState({});
   const existingCols = useMemo(() => {
@@ -87,6 +88,7 @@ const PromptTemplateMessageList = ({
                       return copy;
                     });
                   }}
+                  jinjaMode={jinjaMode}
                 />
                 {error?.content?.message && (
                   <Typography
@@ -116,6 +118,7 @@ PromptTemplateMessageList.propTypes = {
   derivedVariables: PropTypes.object,
   onGeneratePrompt: PropTypes.func,
   onImprovePrompt: PropTypes.func,
+  jinjaMode: PropTypes.bool,
 };
 
 export default PromptTemplateMessageList;

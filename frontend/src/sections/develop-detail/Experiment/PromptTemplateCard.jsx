@@ -24,6 +24,7 @@ import { ShowComponent } from "../../../components/show";
 import LLMPrompt from "./components/LLMPrompt";
 import PromptSTTInput from "../RunPrompt/Components/PromptSTTInput";
 import PromptTTSInput from "../RunPrompt/Components/PromptTTSInput";
+import TemplateFormatSelector from "src/sections/workbench/createPrompt/Playground/TemplateFormatSelector";
 import { escapeModelKey } from "./utils";
 
 const PromptTemplateCard = ({
@@ -69,6 +70,8 @@ const PromptTemplateCard = ({
     name: modelTypePath,
   });
   const watchedOutputFormat = watchedModelType === "tts" ? "audio" : "string";
+  const templateFormat =
+    watch(`promptConfig.${index}.configuration.template_format`) || "mustache";
 
   const allInvalidVariables = useMemo(() => {
     const invalids = [];
@@ -257,6 +260,16 @@ const PromptTemplateCard = ({
           marginTop: "16px",
         }}
       >
+        <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 2 }}>
+          <TemplateFormatSelector
+            value={templateFormat}
+            onChange={(v) =>
+              setValue(`promptConfig.${index}.configuration.template_format`, v, {
+                shouldDirty: true,
+              })
+            }
+          />
+        </Box>
         <Box
           sx={{
             display: "flex",
@@ -412,6 +425,7 @@ const PromptTemplateCard = ({
               onImprovePrompt={onImprovePrompt}
               errors={errors}
               clearErrors={clearErrors}
+              jinjaMode={templateFormat === "jinja"}
             />
           </ShowComponent>
           <ShowComponent
@@ -431,6 +445,7 @@ const PromptTemplateCard = ({
               errors={errors}
               watch={watch}
               control={control}
+              jinjaMode={templateFormat === "jinja"}
             />
           </ShowComponent>
           <ShowComponent condition={watchedModelType === MODEL_TYPES.STT}>
