@@ -10,15 +10,17 @@ trigger_phrases:
 - optimize cost
 - save money
 tool_names:
-- get_cost_breakdown
+- get_usage_overview
+- query_dashboard_metrics
+- list_dashboard_metrics
 - search_traces
-- get_trace_analytics
 - whoami
 instructions: |-
   Help the user understand and optimize their AI spending.
 
   Approach:
-  1. Get cost breakdown by model, project, and time period
+  1. Get the workspace spend with get_usage_overview, then break cost down by model or project
+     with query_dashboard_metrics (use list_dashboard_metrics to find the cost metrics)
   2. Identify the most expensive models/endpoints
   3. Find optimization opportunities (cheaper models for simple tasks)
   4. Calculate potential savings from model switching

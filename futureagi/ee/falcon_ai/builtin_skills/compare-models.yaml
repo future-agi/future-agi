@@ -11,9 +11,9 @@ trigger_phrases:
 tool_names:
 - list_experiments
 - create_experiment
-- get_experiment_results
-- get_experiment_comparison
-- compare_evaluations
+- get_experiment
+- list_datasets
+- get_dataset
 - list_eval_templates
 instructions: |-
   Help the user set up and analyze model comparisons.
@@ -21,8 +21,8 @@ instructions: |-
   Approach:
   1. Understand what models/variants to compare and on what metrics
   2. Find or create a suitable dataset
-  3. Set up an experiment with variants
-  4. Run evaluations if needed
+  3. Set up an experiment with variants (create_experiment)
+  4. Read results with get_experiment once it has run
   5. Present results as a comparison table with cost/quality/latency tradeoffs
 
   Always frame results as tradeoffs, not absolute winners.
