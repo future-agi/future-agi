@@ -349,6 +349,10 @@ const PrimaryGraph = ({
   setDateFilter,
   selectedInterval = "day",
   hasEvalFilter = false,
+  // AND/OR combinator of the query-builder filters that produced
+  // extraFilters. Sent only when "or" so every caller that never had the
+  // AND/OR control keeps sending the exact same request body as before.
+  filterCombinator = "and",
   lineColorOverride,
   barColorOverride,
   graphLabel = "Primary Graph",
@@ -663,6 +667,7 @@ const PrimaryGraph = ({
       metricDef.apiType,
       selectedInterval,
       combinedFilters,
+      filterCombinator,
       apiEndpoint,
       graphPropertyId,
       graphTransportSource,
@@ -681,6 +686,9 @@ const PrimaryGraph = ({
               {
                 interval: selectedInterval,
                 filters: toBackendFilters(combinedFilters),
+                // OR must reach the backend; omitting the field keeps the
+                // request byte-identical for callers without the control.
+                ...(filterCombinator === "or" && { filter_combinator: "or" }),
                 property: "average",
                 req_data_config: {
                   id: metricDef.id,
@@ -1504,6 +1512,7 @@ PrimaryGraph.propTypes = {
   setDateFilter: PropTypes.func,
   selectedInterval: PropTypes.string,
   hasEvalFilter: PropTypes.bool,
+  filterCombinator: PropTypes.oneOf(["and", "or"]),
   lineColorOverride: PropTypes.string,
   barColorOverride: PropTypes.string,
   graphLabel: PropTypes.string,

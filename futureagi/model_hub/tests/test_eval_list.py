@@ -946,3 +946,184 @@ class TestTagFilterCaseInsensitive:
         names = set(qs.values_list("name", flat=True))
         assert "eval_to_exclude" not in names
         assert "eval_to_keep" in names
+
+
+# =============================================================================
+# Filter combinator (AND / OR) — #2226
+# =============================================================================
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
+class TestEvalListFilterCombinator:
+    """Pins the ``filter_combinator`` contract for ``build_eval_list_queryset``.
+
+    The advanced filters (eval_type, output_type, tags, template_type,
+    names, created_by and their ``*_not`` negations) are combined with a
+    single operator across the whole list: ``"and"`` (default) joins them
+    with ``.filter()`` / ``.exclude()``; ``"or"`` ORs every condition into
+    one ``.filter(reduce(or_))`` and negates the ``*_not`` conditions so they
+    keep exclude semantics.
+    """
+
+    def _make(self, organization, workspace, name, **kwargs):
+        defaults = {
+            "name": name,
+            "organization": organization,
+            "workspace": workspace,
+            "owner": OwnerChoices.USER.value,
+            "config": {"output": "score"},
+            "eval_tags": ["llm"],
+            "visible_ui": True,
+        }
+        defaults.update(kwargs)
+        return EvalTemplate.no_workspace_objects.create(**defaults)
+
+    def test_and_is_default(self, organization, workspace):
+        """Absent ``filter_combinator`` behaves exactly like explicit ``"and"``."""
+        self._make(organization, workspace, "and_a", eval_type="code", eval_tags=["x"])
+        b = self._make(
+            organization, workspace, "and_b", eval_type="agent", eval_tags=["y"]
+        )
+        self._make(organization, workspace, "and_c", eval_type="llm", eval_tags=["z"])
+
+        default_qs = build_eval_list_queryset(
+            organization=organization,
+            workspace=workspace,
+            filters={"eval_type": ["code"], "tags": ["x"]},
+        )
+        and_qs = build_eval_list_queryset(
+            organization=organization,
+            workspace=workspace,
+            filters={"eval_type": ["code"], "tags": ["x"]},
+            filter_combinator="and",
+        )
+        assert set(default_qs.values_list("name", flat=True)) == {"and_a"}
+        assert set(and_qs.values_list("name", flat=True)) == {"and_a"}
+        # `and_b` (agent, not x) and `and_c` (llm, not x) are excluded.
+        assert b.name not in set(default_qs.values_list("name", flat=True))
+
+    def test_or_unions_across_different_filter_keys(self, organization, workspace):
+        """``"or"`` must return the union of rows matching ANY single filter."""
+        code_a = self._make(
+            organization, workspace, "or_code", eval_type="code", eval_tags=["x"]
+        )
+        agent_b = self._make(
+            organization, workspace, "or_agent", eval_type="agent", eval_tags=["y"]
+        )
+
+        qs = build_eval_list_queryset(
+            organization=organization,
+            workspace=workspace,
+            filters={"eval_type": ["code"], "tags": ["y"]},
+            filter_combinator="or",
+        )
+        names = set(qs.values_list("name", flat=True))
+        # code_a matches eval_type=code; agent_b matches tags=y.
+        assert code_a.name in names
+        assert agent_b.name in names
+
+    def test_or_does_not_narrow_like_and(self, organization, workspace):
+        """The same two filters that yield one row under AND must yield two
+        under OR — proving the operator actually swaps, not just re-parses."""
+        self._make(
+            organization, workspace, "oru_code", eval_type="code", eval_tags=["x"]
+        )
+        self._make(
+            organization, workspace, "oru_agent", eval_type="agent", eval_tags=["y"]
+        )
+
+        and_names = set(
+            build_eval_list_queryset(
+                organization=organization,
+                workspace=workspace,
+                filters={"eval_type": ["code"], "tags": ["y"]},
+                filter_combinator="and",
+            ).values_list("name", flat=True)
+        )
+        or_names = set(
+            build_eval_list_queryset(
+                organization=organization,
+                workspace=workspace,
+                filters={"eval_type": ["code"], "tags": ["y"]},
+                filter_combinator="or",
+            ).values_list("name", flat=True)
+        )
+        # Under AND no row satisfies BOTH eval_type=code AND tags=y.
+        assert and_names == set()
+        # Under OR the two rows each satisfy one filter.
+        assert or_names == {"oru_code", "oru_agent"}
+
+    def test_or_keeps_not_exclusion_semantics(self, organization, workspace):
+        """In OR mode ``*_not`` filters must still exclude, never become
+        inclusive. Negating them before OR-ing preserves exclude semantics."""
+        keep = self._make(
+            organization, workspace, "orn_keep", eval_type="code", eval_tags=["keep"]
+        )
+        drop = self._make(
+            organization, workspace, "orn_drop", eval_type="llm", eval_tags=["drop"]
+        )
+
+        qs = build_eval_list_queryset(
+            organization=organization,
+            workspace=workspace,
+            filters={"eval_type": ["code"], "tags_not": ["drop"]},
+            filter_combinator="or",
+        )
+        names = set(qs.values_list("name", flat=True))
+        assert keep.name in names
+        assert drop.name not in names
+
+    def test_or_with_only_not_filters(self, organization, workspace):
+        """OR over a single ``*_not`` filter: the negated condition is ORed,
+        i.e. ``tags != drop`` — so the kept row still appears."""
+        keep = self._make(
+            organization, workspace, "orn2_keep", eval_type="code", eval_tags=["keep"]
+        )
+        drop = self._make(
+            organization, workspace, "orn2_drop", eval_type="llm", eval_tags=["drop"]
+        )
+
+        qs = build_eval_list_queryset(
+            organization=organization,
+            workspace=workspace,
+            filters={"tags_not": ["drop"]},
+            filter_combinator="or",
+        )
+        names = set(qs.values_list("name", flat=True))
+        assert keep.name in names
+        assert drop.name not in names
+
+    def test_mixed_and_vs_or_on_three_filters(self, organization, workspace):
+        """Three filters: one row matches all, one matches none, one matches
+        two. AND returns only the all-match; OR returns the all-match plus the
+        two-matchers."""
+        self._make(
+            organization, workspace, "mx_all3", eval_type="code", eval_tags=["p"]
+        )
+        self._make(
+            organization, workspace, "mx_none", eval_type="agent", eval_tags=["q"]
+        )
+        self._make(organization, workspace, "mx_two", eval_type="code", eval_tags=["q"])
+
+        and_names = set(
+            build_eval_list_queryset(
+                organization=organization,
+                workspace=workspace,
+                filters={"eval_type": ["code"], "tags": ["p"], "tags_not": ["q"]},
+                filter_combinator="and",
+            ).values_list("name", flat=True)
+        )
+        or_names = set(
+            build_eval_list_queryset(
+                organization=organization,
+                workspace=workspace,
+                filters={"eval_type": ["code"], "tags": ["p"], "tags_not": ["q"]},
+                filter_combinator="or",
+            ).values_list("name", flat=True)
+        )
+        # AND: eval_type=code AND tags=p AND NOT tags=q → only a3.
+        assert and_names == {"mx_all3"}
+        # OR: matches a3 (all three) and two (code + NOT q). `none` (agent, q)
+        # matches nothing.
+        assert or_names == {"mx_all3", "mx_two"}

@@ -674,10 +674,15 @@ const QueryInput = forwardRef(function QueryInput(
     hasMoreFields = false,
     hasMoreValues = false,
     getOperators: getOperatorsProp,
+    showCombinator = false,
+    initialCombinator = "and",
   },
   ref,
 ) {
   const [tokens, setTokens] = useState(initialTokens);
+  // Seeded by the parent so a re-opened panel shows the operator actually in
+  // effect downstream instead of snapping back to AND.
+  const [combinator, setCombinator] = useState(initialCombinator);
   const [partialField, setPartialField] = useState(null);
   const [partialOp, setPartialOp] = useState(null);
   const [partialValueTypes, setPartialValueTypes] = useState([]);
@@ -859,6 +864,14 @@ const QueryInput = forwardRef(function QueryInput(
     partialOriginalValue !== undefined &&
     partialOriginalDisplayValue === inputValue.trim();
 
+  // AND/OR between every pair of chips. One value for the whole builder, so
+  // toggling any separator updates them all and re-applies via onApply.
+  const toggleCombinator = useCallback(() => {
+    const next = combinator === "and" ? "or" : "and";
+    setCombinator(next);
+    onApply(tokens, next);
+  }, [combinator, tokens, onApply]);
+
   const commitFilter = useCallback(
     (field, op, value, valueTypes) => {
       const token = { field, operator: op, value };
@@ -879,9 +892,9 @@ const QueryInput = forwardRef(function QueryInput(
         inputRef.current?.focus();
         setDropdownOpen(true);
       }, 0);
-      onApply(updated);
+      onApply(updated, combinator);
     },
-    [tokens, onApply, onValueSearchChange],
+    [tokens, onApply, onValueSearchChange, combinator],
   );
 
   const commitRange = useCallback(() => {
@@ -1200,9 +1213,9 @@ const QueryInput = forwardRef(function QueryInput(
       const updated = tokens.filter((_, i) => i !== index);
       setTokens(updated);
       setDropdownOpen(true);
-      onApply(updated.length > 0 ? updated : []);
+      onApply(updated.length > 0 ? updated : [], combinator);
     },
-    [tokens, onApply],
+    [tokens, onApply, combinator],
   );
 
   const requestNextPage = useCallback(
@@ -1325,9 +1338,50 @@ const QueryInput = forwardRef(function QueryInput(
 
   // Shared chip/prefix render — used by both the Autocomplete renderInput
   // startAdornment and the range-phase Box below.
-  const tokenChips = tokens.map((token, idx) => (
+  const tokenChips = tokens.flatMap((token, idx) => [
+    idx > 0 && showCombinator ? (
+      <Box
+        key={`combinator-${idx}`}
+        component="button"
+        type="button"
+        aria-pressed={combinator === "or"}
+        aria-label={`Combine filters with ${combinator === "and" ? "AND" : "OR"}`}
+        onClick={toggleCombinator}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            toggleCombinator();
+          }
+        }}
+        sx={{
+          border: "1px solid",
+          borderColor: (theme) => alpha(theme.palette.warning.main, 0.5),
+          borderRadius: "4px",
+          px: 0.5,
+          py: "0px",
+          fontSize: 10,
+          fontWeight: 700,
+          lineHeight: 1.6,
+          color: "warning.main",
+          bgcolor: "transparent",
+          cursor: "pointer",
+          mr: 0.25,
+          fontFamily: "monospace",
+          "&:hover": {
+            bgcolor: (theme) => alpha(theme.palette.warning.main, 0.14),
+          },
+          "&:focus-visible": {
+            outline: "2px solid",
+            outlineColor: "primary.main",
+            outlineOffset: 1,
+          },
+        }}
+      >
+        {combinator === "and" ? "AND" : "OR"}
+      </Box>
+    ) : null,
     <Chip
-      key={idx}
+      key={`token-${idx}`}
       label={`${fieldMap[token.field]?.label || token.field} ${opDefFor(token.field, token.operator)?.label || token.operator} ${Array.isArray(token.value) ? token.value.join(" – ") : token.value}`}
       size="small"
       onClick={() => editToken(idx)}
@@ -1351,8 +1405,8 @@ const QueryInput = forwardRef(function QueryInput(
           "&:hover": { color: "primary.dark" },
         },
       }}
-    />
-  ));
+    />,
+  ]);
 
   const prefixChips = inlinePrefix.map((p, i) => (
     <Box
@@ -1668,6 +1722,8 @@ QueryInput.propTypes = {
   hasMoreFields: PropTypes.bool,
   hasMoreValues: PropTypes.bool,
   getOperators: PropTypes.func,
+  showCombinator: PropTypes.bool,
+  initialCombinator: PropTypes.oneOf(["and", "or"]),
 };
 
 // Collapse rows into the `{field: [values]}` shape callers receive. Rows with
