@@ -1,0 +1,53 @@
+# Hosted ALK harness override.
+#
+# Adds the dedicated Temporal worker for the `simulation_runner` queue, which
+# runs HostedHarnessGatewayWorkflow + its activities (launch/poll/cancel) and
+# drives the Daytona sandbox. The dev worker (docker-compose.dev.yml) explicitly
+# excludes `simulation_runner`, so this worker owns it exclusively.
+#
+# Usage (local e2e):
+#   docker compose \
+#     -f docker-compose.yml \
+#     -f docker-compose.dev.yml \
+#     -f docker-compose.harness.yml \
+#     up -d db pgbouncer redis clickhouse rabbitmq minio temporal temporal-ui \
+#        backend temporal-worker-dev temporal-worker-simulation-runner
+
+services:
+  # Skip cron-schedule registration on boot: it blocks the HTTP server before
+  # granian starts and is irrelevant to the on-demand harness workflows.
+  backend:
+    environment:
+      - REGISTER_TEMPORAL_SCHEDULES=false
+
+  temporal-worker-simulation-runner:
+    platform: linux/amd64
+    container_name: temporal-worker-simulation-runner
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /app/backend
+    volumes:
+      - ".:/app/backend"
+      - "${EE_SOURCE_PATH:-./ee}:/app/backend/ee"
+    env_file:
+      - .env
+    environment:
+      - SERVICE_TYPE=temporal-worker
+      - TEMPORAL_HOST=temporal:7233
+      - TEMPORAL_NAMESPACE=${TEMPORAL_NAMESPACE:-default}
+      - TEMPORAL_TASK_QUEUE=simulation_runner
+      - TEMPORAL_ALL_QUEUES=false
+      - FAST_STARTUP=${FAST_STARTUP:-true}
+      # The gateway clones customer repos and drives Daytona; keep concurrency
+      # modest so a single dev host is not overwhelmed by parallel sandboxes.
+      - TEMPORAL_MAX_CONCURRENT_ACTIVITIES=${TEMPORAL_RUNNER_MAX_ACTIVITIES:-8}
+      - TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS=${TEMPORAL_RUNNER_MAX_WORKFLOWS:-20}
+    depends_on:
+      temporal:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped

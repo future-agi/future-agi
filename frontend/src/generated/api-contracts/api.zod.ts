@@ -34278,6 +34278,8 @@ export const SimulateApiAlkSimulateCallExecutionsRecordingUploadBody =
   zod.object({
     file: zod.instanceof(File),
     filename: zod.string().optional(),
+    sha256: zod.string().optional(),
+    kind: zod.string().optional(),
   });
 
 export const simulateApiAlkSimulateCallExecutionsRecordingUploadResponseStatusDefault =
@@ -34317,6 +34319,11 @@ export const simulateApiAlkSimulateCallExecutionsResultBodyDurationSecondsMin = 
 
 export const simulateApiAlkSimulateCallExecutionsResultBodyEndedReasonMax = 10000;
 
+export const simulateApiAlkSimulateCallExecutionsResultBodyResultDigestRegExp =
+  new RegExp("^sha256:[0-9a-f]{64}$");
+
+export const simulateApiAlkSimulateCallExecutionsResultBodyArtifactManifestDigestRegExp =
+  new RegExp("^sha256:[0-9a-f]{64}$");
 export const simulateApiAlkSimulateCallExecutionsResultBodyTranscriptItemStartTimeMsDefault = 0;
 export const simulateApiAlkSimulateCallExecutionsResultBodyTranscriptItemStartTimeMsMin = 0;
 
@@ -34348,6 +34355,18 @@ export const SimulateApiAlkSimulateCallExecutionsResultBody = zod.object({
     .optional(),
   error_message: zod.string().optional(),
   call_summary: zod.string().optional(),
+  result_digest: zod
+    .string()
+    .min(1)
+    .regex(simulateApiAlkSimulateCallExecutionsResultBodyResultDigestRegExp)
+    .optional(),
+  artifact_manifest_digest: zod
+    .string()
+    .min(1)
+    .regex(
+      simulateApiAlkSimulateCallExecutionsResultBodyArtifactManifestDigestRegExp,
+    )
+    .optional(),
   transcript: zod
     .array(
       zod.object({
@@ -34471,7 +34490,10 @@ scenario generation. See ``provision_alk_sim_run_test``.
  */
 export const simulateApiAlkSimulateRunTestsProvisionRunTestBodyNameMax = 255;
 
+export const simulateApiAlkSimulateRunTestsProvisionRunTestBodyModalityDefault = `text`;
 export const simulateApiAlkSimulateRunTestsProvisionRunTestBodyPersonasItemNameMax = 255;
+
+export const simulateApiAlkSimulateRunTestsProvisionRunTestBodyPersonasItemScenarioNameMax = 255;
 
 export const simulateApiAlkSimulateRunTestsProvisionRunTestBodyPersonasItemRoleMax = 255;
 
@@ -34482,6 +34504,9 @@ export const SimulateApiAlkSimulateRunTestsProvisionRunTestBody = zod.object({
     .string()
     .min(1)
     .max(simulateApiAlkSimulateRunTestsProvisionRunTestBodyNameMax),
+  modality: zod
+    .enum(["text", "chat", "voice"])
+    .default(simulateApiAlkSimulateRunTestsProvisionRunTestBodyModalityDefault),
   description: zod.string().optional(),
   personas: zod
     .array(
@@ -34490,6 +34515,12 @@ export const SimulateApiAlkSimulateRunTestsProvisionRunTestBody = zod.object({
           .string()
           .max(
             simulateApiAlkSimulateRunTestsProvisionRunTestBodyPersonasItemNameMax,
+          )
+          .optional(),
+        scenario_name: zod
+          .string()
+          .max(
+            simulateApiAlkSimulateRunTestsProvisionRunTestBodyPersonasItemScenarioNameMax,
           )
           .optional(),
         role: zod
@@ -34540,9 +34571,29 @@ export const SimulateApiAlkSimulateRunTestsStartTestExecutionParams =
     run_test_id: zod.string(),
   });
 
+export const simulateApiAlkSimulateRunTestsStartTestExecutionBodyScenarioSelectorsItemMaxOne = 255;
+
+export const simulateApiAlkSimulateRunTestsStartTestExecutionBodyScenarioSelectorsMax = 100;
+
 export const SimulateApiAlkSimulateRunTestsStartTestExecutionBody = zod.object({
   scenario_ids: zod.array(zod.string().uuid()).optional(),
+  scenario_selectors: zod
+    .array(
+      zod.record(
+        zod.string(),
+        zod
+          .string()
+          .max(
+            simulateApiAlkSimulateRunTestsStartTestExecutionBodyScenarioSelectorsItemMaxOne,
+          ),
+      ),
+    )
+    .max(
+      simulateApiAlkSimulateRunTestsStartTestExecutionBodyScenarioSelectorsMax,
+    )
+    .optional(),
   simulator_agent_id: zod.string().uuid().optional(),
+  harness_job_id: zod.string().uuid().optional(),
 });
 
 export const simulateApiAlkSimulateRunTestsStartTestExecutionResponseStatusDefault =
@@ -34865,6 +34916,1399 @@ export const SimulateApiCallExecutionsListResponseItem = zod.object({
 export const SimulateApiCallExecutionsListResponse = zod.array(
   SimulateApiCallExecutionsListResponseItem,
 );
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the backend
+selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
+``sandbox``). See ``simulate.services.harness_provider``.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+
+export const SimulateApiHarnessJobsListResponseItem = zod.object({
+  job: zod.object({
+    job_id: zod.string().uuid(),
+    run_id: zod.string().uuid(),
+    source: zod.record(zod.string(), zod.string()),
+    metadata: zod.record(zod.string(), zod.string()),
+    run_test_id: zod.string().uuid(),
+    test_execution_id: zod.string().uuid(),
+  }),
+  status: zod.object({
+    state: zod.string().min(1),
+    stage: zod.string().min(1),
+    updated_at: zod.string().min(1),
+    attempt: zod.number(),
+    completed_scenarios: zod.number(),
+    failed_scenarios: zod.number(),
+    total_scenarios: zod.number(),
+    deadline_at: zod.string().min(1),
+    failure: zod.object({}).passthrough(),
+  }),
+  events: zod.array(
+    zod.object({
+      event_id: zod.string().min(1),
+      sequence: zod.number(),
+      stage: zod.string().min(1),
+      type: zod.string().min(1),
+      payload: zod.object({}).passthrough(),
+      emitted_at: zod.string().min(1),
+    }),
+  ),
+  stage_outputs: zod.array(
+    zod.object({
+      id: zod.string().uuid(),
+      title: zod.string().min(1),
+      summary: zod.string(),
+      kind: zod.string().min(1),
+      data: zod.object({}).passthrough(),
+    }),
+  ),
+  scenarios: zod.array(
+    zod.object({
+      scenario_key: zod.string().min(1),
+      scenario_id: zod.string().uuid(),
+      name: zod.string(),
+      instruction: zod.string().optional(),
+      use_case: zod.string().optional(),
+      call_execution_id: zod.string().uuid().optional(),
+      status: zod.string().min(1).optional(),
+    }),
+  ),
+  receipts: zod.array(zod.object({}).passthrough()),
+  platform: zod.object({
+    run_test_id: zod.string().uuid(),
+    test_execution_id: zod.string().uuid(),
+    url: zod.string().min(1),
+  }),
+  runtime: zod
+    .object({
+      sandbox_id: zod.string().min(1).optional(),
+      diagnostics: zod
+        .object({
+          object_key: zod.string().min(1).optional(),
+          sha256: zod.string().min(1).optional(),
+          size: zod.number(),
+          captured_at: zod.string().min(1).optional(),
+          final: zod.boolean(),
+          error: zod.string(),
+        })
+        .optional(),
+    })
+    .optional(),
+});
+export const SimulateApiHarnessJobsListResponse = zod.array(
+  SimulateApiHarnessJobsListResponseItem,
+);
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the backend
+selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
+``sandbox``). See ``simulate.services.harness_provider``.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const simulateApiHarnessJobsCreateBodySchemaVersionDefault = `futureagi.harness-job.v1`;
+
+export const simulateApiHarnessJobsCreateBodySourceRepositoryRegExp =
+  new RegExp("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$");
+
+export const simulateApiHarnessJobsCreateBodySourceRefRegExp = new RegExp(
+  "^[A-Za-z0-9._/-]+$",
+);
+
+export const simulateApiHarnessJobsCreateBodySourceCommitShaRegExp = new RegExp(
+  "^[0-9a-fA-F]{40}$",
+);
+export const simulateApiHarnessJobsCreateBodySourceInstallationIdMax = 255;
+
+export const simulateApiHarnessJobsCreateBodySourceVisibilityDefault = `public`;
+export const simulateApiHarnessJobsCreateBodyAgentConfigDefault = {};
+export const simulateApiHarnessJobsCreateBodyAgentSecretRefsKeyMax = 255;
+
+export const simulateApiHarnessJobsCreateBodyAgentSecretRefsVersionMax = 255;
+
+export const simulateApiHarnessJobsCreateBodyAgentSecretRefsDefault = {};
+export const simulateApiHarnessJobsCreateBodyScenarioCountDefault = 10;
+export const simulateApiHarnessJobsCreateBodyScenarioCountMax = 200;
+
+export const simulateApiHarnessJobsCreateBodyRuntimeIsolationDefault = `dedicated_vm`;
+export const simulateApiHarnessJobsCreateBodyRuntimeCpuUnitsDefault = 4;
+
+export const simulateApiHarnessJobsCreateBodyRuntimeMemoryMbDefault = 8192;
+export const simulateApiHarnessJobsCreateBodyRuntimeMemoryMbMin = 1024;
+
+export const simulateApiHarnessJobsCreateBodyRuntimeParallelismDefault = 1;
+export const simulateApiHarnessJobsCreateBodyRuntimeParallelismMax = 8;
+
+export const simulateApiHarnessJobsCreateBodyRuntimeConcurrencyWeightDefault = 1;
+export const simulateApiHarnessJobsCreateBodyRuntimeConcurrencyWeightMax = 10;
+
+export const simulateApiHarnessJobsCreateBodyRuntimeMaxDurationSecondsDefault = 3600;
+export const simulateApiHarnessJobsCreateBodyRuntimeMaxDurationSecondsMin = 60;
+export const simulateApiHarnessJobsCreateBodyRuntimeMaxDurationSecondsMax = 86400;
+
+export const simulateApiHarnessJobsCreateBodyRuntimeNetworkPolicyDefault = `live`;
+export const simulateApiHarnessJobsCreateBodyRuntimeDefault = {
+  isolation: "dedicated_vm",
+  cpu_units: 4,
+  memory_mb: 8192,
+  parallelism: 1,
+  concurrency_weight: 1,
+  max_duration_seconds: 3600,
+  network_policy: "live",
+};
+export const simulateApiHarnessJobsCreateBodySecurityUntrustedSourceDefault =
+  true;
+export const simulateApiHarnessJobsCreateBodySecurityReadOnlySourceDefault =
+  true;
+export const simulateApiHarnessJobsCreateBodySecurityAllowPrivilegedDefault =
+  false;
+export const simulateApiHarnessJobsCreateBodySecurityAllowHostRuntimeControlDefault =
+  false;
+
+export const simulateApiHarnessJobsCreateBodySecurityAllowedEgressDomainsItemRegExp =
+  new RegExp("^(?:[A-Za-z0-9-]+\\.)*[A-Za-z0-9-]+$");
+export const simulateApiHarnessJobsCreateBodySecurityAllowedEgressDomainsDefault =
+  [];
+export const simulateApiHarnessJobsCreateBodySecurityDefault = {
+  untrusted_source: true,
+  read_only_source: true,
+  allow_privileged: false,
+  allow_host_runtime_control: false,
+  allowed_egress_domains: [],
+};
+export const simulateApiHarnessJobsCreateBodyRetryMaxInfrastructureAttemptsDefault = 2;
+export const simulateApiHarnessJobsCreateBodyRetryMaxInfrastructureAttemptsMax = 5;
+
+export const simulateApiHarnessJobsCreateBodyRetryInitialBackoffSecondsDefault = 1;
+export const simulateApiHarnessJobsCreateBodyRetryInitialBackoffSecondsMin = 0;
+export const simulateApiHarnessJobsCreateBodyRetryInitialBackoffSecondsMax = 60;
+
+export const simulateApiHarnessJobsCreateBodyRetryMaxBackoffSecondsDefault = 15;
+export const simulateApiHarnessJobsCreateBodyRetryMaxBackoffSecondsMin = 0;
+export const simulateApiHarnessJobsCreateBodyRetryMaxBackoffSecondsMax = 300;
+
+export const simulateApiHarnessJobsCreateBodyRetryDefault = {
+  max_infrastructure_attempts: 2,
+  initial_backoff_seconds: 1,
+  max_backoff_seconds: 15,
+  retryable_domains: ["infrastructure", "connectivity"],
+};
+export const simulateApiHarnessJobsCreateBodyArtifactsRetentionDaysDefault = 30;
+export const simulateApiHarnessJobsCreateBodyArtifactsRetentionDaysMax = 3650;
+
+export const simulateApiHarnessJobsCreateBodyArtifactsAllowBundleDownloadDefault =
+  false;
+export const simulateApiHarnessJobsCreateBodyArtifactsMaxArtifactBytesDefault = 1073741824;
+export const simulateApiHarnessJobsCreateBodyArtifactsMaxArtifactBytesMin = 0;
+
+export const simulateApiHarnessJobsCreateBodyPlatformRunIdMax = 255;
+
+export const simulateApiHarnessJobsCreateBodyMetadataDefault = {};
+
+export const SimulateApiHarnessJobsCreateBody = zod.object({
+  schema_version: zod
+    .enum(["futureagi.harness-job.v1"])
+    .default(simulateApiHarnessJobsCreateBodySchemaVersionDefault),
+  run_id: zod.string().uuid().optional(),
+  source: zod
+    .object({
+      kind: zod.enum(["github", "archive", "remote", "provider"]),
+      repository: zod
+        .string()
+        .min(1)
+        .regex(simulateApiHarnessJobsCreateBodySourceRepositoryRegExp)
+        .optional(),
+      ref: zod
+        .string()
+        .min(1)
+        .regex(simulateApiHarnessJobsCreateBodySourceRefRegExp)
+        .optional(),
+      commit_sha: zod
+        .string()
+        .min(1)
+        .regex(simulateApiHarnessJobsCreateBodySourceCommitShaRegExp)
+        .optional(),
+      installation_id: zod
+        .string()
+        .min(1)
+        .max(simulateApiHarnessJobsCreateBodySourceInstallationIdMax)
+        .optional(),
+      archive_artifact_id: zod.string().uuid().optional(),
+      endpoint: zod.string().url().min(1).optional(),
+      visibility: zod
+        .enum(["public", "private"])
+        .default(simulateApiHarnessJobsCreateBodySourceVisibilityDefault),
+    })
+    .optional(),
+  agent: zod.object({
+    connector: zod.enum(["livekit", "vapi", "retell", "retell_chat", "auto"]),
+    mode: zod
+      .enum(["connect_only", "environment_backed", "provider_import"])
+      .optional(),
+    config: zod
+      .record(zod.string(), zod.string())
+      .default(simulateApiHarnessJobsCreateBodyAgentConfigDefault),
+    secret_refs: zod
+      .record(
+        zod.string(),
+        zod.object({
+          manager: zod.enum(["platform-vault", "platform-config"]),
+          key: zod
+            .string()
+            .min(1)
+            .max(simulateApiHarnessJobsCreateBodyAgentSecretRefsKeyMax),
+          version: zod
+            .string()
+            .min(1)
+            .max(simulateApiHarnessJobsCreateBodyAgentSecretRefsVersionMax)
+            .optional(),
+          purpose: zod.enum([
+            "target_provider",
+            "simulator_provider",
+            "source_checkout",
+          ]),
+        }),
+      )
+      .default(simulateApiHarnessJobsCreateBodyAgentSecretRefsDefault),
+  }),
+  scenario_count: zod
+    .number()
+    .min(1)
+    .max(simulateApiHarnessJobsCreateBodyScenarioCountMax)
+    .default(simulateApiHarnessJobsCreateBodyScenarioCountDefault),
+  seed: zod.number().optional(),
+  runtime: zod
+    .object({
+      isolation: zod
+        .enum(["dedicated_vm"])
+        .default(simulateApiHarnessJobsCreateBodyRuntimeIsolationDefault),
+      cpu_units: zod
+        .number()
+        .min(1)
+        .default(simulateApiHarnessJobsCreateBodyRuntimeCpuUnitsDefault),
+      memory_mb: zod
+        .number()
+        .min(simulateApiHarnessJobsCreateBodyRuntimeMemoryMbMin)
+        .default(simulateApiHarnessJobsCreateBodyRuntimeMemoryMbDefault),
+      parallelism: zod
+        .number()
+        .min(1)
+        .max(simulateApiHarnessJobsCreateBodyRuntimeParallelismMax)
+        .default(simulateApiHarnessJobsCreateBodyRuntimeParallelismDefault),
+      concurrency_weight: zod
+        .number()
+        .min(1)
+        .max(simulateApiHarnessJobsCreateBodyRuntimeConcurrencyWeightMax)
+        .default(
+          simulateApiHarnessJobsCreateBodyRuntimeConcurrencyWeightDefault,
+        ),
+      max_duration_seconds: zod
+        .number()
+        .min(simulateApiHarnessJobsCreateBodyRuntimeMaxDurationSecondsMin)
+        .max(simulateApiHarnessJobsCreateBodyRuntimeMaxDurationSecondsMax)
+        .default(
+          simulateApiHarnessJobsCreateBodyRuntimeMaxDurationSecondsDefault,
+        ),
+      network_policy: zod
+        .enum(["live"])
+        .default(simulateApiHarnessJobsCreateBodyRuntimeNetworkPolicyDefault),
+    })
+    .default(simulateApiHarnessJobsCreateBodyRuntimeDefault),
+  security: zod
+    .object({
+      untrusted_source: zod
+        .boolean()
+        .default(
+          simulateApiHarnessJobsCreateBodySecurityUntrustedSourceDefault,
+        ),
+      read_only_source: zod
+        .boolean()
+        .default(simulateApiHarnessJobsCreateBodySecurityReadOnlySourceDefault),
+      allow_privileged: zod
+        .boolean()
+        .default(
+          simulateApiHarnessJobsCreateBodySecurityAllowPrivilegedDefault,
+        ),
+      allow_host_runtime_control: zod
+        .boolean()
+        .default(
+          simulateApiHarnessJobsCreateBodySecurityAllowHostRuntimeControlDefault,
+        ),
+      allowed_egress_domains: zod
+        .array(
+          zod
+            .string()
+            .min(1)
+            .regex(
+              simulateApiHarnessJobsCreateBodySecurityAllowedEgressDomainsItemRegExp,
+            ),
+        )
+        .default(
+          simulateApiHarnessJobsCreateBodySecurityAllowedEgressDomainsDefault,
+        ),
+    })
+    .default(simulateApiHarnessJobsCreateBodySecurityDefault),
+  retry: zod
+    .object({
+      max_infrastructure_attempts: zod
+        .number()
+        .min(1)
+        .max(simulateApiHarnessJobsCreateBodyRetryMaxInfrastructureAttemptsMax)
+        .default(
+          simulateApiHarnessJobsCreateBodyRetryMaxInfrastructureAttemptsDefault,
+        ),
+      initial_backoff_seconds: zod
+        .number()
+        .min(simulateApiHarnessJobsCreateBodyRetryInitialBackoffSecondsMin)
+        .max(simulateApiHarnessJobsCreateBodyRetryInitialBackoffSecondsMax)
+        .default(
+          simulateApiHarnessJobsCreateBodyRetryInitialBackoffSecondsDefault,
+        ),
+      max_backoff_seconds: zod
+        .number()
+        .min(simulateApiHarnessJobsCreateBodyRetryMaxBackoffSecondsMin)
+        .max(simulateApiHarnessJobsCreateBodyRetryMaxBackoffSecondsMax)
+        .default(simulateApiHarnessJobsCreateBodyRetryMaxBackoffSecondsDefault),
+      retryable_domains: zod
+        .array(zod.enum(["infrastructure", "connectivity", "platform_sync"]))
+        .default([`infrastructure`, `connectivity`]),
+    })
+    .default(simulateApiHarnessJobsCreateBodyRetryDefault),
+  artifacts: zod.object({
+    level: zod.enum([
+      "metadata-only",
+      "traces",
+      "traces-and-recordings",
+      "full",
+    ]),
+    retention_days: zod
+      .number()
+      .min(1)
+      .max(simulateApiHarnessJobsCreateBodyArtifactsRetentionDaysMax)
+      .default(simulateApiHarnessJobsCreateBodyArtifactsRetentionDaysDefault),
+    allow_bundle_download: zod
+      .boolean()
+      .default(
+        simulateApiHarnessJobsCreateBodyArtifactsAllowBundleDownloadDefault,
+      ),
+    max_artifact_bytes: zod
+      .number()
+      .min(simulateApiHarnessJobsCreateBodyArtifactsMaxArtifactBytesMin)
+      .default(
+        simulateApiHarnessJobsCreateBodyArtifactsMaxArtifactBytesDefault,
+      ),
+  }),
+  platform_run_id: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessJobsCreateBodyPlatformRunIdMax)
+    .optional(),
+  metadata: zod
+    .record(zod.string(), zod.string())
+    .default(simulateApiHarnessJobsCreateBodyMetadataDefault),
+});
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the backend
+selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
+``sandbox``). See ``simulate.services.harness_provider``.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const simulateApiHarnessJobsPreflightBodySchemaVersionDefault = `futureagi.harness-job.v1`;
+
+export const simulateApiHarnessJobsPreflightBodySourceRepositoryRegExp =
+  new RegExp("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$");
+
+export const simulateApiHarnessJobsPreflightBodySourceRefRegExp = new RegExp(
+  "^[A-Za-z0-9._/-]+$",
+);
+
+export const simulateApiHarnessJobsPreflightBodySourceCommitShaRegExp =
+  new RegExp("^[0-9a-fA-F]{40}$");
+export const simulateApiHarnessJobsPreflightBodySourceInstallationIdMax = 255;
+
+export const simulateApiHarnessJobsPreflightBodySourceVisibilityDefault = `public`;
+export const simulateApiHarnessJobsPreflightBodyAgentConfigDefault = {};
+export const simulateApiHarnessJobsPreflightBodyAgentSecretRefsKeyMax = 255;
+
+export const simulateApiHarnessJobsPreflightBodyAgentSecretRefsVersionMax = 255;
+
+export const simulateApiHarnessJobsPreflightBodyAgentSecretRefsDefault = {};
+export const simulateApiHarnessJobsPreflightBodyScenarioCountDefault = 10;
+export const simulateApiHarnessJobsPreflightBodyScenarioCountMax = 200;
+
+export const simulateApiHarnessJobsPreflightBodyRuntimeIsolationDefault = `dedicated_vm`;
+export const simulateApiHarnessJobsPreflightBodyRuntimeCpuUnitsDefault = 4;
+
+export const simulateApiHarnessJobsPreflightBodyRuntimeMemoryMbDefault = 8192;
+export const simulateApiHarnessJobsPreflightBodyRuntimeMemoryMbMin = 1024;
+
+export const simulateApiHarnessJobsPreflightBodyRuntimeParallelismDefault = 1;
+export const simulateApiHarnessJobsPreflightBodyRuntimeParallelismMax = 8;
+
+export const simulateApiHarnessJobsPreflightBodyRuntimeConcurrencyWeightDefault = 1;
+export const simulateApiHarnessJobsPreflightBodyRuntimeConcurrencyWeightMax = 10;
+
+export const simulateApiHarnessJobsPreflightBodyRuntimeMaxDurationSecondsDefault = 3600;
+export const simulateApiHarnessJobsPreflightBodyRuntimeMaxDurationSecondsMin = 60;
+export const simulateApiHarnessJobsPreflightBodyRuntimeMaxDurationSecondsMax = 86400;
+
+export const simulateApiHarnessJobsPreflightBodyRuntimeNetworkPolicyDefault = `live`;
+export const simulateApiHarnessJobsPreflightBodyRuntimeDefault = {
+  isolation: "dedicated_vm",
+  cpu_units: 4,
+  memory_mb: 8192,
+  parallelism: 1,
+  concurrency_weight: 1,
+  max_duration_seconds: 3600,
+  network_policy: "live",
+};
+export const simulateApiHarnessJobsPreflightBodySecurityUntrustedSourceDefault =
+  true;
+export const simulateApiHarnessJobsPreflightBodySecurityReadOnlySourceDefault =
+  true;
+export const simulateApiHarnessJobsPreflightBodySecurityAllowPrivilegedDefault =
+  false;
+export const simulateApiHarnessJobsPreflightBodySecurityAllowHostRuntimeControlDefault =
+  false;
+
+export const simulateApiHarnessJobsPreflightBodySecurityAllowedEgressDomainsItemRegExp =
+  new RegExp("^(?:[A-Za-z0-9-]+\\.)*[A-Za-z0-9-]+$");
+export const simulateApiHarnessJobsPreflightBodySecurityAllowedEgressDomainsDefault =
+  [];
+export const simulateApiHarnessJobsPreflightBodySecurityDefault = {
+  untrusted_source: true,
+  read_only_source: true,
+  allow_privileged: false,
+  allow_host_runtime_control: false,
+  allowed_egress_domains: [],
+};
+export const simulateApiHarnessJobsPreflightBodyRetryMaxInfrastructureAttemptsDefault = 2;
+export const simulateApiHarnessJobsPreflightBodyRetryMaxInfrastructureAttemptsMax = 5;
+
+export const simulateApiHarnessJobsPreflightBodyRetryInitialBackoffSecondsDefault = 1;
+export const simulateApiHarnessJobsPreflightBodyRetryInitialBackoffSecondsMin = 0;
+export const simulateApiHarnessJobsPreflightBodyRetryInitialBackoffSecondsMax = 60;
+
+export const simulateApiHarnessJobsPreflightBodyRetryMaxBackoffSecondsDefault = 15;
+export const simulateApiHarnessJobsPreflightBodyRetryMaxBackoffSecondsMin = 0;
+export const simulateApiHarnessJobsPreflightBodyRetryMaxBackoffSecondsMax = 300;
+
+export const simulateApiHarnessJobsPreflightBodyRetryDefault = {
+  max_infrastructure_attempts: 2,
+  initial_backoff_seconds: 1,
+  max_backoff_seconds: 15,
+  retryable_domains: ["infrastructure", "connectivity"],
+};
+export const simulateApiHarnessJobsPreflightBodyArtifactsRetentionDaysDefault = 30;
+export const simulateApiHarnessJobsPreflightBodyArtifactsRetentionDaysMax = 3650;
+
+export const simulateApiHarnessJobsPreflightBodyArtifactsAllowBundleDownloadDefault =
+  false;
+export const simulateApiHarnessJobsPreflightBodyArtifactsMaxArtifactBytesDefault = 1073741824;
+export const simulateApiHarnessJobsPreflightBodyArtifactsMaxArtifactBytesMin = 0;
+
+export const simulateApiHarnessJobsPreflightBodyPlatformRunIdMax = 255;
+
+export const simulateApiHarnessJobsPreflightBodyMetadataDefault = {};
+export const simulateApiHarnessJobsPreflightBodyCredentialValuesMaxOne = 4096;
+
+export const SimulateApiHarnessJobsPreflightBody = zod.object({
+  schema_version: zod
+    .enum(["futureagi.harness-job.v1"])
+    .default(simulateApiHarnessJobsPreflightBodySchemaVersionDefault),
+  run_id: zod.string().uuid().optional(),
+  source: zod
+    .object({
+      kind: zod.enum(["github", "archive", "remote", "provider"]),
+      repository: zod
+        .string()
+        .min(1)
+        .regex(simulateApiHarnessJobsPreflightBodySourceRepositoryRegExp)
+        .optional(),
+      ref: zod
+        .string()
+        .min(1)
+        .regex(simulateApiHarnessJobsPreflightBodySourceRefRegExp)
+        .optional(),
+      commit_sha: zod
+        .string()
+        .min(1)
+        .regex(simulateApiHarnessJobsPreflightBodySourceCommitShaRegExp)
+        .optional(),
+      installation_id: zod
+        .string()
+        .min(1)
+        .max(simulateApiHarnessJobsPreflightBodySourceInstallationIdMax)
+        .optional(),
+      archive_artifact_id: zod.string().uuid().optional(),
+      endpoint: zod.string().url().min(1).optional(),
+      visibility: zod
+        .enum(["public", "private"])
+        .default(simulateApiHarnessJobsPreflightBodySourceVisibilityDefault),
+    })
+    .optional(),
+  agent: zod.object({
+    connector: zod.enum(["livekit", "vapi", "retell", "retell_chat", "auto"]),
+    mode: zod
+      .enum(["connect_only", "environment_backed", "provider_import"])
+      .optional(),
+    config: zod
+      .record(zod.string(), zod.string())
+      .default(simulateApiHarnessJobsPreflightBodyAgentConfigDefault),
+    secret_refs: zod
+      .record(
+        zod.string(),
+        zod.object({
+          manager: zod.enum(["platform-vault", "platform-config"]),
+          key: zod
+            .string()
+            .min(1)
+            .max(simulateApiHarnessJobsPreflightBodyAgentSecretRefsKeyMax),
+          version: zod
+            .string()
+            .min(1)
+            .max(simulateApiHarnessJobsPreflightBodyAgentSecretRefsVersionMax)
+            .optional(),
+          purpose: zod.enum([
+            "target_provider",
+            "simulator_provider",
+            "source_checkout",
+          ]),
+        }),
+      )
+      .default(simulateApiHarnessJobsPreflightBodyAgentSecretRefsDefault),
+  }),
+  scenario_count: zod
+    .number()
+    .min(1)
+    .max(simulateApiHarnessJobsPreflightBodyScenarioCountMax)
+    .default(simulateApiHarnessJobsPreflightBodyScenarioCountDefault),
+  seed: zod.number().optional(),
+  runtime: zod
+    .object({
+      isolation: zod
+        .enum(["dedicated_vm"])
+        .default(simulateApiHarnessJobsPreflightBodyRuntimeIsolationDefault),
+      cpu_units: zod
+        .number()
+        .min(1)
+        .default(simulateApiHarnessJobsPreflightBodyRuntimeCpuUnitsDefault),
+      memory_mb: zod
+        .number()
+        .min(simulateApiHarnessJobsPreflightBodyRuntimeMemoryMbMin)
+        .default(simulateApiHarnessJobsPreflightBodyRuntimeMemoryMbDefault),
+      parallelism: zod
+        .number()
+        .min(1)
+        .max(simulateApiHarnessJobsPreflightBodyRuntimeParallelismMax)
+        .default(simulateApiHarnessJobsPreflightBodyRuntimeParallelismDefault),
+      concurrency_weight: zod
+        .number()
+        .min(1)
+        .max(simulateApiHarnessJobsPreflightBodyRuntimeConcurrencyWeightMax)
+        .default(
+          simulateApiHarnessJobsPreflightBodyRuntimeConcurrencyWeightDefault,
+        ),
+      max_duration_seconds: zod
+        .number()
+        .min(simulateApiHarnessJobsPreflightBodyRuntimeMaxDurationSecondsMin)
+        .max(simulateApiHarnessJobsPreflightBodyRuntimeMaxDurationSecondsMax)
+        .default(
+          simulateApiHarnessJobsPreflightBodyRuntimeMaxDurationSecondsDefault,
+        ),
+      network_policy: zod
+        .enum(["live"])
+        .default(
+          simulateApiHarnessJobsPreflightBodyRuntimeNetworkPolicyDefault,
+        ),
+    })
+    .default(simulateApiHarnessJobsPreflightBodyRuntimeDefault),
+  security: zod
+    .object({
+      untrusted_source: zod
+        .boolean()
+        .default(
+          simulateApiHarnessJobsPreflightBodySecurityUntrustedSourceDefault,
+        ),
+      read_only_source: zod
+        .boolean()
+        .default(
+          simulateApiHarnessJobsPreflightBodySecurityReadOnlySourceDefault,
+        ),
+      allow_privileged: zod
+        .boolean()
+        .default(
+          simulateApiHarnessJobsPreflightBodySecurityAllowPrivilegedDefault,
+        ),
+      allow_host_runtime_control: zod
+        .boolean()
+        .default(
+          simulateApiHarnessJobsPreflightBodySecurityAllowHostRuntimeControlDefault,
+        ),
+      allowed_egress_domains: zod
+        .array(
+          zod
+            .string()
+            .min(1)
+            .regex(
+              simulateApiHarnessJobsPreflightBodySecurityAllowedEgressDomainsItemRegExp,
+            ),
+        )
+        .default(
+          simulateApiHarnessJobsPreflightBodySecurityAllowedEgressDomainsDefault,
+        ),
+    })
+    .default(simulateApiHarnessJobsPreflightBodySecurityDefault),
+  retry: zod
+    .object({
+      max_infrastructure_attempts: zod
+        .number()
+        .min(1)
+        .max(
+          simulateApiHarnessJobsPreflightBodyRetryMaxInfrastructureAttemptsMax,
+        )
+        .default(
+          simulateApiHarnessJobsPreflightBodyRetryMaxInfrastructureAttemptsDefault,
+        ),
+      initial_backoff_seconds: zod
+        .number()
+        .min(simulateApiHarnessJobsPreflightBodyRetryInitialBackoffSecondsMin)
+        .max(simulateApiHarnessJobsPreflightBodyRetryInitialBackoffSecondsMax)
+        .default(
+          simulateApiHarnessJobsPreflightBodyRetryInitialBackoffSecondsDefault,
+        ),
+      max_backoff_seconds: zod
+        .number()
+        .min(simulateApiHarnessJobsPreflightBodyRetryMaxBackoffSecondsMin)
+        .max(simulateApiHarnessJobsPreflightBodyRetryMaxBackoffSecondsMax)
+        .default(
+          simulateApiHarnessJobsPreflightBodyRetryMaxBackoffSecondsDefault,
+        ),
+      retryable_domains: zod
+        .array(zod.enum(["infrastructure", "connectivity", "platform_sync"]))
+        .default([`infrastructure`, `connectivity`]),
+    })
+    .default(simulateApiHarnessJobsPreflightBodyRetryDefault),
+  artifacts: zod.object({
+    level: zod.enum([
+      "metadata-only",
+      "traces",
+      "traces-and-recordings",
+      "full",
+    ]),
+    retention_days: zod
+      .number()
+      .min(1)
+      .max(simulateApiHarnessJobsPreflightBodyArtifactsRetentionDaysMax)
+      .default(
+        simulateApiHarnessJobsPreflightBodyArtifactsRetentionDaysDefault,
+      ),
+    allow_bundle_download: zod
+      .boolean()
+      .default(
+        simulateApiHarnessJobsPreflightBodyArtifactsAllowBundleDownloadDefault,
+      ),
+    max_artifact_bytes: zod
+      .number()
+      .min(simulateApiHarnessJobsPreflightBodyArtifactsMaxArtifactBytesMin)
+      .default(
+        simulateApiHarnessJobsPreflightBodyArtifactsMaxArtifactBytesDefault,
+      ),
+  }),
+  platform_run_id: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessJobsPreflightBodyPlatformRunIdMax)
+    .optional(),
+  metadata: zod
+    .record(zod.string(), zod.string())
+    .default(simulateApiHarnessJobsPreflightBodyMetadataDefault),
+  credential_values: zod
+    .record(
+      zod.string(),
+      zod
+        .string()
+        .max(simulateApiHarnessJobsPreflightBodyCredentialValuesMaxOne),
+    )
+    .optional()
+    .describe(
+      "Target-provider values to verify live; used for this check only.",
+    ),
+});
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the backend
+selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
+``sandbox``). See ``simulate.services.harness_provider``.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const SimulateApiHarnessJobsSecretFileUploadBody = zod.object({
+  file: zod.instanceof(File),
+  environment_name: zod
+    .string()
+    .describe("Environment variable that will point to the mounted file."),
+});
+
+/**
+ * Values are intentionally separate from platform/model-provider settings. They are scoped
+to the submitting organization and only resolved inside the selected hosted job.
+ * @summary Persist uploaded agent values encrypted and return opaque hosted refs.
+ */
+export const simulateApiHarnessJobsSecretValuesBodyEnvironmentValuesMaxOne = 65536;
+
+export const SimulateApiHarnessJobsSecretValuesBody = zod.object({
+  environment_values: zod.record(
+    zod.string(),
+    zod
+      .string()
+      .min(1)
+      .max(simulateApiHarnessJobsSecretValuesBodyEnvironmentValuesMaxOne),
+  ),
+});
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the backend
+selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
+``sandbox``). See ``simulate.services.harness_provider``.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const SimulateApiHarnessJobsSourceUploadBody = zod.object({
+  files: zod.instanceof(File),
+  paths: zod
+    .string()
+    .describe("Repeat in file order with each repository-relative path."),
+  name: zod.string().optional(),
+});
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the backend
+selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
+``sandbox``). See ``simulate.services.harness_provider``.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const SimulateApiHarnessJobsReadParams = zod.object({
+  id: zod.string(),
+});
+
+export const SimulateApiHarnessJobsReadResponse = zod.object({
+  job: zod.object({
+    job_id: zod.string().uuid(),
+    run_id: zod.string().uuid(),
+    source: zod.record(zod.string(), zod.string()),
+    metadata: zod.record(zod.string(), zod.string()),
+    run_test_id: zod.string().uuid(),
+    test_execution_id: zod.string().uuid(),
+  }),
+  status: zod.object({
+    state: zod.string().min(1),
+    stage: zod.string().min(1),
+    updated_at: zod.string().min(1),
+    attempt: zod.number(),
+    completed_scenarios: zod.number(),
+    failed_scenarios: zod.number(),
+    total_scenarios: zod.number(),
+    deadline_at: zod.string().min(1),
+    failure: zod.object({}).passthrough(),
+  }),
+  events: zod.array(
+    zod.object({
+      event_id: zod.string().min(1),
+      sequence: zod.number(),
+      stage: zod.string().min(1),
+      type: zod.string().min(1),
+      payload: zod.object({}).passthrough(),
+      emitted_at: zod.string().min(1),
+    }),
+  ),
+  stage_outputs: zod.array(
+    zod.object({
+      id: zod.string().uuid(),
+      title: zod.string().min(1),
+      summary: zod.string(),
+      kind: zod.string().min(1),
+      data: zod.object({}).passthrough(),
+    }),
+  ),
+  scenarios: zod.array(
+    zod.object({
+      scenario_key: zod.string().min(1),
+      scenario_id: zod.string().uuid(),
+      name: zod.string(),
+      instruction: zod.string().optional(),
+      use_case: zod.string().optional(),
+      call_execution_id: zod.string().uuid().optional(),
+      status: zod.string().min(1).optional(),
+    }),
+  ),
+  receipts: zod.array(zod.object({}).passthrough()),
+  platform: zod.object({
+    run_test_id: zod.string().uuid(),
+    test_execution_id: zod.string().uuid(),
+    url: zod.string().min(1),
+  }),
+  runtime: zod
+    .object({
+      sandbox_id: zod.string().min(1).optional(),
+      diagnostics: zod
+        .object({
+          object_key: zod.string().min(1).optional(),
+          sha256: zod.string().min(1).optional(),
+          size: zod.number(),
+          captured_at: zod.string().min(1).optional(),
+          final: zod.boolean(),
+          error: zod.string(),
+        })
+        .optional(),
+    })
+    .optional(),
+});
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the backend
+selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
+``sandbox``). See ``simulate.services.harness_provider``.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const SimulateApiHarnessJobsAdjustParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessJobsAdjustBodyInstructionMax = 2000;
+
+export const simulateApiHarnessJobsAdjustBodyClientRequestIdMax = 128;
+
+export const SimulateApiHarnessJobsAdjustBody = zod.object({
+  instruction: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessJobsAdjustBodyInstructionMax)
+    .describe(
+      "A user correction to apply at the next safe harness stage boundary.",
+    ),
+  client_request_id: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessJobsAdjustBodyClientRequestIdMax)
+    .optional(),
+});
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the backend
+selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
+``sandbox``). See ``simulate.services.harness_provider``.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const SimulateApiHarnessJobsCancelParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessJobsCancelBodyReasonDefault = `user_canceled`;
+
+export const SimulateApiHarnessJobsCancelBody = zod.object({
+  reason: zod
+    .enum(["user_canceled", "ttl_exceeded"])
+    .default(simulateApiHarnessJobsCancelBodyReasonDefault),
+});
+
+export const SimulateApiHarnessJobsCancelResponse = zod.object({
+  job: zod.object({
+    job_id: zod.string().uuid(),
+    run_id: zod.string().uuid(),
+    source: zod.record(zod.string(), zod.string()),
+    metadata: zod.record(zod.string(), zod.string()),
+    run_test_id: zod.string().uuid(),
+    test_execution_id: zod.string().uuid(),
+  }),
+  status: zod.object({
+    state: zod.string().min(1),
+    stage: zod.string().min(1),
+    updated_at: zod.string().min(1),
+    attempt: zod.number(),
+    completed_scenarios: zod.number(),
+    failed_scenarios: zod.number(),
+    total_scenarios: zod.number(),
+    deadline_at: zod.string().min(1),
+    failure: zod.object({}).passthrough(),
+  }),
+  events: zod.array(
+    zod.object({
+      event_id: zod.string().min(1),
+      sequence: zod.number(),
+      stage: zod.string().min(1),
+      type: zod.string().min(1),
+      payload: zod.object({}).passthrough(),
+      emitted_at: zod.string().min(1),
+    }),
+  ),
+  stage_outputs: zod.array(
+    zod.object({
+      id: zod.string().uuid(),
+      title: zod.string().min(1),
+      summary: zod.string(),
+      kind: zod.string().min(1),
+      data: zod.object({}).passthrough(),
+    }),
+  ),
+  scenarios: zod.array(
+    zod.object({
+      scenario_key: zod.string().min(1),
+      scenario_id: zod.string().uuid(),
+      name: zod.string(),
+      instruction: zod.string().optional(),
+      use_case: zod.string().optional(),
+      call_execution_id: zod.string().uuid().optional(),
+      status: zod.string().min(1).optional(),
+    }),
+  ),
+  receipts: zod.array(zod.object({}).passthrough()),
+  platform: zod.object({
+    run_test_id: zod.string().uuid(),
+    test_execution_id: zod.string().uuid(),
+    url: zod.string().min(1),
+  }),
+  runtime: zod
+    .object({
+      sandbox_id: zod.string().min(1).optional(),
+      diagnostics: zod
+        .object({
+          object_key: zod.string().min(1).optional(),
+          sha256: zod.string().min(1).optional(),
+          size: zod.number(),
+          captured_at: zod.string().min(1).optional(),
+          final: zod.boolean(),
+          error: zod.string(),
+        })
+        .optional(),
+    })
+    .optional(),
+});
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the backend
+selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
+``sandbox``). See ``simulate.services.harness_provider``.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const SimulateApiHarnessJobsExtendParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessJobsExtendBodyCountMax = 50;
+
+export const simulateApiHarnessJobsExtendBodyGuidanceDefault = ``;
+export const simulateApiHarnessJobsExtendBodyGuidanceMax = 2000;
+
+export const simulateApiHarnessJobsExtendBodyClientRequestIdMax = 128;
+
+export const SimulateApiHarnessJobsExtendBody = zod.object({
+  count: zod
+    .number()
+    .min(1)
+    .max(simulateApiHarnessJobsExtendBodyCountMax)
+    .describe("How many new scenarios to add to the saved world."),
+  guidance: zod
+    .string()
+    .max(simulateApiHarnessJobsExtendBodyGuidanceMax)
+    .default(simulateApiHarnessJobsExtendBodyGuidanceDefault)
+    .describe(
+      "Optional natural-language steering for the added scenarios (e.g. 'calm first-time riders booking an airport pickup'). Existing scenarios are preserved.",
+    ),
+  client_request_id: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessJobsExtendBodyClientRequestIdMax)
+    .optional(),
+});
+
+export const SimulateApiHarnessAttemptsArtifactsArtifactManifestParams =
+  zod.object({
+    id: zod.string(),
+  });
+
+export const simulateApiHarnessAttemptsArtifactsArtifactManifestBodyEntriesItemArtifactIdRegExp =
+  new RegExp("^sha256:[0-9a-f]{64}$");
+export const simulateApiHarnessAttemptsArtifactsArtifactManifestBodyEntriesItemKindMax = 32;
+
+export const simulateApiHarnessAttemptsArtifactsArtifactManifestBodyEntriesItemSizeMin = 0;
+
+export const simulateApiHarnessAttemptsArtifactsArtifactManifestBodyEntriesItemScenarioKeyMax = 255;
+
+export const simulateApiHarnessAttemptsArtifactsArtifactManifestBodyDigestRegExp =
+  new RegExp("^sha256:[0-9a-f]{64}$");
+
+export const SimulateApiHarnessAttemptsArtifactsArtifactManifestBody =
+  zod.object({
+    schema_version: zod.enum(["futureagi.harness-manifest.v1"]),
+    job_id: zod.string().uuid(),
+    attempt_id: zod.string().uuid(),
+    attempt_number: zod.number().min(1),
+    entries: zod.array(
+      zod.object({
+        artifact_id: zod
+          .string()
+          .min(1)
+          .regex(
+            simulateApiHarnessAttemptsArtifactsArtifactManifestBodyEntriesItemArtifactIdRegExp,
+          ),
+        kind: zod
+          .string()
+          .min(1)
+          .max(
+            simulateApiHarnessAttemptsArtifactsArtifactManifestBodyEntriesItemKindMax,
+          ),
+        size: zod
+          .number()
+          .min(
+            simulateApiHarnessAttemptsArtifactsArtifactManifestBodyEntriesItemSizeMin,
+          ),
+        scenario_key: zod
+          .string()
+          .min(1)
+          .max(
+            simulateApiHarnessAttemptsArtifactsArtifactManifestBodyEntriesItemScenarioKeyMax,
+          )
+          .optional(),
+      }),
+    ),
+    complete: zod.boolean(),
+    digest: zod
+      .string()
+      .min(1)
+      .regex(
+        simulateApiHarnessAttemptsArtifactsArtifactManifestBodyDigestRegExp,
+      ),
+  });
+
+export const SimulateApiHarnessAttemptsArtifactsArtifactManifestResponse =
+  zod.object({
+    accepted: zod.boolean(),
+    duplicate: zod.boolean(),
+  });
+
+export const SimulateApiHarnessAttemptsArtifactUploadParams = zod.object({
+  id: zod.string(),
+  artifact_digest: zod.string(),
+});
+
+export const SimulateApiHarnessAttemptsArtifactUploadBody =
+  zod.instanceof(File);
+
+export const SimulateApiHarnessAttemptsArtifactUploadResponse = zod.object({
+  artifact_id: zod.string().min(1),
+  duplicate: zod.boolean(),
+});
+
+export const SimulateApiHarnessAttemptsEventsParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessAttemptsEventsBodyEventsItemEventIdRegExp =
+  new RegExp("^[A-Za-z0-9_-]{1,64}$");
+
+export const simulateApiHarnessAttemptsEventsBodyEventsItemStageMax = 64;
+
+export const simulateApiHarnessAttemptsEventsBodyEventsItemTypeMax = 64;
+
+export const simulateApiHarnessAttemptsEventsBodyEventsItemDigestRegExp =
+  new RegExp("^sha256:[0-9a-f]{64}$");
+
+export const SimulateApiHarnessAttemptsEventsBody = zod.object({
+  schema_version: zod.enum(["futureagi.harness-event.v1"]),
+  events: zod.array(
+    zod.object({
+      event_id: zod
+        .string()
+        .min(1)
+        .regex(simulateApiHarnessAttemptsEventsBodyEventsItemEventIdRegExp),
+      job_id: zod.string().uuid(),
+      attempt_id: zod.string().uuid(),
+      attempt_number: zod.number().min(1),
+      sequence: zod.number().min(1),
+      emitted_at: zod.string().datetime({ offset: true }),
+      stage: zod
+        .string()
+        .min(1)
+        .max(simulateApiHarnessAttemptsEventsBodyEventsItemStageMax),
+      type: zod
+        .string()
+        .min(1)
+        .max(simulateApiHarnessAttemptsEventsBodyEventsItemTypeMax),
+      payload: zod.object({}).passthrough(),
+      digest: zod
+        .string()
+        .min(1)
+        .regex(simulateApiHarnessAttemptsEventsBodyEventsItemDigestRegExp),
+    }),
+  ),
+});
+
+export const SimulateApiHarnessAttemptsEventsResponse = zod.object({
+  acked_through_sequence: zod.number(),
+  rejected: zod.array(
+    zod.object({
+      event_id: zod.string().min(1),
+      sequence: zod.number(),
+      code: zod.string().min(1),
+      message: zod.string().min(1),
+    }),
+  ),
+});
+
+/**
+ * The attempt capability authenticates the trusted ALK guest. Customer processes never
+receive that bearer and therefore cannot expose arbitrary sandbox ports themselves.
+ * @summary Mint a short-lived, no-header Daytona URL for one guest-selected HTTP port.
+ */
+export const SimulateApiHarnessAttemptsIngressParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessAttemptsIngressBodyPortMax = 65535;
+
+export const simulateApiHarnessAttemptsIngressBodyExpiresInSecondsDefault = 7200;
+export const simulateApiHarnessAttemptsIngressBodyExpiresInSecondsMin = 60;
+export const simulateApiHarnessAttemptsIngressBodyExpiresInSecondsMax = 86400;
+
+export const SimulateApiHarnessAttemptsIngressBody = zod.object({
+  port: zod.number().min(1).max(simulateApiHarnessAttemptsIngressBodyPortMax),
+  expires_in_seconds: zod
+    .number()
+    .min(simulateApiHarnessAttemptsIngressBodyExpiresInSecondsMin)
+    .max(simulateApiHarnessAttemptsIngressBodyExpiresInSecondsMax)
+    .default(simulateApiHarnessAttemptsIngressBodyExpiresInSecondsDefault),
+});
+
+export const simulateApiHarnessAttemptsIngressResponseExpiresInSecondsMin = 60;
+export const simulateApiHarnessAttemptsIngressResponseExpiresInSecondsMax = 86400;
+
+export const SimulateApiHarnessAttemptsIngressResponse = zod.object({
+  url: zod.string().url().min(1),
+  expires_in_seconds: zod
+    .number()
+    .min(simulateApiHarnessAttemptsIngressResponseExpiresInSecondsMin)
+    .max(simulateApiHarnessAttemptsIngressResponseExpiresInSecondsMax),
+});
+
+export const SimulateApiHarnessAttemptsResultsParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessAttemptsResultsBodyScenarioKeyMax = 255;
+
+export const simulateApiHarnessAttemptsResultsBodyScenarioAttemptMax = 2;
+
+export const simulateApiHarnessAttemptsResultsBodyWorldIndexMin = 0;
+export const simulateApiHarnessAttemptsResultsBodyWorldIndexMax = 7;
+
+export const simulateApiHarnessAttemptsResultsBodySubGoalsItemNameMax = 255;
+
+export const simulateApiHarnessAttemptsResultsBodyCallDurationMsMin = 0;
+
+export const simulateApiHarnessAttemptsResultsBodyCallTurnsMin = 0;
+
+export const simulateApiHarnessAttemptsResultsBodyCallTranscriptArtifactRegExp =
+  new RegExp("^sha256:[0-9a-f]{64}$");
+
+export const simulateApiHarnessAttemptsResultsBodyCallRecordingArtifactsItemRegExp =
+  new RegExp("^sha256:[0-9a-f]{64}$");
+export const simulateApiHarnessAttemptsResultsBodyCallRecordingArtifactsDefault =
+  [];
+export const simulateApiHarnessAttemptsResultsBodyCallStopReasonMax = 128;
+
+export const simulateApiHarnessAttemptsResultsBodyFailureStageMax = 64;
+
+export const simulateApiHarnessAttemptsResultsBodyFailureCodeMax = 128;
+
+export const simulateApiHarnessAttemptsResultsBodyFailureMessageMax = 2000;
+
+export const simulateApiHarnessAttemptsResultsBodyDigestRegExp = new RegExp(
+  "^sha256:[0-9a-f]{64}$",
+);
+
+export const SimulateApiHarnessAttemptsResultsBody = zod.object({
+  schema_version: zod.enum(["futureagi.harness-result.v1"]),
+  job_id: zod.string().uuid(),
+  attempt_id: zod.string().uuid(),
+  attempt_number: zod.number().min(1),
+  scenario_key: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessAttemptsResultsBodyScenarioKeyMax),
+  scenario_id: zod.string().uuid(),
+  scenario_attempt: zod
+    .number()
+    .min(1)
+    .max(simulateApiHarnessAttemptsResultsBodyScenarioAttemptMax),
+  world_index: zod
+    .number()
+    .min(simulateApiHarnessAttemptsResultsBodyWorldIndexMin)
+    .max(simulateApiHarnessAttemptsResultsBodyWorldIndexMax),
+  status: zod.enum(["passed", "failed", "errored", "skipped"]),
+  sub_goals: zod.array(
+    zod.object({
+      name: zod
+        .string()
+        .min(1)
+        .max(simulateApiHarnessAttemptsResultsBodySubGoalsItemNameMax),
+      held: zod.boolean(),
+      reason: zod.string().optional(),
+      judged: zod.boolean(),
+    }),
+  ),
+  evaluations: zod.object({}).passthrough(),
+  call: zod.object({
+    started_at: zod.string().datetime({ offset: true }),
+    ended_at: zod.string().datetime({ offset: true }),
+    duration_ms: zod
+      .number()
+      .min(simulateApiHarnessAttemptsResultsBodyCallDurationMsMin),
+    turns: zod.number().min(simulateApiHarnessAttemptsResultsBodyCallTurnsMin),
+    transcript_artifact: zod
+      .string()
+      .min(1)
+      .regex(simulateApiHarnessAttemptsResultsBodyCallTranscriptArtifactRegExp)
+      .optional(),
+    recording_artifacts: zod
+      .array(
+        zod
+          .string()
+          .min(1)
+          .regex(
+            simulateApiHarnessAttemptsResultsBodyCallRecordingArtifactsItemRegExp,
+          ),
+      )
+      .default(
+        simulateApiHarnessAttemptsResultsBodyCallRecordingArtifactsDefault,
+      ),
+    stop_reason: zod
+      .string()
+      .min(1)
+      .max(simulateApiHarnessAttemptsResultsBodyCallStopReasonMax)
+      .optional(),
+  }),
+  failure: zod.object({
+    domain: zod.enum([
+      "agent",
+      "simulator",
+      "environment",
+      "connectivity",
+      "infrastructure",
+      "grading",
+      "platform_sync",
+    ]),
+    stage: zod
+      .string()
+      .min(1)
+      .max(simulateApiHarnessAttemptsResultsBodyFailureStageMax),
+    code: zod
+      .string()
+      .min(1)
+      .max(simulateApiHarnessAttemptsResultsBodyFailureCodeMax),
+    message: zod
+      .string()
+      .min(1)
+      .max(simulateApiHarnessAttemptsResultsBodyFailureMessageMax),
+  }),
+  digest: zod
+    .string()
+    .min(1)
+    .regex(simulateApiHarnessAttemptsResultsBodyDigestRegExp),
+});
+
+export const SimulateApiHarnessAttemptsResultsResponse = zod.object({
+  accepted: zod.boolean(),
+  duplicate: zod.boolean(),
+});
+
+export const SimulateApiHarnessAttemptsScenariosParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessAttemptsScenariosBodyNameMax = 255;
+
+export const simulateApiHarnessAttemptsScenariosBodyPersonasItemScenarioKeyMax = 255;
+
+export const simulateApiHarnessAttemptsScenariosBodyPersonasItemNameMax = 255;
+
+export const simulateApiHarnessAttemptsScenariosBodyPersonasItemRoleMax = 255;
+
+export const simulateApiHarnessAttemptsScenariosBodyAgentNameMax = 255;
+
+export const simulateApiHarnessAttemptsScenariosBodyChosenEvalsItemMax = 2000;
+
+export const simulateApiHarnessAttemptsScenariosBodyScenarioKeysItemMax = 255;
+
+export const SimulateApiHarnessAttemptsScenariosBody = zod.object({
+  operation: zod.enum(["provision", "begin"]),
+  name: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessAttemptsScenariosBodyNameMax)
+    .optional(),
+  modality: zod.enum(["text", "voice"]).optional(),
+  description: zod.string().optional(),
+  personas: zod
+    .array(
+      zod.object({
+        scenario_key: zod
+          .string()
+          .min(1)
+          .max(
+            simulateApiHarnessAttemptsScenariosBodyPersonasItemScenarioKeyMax,
+          ),
+        name: zod
+          .string()
+          .max(simulateApiHarnessAttemptsScenariosBodyPersonasItemNameMax)
+          .optional(),
+        role: zod
+          .string()
+          .max(simulateApiHarnessAttemptsScenariosBodyPersonasItemRoleMax)
+          .optional(),
+        situation: zod.string().optional(),
+        outcome: zod.string().optional(),
+        persona: zod.object({}).passthrough().optional(),
+      }),
+    )
+    .optional(),
+  agent_definition_id: zod.string().uuid().optional(),
+  agent_name: zod
+    .string()
+    .max(simulateApiHarnessAttemptsScenariosBodyAgentNameMax)
+    .optional(),
+  agent_prompt: zod.string().optional(),
+  chosen_evals: zod
+    .array(
+      zod
+        .string()
+        .min(1)
+        .max(simulateApiHarnessAttemptsScenariosBodyChosenEvalsItemMax),
+    )
+    .optional(),
+  run_test_id: zod.string().uuid().optional(),
+  scenario_keys: zod
+    .array(
+      zod
+        .string()
+        .min(1)
+        .max(simulateApiHarnessAttemptsScenariosBodyScenarioKeysItemMax),
+    )
+    .optional(),
+});
+
+export const SimulateApiHarnessAttemptsScenariosResponse = zod.object({
+  result: zod.object({
+    run_test_id: zod.string().uuid().optional(),
+    test_execution_id: zod.string().uuid().optional(),
+    scenarios: zod.array(
+      zod.object({
+        scenario_key: zod.string().min(1),
+        scenario_id: zod.string().uuid(),
+        call_execution_id: zod.string().uuid().optional(),
+      }),
+    ),
+  }),
+});
 
 /**
  * Return call config for a given call execution.
@@ -42760,6 +44204,10 @@ export const SimulateTestExecutionsRerunCallsCreateParams = zod.object({
 });
 
 export const simulateTestExecutionsRerunCallsCreateBodySelectAllDefault = false;
+export const simulateTestExecutionsRerunCallsCreateBodyEnvironmentValuesMaxOne = 65536;
+
+export const simulateTestExecutionsRerunCallsCreateBodyEnvironmentValuesDefault =
+  {};
 
 export const SimulateTestExecutionsRerunCallsCreateBody = zod.object({
   rerun_type: zod
@@ -42773,6 +44221,17 @@ export const SimulateTestExecutionsRerunCallsCreateBody = zod.object({
     .boolean()
     .default(simulateTestExecutionsRerunCallsCreateBodySelectAllDefault)
     .describe("Whether to rerun all call executions in the test execution"),
+  environment_values: zod
+    .record(
+      zod.string(),
+      zod
+        .string()
+        .max(simulateTestExecutionsRerunCallsCreateBodyEnvironmentValuesMaxOne),
+    )
+    .default(simulateTestExecutionsRerunCallsCreateBodyEnvironmentValuesDefault)
+    .describe(
+      "Fresh job-scoped environment for a repository-backed harness rerun. Values are forwarded to the sandbox and are not persisted.",
+    ),
 });
 
 export const SimulateTestExecutionsRerunCallsCreateResponse = zod.object({
@@ -60941,7 +62400,10 @@ export const UsageAdminInvoiceGenerateCreateResponse = zod.object({
 });
 
 /**
- * Preview invoice for an org+period (no side effects).
+ * Creates no invoice and deducts no credits, but does backfill missing
+``UsageSummary`` rows for the usage period. Open to staff so the admin's
+read-only Generate Invoice page can show what would be billed.
+ * @summary Preview invoice for an org+period.
  */
 
 export const usageAdminInvoicePreviewCreateBodyPeriodRegExp = new RegExp(

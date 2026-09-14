@@ -553,6 +553,25 @@ import type {
   GroundTruthStatusResponseApi,
   GroundTruthUploadRequestApi,
   GroundTruthUploadResponseApi,
+  HarnessAcceptedResponseApi,
+  HarnessArtifactUploadResponseApi,
+  HarnessEventBatchApi,
+  HarnessEventBatchResponseApi,
+  HarnessIngressRequestApi,
+  HarnessIngressResponseApi,
+  HarnessJobActionApi,
+  HarnessJobAdjustmentApi,
+  HarnessJobCreateApi,
+  HarnessJobExtendApi,
+  HarnessJobReadApi,
+  HarnessManifestApi,
+  HarnessPreflightApi,
+  HarnessResultReceiptApi,
+  HarnessScenarioOperationApi,
+  HarnessScenarioOperationResponseApi,
+  HarnessSecretFileUploadResponseApi,
+  HarnessSecretValuesApi,
+  HarnessSourceUploadResponseApi,
   HealthCheckResponseApi,
   HeartbeatApi,
   HuggingFaceAddRowsRequestApi,
@@ -1042,6 +1061,8 @@ import type {
   SimulateApiAgentPromptOptimiserListParams,
   SimulateApiAlkSimulateCallExecutionsRecordingUploadBody,
   SimulateApiCallExecutionsListParams,
+  SimulateApiHarnessJobsSecretFileUploadBody,
+  SimulateApiHarnessJobsSourceUploadBody,
   SimulateApiLivekitWebhookCreateBody,
   SimulateApiPersonasFieldOptions200,
   SimulateApiPersonasFieldOptionsParams,
@@ -57625,6 +57646,23 @@ export const simulateApiAlkSimulateCallExecutionsRecordingUpload = async (
       simulateApiAlkSimulateCallExecutionsRecordingUploadBody.filename,
     );
   }
+  if (
+    simulateApiAlkSimulateCallExecutionsRecordingUploadBody?.sha256 !==
+    undefined
+  ) {
+    formData.append(
+      `sha256`,
+      simulateApiAlkSimulateCallExecutionsRecordingUploadBody.sha256,
+    );
+  }
+  if (
+    simulateApiAlkSimulateCallExecutionsRecordingUploadBody?.kind !== undefined
+  ) {
+    formData.append(
+      `kind`,
+      simulateApiAlkSimulateCallExecutionsRecordingUploadBody.kind,
+    );
+  }
 
   return apiMutator<simulateApiAlkSimulateCallExecutionsRecordingUploadResponse>(
     getSimulateApiAlkSimulateCallExecutionsRecordingUploadUrl(callExecutionId),
@@ -58058,6 +58096,827 @@ export const simulateApiCallExecutionsList = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessJobsListResponse200 = {
+  data: HarnessJobReadApi[];
+  status: 200;
+};
+
+export type simulateApiHarnessJobsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessJobsListResponseSuccess =
+  simulateApiHarnessJobsListResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessJobsListResponseError =
+  simulateApiHarnessJobsListResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessJobsListResponse =
+  | simulateApiHarnessJobsListResponseSuccess
+  | simulateApiHarnessJobsListResponseError;
+
+export const getSimulateApiHarnessJobsListUrl = () => {
+  return `/simulate/api/harness-jobs/`;
+};
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the backend
+selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
+``sandbox``). See ``simulate.services.harness_provider``.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const simulateApiHarnessJobsList = async (
+  options?: RequestInit,
+): Promise<simulateApiHarnessJobsListResponse> => {
+  return apiMutator<simulateApiHarnessJobsListResponse>(
+    getSimulateApiHarnessJobsListUrl(),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessJobsCreateResponse202 = {
+  data: HarnessJobReadApi;
+  status: 202;
+};
+
+export type simulateApiHarnessJobsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202>;
+};
+
+export type simulateApiHarnessJobsCreateResponseSuccess =
+  simulateApiHarnessJobsCreateResponse202 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessJobsCreateResponseError =
+  simulateApiHarnessJobsCreateResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessJobsCreateResponse =
+  | simulateApiHarnessJobsCreateResponseSuccess
+  | simulateApiHarnessJobsCreateResponseError;
+
+export const getSimulateApiHarnessJobsCreateUrl = () => {
+  return `/simulate/api/harness-jobs/`;
+};
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the backend
+selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
+``sandbox``). See ``simulate.services.harness_provider``.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const simulateApiHarnessJobsCreate = async (
+  harnessJobCreateApi: HarnessJobCreateApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessJobsCreateResponse> => {
+  return apiMutator<simulateApiHarnessJobsCreateResponse>(
+    getSimulateApiHarnessJobsCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessJobCreateApi),
+    },
+  );
+};
+
+export type simulateApiHarnessJobsHealthResponse200 = {
+  data: void;
+  status: 200;
+};
+
+export type simulateApiHarnessJobsHealthResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessJobsHealthResponseSuccess =
+  simulateApiHarnessJobsHealthResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessJobsHealthResponseError =
+  simulateApiHarnessJobsHealthResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessJobsHealthResponse =
+  | simulateApiHarnessJobsHealthResponseSuccess
+  | simulateApiHarnessJobsHealthResponseError;
+
+export const getSimulateApiHarnessJobsHealthUrl = () => {
+  return `/simulate/api/harness-jobs/health/`;
+};
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the backend
+selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
+``sandbox``). See ``simulate.services.harness_provider``.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const simulateApiHarnessJobsHealth = async (
+  options?: RequestInit,
+): Promise<simulateApiHarnessJobsHealthResponse> => {
+  return apiMutator<simulateApiHarnessJobsHealthResponse>(
+    getSimulateApiHarnessJobsHealthUrl(),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessJobsPreflightResponse201 = {
+  data: HarnessPreflightApi;
+  status: 201;
+};
+
+export type simulateApiHarnessJobsPreflightResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiHarnessJobsPreflightResponseSuccess =
+  simulateApiHarnessJobsPreflightResponse201 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessJobsPreflightResponseError =
+  simulateApiHarnessJobsPreflightResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessJobsPreflightResponse =
+  | simulateApiHarnessJobsPreflightResponseSuccess
+  | simulateApiHarnessJobsPreflightResponseError;
+
+export const getSimulateApiHarnessJobsPreflightUrl = () => {
+  return `/simulate/api/harness-jobs/preflight/`;
+};
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the backend
+selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
+``sandbox``). See ``simulate.services.harness_provider``.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const simulateApiHarnessJobsPreflight = async (
+  harnessPreflightApi: HarnessPreflightApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessJobsPreflightResponse> => {
+  return apiMutator<simulateApiHarnessJobsPreflightResponse>(
+    getSimulateApiHarnessJobsPreflightUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessPreflightApi),
+    },
+  );
+};
+
+export type simulateApiHarnessJobsSecretFileUploadResponse201 = {
+  data: HarnessSecretFileUploadResponseApi;
+  status: 201;
+};
+
+export type simulateApiHarnessJobsSecretFileUploadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiHarnessJobsSecretFileUploadResponseSuccess =
+  simulateApiHarnessJobsSecretFileUploadResponse201 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessJobsSecretFileUploadResponseError =
+  simulateApiHarnessJobsSecretFileUploadResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessJobsSecretFileUploadResponse =
+  | simulateApiHarnessJobsSecretFileUploadResponseSuccess
+  | simulateApiHarnessJobsSecretFileUploadResponseError;
+
+export const getSimulateApiHarnessJobsSecretFileUploadUrl = () => {
+  return `/simulate/api/harness-jobs/secret-files/`;
+};
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the backend
+selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
+``sandbox``). See ``simulate.services.harness_provider``.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const simulateApiHarnessJobsSecretFileUpload = async (
+  simulateApiHarnessJobsSecretFileUploadBody?: SimulateApiHarnessJobsSecretFileUploadBody,
+  options?: RequestInit,
+): Promise<simulateApiHarnessJobsSecretFileUploadResponse> => {
+  const formData = new FormData();
+  if (simulateApiHarnessJobsSecretFileUploadBody?.file !== undefined) {
+    formData.append(`file`, simulateApiHarnessJobsSecretFileUploadBody.file);
+  }
+  if (
+    simulateApiHarnessJobsSecretFileUploadBody?.environment_name !== undefined
+  ) {
+    formData.append(
+      `environment_name`,
+      simulateApiHarnessJobsSecretFileUploadBody.environment_name,
+    );
+  }
+
+  return apiMutator<simulateApiHarnessJobsSecretFileUploadResponse>(
+    getSimulateApiHarnessJobsSecretFileUploadUrl(),
+    {
+      ...options,
+      method: "POST",
+      body: formData,
+    },
+  );
+};
+
+export type simulateApiHarnessJobsSecretValuesResponse201 = {
+  data: HarnessSecretValuesApi;
+  status: 201;
+};
+
+export type simulateApiHarnessJobsSecretValuesResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiHarnessJobsSecretValuesResponseSuccess =
+  simulateApiHarnessJobsSecretValuesResponse201 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessJobsSecretValuesResponseError =
+  simulateApiHarnessJobsSecretValuesResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessJobsSecretValuesResponse =
+  | simulateApiHarnessJobsSecretValuesResponseSuccess
+  | simulateApiHarnessJobsSecretValuesResponseError;
+
+export const getSimulateApiHarnessJobsSecretValuesUrl = () => {
+  return `/simulate/api/harness-jobs/secret-values/`;
+};
+
+/**
+ * Values are intentionally separate from platform/model-provider settings. They are scoped
+to the submitting organization and only resolved inside the selected hosted job.
+ * @summary Persist uploaded agent values encrypted and return opaque hosted refs.
+ */
+export const simulateApiHarnessJobsSecretValues = async (
+  harnessSecretValuesApi: HarnessSecretValuesApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessJobsSecretValuesResponse> => {
+  return apiMutator<simulateApiHarnessJobsSecretValuesResponse>(
+    getSimulateApiHarnessJobsSecretValuesUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessSecretValuesApi),
+    },
+  );
+};
+
+export type simulateApiHarnessJobsSourceUploadResponse201 = {
+  data: HarnessSourceUploadResponseApi;
+  status: 201;
+};
+
+export type simulateApiHarnessJobsSourceUploadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiHarnessJobsSourceUploadResponseSuccess =
+  simulateApiHarnessJobsSourceUploadResponse201 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessJobsSourceUploadResponseError =
+  simulateApiHarnessJobsSourceUploadResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessJobsSourceUploadResponse =
+  | simulateApiHarnessJobsSourceUploadResponseSuccess
+  | simulateApiHarnessJobsSourceUploadResponseError;
+
+export const getSimulateApiHarnessJobsSourceUploadUrl = () => {
+  return `/simulate/api/harness-jobs/sources/`;
+};
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the backend
+selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
+``sandbox``). See ``simulate.services.harness_provider``.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const simulateApiHarnessJobsSourceUpload = async (
+  simulateApiHarnessJobsSourceUploadBody?: SimulateApiHarnessJobsSourceUploadBody,
+  options?: RequestInit,
+): Promise<simulateApiHarnessJobsSourceUploadResponse> => {
+  const formData = new FormData();
+  if (simulateApiHarnessJobsSourceUploadBody?.files !== undefined) {
+    formData.append(`files`, simulateApiHarnessJobsSourceUploadBody.files);
+  }
+  if (simulateApiHarnessJobsSourceUploadBody?.paths !== undefined) {
+    formData.append(`paths`, simulateApiHarnessJobsSourceUploadBody.paths);
+  }
+  if (simulateApiHarnessJobsSourceUploadBody?.name !== undefined) {
+    formData.append(`name`, simulateApiHarnessJobsSourceUploadBody.name);
+  }
+
+  return apiMutator<simulateApiHarnessJobsSourceUploadResponse>(
+    getSimulateApiHarnessJobsSourceUploadUrl(),
+    {
+      ...options,
+      method: "POST",
+      body: formData,
+    },
+  );
+};
+
+export type simulateApiHarnessJobsReadResponse200 = {
+  data: HarnessJobReadApi;
+  status: 200;
+};
+
+export type simulateApiHarnessJobsReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessJobsReadResponseSuccess =
+  simulateApiHarnessJobsReadResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessJobsReadResponseError =
+  simulateApiHarnessJobsReadResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessJobsReadResponse =
+  | simulateApiHarnessJobsReadResponseSuccess
+  | simulateApiHarnessJobsReadResponseError;
+
+export const getSimulateApiHarnessJobsReadUrl = (id: string) => {
+  return `/simulate/api/harness-jobs/${id}/`;
+};
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the backend
+selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
+``sandbox``). See ``simulate.services.harness_provider``.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const simulateApiHarnessJobsRead = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessJobsReadResponse> => {
+  return apiMutator<simulateApiHarnessJobsReadResponse>(
+    getSimulateApiHarnessJobsReadUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessJobsAdjustResponse201 = {
+  data: HarnessJobAdjustmentApi;
+  status: 201;
+};
+
+export type simulateApiHarnessJobsAdjustResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiHarnessJobsAdjustResponseSuccess =
+  simulateApiHarnessJobsAdjustResponse201 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessJobsAdjustResponseError =
+  simulateApiHarnessJobsAdjustResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessJobsAdjustResponse =
+  | simulateApiHarnessJobsAdjustResponseSuccess
+  | simulateApiHarnessJobsAdjustResponseError;
+
+export const getSimulateApiHarnessJobsAdjustUrl = (id: string) => {
+  return `/simulate/api/harness-jobs/${id}/adjust/`;
+};
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the backend
+selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
+``sandbox``). See ``simulate.services.harness_provider``.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const simulateApiHarnessJobsAdjust = async (
+  id: string,
+  harnessJobAdjustmentApi: HarnessJobAdjustmentApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessJobsAdjustResponse> => {
+  return apiMutator<simulateApiHarnessJobsAdjustResponse>(
+    getSimulateApiHarnessJobsAdjustUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessJobAdjustmentApi),
+    },
+  );
+};
+
+export type simulateApiHarnessJobsCancelResponse200 = {
+  data: HarnessJobReadApi;
+  status: 200;
+};
+
+export type simulateApiHarnessJobsCancelResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessJobsCancelResponseSuccess =
+  simulateApiHarnessJobsCancelResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessJobsCancelResponseError =
+  simulateApiHarnessJobsCancelResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessJobsCancelResponse =
+  | simulateApiHarnessJobsCancelResponseSuccess
+  | simulateApiHarnessJobsCancelResponseError;
+
+export const getSimulateApiHarnessJobsCancelUrl = (id: string) => {
+  return `/simulate/api/harness-jobs/${id}/cancel/`;
+};
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the backend
+selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
+``sandbox``). See ``simulate.services.harness_provider``.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const simulateApiHarnessJobsCancel = async (
+  id: string,
+  harnessJobActionApi: HarnessJobActionApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessJobsCancelResponse> => {
+  return apiMutator<simulateApiHarnessJobsCancelResponse>(
+    getSimulateApiHarnessJobsCancelUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessJobActionApi),
+    },
+  );
+};
+
+export type simulateApiHarnessJobsExtendResponse201 = {
+  data: HarnessJobExtendApi;
+  status: 201;
+};
+
+export type simulateApiHarnessJobsExtendResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiHarnessJobsExtendResponseSuccess =
+  simulateApiHarnessJobsExtendResponse201 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessJobsExtendResponseError =
+  simulateApiHarnessJobsExtendResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessJobsExtendResponse =
+  | simulateApiHarnessJobsExtendResponseSuccess
+  | simulateApiHarnessJobsExtendResponseError;
+
+export const getSimulateApiHarnessJobsExtendUrl = (id: string) => {
+  return `/simulate/api/harness-jobs/${id}/extend/`;
+};
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the backend
+selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
+``sandbox``). See ``simulate.services.harness_provider``.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const simulateApiHarnessJobsExtend = async (
+  id: string,
+  harnessJobExtendApi: HarnessJobExtendApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessJobsExtendResponse> => {
+  return apiMutator<simulateApiHarnessJobsExtendResponse>(
+    getSimulateApiHarnessJobsExtendUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessJobExtendApi),
+    },
+  );
+};
+
+export type simulateApiHarnessAttemptsArtifactsArtifactManifestResponse200 = {
+  data: HarnessAcceptedResponseApi;
+  status: 200;
+};
+
+export type simulateApiHarnessAttemptsArtifactsArtifactManifestResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200>;
+  };
+
+export type simulateApiHarnessAttemptsArtifactsArtifactManifestResponseSuccess =
+  simulateApiHarnessAttemptsArtifactsArtifactManifestResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessAttemptsArtifactsArtifactManifestResponseError =
+  simulateApiHarnessAttemptsArtifactsArtifactManifestResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessAttemptsArtifactsArtifactManifestResponse =
+  | simulateApiHarnessAttemptsArtifactsArtifactManifestResponseSuccess
+  | simulateApiHarnessAttemptsArtifactsArtifactManifestResponseError;
+
+export const getSimulateApiHarnessAttemptsArtifactsArtifactManifestUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness/attempts/${id}/artifacts/manifest/`;
+};
+
+export const simulateApiHarnessAttemptsArtifactsArtifactManifest = async (
+  id: string,
+  harnessManifestApi: HarnessManifestApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessAttemptsArtifactsArtifactManifestResponse> => {
+  return apiMutator<simulateApiHarnessAttemptsArtifactsArtifactManifestResponse>(
+    getSimulateApiHarnessAttemptsArtifactsArtifactManifestUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessManifestApi),
+    },
+  );
+};
+
+export type simulateApiHarnessAttemptsArtifactUploadResponse200 = {
+  data: HarnessArtifactUploadResponseApi;
+  status: 200;
+};
+
+export type simulateApiHarnessAttemptsArtifactUploadResponse201 = {
+  data: HarnessArtifactUploadResponseApi;
+  status: 201;
+};
+
+export type simulateApiHarnessAttemptsArtifactUploadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 201>;
+};
+
+export type simulateApiHarnessAttemptsArtifactUploadResponseSuccess = (
+  | simulateApiHarnessAttemptsArtifactUploadResponse200
+  | simulateApiHarnessAttemptsArtifactUploadResponse201
+) & {
+  headers: Headers;
+};
+export type simulateApiHarnessAttemptsArtifactUploadResponseError =
+  simulateApiHarnessAttemptsArtifactUploadResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessAttemptsArtifactUploadResponse =
+  | simulateApiHarnessAttemptsArtifactUploadResponseSuccess
+  | simulateApiHarnessAttemptsArtifactUploadResponseError;
+
+export const getSimulateApiHarnessAttemptsArtifactUploadUrl = (
+  id: string,
+  artifactDigest: string,
+) => {
+  return `/simulate/api/harness/attempts/${id}/artifacts/${artifactDigest}/`;
+};
+
+export const simulateApiHarnessAttemptsArtifactUpload = async (
+  id: string,
+  artifactDigest: string,
+  simulateApiHarnessAttemptsArtifactUploadBody: Blob,
+  options?: RequestInit,
+): Promise<simulateApiHarnessAttemptsArtifactUploadResponse> => {
+  return apiMutator<simulateApiHarnessAttemptsArtifactUploadResponse>(
+    getSimulateApiHarnessAttemptsArtifactUploadUrl(id, artifactDigest),
+    {
+      ...options,
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(simulateApiHarnessAttemptsArtifactUploadBody),
+    },
+  );
+};
+
+export type simulateApiHarnessAttemptsEventsResponse200 = {
+  data: HarnessEventBatchResponseApi;
+  status: 200;
+};
+
+export type simulateApiHarnessAttemptsEventsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessAttemptsEventsResponseSuccess =
+  simulateApiHarnessAttemptsEventsResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessAttemptsEventsResponseError =
+  simulateApiHarnessAttemptsEventsResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessAttemptsEventsResponse =
+  | simulateApiHarnessAttemptsEventsResponseSuccess
+  | simulateApiHarnessAttemptsEventsResponseError;
+
+export const getSimulateApiHarnessAttemptsEventsUrl = (id: string) => {
+  return `/simulate/api/harness/attempts/${id}/events/`;
+};
+
+export const simulateApiHarnessAttemptsEvents = async (
+  id: string,
+  harnessEventBatchApi: HarnessEventBatchApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessAttemptsEventsResponse> => {
+  return apiMutator<simulateApiHarnessAttemptsEventsResponse>(
+    getSimulateApiHarnessAttemptsEventsUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessEventBatchApi),
+    },
+  );
+};
+
+export type simulateApiHarnessAttemptsIngressResponse200 = {
+  data: HarnessIngressResponseApi;
+  status: 200;
+};
+
+export type simulateApiHarnessAttemptsIngressResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessAttemptsIngressResponseSuccess =
+  simulateApiHarnessAttemptsIngressResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessAttemptsIngressResponseError =
+  simulateApiHarnessAttemptsIngressResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessAttemptsIngressResponse =
+  | simulateApiHarnessAttemptsIngressResponseSuccess
+  | simulateApiHarnessAttemptsIngressResponseError;
+
+export const getSimulateApiHarnessAttemptsIngressUrl = (id: string) => {
+  return `/simulate/api/harness/attempts/${id}/ingress/`;
+};
+
+/**
+ * The attempt capability authenticates the trusted ALK guest. Customer processes never
+receive that bearer and therefore cannot expose arbitrary sandbox ports themselves.
+ * @summary Mint a short-lived, no-header Daytona URL for one guest-selected HTTP port.
+ */
+export const simulateApiHarnessAttemptsIngress = async (
+  id: string,
+  harnessIngressRequestApi: HarnessIngressRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessAttemptsIngressResponse> => {
+  return apiMutator<simulateApiHarnessAttemptsIngressResponse>(
+    getSimulateApiHarnessAttemptsIngressUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessIngressRequestApi),
+    },
+  );
+};
+
+export type simulateApiHarnessAttemptsResultsResponse200 = {
+  data: HarnessAcceptedResponseApi;
+  status: 200;
+};
+
+export type simulateApiHarnessAttemptsResultsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessAttemptsResultsResponseSuccess =
+  simulateApiHarnessAttemptsResultsResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessAttemptsResultsResponseError =
+  simulateApiHarnessAttemptsResultsResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessAttemptsResultsResponse =
+  | simulateApiHarnessAttemptsResultsResponseSuccess
+  | simulateApiHarnessAttemptsResultsResponseError;
+
+export const getSimulateApiHarnessAttemptsResultsUrl = (id: string) => {
+  return `/simulate/api/harness/attempts/${id}/results/`;
+};
+
+export const simulateApiHarnessAttemptsResults = async (
+  id: string,
+  harnessResultReceiptApi: HarnessResultReceiptApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessAttemptsResultsResponse> => {
+  return apiMutator<simulateApiHarnessAttemptsResultsResponse>(
+    getSimulateApiHarnessAttemptsResultsUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessResultReceiptApi),
+    },
+  );
+};
+
+export type simulateApiHarnessAttemptsScenariosResponse200 = {
+  data: HarnessScenarioOperationResponseApi;
+  status: 200;
+};
+
+export type simulateApiHarnessAttemptsScenariosResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessAttemptsScenariosResponseSuccess =
+  simulateApiHarnessAttemptsScenariosResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessAttemptsScenariosResponseError =
+  simulateApiHarnessAttemptsScenariosResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessAttemptsScenariosResponse =
+  | simulateApiHarnessAttemptsScenariosResponseSuccess
+  | simulateApiHarnessAttemptsScenariosResponseError;
+
+export const getSimulateApiHarnessAttemptsScenariosUrl = (id: string) => {
+  return `/simulate/api/harness/attempts/${id}/scenarios/`;
+};
+
+export const simulateApiHarnessAttemptsScenarios = async (
+  id: string,
+  harnessScenarioOperationApi: HarnessScenarioOperationApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessAttemptsScenariosResponse> => {
+  return apiMutator<simulateApiHarnessAttemptsScenariosResponse>(
+    getSimulateApiHarnessAttemptsScenariosUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessScenarioOperationApi),
     },
   );
 };
@@ -64090,6 +64949,11 @@ export type simulateTestExecutionsRerunCallsCreateResponse200 = {
   status: 200;
 };
 
+export type simulateTestExecutionsRerunCallsCreateResponse202 = {
+  data: RerunCallsResponseApi;
+  status: 202;
+};
+
 export type simulateTestExecutionsRerunCallsCreateResponse400 = {
   data: ErrorResponseApi;
   status: 400;
@@ -64107,13 +64971,15 @@ export type simulateTestExecutionsRerunCallsCreateResponse500 = {
 
 export type simulateTestExecutionsRerunCallsCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 202 | 400 | 404 | 500>;
 };
 
-export type simulateTestExecutionsRerunCallsCreateResponseSuccess =
-  simulateTestExecutionsRerunCallsCreateResponse200 & {
-    headers: Headers;
-  };
+export type simulateTestExecutionsRerunCallsCreateResponseSuccess = (
+  | simulateTestExecutionsRerunCallsCreateResponse200
+  | simulateTestExecutionsRerunCallsCreateResponse202
+) & {
+  headers: Headers;
+};
 export type simulateTestExecutionsRerunCallsCreateResponseError = (
   | simulateTestExecutionsRerunCallsCreateResponse400
   | simulateTestExecutionsRerunCallsCreateResponse404
@@ -78219,7 +79085,10 @@ export const getUsageAdminInvoicePreviewCreateUrl = () => {
 };
 
 /**
- * Preview invoice for an org+period (no side effects).
+ * Creates no invoice and deducts no credits, but does backfill missing
+``UsageSummary`` rows for the usage period. Open to staff so the admin's
+read-only Generate Invoice page can show what would be billed.
+ * @summary Preview invoice for an org+period.
  */
 export const usageAdminInvoicePreviewCreate = async (
   adminInvoiceRequestApi: AdminInvoiceRequestApi,

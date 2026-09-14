@@ -91,7 +91,6 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
         return bool(
             end - start > timedelta(hours=1)
             and not self._bounded_anchor_probe
-            and self._bounded_sampling_rate is None
             and not self.sort_params
             and not self.supports_filter_candidate_seed_page()
         )
@@ -146,7 +145,8 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
                     value_types := cfg.get(
                         "attribute_value_types", cfg.get("attributeValueTypes")
                     )
-                ) is None
+                )
+                is None
                 or (
                     isinstance(
                         values := cfg.get("filter_value", cfg.get("filterValue")), list
@@ -163,6 +163,13 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
         # Thin text/time probes stay daily; other equality/IN witnesses reuse
         # compiler-proven raw values and other supported leaves keep presence.
         start, end = self._bounded_request_window
+        if (
+            self._bounded_sampling_rate is not None
+            and not self._filter_population_plans()
+        ):
+            # The hourly raw population is a complete superset of the sampled
+            # task population without loading rows through FINAL.
+            return end - start
         return (
             end - start
             if self._filter_population_plans()
@@ -190,14 +197,20 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
         # Keep every cheap necessary conjunct: using just one common value
         # repeatedly visits hours with no joint match when results are sparse.
         # Compile together so each predicate retains distinct parameter names.
-        plans, _ = partition_span_filter_plans([
-            item for item, cfg in raw_leaves
-            if (cfg.get("filter_type") or cfg.get("filterType")) in {"number", "boolean"}
-            # Never extract one branch from a picker OR across physical Maps.
-            and cfg.get("attribute_value_types", cfg.get("attributeValueTypes")) is None
-        ])
+        plans, _ = partition_span_filter_plans(
+            [
+                item
+                for item, cfg in raw_leaves
+                if (cfg.get("filter_type") or cfg.get("filterType"))
+                in {"number", "boolean"}
+                # Never extract one branch from a picker OR across physical Maps.
+                and cfg.get("attribute_value_types", cfg.get("attributeValueTypes"))
+                is None
+            ]
+        )
         return [
-            plan for plan in plans
+            plan
+            for plan in plans
             if not plan.exclude_group_matches
             and self._filter_population_plan_predicate(plan, ordinary_seed=True)
         ]
@@ -209,9 +222,12 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
         probes retain daily widths; witness-filtered probes eventually widen
         to the remaining request. Neither policy truncates older history.
         """
-        if not self._filter_population_plans():
-            return None
+        plans = self._filter_population_plans()
         start, end = self._bounded_request_window
+        if self._bounded_sampling_rate is not None and not plans:
+            return (end - start,)
+        if not plans:
+            return None
         width = end - start
         if self._uses_thin_text_population_discovery():
             return (min(width, timedelta(days=1)),)
@@ -235,19 +251,81 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
         if not self.supports_filter_population_time_discovery():
             raise ValueError("span population discovery is unavailable")
         population_plans = self._filter_population_plans()
+        if self._bounded_sampling_rate == 0:
+            return (
+                "SELECT CAST(NULL AS Nullable(Int64)) AS newest_raw_time_us",
+                dict(self.params),
+            )
+        if self._bounded_sampling_rate is not None and not population_plans:
+            # Sampling needs trace/span IDs, which turns a year-scale max-time
+            # aggregate into a wide raw scan on dense projects. An unsampled
+            # populated hour is a conservative superset: the unchanged seed
+            # applies the exact hash and latest-state classifier before use.
+            # Grouping in the deployed hourly projection shape keeps this
+            # timestamp-only proof cheap without permitting a false absence.
+            population_hour_start = slice_start.replace(
+                minute=0, second=0, microsecond=0
+            )
+            population_hour_end = slice_end.replace(minute=0, second=0, microsecond=0)
+            if population_hour_end < slice_end:
+                population_hour_end += timedelta(hours=1)
+            params = {
+                **self.params,
+                "population_start_us": _unix_microseconds(slice_start),
+                "population_hour_start_us": _unix_microseconds(population_hour_start),
+                "population_hour_end_us": _unix_microseconds(population_hour_end),
+            }
+            return (
+                f"""
+                SELECT if(
+                    newest_hour_us IS NULL,
+                    CAST(NULL AS Nullable(Int64)),
+                    greatest(newest_hour_us, %(population_start_us)s)
+                ) AS newest_raw_time_us
+                FROM (
+                    SELECT maxOrNull(
+                        toUnixTimestamp64Micro(
+                            toDateTime64(population_hour, 6, 'UTC')
+                        )
+                    ) AS newest_hour_us
+                    FROM (
+                        SELECT
+                            project_id,
+                            toStartOfHour(start_time) AS population_hour,
+                            count() AS population_count
+                        FROM {self.TABLE}
+                        PREWHERE {self.project_filter_sql()}
+                        WHERE toStartOfHour(start_time) >=
+                            fromUnixTimestamp64Micro(%(population_hour_start_us)s)
+                          AND toStartOfHour(start_time) <
+                            fromUnixTimestamp64Micro(%(population_hour_end_us)s)
+                        GROUP BY project_id, population_hour
+                    )
+                )
+                """,
+                params,
+            )
         if self._uses_thin_text_population_discovery():
             # NULL proves only this adjacent day. Every raw hit replays its
             # complete physical hour; stale/missing values only add work.
             population_plans = []
         elif witnesses := self._mixed_population_plans():
             population_plans = witnesses
-        key_scope = (
-            "WHERE "
-            + " AND ".join(
-                f"({self._filter_population_plan_predicate(plan, ordinary_seed=True)})"
-                for plan in population_plans
+        population_predicates = [
+            f"({self._filter_population_plan_predicate(plan, ordinary_seed=True)})"
+            for plan in population_plans
+        ]
+        if self._bounded_sampling_rate is not None:
+            # Sampling is stable across physical versions, so stale versions
+            # can only add conservative timestamp witnesses.
+            population_predicates.append(
+                "modulo(cityHash64(%(bounded_sampling_salt)s, "
+                "toString(project_id), toString(trace_id), toString(id)), 100) "
+                "< %(bounded_sampling_rate)s"
             )
-            if population_plans
+        key_scope = (
+            "WHERE " + " AND ".join(population_predicates)
+            if population_predicates
             else ""
         )
         params = {
@@ -255,6 +333,11 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
             "population_start_us": _unix_microseconds(slice_start),
             "population_end_us": _unix_microseconds(slice_end),
         }
+        if self._bounded_sampling_rate is not None:
+            params.update(
+                bounded_sampling_salt=str(self._bounded_sampling_salt),
+                bounded_sampling_rate=float(self._bounded_sampling_rate),
+            )
         for plan in population_plans:
             params.update(
                 {

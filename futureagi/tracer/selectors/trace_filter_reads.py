@@ -340,6 +340,7 @@ def read_bounded_filter_page(
     continuation_before_start_time: datetime | None = None,
     continuation_before_id: Any = None,
     bounded_continuation: bool = False,
+    exact_population_time_discovery: bool = False,
     carry_continuation_slice_width: bool = False,
     root_time_discovery: bool = False,
     read_settings: dict[str, Any] | None = None,
@@ -389,6 +390,8 @@ def read_bounded_filter_page(
     empty seed. This reads only project/time columns, retains all versions and
     tombstones, and does not depend on per-statement time/scan abort caps. It
     shares the same conservative interval/checkpoint validation below.
+    ``exact_population_time_discovery`` enables the same proof for a fully
+    buffered page-zero caller that rejects incomplete results.
     """
 
     if page_number < 0 or page_size <= 0 or deadline_ms <= 0:
@@ -457,6 +460,15 @@ def read_bounded_filter_page(
     if bounded_continuation and (not include_incomplete_rows or page_number != 0):
         raise ValueError(
             "bounded continuation requires page-zero classified partial rows"
+        )
+    if exact_population_time_discovery and (
+        page_number != 0
+        or cursor_start_time is not None
+        or continuation_slice_end is not None
+        or include_incomplete_rows
+    ):
+        raise ValueError(
+            "exact population discovery requires a fully buffered page-zero read"
         )
     if carry_continuation_slice_width and not bounded_continuation:
         raise ValueError("continuation slice width carry requires bounded continuation")
@@ -1416,7 +1428,7 @@ def read_bounded_filter_page(
         builder, "build_filter_population_time_discovery_query", None
     )
     population_discovery = bool(
-        bounded_continuation
+        (bounded_continuation or exact_population_time_discovery)
         and key_field == "id"
         and not anchor_probe_only
         and not defer_classification
@@ -2173,7 +2185,10 @@ def read_bounded_filter_page(
         a 10k+1 rejection sentinel.
         """
 
-        nonlocal initial_identity_flush_pending, adaptive_identity_start, empty_prefix_seed
+        nonlocal \
+            initial_identity_flush_pending, \
+            adaptive_identity_start, \
+            empty_prefix_seed
 
         if (
             not identity_only_classification

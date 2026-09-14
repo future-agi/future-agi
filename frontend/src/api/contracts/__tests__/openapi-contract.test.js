@@ -89,6 +89,44 @@ describe("OpenAPI runtime contract", () => {
     );
   });
 
+  it("accepts provider-ID harness requests without a source upload", () => {
+    const payload = {
+      schema_version: "futureagi.harness-job.v1",
+      agent: {
+        connector: "retell",
+        mode: "connect_only",
+        config: { agent_id: "agent_existing" },
+        secret_refs: {
+          RETELL_API_KEY: {
+            manager: "platform-vault",
+            key: "pending-retell_api_key",
+            version: "1",
+            purpose: "target_provider",
+          },
+        },
+      },
+      artifacts: { level: "full" },
+      credential_values: { RETELL_API_KEY: "key_for_preflight_only" },
+    };
+
+    expect(
+      validateContractedRequestConfig({
+        url: "/simulate/api/harness-jobs/preflight/",
+        method: "post",
+        data: payload,
+      }),
+    ).toMatchObject({ ok: true });
+
+    const { credential_values: _credentialValues, ...createPayload } = payload;
+    expect(
+      validateContractedRequestConfig({
+        url: "/simulate/api/harness-jobs/",
+        method: "post",
+        data: createPayload,
+      }),
+    ).toMatchObject({ ok: true });
+  });
+
   it("keeps generated alert-log mutation request bodies documented", () => {
     expect(
       findOpenApiEndpoint("/tracer/user-alert-logs/", "post").contract

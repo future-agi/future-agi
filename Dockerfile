@@ -4,6 +4,14 @@ ENV NLTK_DATA=/usr/local/share/nltk_data
 
 COPY futureagi/ .
 
+# The application source can advance independently of the shared base image.
+# Keep small import-critical additions explicit here so every service built
+# from this Dockerfile (backend and queue workers alike) has the same runtime.
+RUN pip install --no-cache-dir \
+    "daytona==0.207.0" \
+    "httpx-ws==0.7.2" \
+    "urllib3>=2.1"
+
 # The gRPC import path loads the EE trace scanner, which requires these corpora.
 # Pin both the nltk_data revision and archive checksums for reproducible images.
 RUN python bin/install_nltk_data.py

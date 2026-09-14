@@ -16,9 +16,37 @@ Options:
   --release NAME           Helm release name used for rendering
   --namespace NAME         Helm namespace used for rendering
   --runner-tag TAG         Override the runner image tag for rendering (latest is rejected)
+  --runner-env-file PATH   KEY=VALUE file holding the runner worker's EFFECTIVE
+                           environment, e.g. `docker exec <runner> env > file` or
+                           the rendered Secret. Not a shared .env: other services
+                           may legitimately carry keys the runner must not see.
+                           Repeat for layered files; later files win. Names are
+                           checked, values are never printed.
+  --voice-transports LIST  Comma-separated hosted voice transports the deployment
+                           must serve: sip_outbound (we dial the agent),
+                           sip_inbound_retell (the Retell agent dials our leased
+                           number). Adds that transport's required settings.
+  --env-only               Run only the runner environment contract check; skips
+                           the Compose and Helm renders (no docker/helm needed).
   -h, --help               Show this help
 
 Environment overrides use the SIMULATION_RUNNER_* prefix with the same names.
+
+Runner environment contract (what the hosted voice runner refuses without).
+Every problem is reported together; a value of only whitespace counts as missing.
+  always            LIVEKIT_URL LIVEKIT_API_KEY LIVEKIT_API_SECRET INTERNAL_API_SECRET
+                    and ALK_RUNNER_API_URL (or FI_BASE_URL) for result ingestion
+  sip_outbound      LIVEKIT_OUTBOUND_TRUNK_ID PSTN_CALLER_NUMBER (E.164)
+  sip_inbound_retell ALK_SIM_SLOT_LEASE_SCRIPT SIM_SLOT_LEASE_STORE
+  must be unset     FI_API_KEY FI_SECRET_KEY (the SDK submitter prefers them over
+                    the internal bearer and ingestion then authenticates the wrong
+                    org), HOSTED_RUNNER_MAX_DURATION_SECONDS (retired)
+  optional          HOSTED_RUNNER_PARENT_SLACK_SECONDS (integer, default 600),
+                    HOSTED_RUNNER_LEASED_ROOM_REUSE (default false; turn on only
+                    once a reuse-capable runner kit is deployed). Assigned-but-
+                    empty is refused: int("") kills the worker at import.
+  glued lines       a value containing one of these names followed by "=" is two
+                    assignments joined by an append with no trailing newline.
 USAGE
 }
 
@@ -39,6 +67,12 @@ fi
 helm_release=${SIMULATION_RUNNER_HELM_RELEASE:-simulation-runner-preflight}
 helm_namespace=${SIMULATION_RUNNER_HELM_NAMESPACE:-default}
 runner_tag=${SIMULATION_RUNNER_IMAGE_TAG:-preflight-only}
+runner_env_files=()
+if [[ -n "${SIMULATION_RUNNER_RUNNER_ENV_FILE:-}" ]]; then
+    runner_env_files=("$SIMULATION_RUNNER_RUNNER_ENV_FILE")
+fi
+voice_transports=${SIMULATION_RUNNER_VOICE_TRANSPORTS:-}
+env_only=false
 
 while (($#)); do
     case "$1" in
@@ -75,6 +109,21 @@ while (($#)); do
             runner_tag=$2
             shift 2
             ;;
+        --runner-env-file)
+            (($# >= 2)) || die "--runner-env-file requires a path"
+            [[ -n "$2" ]] || die "--runner-env-file requires a non-empty path"
+            runner_env_files+=("$2")
+            shift 2
+            ;;
+        --voice-transports)
+            (($# >= 2)) || die "--voice-transports requires a list"
+            voice_transports=$2
+            shift 2
+            ;;
+        --env-only)
+            env_only=true
+            shift
+            ;;
         -h|--help)
             usage
             exit 0
@@ -98,10 +147,221 @@ if ((${#compose_files[@]} == 0)); then
 fi
 
 [[ -d "$repo_root" ]] || die "repository root does not exist: $repo_root"
-[[ -d "$deployment_root" ]] || die "deployment root does not exist: $deployment_root"
-for compose_file in "${compose_files[@]}"; do
-    [[ -f "$compose_file" ]] || die "Compose file does not exist: $compose_file"
-done
+if ((${#runner_env_files[@]} == 0)); then
+    [[ "$env_only" != true ]] || die "--env-only requires at least one --runner-env-file"
+    [[ -z "$voice_transports" ]] || \
+        die "--voice-transports names a contract to check but no --runner-env-file" \
+            "was given"
+fi
+if [[ "$env_only" != true ]]; then
+    [[ -d "$deployment_root" ]] || die "deployment root does not exist: $deployment_root"
+    for compose_file in "${compose_files[@]}"; do
+        [[ -f "$compose_file" ]] || die "Compose file does not exist: $compose_file"
+    done
+fi
+
+# ---- Runner environment contract -------------------------------------------
+# The hosted voice runner reads these from its process environment and refuses
+# one run per missing name. Check them here, once, before anything is rolled
+# out, and report every problem together. Only names are ever printed; values
+# stay in this process. Plain file scans, no bash-4 features: this must run
+# from a stock macOS bash 3.2 too.
+
+contract_failures=()
+
+contract_fail() {
+    contract_failures+=("$*")
+}
+
+runner_env_file_exists() {
+    local file
+    for file in "${runner_env_files[@]}"; do
+        [[ -f "$file" ]] || die "runner env file does not exist: $file"
+    done
+}
+
+strip_ws() {
+    local value=$1
+    value=${value#"${value%%[![:space:]]*}"}
+    value=${value%"${value##*[![:space:]]}"}
+    printf '%s' "$value"
+}
+
+# Last assignment across the files wins, matching dotenv/Compose semantics.
+# Whitespace around the value and then surrounding quotes are dropped the way
+# the builder's strip does, so a value of spaces counts as missing here as it
+# does there. The raw form is the value verbatim: the input is the runner's
+# effective environment, which the builder hands to the kit untouched, and the
+# kit's E.164 rule must hold on exactly that.
+runner_env_value() {
+    local name=$1
+    local raw=${2:-}
+    local file line value found=""
+    for file in "${runner_env_files[@]}"; do
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            line=${line%$'\r'}
+            [[ "$line" == "$name="* ]] || continue
+            value=${line#*=}
+            if [[ -z "$raw" ]]; then
+                value=$(strip_ws "$value")
+                if [[ "$value" =~ ^\"(.*)\"$ || "$value" =~ ^\'(.*)\'$ ]]; then
+                    value=$(strip_ws "${BASH_REMATCH[1]}")
+                fi
+            fi
+            found=$value
+        done <"$file"
+    done
+    printf '%s' "$found"
+}
+
+runner_env_set() {
+    [[ -n "$(runner_env_value "$1")" ]]
+}
+
+# True when any file carries a NAME= line, even an empty one. An optional
+# setting that is assigned but empty is not "absent": int("") kills the worker
+# at import and an empty boolean silently reads as false.
+runner_env_assigned() {
+    local name=$1
+    local file
+    for file in "${runner_env_files[@]}"; do
+        grep -q "^$name=" "$file" && return 0
+    done
+    return 1
+}
+
+# A value that contains one of this contract's exact names followed by "=" is
+# two lines glued together by an append onto a file with no trailing newline;
+# both settings are then wrong and the failure surfaces one run later. Exact
+# names only: a prefix pattern would refuse a URL query like ?LIVEKIT_URL_HINT=.
+contract_names='LIVEKIT_URL|LIVEKIT_API_KEY|LIVEKIT_API_SECRET|LIVEKIT_OUTBOUND_TRUNK_ID'
+contract_names+='|INTERNAL_API_SECRET|ALK_RUNNER_API_URL|FI_BASE_URL|PSTN_CALLER_NUMBER'
+contract_names+='|ALK_SIM_SLOT_LEASE_SCRIPT|SIM_SLOT_LEASE_STORE'
+contract_names+='|HOSTED_RUNNER_PARENT_SLACK_SECONDS|HOSTED_RUNNER_LEASED_ROOM_REUSE'
+contract_names+='|HOSTED_RUNNER_MAX_DURATION_SECONDS|FI_API_KEY|FI_SECRET_KEY'
+glued_pattern="($contract_names)="
+
+check_runner_env_not_glued() {
+    local file line value lineno
+    for file in "${runner_env_files[@]}"; do
+        lineno=0
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            lineno=$((lineno + 1))
+            line=${line%$'\r'}
+            [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] || continue
+            value=${line#*=}
+            if [[ "$value" =~ $glued_pattern ]]; then
+                contract_fail "$file line $lineno looks like two assignments glued on one line" \
+                    "(missing newline before the next KEY=)"
+            fi
+        done <"$file"
+    done
+}
+
+check_runner_env_present() {
+    local scope=$1
+    shift
+    local missing=()
+    local name
+    for name in "$@"; do
+        runner_env_set "$name" || missing+=("$name")
+    done
+    ((${#missing[@]} == 0)) || \
+        contract_fail "missing for $scope: ${missing[*]}"
+}
+
+check_runner_env_absent() {
+    local reason=$1
+    shift
+    local present=()
+    local name
+    for name in "$@"; do
+        runner_env_set "$name" && present+=("$name")
+    done
+    ((${#present[@]} == 0)) || \
+        contract_fail "must be unset: ${present[*]} ($reason)"
+}
+
+verify_runner_env() {
+    local transport value
+    runner_env_file_exists
+    check_runner_env_not_glued
+    check_runner_env_present "hosted voice runs" \
+        LIVEKIT_URL LIVEKIT_API_KEY LIVEKIT_API_SECRET INTERNAL_API_SECRET
+    # The child reports results to one of these; without either, nothing lands.
+    runner_env_set ALK_RUNNER_API_URL || runner_env_set FI_BASE_URL || \
+        contract_fail "missing for result ingestion: ALK_RUNNER_API_URL (or FI_BASE_URL)"
+    local transports=()
+    IFS=', ' read -r -a transports <<<"$voice_transports"
+    for transport in "${transports[@]+"${transports[@]}"}"; do
+        transport=${transport// /}
+        case "$transport" in
+            "")
+                ;;
+            sip_outbound)
+                check_runner_env_present "sip_outbound (we dial the agent)" \
+                    LIVEKIT_OUTBOUND_TRUNK_ID PSTN_CALLER_NUMBER
+                value=$(runner_env_value PSTN_CALLER_NUMBER raw)
+                # The kit's transport model rejects anything but E.164 at hydration,
+                # on the value as handed over: stray whitespace fails it there too.
+                if [[ -n "$value" && ! "$value" =~ ^\+[1-9][0-9]{6,14}$ ]]; then
+                    contract_fail "PSTN_CALLER_NUMBER is not E.164 (+ then 7-15 digits;" \
+                        "no spaces or quotes, exactly as the runner env holds it)"
+                fi
+                ;;
+            sip_inbound_retell)
+                check_runner_env_present \
+                    "sip_inbound_retell (the Retell agent dials our leased number)" \
+                    ALK_SIM_SLOT_LEASE_SCRIPT SIM_SLOT_LEASE_STORE
+                ;;
+            *)
+                contract_fail "unknown voice transport: $transport" \
+                    "(expected sip_outbound, sip_inbound_retell)"
+                ;;
+        esac
+    done
+    local key_pair_reason="the SDK submitter prefers the org key pair over the"
+    key_pair_reason+=" internal bearer, so ingestion authenticates the wrong org"
+    check_runner_env_absent "$key_pair_reason" FI_API_KEY FI_SECRET_KEY
+    check_runner_env_absent \
+        "retired: the run budget is the child's own deadline" \
+        HOSTED_RUNNER_MAX_DURATION_SECONDS
+    if runner_env_assigned HOSTED_RUNNER_PARENT_SLACK_SECONDS; then
+        value=$(runner_env_value HOSTED_RUNNER_PARENT_SLACK_SECONDS)
+        [[ "$value" =~ ^\+?[0-9]+$ ]] || \
+            contract_fail "HOSTED_RUNNER_PARENT_SLACK_SECONDS must be a non-negative integer" \
+                "(an empty assignment kills the worker at import)"
+    fi
+    if runner_env_assigned HOSTED_RUNNER_LEASED_ROOM_REUSE; then
+        value=$(runner_env_value HOSTED_RUNNER_LEASED_ROOM_REUSE)
+        # The code lowercases and treats true/1/yes as on and anything else as
+        # off, so a typo silently disables reuse; only the explicit spellings pass.
+        case "$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')" in
+            true|1|yes|false|0|no) ;;
+            *)
+                contract_fail "HOSTED_RUNNER_LEASED_ROOM_REUSE must be true/1/yes or false/0/no" \
+                    "(anything else reads as false; empty is refused)"
+                ;;
+        esac
+    fi
+    if ((${#contract_failures[@]} > 0)); then
+        local failure
+        for failure in "${contract_failures[@]}"; do
+            echo "ERROR: runner env contract: $failure" >&2
+        done
+        exit 1
+    fi
+    echo "Runner environment contract (${#runner_env_files[@]} file(s);" \
+        "transports: ${voice_transports:-none}): OK"
+}
+
+if ((${#runner_env_files[@]} > 0)); then
+    verify_runner_env
+fi
+if [[ "$env_only" == true ]]; then
+    echo "Simulation-runner deployment preflight (env only): PASS"
+    exit 0
+fi
 
 command -v helm >/dev/null 2>&1 || die "helm is required"
 helm_command=(helm)
@@ -254,6 +514,24 @@ runner_value() {
     ' "$values_file"
 }
 
+# Compose renders durations as 5m30s / 1h10m / 45s; the stop grace must be
+# compared in seconds against the worker's drain timeout.
+compose_duration_seconds() {
+    local text=$1 total=0 num unit
+    while [[ "$text" =~ ^([0-9]+)([hms]) ]]; do
+        num=${BASH_REMATCH[1]}
+        unit=${BASH_REMATCH[2]}
+        case "$unit" in
+            h) total=$((total + num * 3600)) ;;
+            m) total=$((total + num * 60)) ;;
+            s) total=$((total + num)) ;;
+        esac
+        text=${text#"${BASH_REMATCH[0]}"}
+    done
+    [[ -z "$text" ]] || return 1
+    printf '%s' "$total"
+}
+
 assert_integer_at_least() {
     local value=$1
     local minimum=$2
@@ -313,6 +591,17 @@ compose_workflow_concurrency=$(compose_field_value TEMPORAL_MAX_CONCURRENT_WORKF
 [[ "$compose_child_concurrency" == "$compose_activity_concurrency" ]] || \
     die "Compose runner concurrency caps differ"
 [[ "$compose_workflow_concurrency" == 8 ]] || die "Compose runner workflow-task concurrency default is not 8"
+# A stop that lands during a phone call must outlast the worker's drain, or
+# Docker force-kills the child mid-call and the leased number stays taken.
+compose_drain_seconds=$(compose_field_value TEMPORAL_GRACEFUL_SHUTDOWN_TIMEOUT "$compose_runner_render")
+compose_stop_grace=$(compose_field_value stop_grace_period "$compose_runner_render")
+[[ "$compose_drain_seconds" =~ ^[0-9]+$ ]] || \
+    die "Compose runner does not set an integer TEMPORAL_GRACEFUL_SHUTDOWN_TIMEOUT"
+[[ -n "$compose_stop_grace" ]] || die "Compose runner does not set stop_grace_period"
+compose_stop_grace_seconds=$(compose_duration_seconds "$compose_stop_grace") || \
+    die "Compose runner stop_grace_period is not a duration: $compose_stop_grace"
+((compose_stop_grace_seconds > compose_drain_seconds)) || \
+    die "Compose runner stop_grace_period must exceed TEMPORAL_GRACEFUL_SHUTDOWN_TIMEOUT"
 if [[ "$explicit_compose_set" == true ]]; then
     echo "Compose configuration (caller-specified set): OK"
 else
@@ -486,8 +775,10 @@ for region in eu us; do
         "$region runner enables dynamic memory tuning"
     assert_rendered_env_value "$rendered_worker" TEMPORAL_TARGET_CPU_USAGE "" \
         "$region runner enables dynamic CPU tuning"
-    assert_rendered_env_value "$rendered_worker" HOSTED_RUNNER_MAX_DURATION_SECONDS 3900 \
-        "$region runner duration ceiling is not 3900 seconds"
+    # The run budget now comes from each job's own deadline; a global ceiling
+    # in the worker env is a leftover that no code reads.
+    assert_rendered_env_value "$rendered_worker" HOSTED_RUNNER_MAX_DURATION_SECONDS "" \
+        "$region runner still sets the retired HOSTED_RUNNER_MAX_DURATION_SECONDS ceiling"
 
     assert_contains \
         "$rendered_worker" \
