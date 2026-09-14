@@ -17,11 +17,12 @@ import {
   timeOptions,
   alertDefinitionOptions,
   convertFiltersToPayload,
+  evalUsesChoiceThreshold,
   isSpanAttrFilterValid,
 } from "../common";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import AlertFilterBar from "./AlertFilterBar";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import RadioField from "src/components/RadioField/RadioField";
 import { ShowComponent } from "src/components/show";
@@ -61,6 +62,7 @@ export default function AlertSettingsForm({
 
   const { alertRuleDetails, refreshGrid: refreshIssues } = useAlertSheetView();
   const { currentOrganizationId } = useOrganization();
+  const queryClient = useQueryClient();
   const observeId = selectedProject || alertRuleDetails?.project || null;
 
   const buildFormValues = useCallback(
@@ -154,11 +156,14 @@ export default function AlertSettingsForm({
     enabled: Boolean(observeId && metricType === "evaluation_metrics"),
   });
 
+  const selectedEval = useMemo(
+    () => expandedEvaluations?.find((evaluation) => evaluation?.id === metric),
+    [expandedEvaluations, metric],
+  );
+
   const selectedMetricOptions = useMemo(() => {
     if (expandedEvaluations?.length > 0 && metric) {
-      const selectedEval = expandedEvaluations.find(
-        (evaluation) => evaluation?.id === metric,
-      );
+      if (!evalUsesChoiceThreshold(selectedEval)) return [];
       return (
         selectedEval?.choices?.map((choice) => ({
           label: choice,
@@ -167,7 +172,7 @@ export default function AlertSettingsForm({
       );
     }
     return [];
-  }, [expandedEvaluations, metric]);
+  }, [expandedEvaluations, metric, selectedEval]);
 
   const queryPayload = useMemo(() => {
     const { observation_type, span_attributes_filters } =
@@ -233,7 +238,13 @@ export default function AlertSettingsForm({
       debouncedWarning &&
       debouncedFrequency &&
       !hasErrors &&
-      (debouncedMetricType === "evaluation_metrics" ? debouncedMetric : true);
+      (debouncedMetricType === "evaluation_metrics"
+        ? debouncedMetric &&
+          // A choice-thresholded eval's graph requires the chosen label; firing
+          // the preview before it is set 400s. Score evals need no choice.
+          (!evalUsesChoiceThreshold(selectedEval) ||
+            debouncedThresHoldMetricValue)
+        : true);
 
     const isThresholdValid = (() => {
       if (debouncedOperator === "less_than") {
@@ -257,6 +268,8 @@ export default function AlertSettingsForm({
     debouncedWarning,
     debouncedFrequency,
     debouncedMetric,
+    debouncedThresHoldMetricValue,
+    selectedEval,
     errors,
     openSheetView,
     isDirty,
@@ -313,6 +326,10 @@ export default function AlertSettingsForm({
       handleCloseCreateAlert();
       refreshGrid();
       refreshIssues();
+      // The details-page graph is keyed only on the alert id + date window, so
+      // a threshold_type or config change leaves its cache stale until the 10s
+      // poll happens to refetch. Invalidate it so the saved graph updates now.
+      queryClient.invalidateQueries({ queryKey: ["alert-graph"] });
     },
   });
 
@@ -357,9 +374,10 @@ export default function AlertSettingsForm({
       }),
       ...(data?.metric_type === "evaluation_metrics" && {
         metric: data?.metric,
-        ...(data?.threshold_metric_value && {
-          threshold_metric_value: data?.threshold_metric_value,
-        }),
+        ...(data?.threshold_metric_value &&
+          !(selectedEval && !evalUsesChoiceThreshold(selectedEval)) && {
+            threshold_metric_value: data?.threshold_metric_value,
+          }),
       }),
       ...notificationPayload,
       ...(data?.threshold_type === "percentage_change" && {

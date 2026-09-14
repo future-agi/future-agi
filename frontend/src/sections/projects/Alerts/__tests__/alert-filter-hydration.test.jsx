@@ -202,7 +202,12 @@ const savedAlert = {
 };
 
 const evaluations = [
-  { id: "eval-1", name: "Groundedness", choices: ["Passed", "Failed"] },
+  {
+    id: "eval-1",
+    name: "Groundedness",
+    output_type: "Pass/Fail",
+    choices: ["Passed", "Failed"],
+  },
 ];
 
 const labelFor = (options, value) =>

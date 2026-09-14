@@ -32,6 +32,30 @@
 - the header button carries the window spanning every fire
 - the monitor’s span-type filter travels in the link and renders as a chip
 
+### ALERT-E2E-002 — a scoring-eval alert measures the score while a labelled eval alerts on a chosen label
+
+**Goal:** A user sets up an alert on a scoring evaluation and it measures the score itself, while a labelled evaluation still alerts on a chosen label  
+**Spec:** `flows/alerts/scoring-eval-alert.spec.ts:26`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a scoring eval (with labels) and a choices eval on a new project
+2. create an alert on the scoring eval with no chosen label
+3. try to create an alert on the scoring eval with a label
+4. try to create an alert on the choices eval with no label
+5. create an alert on the choices eval with a valid label
+6. open the alerts list and read each alert’s Alert Type
+
+**Backend state verified:**
+
+- scoring-eval alert with no label is created (POST /tracer/user-alerts/ 201)
+- scoring-eval alert with a label is rejected: must be empty for evals without predefined choices
+- choices-eval alert with no label is rejected: required for evals with predefined choices
+- choices-eval alert with a valid label is created
+- PG tracer_useralertmonitor: the scoring monitor’s threshold_metric_value is NULL, the choices monitor’s is the label, both org-scoped
+- alerts list shows the scoring alert’s Alert Type as the bare eval name and the choices alert’s as "name (label)"
+
 ## auth
 
 ### AUTH-E2E-001 — user signs in with email and password

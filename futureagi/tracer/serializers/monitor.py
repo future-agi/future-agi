@@ -18,6 +18,7 @@ from tracer.serializers.filters import (
     filter_list_field,
     filter_list_query_param_field,
 )
+from tracer.utils.monitor import uses_choice_threshold
 
 OBSERVATION_SPAN_TYPES = [t[0] for t in ObservationSpan.OBSERVATION_SPAN_TYPES]
 
@@ -48,7 +49,9 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
                 )
                 if eval_config:
                     metric_name = eval_config.name
-                    if obj.threshold_metric_value:
+                    if obj.threshold_metric_value and uses_choice_threshold(
+                        eval_config.eval_template
+                    ):
                         metric_name += f" ({obj.threshold_metric_value})"
                     return metric_name
                 return "Invalid Eval"
@@ -97,11 +100,9 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
                     {"metric": f"Invalid metric format for '{metric}'."}
                 )
 
+            eval_template = custom_eval_config.eval_template
             choices = (
-                custom_eval_config.eval_template.choices
-                if custom_eval_config.eval_template
-                and custom_eval_config.eval_template.choices
-                else None
+                eval_template.choices if uses_choice_threshold(eval_template) else None
             )
             if choices:
                 if threshold_metric_value is None:
@@ -479,7 +480,9 @@ class UserAlertMonitorDetailSerializer(serializers.ModelSerializer):
                 )
                 if eval_config:
                     metric_name = eval_config.name
-                    if obj.threshold_metric_value:
+                    if obj.threshold_metric_value and uses_choice_threshold(
+                        eval_config.eval_template
+                    ):
                         metric_name += f" ({obj.threshold_metric_value})"
                     return metric_name
                 return "Invalid Eval"
