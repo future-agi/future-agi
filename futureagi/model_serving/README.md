@@ -324,6 +324,27 @@ docker build -t model-serving .
 docker build -t model-serving:v1.0.0 .
 ```
 
+#### Torch wheel channel
+
+`Dockerfile.oss` resolves torch from PyPI by default. On x86_64 that pulls the
+CUDA build — 13 `nvidia-*` wheels plus `triton`, about 5 GB of runtime that is
+only reachable if the container is actually given a GPU. To build the CPU-only
+variant instead, point `TORCH_INDEX_URL` at the PyTorch CPU channel:
+
+```bash
+docker build -f Dockerfile.oss \
+  --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu \
+  -t model-serving:cpu .
+```
+
+Only torch changes: the arg installs torch from that channel and pins the
+resolved build (`2.6.0+cpu`) as a constraint for the project install, so no
+other dependency moves. The same arg works for any PyTorch channel, e.g.
+`https://download.pytorch.org/whl/cu124`.
+
+In CI, the **Release serving** workflow exposes this as the `torch-channel`
+input (`default` or `cpu`).
+
 ### Running
 
 ```bash
