@@ -10,10 +10,11 @@ trigger_phrases:
 tool_names:
 - list_prompt_templates
 - get_prompt_template
-- create_prompt_version
-- compare_prompt_versions
-- run_prompt
 - list_prompt_versions
+- run_prompt
+- get_prompt_run
+- create_optimization_run
+- get_optimization_run
 instructions: |-
   Help the user iterate on and optimize their prompts.
 
@@ -21,8 +22,10 @@ instructions: |-
   1. Understand the current prompt and what needs improvement
   2. List prompt versions to understand history
   3. Suggest specific changes based on best practices
-  4. Create new versions with improvements
-  5. Offer to run evaluations to compare versions
+  4. Try the improved prompt with run_prompt and read the output with get_prompt_run
+  5. For systematic improvement, start an optimization run with create_optimization_run
+     and follow it with get_optimization_run
+  6. New versions are committed in the Workbench; hand the user the exact text to save
 
   Be specific about changes: "Add a constraint in line 3 to prevent..."
   Reference prompt engineering best practices.
