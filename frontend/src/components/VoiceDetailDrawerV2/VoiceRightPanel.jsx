@@ -12,7 +12,7 @@ import {
 import { normalizeEvalResult } from "src/sections/develop-detail/DataTab/common";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import CallAnalyticsView from "./CallAnalyticsView";
-import { isLiveKitProvider } from "src/sections/agents/constants";
+import { AGENT_TYPES, isLiveKitProvider } from "src/sections/agents/constants";
 import ScoresListSection from "src/components/ScoresListSection/ScoresListSection";
 import { buildVoiceCallScoreSource } from "src/components/voiceAnnotationSources";
 import EvalsTabView from "src/components/traceDetail/EvalsTabView";
@@ -151,6 +151,7 @@ const VoiceRightPanel = ({
 
   const analyticsProps = useMemo(() => {
     // API-provided per-call metrics (prefer over client-computed values)
+    const isChatSimulation = data?.simulation_call_type === AGENT_TYPES.CHAT;
     const apiMetrics = {
       turnCount: data?.turn_count,
       talkRatio: data?.talk_ratio,
@@ -158,8 +159,13 @@ const VoiceRightPanel = ({
       avgAgentLatencyMs: data?.avg_agent_latency_ms ?? data?.avg_agent_latency,
       userWpm: data?.user_wpm,
       botWpm: data?.bot_wpm,
-      userInterruptionCount: data?.user_interruption_count,
-      aiInterruptionCount: data?.ai_interruption_count,
+      // Interruptions only make sense for voice; chat has no audio to interrupt.
+      ...(isChatSimulation
+        ? {}
+        : {
+            userInterruptionCount: data?.user_interruption_count,
+            aiInterruptionCount: data?.ai_interruption_count,
+          }),
     };
 
     if (isSimulate) {
