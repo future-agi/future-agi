@@ -30,6 +30,9 @@ _REPORT_KEY = "usage_reports"
 _AUTHORING_REPORT_KEY = "authoring_usage_reports"
 _MAX_AUTHORING_STAGE_TOKENS = 1_000_000_000
 
+_NON_BILLABLE_FAILURE_DOMAINS = frozenset(
+    {"infrastructure", "connectivity", "platform_sync"}
+)
 
 def check_harness_usage(
     attempt: HostedHarnessAttempt,
@@ -205,7 +208,7 @@ def emit_harness_usage(attempt: HostedHarnessAttempt, report: dict) -> None:
             ):
                 continue
             failure_domain = (receipt.body.get("failure") or {}).get("domain")
-            if failure_domain and failure_domain != "agent":
+            if failure_domain in _NON_BILLABLE_FAILURE_DOMAINS:
                 continue
         emit(
             UsageEvent(

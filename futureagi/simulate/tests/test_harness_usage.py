@@ -178,9 +178,12 @@ def test_run_usage_waits_for_receipt_and_exempts_customer_tokens_not_voice(
         attempt=attempt,
         scenario=registration,
         attempt_number=attempt.attempt_number,
-        status="passed",
+        status="errored",
         digest="sha256:" + "0" * 64,
-        body={"call": {"duration_ms": 15000}, "failure": None},
+        body={
+            "call": {"duration_ms": 15000},
+            "failure": {"domain": "simulator", "code": "evidence_missing"},
+        },
     )
     harness_usage.replay_harness_usage(attempt)
     events = [data for _, data in redis.xrange("usage:events")]
