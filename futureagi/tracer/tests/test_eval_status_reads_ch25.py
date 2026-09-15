@@ -8,6 +8,7 @@ import pytest
 from clickhouse_driver import Client
 from django.test import override_settings
 
+from conftest import require_live_clickhouse
 from tracer.services.clickhouse import eval_logger_table as eval_logger_table_config
 from tracer.services.clickhouse import query_service as query_service_config
 from tracer.services.clickhouse.client import ClickHouseClient
@@ -18,6 +19,7 @@ pytestmark = pytest.mark.integration
 
 @pytest.fixture(scope="module")
 def ch_client():
+    require_live_clickhouse()
     host = os.environ.get("CH25_HOST", "127.0.0.1")
     port = int(os.environ.get("CH25_NATIVE_PORT", "19000"))
     client = Client(host=host, port=port, connect_timeout=3)

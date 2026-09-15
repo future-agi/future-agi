@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import pytest
 
+from conftest import require_live_clickhouse
 from tracer.services.clickhouse.query_builders.session_list import (
     SessionListQueryBuilder,
 )
@@ -184,6 +185,7 @@ def test_bounded_surfaces_apply_attribute_nullness_at_target_grain(
 
 
 def _local_ch25_client():
+    require_live_clickhouse()
     host = os.environ.get("CH25_HOST", "127.0.0.1")
     if host not in {"127.0.0.1", "localhost", "::1"}:
         pytest.skip("physical-version proof is restricted to local ClickHouse")

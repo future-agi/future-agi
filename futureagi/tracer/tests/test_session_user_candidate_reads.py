@@ -13,6 +13,7 @@ import pytest
 from django.conf import settings as django_settings
 from django.test import override_settings
 
+from conftest import require_live_clickhouse
 from tracer.selectors.trace_filter_reads import read_bounded_filter_page
 from tracer.services.clickhouse.query_builders.user_list import (
     UnsupportedBoundedUserListQuery,
@@ -1894,6 +1895,7 @@ def test_session_page_enrichments_replay_tombstones_and_resolve_remaps():
 
 
 def _ch25_client():
+    require_live_clickhouse()
     host = os.getenv("CH25_HOST")
     port = int(
         os.getenv("CH25_NATIVE_PORT")

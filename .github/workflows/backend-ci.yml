@@ -88,6 +88,8 @@ jobs:
       CH_DATABASE: test_tfc
       PYTHONHASHSEED: "0"
       FI_CH25_SCHEMA_APPLY_STRICT: "1"
+      # Live-ClickHouse suites are opt-in; CI owns the compose sidecar.
+      FI_LIVE_CH_TESTS: "1"
       EE_REPO_BRANCH: ${{ github.head_ref || github.ref_name }}
       EE_BASE_REF: ${{ github.base_ref || 'dev' }}
       IS_INTERNAL_RUN: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false }}

@@ -167,6 +167,31 @@ def _strict_ch25_apply() -> bool:
     return _os.getenv("FI_CH25_SCHEMA_APPLY_STRICT", "").lower() in ("1", "true", "yes")
 
 
+LIVE_CH_TESTS_ENV_VAR = "FI_LIVE_CH_TESTS"
+
+_LIVE_CH_SKIP_REASON = "live ClickHouse tests are opt-in: set FI_LIVE_CH_TESTS=1"
+
+
+def require_live_clickhouse() -> None:
+    """Skip the caller unless live ClickHouse suites were opted into.
+
+    The live suites connect to whatever answers on the configured host/port
+    (``CH_PORT`` / ``CH25_NATIVE_PORT`` / ``CH25_TCP_PORT``, all defaulting to
+    the local native port) and then run DDL and DML against it. That is fine
+    when the port belongs to the disposable test stack, and destructive when a
+    developer port-forward happens to be holding the same default port.
+
+    So nothing reaches a live ClickHouse unless it is asked for: call this
+    before the first socket is opened. ``bin/test`` and CI set the variable,
+    because they own the ClickHouse they point at.
+    """
+
+    import pytest
+
+    if os.environ.get(LIVE_CH_TESTS_ENV_VAR) != "1":
+        pytest.skip(_LIVE_CH_SKIP_REASON)
+
+
 class UnsafeClickHouseTestTarget(RuntimeError):
     """Raised before a test helper can mutate an unsafe ClickHouse target."""
 

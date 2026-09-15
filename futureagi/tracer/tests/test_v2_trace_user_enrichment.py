@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from conftest import require_live_clickhouse
 from tracer.services.clickhouse.v2.query_builders.trace_list import (
     MAX_USER_PHYSICAL_IDENTITIES_PER_PAGE,
     TraceListQueryBuilderV2,
@@ -298,6 +299,7 @@ def test_content_query_preserves_project_in_public_identity() -> None:
 def _local_ch25_client():
     """Return an explicitly local native client or skip the integration proof."""
 
+    require_live_clickhouse()
     host = os.environ.get("CH25_HOST", "127.0.0.1")
     if host not in {"127.0.0.1", "localhost", "::1"}:
         pytest.skip("V2 trace-user integration proof is restricted to local ClickHouse")
