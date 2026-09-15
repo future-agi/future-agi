@@ -1,11 +1,16 @@
 import json
 import uuid
 
+from django.db.models.functions import Lower
 from rest_framework import serializers
 
 from model_hub.models.choices import DataTypeChoices, SourceChoices
 from simulate.models import Scenarios
 from tracer.serializers.filters import StrictInputSerializer
+
+DUPLICATE_NAME_ERROR = (
+    "A scenario with this name already exists. Please choose another name."
+)
 
 
 class ColumnDefinitionSerializer(StrictInputSerializer):
@@ -141,6 +146,24 @@ class ScenarioCreateRequestSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 "Name cannot be empty or just whitespace."
             )
+
+        # Best-effort duplicate check — DB unique constraint is the real enforcer.
+        # Uses LOWER(name) explicitly to hit the functional unique index rather than
+        # relying on iexact (which generates UPPER on PostgreSQL).
+        request = self.context.get("request")
+        if request:
+            org = getattr(request, "organization", None) or request.user.organization
+            if (
+                Scenarios.objects.annotate(name_lower=Lower("name"))
+                .filter(
+                    organization=org,
+                    name_lower=value.strip().lower(),
+                    deleted=False,
+                )
+                .exists()
+            ):
+                raise serializers.ValidationError(DUPLICATE_NAME_ERROR)
+
         return value.strip()
 
     def validate_dataset_id(self, value):
@@ -257,9 +280,8 @@ class ScenarioCreateRequestSerializer(serializers.Serializer):
                 {"script_url": "script_url is required for script kind."}
             )
 
-        if (
-            source_type == Scenarios.SourceTypes.AGENT_DEFINITION
-            and not data.get("agent_definition_id")
+        if source_type == Scenarios.SourceTypes.AGENT_DEFINITION and not data.get(
+            "agent_definition_id"
         ):
             raise serializers.ValidationError(
                 {
@@ -404,6 +426,22 @@ class ScenarioEditRequestSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 "Name cannot be empty or just whitespace."
             )
+
+        # Best-effort duplicate check — DB unique constraint is the real enforcer.
+        request = self.context.get("request")
+        if request:
+            org = getattr(request, "organization", None) or request.user.organization
+            qs = Scenarios.objects.annotate(name_lower=Lower("name")).filter(
+                organization=org,
+                name_lower=value.strip().lower(),
+                deleted=False,
+            )
+            scenario_id = self.context.get("scenario_id")
+            if scenario_id:
+                qs = qs.exclude(id=scenario_id)
+            if qs.exists():
+                raise serializers.ValidationError(DUPLICATE_NAME_ERROR)
+
         return value.strip()
 
 
