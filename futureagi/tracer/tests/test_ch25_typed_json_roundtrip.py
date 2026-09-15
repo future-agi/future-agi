@@ -49,7 +49,10 @@ except ImportError:  # pragma: no cover
 
 
 CH_HOST = os.environ.get("CH25_HOST", "127.0.0.1")
-CH_PORT = int(os.environ.get("CH25_HTTP_PORT", "19001"))
+# 1, not 19001: that default is a port-forward band on a developer machine and
+# this suite creates and drops a table. Nothing publishes 19001 in CI either,
+# so this suite skips there today and still does. Reviving it is separate work.
+CH_PORT = int(os.environ.get("CH25_HTTP_PORT", "1"))
 CH_DATABASE = os.environ.get("CH25_DATABASE", "default")
 
 
