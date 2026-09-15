@@ -60,6 +60,7 @@ from tracer.models.observation_span import (
 from tracer.models.project import Project, ProjectSourceChoices
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
+from tracer.selectors.session_candidate_slice import read_candidate_slice_page
 from tracer.selectors.trace_filter_reads import (
     PAGE_DEPTH_EXCEEDED_CODE,
     PAGE_DEPTH_EXCEEDED_MESSAGE,
@@ -298,6 +299,10 @@ class SessionPageSelection:
     bounded_page: BoundedFilterPage | None
     candidate_cursor: bool
     candidate_cursor_has_more: bool
+    # A candidate page read from a narrowed scan cannot see sessions whose
+    # every root lies below its floor, so its count is a proven prefix - the
+    # same contract the bounded filter route publishes - not a window total.
+    candidate_total_is_lower_bound: bool
     cursor_enabled: bool
     cursor_state: ListCursor | None
     cursor_scope: dict
@@ -3032,39 +3037,52 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             )
 
         candidate_total_count: int | None = None
+        candidate_total_is_lower_bound = False
         if candidate_first:
             if candidate_cursor:
-                before_start_time = (
-                    cursor_state.order[0] if cursor_state is not None else None
+                # The candidate statement replays latest state across whatever
+                # window it is given, and on a high-volume tenant a month-long
+                # window does not return inside the request wall. The reader
+                # below issues the SAME statement over the newest slice whose
+                # rows fit a budget, then proves the page exact against full
+                # state before publishing it, widening to the whole window when
+                # it cannot. See ``selectors.session_candidate_slice``.
+                slice_page = read_candidate_slice_page(
+                    builder=builder,
+                    analytics=analytics,
+                    deadline=read_deadline,
+                    read_settings=_page_read_settings,
+                    query_timeout_ms=SESSION_LIST_QUERY_TIMEOUT_MS,
+                    before_start_time=(
+                        cursor_state.order[0] if cursor_state is not None else None
+                    ),
+                    before_session_id=(
+                        str(cursor_state.order[1]) if cursor_state is not None else None
+                    ),
                 )
-                before_session_id = (
-                    str(cursor_state.order[1]) if cursor_state is not None else None
-                )
-                page_query, page_params = builder.build_candidate_cursor_page_query(
-                    before_start_time=before_start_time,
-                    before_session_id=before_session_id,
-                )
-            else:
-                page_query, page_params = builder.build_candidate_page_query()
-            page_result = analytics.execute_ch_query(
-                page_query,
-                page_params,
-                timeout_ms=read_deadline.remaining_ms(SESSION_LIST_QUERY_TIMEOUT_MS),
-                settings=_page_read_settings(page_size + 1),
-            )
-            candidate_rows = list(page_result.data or [])
-            page_candidates = candidate_rows[:page_size]
-            if candidate_cursor:
-                candidate_cursor_has_more = len(candidate_rows) > page_size
+                page_candidates = slice_page.rows
+                candidate_cursor_has_more = slice_page.has_more
                 prior_seen_rows = (
                     cursor_state.seen_rows if cursor_state is not None else 0
                 )
-                candidate_total_count = prior_seen_rows + (
-                    int(candidate_rows[0].get("remaining_count", 0) or 0)
-                    if candidate_rows
-                    else 0
+                # A narrowed scan cannot see sessions whose every root is below
+                # its floor, so this total is the proven prefix, exactly as on
+                # the bounded filter route. Re-running the legacy full-window
+                # count would reintroduce the timeout this path removes.
+                candidate_total_count = prior_seen_rows + slice_page.remaining_count
+                candidate_total_is_lower_bound = slice_page.slice_start is not None
+            else:
+                page_query, page_params = builder.build_candidate_page_query()
+                page_result = analytics.execute_ch_query(
+                    page_query,
+                    page_params,
+                    timeout_ms=read_deadline.remaining_ms(
+                        SESSION_LIST_QUERY_TIMEOUT_MS
+                    ),
+                    settings=_page_read_settings(page_size + 1),
                 )
-            elif page_candidates:
+                page_candidates = list(page_result.data or [])[:page_size]
+            if not candidate_cursor and page_candidates:
                 candidate_total_count = int(
                     page_candidates[0].get("total_count", 0) or 0
                 )
@@ -3150,6 +3168,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             bounded_page=bounded_page,
             candidate_cursor=candidate_cursor,
             candidate_cursor_has_more=candidate_cursor_has_more,
+            candidate_total_is_lower_bound=candidate_total_is_lower_bound,
             cursor_enabled=cursor_enabled,
             cursor_state=cursor_state,
             cursor_scope=cursor_scope,
@@ -3477,10 +3496,11 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
 
         metadata = {"total_rows": total_count}
         if candidate_cursor:
+            narrowed = selection.candidate_total_is_lower_bound
             metadata.update(
                 {
-                    "total_rows_exact": total_count,
-                    "total_rows_is_lower_bound": False,
+                    **({} if narrowed else {"total_rows_exact": total_count}),
+                    "total_rows_is_lower_bound": narrowed,
                     "has_more": cursor_has_more,
                     "next_cursor": next_cursor,
                     "next_cursor_fingerprint": (
