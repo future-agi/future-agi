@@ -1404,17 +1404,22 @@ class EmbeddingManager:
                 )
                 return
 
-            # Construct and execute delete query using metadata.key and metadata.value
+            # Construct and execute delete query using parameterized query
             delete_query = f"""
             ALTER TABLE {table_name}
-            DELETE WHERE eval_id = '{kb_id}'
+            DELETE WHERE eval_id = %(kb_id)s
             AND arrayExists(x -> x = 'file_id', metadata.key)
-            AND arrayElement(metadata.value, indexOf(metadata.key, 'file_id')) = '{file_id}'
+            AND arrayElement(metadata.value, indexOf(metadata.key, 'file_id')) = %(file_id)s
             AND arrayExists(x -> x = 'organization_id', metadata.key)
-            AND arrayElement(metadata.value, indexOf(metadata.key, 'organization_id')) = '{organization_id}'
+            AND arrayElement(metadata.value, indexOf(metadata.key, 'organization_id')) = %(organization_id)s
             """
+            params = {
+                "kb_id": str(kb_id),
+                "file_id": str(file_id),
+                "organization_id": str(organization_id),
+            }
 
-            self.db_client.client.execute(delete_query)
+            self.db_client.client.execute(delete_query, params)
             logger.info(
                 f"Successfully deleted chunks with eval_id {kb_id} and file_id {file_id} from table {table_name}"
             )
