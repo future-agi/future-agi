@@ -21,7 +21,12 @@ from model_hub.models.choices import AnnotationTypeChoices, FeedbackSourceChoice
 from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.evals_metric import Feedback
 from tracer.models.custom_eval_config import CustomEvalConfig
-from tracer.models.observation_span import ObservationSpan
+from tracer.models.observation_span import (
+    EvalEntryStatus,
+    EvalLogger,
+    EvalTargetType,
+    ObservationSpan,
+)
 from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.trace import Trace
@@ -1460,3 +1465,251 @@ class TestObservationSpanRetrieveLoadingAPI:
         )
         # Accept 200 or 400
         assert response.status_code in [status.HTTP_200_OK, status.HTTP_400_BAD_REQUEST]
+
+
+@pytest.mark.django_db
+class TestSubmitFeedbackActionTypeRecalculate:
+    """Regression coverage for issue #2333.
+
+    Submitting action_type="recalculate" must NOT crash, and must not delete
+    the existing eval result until the recompute has actually produced a new
+    one. Two distinct failure modes are covered:
+
+      1. The experiment (project_version) path used to pass 4 positional args
+         to ``evaluate_observation_span`` (which only accepts 3), raising a
+         TypeError that was swallowed into a 400 — while the prior result had
+         already been soft-deleted. (the "crash" half of #2333)
+
+      2. The old result was soft-deleted BEFORE the recompute ran, so a failed
+         recompute left the span with no result at all. (the "deletes the
+         result" half of #2333)
+
+    A third mode (observe path, see #2333 design note) is covered by the
+    ``*_forces_recompute_*`` tests: the live prior row shares the span's
+    eval_task_id, so ``evaluate_observation_span_observe``'s batch-eval-task
+    idempotency guard would otherwise silently no-op the recalculate.
+    """
+
+    def _make_feedback(self, user, observation_span):
+        return Feedback.objects.create(
+            source=FeedbackSourceChoices.TRACE.value,
+            source_id=str(observation_span.id),
+            user=user,
+            value="1",
+            organization=observation_span.project.organization,
+            workspace=observation_span.project.workspace,
+        )
+
+    def _make_eval_logger(self, observation_span, custom_eval_config, **kwargs):
+        defaults = {
+            "target_type": EvalTargetType.SPAN,
+            "observation_span": observation_span,
+            "trace": observation_span.trace,
+            "custom_eval_config": custom_eval_config,
+            "output_bool": True,
+            "status": EvalEntryStatus.COMPLETED,
+        }
+        defaults.update(kwargs)
+        return EvalLogger.objects.create(**defaults)
+
+    def _url(self):
+        return "/tracer/observation-span/submit-feedback-action-type/"
+
+    def _post(self, auth_client, observation_span, custom_eval_config, feedback):
+        return auth_client.post(
+            self._url(),
+            {
+                "observation_span_id": str(observation_span.id),
+                "action_type": "recalculate",
+                "custom_eval_config_id": str(custom_eval_config.id),
+                "feedback_id": str(feedback.id),
+            },
+            format="json",
+        )
+
+    @patch("tracer.utils.eval.evaluate_observation_span_observe", return_value=True)
+    def test_recalculate_observe_path_does_not_crash_and_replaces_on_success(
+        self, mock_eval, auth_client, observation_span, custom_eval_config, user
+    ):
+        """Observe path: recompute success soft-deletes the old result and
+        keeps exactly one live row (old deleted, new written by the engine)."""
+        feedback = self._make_feedback(user, observation_span)
+        old = self._make_eval_logger(observation_span, custom_eval_config)
+
+        response = self._post(
+            auth_client, observation_span, custom_eval_config, feedback
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        # The recompute function is invoked with the feedback-driven signature.
+        mock_eval.assert_called_once()
+        _, kwargs = mock_eval.call_args
+        assert kwargs["feedback_id"] == str(feedback.id)
+        assert kwargs["delete_previous"] is False
+
+        # Old result is soft-deleted only after a successful recompute.
+        old.refresh_from_db()
+        assert old.deleted is True
+        assert old.deleted_at is not None
+
+    @patch("tracer.utils.eval.evaluate_observation_span_observe", return_value=False)
+    def test_recalculate_observe_path_keeps_old_result_when_recompute_fails(
+        self, mock_eval, auth_client, observation_span, custom_eval_config, user
+    ):
+        """Observe path: a failed recompute must leave the prior result intact
+        (replacement, never a blind pre-delete)."""
+        feedback = self._make_feedback(user, observation_span)
+        old = self._make_eval_logger(observation_span, custom_eval_config)
+
+        response = self._post(
+            auth_client, observation_span, custom_eval_config, feedback
+        )
+
+        # Failure is reported, not swallowed into a crash.
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        mock_eval.assert_called_once()
+        _, kwargs = mock_eval.call_args
+        assert kwargs["delete_previous"] is False
+
+        # Prior result survives a failed recompute.
+        old.refresh_from_db()
+        assert old.deleted is False
+
+    @patch("tracer.utils.eval._execute_evaluation")
+    @pytest.mark.integration
+    def test_recalculate_observe_path_forces_recompute_past_idempotency_guard(
+        self,
+        mock_execute,
+        auth_client,
+        observation_span,
+        custom_eval_config,
+        user,
+    ):
+        """Observe path regression for #2333: the live prior result row carries
+        the same eval_task_id, so ``evaluate_observation_span_observe``'s
+        batch-eval-task idempotency guard would otherwise hit it and silently
+        no-op (return None -> view reports 200 but nothing recomputed).
+
+        We patch the engine so no real eval/ClickHouse runs, keep the real
+        function (not mocked), and assert it skips the guard because the view
+        passes ``force=True``.
+        """
+        feedback = self._make_feedback(user, observation_span)
+        # Prior result with a real eval_task_id — this is exactly what makes the
+        # default guard fire and would have no-op'd the recalculate before #2333.
+        old = self._make_eval_logger(
+            observation_span,
+            custom_eval_config,
+            eval_task_id="existing-task-id",
+        )
+
+        response = self._post(
+            auth_client, observation_span, custom_eval_config, feedback
+        )
+
+        # 200 + the engine was actually invoked (guard bypassed via force).
+        assert response.status_code == status.HTTP_200_OK
+        assert mock_execute.called
+        # The recompute ran with the prior task id (no new EvalTask fabricated).
+        # Use the last call in case composite evals invoke the engine multiple
+        # times — we only care that the recalculate reached it at least once.
+        _, call_kwargs = mock_execute.call_args_list[-1]
+        assert call_kwargs["eval_task_id"] == "existing-task-id"
+
+        # Old row is soft-deleted only after the successful recompute.
+        old.refresh_from_db()
+        assert old.deleted is True
+
+    @patch("tracer.utils.eval._execute_evaluation")
+    @pytest.mark.integration
+    def test_recalculate_observe_path_no_force_would_skip_recompute(
+        self, mock_execute, auth_client, observation_span, custom_eval_config, user
+    ):
+        """Contrast case (documents the guard's purpose): if ``force`` were not
+        set, a prior row sharing the eval_task_id short-circuits the recompute.
+
+        This is NOT the actual view behavior (the view passes force=True); it
+        pins the underlying invariant so a future change to the default is
+        caught.
+        """
+        feedback = self._make_feedback(user, observation_span)
+        old = self._make_eval_logger(
+            observation_span,
+            custom_eval_config,
+            eval_task_id="existing-task-id",
+        )
+
+        from tracer.utils.eval import evaluate_observation_span_observe
+
+        result = evaluate_observation_span_observe(
+            observation_span_id=str(observation_span.id),
+            custom_eval_config_id=str(custom_eval_config.id),
+            eval_task_id="existing-task-id",
+            feedback_id=str(feedback.id),
+            delete_previous=False,
+            # force defaults to False
+        )
+
+        assert result is None
+        assert not mock_execute.called
+        # The prior row is left untouched by the no-op (it is neither deleted
+        # nor replaced), which is exactly why the view must pass force=True.
+        old.refresh_from_db()
+        assert old.deleted is False
+
+    @patch("tracer.utils.eval.evaluate_observation_span", return_value=True)
+    def test_recalculate_experiment_path_no_type_error_and_replaces_on_success(
+        self,
+        mock_eval,
+        auth_client,
+        observation_span,
+        custom_eval_config,
+        project_version,
+        user,
+    ):
+        """Experiment path (project_version set): the 4-arg TypeError from
+        #2333 is gone, and the old result is replaced only on success."""
+        observation_span.project_version = project_version
+        observation_span.save(update_fields=["project_version"])
+        feedback = self._make_feedback(user, observation_span)
+        old = self._make_eval_logger(observation_span, custom_eval_config)
+
+        response = self._post(
+            auth_client, observation_span, custom_eval_config, feedback
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        # The experiment helper takes (observation_span_id,
+        # custom_eval_config_id, feedback_id) — no eval_task_id positional arg.
+        mock_eval.assert_called_once()
+        _, kwargs = mock_eval.call_args
+        assert "eval_task_id" not in kwargs
+        assert kwargs["feedback_id"] == str(feedback.id)
+        assert kwargs["delete_previous"] is False
+
+        old.refresh_from_db()
+        assert old.deleted is True
+
+    @patch("tracer.utils.eval.evaluate_observation_span", return_value=False)
+    def test_recalculate_experiment_path_keeps_old_result_when_recompute_fails(
+        self,
+        mock_eval,
+        auth_client,
+        observation_span,
+        custom_eval_config,
+        project_version,
+        user,
+    ):
+        """Experiment path: failed recompute leaves the prior result intact."""
+        observation_span.project_version = project_version
+        observation_span.save(update_fields=["project_version"])
+        feedback = self._make_feedback(user, observation_span)
+        old = self._make_eval_logger(observation_span, custom_eval_config)
+
+        response = self._post(
+            auth_client, observation_span, custom_eval_config, feedback
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        old.refresh_from_db()
+        assert old.deleted is False
