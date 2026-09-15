@@ -22,6 +22,7 @@ export const STATUS_META = {
 export const ROW_ACTION = { RUN: "run", DELETE: "delete" };
 
 export const ROW_ACTION_LABEL = {
+  open: "Open",
   run: "Run simulation",
   rerun: "Re-run simulation",
   delete: "Delete",

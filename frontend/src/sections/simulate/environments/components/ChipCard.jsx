@@ -1,7 +1,8 @@
 import PropTypes from "prop-types";
 import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, Tooltip } from "@mui/material";
+import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import { activateOnKey } from "../helpers/activateOnKey";
 
 export default function ChipCard({ icon, logo, label, on, onClick, comingSoon }) {
@@ -33,9 +34,11 @@ export default function ChipCard({ icon, logo, label, on, onClick, comingSoon })
   );
   if (comingSoon) {
     return (
-      <Tooltip title="Coming soon" arrow placement="top">
-        <Box sx={{ display: "inline-flex" }}>{chip}</Box>
-      </Tooltip>
+      <CustomTooltip title="Coming soon" arrow placement="top" size="small">
+        {/* CustomTooltip doesn't mirror its title onto the child as an
+            aria-label (MUI's does), so name the wrapper explicitly. */}
+        <Box aria-label="Coming soon" sx={{ display: "inline-flex" }}>{chip}</Box>
+      </CustomTooltip>
     );
   }
   return chip;

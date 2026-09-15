@@ -1,6 +1,7 @@
 import PropTypes from "prop-types";
 import { alpha, keyframes } from "@mui/material/styles";
-import { Box, Stack, Typography, Tooltip } from "@mui/material";
+import { Box, Stack, Typography } from "@mui/material";
+import CustomTooltip from "src/components/tooltip";
 import { STATUS_META } from "../myEnvironments.constants";
 
 const pulse = keyframes`
@@ -17,7 +18,7 @@ export default function StatusPill({ status, progress }) {
   const isAnimated = status === "building" || status === "running";
 
   return (
-    <Tooltip arrow title={detail}>
+    <CustomTooltip arrow size="small" title={detail}>
       <Stack
         direction="row"
         alignItems="center"
@@ -48,7 +49,7 @@ export default function StatusPill({ status, progress }) {
           {meta.label}
         </Typography>
       </Stack>
-    </Tooltip>
+    </CustomTooltip>
   );
 }
 
