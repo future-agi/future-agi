@@ -15,6 +15,36 @@ if str(_project_root) not in sys.path:
 # env toggling; this only affects the pytest process.
 os.environ.setdefault("EE_LICENSE_KEY", "test-license-key")
 
+# ClickHouse has no default port under test settings.
+#
+# CH_PORT/CH25_TCP_PORT used to default to 19000. A developer machine
+# commonly holds port-forwards to shared clusters on that port, and the
+# suites that reach a real ClickHouse run CREATE / INSERT / DROP as an admin
+# user, so a bare `pytest` that guessed the port could write to a cluster
+# nobody named. The runners that own a ClickHouse name it instead: `bin/test`
+# starts the compose sidecar and exports it, backend-ci sets it in the job
+# env, and api-contracts.yml already did. Unnamed, we point at port 1, which
+# nothing serves, so those suites fail on connection-refused.
+#
+# Port 1 rather than unset or empty: tracer/services/clickhouse/client.py and
+# .../v2/__init__.py resolve the port through `or` chains that fall through an
+# empty value to 9000, a real ClickHouse port, so the sentinel has to be
+# truthy. It is exported rather than only placed in the dicts below because
+# tfc/settings/settings.py reads CH_PORT at import time and several suites
+# read os.environ directly.
+NO_CLICKHOUSE_PORT = "1"
+if not os.environ.get("CH_PORT"):
+    os.environ["CH_PORT"] = NO_CLICKHOUSE_PORT
+    print(
+        "⚠️  CH_PORT is not set: ClickHouse-backed tests will not connect "
+        f"(target port {NO_CLICKHOUSE_PORT}). Run `make test`, or export "
+        "CH_PORT=<your disposable ClickHouse>."
+    )
+# The v2 service talks to the same server over the same native protocol, so a
+# runner that named one native port has named both.
+if not os.environ.get("CH25_TCP_PORT"):
+    os.environ["CH25_TCP_PORT"] = os.environ["CH_PORT"]
+
 # Point Redis-using code at the test compose sidecar at localhost:16379
 # (per docker-compose.test.yml). Without this, modules fall through to the
 # dev `.env` host `redis://redis:6379/0` which doesn't resolve outside
@@ -40,7 +70,7 @@ EVAL_USAGE_CLICKHOUSE_ENABLED = os.environ.get(
 
 # Test database configuration
 # Use different ports than dev (5432/9000) to avoid collisions
-# Dev: PG=5432, CH=9000 | Test: PG=15432, CH=19000
+# Dev: PG=5432, CH=9000 | Test: PG=15432, CH=named by the runner
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
@@ -66,7 +96,7 @@ DATABASES["default_direct"] = {
 
 CLICKHOUSE = {
     "CH_HOST": os.environ.get("CH_HOST", "localhost"),
-    "CH_PORT": os.environ.get("CH_PORT", "19000"),
+    "CH_PORT": os.environ.get("CH_PORT", NO_CLICKHOUSE_PORT),
     "CH_USERNAME": os.environ.get("CH_USERNAME", "default"),
     "CH_PASSWORD": os.environ.get("CH_PASSWORD", ""),
     "CH_DATABASE": os.environ.get("CH_DATABASE", "test_tfc"),
@@ -74,13 +104,14 @@ CLICKHOUSE = {
 }
 
 # CHSpanReader / CH25 v2 service uses clickhouse-connect over HTTP. The TCP
-# port lives in `CLICKHOUSE['CH_PORT']` (19000) but the HTTP listener is on
-# 18123 in the test compose. Without this dict `get_v2_config()` would fall
-# back to the hardcoded HTTP default 8123 and hit the dev CH 24.10 instead.
+# port lives in `CLICKHOUSE['CH_PORT']` (runner-named) but the HTTP listener
+# is on 18123 in the test compose. Without this dict `get_v2_config()` would
+# fall back to the hardcoded HTTP default 8123 and hit the dev CH 24.10
+# instead.
 CLICKHOUSE_V2 = {
     "CH25_HOST": os.environ.get("CH25_HOST", "localhost"),
     "CH25_HTTP_PORT": int(os.environ.get("CH25_HTTP_PORT", "18123")),
-    "CH25_TCP_PORT": int(os.environ.get("CH25_TCP_PORT", "19000")),
+    "CH25_TCP_PORT": int(os.environ.get("CH25_TCP_PORT", NO_CLICKHOUSE_PORT)),
     "CH25_USER": os.environ.get("CH25_USER", "default"),
     "CH25_PASSWORD": os.environ.get("CH25_PASSWORD", ""),
     "CH25_DATABASE": os.environ.get("CH25_DATABASE", "test_tfc"),
@@ -259,7 +290,7 @@ def ensure_clickhouse_test_database():
         # Connect to ClickHouse without specifying a database
         client = Client(
             host=CLICKHOUSE["CH_HOST"],
-            port=int(CLICKHOUSE["CH_PORT"] or "9000"),
+            port=int(CLICKHOUSE["CH_PORT"]),
             user=CLICKHOUSE["CH_USERNAME"],
             password=CLICKHOUSE["CH_PASSWORD"],
         )
