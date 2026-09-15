@@ -50,6 +50,13 @@ const useFalconStore = create((set, _get) => ({
   setActiveSkill: (skill) => set({ activeSkill: skill }),
   clearActiveSkill: () => set({ activeSkill: null }),
 
+  // Declared flows by skill id; the list response carries none, so fetch once.
+  skillPlans: {},
+  setSkillPlan: (skillId, trajectories) =>
+    set((s) => ({
+      skillPlans: { ...s.skillPlans, [skillId]: trajectories || [] },
+    })),
+
   // Attached files for current message
   attachedFiles: [], // [{id, name, size, content_type, url}]
   addAttachedFile: (file) =>

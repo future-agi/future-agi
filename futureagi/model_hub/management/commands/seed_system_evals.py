@@ -30,6 +30,33 @@ SYSTEM_EVALS_VERSION = 16
 # stable 64-bit constant works; this one is arbitrary.
 _SEED_EVALS_LOCK_KEY = 0x5EED_E7A1
 
+SEED_VERSION_CACHE_KEY = "system_evals_version"
+_OSS_MODE = "oss"
+_EE_MODE = "ee"
+
+
+def seed_mode():
+    """The deployment mode the templates were written under.
+
+    ``_yaml_to_template_fields`` picks ``eval_type`` from this, so a stack
+    seeded as OSS and later licensed carries the OSS evaluator on every
+    system eval until it is seeded again.
+    """
+    from tfc.ee_gating import is_oss
+
+    return _OSS_MODE if is_oss() else _EE_MODE
+
+
+def seed_stamp(mode=None):
+    """What the seeded rows are, not just which catalogue version wrote them.
+
+    Compared for equality, so every mode flip re-seeds. A key that only
+    records "this mode was seeded once" leaves the rows on the other mode's
+    evaluator after a flip back.
+    """
+    return f"{SYSTEM_EVALS_VERSION}:{mode or seed_mode()}"
+
+
 SYSTEM_EVALS_DIR = Path(__file__).resolve().parent.parent.parent / "system_evals"
 CATALOG_YAML = (
     Path(__file__).resolve().parent.parent.parent.parent
@@ -107,11 +134,16 @@ def seed_evals(dry_run=False, force=False, verbose=False):
 
         # Re-check version cache INSIDE the lock — another pod may have
         # finished seeding while we were waiting for the lock.
+        mode = seed_mode()
+        stamp = seed_stamp(mode)
         if not force:
-            cached_version = cache.get("system_evals_version", 0)
-            if cached_version >= SYSTEM_EVALS_VERSION:
+            if cache.get(SEED_VERSION_CACHE_KEY) == stamp:
                 if verbose:
-                    logger.info("system_evals_up_to_date", version=SYSTEM_EVALS_VERSION)
+                    logger.info(
+                        "system_evals_up_to_date",
+                        version=SYSTEM_EVALS_VERSION,
+                        mode=mode,
+                    )
                 return 0, 0, 0
 
         yaml_evals = load_yaml_evals()
@@ -202,7 +234,7 @@ def seed_evals(dry_run=False, force=False, verbose=False):
 
         # Update version cache
         try:
-            cache.set("system_evals_version", SYSTEM_EVALS_VERSION, timeout=None)
+            cache.set(SEED_VERSION_CACHE_KEY, stamp, timeout=None)
         except Exception:
             pass  # Cache unavailable — seeder still works, just re-runs next time
 
@@ -213,6 +245,7 @@ def seed_evals(dry_run=False, force=False, verbose=False):
         unchanged=skipped_count,
         total=len(yaml_evals),
         version=SYSTEM_EVALS_VERSION,
+        mode=mode,
     )
 
     return created_count, updated_count, skipped_count
@@ -233,12 +266,12 @@ def _eval_accepts_pdf(config):
 def _yaml_to_template_fields(eval_def):
     """Convert a YAML eval definition dict into EvalTemplate field values."""
     from model_hub.models.choices import OwnerChoices
-    from tfc.ee_gating import is_oss
 
     track = eval_def.get("_track", "agent")
     # In OSS, agent evals run as LLM-as-a-Judge (CustomPromptEvaluator)
     # since AgentEvaluator requires the ee module.
-    if is_oss():
+    oss = seed_mode() == _OSS_MODE
+    if oss:
         eval_type_map = {"function": "code", "agent": "llm", "specialty": "llm"}
     else:
         eval_type_map = {"function": "code", "agent": "agent", "specialty": "agent"}
@@ -255,7 +288,7 @@ def _yaml_to_template_fields(eval_def):
     if track in ("agent", "specialty"):
         if "rule_prompt" not in config and eval_def.get("criteria"):
             config["rule_prompt"] = eval_def["criteria"]
-        if is_oss():
+        if oss:
             config["eval_type_id"] = "CustomPromptEvaluator"
         else:
             config.setdefault("eval_type_id", "AgentEvaluator")
