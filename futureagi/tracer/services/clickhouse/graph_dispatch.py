@@ -1606,11 +1606,64 @@ def fetch_user_system_metric_graph_ch(
     organization_id: str | None = None,
     workspace_id: str | None = None,
 ) -> dict[str, Any]:
-    """Read one complete exact user-grain graph snapshot synchronously."""
+    """Read one exact user-grain graph snapshot, or schedule it out of band.
 
-    del refresh, organization_id, workspace_id
+    The aggregate user graph is one ordered latest-state pass over the whole
+    window, and on the largest tenants that pass outlives the interactive wall.
+    This surface therefore keeps the same read-or-schedule contract the other
+    exact Observe graphs use: a cache-only probe first, the unchanged direct
+    read while nothing is cached, and one deduplicated background refresh -
+    never a second interactive attempt - once the read budget has actually
+    failed. The background lane runs the identical statement under the worker's
+    own wall and the graph thread budget this reader already carries.
+    """
+
     project_id = _validated_project_id(project_id)
     filters = list(filters or [])
+    normalized_metric_id = str(metric_id or "")
+    identity = {
+        "project_id": project_id,
+        "filters": filters,
+        "interval": interval,
+        "metric_id": normalized_metric_id,
+    }
+    pending_payload = _pending_graph_payload(normalized_metric_id)
+    if organization_id:
+        # Without a resolved tenant scope there is no snapshot identity and the
+        # worker could not re-authorize the project, so the cache is not
+        # consulted and the direct read remains the only possible answer.
+        cached = _read_or_refresh_exact_graph(
+            namespace="observe-user-system-graph",
+            identity=dict(identity),
+            refresh=False,
+            pending_payload=pending_payload,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            schedule_on_miss=False,
+        )
+        if (
+            isinstance(cached, dict)
+            and cached.get("query_status") == "complete"
+            and graph_payload_is_publishable(cached, allow_sampled=False)
+        ):
+            if refresh:
+                return _read_or_refresh_exact_graph(
+                    namespace="observe-user-system-graph",
+                    identity=dict(identity),
+                    refresh=True,
+                    pending_payload=pending_payload,
+                    organization_id=organization_id,
+                    workspace_id=workspace_id,
+                )
+            return cached
+        if isinstance(cached, dict) and cached.get("query_refreshing") is True:
+            # A refresh for this identity is already executing. Every poll of
+            # the same window waits on that job instead of starting a duplicate
+            # statement of its own.
+            return cached
+    # A cold identity - manual refresh included - still tries the interactive
+    # read first, so tenants whose window fits the wall keep the synchronous
+    # answer they have today.
     interactive_deadline_ms = min(
         int(timeout_ms),
         GRAPH_INTERACTIVE_QUERY_TIMEOUT_MS,
@@ -1621,7 +1674,6 @@ def fetch_user_system_metric_graph_ch(
         analytics,
         ReadDeadline.start(interactive_deadline_ms),
     )
-    normalized_metric_id = str(metric_id or "")
     try:
         response = read_exact_user_system_graph(
             analytics=bounded_analytics,
@@ -1638,7 +1690,7 @@ def fetch_user_system_metric_graph_ch(
         )
         return enforce_exact_graph_data_contract(response)
     except ExactGraphReadError as exc:
-        return degraded_graph_response(
+        degraded = degraded_graph_response(
             normalized_metric_id,
             exc,
             provenance="exact_snapshot",
@@ -1646,11 +1698,26 @@ def fetch_user_system_metric_graph_ch(
     except Exception as exc:
         if not (is_read_budget_error(exc) or is_clickhouse_query_error(exc)):
             raise
-        return degraded_graph_response(
+        degraded = degraded_graph_response(
             normalized_metric_id,
             exc,
             provenance="exact_snapshot",
         )
+    if organization_id:
+        try:
+            return _read_or_refresh_exact_graph(
+                namespace="observe-user-system-graph",
+                identity=dict(identity),
+                refresh=True,
+                pending_payload=pending_payload,
+                organization_id=organization_id,
+                workspace_id=workspace_id,
+            )
+        except Exception:
+            # The direct failure is already sanitized. Cache/worker transport
+            # availability must not turn it into a raw API exception.
+            return degraded
+    return degraded
 
 
 def normalize_eval_graph_output_type(req_data_config: dict[str, Any]) -> str:
