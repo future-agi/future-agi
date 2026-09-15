@@ -8,7 +8,7 @@ from decimal import Decimal
 from difflib import SequenceMatcher
 from itertools import chain
 from typing import Any, Dict, Optional
-from uuid import uuid4
+from uuid import UUID, uuid4, uuid5
 
 import structlog
 
@@ -37,6 +37,16 @@ from tracer.models.observability_provider import ProviderChoices
 from tfc.utils.storage_client import server_reachable_url
 
 logger = structlog.get_logger(__name__)
+_SIMULATION_USAGE_EVENT_NAMESPACE = UUID("60346c52-eae1-43de-a75c-bb321e966172")
+
+
+def _simulation_usage_event_id(call_execution_id, action: str) -> str:
+    return str(
+        uuid5(
+            _SIMULATION_USAGE_EVENT_NAMESPACE,
+            f"{call_execution_id}:{action}",
+        )
+    )
 
 
 def build_eval_configs_map(call_execution) -> dict[str, "SimulateEvalConfig"]:
@@ -44,8 +54,7 @@ def build_eval_configs_map(call_execution) -> dict[str, "SimulateEvalConfig"]:
     if not eval_config_ids:
         return {}
     return {
-        str(c.id): c
-        for c in SimulateEvalConfig.objects.filter(id__in=eval_config_ids)
+        str(c.id): c for c in SimulateEvalConfig.objects.filter(id__in=eval_config_ids)
     }
 
 
@@ -82,6 +91,7 @@ from simulate.constants.persona_prompt_guides import (
     VOICE_COMMUNICATION_STYLE_GUIDES,
     VOICE_PERSONALITY_GUIDES,
 )
+
 try:
     from ee.voice.constants.voice_mapper import (
         select_voice_id,
@@ -104,6 +114,7 @@ from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import EvalExplanationSummaryStatus
 from simulate.pydantic_schemas.chat import SimulationCallType
 from simulate.services.branch_deviation_analyzer import BranchDeviationAnalyzer
+
 try:
     from ee.voice.services.conversation_metrics import ConversationMetricsCalculator
     from ee.voice.services.phone_number_service import PhoneNumberService
@@ -136,6 +147,7 @@ from tfc.constants.api_calls import APICallStatusChoices
 try:
     from ee.usage.models.usage import APICallType
 except ImportError:
+
     class APICallType:
         class objects:
             @classmethod
@@ -143,16 +155,25 @@ except ImportError:
                 from types import SimpleNamespace
 
                 return SimpleNamespace(id=f"oss-noop-{name or 'unspecified'}"), False
+
+
 try:
     from ee.usage.services.metering import check_usage
 except ImportError:
+
     def check_usage(*args, **kwargs):
         from types import SimpleNamespace
 
         return SimpleNamespace(allowed=True, reason=None)
+
+
 try:
-    from ee.usage.utils.usage_entries import deduct_cost_for_request, log_and_deduct_cost_for_api_request
+    from ee.usage.utils.usage_entries import (
+        deduct_cost_for_request,
+        log_and_deduct_cost_for_api_request,
+    )
 except ImportError:
+
     def deduct_cost_for_request(*args, **kwargs):
         return None
 
@@ -2035,9 +2056,7 @@ class TestExecutor:
         """
         try:
             event_type = (
-                "text_call"
-                if call_type == SimulationCallType.TEXT
-                else "voice_call"
+                "text_call" if call_type == SimulationCallType.TEXT else "voice_call"
             )
             result = check_usage(str(organization.id), event_type)
 
@@ -3633,12 +3652,17 @@ class TestExecutor:
             logger.exception(f"Error storing customer call artifacts.{e}")
 
     @staticmethod
-    def _deduct_call_cost(call_execution: CallExecution):
-        """
-        Deduct cost for completed voice call based on duration
+    def _deduct_call_cost(
+        call_execution: CallExecution,
+        *,
+        text_token_count: int | None = None,
+    ):
+        """Record simulation usage.
 
-        Args:
-            call_execution: CallExecution object with duration information
+        Native text calls keep deriving tokens from their stored messages.
+        Hosted ALK callers pass the measured, platform-funded simulator token
+        count explicitly so target-agent or transcript-estimated tokens can
+        never enter simulator billing.
         """
         try:
             # Get organization from the call execution
@@ -3657,10 +3681,14 @@ class TestExecutor:
                     role=ChatMessageModel.RoleChoices.USER,
                 ).count()
                 total_tokens = (
-                    ChatMessageModel.objects.filter(
-                        call_execution=call_execution
-                    ).aggregate(total=Sum("tokens"))["total"]
-                    or 0
+                    text_token_count
+                    if text_token_count is not None
+                    else (
+                        ChatMessageModel.objects.filter(
+                            call_execution=call_execution
+                        ).aggregate(total=Sum("tokens"))["total"]
+                        or 0
+                    )
                 )
                 config = {
                     "call_execution_id": str(call_execution.id),
@@ -3701,6 +3729,9 @@ class TestExecutor:
 
                     emit(
                         UsageEvent(
+                            event_id=_simulation_usage_event_id(
+                                call_execution.id, "text_call"
+                            ),
                             org_id=str(organization.id),
                             event_type=BillingEventType.TEXT_CALL,
                             amount=total_tokens,
@@ -3779,9 +3810,12 @@ class TestExecutor:
 
                 emit(
                     UsageEvent(
+                        event_id=_simulation_usage_event_id(
+                            call_execution.id, "voice_call"
+                        ),
                         org_id=str(organization.id),
                         event_type=BillingEventType.VOICE_CALL,
-                        amount=max(1, round(float(duration_minutes))),
+                        amount=float(duration_minutes),
                         properties={
                             "source": "simulate",
                             "source_id": str(call_execution.id),
@@ -4529,9 +4563,7 @@ class TestExecutor:
                         eval_dir = (call_execution.call_metadata or {}).get(
                             "call_direction", ""
                         )
-                        eval_is_outbound = (
-                            str(eval_dir).strip().lower() == "outbound"
-                        )
+                        eval_is_outbound = str(eval_dir).strip().lower() == "outbound"
                         conversational_roles = (
                             SpeakerRoleResolver.get_conversational_roles()
                         )
@@ -4545,9 +4577,7 @@ class TestExecutor:
                                 provider=eval_provider,
                                 is_outbound=eval_is_outbound,
                             )
-                            transcript_text.append(
-                                f"{eval_role}: {transcript.content}"
-                            )
+                            transcript_text.append(f"{eval_role}: {transcript.content}")
                     transcript_data["transcript"] = "\n".join(transcript_text)
                     transcript_data["user_chat_transcript"] = "\n".join(
                         user_chat_transcript_text
@@ -4715,6 +4745,14 @@ class TestExecutor:
         """
         try:
             close_old_connections()
+            existing_output = (call_execution.eval_outputs or {}).get(
+                str(eval_config.id)
+            )
+            if (
+                isinstance(existing_output, dict)
+                and existing_output.get("status") == StatusType.COMPLETED.value
+            ):
+                return
 
             # Get the evaluation template
             eval_template = eval_config.eval_template
@@ -4912,9 +4950,9 @@ class TestExecutor:
                             "output_type": derive_kpi_output_type(eval_template),
                         }
                         call_execution.eval_outputs[str(eval_config.id)] = error_result
-                        call_execution.eval_outputs[str(eval_config.id)][
-                            "status"
-                        ] = StatusType.FAILED.value
+                        call_execution.eval_outputs[str(eval_config.id)]["status"] = (
+                            StatusType.FAILED.value
+                        )
                         call_execution.save(update_fields=["eval_outputs"])
                         raise ValueError(error_message)
 
@@ -4950,15 +4988,21 @@ class TestExecutor:
                     "call_type": call_execution.call_type,
                     "simulation_call_type": call_execution.simulation_call_type,
                     "phone_number": call_execution.phone_number,
-                    "started_at": str(call_execution.started_at) if call_execution.started_at else None,
-                    "ended_at": str(call_execution.ended_at) if call_execution.ended_at else None,
+                    "started_at": str(call_execution.started_at)
+                    if call_execution.started_at
+                    else None,
+                    "ended_at": str(call_execution.ended_at)
+                    if call_execution.ended_at
+                    else None,
                     "duration_seconds": call_execution.duration_seconds,
                     "recording_url": call_execution.recording_url,
                     "call_summary": call_execution.call_summary,
                     "ended_reason": call_execution.ended_reason,
                     "error_message": call_execution.error_message,
                     "message_count": call_execution.message_count,
-                    "overall_score": float(call_execution.overall_score) if call_execution.overall_score is not None else None,
+                    "overall_score": float(call_execution.overall_score)
+                    if call_execution.overall_score is not None
+                    else None,
                 }
 
             # Run the evaluation
@@ -4977,6 +5021,12 @@ class TestExecutor:
                 workspace=call_execution.test_execution.run_test.workspace,
                 source="simulate",
                 call_context=_call_context,
+                billing_event_id=_simulation_usage_event_id(
+                    call_execution.id,
+                    f"evaluator:{eval_config.id}",
+                ),
+                billing_test_execution_id=str(call_execution.test_execution_id),
+                billing_call_execution_id=str(call_execution.id),
             )
 
             if isinstance(eval_result, str):
@@ -5053,9 +5103,9 @@ class TestExecutor:
                 "output_type": derive_kpi_output_type(eval_config.eval_template),
             }
             call_execution.eval_outputs[str(eval_config.id)] = error_result
-            call_execution.eval_outputs[str(eval_config.id)][
-                "status"
-            ] = StatusType.FAILED.value
+            call_execution.eval_outputs[str(eval_config.id)]["status"] = (
+                StatusType.FAILED.value
+            )
             call_execution.save(update_fields=["eval_outputs"])
 
             eval_config.status = StatusType.FAILED.value
@@ -5401,9 +5451,7 @@ class TestExecutor:
             call_column_order = []
             tool_eval_ids_map = {}  # Map idx to tool_eval_id for the second phase
             columns_updated = False
-            tool_name_counts = (
-                {}
-            )  # tool_name -> occurrence count (per-call) for stable column naming
+            tool_name_counts = {}  # tool_name -> occurrence count (per-call) for stable column naming
 
             for idx, tool_call in enumerate(tool_calls_data):
                 try:

@@ -764,10 +764,17 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
     from model_hub.tasks.user_evaluation import trigger_error_localization_for_simulate
     from model_hub.views.utils.evals import run_eval_func
     from simulate.models import Scenarios
+    from simulate.services.test_executor import _simulation_usage_event_id
     from tfc.utils.error_codes import get_specific_error_message
 
     try:
         close_old_connections()
+        existing_output = (call_execution.eval_outputs or {}).get(str(eval_config.id))
+        if (
+            isinstance(existing_output, dict)
+            and existing_output.get("status") == StatusType.COMPLETED.value
+        ):
+            return
 
         eval_template = eval_config.eval_template
 
@@ -1022,6 +1029,12 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
             workspace=call_execution.test_execution.run_test.workspace,
             source="simulate",
             call_context=_call_context,
+            billing_event_id=_simulation_usage_event_id(
+                call_execution.id,
+                f"evaluator:{eval_config.id}",
+            ),
+            billing_test_execution_id=str(call_execution.test_execution_id),
+            billing_call_execution_id=str(call_execution.id),
         )
 
         if isinstance(eval_result, str):
@@ -1045,6 +1058,7 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
                 "reason": eval_reason,
                 "output_type": eval_result.get("output_type"),
                 "name": eval_config.name,
+                "status": StatusType.COMPLETED.value,
             }
             call_execution.save(update_fields=["eval_outputs"])
 
