@@ -95,6 +95,7 @@ func (c *OrgProviderCache) GetOrCreateWithTenantConfig(orgID, providerID, apiKey
 			BaseURL:            tenantCfg.BaseURL,
 			APIKey:             apiKey,
 			APIFormat:          apiFormat,
+			APIPathPrefix:      tenantCfg.APIPathPrefix,
 			DefaultTimeout:     timeout,
 			MaxConcurrent:      maxConc,
 			ConnPoolSize:       poolSize,
