@@ -44,6 +44,14 @@ from tracer.services.clickhouse.read_budget import (
 from tracer.services.exact_aggregation_cache import (
     read_or_schedule_exact_snapshot,
 )
+from tracer.utils.graph_provenance import (
+    BOUNDED_CANDIDATES,
+    EMPTY_WINDOW,
+    EXACT_SNAPSHOT,
+    MATERIALIZED_ROLLUP,
+    SERVER_READ_POLICY_UNAVAILABLE,
+    graph_provenance_metadata,
+)
 
 GRAPH_WALL_DEADLINE_MS = settings.GRAPH_BACKGROUND_WALL_MS
 GRAPH_QUERY_TIMEOUT_MS = settings.GRAPH_BACKGROUND_WALL_MS
@@ -1193,7 +1201,10 @@ def _fetch_rollup_system_metric_graph(
         1,
         min(int(timeout_ms), GRAPH_INTERACTIVE_QUERY_TIMEOUT_MS),
     )
-    if start_date is not None and end_date is not None and start_date >= end_date:
+    empty_window = (
+        start_date is not None and end_date is not None and start_date >= end_date
+    )
+    if empty_window:
         rows: list[Any] = []
         columns: list[str] = []
         query_count = 0
@@ -1228,10 +1239,7 @@ def _fetch_rollup_system_metric_graph(
         )
     )
     response.update(
-        {
-            "query_provenance": "materialized_rollup",
-            "query_exact": False,
-        }
+        graph_provenance_metadata(EMPTY_WINDOW if empty_window else MATERIALIZED_ROLLUP)
     )
     return enforce_exact_graph_data_contract(response)
 
@@ -1328,16 +1336,11 @@ def _fetch_direct_raw_system_metric_graph(
             rows_returned=len(rows),
         )
     )
+    # The full bounded window is read without sampling, but physical
+    # ReplacingMergeTree versions are intentionally not collapsed on this
+    # latency-critical path, so the series is complete and inexact.
     response.update(
-        {
-            # The full bounded window is read without sampling, but physical
-            # ReplacingMergeTree versions are intentionally not collapsed on
-            # this latency-critical path.
-            "query_provenance": (
-                "exact_snapshot" if empty_window else "bounded_candidates"
-            ),
-            "query_exact": empty_window,
-        }
+        graph_provenance_metadata(EMPTY_WINDOW if empty_window else BOUNDED_CANDIDATES)
     )
     return enforce_exact_graph_data_contract(response)
 
@@ -1367,7 +1370,7 @@ def fetch_system_metric_graph_ch(
             return degraded_graph_response(
                 str(metric_id or ""),
                 BoundedGraphReadError("query_failed", retryable=True),
-                provenance="server_read_policy_unavailable",
+                provenance=SERVER_READ_POLICY_UNAVAILABLE,
             )
         return _fetch_rollup_system_metric_graph(
             analytics=analytics,
@@ -1465,13 +1468,13 @@ def fetch_system_metric_graph_ch(
         return response
     except ExactGraphReadError as exc:
         degraded = degraded_graph_response(
-            str(metric_id or ""), exc, provenance="bounded_candidates"
+            str(metric_id or ""), exc, provenance=BOUNDED_CANDIDATES
         )
     except Exception as exc:
         if not (is_read_budget_error(exc) or is_clickhouse_query_error(exc)):
             raise
         degraded = degraded_graph_response(
-            str(metric_id or ""), exc, provenance="bounded_candidates"
+            str(metric_id or ""), exc, provenance=BOUNDED_CANDIDATES
         )
     if organization_id:
         try:
@@ -1562,18 +1565,13 @@ def fetch_all_system_metrics_ch(
             filters=filters,
             interval=interval,
         )
-        response.update(
-            {
-                "query_provenance": "exact_snapshot",
-                "query_exact": True,
-            }
-        )
+        response.update(graph_provenance_metadata(EXACT_SNAPSHOT))
         return response
     except ExactGraphReadError as exc:
         degraded = degraded_graph_response(
             "",
             exc,
-            provenance="exact_snapshot",
+            provenance=EXACT_SNAPSHOT,
         )
     except Exception as exc:
         if not (is_read_budget_error(exc) or is_clickhouse_query_error(exc)):
@@ -1581,7 +1579,7 @@ def fetch_all_system_metrics_ch(
         degraded = degraded_graph_response(
             "",
             exc,
-            provenance="exact_snapshot",
+            provenance=EXACT_SNAPSHOT,
         )
     return {
         **{
@@ -1630,18 +1628,13 @@ def fetch_user_system_metric_graph_ch(
             interval=interval,
             metric_id=normalized_metric_id,
         )
-        response.update(
-            {
-                "query_provenance": "exact_snapshot",
-                "query_exact": True,
-            }
-        )
+        response.update(graph_provenance_metadata(EXACT_SNAPSHOT))
         return enforce_exact_graph_data_contract(response)
     except ExactGraphReadError as exc:
         return degraded_graph_response(
             normalized_metric_id,
             exc,
-            provenance="exact_snapshot",
+            provenance=EXACT_SNAPSHOT,
         )
     except Exception as exc:
         if not (is_read_budget_error(exc) or is_clickhouse_query_error(exc)):
@@ -1649,7 +1642,7 @@ def fetch_user_system_metric_graph_ch(
         return degraded_graph_response(
             normalized_metric_id,
             exc,
-            provenance="exact_snapshot",
+            provenance=EXACT_SNAPSHOT,
         )
 
 
@@ -1972,7 +1965,7 @@ def fetch_eval_graph_ch(
         return degraded_graph_response(
             str(req_data_config.get("id") or ""),
             exc,
-            provenance="exact_snapshot",
+            provenance=EXACT_SNAPSHOT,
         )
     except Exception as exc:
         if not (is_read_budget_error(exc) or is_clickhouse_query_error(exc)):
@@ -1980,11 +1973,11 @@ def fetch_eval_graph_ch(
         return degraded_graph_response(
             str(req_data_config.get("id") or ""),
             exc,
-            provenance="exact_snapshot",
+            provenance=EXACT_SNAPSHOT,
         )
     if not isinstance(response, dict):
         raise ExactGraphReadError("eval graph returned an invalid payload")
-    response.update({"query_provenance": "exact_snapshot", "query_exact": True})
+    response.update(graph_provenance_metadata(EXACT_SNAPSHOT))
     return enforce_exact_graph_data_contract(response)
 
 
@@ -2278,12 +2271,12 @@ def fetch_annotation_graph_ch(
             aggregation_context=normalized_aggregation_context,
         )
     except ExactGraphReadError as exc:
-        return degraded_graph_response(label_id, exc, provenance="exact_snapshot")
+        return degraded_graph_response(label_id, exc, provenance=EXACT_SNAPSHOT)
     except Exception as exc:
         if not (is_read_budget_error(exc) or is_clickhouse_query_error(exc)):
             raise
-        return degraded_graph_response(label_id, exc, provenance="exact_snapshot")
-    response.update({"query_provenance": "exact_snapshot", "query_exact": True})
+        return degraded_graph_response(label_id, exc, provenance=EXACT_SNAPSHOT)
+    response.update(graph_provenance_metadata(EXACT_SNAPSHOT))
     return enforce_exact_graph_data_contract(response)
 
 
