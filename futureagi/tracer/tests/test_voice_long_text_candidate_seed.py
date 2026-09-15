@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta
 
 import pytest
+from django.test import override_settings
 
 from tracer.selectors.trace_filter_reads import read_bounded_filter_page
 from tracer.services.clickhouse.query_service import QueryResult
@@ -181,3 +182,29 @@ def test_voice_filters_without_exhaustive_long_text_witness_keep_existing_plan(
 )
 def test_voice_internal_and_sampled_consumers_keep_existing_plan(mode):
     assert not voice_builder(**mode).supports_filter_candidate_seed_page()
+
+
+@override_settings(FILTER_SELECTOR_NUMERIC_LONG_TEXT_SEED_WITNESS_SLACK_HOURS=2)
+def test_the_trace_lane_slack_setting_never_reaches_the_voice_delegate():
+    """Voice mints its own cursor and does not pin this slack; keep it out.
+
+    The delegate is a trace builder and shares the bounded-witness code, so
+    without the internal-root guard this setting would silently narrow voice
+    candidacy with no cursor pin behind it - and voice's own contract is a
+    separate owner decision.
+    """
+
+    subject = voice_builder()
+    delegate = subject._long_text_candidate_delegate()
+    assert delegate is not None
+    assert delegate._public_long_text_candidate_seed_plan() is not None
+    assert not delegate._uses_wide_candidate_seed()
+    assert delegate.filter_seed_width_policy() is None
+    assert not delegate.supports_filter_seed_density_probe()
+    assert delegate.filter_seed_witness_slack_hours() is None
+    _, end = subject._bounded_request_window
+    sql, params = subject.build_filter_candidate_seed_page(
+        slice_start=end - timedelta(hours=1), slice_end=end, limit=50
+    )
+    assert "filter_witness_start_us" not in sql
+    assert "filter_witness_start" not in params
