@@ -44,6 +44,8 @@ import {
 } from "src/hooks/useDashboards";
 import {
   format,
+  isValid,
+  parseISO,
   startOfToday,
   startOfTomorrow,
   startOfYesterday,
@@ -941,13 +943,18 @@ const PrimaryGraph = ({
 
     for (const item of items) {
       if (item.timestamp == null) continue;
-      const ts = item.timestamp.replace(/\+00:00$/, "");
+      const date =
+        typeof item.timestamp === "string"
+          ? parseISO(item.timestamp)
+          : new Date(item.timestamp);
+      if (!isValid(date)) continue;
+      const ts = date.getTime();
       mData.push({
-        x: new Date(ts).getTime(),
+        x: ts,
         y: item.value == null ? null : Number(item.value),
       });
       tData.push({
-        x: new Date(ts).getTime(),
+        x: ts,
         y: item.primary_traffic == null ? null : Number(item.primary_traffic),
       });
     }

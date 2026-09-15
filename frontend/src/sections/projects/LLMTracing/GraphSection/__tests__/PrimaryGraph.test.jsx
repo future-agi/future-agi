@@ -23,6 +23,8 @@ vi.mock("react-apexcharts", () => ({
       data-traffic-series-name={series?.[1]?.name}
       data-traffic-axis-series-name={options?.yaxis?.[1]?.seriesName}
       data-primary-first-y={series?.[0]?.data?.[0]?.y}
+      data-primary-first-x={series?.[0]?.data?.[0]?.x}
+      data-primary-point-count={series?.[0]?.data?.length}
     />
   ),
 }));
@@ -151,7 +153,47 @@ describe("PrimaryGraph", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllEnvs();
     vi.unstubAllGlobals();
+  });
+
+  it("preserves UTC timestamps and skips invalid graph points outside UTC", async () => {
+    vi.stubEnv("TZ", "Asia/Kolkata");
+    expect(new Date("2026-09-01T10:00:00").getTimezoneOffset()).toBe(-330);
+    axios.post.mockResolvedValue({
+      data: {
+        result: {
+          metric_name: "latency",
+          data: [
+            {
+              timestamp: "2026-09-01T10:00:00+00:00",
+              value: 12,
+              primary_traffic: 1,
+            },
+            {
+              timestamp: "not-a-timestamp",
+              value: 999,
+              primary_traffic: 999,
+            },
+          ],
+          query_complete: true,
+          query_status: "complete",
+          query_sampled: false,
+          query_completed_at: "2026-09-01T11:00:00+00:00",
+        },
+      },
+    });
+
+    renderWithQueryClient(
+      <PrimaryGraph observeIdOverride="project-override" />,
+    );
+
+    const chart = await screen.findByTestId("apex-chart");
+    expect(chart).toHaveAttribute(
+      "data-primary-first-x",
+      String(Date.parse("2026-09-01T10:00:00Z")),
+    );
+    expect(chart).toHaveAttribute("data-primary-point-count", "1");
   });
 
   it("uses observeIdOverride as the graph project id", async () => {

@@ -2753,6 +2753,47 @@ class TestTimeSeriesQueryBuilder:
         assert result["output_tokens"] == result["completion_tokens"]
         assert result["total_tokens"] == result["tokens"]
 
+    def test_format_result_emits_explicit_utc_offsets(self):
+        """Graph timestamps preserve their instant on the response wire."""
+        from datetime import UTC, datetime, timedelta, timezone
+
+        from tracer.services.clickhouse.query_builders import TimeSeriesQueryBuilder
+
+        start = datetime(2026, 9, 1, 10, tzinfo=UTC)
+        builder = TimeSeriesQueryBuilder(
+            project_id="test-project-id",
+            filters=[],
+            interval="hour",
+            start_date=start,
+            end_date=start + timedelta(hours=1),
+        )
+        rows = [
+            {
+                "time_bucket": datetime(
+                    2026,
+                    9,
+                    1,
+                    15,
+                    30,
+                    tzinfo=timezone(timedelta(hours=5, minutes=30)),
+                ),
+                "avg_latency": 12,
+                "total_tokens": 0,
+                "avg_cost": 0,
+                "traffic_count": 1,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "error_rate": 0,
+            }
+        ]
+
+        result = builder.format_result(rows, columns=[])
+
+        assert result["latency"] == [
+            {"timestamp": "2026-09-01T10:00:00+00:00", "value": 12, "latency": 0},
+            {"timestamp": "2026-09-01T11:00:00+00:00", "value": 0, "latency": 0},
+        ]
+
     def test_format_result_preserves_values_from_dict_rows(self):
         """Dict-row path (returned by execute_ch_query) must round-trip values.
 
