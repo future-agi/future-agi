@@ -85,10 +85,8 @@ def test_prefix_population_contains_only_raw_keys_and_immutable_scope(op, value)
     assert "project_id" in raw and "toStartOfHour(start_time)" in raw
     for forbidden in ("is_deleted", "project_version_id", "LIMIT", "SAMPLE", "['tag']"):
         assert forbidden not in raw
-    assert "FROM spans FINAL" in sql
+    assert "argMax(tuple(" in sql and "FINAL" not in sql
     assert "AND is_deleted = 0" in sql
-    assert "use_skip_indexes_if_final = 0" in sql
-    assert "enable_optimize_predicate_expression_to_final_subquery = 0" in sql
     assert "tag" in params.values()
 
 
@@ -583,7 +581,8 @@ def test_mixed_gap_uses_one_numeric_witness_without_changing_seed_or_schedule(le
     assert params["project_id"] == PROJECT and "FROM spans" in sql
     assert all(part not in sql for part in ("FINAL", "is_deleted", "project_version_id", "LIMIT", "SAMPLE"))
     seed, bound = query(target)
-    assert "FROM spans FINAL" in seed and "toStartOfHour(start_time)" in seed
+    assert "argMax(tuple(" in seed and "toStartOfHour(start_time)" in seed
+    assert "FINAL" not in seed
     assert_mixed_result_queries_unchanged(target, filters, leaves)
     assert "attrs_string" in seed and "attrs_number" in seed
 

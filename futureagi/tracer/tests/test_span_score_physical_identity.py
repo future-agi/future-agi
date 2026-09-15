@@ -663,7 +663,8 @@ def test_resolved_score_membership_prunes_each_branch_to_physical_candidates(lea
         filters=[time_filter(), leaf], annotation_label_ids=[LABEL, SECOND_LABEL]
     )
     sql, _ = target.build_filter_match_query_from_seed_rows([row()])
-    assert sql.count("FROM spans FINAL") == 1
+    assert sql.count(") AS latest_candidate_spans") == 1
+    assert "FROM spans FINAL" not in sql
     # Each score-shape branch prunes against the same scoped latest source.
     # CTE text references are not a measured database scan count.
     assert sql.count("FROM resolved_annotation_candidates") in (4, 7)
