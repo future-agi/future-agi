@@ -1,12 +1,16 @@
 import React, { memo } from "react";
-import { Box, Stack, Typography, useTheme } from "@mui/material";
+import { Box, Stack, Tooltip, Typography, useTheme } from "@mui/material";
 import PropTypes from "prop-types";
 import SvgColor from "src/components/svg-color";
 import { NODE_TYPE_CONFIG } from "src/sections/agent-playground/utils/constants";
-import { EXECUTION_STATUS } from "src/sections/agent-playground/utils/workflowExecution";
+import {
+  EXECUTION_STATUS,
+  isSkippedStatus,
+} from "src/sections/agent-playground/utils/workflowExecution";
 import {
   getStatusBorderColor,
   getStatusBackgroundColor,
+  getSkippedNodeTooltip,
   PortHandles,
 } from "./nodeUtils";
 import "./agent-graph-animations.css";
@@ -22,6 +26,7 @@ const SubgraphGroupNode = ({ data }) => {
   const { label, frontendNodeType, selected, nodeExecution, ports = [] } = data;
   const nodeStatus = nodeExecution?.status;
   const isRunning = nodeStatus?.toLowerCase() === EXECUTION_STATUS.RUNNING;
+  const isSkipped = isSkippedStatus(nodeStatus);
 
   const config =
     NODE_TYPE_CONFIG[frontendNodeType] || NODE_TYPE_CONFIG.agent || {};
@@ -46,100 +51,118 @@ const SubgraphGroupNode = ({ data }) => {
   const outputPorts = ports.filter((p) => p.direction === "output");
 
   return (
-    <Box
-      sx={{
-        width: "100%",
-        height: "100%",
-        borderRadius: 1,
-        border: isRunning ? "none" : "1.5px solid",
-        borderColor,
-        backgroundColor,
-        position: "relative",
-      }}
+    <Tooltip
+      title={
+        isSkipped ? getSkippedNodeTooltip(nodeExecution?.error_message) : ""
+      }
+      arrow
+      placement="top"
     >
-      {/* Animated dashed border for running state */}
-      {isRunning && (
-        <svg
-          width="100%"
-          height="100%"
-          style={{
-            position: "absolute",
-            top: 0,
-            left: 0,
-            pointerEvents: "none",
-            zIndex: 1,
-          }}
-        >
-          <rect
-            x="0.75"
-            y="0.75"
-            width="calc(100% - 1.5px)"
-            height="calc(100% - 1.5px)"
-            rx="8"
-            fill="none"
-            stroke={theme.palette.green[500]}
-            strokeWidth="1.5"
-            strokeDasharray="8 4"
-            strokeDashoffset="0"
-            style={{
-              animation: "dash-around 2s linear infinite",
-            }}
-          />
-        </svg>
-      )}
-
-      <PortHandles ports={inputPorts} type="input" borderColor={borderColor} />
-
-      {/* Header label */}
-      <Stack
-        direction="row"
-        spacing={0.75}
-        alignItems="center"
+      <Box
+        aria-disabled={isSkipped}
         sx={{
-          px: 1.5,
-          py: 0.75,
-          borderBottom: isRunning ? "none" : "1px solid",
+          width: "100%",
+          height: "100%",
+          borderRadius: 1,
+          border: isRunning
+            ? "none"
+            : isSkipped
+              ? "1.5px dashed"
+              : "1.5px solid",
           borderColor,
+          backgroundColor,
+          position: "relative",
+          opacity: isSkipped ? 0.4 : 1,
         }}
       >
-        <Box
+        {/* Animated dashed border for running state */}
+        {isRunning && (
+          <svg
+            width="100%"
+            height="100%"
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              pointerEvents: "none",
+              zIndex: 1,
+            }}
+          >
+            <rect
+              x="0.75"
+              y="0.75"
+              width="calc(100% - 1.5px)"
+              height="calc(100% - 1.5px)"
+              rx="8"
+              fill="none"
+              stroke={theme.palette.green[500]}
+              strokeWidth="1.5"
+              strokeDasharray="8 4"
+              strokeDashoffset="0"
+              style={{
+                animation: "dash-around 2s linear infinite",
+              }}
+            />
+          </svg>
+        )}
+
+        <PortHandles
+          ports={inputPorts}
+          type="input"
+          borderColor={borderColor}
+        />
+
+        {/* Header label */}
+        <Stack
+          direction="row"
+          spacing={0.75}
+          alignItems="center"
           sx={{
-            width: 18,
-            height: 18,
-            borderRadius: 0.5,
-            border: "1px solid",
-            borderColor: "divider",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            flexShrink: 0,
+            px: 1.5,
+            py: 0.75,
+            borderBottom: isRunning ? "none" : "1px solid",
+            borderColor,
           }}
         >
-          <SvgColor
-            src={config.iconSrc ?? "/assets/icons/navbar/ic_agents.svg"}
+          <Box
             sx={{
-              width: 14,
-              height: 14,
-              bgcolor: config.color ?? "blue.600",
+              width: 18,
+              height: 18,
+              borderRadius: 0.5,
+              border: "1px solid",
+              borderColor: "divider",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexShrink: 0,
             }}
-          />
-        </Box>
-        <Typography
-          typography="s2_1"
-          fontWeight="fontWeightMedium"
-          color="text.secondary"
-          noWrap
-        >
-          {label}
-        </Typography>
-      </Stack>
+          >
+            <SvgColor
+              src={config.iconSrc ?? "/assets/icons/navbar/ic_agents.svg"}
+              sx={{
+                width: 14,
+                height: 14,
+                bgcolor: config.color ?? "blue.600",
+              }}
+            />
+          </Box>
+          <Typography
+            typography="s2_1"
+            fontWeight="fontWeightMedium"
+            color="text.secondary"
+            noWrap
+          >
+            {label}
+          </Typography>
+        </Stack>
 
-      <PortHandles
-        ports={outputPorts}
-        type="output"
-        borderColor={borderColor}
-      />
-    </Box>
+        <PortHandles
+          ports={outputPorts}
+          type="output"
+          borderColor={borderColor}
+        />
+      </Box>
+    </Tooltip>
   );
 };
 
@@ -152,6 +175,7 @@ SubgraphGroupNode.propTypes = {
     selected: PropTypes.bool,
     nodeExecution: PropTypes.shape({
       status: PropTypes.string,
+      error_message: PropTypes.string,
     }),
     ports: PropTypes.array,
   }).isRequired,
