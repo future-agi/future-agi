@@ -247,7 +247,7 @@ class CustomTokenObtainPairView(TokenObtainPairView):
 
             # --- Password check (must come before any token issuance) ---
             password_entered = validated_data["password"]
-            if password_entered and not check_password(password_entered, user.password):
+            if not check_password(password_entered, user.password):
                 failed_attempts += 1
                 cache.set(
                     attempts_key, failed_attempts, settings.FAILED_ATTEMPTS_TIMEOUT
