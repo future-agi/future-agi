@@ -22,6 +22,7 @@ from tracer.models.eval_task import RowType
 from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.services.clickhouse.read_budget import (
     is_clickhouse_query_error,
+    is_clickhouse_query_size_error,
     is_read_budget_error,
 )
 from tracer.services.clickhouse.v2.id_remap_sql import (
@@ -33,6 +34,8 @@ from tracer.services.clickhouse.v2.id_remap_sql import (
 _MAX_PUBLIC_CANDIDATES = 10_000
 _MAX_QUERY_ATTEMPTS = 128
 _SAMPLE_CHUNK = 1_000
+# Three identity IN lists must fit ClickHouse's default 256 KiB parser cap.
+_SPAN_IDENTITY_BATCH_SIZE = 1_000
 _RELATION_PAGE_SIZE = 200
 _MAX_STATEMENT_TIMEOUT_MS = 30_000
 _READ_SETTINGS = {
@@ -415,8 +418,41 @@ def _expand_changed_span_identities(
     identities: tuple[tuple[str, str, int], ...],
     budget: _ReadBudget,
 ) -> list[tuple[str, str, str]]:
-    if not identities:
-        return []
+    # Buffer the complete union before exposing candidates to reconciliation.
+    # Distinct physical start times can map to the same public relation across
+    # batches; preserve the original SELECT DISTINCT semantics and global cap.
+    pending = [
+        identities[offset : offset + _SPAN_IDENTITY_BATCH_SIZE]
+        for offset in reversed(range(0, len(identities), _SPAN_IDENTITY_BATCH_SIZE))
+    ]
+    affected: dict[tuple[str, str, str], None] = {}
+    while pending:
+        batch = pending.pop()
+        try:
+            rows = _expand_changed_span_identity_batch(
+                analytics, project_id=project_id, identities=batch, budget=budget
+            )
+        except Exception as exc:
+            # Nonstandard/escaped IDs can exceed the cap even in a small batch.
+            # Retry only the canonical size error, sharing the original budget.
+            if len(batch) <= 1 or not is_clickhouse_query_size_error(exc):
+                raise
+            midpoint = len(batch) // 2
+            pending.extend((batch[midpoint:], batch[:midpoint]))
+            continue
+        affected.update(dict.fromkeys(rows))
+        if len(affected) > _MAX_PUBLIC_CANDIDATES:
+            raise ContinuousCandidateOverflow("continuous candidate cap exceeded")
+    return list(affected)
+
+
+def _expand_changed_span_identity_batch(
+    analytics,
+    *,
+    project_id: str,
+    identities: tuple[tuple[str, str, int], ...],
+    budget: _ReadBudget,
+) -> list[tuple[str, str, str]]:
     rows = _execute(
         analytics,
         """
