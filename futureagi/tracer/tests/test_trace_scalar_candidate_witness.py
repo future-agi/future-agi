@@ -322,7 +322,15 @@ def test_user_detail_company_seeds_native_user_and_replays_both_filters(
         + "trace_id, id AS root_span_id",
         1,
     )[0]
-    assert "start_time" not in child
+    # The candidate CTE is bounded by the request window plus the adjacent-day
+    # envelope, never by the narrower slice: a keyset continuation still has to
+    # see a witness span that sits outside the slice it is currently reading.
+    # It is still never truncated — an inner LIMIT could hide an older
+    # matching root.
+    assert "start_time >= %(start_date)s - INTERVAL 1 DAY" in child
+    assert "start_time < %(end_date)s + INTERVAL 1 DAY" in child
+    assert "filter_slice_start_us" not in child
+    assert "filter_slice_end_us" not in child
     assert "LIMIT" not in child
     assert "attrs_string" not in sql
     assert "(project_id, trace_id) IN" in sql
