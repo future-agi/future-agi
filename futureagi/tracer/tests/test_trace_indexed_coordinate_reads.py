@@ -198,7 +198,7 @@ def test_numeric_seed_limits_root_population_not_child_history(days):
         assert forbidden not in population
     # Time belongs only to the necessary raw-root subquery, not to the
     # all-history numeric witness query wrapped around that subquery.
-    seed, _ = sql.split("SELECT trace_id, id AS root_span_id, start_time", 1)
+    seed, _ = sql.split("SELECT trace_id, start_time", 1)
     assert seed.count("start_time >=") == 1
     assert seed.count("start_time <") == 1
     assert "attrs_number" in seed

@@ -135,7 +135,7 @@ def test_voice_candidate_keeps_complete_child_history_and_outer_keyset(operation
         before_start_time=end - timedelta(days=1),
         before_id="previous-call",
     )
-    candidates, roots = query.split("SELECT trace_id, id AS root_span_id", 1)
+    candidates, roots = query.split("SELECT trace_id, start_time", 1)
     assert "matching_scalar_trace_identities" in candidates
     assert "indexHint(arrayStringConcat" in candidates
     assert "attrs_string[" in candidates

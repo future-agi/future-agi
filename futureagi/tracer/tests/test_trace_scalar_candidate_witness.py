@@ -170,7 +170,7 @@ def test_scalar_candidate_seed_bounds_roots_to_12m_but_keeps_all_child_history()
         before_start_time=datetime(2026, 8, 1),
         before_id="previous-root",
     )
-    child, root = sql.split("SELECT trace_id, id AS root_span_id, start_time", 1)
+    child, root = sql.split("SELECT trace_id, start_time", 1)
     assert "matching_scalar_trace_identities" in child
     assert "indexHint(has(mapKeys(" in child
     assert "project_id = %(project_id)s" in child
@@ -319,7 +319,7 @@ def test_user_detail_company_seeds_native_user_and_replays_both_filters(
     child = sql.split(
         "SELECT "
         + ("project_id, " if org_scope else "")
-        + "trace_id, id AS root_span_id",
+        + "trace_id, start_time",
         1,
     )[0]
     assert "start_time" not in child

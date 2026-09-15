@@ -289,7 +289,7 @@ def test_uncapped_selector_reaches_numeric_seed_without_five_minute_fallback(wid
     assert result.complete and not result.rows and not result.has_more
     assert len(transport.calls) == 1
     query, params, _ = transport.calls[0]
-    child, root = query.split("SELECT trace_id, id AS root_span_id, start_time", 1)
+    child, root = query.split("SELECT trace_id, start_time", 1)
     assert "matching_scalar_trace_identities" in child and "attrs_number" in child
     assert "indexHint(has(mapKeys(" in child
     for forbidden in (
@@ -576,7 +576,7 @@ def test_rmt_numeric_and_uses_one_witness_and_all_latest_leaf_predicates(
     )
     assert len(transport.calls) == 3
     seed_sql, seed_params, _ = transport.calls[0]
-    child = seed_sql.split("SELECT trace_id, id AS root_span_id", 1)[0]
+    child = seed_sql.split("SELECT trace_id, start_time", 1)[0]
     selected = builder._public_scalar_candidate_seed_plan()
     selected_keys = [
         name for name in selected.params if name.startswith("latest_filter_key_")
@@ -807,7 +807,7 @@ def test_rmt_mixed_and_distinct_latest_children_and_root_order(request, width, d
     assert [row["trace_id"] for row in rows] == ["tie-c", "tie-b", "tie-a", "corrected"]
     assert rows[-1]["start_time"] == corrected and rows[-1]["_root_version"] == 2
     seed, params, _ = transport.calls[0]
-    raw = seed.split("SELECT trace_id, id AS root_span_id", 1)[0]
+    raw = seed.split("SELECT trace_id, start_time", 1)[0]
     assert "matching_scalar_trace_identities" in raw
     for forbidden in (
         "start_time",
