@@ -2,7 +2,7 @@
 
 from inspect import unwrap
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -277,3 +277,105 @@ def test_session_graph_view_fails_closed_without_opt_in_and_clears_points(
     assert rejected.status_code == 503
     assert rejected.data["result"]["data"] == []
     assert call(True).status_code == 503
+
+
+@pytest.mark.unit
+def test_pending_graph_must_name_its_refresh_state():
+    def _pending(**overrides):
+        return {
+            "metric_name": "session_count",
+            "data": [],
+            "query_complete": False,
+            "query_status": "pending",
+            "query_sampled": False,
+            **overrides,
+        }
+
+    # Neither flag: the client cannot tell whether polling will ever finish.
+    assert not graph_payload_is_publishable(_pending(), allow_sampled=False)
+    assert not graph_payload_is_publishable(
+        _pending(query_refreshing=False, query_refresh_failed=False),
+        allow_sampled=False,
+    )
+    # Both flags: self-contradictory.
+    assert not graph_payload_is_publishable(
+        _pending(query_refreshing=True, query_refresh_failed=True),
+        allow_sampled=False,
+    )
+    # A refresh that could not be started is a publishable terminal state.
+    assert graph_payload_is_publishable(
+        _pending(query_refreshing=False, query_refresh_failed=True),
+        allow_sampled=False,
+    )
+
+
+@pytest.mark.unit
+def test_session_graph_publishes_a_refresh_that_could_not_be_enqueued(monkeypatch):
+    """A filtered session graph answers 200 pending, not an opaque 503.
+
+    A filtered session system graph is servable only from the exact
+    aggregation snapshot. When the refresh worker cannot be reached the
+    request itself succeeded: the server knows the graph is not computed and
+    that nothing is computing it, and says so in the payload.
+    """
+
+    from django.core.cache import cache as django_cache
+
+    from tracer.views import trace_session as session_view
+
+    django_cache.clear()
+    project_scope = MagicMock()
+    project_scope.get.return_value = SimpleNamespace(
+        trace_type="observe",
+        organization_id="22222222-2222-4222-8222-222222222222",
+    )
+    monkeypatch.setattr(
+        session_view,
+        "_project_queryset_for_request",
+        lambda _request: project_scope,
+    )
+    monkeypatch.setattr(session_view, "V2AnalyticsQueryService", MagicMock)
+
+    view = session_view.TraceSessionView()
+    request = SimpleNamespace(
+        validated_query_data={"refresh": False},
+        validated_data={
+            "project_id": "11111111-1111-4111-8111-111111111111",
+            "filters": [
+                {
+                    "column_id": "llm.model_name",
+                    "property_id": "span_attribute:string:llm.model_name",
+                    "filter_config": {
+                        "col_type": "SPAN_ATTRIBUTE",
+                        "filter_op": "is_not_null",
+                        "filter_type": "string",
+                    },
+                }
+            ],
+            "interval": "day",
+            "req_data_config": {
+                "id": "session_count",
+                "type": "SYSTEM_METRIC",
+                "property_id": "system_attribute:sessions:session_count",
+            },
+        },
+    )
+    view.request = request
+
+    with patch(
+        "tracer.tasks.exact_aggregation.refresh_exact_aggregation_snapshot.apply_async",
+        side_effect=ConnectionRefusedError("refresh worker is unreachable"),
+    ) as enqueue:
+        response = unwrap(session_view.TraceSessionView.get_session_graph_data)(
+            view,
+            request,
+        )
+
+    enqueue.assert_called_once()
+    assert response.status_code == 200
+    payload = response.data["result"]
+    assert payload["data"] == []
+    assert payload["query_complete"] is False
+    assert payload["query_status"] == "pending"
+    assert payload["query_refreshing"] is False
+    assert payload["query_refresh_failed"] is True
