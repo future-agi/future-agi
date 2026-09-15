@@ -12,6 +12,7 @@ import {
 const mockSetValue = vi.fn();
 const mockWatch = vi.fn();
 const mockControl = {};
+let mockResponseFormatValue = "text";
 
 vi.mock("react-hook-form", () => ({
   useFormContext: () => ({
@@ -20,7 +21,7 @@ vi.mock("react-hook-form", () => ({
     setValue: mockSetValue,
   }),
   useController: () => ({
-    field: { value: "text", onChange: vi.fn() },
+    field: { value: mockResponseFormatValue, onChange: vi.fn() },
   }),
 }));
 
@@ -73,10 +74,11 @@ vi.mock("src/sections/agent-playground/utils/constants", async () => {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-function setupWatch(modelConfig = null, messages = null) {
+function setupWatch(modelConfig = null, messages = null, outputFormat) {
   mockWatch.mockImplementation((key) => {
     if (key === "modelConfig") return modelConfig;
     if (key === "messages") return messages;
+    if (key === "outputFormat") return outputFormat;
     return undefined;
   });
 }
@@ -90,6 +92,7 @@ describe("usePromptNodeForm", () => {
     useAgentPlaygroundStore.getState().reset();
     useGlobalVariablesDrawerStore.getState().reset();
     setupWatch();
+    mockResponseFormatValue = "text";
   });
 
   it("returns form control and state", () => {
@@ -128,6 +131,36 @@ describe("usePromptNodeForm", () => {
     setupWatch({ model: null });
     const { result } = renderHook(() => usePromptNodeForm());
     expect(result.current.isModelSelected).toBe(false);
+  });
+
+  it("allows JSON output format in the prompt drawer", () => {
+    setupWatch({ model: "gpt-4", maxTokens: 1000 }, [], "json");
+    const { result } = renderHook(() => usePromptNodeForm());
+
+    expect(result.current.isUnsupportedOutputFormat).toBe(false);
+  });
+
+  it("marks non-textual output formats as unsupported", () => {
+    setupWatch({ model: "gpt-4", maxTokens: 1000 }, [], "image");
+    const { result } = renderHook(() => usePromptNodeForm());
+
+    expect(result.current.isUnsupportedOutputFormat).toBe(true);
+  });
+
+  it("adds a JSON Schema response-format option for schema-backed imports without schema ids", () => {
+    mockResponseFormatValue = "json_schema";
+    setupWatch({
+      model: "gpt-4",
+      maxTokens: 1000,
+      responseFormat: "json_schema",
+      responseSchema: { type: "object" },
+    });
+
+    const { result } = renderHook(() => usePromptNodeForm());
+
+    expect(result.current.responseFormatMenuItems).toEqual(
+      expect.arrayContaining([{ value: "json_schema", label: "JSON Schema" }]),
+    );
   });
 
   // ---- handleModelChange ----
