@@ -6,6 +6,7 @@ type ProviderConfig struct {
 	APIKey             *string  `json:"api_key,omitempty"`
 	BaseURL            *string  `json:"base_url,omitempty"`
 	APIFormat          *string  `json:"api_format,omitempty"`
+	APIPathPrefix      *string  `json:"api_path_prefix,omitempty"`
 	Models             []string `json:"models,omitempty"`
 	Timeout            *int     `json:"timeout,omitempty"`
 	Weight             *float64 `json:"weight,omitempty"`

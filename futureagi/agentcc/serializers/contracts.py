@@ -90,6 +90,11 @@ class GatewayConfigProviderSerializer(serializers.Serializer):
         allow_null=True,
         help_text=API_FORMAT_HELP_TEXT,
     )
+    api_path_prefix = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
     models = serializers.ListField(child=serializers.JSONField())
     is_active = serializers.BooleanField()
     default_timeout = serializers.IntegerField(allow_null=True)

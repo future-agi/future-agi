@@ -74,6 +74,7 @@ class TestGatewayProvidersOrgIsolation:
             encrypted_credentials=CredentialManager.encrypt({"api_key": "sk-org-b"}),
             api_format="anthropic",
             models_list=["claude-3-5-sonnet"],
+            extra_config={"api_path_prefix": ""},
         )
 
         mock_client = MagicMock()
@@ -124,6 +125,7 @@ class TestGatewayProvidersOrgIsolation:
         assert response.status_code == 200, response.json()
         providers = response.json()["result"]["providers"]
         assert set(providers.keys()) == {"anthropic"}
+        assert providers["anthropic"]["api_path_prefix"] == ""
 
     @patch("agentcc.views.gateway.get_gateway_client")
     def test_gateway_health_check_uses_active_request_organization(

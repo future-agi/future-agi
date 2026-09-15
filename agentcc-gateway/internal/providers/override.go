@@ -19,7 +19,7 @@ import (
 // Thread-safe: protects the cache with a RWMutex.
 type OrgProviderCache struct {
 	mu        sync.RWMutex
-	providers map[string]Provider // key: "orgID:providerID"
+	providers map[string]Provider              // key: "orgID:providerID"
 	baseCfgs  map[string]config.ProviderConfig // providerID → base config
 }
 
@@ -95,6 +95,7 @@ func (c *OrgProviderCache) GetOrCreateWithTenantConfig(orgID, providerID, apiKey
 			BaseURL:            tenantCfg.BaseURL,
 			APIKey:             apiKey,
 			APIFormat:          apiFormat,
+			APIPathPrefix:      tenantCfg.APIPathPrefix,
 			DefaultTimeout:     timeout,
 			MaxConcurrent:      maxConc,
 			ConnPoolSize:       poolSize,

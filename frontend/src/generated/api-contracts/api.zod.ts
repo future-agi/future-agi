@@ -5236,6 +5236,7 @@ export const AgentccGatewaysConfigResponse = zod.object({
           .describe(
             "Gateway protocol adapter name. This intentionally remains a string because self-hosted/custom providers may register adapters outside the built-in openai/anthropic/gemini/google set.",
           ),
+        api_path_prefix: zod.string().optional(),
         models: zod.array(zod.object({}).passthrough()),
         is_active: zod.boolean(),
         default_timeout: zod.number(),
