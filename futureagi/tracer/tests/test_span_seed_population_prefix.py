@@ -10,6 +10,10 @@ from pathlib import Path
 
 import pytest
 
+from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
+    _parts,
+    partition_span_filter_plans,
+)
 from tracer.services.clickhouse.query_builders.span_list import SpanListQueryBuilder
 from tracer.services.clickhouse.v2.query_builders.span_list import (
     SpanListQueryBuilderV2,
@@ -551,11 +555,60 @@ def test_mixed_text_single_witness_does_not_change_joint_membership(
     assert page.complete and [row["id"] for row in page.rows] == ["together"]
 
 
-def assert_mixed_result_queries_unchanged(target, filters, leaves):
-    class PreviousPopulationPolicy(SpanListQueryBuilderV2):
-        def _mixed_population_plans(self):
-            return []
+class PreviousPopulationPolicy(SpanListQueryBuilderV2):
+    """The population policy this change replaced, on the hook that remains.
 
+    Before this change the absence proof narrowed its conjunction to the
+    numeric/boolean witnesses whenever any text leaf was present, because
+    carrying the text leaf meant comparing a string Map value on every row of
+    the interval. ``_mixed_population_plans`` performed that narrowing and is
+    DELETED, so an override of it is dead code and leaves this double an
+    identical copy of the builder - which is what it had become. The narrowing
+    is reproduced here over ``_filter_population_plans``, the one hook the
+    proof still reads, so the double diverges from the builder exactly where
+    the old policy diverged.
+
+    An empty narrowed list meant "keep the full conjunction" in the old
+    ``elif witnesses := self._mixed_population_plans()`` branch, so it means
+    that here too. This reconstructs the mixed branch only; none of the shapes
+    that reach it took the ``_uses_thin_text_population_discovery`` branch,
+    which required EVERY leaf to be text.
+    """
+
+    def _filter_population_plans(self):
+        plans = super()._filter_population_plans()
+        raw_leaves = [
+            (item, cfg)
+            for item in self.filters
+            if str(
+                (cfg := _parts(item)[1]).get("col_type") or cfg.get("colType") or ""
+            ).upper()
+            == "SPAN_ATTRIBUTE"
+        ]
+        if not any(
+            (cfg.get("filter_type") or cfg.get("filterType")) in {"text", "string"}
+            for _, cfg in raw_leaves
+        ):
+            return plans
+        narrowed, _ = partition_span_filter_plans(
+            [
+                item
+                for item, cfg in raw_leaves
+                if (cfg.get("filter_type") or cfg.get("filterType"))
+                in {"number", "boolean"}
+                and cfg.get("attribute_value_types", cfg.get("attributeValueTypes"))
+                is None
+            ]
+        )
+        return [
+            plan
+            for plan in narrowed
+            if not plan.exclude_group_matches
+            and self._filter_population_plan_predicate(plan, ordinary_seed=True)
+        ] or plans
+
+
+def assert_mixed_result_queries_unchanged(target, filters, leaves):
     previous = PreviousPopulationPolicy(
         project_id=PROJECT, filters=filters, bounded_internal_scan=True
     )
