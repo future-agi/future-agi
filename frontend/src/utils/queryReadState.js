@@ -72,7 +72,7 @@ const hasBoundedReadMetadata = (candidate) =>
       key.startsWith("query_sampling_"),
   );
 
-const hasValidStatusPair = (candidate) => {
+export const hasValidStatusPair = (candidate) => {
   if (!hasBoundedReadMetadata(candidate)) return true;
 
   const status = candidate?.query_status;
@@ -98,6 +98,11 @@ const hasValidStatusPair = (candidate) => {
     );
   }
   if (status === "degraded") return complete === false;
+  // The observed catalog's own word for an index that does not yet cover the
+  // source's retained history (coverage_reason says why). A well-formed,
+  // incomplete page: it renders as degraded below, but by contract, not by
+  // falling through as malformed metadata.
+  if (status === "partial") return complete === false;
   return false;
 };
 

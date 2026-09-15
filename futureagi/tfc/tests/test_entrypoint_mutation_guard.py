@@ -258,3 +258,44 @@ def test_entrypoint_mutation_free_backend_still_collects_static_assets():
     )
 
     assert "collect_static" in source[static_guard : static_guard + 220]
+
+
+@pytest.mark.parametrize(
+    ("service", "guard", "register", "result", "exit_code", "calls"),
+    [
+        ("bootstrap", "false", "true", 7, 1, 1),
+        ("bootstrap", "false", "true", 0, 0, 1),
+        ("backend", "false", "true", 7, 0, 1),
+        ("bootstrap", "true", "true", 7, 0, 0),
+        ("backend", "true", "true", 7, 0, 0),
+        ("bootstrap", "false", "false", 7, 0, 0),
+    ],
+)
+def test_single_bootstrap_registrar_cannot_succeed_without_schedules(
+    service, guard, register, result, exit_code, calls
+):
+    source = ENTRYPOINT.read_text()
+    block = source[
+        source.index("should_register_temporal_schedules()") : source.index(
+            "# Start the appropriate service"
+        )
+    ]
+    completed = subprocess.run(
+        ["bash"],
+        input=(
+            f"set -e\nSERVICE_TYPE={service}\nNO_STARTUP_DB_MUTATIONS={guard}\n"
+            f"REGISTER_TEMPORAL_SCHEDULES={register}\n"
+            f'python() {{ echo "SCHEDULE_CALL:$*"; return {result}; }}\n'
+            f'{block}\necho "CONTINUED"\n'
+        ),
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+    assert completed.returncode == exit_code
+    assert (
+        completed.stdout.count("SCHEDULE_CALL:manage.py register_temporal_schedules")
+        == calls
+    )
+    assert ("CONTINUED" in completed.stdout) == (exit_code == 0)

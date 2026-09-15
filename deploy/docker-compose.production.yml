@@ -2,44 +2,121 @@
 # Re-binds required env vars with ${VAR:?error} so compose refuses to boot
 # if any are still unset. Pair with deploy/.env.production.
 
+x-production-backend-env: &production-backend-env
+  ENV_TYPE: production
+  NO_STARTUP_DB_MUTATIONS: "true"
+  FI_SKIP_CH25_MIGRATION: "1"
+  SECRET_KEY: ${SECRET_KEY:?must be set for production}
+  AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:?must be set for production}
+  AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:?must be set for production}
+  PG_PASSWORD: ${PG_PASSWORD:?must be set for production}
+  MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?must be set for production}
+  RABBITMQ_USER: ${RABBITMQ_USER:?must be set for production}
+  RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?must be set for production}
+  PROPERTY_CATALOG_CH_PASSWORD: ${PROPERTY_CATALOG_API_PASSWORD:?must be set for production}
+
 services:
-  backend:
+  # Production uses the reviewed published image, never a source build or :local.
+  fi-collector:
+    image: futureagi/fi-collector:${FI_COLLECTOR_VERSION:?set the reviewed collector release for production}
+    build: !reset null
+
+  # Hosted schema/mirror changes require an explicit, separately qualified
+  # deployment. Never inherit the local fresh-install --apply commands.
+  property-catalog-clickhouse-bootstrap:
+    command: ["--check"]
     environment:
-      ENV_TYPE: production
-      SECRET_KEY: ${SECRET_KEY:?must be set for production}
-      AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:?must be set for production}
-      AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:?must be set for production}
-      PG_PASSWORD: ${PG_PASSWORD:?must be set for production}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?must be set for production}
-      RABBITMQ_USER: ${RABBITMQ_USER:?must be set for production}
-      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?must be set for production}
+      CLICKHOUSE_USER: observed_catalog_reader
+      CLICKHOUSE_PASSWORD: ${PROPERTY_CATALOG_API_PASSWORD:?must be set for production}
+      PROPERTY_CATALOG_API_PASSWORD: ${PROPERTY_CATALOG_API_PASSWORD:?must be set for production}
+      PROPERTY_CATALOG_CONSUMER_PASSWORD: ${PROPERTY_CATALOG_CONSUMER_PASSWORD:?must be set for production}
+
+  fi-property-catalog-consumer:
+    image: futureagi/fi-collector:${FI_COLLECTOR_VERSION:?set the reviewed collector release for production}
+    build: !reset null
+    environment:
+      FI_OBSERVED_CATALOG_CH_PASSWORD: ${PROPERTY_CATALOG_CONSUMER_PASSWORD:?must be set for production}
+
+  postgres-schema-bootstrap:
+    image: futureagi/future-agi:${FUTURE_AGI_VERSION:?must be set for production}
+    environment:
+      <<: *production-backend-env
+    entrypoint: ["python"]
+    command: ["manage.py", "migrate", "--check", "--noinput"]
+
+  clickhouse-native-bootstrap:
+    image: futureagi/future-agi:${FUTURE_AGI_VERSION:?must be set for production}
+    environment:
+      <<: *production-backend-env
+    command: ["--phase", "native"]
+
+  peerdb-init:
+    image: futureagi/future-agi:${FUTURE_AGI_VERSION:?must be set for production}
+    environment:
+      <<: *production-backend-env
+      SRC_PG_PASSWORD: ${PG_PASSWORD:?must be set for production}
+    command: ["--wait-for-mirrors", "--timeout", "900"]
+
+  peerdb-temporal-init:
+    image: futureagi/future-agi:${FUTURE_AGI_VERSION:?must be set for production}
+    environment:
+      <<: *production-backend-env
+    command: []
+
+  clickhouse-cdc-bootstrap:
+    image: futureagi/future-agi:${FUTURE_AGI_VERSION:?must be set for production}
+    environment:
+      <<: *production-backend-env
+    command: ["--phase", "cdc", "--wait-for-mirrors", "--timeout", "900"]
+
+  backend:
+    image: futureagi/future-agi:${FUTURE_AGI_VERSION:?must be set for production}
+    environment:
+      <<: *production-backend-env
       FRONTEND_URL: ${FRONTEND_URL:?must be set for production}
     restart: always
 
   worker:
-    environment:
-      ENV_TYPE: production
-      SECRET_KEY: ${SECRET_KEY:?must be set for production}
-      AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:?must be set for production}
-      AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:?must be set for production}
-      PG_PASSWORD: ${PG_PASSWORD:?must be set for production}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?must be set for production}
-      RABBITMQ_USER: ${RABBITMQ_USER:?must be set for production}
-      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?must be set for production}
-    restart: always
+    <<: &production-worker
+      image: futureagi/future-agi:${FUTURE_AGI_VERSION:?must be set for production}
+      environment:
+        <<: *production-backend-env
+      restart: always
+
+  worker-default:
+    <<: *production-worker
+  worker-tasks-s:
+    <<: *production-worker
+  worker-tasks-l:
+    <<: *production-worker
+  worker-tasks-xl:
+    <<: *production-worker
+  worker-exact-aggregation:
+    <<: *production-worker
+  worker-trace-ingestion:
+    <<: *production-worker
+  worker-agent-compass:
+    <<: *production-worker
+  worker-simulation-runner:
+    <<: *production-worker
+    # This worker requires the separate SDK image, not the backend image.
+    image: futureagi/future-agi-simulation-runner:${SIMULATION_RUNNER_VERSION:?must be set for production}
 
   agentcc-gateway:
+    image: futureagi/agentcc-gateway:${AGENTCC_GATEWAY_VERSION:?must be set for production}
     environment:
       AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:?must be set for production}
       AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:?must be set for production}
     restart: always
 
   frontend:
+    image: futureagi/frontend:${FRONTEND_VERSION:?must be set for production}
     environment:
       VITE_HOST_API: ${VITE_HOST_API:?set to your backend URL — e.g. https://api.example.com}
     restart: always
 
   serving:
+    image: futureagi/serving:${SERVING_VERSION:?must be set for production}
     environment:
       ENV_TYPE: production
       SECRET_KEY: ${SECRET_KEY:?must be set for production}
@@ -56,4 +133,5 @@ services:
     restart: always
 
   code-executor:
+    image: futureagi/code-executor:${CODE_EXECUTOR_VERSION:?must be set for production}
     restart: always

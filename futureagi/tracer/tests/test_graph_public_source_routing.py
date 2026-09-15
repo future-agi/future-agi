@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from clickhouse_connect.driver.binding import finalize_query
 from django.db import DatabaseError
 
 from tracer.serializers.project import (
@@ -165,7 +166,9 @@ def test_public_dispatch_raw_alias_compiles_map_not_native_relation(
     observe_type,
 ):
     query, params, _ = direct([window(), leaf(key, value, kind=kind)], observe_type)
-    assert f"{column}['{key}']" in query
+    assert key in params.values()
+    assert f"{column}['{key}']" not in query
+    assert f"{column}['{key}']" in finalize_query(query, params)
     assert "FROM spans" in query
     assert "tracer_eval_logger" not in query
     assert "model_hub_score" not in query
@@ -184,9 +187,12 @@ def test_public_dispatch_raw_date_is_not_date_only_rollup(
 ):
     query, params, _ = direct([window(days), leaf(key, value, op=op)], observe_type)
     assert "spans_hourly_rollup" not in query
-    assert f"mapContains(attrs_string, '{key}')" in query
+    assert key in params.values()
+    assert f"mapContains(attrs_string, '{key}')" not in query
+    rendered = finalize_query(query, params)
+    assert f"mapContains(attrs_string, '{key}')" in rendered
     if op != "is_null":
-        assert f"attrs_string['{key}']" in query
+        assert f"attrs_string['{key}']" in rendered
     assert params["start_date"] == END - timedelta(days=days)
     assert params["end_date"] == END
 
@@ -264,7 +270,9 @@ def test_agent_graph_uses_raw_alias_map(monkeypatch, key):
     )
     assert result["query_complete"] is True
     query, params, _ = analytics.calls[0]
-    assert f"attrs_string['{key}']" in query
+    assert key in params.values()
+    assert f"attrs_string['{key}']" not in query
+    assert f"attrs_string['{key}']" in finalize_query(query, params)
     assert "model_hub_score" not in query and "tracer_eval_logger" not in query
     assert "FROM end_users" not in query
 
@@ -427,5 +435,7 @@ def test_raw_eval_score_does_not_resolve_native_eval_ownership():
     )
     query, params, _ = analytics.calls[0]
     assert "attrs_number" in query
-    assert "'eval_score'" in query or "eval_score" in params.values()
+    assert "eval_score" in params.values()
+    assert "attrs_number['eval_score']" not in query
+    assert "attrs_number['eval_score']" in finalize_query(query, params)
     assert "user_eval_metrics AS" not in query

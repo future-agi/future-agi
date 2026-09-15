@@ -1,8 +1,11 @@
 package chwriter
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +16,215 @@ import (
 	"testing"
 	"time"
 )
+
+type confirmationRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f confirmationRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+type confirmationReadError struct{ err error }
+
+func (r confirmationReadError) Read([]byte) (int, error) { return 0, r.err }
+
+type confirmationBody struct {
+	io.Reader
+	closed bool
+}
+
+func (b *confirmationBody) Close() error { b.closed = true; return nil }
+
+// These transport contracts do not open listeners or contact ClickHouse.
+func TestInsertConfirmationRequestSettings(t *testing.T) {
+	for _, async := range []bool{false, true} {
+		for _, curated := range []bool{false, true} {
+			t.Run(fmt.Sprintf("async=%t/curated=%t", async, curated), func(t *testing.T) {
+				cfg := mkConfig(t, "http://offline.invalid")
+				cfg.AsyncInsert = async
+				w, err := New(cfg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = w.Close() })
+				calls := 0
+				w.client.Transport = confirmationRoundTripper(func(r *http.Request) (*http.Response, error) {
+					calls++
+					q := r.URL.Query()
+					wantAsync, wantWait, wantParams := "0", "", 3
+					if async {
+						wantAsync, wantWait, wantParams = "1", "0", 4
+					}
+					table := "spans"
+					if curated {
+						table = "end_users"
+					}
+					if q.Get("async_insert") != wantAsync || q.Get("wait_for_async_insert") != wantWait || len(q) != wantParams {
+						t.Errorf("unexpected insert settings: %v", q)
+					}
+					if q.Get("database") != cfg.Database || q.Get("query") != "INSERT INTO "+table+" FORMAT JSONEachRow" || r.Method != http.MethodPost {
+						t.Errorf("insert target or method changed: %s %v", r.Method, q)
+					}
+					return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: http.NoBody, Request: r}, nil
+				})
+				rows := []map[string]any{{"id": "one"}}
+				if curated {
+					err = w.InsertBestEffort(context.Background(), "end_users", rows)
+				} else {
+					err = w.Insert(context.Background(), rows)
+				}
+				if err != nil || calls != 1 {
+					t.Fatalf("successful insert: calls=%d err=%v", calls, err)
+				}
+			})
+		}
+	}
+}
+
+func TestInsertConfirmationResponse(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, exception, trailer string
+		readErr                        error
+		length                         int64
+		confirmed                      bool
+	}{
+		{name: "empty", confirmed: true},
+		{name: "whitespace", body: " \r\n\t", length: 4, confirmed: true},
+		{name: "unknown length", length: -1, confirmed: true},
+		{name: "exception header", exception: "241"},
+		{name: "exception trailer", trailer: "241"},
+		{name: "exception body", body: "Code: 241. DB::Exception: private-source-value", length: -1},
+		{name: "late exception body", body: strings.Repeat(" ", 1024) + "DB::Exception: private-source-value", length: -1},
+		{name: "unexpected body", body: "private-source-value", length: -1},
+		{name: "truncated framing", body: " ", length: 2},
+		{name: "unexpected EOF", body: " ", length: -1, readErr: io.ErrUnexpectedEOF},
+		{name: "read error", length: -1, readErr: errors.New("response interrupted")},
+		{name: "oversized response", body: strings.Repeat(" ", 4097), length: -1},
+	} {
+		for _, curated := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/curated=%t", tc.name, curated), func(t *testing.T) {
+				cfg := mkConfig(t, "http://offline.invalid")
+				cfg.InitialBackoff, cfg.MaxBackoff = time.Nanosecond, time.Nanosecond
+				w, err := New(cfg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = w.Close() })
+				rows := []map[string]any{{"id": "private-span", "attrs_string": map[string]any{"key": "<a&b>"}}}
+				want := []byte("{\"attrs_string\":{\"key\":\"<a&b>\"},\"id\":\"private-span\"}\n")
+				var bodies [][]byte
+				var responses []*confirmationBody
+				w.client.Transport = confirmationRoundTripper(func(r *http.Request) (*http.Response, error) {
+					body, err := io.ReadAll(r.Body)
+					if err != nil {
+						t.Fatal(err)
+					}
+					bodies = append(bodies, body)
+					var reader io.Reader = strings.NewReader(tc.body)
+					if tc.readErr != nil {
+						reader = io.MultiReader(reader, confirmationReadError{tc.readErr})
+					}
+					responseBody := &confirmationBody{Reader: reader}
+					responses = append(responses, responseBody)
+					resp := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Trailer: make(http.Header), Body: responseBody, ContentLength: tc.length, Request: r}
+					if tc.exception != "" {
+						resp.Header.Set("X-ClickHouse-Exception-Code", tc.exception)
+					}
+					if tc.trailer != "" {
+						resp.Trailer.Set("X-ClickHouse-Exception-Code", tc.trailer)
+					}
+					return resp, nil
+				})
+				if curated {
+					err = w.InsertBestEffort(context.Background(), "end_users", rows)
+				} else {
+					err = w.Insert(context.Background(), rows)
+				}
+				if (err == nil) != tc.confirmed {
+					t.Errorf("confirmed=%t, got err=%v", tc.confirmed, err)
+				}
+				if err != nil && strings.Contains(err.Error(), "private-") {
+					t.Error("unconfirmed response exposed source payload")
+				}
+				if err != nil && !curated && !tc.confirmed &&
+					(!strings.Contains(err.Error(), "after 1 attempts") || !strings.Contains(err.Error(), "reconcile canonical source before replay")) {
+					t.Errorf("missing single-attempt reconciliation diagnostic: %v", err)
+				}
+				if len(bodies) != 1 || !bytes.Equal(bodies[0], want) {
+					t.Fatalf("canonical insert replayed or changed; calls=%d", len(bodies))
+				}
+				if after, _ := encodeBatch(rows); !bytes.Equal(after, want) {
+					t.Error("caller rows mutated")
+				}
+				if !responses[0].closed {
+					t.Error("response body not closed")
+				}
+				var wantStats Stats
+				if curated {
+					if tc.confirmed {
+						wantStats.CuratedBatchesInserted = 1
+					} else {
+						wantStats.CuratedBatchesFailed = 1
+					}
+				} else if tc.confirmed {
+					wantStats.BatchesInserted, wantStats.RowsInserted = 1, 1
+				} else {
+					wantStats.BatchesFailed, wantStats.RowsDeadLettered = 1, 1
+				}
+				if got := w.Snapshot(); got != wantStats {
+					t.Errorf("stats=%+v want=%+v", got, wantStats)
+				}
+				dead, readErr := os.ReadFile(cfg.DeadLetterFile)
+				if curated || tc.confirmed {
+					if !os.IsNotExist(readErr) {
+						t.Error("unexpected canonical dead-letter")
+					}
+				} else {
+					var row map[string]any
+					if readErr != nil || json.Unmarshal(dead, &row) != nil {
+						t.Fatal("missing or invalid canonical dead-letter")
+					}
+					if encoded, _ := encodeBatch([]map[string]any{row}); !bytes.Equal(encoded, want) {
+						t.Error("canonical dead-letter row changed")
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestInsertConfirmationPreservesExistingRetryPolicy(t *testing.T) {
+	for _, firstStatus := range []int{0, http.StatusInternalServerError, http.StatusTooManyRequests, http.StatusBadRequest} {
+		t.Run(fmt.Sprint(firstStatus), func(t *testing.T) {
+			cfg := mkConfig(t, "http://offline.invalid")
+			cfg.InitialBackoff, cfg.MaxBackoff = time.Nanosecond, time.Nanosecond
+			w, err := New(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = w.Close() })
+			calls := 0
+			w.client.Transport = confirmationRoundTripper(func(r *http.Request) (*http.Response, error) {
+				calls++
+				if calls == 1 && firstStatus == 0 {
+					return nil, errors.New("existing transport failure")
+				}
+				status := http.StatusOK
+				if calls == 1 {
+					status = firstStatus
+				}
+				return &http.Response{StatusCode: status, Header: make(http.Header), Body: http.NoBody, Request: r}, nil
+			})
+			err = w.Insert(context.Background(), []map[string]any{{"id": "one"}})
+			if firstStatus == http.StatusBadRequest {
+				if err == nil || calls != 1 || w.Snapshot().BatchesRetried != 0 {
+					t.Fatalf("4xx policy changed: calls=%d err=%v", calls, err)
+				}
+			} else if err != nil || calls != 2 || w.Snapshot().BatchesRetried != 1 {
+				t.Fatalf("retry policy changed: calls=%d err=%v", calls, err)
+			}
+		})
+	}
+}
 
 func mkConfig(t *testing.T, url string) Config {
 	t.Helper()

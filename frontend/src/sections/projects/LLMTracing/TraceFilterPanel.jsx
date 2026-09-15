@@ -197,6 +197,29 @@ const BASE_TRACE_FILTER_FIELDS = [
   { value: "tag", label: "Tag", type: "string" },
 ];
 
+// Users discover custom attributes through the trace catalog, but these row
+// fields belong to the Users registry. Keep their identity and input type
+// authoritative even when that shared catalog publishes a trace-system alias.
+const USER_FILTER_FIELDS = [
+  { value: "user_id", label: "User ID", type: "string", dynamicAliases: ["user"] },
+  { value: "user_id_type", label: "User ID Type", type: "string" },
+  { value: "user_id_hash", label: "User ID Hash", type: "string" },
+  { value: "activated_at", label: "First Active", type: "datetime" },
+  { value: "last_active", label: "Last Active", type: "datetime" },
+  { value: "num_active_days", label: "Active Days", type: "number" },
+  { value: "total_cost", label: "Total Cost ($)", type: "number" },
+  { value: "total_tokens", label: "Total Tokens", type: "number" },
+  { value: "input_tokens", label: "Input Tokens", type: "number" },
+  { value: "output_tokens", label: "Output Tokens", type: "number" },
+  { value: "num_traces", label: "No. of Traces", type: "number" },
+  { value: "num_sessions", label: "No. of Sessions", type: "number" },
+  { value: "avg_session_duration", label: "Avg Session Duration (s)", type: "number" },
+  { value: "avg_trace_latency", label: "Avg Latency / Trace (ms)", type: "number" },
+  { value: "num_llm_calls", label: "No. of LLM Calls", type: "number" },
+  { value: "num_guardrails_triggered", label: "Guardrails Triggered", type: "number" },
+  { value: "num_traces_with_errors", label: "Traces with Errors", type: "number" },
+];
+
 const TRACE_ID_FIELD = {
   value: "trace_id",
   label: "Trace ID",
@@ -214,10 +237,11 @@ const SPAN_ID_FIELD = {
 //   `tab` === "trace"  → Trace ID
 //   `tab` === "spans"  → Trace ID + Span ID
 //   otherwise          → no id fields (preserves behavior for non-LLMTracing
-//                        consumers such as sessions/users).
+//                        consumers such as sessions).
 // Exported for direct unit testing.
 export const getTraceFilterFields = (tab) => {
   if (tab === "voiceCalls") return VOICE_CALL_FILTER_FIELDS;
+  if (tab === "users") return USER_FILTER_FIELDS;
   if (tab === "trace") return [TRACE_ID_FIELD, ...BASE_TRACE_FILTER_FIELDS];
   if (tab === "spans")
     return [TRACE_ID_FIELD, SPAN_ID_FIELD, ...BASE_TRACE_FILTER_FIELDS];
@@ -280,7 +304,9 @@ export function mergeTraceFilterProperties({
 }) {
   const effectivePropertyNamespace =
     propertyNamespace || defaultPropertyNamespace(tab, source);
-  const staticProps = getTraceFilterFields(tab).map((field) =>
+  const staticProps = getTraceFilterFields(
+    effectivePropertyNamespace === "users" ? "users" : tab,
+  ).map((field) =>
     toStaticFilterProperty(
       field,
       isSpansView,
@@ -568,9 +594,17 @@ const BOOLEAN_TYPES = new Set(["boolean", "bool"]);
 const ARRAY_TYPES = new Set(["array", "list", "json"]);
 const MAP_TYPES = new Set(["map", "object"]);
 
-const normalizeFieldType = (rawType) => {
+const normalizeFieldType = (rawType, attributeTypes) => {
   if (!rawType) return "string";
   const t = String(rawType).toLowerCase();
+  // The catalog uses json for a union of storage types, not just arrays.
+  // Mixed scalars use the typed value picker so equality preserves each type.
+  if (
+    t === "json" &&
+    Array.isArray(attributeTypes) &&
+    attributeTypes.length > 1 &&
+    attributeTypes.every((type) => ["string", "number", "boolean"].includes(type))
+  ) return "string";
   if (NUMERIC_TYPES.has(t)) return "number";
   if (DATE_TYPES.has(t)) return "date";
   if (BOOLEAN_TYPES.has(t)) return "boolean";
@@ -928,7 +962,12 @@ export function filterPropertiesForPicker({
   const fuzzyMatches = list.filter((property) => {
     const name = normalizePropertySearchText(property.name);
     const id = normalizePropertySearchText(property.id);
-    const aliases = (property.searchAliases || []).some((alias) =>
+    // A backend alias must find its canonical local field during search too;
+    // otherwise search bypasses the alias suppression used by normal browsing.
+    const aliases = [
+      ...(property.searchAliases || []),
+      ...(property.dynamicAliases || []),
+    ].some((alias) =>
       normalizePropertySearchText(alias).includes(query),
     );
     return name.includes(query) || id.includes(query) || aliases;
@@ -1151,6 +1190,12 @@ export function mergeCatalogSearchProperties({
       );
       if (!localProperty) return true;
 
+      // Native fields own their controls and wire identity just as in the
+      // unsearched inventory. Server search must not replace Call ID's text
+      // input or Status's closed choices depending on response timing. Raw
+      // attributes with the same spelling remain distinct above.
+      if (localProperty.category === "system") return false;
+
       // An exact catalog id remains authoritative for project naming/type
       // metadata. Alias-only results (for example `tokens`) yield to the local
       // canonical definition so filters still submit
@@ -1255,7 +1300,7 @@ function metricToTraceFilterProperty(m) {
     else if (ot === "thumbs_up_down") type = "thumbs";
     else type = "categorical";
   } else {
-    type = normalizeFieldType(m.type);
+    type = normalizeFieldType(m.type, m.attributeTypes || m.attribute_types);
   }
   // thumbs labels have two fixed choices — surface them so the value picker
   // renders a multi-select without needing a dashboard lookup.
@@ -3090,13 +3135,17 @@ function ValuePicker({
             const displayLabel =
               (typeof match === "string" ? match : match?.label) ?? String(v);
             const secondaryLabel = getPickerOptionSecondaryLabel(match);
+            const chipLabel =
+              metricType === "custom_attribute" && selectedType
+                ? `${displayLabel} · ${selectedType}`
+                : displayLabel;
             const chipTitle = secondaryLabel
-              ? `${displayLabel} (${secondaryLabel})`
-              : displayLabel;
+              ? `${chipLabel} (${secondaryLabel})`
+              : chipLabel;
             return (
               <Chip
                 key={pickerValueKey(v, selectedType)}
-                label={displayLabel}
+                label={chipLabel}
                 title={chipTitle}
                 size="small"
                 onDelete={(e) => {
@@ -3279,7 +3328,9 @@ function ValuePicker({
             const optionValue = getPickerOptionValue(opt);
             const optionType = getPickerOptionType(opt);
             const label = getPickerOptionLabel(opt);
-            const secondaryLabel = getPickerOptionSecondaryLabel(opt);
+            const secondaryLabel = getPickerOptionSecondaryLabel(opt, {
+              showType: metricType === "custom_attribute",
+            });
             const isSelected = selectedIndexFor(optionValue, optionType) >= 0;
             return (
               <Box
@@ -3556,7 +3607,7 @@ function FilterRow({
         prop.type === "text" ||
         prop.type === "annotator"
           ? prop.type
-          : normalizeFieldType(prop.type);
+          : normalizeFieldType(prop.type, prop.attributeTypes);
       // Native identifiers default to exact membership; raw keys keep their type.
       // defaultOperatorForType: optional per-flow { type: op } override.
       const defaultOp = isNativeIdField(prop.id, prop.apiColType || prop.category)
@@ -3886,7 +3937,8 @@ function FilterRow({
       );
     }
 
-    if (usesFreeTextValue(filter.fieldType, source)) {
+    // Dataset columns provide their own suggestions; do not bypass that picker.
+    if (!ValuePickerOverride && usesFreeTextValue(filter.fieldType, source)) {
       return (
         <TextField
           size="small"
@@ -4453,22 +4505,26 @@ const TraceFilterPanel = ({
   // QueryInput needs a unique UI identity for same-id fields. The converter
   // below maps that identity back to the raw backend id before applying.
   const queryFilterFields = useMemo(() => {
-    return queryPropertyEntries.map(([identity, p]) => ({
-      value: identity,
-      label: p.name,
-      type: p.type || "string",
-      choices: p.choices,
-      allowCustomValue:
-        p.allowCustomValue === true ||
-        (p.category === "annotation" && p.type === "categorical"),
-      panelType: p.type || "string",
-      category: p.category, // system, eval, annotation, attribute
-      rawCategory: p.rawCategory,
-      registryId: p.registryId || p.property_id,
-      apiColType: p.apiColType,
-      attributeTypes: p.attributeTypes,
-      attributeTypesExact: p.attributeTypesExact,
-    }));
+    return queryPropertyEntries.map(([identity, p]) => {
+      const type = p.type === "json" && normalizeFieldType(p.type, p.attributeTypes) === "string"
+        ? "string" : p.type || "string";
+      return {
+        value: identity,
+        label: p.name,
+        type,
+        choices: p.choices,
+        allowCustomValue:
+          p.allowCustomValue === true ||
+          (p.category === "annotation" && p.type === "categorical"),
+        panelType: type,
+        category: p.category, // system, eval, annotation, attribute
+        rawCategory: p.rawCategory,
+        registryId: p.registryId || p.property_id,
+        apiColType: p.apiColType,
+        attributeTypes: p.attributeTypes,
+        attributeTypesExact: p.attributeTypesExact,
+      };
+    });
   }, [queryPropertyEntries]);
   const queryFieldMap = useMemo(
     () => Object.fromEntries(queryFilterFields.map((f) => [f.value, f])),
@@ -4779,8 +4835,8 @@ const TraceFilterPanel = ({
         const queryFieldDef = queryFieldMap[t.field];
         const prop = queryPropertyById[t.field];
         const fieldType =
-          prop?.type ||
           queryFieldDef?.panelType ||
+          prop?.type ||
           (queryFieldDef?.type === "enum" ? "categorical" : "string");
         const value = NO_VALUE_OPS.has(t.operator)
           ? ""

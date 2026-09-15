@@ -125,60 +125,11 @@ def test_numeric_settings_reject_invalid_values(raw_value):
         )
 
 
-def test_property_catalog_cross_field_limits_are_validated():
-    values = load_numeric_settings(PROPERTY_CATALOG_RUNTIME_SETTING_SPECS, source={})
-    values["PROPERTY_CATALOG_SOURCE_MAX_PAGE_BYTES"] = (
-        values["PROPERTY_CATALOG_SOURCE_MAX_TOTAL_BYTES"] + 1
-    )
-
-    with pytest.raises(ValueError, match="source page bytes"):
-        validate_property_catalog_settings(values)
-
-
 @pytest.mark.parametrize(
     ("lower_name", "upper_name"),
     (
-        (
-            "PROPERTY_CATALOG_REVISION_LEASE_SECONDS",
-            "PROPERTY_CATALOG_MAX_REVISION_LEASE_SECONDS",
-        ),
-        (
-            "PROPERTY_CATALOG_DEV_STANDARD_MAX_WALL_MS",
-            "PROPERTY_CATALOG_DEV_INITIAL_BACKFILL_MAX_WALL_MS",
-        ),
-        (
-            "PROPERTY_CATALOG_RECONCILE_DEFAULT_EXTENDED_WALL_MS",
-            "PROPERTY_CATALOG_DEV_SCHEDULED_RECONCILE_MAX_WALL_MS",
-        ),
-        (
-            "PROPERTY_CATALOG_SOURCE_ADAPTER_WALL_SECONDS",
-            "PROPERTY_CATALOG_SCHEDULED_RECONCILE_SOURCE_ADAPTER_WALL_SECONDS",
-        ),
-        (
-            "PROPERTY_CATALOG_SCHEDULED_RECONCILE_SOURCE_ADAPTER_WALL_SECONDS",
-            "PROPERTY_CATALOG_INITIAL_BACKFILL_SOURCE_ADAPTER_WALL_SECONDS",
-        ),
-        (
-            "PROPERTY_CATALOG_POSTGRES_PAGE_ROWS",
-            "PROPERTY_CATALOG_POSTGRES_MAX_TOTAL_ROWS",
-        ),
-        ("PROPERTY_CATALOG_PUBLISHER_WALL_MS", "PROPERTY_CATALOG_DEADLINE_MAX_WALL_MS"),
-        (
-            "PROPERTY_CATALOG_DRAIN_POLL_INTERVAL_MS",
-            "PROPERTY_CATALOG_DRAIN_POLL_CAP_MS",
-        ),
-        (
-            "PROPERTY_CATALOG_STATE_STORE_TIMEOUT_MS",
-            "PROPERTY_CATALOG_PUBLISHER_WALL_MS",
-        ),
-        (
-            "PROPERTY_CATALOG_READ_MAX_THREADS",
-            "PROPERTY_CATALOG_READ_POOL_SIZE",
-        ),
-        (
-            "PROPERTY_CATALOG_READ_MAX_RESULT_BYTES",
-            "PROPERTY_CATALOG_READ_MAX_BYTES",
-        ),
+        ("PROPERTY_CATALOG_READ_MAX_THREADS", "PROPERTY_CATALOG_READ_POOL_SIZE"),
+        ("PROPERTY_CATALOG_READ_MAX_RESULT_BYTES", "PROPERTY_CATALOG_READ_MAX_BYTES"),
         (
             "PROPERTY_CATALOG_READ_EXTERNAL_GROUP_BY_BYTES",
             "PROPERTY_CATALOG_READ_MAX_MEMORY_BYTES",
@@ -187,69 +138,13 @@ def test_property_catalog_cross_field_limits_are_validated():
             "PROPERTY_CATALOG_READ_EXTERNAL_SORT_BYTES",
             "PROPERTY_CATALOG_READ_MAX_MEMORY_BYTES",
         ),
-        (
-            "PROPERTY_CATALOG_CURSOR_MAX_AGE_SECONDS",
-            "PROPERTY_CATALOG_LINEAGE_ANCHOR_MAX_AGE_SECONDS",
-        ),
-        (
-            "PROPERTY_CATALOG_CANONICAL_SPAN_QUERY_TIMEOUT_MS",
-            "PROPERTY_CATALOG_INITIAL_BACKFILL_CANONICAL_SPAN_QUERY_TIMEOUT_MS",
-        ),
-        (
-            "PROPERTY_CATALOG_CANONICAL_SPAN_MAX_THREADS",
-            "PROPERTY_CATALOG_READ_MAX_THREADS",
-        ),
-        (
-            "PROPERTY_CATALOG_AUTHORITATIVE_VALUE_BATCH_MAX_ROWS",
-            "PROPERTY_CATALOG_CANONICAL_SPAN_MAX_GROUPS",
-        ),
-        (
-            "PROPERTY_CATALOG_AUTHORITATIVE_VALUE_BATCH_MAX_BYTES",
-            "PROPERTY_CATALOG_CANONICAL_SPAN_MAX_GROUP_BYTES",
-        ),
-        (
-            "PROPERTY_CATALOG_RECONCILE_DEFAULT_ENVELOPE_ROWS",
-            "PROPERTY_CATALOG_RECONCILE_MAX_ENVELOPE_ROWS",
-        ),
-        (
-            "PROPERTY_CATALOG_RECONCILE_DEFAULT_MAX_ENVELOPE_BYTES",
-            "PROPERTY_CATALOG_RECONCILE_MAX_ENVELOPE_BYTES",
-        ),
     ),
 )
-def test_property_catalog_ordered_limits_reject_inverted_values(lower_name, upper_name):
+def test_property_catalog_read_limits_reject_inverted_values(lower_name, upper_name):
     values = load_numeric_settings(PROPERTY_CATALOG_RUNTIME_SETTING_SPECS, source={})
     values[lower_name] = values[upper_name] + 1
 
     with pytest.raises(ValueError):
-        validate_property_catalog_settings(values)
-
-
-def test_property_catalog_statement_timeout_requires_source_wall_headroom():
-    values = load_numeric_settings(PROPERTY_CATALOG_RUNTIME_SETTING_SPECS, source={})
-    values["PROPERTY_CATALOG_POSTGRES_STATEMENT_TIMEOUT_MS"] = int(
-        values["PROPERTY_CATALOG_SOURCE_ADAPTER_WALL_SECONDS"] * 1_000
-    )
-
-    with pytest.raises(ValueError, match="statement timeout"):
-        validate_property_catalog_settings(values)
-
-
-def test_property_catalog_initial_backfill_wall_requires_lease_headroom():
-    values = load_numeric_settings(PROPERTY_CATALOG_RUNTIME_SETTING_SPECS, source={})
-    values["PROPERTY_CATALOG_MAX_REVISION_LEASE_SECONDS"] -= 1
-
-    with pytest.raises(ValueError, match="initial-backfill wall plus headroom"):
-        validate_property_catalog_settings(values)
-
-
-def test_property_catalog_specialized_span_pages_fit_the_canonical_page():
-    values = load_numeric_settings(PROPERTY_CATALOG_RUNTIME_SETTING_SPECS, source={})
-    values["PROPERTY_CATALOG_DEV_CANONICAL_SPAN_PAGE_ROWS"] = (
-        values["PROPERTY_CATALOG_CANONICAL_SPAN_PAGE_ROWS"] + 1
-    )
-
-    with pytest.raises(ValueError, match="specialized span page"):
         validate_property_catalog_settings(values)
 
 

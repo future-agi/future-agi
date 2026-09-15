@@ -42,7 +42,9 @@ from tracer.services.clickhouse.read_budget import (
     is_read_budget_error,
 )
 from tracer.utils.attribute_suggestion_contract import (
+    ATTRIBUTE_KEY_MAX_UTF8_BYTES,
     TYPED_STRING_SUGGESTION_MAX_UTF8_BYTES,
+    validate_exact_attribute_key,
 )
 from tracer.utils.filter_operators import (
     JSON_ARRAY_FILTER_MAX_STRING_UTF8_BYTES,
@@ -117,7 +119,7 @@ ATTRIBUTE_READ_VALUE_CANDIDATE_PAGE_LIMIT = 6
 ATTRIBUTE_READ_VALUE_TOTAL_CANDIDATE_PAGE_LIMIT = 15
 ATTRIBUTE_READ_MAX_KEYS = 1_000
 ATTRIBUTE_READ_MAX_VALUES = 500
-ATTRIBUTE_READ_MAX_KEY_BYTES = 512
+ATTRIBUTE_READ_MAX_KEY_BYTES = ATTRIBUTE_KEY_MAX_UTF8_BYTES
 ATTRIBUTE_READ_MAX_SEARCH_BYTES = 512
 ATTRIBUTE_READ_MAX_PROJECTS = 64
 
@@ -587,15 +589,11 @@ def _validate_text(
 
 
 def validate_attribute_key(value: Any) -> str:
-    """Validate without restricting punctuation or non-ASCII key names."""
-
-    return _validate_text(
-        value,
-        label="Attribute key",
-        max_bytes=ATTRIBUTE_READ_MAX_KEY_BYTES,
-        allow_empty=False,
-        error_type=InvalidAttributeKey,
-    )
+    """Preserve exact key eligibility and the public picker error class."""
+    try:
+        return validate_exact_attribute_key(value)
+    except ValueError as exc:
+        raise InvalidAttributeKey(str(exc)) from exc
 
 
 def validate_attribute_search(value: Any) -> str:

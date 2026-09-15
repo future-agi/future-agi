@@ -41,13 +41,15 @@ class _VoiceTraceReplayBuilder(_TraceRootReplayV2, TraceListQueryBuilder):
     """Use the CH25 physical winner for voice membership and page content."""
 
     def _root_replay_content_fields(self) -> list[tuple[str, str]]:
+        # String overflow is already JSON text; toJSONString would quote it again.
+        # toString also serializes native JSON, preserving nested call metadata.
         return [
             ("provider", "provider"),
             (
                 "concat('{', arrayStringConcat(arrayMap("
                 "kv -> concat(toJSONString(kv.1), ':', kv.2), "
                 "arrayFilter(kv -> kv.1 != 'call_logs', "
-                "JSONExtractKeysAndValuesRaw(toJSONString(attributes_extra)))), ','), '}')",
+                "JSONExtractKeysAndValuesRaw(toString(attributes_extra)))), ','), '}')",
                 "span_attributes",
             ),
             ("mapFilter((k, v) -> k != 'call_logs', attrs_string)", "attrs_string"),

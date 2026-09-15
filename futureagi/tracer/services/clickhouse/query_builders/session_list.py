@@ -507,6 +507,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         candidate_placeholder = f"%({candidate_param})s"
         merged_params: dict[str, Any] = {}
         needs_candidate_cte = False
+        needs_session_score_cte = False
         org_scope = self.project_ids is not None
         branch_projects = self.project_ids if org_scope else [self.project_id]
         predicates_by_leaf: list[list[str]] = [[] for _ in relational_filters]
@@ -539,6 +540,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                     score_date_scope=False,
                     span_date_scope=scope_to_request_window,
                     candidate_ids_param=candidate_param,
+                    resolved_candidate_sessions_table="candidate_relational_session_traces",
                     strict_trace_project_correlation=(
                         org_scope
                         or (item.get("column_id") or item.get("columnId")) == "has_eval"
@@ -554,6 +556,9 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                     ),
                 )
                 predicate, leaf_params = filter_builder.translate([item])
+                needs_session_score_cte |= (
+                    "candidate_relational_session_traces" in predicate
+                )
                 if not predicate:
                     raise ValueError("relational session filter compiled no predicate")
 
@@ -637,6 +642,19 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             SELECT DISTINCT {candidate_project_select}toString(trace_id) AS trace_id
             FROM resolved_root_sessions
             WHERE notEmpty(toString(trace_id))
+        )"""
+        if needs_session_score_cte:
+            # Inline session Scores carry no trace/span FK. Expand them only
+            # over this page's live roots, retaining the project fence and all
+            # old/new IDs in the same bounded survivor map used by the list.
+            ctes += """,
+        candidate_relational_session_traces AS (
+            SELECT project_id, trace_id, session_id
+            FROM resolved_root_sessions
+            UNION DISTINCT
+            SELECT roots.project_id, roots.trace_id, remap.any_id AS session_id
+            FROM resolved_root_sessions AS roots
+            INNER JOIN ts_survivor_map AS remap ON roots.session_id = remap.survivor_id
         )"""
         predicates = tuple(
             "(" + " OR ".join(branches) + ")" for branches in predicates_by_leaf

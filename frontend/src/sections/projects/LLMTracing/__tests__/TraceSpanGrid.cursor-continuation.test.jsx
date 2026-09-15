@@ -156,6 +156,7 @@ vi.mock("../LLMTracingSpanDetailDrawer", () => ({ default: () => null }));
 
 import SpanGrid from "../SpanGrid";
 import TraceGrid from "../TraceGrid";
+import * as listCursorPagination from "../listCursorPagination";
 import { paintedGridRowSignature } from "../useCursorGridPagination";
 import {
   OBSERVE_LIST_REFRESH_EVENT,
@@ -931,7 +932,7 @@ describe.each([
     });
 
     expect(params.success).not.toHaveBeenCalled();
-    expect(params.fail).not.toHaveBeenCalled();
+    expect(params.fail).toHaveBeenCalledOnce();
     expect(params.api.forEachNode).not.toHaveBeenCalled();
   });
 
@@ -1045,6 +1046,214 @@ describe.each([
       rowCount: 1,
     });
     expect(params.fail).not.toHaveBeenCalled();
+  });
+});
+
+// Keep the actual SSRM loader: settling a datasource promise does not release
+// its outbound slot, whereas either AG Grid callback does, even for an old cache.
+const completionGrid = async (datasource, maxConcurrentDatasourceRequests = 1) => {
+  const { createGrid, ModuleRegistry } = await import("ag-grid-community");
+  const { AllEnterpriseModule } = await import("ag-grid-enterprise");
+  ModuleRegistry.registerModules([AllEnterpriseModule]);
+  const reads = [];
+  const track = (source) => ({
+    getRows(params) {
+      const read = {
+        ...params,
+        success: vi.fn(params.success),
+        fail: vi.fn(params.fail),
+      };
+      reads.push(read);
+      read.settled = source.getRows(read);
+    },
+  });
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  let api;
+  act(() => {
+    api = createGrid(host, {
+      theme: "legacy",
+      domLayout: "autoHeight",
+      columnDefs: [{ field: "trace_id" }],
+      rowModelType: "serverSide",
+      cacheBlockSize: 25,
+      serverSideInitialRowCount: 5,
+      maxConcurrentDatasourceRequests,
+      rowSelection: { mode: "multiRow" },
+      suppressServerSideFullWidthLoadingRow: true,
+      serverSideDatasource: track(datasource),
+    });
+    gridState.api = api;
+  });
+  return {
+    api,
+    reads,
+    replace: (source) => act(() => api.setGridOption("serverSideDatasource", track(source))),
+    close: () => {
+      act(() => api.destroy());
+      host.remove();
+    },
+  };
+};
+
+const deferredCompletion = () => {
+  let resolve;
+  let reject;
+  const promise = new Promise((accept, decline) => {
+    resolve = accept;
+    reject = decline;
+  });
+  return { promise, resolve, reject };
+};
+
+describe.each(["trace", "span"])("%s grid completion regression", (kind) => {
+  beforeEach(() => {
+    getMock.mockReset();
+    gridState.api = null;
+    gridState.props = null;
+    resetMetricIds.mockReset();
+  });
+
+  const currentRow = {
+    trace_id: "replacement",
+    span_id: "replacement",
+    project_id: "project-1",
+    start_time: "2026-01-01T00:00:00Z",
+  };
+  const changedFilters = [{
+    column_id: "company_id",
+    filter_config: { filter_type: "text", filter_op: "in", filter_value: ["new"] },
+  }];
+
+  it.each(["success", "failure"])(
+    "releases the real concurrency-one queue before cancelled transport late %s",
+    async (outcome) => {
+      const old = deferredCompletion();
+      const current = deferredCompletion();
+      getMock.mockReturnValueOnce(old.promise).mockReturnValueOnce(current.promise);
+      const props = baseProps();
+      const ref = React.createRef();
+      const view = render(renderGridSubject({ kind, ref, props, filters: props.filters }));
+      const grid = await completionGrid(gridState.props.serverSideDatasource);
+      try {
+        await waitFor(() => expect(getMock).toHaveBeenCalledTimes(1));
+        const oldSignal = getMock.mock.calls[0][1].signal;
+        view.rerender(renderGridSubject({ kind, ref, props, filters: changedFilters }));
+        // Updating the real datasource queues replacement; never call its
+        // getRows directly, which would bypass the occupied loader slot.
+        grid.replace(gridState.props.serverSideDatasource);
+        expect(oldSignal.aborted).toBe(true);
+        await act(async () => { await grid.reads[0].settled; });
+        await waitFor(() => expect(getMock).toHaveBeenCalledTimes(2));
+        expect(grid.reads[0].fail).toHaveBeenCalledOnce();
+        expect(grid.reads[0].success).not.toHaveBeenCalled();
+        expect(JSON.parse(getMock.mock.calls[1][1].params.filters)).toEqual(changedFilters);
+
+        await act(async () => {
+          if (outcome === "success") old.resolve(listResponse());
+          else old.reject(new Error("obsolete transport failure"));
+          await grid.reads[0].settled;
+        });
+        expect(props.setLoading).toHaveBeenLastCalledWith(true);
+        expect(gridState.props.loading).toBe(true);
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+        expect(grid.api.getDisplayedRowAtIndex(0)?.data).toBeUndefined();
+
+        await act(async () => {
+          current.resolve(listResponse({ rows: [currentRow] }));
+          await grid.reads[1].settled;
+        });
+        expect(grid.api.getDisplayedRowAtIndex(0)?.data).toEqual(currentRow);
+        expect(grid.reads[0].fail).toHaveBeenCalledOnce();
+        expect(grid.reads[0].success).not.toHaveBeenCalled();
+        expect(grid.reads[1].success).toHaveBeenCalledOnce();
+        expect(grid.reads[1].fail).not.toHaveBeenCalled();
+      } finally {
+        grid.close();
+        await act(async () => {
+          old.resolve(listResponse());
+          current.resolve(listResponse({ rows: [currentRow] }));
+          await Promise.all(grid.reads.map((read) => read.settled));
+        });
+      }
+    },
+  );
+
+  it.each(["stale error", "stale loading"])(
+    "keeps replacement state safe after %s",
+    async (scenario) => {
+      const old = deferredCompletion();
+      const current = deferredCompletion();
+      // Bypass transport cancellation only for the old page, so the product's
+      // generation/error guards are exercised rather than ERR_CANCELED alone.
+      const loadPage = vi.spyOn(listCursorPagination, "loadExactListPage")
+        .mockReturnValueOnce(old.promise);
+      getMock.mockReturnValueOnce(current.promise);
+      const props = baseProps();
+      const ref = React.createRef();
+      const view = render(renderGridSubject({ kind, ref, props, filters: props.filters }));
+      // Two is a supported override and lets the replacement own loading
+      // before old completion; the independent queue regression stays at one.
+      const grid = await completionGrid(
+        gridState.props.serverSideDatasource,
+        scenario === "stale loading" ? 2 : 1,
+      );
+      const showOverlay = vi.spyOn(grid.api, "showNoRowsOverlay");
+      try {
+        await waitFor(() => expect(loadPage).toHaveBeenCalledOnce());
+        view.rerender(renderGridSubject({ kind, ref, props, filters: changedFilters }));
+        grid.replace(gridState.props.serverSideDatasource);
+        if (scenario === "stale loading") {
+          await waitFor(() => expect(getMock).toHaveBeenCalledOnce());
+          expect(props.setLoading).toHaveBeenLastCalledWith(true);
+        }
+        await act(async () => {
+          if (scenario === "stale error") old.reject(new Error("obsolete page failure"));
+          else old.resolve({ rows: [], response: { data: {} }, isLastPage: true });
+          await grid.reads[0].settled;
+        });
+        expect.soft(showOverlay).not.toHaveBeenCalled();
+        expect.soft(screen.queryByRole("alert")).not.toBeInTheDocument();
+        expect(grid.reads[0].fail).toHaveBeenCalledOnce();
+        expect(grid.reads[0].success).not.toHaveBeenCalled();
+        if (scenario === "stale loading") {
+          expect.soft(props.setLoading).toHaveBeenLastCalledWith(true);
+          expect.soft(gridState.props.loading).toBe(true);
+        }
+        await waitFor(() => expect(grid.reads).toHaveLength(2));
+        expect(grid.api.getDisplayedRowAtIndex(0)?.data).toBeUndefined();
+        await act(async () => {
+          current.resolve(listResponse({ rows: [currentRow] }));
+          await grid.reads[1].settled;
+        });
+        expect(grid.api.getDisplayedRowAtIndex(0)?.data).toEqual(currentRow);
+        expect(grid.reads[1].success).toHaveBeenCalledOnce();
+        expect(grid.reads[1].fail).not.toHaveBeenCalled();
+      } finally {
+        grid.close();
+        await act(async () => {
+          old.resolve({ rows: [], response: { data: {} }, isLastPage: true });
+          current.resolve(listResponse({ rows: [currentRow] }));
+          await Promise.all(grid.reads.map((read) => read.settled));
+        });
+        showOverlay.mockRestore();
+        loadPage.mockRestore();
+      }
+    },
+  );
+
+  it("does not acquire transport or loading for an already-dead API", async () => {
+    getMock.mockResolvedValueOnce(listResponse());
+    const props = renderGrid(kind);
+    const params = makeParams();
+    params.api.isDestroyed = () => true;
+    await getRows(params);
+
+    expect.soft(getMock).not.toHaveBeenCalled();
+    expect.soft(props.setLoading).not.toHaveBeenCalled();
+    expect.soft(params.fail).toHaveBeenCalledOnce();
+    expect(params.success).not.toHaveBeenCalled();
+    expect(params.api.showNoRowsOverlay).not.toHaveBeenCalled();
   });
 });
 
@@ -1184,7 +1393,7 @@ describe.each(["trace", "span"])("%s grid loading lifecycle", (kind) => {
     });
 
     // Reset now settles through the neutral cancellation path before late data.
-    expect(params.fail).not.toHaveBeenCalled();
+    expect(params.fail).toHaveBeenCalledOnce();
     expect(params.success).not.toHaveBeenCalled();
     await waitFor(() => expect(gridState.props.loading).toBe(false));
   });
@@ -1215,6 +1424,7 @@ describe.each(["trace", "span"])("%s grid loading lifecycle", (kind) => {
       expect(gridState.props.loading).toBe(false);
       expect(props.setLoading).toHaveBeenLastCalledWith(false);
       expect(params.success).not.toHaveBeenCalled();
+      expect(params.fail).toHaveBeenCalledOnce();
       expect(params.api.showNoRowsOverlay).not.toHaveBeenCalled();
       expect(getMock).toHaveBeenCalledTimes(1);
 
@@ -1243,6 +1453,7 @@ describe.each(["trace", "span"])("%s grid loading lifecycle", (kind) => {
       });
     }
     expect(params.success).not.toHaveBeenCalled();
+    expect(params.fail).toHaveBeenCalledOnce();
   });
 
   it("shows replacement loading immediately and hands it to the first read", async () => {

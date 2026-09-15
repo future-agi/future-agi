@@ -38,6 +38,10 @@ jobs:
           filters: |
             backend:
               - 'futureagi/**'
+              - 'docker-compose*.yml'
+              - 'fi-collector/Dockerfile'
+              - 'bin/install*'
+              - 'deploy/**'
               - '.github/workflows/backend-ci.yml'
       - id: always
         if: github.event_name != 'pull_request'
@@ -86,6 +90,11 @@ jobs:
       LITELLM_MODE: PRODUCTION
       CH25_DATABASE: test_tfc
       CH_DATABASE: test_tfc
+      OBSERVED_CATALOG_TEST_CH_HOST: 127.0.0.1
+      OBSERVED_CATALOG_TEST_CH_PORT: "18123"
+      OBSERVED_CATALOG_TEST_CH_USER: default
+      OBSERVED_CATALOG_TEST_CH_PASSWORD: ""
+      OBSERVED_CATALOG_TEST_NATIVE_PORT: "19000"
       PYTHONHASHSEED: "0"
       FI_CH25_SCHEMA_APPLY_STRICT: "1"
       EE_REPO_BRANCH: ${{ github.head_ref || github.ref_name }}

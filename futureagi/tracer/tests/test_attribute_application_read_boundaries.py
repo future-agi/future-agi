@@ -21,6 +21,8 @@ from tracer.services.clickhouse.v2.property_catalog.connection import (
     PropertyCatalogConnectionConfig,
     PropertyCatalogReadExecutor,
 )
+from tracer.services.clickhouse.v2.property_catalog.reader import PropertyCatalogReader
+from tracer.services.clickhouse.v2.property_catalog.runtime_limits import RUNTIME_LIMITS
 
 pytestmark = pytest.mark.unit
 GiB = 1024**3
@@ -33,8 +35,8 @@ CONFIG = PropertyCatalogConnectionConfig(
     password="test-only",
 )
 SQL = (
-    "SELECT status FROM `property_catalog_dev_clean`.property_catalog_activations "
-    "WHERE status = %(status)s LIMIT 25"
+    "SELECT attribute_key FROM `property_catalog_dev_clean`.observed_attribute_keys "
+    "WHERE attribute_key = %(status)s LIMIT 25"
 )
 PARAMS = {"status": "ok"}
 
@@ -97,7 +99,7 @@ def _executor(lane, owner, *, application_read=None):
     if lane == "raw":
         return V2AttributeQueryExecutor(owner, **options)
     return PropertyCatalogReadExecutor(
-        config=CONFIG, client_factory=lambda _config: owner, clock=lambda: 0, **options
+        config=CONFIG, client_factory=lambda _config: owner, clock=lambda: 0
     )
 
 
@@ -137,15 +139,23 @@ def test_public_dispatch_then_bounded_maintenance_restores_same_pool(
     original = dict(requested)
 
     def application_execute(sql, params, **kwargs):
-        assert is_application_read()
+        assert is_application_read() is (lane == "raw")
         assert sql == SQL and params == PARAMS
-        assert connection.send_receive_timeout is None
-        assert connection.socket.gettimeout() is None
+        if lane == "raw":
+            assert connection.send_receive_timeout is None
+            assert connection.socket.gettimeout() is None
+        else:
+            assert 0 < connection.socket.gettimeout() <= 0.001
         assert connection.connect_timeout == 3
         assert connection.sync_request_timeout == 1
         applied = kwargs["settings"]
-        assert all(applied[key] == 0 for key in UNLIMITED_STATEMENT_SETTINGS)
-        expected_memory = ceiling if lane == "raw" else min(MAINTENANCE_MEMORY, ceiling)
+        if lane == "raw":
+            assert all(applied[key] == 0 for key in UNLIMITED_STATEMENT_SETTINGS)
+        else:
+            assert applied["max_execution_time"] == 0.001
+            for key in ("max_bytes_to_read", "max_result_rows", "max_result_bytes"):
+                assert applied[key] == requested[key]
+        expected_memory = ceiling if lane == "raw" else MAINTENANCE_MEMORY
         assert applied["max_memory_usage"] == expected_memory > 0
         for key in (
             "max_threads",
@@ -259,12 +269,11 @@ def test_raw_benchmark_optout_and_injected_executor_keep_bounded_policy(monkeypa
     assert not is_application_read()
 
 
-@pytest.mark.parametrize("lane", ["raw", "catalog"])
 @pytest.mark.parametrize("allow", [False, True])
-def test_public_read_preserves_locked_server_profile_policy(monkeypatch, lane, allow):
+def test_raw_public_read_preserves_locked_server_profile_policy(monkeypatch, allow):
     owner, native, _ = _native_client(monkeypatch, locked=True, allow=allow)
     with override_settings(CLICKHOUSE_APPLICATION_READ_MAX_MEMORY_BYTES=8 * GiB):
-        _executor(lane, owner, application_read=True).execute(
+        _executor("raw", owner, application_read=True).execute(
             SQL, PARAMS, timeout_ms=1, settings={}
         )
     applied = native.execute.call_args.kwargs["settings"]
@@ -286,7 +295,7 @@ def test_failure_restores_outer_context_native_timeouts_and_admission(
     owner, native, connection = _native_client(monkeypatch, original_timeout=None)
 
     def fail(*_args, **_kwargs):
-        assert is_application_read() is application_read
+        assert is_application_read() is (application_read and lane == "raw")
         raise failure_type("test-only failure")
 
     native.execute.side_effect = fail
@@ -309,19 +318,88 @@ def test_failure_restores_outer_context_native_timeouts_and_admission(
     owner._read_admission.release()
 
 
-@pytest.mark.parametrize("lane", ["raw", "catalog"])
 @pytest.mark.parametrize("ceiling", [0, -1])
-def test_invalid_application_memory_ceiling_never_dispatches(
-    monkeypatch, lane, ceiling
-):
+def test_invalid_raw_application_memory_ceiling_never_dispatches(monkeypatch, ceiling):
     owner, native, _ = _native_client(monkeypatch)
     with override_settings(CLICKHOUSE_APPLICATION_READ_MAX_MEMORY_BYTES=ceiling):
         with pytest.raises(ValueError, match="memory ceiling must be positive"):
-            _executor(lane, owner, application_read=True).execute(
+            _executor("raw", owner, application_read=True).execute(
                 SQL, PARAMS, timeout_ms=1, settings=_request_settings()
             )
     native.execute.assert_not_called()
     assert not is_application_read()
+
+
+@pytest.mark.parametrize("outer_application_read", [False, True])
+@pytest.mark.parametrize("original_timeout", [10, None])
+@pytest.mark.parametrize("application_memory", [0, 8 * GiB])
+def test_default_observed_reader_enforces_native_deadline_and_catalog_bounds(
+    monkeypatch, outer_application_read, original_timeout, application_memory
+):
+    from tracer.services.clickhouse.v2.property_catalog import connection as catalog
+
+    owner, native, connection = _native_client(
+        monkeypatch, original_timeout=original_timeout, locked=True, allow=True
+    )
+    factory = Mock(return_value=owner)
+    monkeypatch.setattr(catalog, "ClickHouseClient", factory)
+    monkeypatch.setattr(catalog, "_client", None)
+    monkeypatch.setattr(catalog, "_client_config", None)
+    reader = PropertyCatalogReader(catalog_database=CONFIG.database)
+    assert reader.observed.executor is None
+    # Consume part of the default request budget before the first catalog read.
+    monkeypatch.setattr(
+        type(reader.observed.deadline),
+        "elapsed_ms",
+        lambda self: RUNTIME_LIMITS.query_wall_ms / 2,
+    )
+    remaining_seconds = RUNTIME_LIMITS.query_wall_ms / 2000
+
+    def bounded_execute(sql, params, **kwargs):
+        assert not is_application_read()
+        assert sql == SQL and params == PARAMS
+        assert 0 < connection.socket.gettimeout() <= remaining_seconds
+        if original_timeout is not None:
+            assert 0 < connection.send_receive_timeout <= remaining_seconds
+        applied = kwargs["settings"]
+        assert 0 < applied["max_execution_time"] <= remaining_seconds
+        assert applied["max_result_rows"] == 25
+        for key, expected in RUNTIME_LIMITS.clickhouse_read_settings.items():
+            assert applied[key] == expected
+        assert "readonly" not in applied
+        return [("ok",)], [("status", "String")]
+
+    native.execute.side_effect = bounded_execute
+    with override_settings(
+        PROPERTY_CATALOG_CH_HOST=CONFIG.host,
+        PROPERTY_CATALOG_CH_PORT=CONFIG.port,
+        PROPERTY_CATALOG_DATABASE=CONFIG.database,
+        PROPERTY_CATALOG_CH_USER=CONFIG.user,
+        PROPERTY_CATALOG_CH_PASSWORD=CONFIG.password,
+        CLICKHOUSE_APPLICATION_READ_MAX_MEMORY_BYTES=application_memory,
+    ):
+        with application_read_context(outer_application_read):
+            assert reader.observed.execute(SQL, PARAMS, 25) == [{"status": "ok"}]
+            assert is_application_read() is outer_application_read
+    assert not is_application_read()
+    assert connection.socket.gettimeout() == original_timeout
+    assert connection.send_receive_timeout == original_timeout
+    owner._return_client.assert_called_once_with(native)
+    assert owner._read_admission.acquire(blocking=False)
+    owner._read_admission.release()
+    factory.assert_called_once_with(
+        host=CONFIG.host,
+        port=CONFIG.port,
+        user=CONFIG.user,
+        password=CONFIG.password,
+        database=CONFIG.database,
+        server_enforced_readonly=True,
+        connect_timeout=RUNTIME_LIMITS.read_transport_timeout_seconds,
+        send_timeout=RUNTIME_LIMITS.read_transport_timeout_seconds,
+        receive_timeout=RUNTIME_LIMITS.read_transport_timeout_seconds,
+        pool_size=RUNTIME_LIMITS.read_pool_size,
+        allow_query_settings_with_server_readonly=True,
+    )
 
 
 @pytest.mark.parametrize("value", [None, 1, "true"])

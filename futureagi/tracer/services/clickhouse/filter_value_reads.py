@@ -394,7 +394,7 @@ def read_end_user_filter_value_cursor_page(
     analytics: QueryExecutor,
     *,
     project_ids: list[str] | tuple[str, ...],
-    source_column: Literal["user_id", "user_id_type"],
+    source_column: Literal["user_id", "user_id_type", "user_id_hash"],
     page_size: int,
     search: str = "",
     value_after: str | None = None,
@@ -409,7 +409,7 @@ def read_end_user_filter_value_cursor_page(
     finite chain without an offset scan or a cardinality sample.
     """
 
-    if source_column not in {"user_id", "user_id_type"}:
+    if source_column not in {"user_id", "user_id_type", "user_id_hash"}:
         raise ValueError("unsupported end-user filter-value column")
     if not 1 <= int(page_size) <= FILTER_VALUE_MAX_PAGE_SIZE:
         raise ValueError(

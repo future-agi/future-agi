@@ -14,6 +14,7 @@ from typing import Any, Dict, Optional
 from unittest import mock
 
 import pytest
+from clickhouse_connect.driver.binding import finalize_query
 
 from tracer.models.monitor import MonitorMetricTypeChoices
 from tracer.services.clickhouse.query_builders import monitor_metrics as mm
@@ -142,15 +143,20 @@ def test_span_attr_filter_is_inline_span_scoped() -> None:
     assert b._filter_clause, "attr filter must compile to a non-empty clause"
     # Span mode (PG parity): a direct predicate on the span row, no
     # trace-membership subquery.
-    assert "mapContains(span_attr_str, 'session.id')" in b._filter_clause
+    assert "session.id" in b._filter_params.values()
+    assert "mapContains(span_attr_str, 'session.id')" not in b._filter_clause
+    assert "mapContains(span_attr_str, 'session.id')" in finalize_query(
+        b._filter_clause, b._filter_params
+    )
     assert "trace_id IN (" not in b._filter_clause
-    sql, _ = b.build_metric_value_query(
+    sql, params = b.build_metric_value_query(
         MonitorMetricTypeChoices.COUNT_OF_ERRORS, START, END
     )
     # Predicate rides the tenant-scoped outer scan; no unscoped subquery.
     assert "WHERE 1 = 1" not in sql
     assert "trace_id IN (" not in sql
-    assert "mapContains(span_attr_str, 'session.id')" in sql
+    assert "session.id" in params.values()
+    assert "mapContains(span_attr_str, 'session.id')" in finalize_query(sql, params)
 
 
 @pytest.mark.parametrize("key", ["session_id", "trace_id", "span_id"])
@@ -185,8 +191,11 @@ def test_attr_filter_compiles_to_inline_predicate() -> None:
     # outer scan — no trace-membership subquery, so no scan of the
     # project's entire span history.
     b = _builder(filters=ATTR_FILTER)
-    assert "mapContains(span_attr_str, 'llm.model_name')" in b._filter_clause
-    assert "span_attr_str['llm.model_name']" in b._filter_clause
+    assert "llm.model_name" in b._filter_params.values()
+    assert "mapContains(span_attr_str, 'llm.model_name')" not in b._filter_clause
+    rendered = finalize_query(b._filter_clause, b._filter_params)
+    assert "mapContains(span_attr_str, 'llm.model_name')" in rendered
+    assert "span_attr_str['llm.model_name']" in rendered
     assert "trace_id IN (" not in b._filter_clause
 
 
@@ -218,10 +227,12 @@ def test_attr_filter_inlined_into_eval_span_subquery() -> None:
     sql, params = b.build_metric_value_query(
         MonitorMetricTypeChoices.EVALUATION_METRICS, START, END
     )
-    assert "mapContains(span_attr_str, 'llm.model_name')" in sql
+    assert "llm.model_name" in params.values()
+    rendered = finalize_query(sql, params)
+    assert "mapContains(span_attr_str, 'llm.model_name')" in rendered
     assert "trace_id IN (" not in sql
     # The predicate lands inside the bounded spans subquery.
-    spans_subq = sql.split("FROM spans", 1)[1]
+    spans_subq = rendered.split("FROM spans", 1)[1]
     assert "mapContains(span_attr_str, 'llm.model_name')" in spans_subq
     assert params["start_date"] == params["start_time"]
 

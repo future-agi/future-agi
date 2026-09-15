@@ -1,7 +1,5 @@
-// Package attributecatalog defines the pure canonical scalar codec for the
-// ingestion-fed span-attribute catalog. It is intentionally not wired into the
-// collector writer yet; the first stacked-PR slice only freezes the byte
-// contract shared with Django/Python.
+// Package attributecatalog defines the shared canonical scalar codec and typed
+// row builder used by live and backfilled attribute observations.
 package attributecatalog
 
 import (
@@ -30,7 +28,7 @@ type Scalar struct {
 
 // EncodeScalar returns canonical JSON plus a typed lowercase SHA-256 hex
 // fingerprint. Only selectable JSON scalars are accepted. Arrays are expanded
-// by a future bounded writer before this function; maps/JSON remain key-only.
+// by the bounded row builder before this function; maps/JSON remain key-only.
 func EncodeScalar(value any) (Scalar, error) {
 	var out Scalar
 	switch typed := value.(type) {

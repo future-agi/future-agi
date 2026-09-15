@@ -22,7 +22,6 @@ from tfc.temporal.schedules.enterprise_heartbeat import (
 from tfc.temporal.schedules.integrations import INTEGRATION_SCHEDULES
 from tfc.temporal.schedules.marketplace import MARKETPLACE_SCHEDULES
 from tfc.temporal.schedules.model_hub import MODEL_HUB_SCHEDULES
-from tfc.temporal.schedules.property_catalog import PROPERTY_CATALOG_SCHEDULES
 from tfc.temporal.schedules.retention import RETENTION_SCHEDULES
 from tfc.temporal.schedules.simulate import SIMULATE_SCHEDULES
 from tfc.temporal.schedules.tracer import TRACER_SCHEDULES
@@ -38,7 +37,6 @@ ALL_SCHEDULES = [
     *RETENTION_SCHEDULES,
     *DEPLOYMENT_TELEMETRY_SCHEDULES,
     *ENTERPRISE_HEARTBEAT_SCHEDULES,
-    *PROPERTY_CATALOG_SCHEDULES,
 ]
 
 # Manager functions
@@ -79,7 +77,6 @@ __all__ = [
     "BILLING_SCHEDULES",
     "MARKETPLACE_SCHEDULES",
     "RETENTION_SCHEDULES",
-    "PROPERTY_CATALOG_SCHEDULES",
     "DEPLOYMENT_TELEMETRY_SCHEDULES",
     "ALL_SCHEDULES",
     # Async functions (a_ prefix)

@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from uuid import uuid4
 
 import pytest
+from clickhouse_connect.driver.binding import finalize_query
 
 from tracer.services.clickhouse.query_builders.session_list import (
     SessionListQueryBuilder,
@@ -30,17 +31,25 @@ def _attribute_filter(operation: str) -> dict:
 
 
 def _surface_query(surface: str, operation: str) -> str:
+    """Return the surface query with its attribute key rendered in place.
+
+    The compiler binds attribute keys as parameters rather than inlining them,
+    so these grain assertions are made against the statement the database
+    actually receives.
+    """
     builder_cls = {
         "trace": TraceListQueryBuilder,
         "voice": VoiceCallListQueryBuilder,
         "session": SessionListQueryBuilder,
         "span": SpanListQueryBuilder,
     }[surface]
-    query, _ = builder_cls(
+    query, params = builder_cls(
         project_id=PROJECT_ID,
         filters=[_attribute_filter(operation)],
     ).build()
-    return query
+    assert params["attr_key_1"] == "coupon"
+    assert "'coupon'" not in query
+    return finalize_query(query, params)
 
 
 def _bounded_surface_query(surface: str, operation: str) -> str:
@@ -287,8 +296,13 @@ def test_trace_attribute_nullness_replays_versions_and_tombstones():
         for operation, expected_index in (("is_null", 0), ("is_not_null", 1)):
             predicate, params = builder.translate([_attribute_filter(operation)])
             assert "argMax(is_deleted, _version)" in predicate
+            # The attribute key is bound, not inlined. The predicate below is
+            # executed with those bindings intact, so render a copy purely to
+            # assert the key reaches the statement ClickHouse receives.
+            assert params["attr_key_1"] == "coupon"
+            assert "'coupon'" not in predicate
             assert "argMax(toUInt8(mapContains(attrs_string, 'coupon')), _version)" in (
-                predicate
+                finalize_query(predicate, {**params, "project_id": project_id})
             )
             assert "GROUP BY project_id, trace_id, id, start_time" in predicate
             for trace_id, expected in traces.items():

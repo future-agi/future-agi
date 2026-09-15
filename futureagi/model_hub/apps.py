@@ -8,19 +8,6 @@ logger = structlog.get_logger(__name__)
 
 STARTUP_SAFE_MANAGEMENT_COMMANDS = frozenset(
     {
-        # Retired zero-I/O tombstones remain runnable so stale jobs receive
-        # their explicit unified-command replacement error.
-        "ch25_activate_attribute_catalog",
-        "ch25_backfill_attribute_catalog",
-        # Long-running OSS control plane. AppConfig initialization remains
-        # mutation-free; the command itself has an exact development-only
-        # acknowledgement and uses read-only source identities plus an
-        # isolated catalog writer.
-        "ch25_property_catalog_oss_supervisor",
-        # Production twin of the OSS supervisor: long-running, verifies the
-        # provisioned schema, never creates databases or tables, and writes
-        # only through its own isolated catalog identity.
-        "ch25_property_catalog_lifecycle_controller",
         "check",
         "collectstatic",
         "generate_swagger",
@@ -39,7 +26,6 @@ HOSTED_DEPLOYMENTS = frozenset({"US", "EU", "DEV"})
 OPERATOR_STARTUP_MUTATION_COMMANDS = frozenset(
     {
         "ch25_apply_schema",
-        "ch25_property_catalog_dev_rollout",
         "ch25_remove_pg",
         "backfill_score_tracer_project",
         "createcachetable",
@@ -154,6 +140,16 @@ def guarded_management_command(argv: list[str]) -> str | None:
     command = _management_command(argv)
     if command is None or command in STARTUP_SAFE_MANAGEMENT_COMMANDS:
         return None
+    if command == "migrate":
+        # Django 5.1 runs --prune before the --check exit. Permit only this
+        # closed check-only form, not arbitrary options containing --check.
+        options = argv[argv.index(command) + 1 :]
+        if "--check" in options and set(options) <= {
+            "--check",
+            "--noinput",
+            "--no-input",
+        }:
+            return None
     return command
 
 
