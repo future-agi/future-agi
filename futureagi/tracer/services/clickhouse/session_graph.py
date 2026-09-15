@@ -18,6 +18,7 @@ from tracer.services.clickhouse.bounded_graph_reads import (
     read_graph_candidates,
 )
 from tracer.services.clickhouse.graph_dispatch import (
+    _require_rollup_result_shape,
     degraded_graph_response,
     fetch_annotation_graph_ch,
     fetch_eval_graph_ch,
@@ -72,22 +73,6 @@ _SESSION_IDENTITY_ONLY_METRICS = frozenset(
     {"traffic", "session_count", "avg_traces_per_session"}
 )
 _SESSION_ROLLUP_METRICS = SESSION_SYSTEM_METRICS - {"avg_traces_per_session"}
-_SESSION_ROLLUP_RESULT_COLUMNS = frozenset(
-    {
-        "time_bucket",
-        "avg_latency",
-        "total_tokens",
-        "avg_cost",
-        "traffic_count",
-        "prompt_tokens",
-        "completion_tokens",
-        "error_rate",
-        "session_count",
-        "avg_duration",
-        "avg_traces_per_session",
-        "total_cost_sum",
-    }
-)
 
 _SESSION_GRAPH_READ_CAPS = {
     "max_threads": settings.DASHBOARD_TRACE_READ_MAX_THREADS,
@@ -133,25 +118,6 @@ def _has_only_positive_window_filters(filters: list[dict[str, Any]]) -> bool:
     )
 
 
-def _require_rollup_result_shape(rows: list[Any], columns: list[str]) -> None:
-    """Reject schema drift instead of publishing a successful zero graph."""
-
-    missing = _SESSION_ROLLUP_RESULT_COLUMNS.difference(columns)
-    if missing:
-        raise BoundedGraphReadError("query_failed")
-    bucket_index = columns.index("time_bucket")
-    for row in rows:
-        bucket = (
-            row.get("time_bucket")
-            if isinstance(row, dict)
-            else row[bucket_index]
-            if bucket_index < len(row)
-            else None
-        )
-        if bucket is None:
-            raise BoundedGraphReadError("query_failed")
-
-
 def _fetch_rollup_system_metric_graph(
     *,
     analytics: QueryExecutor,
@@ -167,6 +133,7 @@ def _fetch_rollup_system_metric_graph(
         project_id=project_id,
         filters=filters,
         interval=interval,
+        metric_id=metric_id,
     )
     query, params = builder.build()
     if (
@@ -182,11 +149,20 @@ def _fetch_rollup_system_metric_graph(
             query,
             params,
             timeout_ms=SESSION_GRAPH_INTERACTIVE_QUERY_TIMEOUT_MS,
-            settings={"max_threads": 4},
+            # ``spans_per_session`` is sorted by (project_id, trace_session_id,
+            # hour_first_seen); with the project fixed by the PREWHERE the
+            # per-session GROUP BY runs on a sort-key prefix, so ClickHouse can
+            # retire each session as the key advances instead of holding a hash
+            # table for every session in the window.
+            settings={"max_threads": 4, "optimize_aggregation_in_order": 1},
         )
         rows = list(result.data or [])
         columns = list(result.columns or [])
-        _require_rollup_result_shape(rows, columns)
+        _require_rollup_result_shape(
+            rows,
+            columns,
+            expected_columns=builder.result_columns,
+        )
         query_count = 1
     response = format_system_metric_graph(
         builder.format_result(rows, columns),
