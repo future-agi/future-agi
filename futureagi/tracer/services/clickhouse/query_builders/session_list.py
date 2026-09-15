@@ -844,7 +844,55 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         return None
 
     def recommended_filter_max_slice_width(self) -> timedelta | None:
-        return None
+        """Let an exhausted session slice widen to the request window.
+
+        The shared selector widens a slice only after the previous, half as
+        wide one was *exhausted* - it returned fewer roots than its finite
+        seed limit.  Capping that schedule below the request width therefore
+        does not protect a dense project, which stops widening on its first
+        full slice; it only forces a sparse one to prove a twelve-month window
+        two days at a time.  Twenty-four seed reads cannot cross a year that
+        way, so the cursor hands out checkpoint pages that carry no rows, and
+        pagination ends at the page-depth limit instead of at ``has_more:
+        false``.  Doubling to the request window reaches the same history in a
+        logarithmic number of reads without changing membership, order, or the
+        exact latest-state classifier, and a wide read that exceeds its server
+        side budget is halved by ``should_retry_filter_wide_read_budget``.
+
+        Lanes constructed with a sampling salt/rate pair keep the conservative
+        shared ceiling, and there are two of them.  A genuinely sampled read
+        must: an under-full sampled slice is not evidence that the interval is
+        sparse.  The eval-task resolver
+        (``tracer/selectors/eval_tasks/row_resolver.py``) must for a different
+        reason - it always pairs salt and rate, at any rate, and reads a single
+        fully buffered page with no continuation and no valve, so one widened
+        over-budget seed there would have no checkpoint to fall back on and
+        would fail the whole task.  Widening and valve therefore switch
+        together, never apart.
+        """
+
+        if self._bounded_sampling_rate is not None:
+            return None
+        start, end = self._bounded_request_window
+        width = end - start
+        # Keep the selector's existing minimum-width contract/fallback.
+        return width if width >= timedelta(minutes=5) else None
+
+    def should_retry_filter_wide_read_budget(self) -> bool:
+        """Halve a seed slice that widened past its server-side read budget.
+
+        ``recommended_filter_max_slice_width`` lets an exhausted slice double
+        towards the request window.  The session seed aggregates raw roots per
+        slice, so one such read can still cross ``max_bytes_to_read`` when the
+        walk reaches a dense region of history.  Retrying that unpublished
+        identity-only seed on narrower adjacent slices changes neither
+        membership nor order, and without it the widened schedule would return
+        the same non-advancing checkpoint on every request.  It is off for
+        exactly the lanes that keep the shared ceiling above, so no caller can
+        receive the widening without the valve.
+        """
+
+        return self._bounded_sampling_rate is None
 
     def filter_candidate_seed_is_sampled(self) -> bool:
         return False
