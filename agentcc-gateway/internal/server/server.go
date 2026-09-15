@@ -454,7 +454,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 
 	// Realtime WebSocket API.
 	realtimeTracker := realtime.NewSessionTracker(5)
-	realtimeHandler := NewRealtimeHandler(realtimeTracker, registry, authKeyStore, realtimeHandlerConfig{
+	realtimeHandler := NewRealtimeHandler(realtimeTracker, registry, authKeyStore, guardrailEngine, realtimeHandlerConfig{
 		MaxSessionDuration: 3600 * time.Second,
 		PingInterval:       30 * time.Second,
 		PongTimeout:        10 * time.Second,
