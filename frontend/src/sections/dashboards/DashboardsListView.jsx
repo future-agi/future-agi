@@ -38,6 +38,7 @@ import { useSnackbar } from "src/components/snackbar";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { formatDistanceToNowStrict, format } from "date-fns";
 import useCanEditDashboard from "./hooks/useCanEditDashboard";
+import { fDate } from "src/utils/format-time";
 
 const AVATAR_COLORS = [
   "#7C4DFF",
@@ -82,8 +83,8 @@ function getDashboardViewers(db) {
     seen.add(u.email);
     users.push({ ...u, displayName: u.name || u.email, time });
   };
-  addUser(db.updated_by, db.updated_at);
   addUser(db.created_by, db.created_at);
+  addUser(db.updated_by, db.updated_at);
   return users;
 }
 
@@ -270,13 +271,15 @@ function ViewerAvatars({ db }) {
       <Stack
         direction="row"
         alignItems="center"
-        gap={0.5}
-        onClick={(e) => e.stopPropagation()}
-        sx={{ cursor: "default" }}
+        gap={1}
+        sx={{ minWidth: 0 }}
       >
         <AvatarGroup
           max={3}
+          onClick={(e) => e.stopPropagation()}
           sx={{
+            cursor: "default",
+            flexShrink: 0,
             "& .MuiAvatar-root": {
               width: 26,
               height: 26,
@@ -293,10 +296,22 @@ function ViewerAvatars({ db }) {
           ))}
         </AvatarGroup>
         {extra > 0 && (
-          <Typography variant="caption" color="text.secondary">
+          <Typography variant="caption" color="text.secondary" sx={{ flexShrink: 0 }}>
             + {extra}
           </Typography>
         )}
+        <Typography
+          variant="body2"
+          noWrap
+          sx={{
+            ml: 1,
+            color: "text.primary",
+            minWidth: 0,
+            flex: 1,
+          }}
+        >
+          {db.created_by?.name || db.created_by?.email}
+        </Typography>
       </Stack>
     </Tooltip>
   );
@@ -574,7 +589,7 @@ export default function DashboardsListView() {
       </Stack>
 
       {/* Dashboard list */}
-      <Box sx={{ flex: 1 }}>
+      <Box sx={{ flex: 1, overflowX: "auto" }}>
         {filteredDashboards.length === 0 ? (
           searchQuery ? (
             <Stack alignItems="center" gap={1} sx={{ py: 8 }}>
@@ -597,7 +612,57 @@ export default function DashboardsListView() {
             />
           )
         ) : (
-          <Stack spacing={1}>
+          <Stack spacing={1} sx={{ minWidth: 742 }}>
+            {/* Table Header */}
+            <Stack
+              direction="row"
+              alignItems="center"
+              sx={{
+                px: 2,
+                py: 0.5,
+              }}
+            >
+              <Box sx={{ width: 30, flexShrink: 0 }} />
+
+              <Typography
+                variant="caption"
+                color="text.disabled"
+                fontWeight="fontWeightSemiBold"
+                sx={{ flex: 1, mr: 2 }}
+              >
+                Name
+              </Typography>
+
+              <Typography
+                variant="caption"
+                color="text.disabled"
+                fontWeight="fontWeightSemiBold"
+                sx={{ width: 100, mr: 1.5, flexShrink: 0 }}
+              >
+                Widgets
+              </Typography>
+
+              <Typography
+                variant="caption"
+                color="text.disabled"
+                fontWeight="fontWeightSemiBold"
+                sx={{ width: 120, mr: 2, flexShrink: 0 }}
+              >
+                Updated
+              </Typography>
+
+              <Typography
+                variant="caption"
+                color="text.disabled"
+                fontWeight="fontWeightSemiBold"
+                sx={{ width: 260, mr: 1, flexShrink: 0 }}
+              >
+                Created by
+              </Typography>
+
+              {canDelete && <Box sx={{ width: 28, flexShrink: 0 }} />}
+            </Stack>
+
             {filteredDashboards.map((db) => (
               <Stack
                 key={db.id}
@@ -641,7 +706,7 @@ export default function DashboardsListView() {
                   variant="body2"
                   fontWeight={600}
                   noWrap
-                  sx={{ flex: 1, mr: 2, minWidth: 0 }}
+                  sx={{ flex: 1, mr: 2, minWidth: 120 }}
                 >
                   {db.name}
                 </Typography>
@@ -649,7 +714,7 @@ export default function DashboardsListView() {
                 <Typography
                   variant="caption"
                   color="text.disabled"
-                  sx={{ mr: 1.5, whiteSpace: "nowrap", flexShrink: 0 }}
+                  sx={{ width: 100, mr: 1.5, whiteSpace: "nowrap", flexShrink: 0 }}
                 >
                   {db.widget_count || 0} widget
                   {db.widget_count !== 1 ? "s" : ""}
@@ -658,12 +723,12 @@ export default function DashboardsListView() {
                 <Typography
                   variant="caption"
                   color="text.secondary"
-                  sx={{ mr: 2, whiteSpace: "nowrap", flexShrink: 0 }}
+                  sx={{ width: 120, mr: 2, whiteSpace: "nowrap", flexShrink: 0 }}
                 >
-                  {timeAgo(db.updated_at || db.created_at)}
+                  {fDate(db.updated_at || db.created_at)}
                 </Typography>
 
-                <Box sx={{ mr: 1, flexShrink: 0 }}>
+                <Box sx={{ width: 260, mr: 1, flexShrink: 0 }}>
                   <ViewerAvatars db={db} />
                 </Box>
 
