@@ -5,10 +5,3 @@ export const convertToISO = (dateArray) => {
     return d.toISOString();
   });
 };
-
-export const normalizeTimestamp = (timestamp) => {
-  if (!timestamp) return timestamp;
-
-  // Remove common timezone patterns: +00:00, -05:00, Z, etc.
-  return timestamp.replace(/([+-]\d{2}:\d{2}|Z)$/, "");
-};

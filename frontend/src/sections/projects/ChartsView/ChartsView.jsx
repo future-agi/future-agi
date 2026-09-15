@@ -28,7 +28,7 @@ import ChartsGenerator from "./ChartsGenerator";
 import ChartsDateTimeRangePicker from "./ChartsDateTimeRangePicker";
 import EvaluationCharts from "./EvaluationCharts";
 import { useChartsViewContext } from "./ChartsViewProvider/ChartsViewContext";
-import { normalizeTimestamp } from "./ChartsViewProvider/common";
+import { parseTimestampToMs } from "./ChartsViewProvider/timestampUtils";
 import SvgColor from "src/components/svg-color";
 import Iconify from "src/components/iconify";
 import TraceFilterPanel from "../LLMTracing/TraceFilterPanel";
@@ -329,7 +329,7 @@ const ChartsView = () => {
                   name: "Latency",
                   data:
                     systemMetrics?.latency?.map((item) => ({
-                      x: normalizeTimestamp(item?.timestamp),
+                      x: parseTimestampToMs(item?.timestamp),
                       y: item?.latency,
                     })) || [],
                 },
@@ -346,7 +346,7 @@ const ChartsView = () => {
                   name: "Tokens",
                   data:
                     systemMetrics?.tokens?.map((item) => ({
-                      x: normalizeTimestamp(item?.timestamp),
+                      x: parseTimestampToMs(item?.timestamp),
                       y: item?.tokens,
                     })) || [],
                 },
@@ -363,7 +363,7 @@ const ChartsView = () => {
                   name: "Traffic",
                   data:
                     systemMetrics?.traffic?.map((item) => ({
-                      x: normalizeTimestamp(item?.timestamp),
+                      x: parseTimestampToMs(item?.timestamp),
                       y: item?.traffic,
                     })) || [],
                 },
@@ -380,7 +380,7 @@ const ChartsView = () => {
                   name: "Cost",
                   data:
                     systemMetrics?.cost?.map((item) => ({
-                      x: normalizeTimestamp(item?.timestamp),
+                      x: parseTimestampToMs(item?.timestamp),
                       y: item?.cost,
                     })) || [],
                 },
