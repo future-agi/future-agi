@@ -1073,11 +1073,21 @@ def test_actual_public_disjoint_fetches_order_labels_deadline_and_257_series(
                     [] if series["name"] == "series_000" else [float(index - 3)]
                 )
     assert len({call["sql"] for call in fetched}) == 3
-    # Each read consumes a fresh shared budget, followed by the collection
-    # fence. Formatting a complete exact payload does not start another read
-    # and must not trigger a final deadline check that discards those results.
-    assert remaining == [9000, 8900, 8800, 8700]
-    assert {call["timeout_ms"] for call in fetched} == set(remaining[:3])
+    # A public request first asks the shared wall what it has left, so it can
+    # route this read inline or to the background before any statement runs;
+    # the exact worker is already that background lane and skips the question.
+    # The routing decision only reads the wall, and this fixture is unfiltered,
+    # so it embeds no candidate CTE and the cost probe issued no statement of
+    # its own. Each read then consumes a fresh shared budget, followed by the
+    # collection fence. Formatting a complete exact payload does not start
+    # another read and must not trigger a final deadline check that discards
+    # those results.
+    if worker:
+        assert remaining == [9000, 8900, 8800, 8700]
+        assert {call["timeout_ms"] for call in fetched} == set(remaining[:3])
+    else:
+        assert remaining == [9000, 8900, 8800, 8700, 8600]
+        assert {call["timeout_ms"] for call in fetched} == set(remaining[1:4])
     assert config == original
 
 

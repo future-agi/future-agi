@@ -8090,13 +8090,15 @@ class TestWidgetQueryExecution:
     ):
         mock_client = MagicMock()
         # ``execute_ch_query`` reads through the progress-reporting transport
-        # (rows, columns, elapsed, rows read, bytes read).
+        # (rows, columns, elapsed, rows read, bytes read). This double leaves
+        # both counters unmeasured, because the preview assertion is about the
+        # response, not about what the statement cost.
         mock_client.execute_read_with_progress.return_value = (
             [(datetime(2025, 1, 1), 50.0)],
             [("time_bucket", "DateTime"), ("value", "Float64")],
             3.0,
-            1,
-            64,
+            None,
+            None,
         )
         mock_get_client.return_value = mock_client
 
