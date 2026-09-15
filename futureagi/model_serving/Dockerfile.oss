@@ -23,30 +23,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && pip install uv
 
-# Torch wheel channel. Unset (the default) resolves torch from PyPI, which on
-# x86_64 pulls in 13 nvidia-* wheels plus triton — roughly 5 GB of CUDA runtime
-# the compose stack cannot reach, since no service in it requests a GPU.
-# Point this at the CPU channel to build the CPU-only variant:
-#   docker build --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu \
-#                -f Dockerfile.oss .
-# Left unset the resolve is exactly what this image has always done, so the
-# GPU-capable build is unaffected.
+# Torch wheel channel, e.g. https://download.pytorch.org/whl/cpu for a CPU-only
+# image. Unset resolves torch from PyPI as before. See README.
 ARG TORCH_INDEX_URL=""
 
 COPY pyproject.toml ./
 
-# With a channel pinned the install runs in two steps: torch comes from that
-# channel first, and the build it actually resolved to (e.g. 2.6.0+cpu) is fed
-# back as a constraint so the project install cannot swap it for the PyPI wheel
-# and re-add CUDA. Reading that constraint off the installed wheel instead of
-# hardcoding "+cpu" keeps the arg usable for any channel (cu124, rocm6.2, ...).
-#
-# The first install passes no --extra-index-url on purpose: unlike pip, uv ranks
-# extra indexes ABOVE --index-url, so adding PyPI as a fallback there hands torch
-# straight back to the CUDA wheel. The channel mirrors every dep torch needs, so
-# it wants no fallback. The second install is the reverse case — PyPI stays
-# primary and unsafe-best-match is what lets the constrained torch come from the
-# extra index while every other pin still resolves from PyPI.
+# Install torch from the channel first, then constrain the project install to
+# the build it resolved to so the resolver cannot swap it back for the PyPI
+# wheel. No --extra-index-url on the first install: uv ranks extra indexes above
+# --index-url, the opposite of pip, which would undo this.
 RUN set -eu; \
     if [ -z "$TORCH_INDEX_URL" ]; then \
         uv pip install --system .; \

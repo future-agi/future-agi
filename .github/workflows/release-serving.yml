@@ -41,8 +41,7 @@ jobs:
       platforms: 'linux/amd64,linux/arm64'
       push-latest: false
       free-disk: false
-      # Separate scope per channel: a CPU build and a CUDA build share no layers
-      # past the apt stage, so one would otherwise keep evicting the other.
+      # Separate scope per channel; the variants share no layers past apt.
       cache-scope: ${{ inputs.torch-channel == 'cpu' && 'serving-cpu' || 'serving' }}
       build-args: ${{ inputs.torch-channel == 'cpu' && 'TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu' || '' }}
     secrets:
