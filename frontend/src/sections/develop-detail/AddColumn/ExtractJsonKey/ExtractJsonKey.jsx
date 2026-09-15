@@ -22,6 +22,7 @@ import {
 import DynamicColumnSkeleton from "../DynamicColumnSkeleton";
 import { ShowComponent } from "../../../../components/show";
 import { isJsonColumn } from "./columnFilterUtils";
+import useRerunDependentColumns from "../../DataTab/useRerunDependentColumns";
 
 const getDefaultValue = () => {
   return {
@@ -49,6 +50,7 @@ export const ExtractJsonKeyChild = ({
 
   const { dataset } = useParams();
   const allColumns = useDatasetColumnConfig(dataset);
+  const promptToRerunDependents = useRerunDependentColumns(dataset);
   // refetchOnMount: "always" ensures the schema is fresh when the drawer opens,
   // so a newly-created api_call column isn't hidden by a stale cache entry.
   const { data: jsonSchemas = {} } = useGetJsonColumnSchema(dataset, {
@@ -117,6 +119,7 @@ export const ExtractJsonKeyChild = ({
       enqueueSnackbar("API Call column updated successfully", {
         variant: "success",
       });
+      promptToRerunDependents(editId);
       refreshGrid();
       onClose();
     },
