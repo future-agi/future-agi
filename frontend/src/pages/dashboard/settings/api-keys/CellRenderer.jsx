@@ -20,6 +20,7 @@ import { enqueueSnackbar } from "notistack";
 import axios, { endpoints } from "src/utils/axios";
 import { useMutation } from "@tanstack/react-query";
 import { LoadingButton } from "@mui/lab";
+import SecretKeyRenderer from "src/sections/keys/view/SecretKeyRenderer";
 
 const allMenuItems = [
   {
@@ -423,6 +424,10 @@ const CellRenderer = (props) => {
         )}
       </Box>
     );
+  }
+
+  if (columnKey === "api_key" || columnKey === "secret_key") {
+    return <SecretKeyRenderer value={value} />;
   }
 
   return (
