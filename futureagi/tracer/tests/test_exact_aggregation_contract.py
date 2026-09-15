@@ -8078,3 +8078,53 @@ def test_user_eval_filter_is_full_window_membership_not_raw_span_attribute(monke
     assert "additional_table_filters" not in settings
     assert result["query_complete"] is True
     assert result["query_sampled"] is False
+
+
+@pytest.mark.unit
+def test_exact_worker_runs_the_users_graph_on_the_graph_thread_budget(monkeypatch):
+    """The scheduled lane must keep the budget the interactive hand-off assumes.
+
+    The users graph is handed to this worker precisely because the interactive
+    wall could not finish it. The one ordered latest-state statement therefore
+    has to reach the worker with the graph read budget, not the single-thread
+    filter-selector default the shared exact-graph settings carry.
+    """
+
+    from django.conf import settings as django_settings
+
+    from tracer.tasks import exact_aggregation
+
+    analytics = _ExactEntityAnalytics()
+    monkeypatch.setattr(
+        exact_aggregation,
+        "_exact_observe_analytics",
+        lambda: nullcontext(analytics),
+    )
+    monkeypatch.setattr(
+        exact_aggregation,
+        "_reauthorize_exact_observe_project",
+        lambda _identity: None,
+    )
+
+    payload = exact_aggregation._observe_payload(
+        "observe-user-system-graph",
+        {
+            "project_id": "22222222-2222-4222-8222-222222222222",
+            "organization_id": "33333333-3333-4333-8333-333333333333",
+            "filters": [_time_filter(datetime(2026, 1, 1), datetime(2026, 3, 15))],
+            "interval": "day",
+            "metric_id": "active_users",
+        },
+    )
+
+    assert exact_payload_is_complete(payload)
+    assert analytics.main_calls
+    for _query, _params, statement_settings in analytics.main_calls:
+        assert (
+            statement_settings["max_threads"]
+            == django_settings.DASHBOARD_TRACE_READ_MAX_THREADS
+        )
+        assert (
+            statement_settings["max_threads"]
+            > django_settings.FILTER_SELECTOR_MAX_THREADS
+        )
