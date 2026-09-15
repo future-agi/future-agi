@@ -23373,6 +23373,20 @@ export const ObserveGraphDataResultApiQuerySamplingStrategy = {
   newest_trace_candidates: "newest_trace_candidates",
 } as const;
 
+/**
+ * Which statistic the published series actually is. One metric_name can carry two: latency is a true mean on every row-level read and an hourly t-digest median on the unfiltered rollup fast path (hourly_tdigest_p50_proxy_for_average). Absent on envelopes that publish no series and on payloads cached before this field existed, so consumers must treat absence as unknown.
+ */
+export type ObserveGraphDataResultApiMetricStatistic =
+  (typeof ObserveGraphDataResultApiMetricStatistic)[keyof typeof ObserveGraphDataResultApiMetricStatistic];
+
+export const ObserveGraphDataResultApiMetricStatistic = {
+  count: "count",
+  hourly_tdigest_p50_proxy_for_average: "hourly_tdigest_p50_proxy_for_average",
+  mean: "mean",
+  percentage: "percentage",
+  sum: "sum",
+} as const;
+
 export interface ObserveGraphDataResultApi {
   metric_name: string;
   name?: string;
@@ -23419,6 +23433,8 @@ export interface ObserveGraphDataResultApi {
   query_sampling_strata?: number;
   /** @minimum 0 */
   query_sampling_strata_completed?: number;
+  /** Which statistic the published series actually is. One metric_name can carry two: latency is a true mean on every row-level read and an hourly t-digest median on the unfiltered rollup fast path (hourly_tdigest_p50_proxy_for_average). Absent on envelopes that publish no series and on payloads cached before this field existed, so consumers must treat absence as unknown. */
+  metric_statistic?: ObserveGraphDataResultApiMetricStatistic;
 }
 
 export interface ObserveGraphDataResponseApi {
@@ -25085,6 +25101,20 @@ export const ObserveGraphDataErrorResultApiQuerySamplingStrategy = {
   newest_trace_candidates: "newest_trace_candidates",
 } as const;
 
+/**
+ * Which statistic the published series actually is. One metric_name can carry two: latency is a true mean on every row-level read and an hourly t-digest median on the unfiltered rollup fast path (hourly_tdigest_p50_proxy_for_average). Absent on envelopes that publish no series and on payloads cached before this field existed, so consumers must treat absence as unknown.
+ */
+export type ObserveGraphDataErrorResultApiMetricStatistic =
+  (typeof ObserveGraphDataErrorResultApiMetricStatistic)[keyof typeof ObserveGraphDataErrorResultApiMetricStatistic];
+
+export const ObserveGraphDataErrorResultApiMetricStatistic = {
+  count: "count",
+  hourly_tdigest_p50_proxy_for_average: "hourly_tdigest_p50_proxy_for_average",
+  mean: "mean",
+  percentage: "percentage",
+  sum: "sum",
+} as const;
+
 export interface ObserveGraphDataErrorResultApi {
   metric_name: string;
   name?: string;
@@ -25131,6 +25161,8 @@ export interface ObserveGraphDataErrorResultApi {
   query_sampling_strata?: number;
   /** @minimum 0 */
   query_sampling_strata_completed?: number;
+  /** Which statistic the published series actually is. One metric_name can carry two: latency is a true mean on every row-level read and an hourly t-digest median on the unfiltered rollup fast path (hourly_tdigest_p50_proxy_for_average). Absent on envelopes that publish no series and on payloads cached before this field existed, so consumers must treat absence as unknown. */
+  metric_statistic?: ObserveGraphDataErrorResultApiMetricStatistic;
   /** @minLength 1 */
   message: string;
 }

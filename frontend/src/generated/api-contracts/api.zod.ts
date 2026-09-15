@@ -52603,6 +52603,18 @@ export const TracerObservationSpanGetGraphMethodsResponse = zod.object({
         tracerObservationSpanGetGraphMethodsResponseResultQuerySamplingStrataCompletedMin,
       )
       .optional(),
+    metric_statistic: zod
+      .enum([
+        "count",
+        "hourly_tdigest_p50_proxy_for_average",
+        "mean",
+        "percentage",
+        "sum",
+      ])
+      .optional()
+      .describe(
+        "Which statistic the published series actually is. One metric_name can carry two: latency is a true mean on every row-level read and an hourly t-digest median on the unfiltered rollup fast path (hourly_tdigest_p50_proxy_for_average). Absent on envelopes that publish no series and on payloads cached before this field existed, so consumers must treat absence as unknown.",
+      ),
   }),
 });
 
@@ -55518,6 +55530,18 @@ export const TracerProjectGetUsersAggregateGraphDataResponse = zod.object({
         tracerProjectGetUsersAggregateGraphDataResponseResultQuerySamplingStrataCompletedMin,
       )
       .optional(),
+    metric_statistic: zod
+      .enum([
+        "count",
+        "hourly_tdigest_p50_proxy_for_average",
+        "mean",
+        "percentage",
+        "sum",
+      ])
+      .optional()
+      .describe(
+        "Which statistic the published series actually is. One metric_name can carry two: latency is a true mean on every row-level read and an hourly t-digest median on the unfiltered rollup fast path (hourly_tdigest_p50_proxy_for_average). Absent on envelopes that publish no series and on payloads cached before this field existed, so consumers must treat absence as unknown.",
+      ),
   }),
 });
 
@@ -57770,6 +57794,18 @@ export const TracerTraceSessionGetSessionGraphDataResponse = zod.object({
         tracerTraceSessionGetSessionGraphDataResponseResultQuerySamplingStrataCompletedMin,
       )
       .optional(),
+    metric_statistic: zod
+      .enum([
+        "count",
+        "hourly_tdigest_p50_proxy_for_average",
+        "mean",
+        "percentage",
+        "sum",
+      ])
+      .optional()
+      .describe(
+        "Which statistic the published series actually is. One metric_name can carry two: latency is a true mean on every row-level read and an hourly t-digest median on the unfiltered rollup fast path (hourly_tdigest_p50_proxy_for_average). Absent on envelopes that publish no series and on payloads cached before this field existed, so consumers must treat absence as unknown.",
+      ),
   }),
 });
 
@@ -58951,6 +58987,18 @@ export const TracerTraceGetGraphMethodsResponse = zod.object({
         tracerTraceGetGraphMethodsResponseResultQuerySamplingStrataCompletedMin,
       )
       .optional(),
+    metric_statistic: zod
+      .enum([
+        "count",
+        "hourly_tdigest_p50_proxy_for_average",
+        "mean",
+        "percentage",
+        "sum",
+      ])
+      .optional()
+      .describe(
+        "Which statistic the published series actually is. One metric_name can carry two: latency is a true mean on every row-level read and an hourly t-digest median on the unfiltered rollup fast path (hourly_tdigest_p50_proxy_for_average). Absent on envelopes that publish no series and on payloads cached before this field existed, so consumers must treat absence as unknown.",
+      ),
   }),
 });
 

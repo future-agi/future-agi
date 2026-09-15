@@ -916,3 +916,165 @@ def test_rollup_schema_drift_fails_closed_instead_of_publishing_zero(
 
     assert raised.value.error_code == "query_failed"
     exact_read.assert_not_called()
+
+
+_ROLLUP_RESULT_COLUMNS = [
+    "time_bucket",
+    "avg_latency",
+    "total_tokens",
+    "avg_cost",
+    "traffic_count",
+    "prompt_tokens",
+    "completion_tokens",
+    "error_rate",
+]
+
+
+def _one_bucket_result():
+    return mock.Mock(
+        data=[
+            {
+                "time_bucket": datetime(2026, 8, 1),
+                "avg_latency": 29_410,
+                "total_tokens": 100,
+                "avg_cost": 0.25,
+                "traffic_count": 100,
+                "prompt_tokens": 60,
+                "completion_tokens": 40,
+                "error_rate": 0,
+            }
+        ],
+        columns=list(_ROLLUP_RESULT_COLUMNS),
+    )
+
+
+def _date_only_latency_graph():
+    analytics = mock.Mock()
+    analytics.execute_ch_query.return_value = _one_bucket_result()
+    response = graph_dispatch.fetch_system_metric_graph_ch(
+        analytics=analytics,
+        project_id=PROJECT_ID,
+        filters=[_date_filter("2026-08-01T00:00:00Z", "2026-08-12T00:00:00Z")],
+        interval="day",
+        metric_id="latency",
+        observe_type="trace",
+    )
+    return analytics, response
+
+
+def _filtered_latency_graph():
+    analytics = mock.Mock()
+    analytics.execute_ch_query.return_value = _one_bucket_result()
+    response = graph_dispatch._fetch_direct_raw_system_metric_graph(
+        analytics=analytics,
+        project_id=PROJECT_ID,
+        filters=[
+            _date_filter("2026-08-01T00:00:00Z", "2026-08-12T00:00:00Z"),
+            _attribute_filter(),
+        ],
+        interval="day",
+        metric_id="latency",
+        observe_type="trace",
+        timeout_ms=django_settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS,
+    )
+    return analytics, response
+
+
+@pytest.mark.unit
+def test_date_only_latency_graph_declares_the_rollup_median_substitution():
+    """The rollup answers a t-digest median under the ``avg_latency`` alias."""
+
+    analytics, response = _date_only_latency_graph()
+
+    query = analytics.execute_ch_query.call_args.args[0]
+    assert "quantilesTDigestMerge(0.5, 0.95, 0.99)(latency_q)" in query
+    assert response["query_provenance"] == "materialized_rollup"
+    assert response["metric_statistic"] == "hourly_tdigest_p50_proxy_for_average"
+
+
+@pytest.mark.unit
+def test_filtered_latency_graph_declares_the_row_mean():
+    """Adding a filter moves the same metric onto a true row-level mean."""
+
+    analytics, response = _filtered_latency_graph()
+
+    query = analytics.execute_ch_query.call_args.args[0]
+    assert "quantilesTDigest" not in query
+    assert response["query_provenance"] == "bounded_candidates"
+    assert response["metric_statistic"] == "mean"
+
+
+@pytest.mark.unit
+def test_latency_graph_never_changes_statistic_without_saying_so():
+    """One ``metric_name``, two statistics: the response must name which."""
+
+    _, date_only = _date_only_latency_graph()
+    _, filtered = _filtered_latency_graph()
+
+    assert date_only["metric_name"] == filtered["metric_name"] == "latency"
+    assert date_only["metric_statistic"] != filtered["metric_statistic"]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("metric_id", "statistic"),
+    [
+        ("tokens", "sum"),
+        ("total_tokens", "sum"),
+        ("prompt_tokens", "sum"),
+        ("cost", "mean"),
+        ("traffic", "count"),
+        ("error_rate", "percentage"),
+    ],
+)
+def test_non_latency_metric_statistic_is_the_same_on_both_sources(metric_id, statistic):
+    """Only latency depends on the physical source; the rest must not drift."""
+
+    from tracer.services.clickhouse.query_builders import TimeSeriesQueryBuilder
+
+    rollup = TimeSeriesQueryBuilder(project_id=PROJECT_ID, filters=[], interval="day")
+    rollup.build()
+    raw = TimeSeriesQueryBuilder(
+        project_id=PROJECT_ID,
+        filters=[_date_filter("2026-08-01T00:00:00Z", "2026-08-12T00:00:00Z")],
+        interval="day",
+        exact_snapshot=True,
+    )
+    raw.build()
+
+    assert rollup.metric_statistic(metric_id) == statistic
+    assert raw.metric_statistic(metric_id) == statistic
+    assert rollup.metric_statistic("latency") != raw.metric_statistic("latency")
+
+
+@pytest.mark.unit
+def test_exact_snapshot_latency_graph_also_names_its_statistic():
+    """The third successful exit must name its statistic too.
+
+    The shape built here is the degenerate window (``start_date >= end_date``):
+    the reader publishes ``exact_snapshot`` without emitting any statement, so
+    the statistic is the builder's ``__init__`` default rather than one written
+    beside the SQL. ``tasks/exact_aggregation.py`` dispatches the
+    ``observe-system-graph`` namespace straight back to
+    ``_fetch_direct_raw_system_metric_graph``, so a background refresh over a
+    real window takes the ``bounded_candidates`` path covered above; either way
+    this reader cannot be the one response shape that stays silent.
+    """
+
+    analytics = mock.Mock()
+    response = graph_dispatch._fetch_direct_raw_system_metric_graph(
+        analytics=analytics,
+        project_id=PROJECT_ID,
+        filters=[
+            _date_filter("2026-08-01T00:00:00Z", "2026-08-01T00:00:00Z"),
+            _attribute_filter(),
+        ],
+        interval="day",
+        metric_id="latency",
+        observe_type="trace",
+        timeout_ms=django_settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS,
+    )
+
+    analytics.execute_ch_query.assert_not_called()
+    assert response["query_provenance"] == "exact_snapshot"
+    assert response["metric_statistic"] == "mean"

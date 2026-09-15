@@ -438,3 +438,24 @@ def test_swagger_publishes_typed_filter_attestation(definition):
     ]
     assert properties["query_applied_filter_sha256"]["pattern"] == r"^[0-9a-f]{64}$"
     assert properties["query_applied_filter_count"]["minimum"] == 0
+
+
+@pytest.mark.parametrize(
+    "definition",
+    ["ObserveGraphDataResult", "ObserveGraphDataErrorResult"],
+)
+def test_swagger_publishes_the_graph_metric_statistic(definition):
+    """A statistic the graph can publish must be in the checked-in contract."""
+
+    from tracer.services.clickhouse.query_builders import TimeSeriesQueryBuilder
+
+    schema = _swagger()["definitions"][definition]
+    published = schema["properties"]["metric_statistic"]
+    emitted = set(TimeSeriesQueryBuilder._METRIC_STATISTICS.values()) | {
+        TimeSeriesQueryBuilder.LATENCY_STATISTIC_MEAN,
+        TimeSeriesQueryBuilder.LATENCY_STATISTIC_ROLLUP_MEDIAN,
+    }
+
+    assert published["type"] == "string"
+    assert emitted <= set(published["enum"])
+    assert "metric_statistic" not in schema.get("required", [])
