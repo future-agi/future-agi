@@ -850,7 +850,28 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         return None
 
     def recommended_filter_cursor_seed_batch_size(self) -> int | None:
-        return None
+        """Acquire a whole classifier schedule per seed statement.
+
+        Declining a recommendation left cursor reads on the selector's default
+        of ``page + 1``: every 26 candidates cost one seed statement plus one
+        classifier statement, and each of those classifier statements replays
+        latest state across the WHOLE request window regardless of how many
+        candidates it carries.  Measured on production's largest tenant, a
+        30-day session conjunction spent 18 statements and ~9.5 s covering 182
+        candidates - the classifier ran 8 times where 4 would have done and the
+        seed re-aggregated its slice 8 times instead of once.
+
+        This is an acquisition size only.  The seed order, the slice schedule,
+        the classifier, its own ``recommended_filter_classify_batch_size``
+        split and the per-chunk continuation checkpoint are all unchanged, so
+        the walk yields exactly the same candidates in exactly the same order
+        and publishes exactly the same page - in fewer statements.  Reuse the
+        numbered-page acquisition size rather than introduce a second one: it
+        is the batch this builder already holds in memory on every non-cursor
+        read, and the selector clamps it to ``max_candidates`` anyway.
+        """
+
+        return self.recommended_filter_seed_batch_size()
 
     def recommended_filter_max_slice_width(self) -> timedelta | None:
         return None
