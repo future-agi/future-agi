@@ -1,0 +1,188 @@
+eval_id: 202
+name: perspective_gap_role_assignment
+description: Scores PerspectiveGap role-fragment assignment outputs for multi-agent orchestration. Checks whether each sub-agent role receives exactly the information fragments it needs while avoiding omissions, leakage, and distractors.
+criteria: Measures strict role-fragment assignment accuracy using the PerspectiveGap benchmark scorer.
+eval_tags:
+- Agents
+- Output Validation
+- Context Engineering
+- Benchmark
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+output_type_normalized: percentage
+pass_threshold: 0.5
+config:
+  required_keys:
+  - output
+  - reference_need_sets
+  output: score
+  eval_type_id: CustomCodeEval
+  config: {}
+  config_params_desc:
+    output: 'Model prediction as a JSON object mapping role names to lists of fragment IDs, e.g. {"Planner": ["F1", "F3"]}'
+    reference_need_sets: 'Gold role-to-fragment mapping as JSON object, matching the PerspectiveGap reference_need_sets field'
+    distractor_id: Optional fragment ID for the distractor item; leaks are counted separately when present
+  param_modalities:
+    output:
+    - TEXT
+    - JSON
+    reference_need_sets:
+    - JSON
+    - TEXT
+    distractor_id:
+    - TEXT
+  code: |
+    import json
+    import re
+
+    def metric_values(strict_pass, tp, fp, fn, distractor_leak):
+        expected = tp + fn
+        predicted = tp + fp
+        return {
+            "strict_pass": float(strict_pass),
+            "net_match_score": max(0.0, (tp - fp - fn) / expected) if expected else 0.0,
+            "required_coverage": tp / expected if expected else 0.0,
+            "boundary_precision": tp / predicted if predicted else 0.0,
+            "distractor_leakage": float(distractor_leak),
+        }
+
+    def parse_json_response(text):
+        if text is None:
+            raise ValueError("empty response")
+        text = text.strip()
+        fence = re.match(r"^```(?:json)?\s*\n(.*?)\n```\s*$", text, re.DOTALL)
+        if fence:
+            text = fence.group(1).strip()
+        return json.loads(text)
+
+    def parse_json_object_loose(text):
+        if text is None:
+            raise ValueError("empty response")
+        try:
+            parsed = parse_json_response(text)
+            if isinstance(parsed, dict):
+                return parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+        if not match:
+            raise ValueError("no JSON object")
+        parsed = json.loads(match.group(0))
+        if not isinstance(parsed, dict):
+            raise ValueError("response is not a JSON object")
+        return parsed
+
+    def score_role_assignment(response_text, reference_need_sets, distractor_id=None):
+        reference_event_count = sum(len(items) for items in reference_need_sets.values())
+        parse_fail_counts = {
+            "tp": 0,
+            "fp": 0,
+            "fn": reference_event_count,
+            "distractor_leak": 0,
+        }
+        strict_error = None
+        try:
+            strict_predicted = parse_json_response(response_text)
+            if not isinstance(strict_predicted, dict):
+                strict_error = "response is not a JSON object"
+        except (json.JSONDecodeError, ValueError) as error:
+            strict_predicted = None
+            strict_error = f"parse: {error}"
+        try:
+            boundary_predicted = parse_json_object_loose(response_text)
+        except (json.JSONDecodeError, ValueError) as error:
+            return {
+                "pass": False,
+                "metrics": metric_values(
+                    False,
+                    parse_fail_counts["tp"],
+                    parse_fail_counts["fp"],
+                    parse_fail_counts["fn"],
+                    parse_fail_counts["distractor_leak"],
+                ),
+                "counts": parse_fail_counts,
+                "error": strict_error or f"parse: {error}",
+            }
+        normalized = {
+            role: sorted({fragment_id for fragment_id in fragment_ids if isinstance(fragment_id, str)})
+            for role, fragment_ids in boundary_predicted.items()
+            if isinstance(fragment_ids, list)
+        }
+        strict_role_values_are_valid = (
+            isinstance(strict_predicted, dict)
+            and all(
+                isinstance(fragment_ids, list)
+                and all(isinstance(fragment_id, str) for fragment_id in fragment_ids)
+                for fragment_ids in strict_predicted.values()
+            )
+        )
+        per_role = {
+            role: set(normalized.get(role, [])) == set(expected)
+            for role, expected in reference_need_sets.items()
+        }
+        tp = 0
+        fp = 0
+        fn = 0
+        distractor_leak = 0
+        distractor_ids = {distractor_id} if distractor_id else set()
+        for role, expected_list in reference_need_sets.items():
+            expected = set(expected_list)
+            predicted_set = set(normalized.get(role, []))
+            extra = predicted_set - expected
+            tp += len(predicted_set & expected)
+            fp += len(extra)
+            fn += len(expected - predicted_set)
+            distractor_leak += len(extra & distractor_ids)
+        overall_pass = (
+            strict_error is None
+            and strict_role_values_are_valid
+            and set(strict_predicted.keys()) == set(reference_need_sets.keys())
+            and all(per_role.values())
+        )
+        counts = {
+            "tp": tp,
+            "fp": fp,
+            "fn": fn,
+            "distractor_leak": distractor_leak,
+        }
+        return {
+            "pass": overall_pass,
+            "metrics": metric_values(overall_pass, tp, fp, fn, distractor_leak),
+            "counts": counts,
+            "normalized": normalized,
+            "per_role": per_role,
+        }
+
+    def evaluate(input, output, expected, context, **kwargs):
+        raw = kwargs.get("output", output) or ""
+        text = str(raw)
+        parts = text.rsplit("</think>", 1)
+        response = parts[1].strip() if len(parts) == 2 else text.strip()
+        ref = kwargs.get("reference_need_sets")
+        if ref is None:
+            return {"score": 0.0, "reason": "Missing required field: reference_need_sets"}
+        if isinstance(ref, str):
+            try:
+                ref = json.loads(ref)
+            except (json.JSONDecodeError, ValueError) as error:
+                return {"score": 0.0, "reason": f"Cannot parse reference_need_sets: {error}"}
+        distractor = kwargs.get("distractor_id")
+        result = score_role_assignment(response, ref, distractor)
+        score = float(result.get("metrics", {}).get("strict_pass", 0.0))
+        if result.get("error"):
+            return {"score": score, "reason": result["error"]}
+        metrics = result.get("metrics", {})
+        counts = result.get("counts", {})
+        status = "passed" if result.get("pass") else "failed"
+        reason = (
+            f"PerspectiveGap role assignment {status}: "
+            f"strict_pass={metrics.get('strict_pass', 0.0):.1f}, "
+            f"net_match={metrics.get('net_match_score', 0.0):.3f}, "
+            f"coverage={metrics.get('required_coverage', 0.0):.3f}, "
+            f"precision={metrics.get('boundary_precision', 0.0):.3f}, "
+            f"leakage={metrics.get('distractor_leakage', 0.0):.1f}; "
+            f"counts={counts}"
+        )
+        return {"score": score, "reason": reason}
