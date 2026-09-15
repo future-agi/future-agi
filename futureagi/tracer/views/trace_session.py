@@ -1,5 +1,6 @@
 import json
 from collections import defaultdict
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from contextlib import contextmanager
@@ -118,6 +119,9 @@ from tracer.services.clickhouse.query_builders.eval_status import (
 )
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     UnsupportedFilterShapeError,
+)
+from tracer.services.clickhouse.query_builders.session_filters import (
+    SESSION_ID_FILTER_COLS,
 )
 from tracer.services.clickhouse.read_budget import (
     ReadDeadline,
@@ -680,40 +684,30 @@ def _resolve_ch_session_fields(request, trace_session_id):
     return session_fields
 
 
-def _resolve_end_user_ids_for_user_id(
-    user_id,
+def _resolve_end_user_ids_for_user_ids(
+    user_ids,
     *,
     org,
     org_scope,
     project_id,
+    display_user_id=None,
     deadline: ReadDeadline | None = None,
 ):
-    """Resolve a string ``user_id`` to the set of CH ``end_user`` UUIDs.
-
-    The CH ``spans`` table keys users by the UUID ``end_user_id``, not the
-    string ``user_id``, so a string filter must be reverse-resolved. Prefers
-    the curated CH ``end_users`` dimension (state-robust across the P3b id
-    cutover). ClickHouse is authoritative; an empty CH result stays empty and a
-    CH failure propagates instead of consulting the stale PostgreSQL mirror.
-
-    Returns ``(ids, display_row)`` where ``display_row`` is the first matched
-    PG row's display fields (``user_id``/``user_id_type``/``user_id_hash``) or
-    ``None`` — used to label the single-user (cross-project) detail page.
-    """
+    """Batch-resolve user labels and optionally load one display record."""
     from tracer.services.clickhouse.v2.end_user_dict_reader import (
-        resolve_end_user_ids_by_user_id,
+        resolve_end_user_ids_by_user_ids,
     )
 
-    timeout_ms = (
-        deadline.remaining_ms(SESSION_LIST_ENRICHMENT_TIMEOUT_MS)
-        if deadline is not None
-        else None
-    )
-    ids = resolve_end_user_ids_by_user_id(
-        user_id,
+    values = tuple(dict.fromkeys(str(value) for value in user_ids if value))
+    resolved = resolve_end_user_ids_by_user_ids(
+        values,
         organization_id=org.id if org else None,
         project_id=(project_id if (not org_scope and project_id) else None),
-        timeout_ms=timeout_ms,
+        timeout_ms=(
+            deadline.remaining_ms(SESSION_LIST_ENRICHMENT_TIMEOUT_MS)
+            if deadline is not None
+            else None
+        ),
         settings=(
             _session_read_settings(max_result_rows=10_000)
             if deadline is not None
@@ -722,11 +716,8 @@ def _resolve_end_user_ids_for_user_id(
     )
 
     display_row = None
-    if ids:
-        # This finite metadata read labels the single-user detail view only; it
-        # never decides ClickHouse membership. Missing/stale PG metadata simply
-        # leaves the CH-derived row labels to page enrichment below.
-        end_user_qs = EndUser.objects.filter(user_id=user_id)
+    if display_user_id and resolved.get(str(display_user_id)):
+        end_user_qs = EndUser.objects.filter(user_id=display_user_id)
         if org:
             end_user_qs = end_user_qs.filter(organization=org)
         if not org_scope and project_id:
@@ -734,7 +725,66 @@ def _resolve_end_user_ids_for_user_id(
         display_row = end_user_qs.values(
             "id", "user_id", "user_id_type", "user_id_hash"
         ).first()
-    return ids, display_row
+    return resolved, display_row
+
+
+def _resolve_session_identity_filters(
+    filters,
+    *,
+    project_ids,
+    deadline: ReadDeadline | None = None,
+    deadline_factory: Callable[[], ReadDeadline] | None = None,
+):
+    """Resolve public session labels/IDs to scoped survivor UUID filters."""
+    raw_values = []
+    for item in filters:
+        column_id, config = FilterEngine._normalize_filter_params(item)
+        if column_id not in SESSION_ID_FILTER_COLS:
+            continue
+        filter_op = config.get("filter_op")
+        if filter_op in {"is_null", "is_not_null"}:
+            continue
+        value = config.get("filter_value")
+        values = value if isinstance(value, list) else [value]
+        raw_values.extend(entry for entry in values if entry not in (None, ""))
+
+    if not raw_values:
+        return list(filters)
+
+    if deadline is None and deadline_factory is not None:
+        deadline = deadline_factory()
+
+    from tracer.services.clickhouse.v2.trace_session_dict_reader import (
+        resolve_session_filter_values,
+    )
+
+    resolved = resolve_session_filter_values(
+        raw_values,
+        project_ids=project_ids,
+        deadline=deadline,
+        settings=_session_read_settings(max_result_rows=10_000),
+    )
+    output = []
+    for item in filters:
+        column_id, config = FilterEngine._normalize_filter_params(item)
+        if column_id not in SESSION_ID_FILTER_COLS or config.get("filter_op") in {
+            "is_null",
+            "is_not_null",
+        }:
+            output.append(item)
+            continue
+
+        raw_value = config.get("filter_value")
+        values = raw_value if isinstance(raw_value, list) else [raw_value]
+        resolved_ids = []
+        for value in values:
+            resolved_ids.extend(resolved.get(str(value), []))
+        normalized_item = dict(item)
+        normalized_config = dict(config)
+        normalized_config["filter_value"] = list(dict.fromkeys(resolved_ids))
+        normalized_item["filter_config"] = normalized_config
+        output.append(normalized_item)
+    return output
 
 
 def _soft_delete_trace_session_tree(trace_sessions):
@@ -1086,6 +1136,14 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         page_size = query_data["page_size"]
         page_start = page_number * page_size
         read_deadline = ReadDeadline.start(SESSION_LIST_WALL_DEADLINE_MS)
+        query_data = {
+            **query_data,
+            "filters": _resolve_session_identity_filters(
+                query_data.get("filters", []),
+                project_ids=[project_id],
+                deadline=read_deadline,
+            ),
+        }
 
         # P3b step1.5: resolve the session's canonical ID and expand it to
         # all group member IDs (old + new). Use IN (...) instead of the heavy
@@ -1658,9 +1716,16 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                         )
                     )
 
+            filters = _resolve_session_identity_filters(
+                body["filters"],
+                project_ids=[project_id],
+                deadline_factory=lambda: ReadDeadline.start(
+                    graph_action_remaining_ms(deadline)
+                ),
+            )
             filters = bind_request_my_annotations_principal(
                 request,
-                body["filters"],
+                filters,
             )
             filters = graph_execution_filters(filters)
             try:
@@ -2808,7 +2873,11 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         # (request is a param here; the helper is pure getattr, no query). Needed
         # by the user_id → end_user_id resolution below.
         org = _get_request_organization(request)
-        filters = list(validated_data.get("filters", []) or [])
+        filters = _resolve_session_identity_filters(
+            validated_data.get("filters", []) or [],
+            project_ids=(org_project_ids or [project_id]),
+            deadline=read_deadline,
+        )
         attested_filters = list(filters)
         sort_params = validated_data.get("sort_params", [])
         page_number = validated_data.get("page_number", 0)
@@ -2833,13 +2902,13 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         if user_id_qp:
             user_filters.insert(0, {"filter_op": "in", "filter_value": str(user_id_qp)})
 
-        # The existing tenant-scoped resolver yields curated IDs; the builder
-        # binds each synthetic leaf to its id-remap-resolved end_user_id column.
+        # Resolve all user labels in one tenant-scoped lookup, then preserve
+        # each original leaf as an independent synthetic end_user_id filter.
         _NULL_USER_OPS = {"is_null", "is_not_null"}
         _NEGATED_USER_OPS = {"not_in", "not_equals"}
         _SUPPORTED_USER_OPS = _NULL_USER_OPS | _NEGATED_USER_OPS | {"in", "equals"}
-        resolved_users = {}
-        end_user_display = None
+        prepared_user_filters = []
+        all_user_values = []
         for _cfg in user_filters:
             user_id_op = _cfg.get("filter_op") or "in"
             if user_id_op not in _SUPPORTED_USER_OPS:
@@ -2847,41 +2916,43 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     f"Unsupported operator '{user_id_op}' for user_id filter. "
                     f"Supported: {sorted(_SUPPORTED_USER_OPS)}"
                 )
+            values = []
+            if user_id_op not in _NULL_USER_OPS:
+                raw_values = _cfg.get("filter_value")
+                if not isinstance(raw_values, list):
+                    raw_values = [raw_values]
+                values = [str(value) for value in raw_values if value not in (None, "")]
+                if not values:
+                    continue
+                all_user_values.extend(values)
+            prepared_user_filters.append((user_id_op, values))
+
+        resolved_by_user, end_user_display = ({}, None)
+        if all_user_values:
+            resolved_by_user, end_user_display = _resolve_end_user_ids_for_user_ids(
+                all_user_values,
+                org=org,
+                org_scope=org_scope,
+                project_id=project_id,
+                display_user_id=user_id_qp,
+                deadline=read_deadline,
+            )
+
+        for user_id_op, user_id_values in prepared_user_filters:
             resolved_config = {
                 "col_type": "SYSTEM_METRIC",
                 "filter_type": "text",
                 "filter_op": user_id_op,
             }
             if user_id_op not in _NULL_USER_OPS:
-                _values = _cfg.get("filter_value")
-                if not isinstance(_values, list):
-                    _values = [_values]
-                _values = [str(v) for v in _values if v not in (None, "")]
-                if not _values:
-                    continue
                 _ids: list[str] = []
-                for _uv in dict.fromkeys(_values):
-                    if _uv not in resolved_users:
-                        resolved_users[_uv] = _resolve_end_user_ids_for_user_id(
-                            _uv,
-                            org=org,
-                            org_scope=org_scope,
-                            project_id=project_id,
-                            deadline=read_deadline,
-                        )
-                    _resolved, _display = resolved_users[_uv]
-                    _ids.extend(_resolved)
-                    # Only the query-param user labels the displayed rows.
-                    if (
-                        _display is not None
-                        and end_user_display is None
-                        and user_id_qp is not None
-                        and _uv == str(user_id_qp)
-                    ):
-                        end_user_display = _display
+                for _uv in dict.fromkeys(user_id_values):
+                    _ids.extend(resolved_by_user.get(_uv, []))
+                _ids = list(dict.fromkeys(_ids))
                 _out_op = "not_in" if user_id_op in _NEGATED_USER_OPS else "in"
-                # Unknown positive sets match nothing; unknown negative sets
-                # add no restriction, without discarding any other AND leaf.
+                # An unresolved value-set means "no such user". For inclusive
+                # ops that is an empty result (NIL sentinel matches nothing);
+                # for negated ops it is a no-op (everything matches).
                 if not _ids:
                     if _out_op == "not_in":
                         continue
