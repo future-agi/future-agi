@@ -1,4 +1,4 @@
-"""Regression coverage for changed-span SQL exceeding ClickHouse's parser cap."""
+"""Regression coverage for continuous candidate SQL exceeding the parser cap."""
 
 from __future__ import annotations
 
@@ -163,4 +163,169 @@ def test_unrelated_syntax_error_is_not_split(monkeypatch):
 def test_empty_identity_set_issues_no_queries():
     analytics = _SizeLimitedAnalytics()
     assert _expand(analytics, ()) == []
+    assert analytics.calls == []
+
+
+_STAGES = ("relations", "sessions", "voice_roots", "end_users", "sampling")
+
+
+class _StageAnalytics(_SizeLimitedAnalytics):
+    def execute_ch_query(self, query, params, *, timeout_ms, settings):
+        sql = self.client.substitute_params(
+            query, params, self.client.connection.context
+        )
+        self.calls.append((len(sql.encode("utf-8")), params))
+        assert timeout_ms > 0
+        assert "max_query_size" not in settings
+        if self.calls[-1][0] > self.max_query_bytes:
+            raise ServerException("Max query size exceeded", code=62)
+        if "relation_session_ids" in params:
+            ids = params["relation_session_ids"]
+            rows = self._relations(ids)
+        elif "candidate_end_user_ids" in params:
+            ids = params["candidate_end_user_ids"]
+            rows = self._relations(ids)
+        elif "candidate_trace_ids" in params:
+            ids = params["candidate_trace_ids"]
+            rows = [{"id": value} for value in ids]
+        else:
+            prefix, key = (
+                ("sample_id_", "row_id")
+                if "sampling_salt" in params
+                else ("session_id_", "session_id")
+            )
+            ids = tuple(
+                value for name, value in params.items() if name.startswith(prefix)
+            )
+            rows = [{key: value} for value in ids]
+        self.accepted.extend(ids)
+        return SimpleNamespace(data=rows)
+
+    @staticmethod
+    def _relations(ids):
+        return [
+            {"trace_id": value, "id": value, "session_id": candidates.NIL_UUID}
+            for value in ids
+        ]
+
+
+def _run_stage(stage, analytics, ids, budget=None):
+    kwargs = {"budget": budget or _budget()}
+    project = "00000000-0000-0000-0000-000000000001"
+    if stage == "relations":
+        return candidates._expand_relation_ref_page(
+            analytics,
+            project_id=project,
+            refs=[("", "", value) for value in ids],
+            **kwargs,
+        )
+    if stage == "sessions":
+        return candidates._resolve_session_ids(analytics, ids, **kwargs)
+    if stage == "voice_roots":
+        return candidates._read_root_ids_for_traces(
+            analytics, project_id=project, trace_ids=ids, **kwargs
+        )
+    if stage == "end_users":
+        return candidates._expand_end_user_ids(
+            analytics, project_id=project, end_user_ids=ids, **kwargs
+        )
+    return candidates._sample_ids(
+        analytics, ids, salt="task-id", sampling_rate=50, **kwargs
+    )
+
+
+def _stage_expected(stage, ids):
+    if stage in {"relations", "end_users"}:
+        return {(value, value, candidates.NIL_UUID) for value in ids}
+    return set(ids)
+
+
+@pytest.mark.parametrize("stage", _STAGES)
+def test_other_candidate_stages_fit_full_window_without_losing_ids(stage):
+    ids = tuple(row[0] for row in _identities(10_000))
+    analytics = _StageAnalytics()
+    budget = _budget()
+
+    result = _run_stage(stage, analytics, ids, budget)
+
+    assert set(result) == _stage_expected(stage, ids)
+    assert sorted(analytics.accepted) == sorted(ids)
+    assert all(size < 262_144 for size, _ in analytics.calls)
+    assert budget.attempts == len(analytics.calls) < candidates._MAX_QUERY_ATTEMPTS
+
+
+@pytest.mark.parametrize("stage", _STAGES)
+def test_other_candidate_stages_split_only_rejected_batches(stage):
+    ids = tuple(row[0] for row in _identities(1_000))
+    analytics = _StageAnalytics(max_query_bytes=4_096)
+    budget = _budget()
+
+    result = _run_stage(stage, analytics, ids, budget)
+
+    assert set(result) == _stage_expected(stage, ids)
+    assert sorted(analytics.accepted) == sorted(ids)
+    assert any(size > 4_096 for size, _ in analytics.calls)
+    assert budget.attempts == len(analytics.calls)
+
+
+@pytest.mark.parametrize("stage", _STAGES)
+def test_other_candidate_stages_fail_before_returning_an_incomplete_union(stage):
+    ids = tuple(row[0] for row in _identities(2_000))
+    analytics = _StageAnalytics()
+    budget = _budget()
+    budget.attempts = candidates._MAX_QUERY_ATTEMPTS - 1
+
+    with pytest.raises(candidates.ContinuousCandidateQueryCapExceeded):
+        _run_stage(stage, analytics, ids, budget)
+
+    assert 0 < len(analytics.accepted) < len(ids)
+    assert len(analytics.calls) == 1
+
+
+@pytest.mark.parametrize("stage", _STAGES)
+def test_other_candidate_stages_keep_a_global_distinct_result_cap(stage, monkeypatch):
+    monkeypatch.setattr(candidates, "_MAX_PUBLIC_CANDIDATES", 3)
+    monkeypatch.setattr(candidates, "_CANDIDATE_ID_BATCH_SIZE", 2)
+    monkeypatch.setattr(candidates, "_RELATION_PAGE_SIZE", 2)
+    monkeypatch.setattr(candidates, "_SAMPLE_CHUNK", 2)
+    ids = tuple(row[0] for row in _identities(4))
+    analytics = _StageAnalytics()
+
+    with pytest.raises(candidates.ContinuousCandidateOverflow):
+        _run_stage(stage, analytics, ids)
+
+    if stage != "sampling":  # Sampling rejects excess input before any reads.
+        assert len(analytics.calls) == 2
+
+
+@pytest.mark.parametrize("stage", _STAGES)
+def test_other_candidate_stages_deduplicate_results_across_batches(stage, monkeypatch):
+    monkeypatch.setattr(candidates, "_CANDIDATE_ID_BATCH_SIZE", 2)
+    monkeypatch.setattr(candidates, "_RELATION_PAGE_SIZE", 2)
+    monkeypatch.setattr(candidates, "_SAMPLE_CHUNK", 2)
+    ids = tuple(row[0] for row in _identities(3))
+    analytics = _StageAnalytics()
+    execute = analytics.execute_ch_query
+
+    def same_result_in_every_batch(query, params, **kwargs):
+        response = execute(query, params, **kwargs)
+        for row in response.data:
+            for key in row:
+                if key != "session_id" or stage == "sessions":
+                    row[key] = ids[0]
+        return response
+
+    monkeypatch.setattr(analytics, "execute_ch_query", same_result_in_every_batch)
+
+    result = _run_stage(stage, analytics, ids)
+
+    assert len(result) == 1
+    assert set(result) == _stage_expected(stage, ids[:1])
+    assert len(analytics.calls) == 2
+
+
+@pytest.mark.parametrize("stage", _STAGES)
+def test_other_candidate_stages_skip_empty_input(stage):
+    analytics = _StageAnalytics()
+    assert not _run_stage(stage, analytics, ())
     assert analytics.calls == []
