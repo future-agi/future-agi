@@ -155,7 +155,7 @@ make pre-commit-install
 
 # Or manually
 pip install pre-commit
-pre-commit install
+# (Hooks are wired through husky, so no `pre-commit install` is needed)
 ```
 
 ## Daily Usage
@@ -242,7 +242,7 @@ SKIP=ruff git commit -m "Message"
 ```bash
 # Clear cache and reinstall
 pre-commit clean
-pre-commit install --install-hooks
+pre-commit install-hooks
 
 # Update hooks to latest versions
 make pre-commit-update
@@ -254,5 +254,5 @@ pre-commit run --all-files --verbose
 ## Help
 
 - 📚 [Full Setup Guide](PRE_COMMIT_SETUP.md)
-- 🔧 [Configuration](.pre-commit-config.yaml)
+- 🔧 [Configuration](../.pre-commit-config.yaml)
 - 💬 Ask in team Slack channel
