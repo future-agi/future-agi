@@ -54,6 +54,13 @@ services:
     ports:
       - "18123:8123"
       - "19000:9000"
+      # Same native listener, second host port. The suites that CREATE, INSERT
+      # and DROP against a real ClickHouse refuse 19000-19002, 19010 and
+      # 18230-18232 (CH25_NATIVE_PORT), because a developer host keeps
+      # port-forwards to shared clusters there and a test must not guess. No
+      # forward uses 19100, so it is the port those suites can be pinned to;
+      # 19000 stays for everything that already defaults to it.
+      - "19100:9000"
     healthcheck:
       # 127.0.0.1, not localhost: busybox wget picks ::1, CH binds IPv4 only.
       test:

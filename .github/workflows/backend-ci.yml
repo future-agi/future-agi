@@ -85,9 +85,17 @@ jobs:
     env:
       LITELLM_MODE: PRODUCTION
       CH25_DATABASE: test_tfc
+      # The suites that write to a real ClickHouse refuse the 19000-19002,
+      # 19010 and 18230-18232 band outright: on a developer host those are
+      # port-forwards to shared clusters, and a CREATE/INSERT run must never
+      # land on one. CI is the side that moves, so the compose sidecar also
+      # answers on 19100 and this names it. Unset here, the suites skip.
+      CH25_NATIVE_PORT: "19100"
       CH_DATABASE: test_tfc
       PYTHONHASHSEED: "0"
       FI_CH25_SCHEMA_APPLY_STRICT: "1"
+      # Live-ClickHouse suites are opt-in; CI owns the compose sidecar.
+      FI_LIVE_CH_TESTS: "1"
       EE_REPO_BRANCH: ${{ github.head_ref || github.ref_name }}
       EE_BASE_REF: ${{ github.base_ref || 'dev' }}
       IS_INTERNAL_RUN: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false }}
