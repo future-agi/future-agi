@@ -1815,7 +1815,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             503: ApiErrorResponseSerializer,
         },
     )
-    @action(detail=False, methods=["get", "post"])
+    @action(detail=False, methods=["get", "post"], pagination_class=None)
     def list_spans_observe(self, request, *args, **kwargs):
         try:
             validated_data = dict(request.validated_query_data)

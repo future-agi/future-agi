@@ -280,6 +280,23 @@ class DashboardWidgetSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["id", "created_by", "created_at", "updated_at"]
+        extra_kwargs = {
+            "query_config": {
+                "help_text": (
+                    "Saved query in the same shape as the dashboard query request: "
+                    "time_range and metrics are required once any metric is set, "
+                    "with optional workflow, project_ids, granularity, filters, "
+                    "and breakdowns."
+                ),
+            },
+            "chart_config": {
+                "help_text": (
+                    "Chart presentation. chart_type must be one of line, "
+                    "stacked_line, column, stacked_column, bar, stacked_bar, pie, "
+                    "table, or metric."
+                ),
+            },
+        }
 
     def validate_width(self, value):
         if value < 1 or value > 12:

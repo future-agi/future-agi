@@ -858,3 +858,20 @@ def test_list_pagination_caps_limit_param():
     request = Request(APIRequestFactory().get("/", {"limit": "100000"}))
 
     assert paginator.get_page_size(request) == 100
+
+
+@pytest.mark.django_db
+def test_optimization_list_keeps_accepting_large_limits(auth_client, output_column):
+    """Documenting the list query must not 400 limit=200; the paginator already
+    silently caps at 100."""
+    run = create_optimization_run(output_column, name="large-limit-run")
+
+    response = auth_client.get("/model-hub/dataset-optimization/", {"limit": 200})
+
+    assert response.status_code == status.HTTP_200_OK, response.content
+    ids = {
+        row["id"]
+        for row in response.json()["result"]["table"]
+        if row.get("id")
+    }
+    assert str(run.id) in ids

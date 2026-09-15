@@ -1,6 +1,5 @@
 from rest_framework import serializers
 
-from ai_tools.serializers import ToolDiscoveryItemSerializer
 from mcp_server.serializers.connection import MCPConnectionSerializer
 from mcp_server.serializers.session import MCPSessionSerializer
 from mcp_server.serializers.tool_config import MCPToolGroupConfigSerializer
@@ -62,6 +61,21 @@ class MCPHealthResponseSerializer(serializers.Serializer):
     result = MCPHealthResultSerializer()
 
 
+class MCPToolParameterSerializer(serializers.Serializer):
+    name = serializers.CharField(read_only=True)
+    type = serializers.CharField(read_only=True)
+    description = serializers.CharField(read_only=True, allow_blank=True)
+    required = serializers.BooleanField(read_only=True)
+
+
+class MCPToolDiscoveryItemSerializer(serializers.Serializer):
+    name = serializers.CharField(read_only=True)
+    category = serializers.CharField(read_only=True)
+    description = serializers.CharField(read_only=True, allow_blank=True)
+    parameters = MCPToolParameterSerializer(many=True, read_only=True)
+    input_schema = serializers.JSONField(read_only=True)
+
+
 class MCPSessionListResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField(default=True)
     result = MCPSessionSerializer(many=True)
@@ -96,7 +110,7 @@ class MCPToolCallResponseSerializer(serializers.Serializer):
 
 
 class MCPToolListResultSerializer(serializers.Serializer):
-    tools = ToolDiscoveryItemSerializer(many=True)
+    tools = MCPToolDiscoveryItemSerializer(many=True)
     total = serializers.IntegerField()
     session_id = serializers.UUIDField(allow_null=True)
 

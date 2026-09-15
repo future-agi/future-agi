@@ -2208,6 +2208,9 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
     serializer_class = DashboardSerializer
+    # Every list-style action here returns its own unpaginated payload, so the
+    # contract must not advertise the default page/limit parameters.
+    pagination_class = None
     lookup_value_regex = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 
     def get_queryset(self):

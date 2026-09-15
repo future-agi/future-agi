@@ -1013,7 +1013,9 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             400: ApiErrorResponseSerializer,
         },
     )
-    @action(detail=True, methods=["get", "post"], url_path="query")
+    @action(
+        detail=True, methods=["get", "post"], url_path="query", pagination_class=None
+    )
     def retrieve_query(self, request, *args, **kwargs):
         """Read the same authorized detail without putting filters in the URL."""
         return self.retrieve(request, *args, **kwargs)
@@ -1791,7 +1793,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             503: ApiErrorResponseSerializer,
         },
     )
-    @action(detail=False, methods=["get", "post"])
+    @action(detail=False, methods=["get", "post"], pagination_class=None)
     def list_sessions(self, request, *args, **kwargs):
         """
         List traces filtered by project ID and project version ID with optimized queries.

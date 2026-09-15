@@ -1,6 +1,5 @@
 import pytest
 
-from ai_tools.base import ToolContext
 from mcp_server.models.connection import MCPConnection
 from mcp_server.models.session import MCPSession
 from mcp_server.models.tool_config import MCPToolGroupConfig
@@ -8,15 +7,6 @@ from tfc.middleware.workspace_context import (
     clear_workspace_context,
     set_workspace_context,
 )
-
-
-@pytest.fixture
-def tool_context(user, workspace):
-    """Create a ToolContext from test fixtures."""
-    org = user.organization
-    set_workspace_context(workspace=workspace, organization=org, user=user)
-    yield ToolContext(user=user, organization=org, workspace=workspace)
-    clear_workspace_context()
 
 
 @pytest.fixture

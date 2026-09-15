@@ -5,6 +5,7 @@ from rest_framework.viewsets import GenericViewSet
 
 from agentcc.models import AgentccRequestLog
 from agentcc.serializers.request_log import AgentccRequestLogSerializer
+from agentcc.serializers.request_queries import GatewayOverviewQuerySerializer
 from agentcc.services.analytics import (
     get_cost_breakdown,
     get_error_breakdown,
@@ -17,6 +18,7 @@ from agentcc.services.analytics import (
     get_usage_timeseries,
     parse_time_range,
 )
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.general_methods import GeneralMethods
 
@@ -52,7 +54,8 @@ class AgentccAnalyticsViewSet(BaseModelViewSetMixinWithUserOrg, GenericViewSet):
             queryset = queryset.filter(api_key_id=api_key_id)
         return queryset
 
-    @action(detail=False, methods=["get"])
+    @validated_request(query_serializer=GatewayOverviewQuerySerializer)
+    @action(detail=False, methods=["get"], pagination_class=None)
     def overview(self, request):
         """KPI cards with trend comparison."""
         try:

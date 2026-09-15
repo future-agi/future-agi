@@ -24,7 +24,9 @@ from agentcc.serializers.request_log import (
     AgentccRequestLogSerializer,
     AgentccSessionSerializer,
 )
+from agentcc.serializers.request_queries import GatewayRequestLogQuerySerializer
 from agentcc.services.export import MAX_EXPORT_ROWS, export_csv, export_json
+from tfc.utils.api_contracts import ExplicitQueryAutoSchema, validated_request
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.general_methods import GeneralMethods
 
@@ -224,6 +226,10 @@ class AgentccRequestLogViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelVi
 
         return queryset
 
+    @validated_request(
+        query_serializer=GatewayRequestLogQuerySerializer,
+        auto_schema=ExplicitQueryAutoSchema,
+    )
     def list(self, request, *args, **kwargs):
         try:
             queryset = self.get_queryset()
