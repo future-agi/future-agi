@@ -941,7 +941,10 @@ def test_structural_end_user_id_candidate_seed_uses_direct_uuid_predicate(
     assert builder.filter_seed_proves_result_order() is True
     assert builder.filter_candidate_seed_proves_result_order() is True
     assert "matching_user_trace_identities AS" in candidate_sql
-    assert "toString(end_user_id) = %(col_1)s" in candidate_sql
+    # The bare column keeps idx_end_user_id eligible; toString() would make the
+    # seed read every span of the project on every window.
+    assert "end_user_id IN (toUUID(%(col_1)s))" in candidate_sql
+    assert "toString(end_user_id)" not in candidate_sql
     assert "FROM end_users" not in candidate_sql
     assert params["col_1"] == end_user_id
 

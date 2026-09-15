@@ -206,9 +206,13 @@ def test_native_and_legacy_token_aliases_still_use_root_column(
 @pytest.mark.parametrize("family", ["SYSTEM_METRIC", "NORMAL", "TRACE_END_USER"])
 @pytest.mark.parametrize("key", ["user", "user_id", "user_id_type", "end_user_id"])
 def test_structural_user_aliases_still_use_dimension_or_native_column(family, key):
+    # ``end_user_id`` is a UUID column: a non-UUID literal compiles to a
+    # no-match fold that mentions no column at all, so the routing this test
+    # is about is only observable with a well-formed value.
+    value = "00000000-0000-4000-8000-00000000000a"
     sql, params = ClickHouseFilterBuilderV2(project_id=PROJECT).translate(
         [
-            leaf(key, "text", "equals", "synthetic-user", family),
+            leaf(key, "text", "equals", value, family),
         ]
     )
     assert key not in params.values()
