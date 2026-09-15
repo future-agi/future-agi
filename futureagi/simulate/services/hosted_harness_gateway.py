@@ -2277,6 +2277,17 @@ class DaytonaHostedGateway:
         _read_harness_usage(attempt, sandbox)
         job = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id)
         _record_harness_spend(job, spend, attempt.attempt_number)
+        authoring_complete = (
+            isinstance(bundle, dict)
+            and isinstance(scenarios, list)
+            and len(scenarios) == job.scenario_count
+        )
+        if authoring_complete and isinstance(spend, dict):
+            from simulate.services.harness_usage import (
+                record_harness_authoring_usage,
+            )
+
+            record_harness_authoring_usage(attempt, spend)
 
         # Unified hosted execution authors the contract/world/scenarios in the same
         # sandbox that later runs the calls.  Freeze those inputs as soon as Bundle V2
@@ -2287,14 +2298,8 @@ class DaytonaHostedGateway:
         # re-freeze even though a key already exists — gated on its one-shot marker.
         # store_authoring_archive clears that marker in the same save.
         metadata = (job.payload or {}).get("metadata") or {}
-        if (
-            isinstance(bundle, dict)
-            and isinstance(scenarios, list)
-            and len(scenarios) == job.scenario_count
-            and (
-                not metadata.get("authoring_object_key")
-                or metadata.get("scenario_extend")
-            )
+        if authoring_complete and (
+            not metadata.get("authoring_object_key") or metadata.get("scenario_extend")
         ):
             try:
                 packed = sandbox.process.exec(

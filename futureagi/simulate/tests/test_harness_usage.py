@@ -99,6 +99,60 @@ def test_repeated_generation_reports_reconcile_with_existing_billing_ledger(
 
 
 @pytest.mark.django_db
+def test_authoring_tokens_become_idempotent_ai_credits(
+    metered_attempt, monkeypatch, django_capture_on_commit_callbacks
+):
+    consumer = pytest.importorskip("ee.cloud.billing.consumer")
+    from ee.usage.models.usage import UsageEventLog
+
+    capability, redis = metered_attempt
+    monkeypatch.setattr(consumer, "get_redis", lambda: redis)
+    consumer._ensure_consumer_group()
+    spend = {
+        "stages": [
+            {
+                "stage": "build-environment",
+                "models": ["gemini-3.7-flash"],
+                "tokens_in": 1_000_000,
+                "tokens_out": 100_000,
+                "tokens_cached": 800_000,
+            }
+        ]
+    }
+    with django_capture_on_commit_callbacks(execute=True):
+        harness_usage.record_harness_authoring_usage(capability.attempt, spend)
+        harness_usage.record_harness_authoring_usage(capability.attempt, spend)
+    consumer.process_batch()
+
+    row = UsageEventLog.objects.get(
+        organization=capability.attempt.job.organization,
+        event_type="harness_authoring",
+    )
+    assert row.dimension == "ai_credits"
+    assert row.amount_raw == pytest.approx(70.2)
+    assert row.properties == {
+        "source": "rl_environment",
+        "source_id": str(capability.attempt.job_id),
+        "harness_job_id": str(capability.attempt.job_id),
+        "attempt_id": str(capability.attempt.id),
+        "workspace_id": "",
+        "test_execution_id": "",
+        "phase": "authoring",
+        "authoring_stage": "build-environment",
+        "model": "gemini-3.7-flash",
+        "input_tokens": 1_000_000,
+        "output_tokens": 100_000,
+        "cached_input_tokens": 800_000,
+        "raw_cost_usd": 0.585,
+        "pricing_source": "available_models",
+    }
+    capability.attempt.job.refresh_from_db()
+    assert harness_usage.harness_consumption(capability.attempt.job)[
+        "ai_credits"
+    ] == pytest.approx(70.2)
+
+
+@pytest.mark.django_db
 def test_stale_snapshot_cannot_erase_or_change_finalized_usage(
     metered_attempt, django_capture_on_commit_callbacks
 ):

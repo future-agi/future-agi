@@ -110,6 +110,21 @@ class TestTokenBasedPricing:
         assert result["prompt_cost"] == 0.0
         assert result["completion_cost"] == 0.0
 
+    def test_calculate_cost_prices_cached_gemini_input_separately(self):
+        result = calculate_total_cost(
+            "gemini-3.7-flash",
+            {
+                "prompt_tokens": 1000,
+                "cached_input_tokens": 800,
+                "completion_tokens": 100,
+            },
+        )
+
+        assert result["prompt_cost"] == 0.00021
+        assert result["completion_cost"] == 0.000375
+        assert result["total_cost"] == 0.000585
+        assert result["pricing_source"] == "available_models"
+
     @pytest.mark.requires_ee
     def test_turing_alias_pricing_lookup(self):
         """Test that evaluator aliases use catalog pricing instead of fallback."""

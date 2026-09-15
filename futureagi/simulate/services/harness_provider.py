@@ -484,9 +484,9 @@ class DaytonaHarnessProvider:
                 status=status.HTTP_400_BAD_REQUEST,
             )
         payload = request.validated_data
-        from simulate.services.harness_usage import require_harness_action
+        from simulate.services.harness_usage import require_harness_authoring
 
-        require_harness_action(str(organization.id), "scenario_generation")
+        require_harness_authoring(str(organization.id))
         base_url = (
             getattr(settings, "HARNESS_PUBLIC_BASE_URL", "")
             or request.build_absolute_uri("/")
@@ -844,9 +844,9 @@ class DaytonaHarnessProvider:
                         "end-to-end run; its follow-ups can then add scenarios.",
                         status_code=409,
                     )
-                from simulate.services.harness_usage import require_harness_action
+                from simulate.services.harness_usage import require_harness_authoring
 
-                require_harness_action(str(organization.id), "scenario_generation")
+                require_harness_authoring(str(organization.id))
                 # Add relative to what the environment actually holds: the scenarios
                 # registered by the last successful run are exactly what the saved authoring
                 # archive contains (it is only re-frozen on success). ``job.scenario_count``
