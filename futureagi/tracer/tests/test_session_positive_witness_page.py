@@ -543,7 +543,9 @@ def test_string_page_policy_and_finite_single_replay(cls, org, filters, preferre
     subject = builder(*filters, cls=cls, org=org)
     assert subject.prefers_bounded_filter_page() is preferred
     assert not preferred or subject.supports_candidate_cursor_page()  # Policy is not capability.
-    assert subject.recommended_filter_cursor_seed_batch_size() is None
+    # Cursor reads acquire the numbered page's batch; only exact latest-state
+    # replay is split, and it keeps its own smaller batch.
+    assert subject.recommended_filter_cursor_seed_batch_size() == 200
     assert subject.recommended_filter_classify_batch_size() == 50
     assert subject.recommended_filter_max_slice_width() is None
     sql, params = subject.build_filter_match_query_from_seed_rows([{"session_id": USER}])
