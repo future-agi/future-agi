@@ -50,9 +50,9 @@ describe("resolveColumnVisibility (dropdown checkbox state)", () => {
   });
 
   it("falls back to the backend value, then to visible", () => {
-    expect(resolveColumnVisibility({ id: "user_id", isVisible: true }, {})).toBe(
-      true,
-    );
+    expect(
+      resolveColumnVisibility({ id: "user_id", isVisible: true }, {}),
+    ).toBe(true);
     expect(resolveColumnVisibility({ id: "unknown" }, {})).toBe(true);
   });
 });

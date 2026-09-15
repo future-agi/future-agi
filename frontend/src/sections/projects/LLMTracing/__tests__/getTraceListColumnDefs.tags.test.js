@@ -19,10 +19,9 @@ describe("getTraceListColumnDefs — tags column cellRendererSelector", () => {
   });
 
   it("still renders CustomTraceRenderer for a populated tags cell", () => {
-    const result = select(
-      { id: "tags", name: "Tags", isVisible: true },
-      ["production"],
-    );
+    const result = select({ id: "tags", name: "Tags", isVisible: true }, [
+      "production",
+    ]);
     expect(result).toEqual({ component: CustomTraceRenderer });
   });
 

@@ -72,6 +72,10 @@ vi.mock("src/sections/project-detail/CompareDrawer/NoRowsOverlay", () => ({
 
 import CallLogsGrid from "../CallLogsGrid";
 import { OBSERVE_PAGE_CHANGED_EVENT } from "src/sections/projects/observeEvents";
+import {
+  getListPagerState,
+  windowedPageNumbers,
+} from "src/sections/projects/LLMTracing/listPagerState";
 
 const incompleteData = {
   count: 0,
@@ -100,6 +104,35 @@ const completeData = {
   query_error_code: null,
 };
 
+// The agent-definition call-log endpoint is NOT a cursor endpoint. It is a
+// plain DRF view behind ExtendedPageNumberPagination
+// (futureagi/simulate/views/agent_version.py -> futureagi/tfc/utils/pagination.py),
+// so the envelope carries an exact `count` and `total_pages` and carries
+// neither `has_more` nor `next_cursor` nor any `*_is_lower_bound` flag.
+const agentDefinitionPage = (page = 1, pageSize = 25, count = 137) => {
+  const start = (page - 1) * pageSize;
+  const rows = Math.max(0, Math.min(pageSize, count - start));
+  return {
+    count,
+    next: start + rows < count ? "https://api.test/next" : null,
+    previous: page > 1 ? "https://api.test/previous" : null,
+    results: Array.from({ length: rows }, (_, index) => ({
+      id: `call-${start + index}`,
+      trace_id: `call-${start + index}`,
+      status: "completed",
+    })),
+    total_pages: Math.ceil(count / pageSize),
+    current_page: page,
+  };
+};
+
+const agentDefinitionRead = (count) => ({ page }) => ({
+  data: agentDefinitionPage(page, 25, count),
+  isLoading: false,
+  error: null,
+  queryKey: ["callLogs", "simulate", "agent-1", "version-1", 25, {}, page],
+});
+
 describe("CallLogsGrid bounded-read state", () => {
   beforeEach(() => {
     agGridState.props = null;
@@ -127,7 +160,7 @@ describe("CallLogsGrid bounded-read state", () => {
     expect(
       screen.queryByRole("button", { name: /go to page 2/i }),
     ).not.toBeInTheDocument();
-    expect(screen.getByText("Next").closest("button")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled();
     await waitFor(() => expect(prefetchCallLogsMock).not.toHaveBeenCalled());
   });
 
@@ -151,7 +184,9 @@ describe("CallLogsGrid bounded-read state", () => {
     expect(
       screen.queryByRole("button", { name: /go to page 3/i }),
     ).not.toBeInTheDocument();
-    expect(screen.getByText("Next").closest("button")).not.toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Next page" }),
+    ).not.toBeDisabled();
     expect(useCallLogsMock).toHaveBeenCalledWith(
       expect.objectContaining({
         paginationParams: {
@@ -164,12 +199,10 @@ describe("CallLogsGrid bounded-read state", () => {
   });
 
   it("retains next-page prefetch for numbered agent-definition reads", async () => {
-    useCallLogsMock.mockReturnValue({
-      data: completeData,
-      isLoading: false,
-      error: null,
-      queryKey: ["callLogs", "simulate", "agent-1", "version-1", 25, {}, 1],
-    });
+    // Fed the real DRF envelope, not a project cursor payload: this endpoint
+    // has no has_more at all, so a pager that only reads has_more collapses
+    // 137 calls into a single unreachable page.
+    useCallLogsMock.mockImplementation(agentDefinitionRead(137));
 
     render(<CallLogsGrid id="agent-1" module="simulate" hideDrawer />);
 
@@ -184,6 +217,74 @@ describe("CallLogsGrid bounded-read state", () => {
         pageLimit: 25,
       }),
     );
+  });
+
+  it("numbers agent-definition pages from the exact DRF count", async () => {
+    // REGRESSION GUARD (C2): 137 calls over 6 pages. Reading only has_more —
+    // which this endpoint never sends — left one page of 6 and 112 calls
+    // unreachable.
+    useCallLogsMock.mockImplementation(agentDefinitionRead(137));
+
+    render(<CallLogsGrid id="agent-1" module="simulate" hideDrawer />);
+
+    expect(
+      await screen.findByRole("button", { name: "Go to page 2" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Next page" }),
+    ).not.toBeDisabled();
+    expect(screen.getByTestId("pager-trailing-ellipsis")).toBeInTheDocument();
+  });
+
+  it("ends the agent-definition pager on its true last page", async () => {
+    // 30 calls at 25 per page: page two holds the final 5, and the exact
+    // count proves nothing follows them.
+    useCallLogsMock.mockImplementation(agentDefinitionRead(30));
+
+    render(<CallLogsGrid id="agent-1" module="simulate" hideDrawer />);
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Go to page 2" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Go to page 2" })).toHaveAttribute(
+        "aria-current",
+        "page",
+      ),
+    );
+
+    expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled();
+    expect(screen.queryByTestId("pager-trailing-ellipsis")).toBeNull();
+  });
+
+  it("keeps forward navigation alive after returning from the terminal page", async () => {
+    // REGRESSION GUARD (C1): the terminal page's flags must not outlive the
+    // terminal page. Back to page one has to restore Next and page two.
+    useCallLogsMock.mockImplementation(agentDefinitionRead(30));
+
+    render(<CallLogsGrid id="agent-1" module="simulate" hideDrawer />);
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Go to page 2" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled(),
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Previous page" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Go to page 1" })).toHaveAttribute(
+        "aria-current",
+        "page",
+      ),
+    );
+    expect(
+      screen.getByRole("button", { name: "Go to page 2" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Next page" }),
+    ).not.toBeDisabled();
   });
 
   it("keeps project pagination stable when an unrelated agent version changes", async () => {
@@ -218,10 +319,9 @@ describe("CallLogsGrid bounded-read state", () => {
     agentDetailsState.selectedVersion = "version-2";
     view.rerender(<CallLogsGrid id="project-1" module="project" hideDrawer />);
 
-    expect(screen.getByRole("button", { name: "page 2" })).toHaveAttribute(
-      "aria-current",
-      "true",
-    );
+    expect(
+      screen.getByRole("button", { name: "Go to page 2" }),
+    ).toHaveAttribute("aria-current", "page");
     expect(useCallLogsMock).toHaveBeenLastCalledWith(
       expect.objectContaining({ page: 2, pageLimit: 25 }),
     );
@@ -272,7 +372,7 @@ describe("CallLogsGrid bounded-read state", () => {
     );
   });
 
-  it("does not request a cursor for a terminal overflow page already buffered locally", async () => {
+  it("keeps a terminal overflow page reachable from the local buffer", async () => {
     useCallLogsMock.mockReturnValue({
       data: {
         ...completeData,
@@ -292,10 +392,17 @@ describe("CallLogsGrid bounded-read state", () => {
 
     render(<CallLogsGrid id="project-1" module="project" hideDrawer />);
 
+    // isLastPage can only be false while has_more is false when the terminal
+    // response overflowed and its surplus rows were buffered for page two.
+    // Those rows are proven to exist by construction — a stronger proof than
+    // any reported count — so page two must be reachable. It is served from
+    // the local buffer, so it still costs no cursor request and no prefetch.
     expect(
-      await screen.findByRole("button", { name: /go to page 2/i }),
+      screen.getByRole("button", { name: "Go to page 2" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("Next").closest("button")).not.toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Next page" }),
+    ).not.toBeDisabled();
     await waitFor(() => expect(prefetchCallLogsMock).not.toHaveBeenCalled());
   });
 
@@ -409,7 +516,9 @@ describe("CallLogsGrid bounded-read state", () => {
     await waitFor(() => expect(prefetchCallLogsMock).not.toHaveBeenCalled());
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
     expect(agGridState.props.rowData).toEqual(completeData.results);
-    expect(screen.getByText("Next").closest("button")).not.toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Next page" }),
+    ).not.toBeDisabled();
   });
 
   it("refreshes project data from a new page-one cursor generation", async () => {
@@ -457,10 +566,9 @@ describe("CallLogsGrid bounded-read state", () => {
         expect.objectContaining({ page: 1, paginationRevision: 1 }),
       ),
     );
-    expect(screen.getByRole("button", { name: "page 1" })).toHaveAttribute(
-      "aria-current",
-      "true",
-    );
+    expect(
+      screen.getByRole("button", { name: "Go to page 1" }),
+    ).toHaveAttribute("aria-current", "page");
     expect(prefetchCallLogsMock).not.toHaveBeenCalled();
   });
 
@@ -557,10 +665,9 @@ describe("CallLogsGrid bounded-read state", () => {
     expect(useCallLogsMock).toHaveBeenLastCalledWith(
       expect.objectContaining({ page: 2, paginationRevision: 0 }),
     );
-    expect(screen.getByRole("button", { name: "page 2" })).toHaveAttribute(
-      "aria-current",
-      "true",
-    );
+    expect(
+      screen.getByRole("button", { name: "Go to page 2" }),
+    ).toHaveAttribute("aria-current", "page");
     window.removeEventListener(OBSERVE_PAGE_CHANGED_EVENT, pageChanged);
   });
 
@@ -599,5 +706,64 @@ describe("CallLogsGrid bounded-read state", () => {
 
     expect(agGridState.props.rowData).toHaveLength(10);
     expect(agGridState.props.loading).toBe(false);
+  });
+
+  it("does not number a page that has not been proven to have rows", () => {
+    // Live capture: page 1 returned 0 rows with has_more true and a cursor.
+    const state = getListPagerState({
+      metadata: { count: 0, count_is_lower_bound: true, has_more: true },
+      startRow: 0,
+      rowCount: 0,
+    });
+    expect(state.provenNext).toBe(false);
+    expect(windowedPageNumbers({ page: 1, provenNext: state.provenNext }).pages).toEqual([1]);
+  });
+
+  it("disables the pager and falls back to page 1 during an unusable, non-loading read", async () => {
+    useCallLogsMock.mockImplementation(({ page }) => {
+      if (page === 2) {
+        // Simulates a user already on page 2 whose next read errors out
+        // without ever entering a loading state.
+        return {
+          data: undefined,
+          isLoading: false,
+          error: { message: "boom" },
+          queryKey: ["callLogs", "project", "project-1", 25, {}, 2],
+        };
+      }
+      return {
+        data: completeData,
+        isLoading: false,
+        error: null,
+        queryKey: ["callLogs", "project", "project-1", 25, {}, page],
+      };
+    });
+
+    render(<CallLogsGrid id="project-1" module="project" hideDrawer />);
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /go to page 2/i }),
+    );
+    await waitFor(() =>
+      expect(useCallLogsMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ page: 2 }),
+      ),
+    );
+
+    // `page` state is 2, but the read is unusable (errored, not loading):
+    // the pager must show page 1, not the stale page 2, and every control
+    // must be non-interactive — not just Next.
+    const currentPageButton = await screen.findByRole("button", {
+      name: "Go to page 1",
+    });
+    expect(currentPageButton).toHaveAttribute("aria-current", "page");
+    expect(currentPageButton).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: "Go to page 2" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Previous page" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled();
   });
 });

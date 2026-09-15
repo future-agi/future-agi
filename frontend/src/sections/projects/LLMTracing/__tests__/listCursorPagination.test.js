@@ -311,6 +311,76 @@ describe("list cursor pagination", () => {
     });
   });
 
+  describe("canReachPage", () => {
+    it("treats page 0 as always reachable, in every mode", () => {
+      const pagination = createListCursorPagination();
+      expect(pagination.canReachPage(0)).toBe(true);
+      pagination.fallbackToNumbered();
+      expect(pagination.canReachPage(0)).toBe(true);
+    });
+
+    it("rejects negative or non-integer page numbers", () => {
+      const pagination = createListCursorPagination();
+      expect(pagination.canReachPage(-1)).toBe(false);
+      expect(pagination.canReachPage(1.5)).toBe(false);
+      expect(pagination.canReachPage(undefined)).toBe(false);
+    });
+
+    it("mirrors requestParams exactly in cursor mode: unreachable until a response proves that page's cursor", () => {
+      const pagination = createListCursorPagination();
+      // A terminal page-0 response establishes cursor mode without proving a
+      // cursor for page 1 — the exact shape that makes requestParams(1) throw.
+      pagination.recordResponse(0, { has_more: false, next_cursor: null });
+      expect(pagination.mode()).toBe(LIST_CURSOR_MODES.CURSOR);
+
+      expect(pagination.canReachPage(1)).toBe(false);
+      expect(() => pagination.requestParams(1, {})).toThrow(
+        "Continuation cursor is unavailable for this page",
+      );
+    });
+
+    it("becomes reachable the instant a response proves the cursor, and stays gated for pages beyond it", () => {
+      const pagination = createListCursorPagination();
+      pagination.recordResponse(0, { has_more: true, next_cursor: "page-1" });
+
+      expect(pagination.canReachPage(1)).toBe(true);
+      expect(() => pagination.requestParams(1, {})).not.toThrow();
+      // Page 2's cursor has not been proven yet — walking to page 1 does not
+      // retroactively make page 2 reachable.
+      expect(pagination.canReachPage(2)).toBe(false);
+      expect(() => pagination.requestParams(2, {})).toThrow(
+        "Continuation cursor is unavailable for this page",
+      );
+    });
+
+    it("forgets every proven cursor on reset(), matching requestParams' fresh generation", () => {
+      const pagination = createListCursorPagination();
+      pagination.recordResponse(0, { has_more: true, next_cursor: "page-1" });
+      expect(pagination.canReachPage(1)).toBe(true);
+
+      pagination.reset();
+
+      // reset() also drops cursor mode back to unknown until the next
+      // response — in that state requestParams() addresses every page
+      // directly by number and never throws, so canReachPage agrees.
+      expect(pagination.mode()).toBe(LIST_CURSOR_MODES.UNKNOWN);
+      expect(pagination.canReachPage(1)).toBe(true);
+      expect(() => pagination.requestParams(1, {})).not.toThrow();
+
+      // The cursor chain itself is gone: re-establishing cursor mode without
+      // re-proving page 1 makes it unreachable again.
+      pagination.recordResponse(0, { has_more: false, next_cursor: null });
+      expect(pagination.canReachPage(1)).toBe(false);
+    });
+
+    it("never needs a cursor once the chain has fallen back to numbered mode, matching requestParams' numbered branch", () => {
+      const pagination = createListCursorPagination();
+      pagination.fallbackToNumbered();
+      expect(pagination.canReachPage(11)).toBe(true);
+      expect(() => pagination.requestParams(11, {})).not.toThrow();
+    });
+  });
+
   it("bounds completed page replay with least-recently-used eviction", () => {
     const pagination = createListCursorPagination({ maxCompletedPages: 2 });
     const completed = (id) => ({

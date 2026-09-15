@@ -138,6 +138,187 @@
 - the metrics catalog scoped to each project returns that project's eval template and not its sibling's
 - the frontend requests the catalog with project_ids set to the project being viewed
 
+### OBS-E2E-004 — trace list pager windows forward without an endless page count
+
+**Goal:** A developer paging through a large trace list always knows where they are and when they have reached the end  
+**Spec:** `flows/observe/list-pagination.spec.ts:297`  
+**Tags:** —
+
+**User steps:**
+
+1. seed 45 traces into one project over OTLP
+2. open the project's trace list
+3. set page size to 10 through the pager control
+4. walk forward one page at a time via Next to the true last page
+5. read the page-number window, ellipses and Next/Previous state at every page
+6. step back from the last page and walk forward again
+7. change the page size and confirm the API and the pager both follow
+
+**Backend state verified:**
+
+- all 45 seeded trace_ids present in CH `spans` (FINAL) under the auto-created project
+- project row auto-created in PG tracer_project, scoped to the actor org
+
+### OBS-E2E-005 — Next stays usable through a full Back-Back-Next-Next round trip from the terminal page
+
+**Goal:** A developer bouncing back and forth near the end of a trace list never loses forward navigation  
+**Spec:** `flows/observe/list-pagination.spec.ts:524`  
+**Tags:** —
+
+**User steps:**
+
+1. seed 25 traces into one project over OTLP
+2. open the project's trace list at page size 10 (3 pages)
+3. walk forward to the true last page
+4. step back twice, then forward twice
+5. confirm Next stays enabled throughout and the terminal page looks the same either way it was reached
+
+**Backend state verified:**
+
+- all 25 seeded trace_ids present in CH `spans` (FINAL) under the auto-created project
+
+### OBS-E2E-006 — an exactly-full final page ends pagination without offering a phantom next page
+
+**Goal:** A developer whose trace count divides evenly by the page size sees a real last page, not an empty page N+1  
+**Spec:** `flows/observe/list-pagination.spec.ts:616`  
+**Tags:** —
+
+**User steps:**
+
+1. seed 30 traces (exactly 3 full pages of 10) into one project over OTLP
+2. open the project's trace list at page size 10
+3. walk forward to the third page
+4. confirm no fourth page is offered, Next is disabled, and the grid is not empty
+
+**Backend state verified:**
+
+- all 30 seeded trace_ids present in CH `spans` (FINAL) under the auto-created project
+
+### OBS-E2E-007 — has_more without a strictly greater total promises no page number, but keeps Next enabled
+
+**Goal:** A developer searching a sparse cursor window is never shown a page number the transport cannot prove exists  
+**Spec:** `flows/observe/list-pagination.spec.ts:670`  
+**Tags:** —
+
+**User steps:**
+
+1. seed 25 traces into one project over OTLP
+2. open the project's trace list at page size 10
+3. intercept the page-2 response to report has_more=true with a total equal to the rows already seen
+4. walk to page 2
+5. confirm no cur+1 page number is offered, while Next stays enabled
+
+**Backend state verified:**
+
+- all 25 seeded trace_ids present in CH `spans` (FINAL) under the auto-created project
+
+### OBS-E2E-008 — the Next label DOM node survives ~1.5s of ancestor re-render churn
+
+**Goal:** A developer's pointer never lands on a button whose label React just tore down and rebuilt underneath it  
+**Spec:** `flows/observe/list-pagination.spec.ts:746`  
+**Tags:** —
+
+**User steps:**
+
+1. seed 15 traces into one project over OTLP
+2. open the project's trace list at page size 10 (Next enabled)
+3. confirm the pager's ancestor is actually re-rendering rapidly (INT-06 guard)
+4. capture the Next label's DOM node and watch the pager subtree for ~1.5s
+5. confirm the node is never removed from the DOM and stays connected
+
+**Backend state verified:**
+
+- all 15 seeded trace_ids present in CH `spans` (FINAL) under the auto-created project
+
+### OBS-E2E-009 — a real dwell-click on Next/Back actually fires a click, not just a press
+
+**Goal:** A developer's mouse press on Back/Next always produces a click, even while the ancestor is mid-re-render  
+**Spec:** `flows/observe/list-pagination.spec.ts:812`  
+**Tags:** —
+
+**User steps:**
+
+1. seed 15 traces into one project over OTLP
+2. open the project's trace list at page size 10
+3. confirm the pager's ancestor is actually re-rendering rapidly (INT-06 guard)
+4. install capture-phase pointer/click counters on the pager root
+5. press-dwell-release on Next and confirm the page advanced with pointerdown === click === 1
+6. repeat the same dwell-click on Back
+
+**Backend state verified:**
+
+- all 15 seeded trace_ids present in CH `spans` (FINAL) under the auto-created project
+
+### OBS-E2E-010 — changing page size changes the outbound page_size, the rendered row count, and resets to page 1
+
+**Goal:** A developer who changes results-per-page gets exactly that many rows and starts back at page 1, not a stale mid-list position  
+**Spec:** `flows/observe/list-pagination.spec.ts:881`  
+**Tags:** —
+
+**User steps:**
+
+1. seed 60 traces into one project over OTLP
+2. open the project's trace list at the default page size
+3. change the page size control to 10
+4. confirm the outbound request carries page_size=10, the grid renders 10 rows, and the pager is back on page 1
+
+**Backend state verified:**
+
+- all 60 seeded trace_ids present in CH `spans` (FINAL) under the auto-created project
+
+### OBS-E2E-011 — the agent call-log pager (a plain DRF-paginated, non-cursor screen) still paginates and reaches its last row
+
+**Goal:** A developer browsing an agent version's call logs gets a working pager even though this screen has no cursor `has_more` contract  
+**Spec:** `flows/observe/list-pagination.spec.ts:921`  
+**Tags:** —
+
+**User steps:**
+
+1. seed 12 completed CallExecution rows for one fresh AgentDefinition/AgentVersion directly through the backend (no simulate/voice infra runs in this harness — see e2e/lib/simulate-seed.ts)
+2. open the agent's Call Logs tab for that version
+3. confirm more than one page is offered
+4. walk forward to the last page
+
+**Backend state verified:**
+
+- the seeded CallExecution rows are scoped to the seeded AgentVersion, status=completed, non-empty eval_outputs — exactly what AgentVersionCallExecutionView filters for
+
+### OBS-E2E-012 — changing the date filter resets pagination to page 1 and drops the old cursor
+
+**Goal:** A developer who narrows the date range never sees stale rows or a stale page position from the filter they just replaced  
+**Spec:** `flows/observe/list-pagination.spec.ts:984`  
+**Tags:** —
+
+**User steps:**
+
+1. seed 45 traces into one project over OTLP
+2. open the project's trace list at page size 10, date range Past 12M
+3. walk forward three pages (into the window where a leading ellipsis has opened)
+4. switch the date filter to Past 30D
+5. confirm the pager resets to page 1 with its page-1 shape, and the resulting request carries no stale cursor
+
+**Backend state verified:**
+
+- all 45 seeded trace_ids present in CH `spans` (FINAL) under the auto-created project
+
+### OBS-E2E-013 — the furthest-visited page reappears as a boundary after walking back to page 1
+
+**Goal:** A developer who has already paged deep into a trace list and jumps back to page 1 can still return straight to the page they left off on  
+**Spec:** `flows/observe/list-pagination.spec.ts:1071`  
+**Tags:** —
+
+**User steps:**
+
+1. seed 45 traces into one project over OTLP
+2. open the project's trace list at page size 10 (5 pages)
+3. walk forward via Next to the true last page (page 5)
+4. jump directly back to page 1 via the pager
+5. confirm page 5 is offered as a right-hand boundary button, is clickable, and navigating to it lands on the true last page again
+
+**Backend state verified:**
+
+- all 45 seeded trace_ids present in CH `spans` (FINAL) under the auto-created project
+
 ### OBS-E2E-020 — duplicate saved-view names are rejected
 
 **Goal:** A user cannot silently overwrite an existing observability view by reusing its name  

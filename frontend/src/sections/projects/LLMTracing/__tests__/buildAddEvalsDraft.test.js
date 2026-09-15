@@ -1,10 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { serializeTaskFilterRowForApi } from "src/sections/common/EvalsTasks/task_filter_serialization";
 
-import {
-  buildAddEvalsDraft,
-  toAddEvalsFormRows,
-} from "../buildAddEvalsDraft";
+import { buildAddEvalsDraft, toAddEvalsFormRows } from "../buildAddEvalsDraft";
 
 // The draft is the only thing that survives the hop to the create page, so
 // whatever preset the toolbar was showing has to travel with the range.
