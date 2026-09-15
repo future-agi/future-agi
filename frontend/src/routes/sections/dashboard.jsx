@@ -330,6 +330,15 @@ const HarnessCreate = lazyWithRetry(
 const HarnessDetail = lazyWithRetry(
   () => import("src/pages/dashboard/harness/HarnessDetail"),
 );
+const SimulateEnvironmentsHome = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate/environments/EnvironmentsHome"),
+);
+const SimulatePrebuiltEnvironments = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate/environments/PrebuiltEnvironments"),
+);
+const SimulateEnvironmentDetail = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate/environments/EnvironmentDetail"),
+);
 const RunTestDetail = lazyWithRetry(
   () => import("src/pages/dashboard/run-tests/RunTestDetail"),
 );
@@ -1335,6 +1344,18 @@ export const dashboardRoutes = (
     {
       path: "simulate",
       children: [
+        {
+          path: "environments",
+          element: <SimulateEnvironmentsHome />,
+        },
+        {
+          path: "environments/templates",
+          element: <SimulatePrebuiltEnvironments />,
+        },
+        {
+          path: "environments/:envId",
+          element: <SimulateEnvironmentDetail />,
+        },
         {
           path: "harness",
           element: <HarnessList />,
