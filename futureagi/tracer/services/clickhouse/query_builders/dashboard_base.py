@@ -19,6 +19,7 @@ from tracer.services.clickhouse.query_builders.dashboard import (
     _coerce_filter_value,
     _generate_time_buckets,
     _parse_dt,
+    rank_and_cap_series,
     rescale_rate_to_percent,
 )
 
@@ -32,6 +33,7 @@ __all__ = [
     "FILTER_OPERATORS",
     "GRANULARITY_TO_CH",
     "PRESET_RANGES",
+    "rank_and_cap_series",
     "rescale_rate_to_percent",
     "_coerce_filter_value",
     "_generate_time_buckets",
@@ -103,7 +105,7 @@ class DashboardQueryBuilderBase:
         rows: list[dict],
         name_map: dict[str, str] | None = None,
         name_map_breakdown: str | None = None,
-    ) -> dict[str, dict[str, Any]]:
+    ) -> tuple[dict[str, dict[str, Any]], int]:
         """Build the intermediate series_data dict from raw rows.
 
         Args:
@@ -115,7 +117,8 @@ class DashboardQueryBuilderBase:
                 resolution (e.g. "project", "dataset").
 
         Returns:
-            Dict of ``{series_name: {iso_timestamp: value}}``.
+            The ranked, capped ``{series_name: {iso_timestamp: value}}`` mapping
+            and the number of distinct series before the cap.
         """
         has_map_breakdown = name_map_breakdown and any(
             bd.get("name") == name_map_breakdown for bd in self.breakdowns
@@ -143,21 +146,7 @@ class DashboardQueryBuilderBase:
         if not series_data:
             series_data["total"] = {}
 
-        # Keep the highest-volume series first.
-        MAX_SERIES = 100
-        if "total" not in series_data:
-            ranked = sorted(
-                series_data.items(),
-                key=lambda kv: sum(v for v in kv[1].values() if v is not None),
-                reverse=True,
-            )
-            if len(ranked) > MAX_SERIES and not self.config.get(
-                "require_complete_series", False
-            ):
-                ranked = ranked[:MAX_SERIES]
-            series_data = dict(ranked)
-
-        return series_data
+        return rank_and_cap_series(series_data)
 
     def _format_metric_result(
         self,
@@ -186,7 +175,9 @@ class DashboardQueryBuilderBase:
         metric_key = metric_info.get("id") or metric_name
         unit = unit_map.get(metric_key, unit_map.get(metric_name, ""))
 
-        series_data = self._build_series_data(rows, name_map, name_map_breakdown)
+        series_data, series_total = self._build_series_data(
+            rows, name_map, name_map_breakdown
+        )
 
         series = []
         for name, data_map in series_data.items():
@@ -208,6 +199,8 @@ class DashboardQueryBuilderBase:
             "aggregation": metric_info.get("aggregation", "avg"),
             "unit": unit,
             "series": series,
+            "series_total": series_total,
+            "series_truncated": len(series) < series_total,
         }
         for metadata_field in DASHBOARD_QUERY_METADATA_FIELDS:
             if metadata_field in metric_info:

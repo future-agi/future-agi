@@ -581,6 +581,10 @@ class DashboardQueryMetricResultSerializer(serializers.Serializer):
     aggregation = serializers.ChoiceField(choices=DASHBOARD_AGGREGATIONS)
     unit = serializers.CharField(allow_blank=True)
     series = DashboardQuerySeriesSerializer(many=True)
+    # Absent only on a payload an older build wrote to the exact-snapshot
+    # cache; every response this build formats carries both.
+    series_total = serializers.IntegerField(min_value=0, required=False)
+    series_truncated = serializers.BooleanField(required=False)
     query_complete = serializers.BooleanField(required=False)
     query_sampled = serializers.BooleanField(required=False)
     query_status = serializers.ChoiceField(

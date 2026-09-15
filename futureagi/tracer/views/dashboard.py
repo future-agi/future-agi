@@ -7180,11 +7180,7 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
             ) from exc
 
         # Format using DatasetQueryBuilder (compatible format_results)
-        formatter_config = {
-            **query_config,
-            "workspace_id": str(workspace.id),
-            "require_complete_series": True,
-        }
+        formatter_config = {**query_config, "workspace_id": str(workspace.id)}
         formatter = DatasetQueryBuilder(formatter_config)
 
         if trace_metrics and not dataset_metrics and not simulation_metrics:
