@@ -7,11 +7,19 @@ import FixMyAgentLoading from "./FixMyAgentLoading";
 import FixMyAgentSections from "./FixMyAgentSections";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
+import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
 import { useParams } from "react-router";
 import { FixMyAgentRefetchStates } from "./common";
 
 const SuggestionsPage = ({ onClose }) => {
   const { executionId } = useParams();
+  const {
+    exhaustionError,
+    handleError: handleCreditError,
+    handleUpgradeClick,
+    handleDismiss,
+  } = useCreditExhaustion({ feature: "fix_my_agent" });
 
   const {
     data: optimizerAnalysis,
@@ -45,6 +53,7 @@ const SuggestionsPage = ({ onClose }) => {
     onSuccess: () => {
       refetch();
     },
+    onError: handleCreditError,
   });
 
   const isLoadingData =
@@ -65,6 +74,11 @@ const SuggestionsPage = ({ onClose }) => {
       }}
     >
       <FixMyAgentHeader onClose={onClose} />
+      <CreditExhaustionBanner
+        error={exhaustionError}
+        onUpgrade={handleUpgradeClick}
+        onDismiss={handleDismiss}
+      />
       <ShowComponent condition={isLoadingData}>
         <FixMyAgentLoading />
       </ShowComponent>

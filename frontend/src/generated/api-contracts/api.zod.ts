@@ -23188,9 +23188,6 @@ export const ModelHubExperimentsUpdateResponse = zod.object({
 });
 
 export const ModelHubExperimentsDataListQueryParams = zod.object({
-  created_at: zod.string().optional(),
-  status: zod.string().optional(),
-  dataset_id: zod.string().optional(),
   ordering: zod
     .string()
     .optional()
@@ -23403,9 +23400,6 @@ export const ModelHubExperimentsV2CreateResponse = zod.object({
  * V2 experiment list with filtering, search, and pagination.
  */
 export const ModelHubExperimentsV2ListListQueryParams = zod.object({
-  created_at: zod.string().optional(),
-  status: zod.string().optional(),
-  dataset_id: zod.string().optional(),
   search: zod.string().optional().describe("A search term."),
   ordering: zod
     .string()
@@ -26101,8 +26095,6 @@ export const ModelHubMetricsByColumnListResponse = zod.object({
 });
 
 export const ModelHubOptimisationListQueryParams = zod.object({
-  optimize_type: zod.string().optional(),
-  status: zod.string().optional(),
   search: zod.string().optional().describe("A search term."),
   ordering: zod
     .string()
@@ -27617,7 +27609,6 @@ export const ModelHubPromptBaseTemplatesDeleteParams = zod.object({
 });
 
 export const ModelHubPromptExecutionsListQueryParams = zod.object({
-  name: zod.string().optional(),
   search: zod.string().optional().describe("A search term."),
   ordering: zod
     .string()
@@ -27816,9 +27807,6 @@ export const ModelHubPromptFoldersDeleteParams = zod.object({
 });
 
 export const ModelHubPromptHistoryExecutionsListQueryParams = zod.object({
-  template_name: zod.string().optional(),
-  template_version: zod.string().optional(),
-  created_at: zod.string().optional(),
   search: zod.string().optional().describe("A search term."),
   ordering: zod
     .string()
@@ -27885,9 +27873,6 @@ export const ModelHubPromptHistoryExecutionsGetExecutionDetailsParams =
 
 export const ModelHubPromptHistoryExecutionsGetExecutionDetailsQueryParams =
   zod.object({
-    template_name: zod.string().optional(),
-    template_version: zod.string().optional(),
-    created_at: zod.string().optional(),
     search: zod.string().optional().describe("A search term."),
     ordering: zod
       .string()
@@ -28239,9 +28224,6 @@ export const ModelHubPromptLabelsAssignLabelByIdBody = zod.object({
 });
 
 export const ModelHubPromptTemplatesListQueryParams = zod.object({
-  name: zod.string().optional(),
-  version: zod.string().optional(),
-  created_at: zod.string().optional(),
   search: zod.string().optional().describe("A search term."),
   ordering: zod
     .string()
@@ -28405,9 +28387,6 @@ If no version is specified, returns the default version (is_default=True).
 If a version is specified, returns that specific version.
  */
 export const ModelHubPromptTemplatesGetTemplateByNameQueryParams = zod.object({
-  name: zod.string().optional(),
-  version: zod.string().optional(),
-  created_at: zod.string().optional(),
   search: zod.string().optional().describe("A search term."),
   ordering: zod
     .string()
@@ -31313,7 +31292,7 @@ export const simulateAgentDefinitionsCreateCreateBodyObservabilityEnabledDefault
   false;
 export const simulateAgentDefinitionsCreateCreateBodyLivekitUrlMax = 500;
 
-export const simulateAgentDefinitionsCreateCreateBodyLivekitMaxConcurrencyMax = 25;
+export const simulateAgentDefinitionsCreateCreateBodyLivekitMaxConcurrencyMax = 5;
 
 export const SimulateAgentDefinitionsCreateCreateBody = zod.object({
   agent_name: zod
@@ -31532,7 +31511,7 @@ export const simulateAgentDefinitionsEditUpdateBodyAgentNameMax = 255;
 
 export const simulateAgentDefinitionsEditUpdateBodyLivekitUrlMax = 500;
 
-export const simulateAgentDefinitionsEditUpdateBodyLivekitMaxConcurrencyMax = 25;
+export const simulateAgentDefinitionsEditUpdateBodyLivekitMaxConcurrencyMax = 5;
 
 export const SimulateAgentDefinitionsEditUpdateBody = zod.object({
   agent_name: zod
@@ -31788,7 +31767,7 @@ export const simulateAgentDefinitionsVersionsCreateCreateBodyLivekitApiSecretMax
 
 export const simulateAgentDefinitionsVersionsCreateCreateBodyLivekitAgentNameMax = 255;
 
-export const simulateAgentDefinitionsVersionsCreateCreateBodyLivekitMaxConcurrencyMax = 25;
+export const simulateAgentDefinitionsVersionsCreateCreateBodyLivekitMaxConcurrencyMax = 5;
 
 export const simulateAgentDefinitionsVersionsCreateCreateBodyCommitMessageDefault = ``;
 export const simulateAgentDefinitionsVersionsCreateCreateBodyObservabilityEnabledDefault =
@@ -34924,6 +34903,14 @@ selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
  * @summary Provider-neutral control plane for hosted ALK harness jobs.
  */
 
+export const simulateApiHarnessJobsListResponseConsumptionTextSimTokensMin = 0;
+
+export const simulateApiHarnessJobsListResponseConsumptionVoiceSimMinutesMin = 0;
+
+export const simulateApiHarnessJobsListResponseConsumptionAiCreditsMin = 0;
+
+export const simulateApiHarnessJobsListResponseConsumptionSandboxSecondsMin = 0;
+
 export const SimulateApiHarnessJobsListResponseItem = zod.object({
   job: zod.object({
     job_id: zod.string().uuid(),
@@ -34995,6 +34982,23 @@ export const SimulateApiHarnessJobsListResponseItem = zod.object({
         .optional(),
     })
     .optional(),
+  consumption: zod
+    .object({
+      text_sim_tokens: zod
+        .number()
+        .min(simulateApiHarnessJobsListResponseConsumptionTextSimTokensMin),
+      voice_sim_minutes: zod
+        .number()
+        .min(simulateApiHarnessJobsListResponseConsumptionVoiceSimMinutesMin),
+      ai_credits: zod
+        .number()
+        .min(simulateApiHarnessJobsListResponseConsumptionAiCreditsMin),
+      sandbox_seconds: zod
+        .number()
+        .min(simulateApiHarnessJobsListResponseConsumptionSandboxSecondsMin),
+    })
+    .optional(),
+  usage_limit: zod.object({}).passthrough().optional(),
 });
 export const SimulateApiHarnessJobsListResponse = zod.array(
   SimulateApiHarnessJobsListResponseItem,
@@ -35691,6 +35695,14 @@ export const SimulateApiHarnessJobsReadParams = zod.object({
   id: zod.string(),
 });
 
+export const simulateApiHarnessJobsReadResponseConsumptionTextSimTokensMin = 0;
+
+export const simulateApiHarnessJobsReadResponseConsumptionVoiceSimMinutesMin = 0;
+
+export const simulateApiHarnessJobsReadResponseConsumptionAiCreditsMin = 0;
+
+export const simulateApiHarnessJobsReadResponseConsumptionSandboxSecondsMin = 0;
+
 export const SimulateApiHarnessJobsReadResponse = zod.object({
   job: zod.object({
     job_id: zod.string().uuid(),
@@ -35762,6 +35774,23 @@ export const SimulateApiHarnessJobsReadResponse = zod.object({
         .optional(),
     })
     .optional(),
+  consumption: zod
+    .object({
+      text_sim_tokens: zod
+        .number()
+        .min(simulateApiHarnessJobsReadResponseConsumptionTextSimTokensMin),
+      voice_sim_minutes: zod
+        .number()
+        .min(simulateApiHarnessJobsReadResponseConsumptionVoiceSimMinutesMin),
+      ai_credits: zod
+        .number()
+        .min(simulateApiHarnessJobsReadResponseConsumptionAiCreditsMin),
+      sandbox_seconds: zod
+        .number()
+        .min(simulateApiHarnessJobsReadResponseConsumptionSandboxSecondsMin),
+    })
+    .optional(),
+  usage_limit: zod.object({}).passthrough().optional(),
 });
 
 /**
@@ -35810,6 +35839,14 @@ export const SimulateApiHarnessJobsCancelBody = zod.object({
     .enum(["user_canceled", "ttl_exceeded"])
     .default(simulateApiHarnessJobsCancelBodyReasonDefault),
 });
+
+export const simulateApiHarnessJobsCancelResponseConsumptionTextSimTokensMin = 0;
+
+export const simulateApiHarnessJobsCancelResponseConsumptionVoiceSimMinutesMin = 0;
+
+export const simulateApiHarnessJobsCancelResponseConsumptionAiCreditsMin = 0;
+
+export const simulateApiHarnessJobsCancelResponseConsumptionSandboxSecondsMin = 0;
 
 export const SimulateApiHarnessJobsCancelResponse = zod.object({
   job: zod.object({
@@ -35882,6 +35919,23 @@ export const SimulateApiHarnessJobsCancelResponse = zod.object({
         .optional(),
     })
     .optional(),
+  consumption: zod
+    .object({
+      text_sim_tokens: zod
+        .number()
+        .min(simulateApiHarnessJobsCancelResponseConsumptionTextSimTokensMin),
+      voice_sim_minutes: zod
+        .number()
+        .min(simulateApiHarnessJobsCancelResponseConsumptionVoiceSimMinutesMin),
+      ai_credits: zod
+        .number()
+        .min(simulateApiHarnessJobsCancelResponseConsumptionAiCreditsMin),
+      sandbox_seconds: zod
+        .number()
+        .min(simulateApiHarnessJobsCancelResponseConsumptionSandboxSecondsMin),
+    })
+    .optional(),
+  usage_limit: zod.object({}).passthrough().optional(),
 });
 
 /**
@@ -36308,6 +36362,91 @@ export const SimulateApiHarnessAttemptsScenariosResponse = zod.object({
       }),
     ),
   }),
+});
+
+export const SimulateApiHarnessAttemptsUsageParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessAttemptsUsageBodyAmountMin = 0;
+
+export const simulateApiHarnessAttemptsUsageBodyModelMax = 255;
+
+export const simulateApiHarnessAttemptsUsageBodyRecordsItemScenarioKeyMax = 255;
+
+export const simulateApiHarnessAttemptsUsageBodyRecordsItemAmountMin = 0;
+
+export const simulateApiHarnessAttemptsUsageBodyRecordsItemModelMax = 255;
+
+export const simulateApiHarnessAttemptsUsageBodyTotalsTextSimTokensMin = 0;
+
+export const simulateApiHarnessAttemptsUsageBodyTotalsVoiceSimMinutesMin = 0;
+
+export const simulateApiHarnessAttemptsUsageBodySandboxSecondsMin = 0;
+
+export const SimulateApiHarnessAttemptsUsageBody = zod.object({
+  operation: zod.enum(["check", "report"]),
+  action: zod
+    .enum(["text_call", "voice_call", "managed_evaluation"])
+    .optional(),
+  amount: zod
+    .number()
+    .min(simulateApiHarnessAttemptsUsageBodyAmountMin)
+    .optional(),
+  model: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessAttemptsUsageBodyModelMax)
+    .optional(),
+  schema_version: zod.enum(["futureagi.harness-usage.v1"]).optional(),
+  records: zod
+    .array(
+      zod.object({
+        id: zod.string().uuid(),
+        action: zod.enum(["text_call", "voice_call", "managed_evaluation"]),
+        scenario_key: zod
+          .string()
+          .min(1)
+          .max(simulateApiHarnessAttemptsUsageBodyRecordsItemScenarioKeyMax),
+        amount: zod
+          .number()
+          .min(simulateApiHarnessAttemptsUsageBodyRecordsItemAmountMin),
+        occurred_at: zod.string().datetime({ offset: true }),
+        funding: zod.enum(["platform", "customer"]),
+        infra_failed: zod.boolean(),
+        model: zod
+          .string()
+          .min(1)
+          .max(simulateApiHarnessAttemptsUsageBodyRecordsItemModelMax)
+          .optional(),
+      }),
+    )
+    .optional(),
+  totals: zod
+    .object({
+      text_sim_tokens: zod
+        .number()
+        .min(simulateApiHarnessAttemptsUsageBodyTotalsTextSimTokensMin),
+      voice_sim_minutes: zod
+        .number()
+        .min(simulateApiHarnessAttemptsUsageBodyTotalsVoiceSimMinutesMin),
+    })
+    .optional(),
+  sandbox_seconds: zod
+    .number()
+    .min(simulateApiHarnessAttemptsUsageBodySandboxSecondsMin)
+    .optional(),
+});
+
+export const SimulateApiHarnessAttemptsUsageResponse = zod.object({
+  allowed: zod.boolean().optional(),
+  accepted: zod.boolean().optional(),
+  reason: zod.string().optional(),
+  error_code: zod.string().optional(),
+  dimension: zod.string().optional(),
+  current_usage: zod.number().optional(),
+  limit: zod.number().optional(),
+  upgrade_cta: zod.object({}).passthrough().optional(),
 });
 
 /**

@@ -15225,7 +15225,7 @@ export interface AgentDefinitionCreateRequestApi {
   livekit_config_json?: AgentDefinitionCreateRequestApiLivekitConfigJson;
   /**
    * @minimum 1
-   * @maximum 25
+   * @maximum 5
    */
   livekit_max_concurrency?: number;
 }
@@ -15466,7 +15466,7 @@ export interface AgentDefinitionEditRequestApi {
   livekit_config_json?: AgentDefinitionEditRequestApiLivekitConfigJson;
   /**
    * @minimum 1
-   * @maximum 25
+   * @maximum 5
    */
   livekit_max_concurrency?: number;
 }
@@ -15579,7 +15579,7 @@ export interface AgentVersionCreateRequestApi {
   livekit_config_json?: AgentVersionCreateRequestApiLivekitConfigJson;
   /**
    * @minimum 1
-   * @maximum 25
+   * @maximum 5
    */
   livekit_max_concurrency?: number;
   commit_message?: string;
@@ -16847,6 +16847,8 @@ export interface CallExecutionErrorResponseApi {
 
 export type HarnessJobReadApiReceiptsItem = { [key: string]: unknown };
 
+export type HarnessJobReadApiUsageLimit = { [key: string]: unknown };
+
 export type HarnessJobInfoApiSource = { [key: string]: string };
 
 export type HarnessJobInfoApiMetadata = { [key: string]: string };
@@ -16942,6 +16944,17 @@ export interface HarnessRuntimeReadApi {
   diagnostics?: HarnessDiagnosticsApi;
 }
 
+export interface HarnessConsumptionApi {
+  /** @minimum 0 */
+  text_sim_tokens: number;
+  /** @minimum 0 */
+  voice_sim_minutes: number;
+  /** @minimum 0 */
+  ai_credits: number;
+  /** @minimum 0 */
+  sandbox_seconds: number;
+}
+
 export interface HarnessJobReadApi {
   job: HarnessJobInfoApi;
   status: HarnessJobStatusApi;
@@ -16951,6 +16964,8 @@ export interface HarnessJobReadApi {
   receipts: HarnessJobReadApiReceiptsItem[];
   platform: HarnessPlatformApi;
   runtime?: HarnessRuntimeReadApi;
+  consumption?: HarnessConsumptionApi;
+  usage_limit?: HarnessJobReadApiUsageLimit;
 }
 
 export type HarnessJobCreateApiSchemaVersion =
@@ -17618,6 +17633,104 @@ export interface HarnessScenarioOperationResultApi {
 
 export interface HarnessScenarioOperationResponseApi {
   result: HarnessScenarioOperationResultApi;
+}
+
+export type HarnessUsageRequestApiOperation =
+  (typeof HarnessUsageRequestApiOperation)[keyof typeof HarnessUsageRequestApiOperation];
+
+export const HarnessUsageRequestApiOperation = {
+  check: "check",
+  report: "report",
+} as const;
+
+export type HarnessUsageRequestApiAction =
+  (typeof HarnessUsageRequestApiAction)[keyof typeof HarnessUsageRequestApiAction];
+
+export const HarnessUsageRequestApiAction = {
+  text_call: "text_call",
+  voice_call: "voice_call",
+  managed_evaluation: "managed_evaluation",
+} as const;
+
+export type HarnessUsageRequestApiSchemaVersion =
+  (typeof HarnessUsageRequestApiSchemaVersion)[keyof typeof HarnessUsageRequestApiSchemaVersion];
+
+export const HarnessUsageRequestApiSchemaVersion = {
+  "futureagiharness-usagev1": "futureagi.harness-usage.v1",
+} as const;
+
+export type HarnessUsageRecordApiAction =
+  (typeof HarnessUsageRecordApiAction)[keyof typeof HarnessUsageRecordApiAction];
+
+export const HarnessUsageRecordApiAction = {
+  text_call: "text_call",
+  voice_call: "voice_call",
+  managed_evaluation: "managed_evaluation",
+} as const;
+
+export type HarnessUsageRecordApiFunding =
+  (typeof HarnessUsageRecordApiFunding)[keyof typeof HarnessUsageRecordApiFunding];
+
+export const HarnessUsageRecordApiFunding = {
+  platform: "platform",
+  customer: "customer",
+} as const;
+
+export interface HarnessUsageRecordApi {
+  id: string;
+  action: HarnessUsageRecordApiAction;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  scenario_key: string;
+  /** @minimum 0 */
+  amount: number;
+  occurred_at: string;
+  funding: HarnessUsageRecordApiFunding;
+  infra_failed: boolean;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  model?: string;
+}
+
+export interface HarnessUsageTotalsApi {
+  /** @minimum 0 */
+  text_sim_tokens: number;
+  /** @minimum 0 */
+  voice_sim_minutes: number;
+}
+
+export interface HarnessUsageRequestApi {
+  operation: HarnessUsageRequestApiOperation;
+  action?: HarnessUsageRequestApiAction;
+  /** @minimum 0 */
+  amount?: number;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  model?: string;
+  schema_version?: HarnessUsageRequestApiSchemaVersion;
+  records?: HarnessUsageRecordApi[];
+  totals?: HarnessUsageTotalsApi;
+  /** @minimum 0 */
+  sandbox_seconds?: number;
+}
+
+export type HarnessUsageResponseApiUpgradeCta = { [key: string]: unknown };
+
+export interface HarnessUsageResponseApi {
+  allowed?: boolean;
+  accepted?: boolean;
+  reason?: string;
+  error_code?: string;
+  dimension?: string;
+  current_usage?: number;
+  limit?: number;
+  upgrade_cta?: HarnessUsageResponseApiUpgradeCta;
 }
 
 export type LiveKitCallConfigResponseApiCallMetadata = {
@@ -29288,9 +29401,6 @@ export type ModelHubExperimentDetailList200 = {
 };
 
 export type ModelHubExperimentsDataListParams = {
-  created_at?: string;
-  status?: string;
-  dataset_id?: string;
   /**
    * Which field to use when ordering the results.
    */
@@ -29317,9 +29427,6 @@ export type ModelHubExperimentsDataList200 = {
 };
 
 export type ModelHubExperimentsV2ListListParams = {
-  created_at?: string;
-  status?: string;
-  dataset_id?: string;
   /**
    * A search term.
    */
@@ -29566,8 +29673,6 @@ export type ModelHubKbSupportedEmbeddingModelsParams = {
 };
 
 export type ModelHubOptimisationListParams = {
-  optimize_type?: string;
-  status?: string;
   /**
    * A search term.
    */
@@ -29745,7 +29850,6 @@ export type ModelHubPromptBaseTemplatesGetAllCategories200 = {
 };
 
 export type ModelHubPromptExecutionsListParams = {
-  name?: string;
   /**
    * A search term.
    */
@@ -29790,9 +29894,6 @@ export type ModelHubPromptFoldersList200 = {
 };
 
 export type ModelHubPromptHistoryExecutionsListParams = {
-  template_name?: string;
-  template_version?: string;
-  created_at?: string;
   /**
    * A search term.
    */
@@ -29819,9 +29920,6 @@ export type ModelHubPromptHistoryExecutionsList200 = {
 };
 
 export type ModelHubPromptHistoryExecutionsGetExecutionDetailsParams = {
-  template_name?: string;
-  template_version?: string;
-  created_at?: string;
   /**
    * A search term.
    */
@@ -29902,9 +30000,6 @@ export type ModelHubPromptLabelsTemplateLabels200 = {
 };
 
 export type ModelHubPromptTemplatesListParams = {
-  name?: string;
-  version?: string;
-  created_at?: string;
   /**
    * A search term.
    */
@@ -29931,9 +30026,6 @@ export type ModelHubPromptTemplatesList200 = {
 };
 
 export type ModelHubPromptTemplatesGetTemplateByNameParams = {
-  name?: string;
-  version?: string;
-  created_at?: string;
   /**
    * A search term.
    */

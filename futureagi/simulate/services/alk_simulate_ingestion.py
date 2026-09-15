@@ -1215,6 +1215,16 @@ def _apply_payload(call_execution: CallExecution, payload: dict[str, Any]) -> No
         merged = call_execution.call_metadata or {}
         merged.update(incoming)
         call_execution.call_metadata = merged
+    metadata = call_execution.call_metadata or {}
+    simulator_usage = metadata.get("simulator_usage")
+    if metadata.get("infra_failed") is True or (
+        isinstance(simulator_usage, dict)
+        and simulator_usage.get("infra_failed") is True
+    ):
+        # Infrastructure health is not a successful agent outcome. Persist it
+        # on the existing FAILED lifecycle rail so every ordinary run rollup,
+        # score aggregate, evaluator gate, and billing gate excludes the call.
+        call_execution.status = CallExecution.CallStatus.FAILED
 
     _apply_harness_evaluation_outputs(call_execution)
 
@@ -1381,24 +1391,64 @@ def _store_alk_chat_messages(
     return len(rows)
 
 
+def _platform_simulator_text_tokens(call_execution: CallExecution) -> int:
+    """Return only ALK-measured tokens funded by the platform simulator."""
+    usage = (call_execution.call_metadata or {}).get("simulator_usage")
+    if not isinstance(usage, dict) or usage.get("funding") != "platform":
+        return 0
+    if usage.get("infra_failed") is True:
+        return 0
+
+    total = 0
+    for field in ("input_tokens", "output_tokens"):
+        value = usage.get(field, 0)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        if value > 0:
+            total += int(value)
+    return total
+
+
 def _deduct_alk_sim_cost_once(call_execution: CallExecution) -> None:
-    """Charge an ALK-ingested sim run the same way native does
-    (TestExecutor._deduct_call_cost: text_call by turns/tokens, voice_call by
-    duration, each with its TEXT_CALL/VOICE_CALL usage event). Guarded so a
-    re-ingest of the same result does not double-charge; a voice call with no
-    billable duration is skipped, mirroring native deduct_call_cost."""
+    """Record one ALK simulation usage event.
+
+    Text uses only measured, platform-funded simulator tokens reported by ALK.
+    Voice uses the full measured duration regardless of credential funding.
+    Failed infrastructure/results never reach either billing path.
+    """
     meta = call_execution.call_metadata or {}
     if meta.get("cost_deducted"):
+        return
+    if call_execution.status != CallExecution.CallStatus.COMPLETED:
+        return
+    usage = meta.get("simulator_usage")
+    if meta.get("infra_failed") is True or (
+        isinstance(usage, dict) and usage.get("infra_failed") is True
+    ):
+        meta["cost_deducted"] = True
+        call_execution.call_metadata = meta
+        call_execution.save(update_fields=["call_metadata"])
         return
     if (
         call_execution.simulation_call_type == CallExecution.SimulationCallType.VOICE
         and not call_execution.duration_seconds
     ):
         return
+    text_token_count = None
+    if call_execution.simulation_call_type == CallExecution.SimulationCallType.TEXT:
+        text_token_count = _platform_simulator_text_tokens(call_execution)
+        if not text_token_count:
+            meta["cost_deducted"] = True
+            call_execution.call_metadata = meta
+            call_execution.save(update_fields=["call_metadata"])
+            return
     from simulate.services.test_executor import TestExecutor
 
     try:
-        TestExecutor._deduct_call_cost(call_execution)
+        TestExecutor._deduct_call_cost(
+            call_execution,
+            text_token_count=text_token_count,
+        )
     except Exception:
         logger.exception(
             "alk_sim_cost_deduct_failed", call_execution_id=str(call_execution.id)

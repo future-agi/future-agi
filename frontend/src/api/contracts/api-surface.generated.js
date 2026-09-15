@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1004,
+  endpointCount: 1005,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -860,6 +860,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/simulate/api/harness/attempts/{id}/ingress/": ["post"],
       "/simulate/api/harness/attempts/{id}/results/": ["post"],
       "/simulate/api/harness/attempts/{id}/scenarios/": ["post"],
+      "/simulate/api/harness/attempts/{id}/usage/": ["post"],
       "/simulate/api/livekit/call-config/{call_id}/": ["get"],
       "/simulate/api/livekit/call-execution/{call_id}/": ["patch"],
       "/simulate/api/livekit/listener-token/{call_id}/": ["get"],
@@ -2043,6 +2044,7 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/simulate/api/harness/attempts/{id}/ingress/": ["post"],
   "/simulate/api/harness/attempts/{id}/results/": ["post"],
   "/simulate/api/harness/attempts/{id}/scenarios/": ["post"],
+  "/simulate/api/harness/attempts/{id}/usage/": ["post"],
   "/simulate/api/livekit/call-config/{call_id}/": ["get"],
   "/simulate/api/livekit/call-execution/{call_id}/": ["patch"],
   "/simulate/api/livekit/listener-token/{call_id}/": ["get"],

@@ -572,6 +572,8 @@ import type {
   HarnessSecretFileUploadResponseApi,
   HarnessSecretValuesApi,
   HarnessSourceUploadResponseApi,
+  HarnessUsageRequestApi,
+  HarnessUsageResponseApi,
   HealthCheckResponseApi,
   HeartbeatApi,
   HuggingFaceAddRowsRequestApi,
@@ -58921,6 +58923,56 @@ export const simulateApiHarnessAttemptsScenarios = async (
   );
 };
 
+export type simulateApiHarnessAttemptsUsageResponse200 = {
+  data: HarnessUsageResponseApi;
+  status: 200;
+};
+
+export type simulateApiHarnessAttemptsUsageResponse402 = {
+  data: HarnessUsageResponseApi;
+  status: 402;
+};
+
+export type simulateApiHarnessAttemptsUsageResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 402>;
+};
+
+export type simulateApiHarnessAttemptsUsageResponseSuccess =
+  simulateApiHarnessAttemptsUsageResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessAttemptsUsageResponseError = (
+  | simulateApiHarnessAttemptsUsageResponse402
+  | simulateApiHarnessAttemptsUsageResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateApiHarnessAttemptsUsageResponse =
+  | simulateApiHarnessAttemptsUsageResponseSuccess
+  | simulateApiHarnessAttemptsUsageResponseError;
+
+export const getSimulateApiHarnessAttemptsUsageUrl = (id: string) => {
+  return `/simulate/api/harness/attempts/${id}/usage/`;
+};
+
+export const simulateApiHarnessAttemptsUsage = async (
+  id: string,
+  harnessUsageRequestApi: HarnessUsageRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessAttemptsUsageResponse> => {
+  return apiMutator<simulateApiHarnessAttemptsUsageResponse>(
+    getSimulateApiHarnessAttemptsUsageUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessUsageRequestApi),
+    },
+  );
+};
+
 export type simulateApiLivekitCallConfigReadResponse200 = {
   data: LiveKitCallConfigResponseApi;
   status: 200;
@@ -64742,6 +64794,11 @@ export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse400 = {
   status: 400;
 };
 
+export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse402 = {
+  data: ApiTextErrorResponseApi;
+  status: 402;
+};
+
 export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse404 = {
   data: ApiTextErrorResponseApi;
   status: 404;
@@ -64755,7 +64812,7 @@ export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse500 = {
 export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponseDefault =
   {
     data: ManagementAPIErrorResponseApi;
-    status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>;
+    status: Exclude<HTTPStatusCodes, 200 | 400 | 402 | 404 | 500>;
   };
 
 export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponseSuccess =
@@ -64765,6 +64822,7 @@ export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponseSuccess 
 export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponseError =
   (
     | simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse400
+    | simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse402
     | simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse404
     | simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse500
     | simulateTestExecutionsOptimiserAnalysisRefreshCreateResponseDefault

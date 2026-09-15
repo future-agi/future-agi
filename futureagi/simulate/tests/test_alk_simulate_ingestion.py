@@ -923,6 +923,69 @@ class TestResultIngest:
         call = CallExecution.objects.get(id=call_id)
         assert (call.call_metadata or {}).get("cost_deducted") is True
         assert call.duration_seconds == 15
+    def test_voice_usage_event_keeps_fractional_measured_minutes(
+        self, auth_client, run_test
+    ):
+        from simulate.services.test_executor import TestExecutor
+
+        _, call_ids = _start_and_batch(auth_client, run_test)
+        call = CallExecution.objects.get(id=call_ids[0])
+        call.duration_seconds = 15
+        emitted = []
+
+        with (
+            patch(
+                "simulate.services.test_executor.APICallType.objects.get_or_create",
+                return_value=(SimpleNamespace(), False),
+            ),
+            patch("simulate.services.test_executor.deduct_cost_for_request"),
+            patch(
+                "ee.usage.services.emitter.emit",
+                side_effect=lambda event: emitted.append(event),
+            ),
+        ):
+            TestExecutor._deduct_call_cost(call)
+
+        assert len(emitted) == 1
+        assert emitted[0].amount == 0.25
+        assert emitted[0].event_id
+    def test_failed_infrastructure_result_is_not_billed_or_evaluated(
+        self, auth_client, run_test
+    ):
+        _, call_ids = _start_and_batch(auth_client, run_test)
+        with (
+            patch(
+                "simulate.services.test_executor.TestExecutor._deduct_call_cost"
+            ) as deduct,
+            patch(
+                "simulate.services.alk_simulate_ingestion._dispatch_evaluations_once"
+            ) as dispatch_evals,
+        ):
+            response = auth_client.patch(
+                f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+                {
+                    "status": "completed",
+                    "error_message": "runner infrastructure unavailable",
+                    "duration_seconds": 15,
+                    "call_metadata": {
+                        "simulator_usage": {
+                            "infra_failed": True,
+                            "input_tokens": 10,
+                            "output_tokens": 5,
+                            "funding": "platform",
+                        }
+                    },
+                },
+                format="json",
+            )
+
+        assert response.status_code == 200, response.content
+        deduct.assert_not_called()
+        dispatch_evals.assert_not_called()
+        call = CallExecution.objects.get(id=call_ids[0])
+        assert call.status == CallExecution.CallStatus.FAILED
+
+
 
     def test_hosted_rerun_reset_clears_batch_claim_for_readoption(
         self, auth_client, run_test
@@ -1333,6 +1396,71 @@ class TestTextModeIngestion:
         # turn_count = number of ASSISTANT rows (one agent turn in the fixture).
         cmd = call.conversation_metrics_data or {}
         assert cmd.get("turn_count") == 1
+    def test_text_billing_uses_only_measured_platform_simulator_tokens(
+        self, auth_client, text_run_test
+    ):
+        _, call_ids = _start_and_batch(auth_client, text_run_test)
+        body = {
+            "status": "completed",
+            "transcript": _transcript_payload(),
+            "call_metadata": {
+                "simulator_usage": {
+                    "input_tokens": 41,
+                    "output_tokens": 7,
+                    "funding": "platform",
+                }
+            },
+        }
+
+        with patch(
+            "simulate.services.test_executor.TestExecutor._deduct_call_cost"
+        ) as deduct:
+            response = auth_client.patch(
+                f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+                body,
+                format="json",
+            )
+            assert response.status_code == 200, response.content
+            assert deduct.call_count == 1
+            assert deduct.call_args.kwargs["text_token_count"] == 48
+
+            retry = auth_client.patch(
+                f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+                body,
+                format="json",
+            )
+            assert retry.status_code == 200, retry.content
+            assert deduct.call_count == 1
+
+    def test_customer_funded_text_usage_is_not_billed(
+        self, auth_client, text_run_test
+    ):
+        _, call_ids = _start_and_batch(auth_client, text_run_test)
+        with patch(
+            "simulate.services.test_executor.TestExecutor._deduct_call_cost"
+        ) as deduct:
+            response = auth_client.patch(
+                f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+                {
+                    "status": "completed",
+                    "transcript": _transcript_payload(),
+                    "call_metadata": {
+                        "simulator_usage": {
+                            "input_tokens": 500,
+                            "output_tokens": 300,
+                            "funding": "customer",
+                        }
+                    },
+                },
+                format="json",
+            )
+
+        assert response.status_code == 200, response.content
+        deduct.assert_not_called()
+        call = CallExecution.objects.get(id=call_ids[0])
+        assert call.call_metadata["cost_deducted"] is True
+
+
 
     def test_text_result_ingest_folds_tool_calls_into_agent_turn(
         self, auth_client, text_run_test
@@ -1422,6 +1550,55 @@ class TestBuildRunnerJob:
             "key": "INTERNAL_API_SECRET",
             "purpose": "internal_api_secret",
         }
+    def test_usage_denial_raises_structured_exception_before_case_loading(
+        self, text_run_test, scenario, monkeypatch
+    ):
+        from ee.usage.exceptions import UsageLimitExceeded
+        from ee.usage.schemas.events import CheckResult
+        from simulate.services.alk_simulate_ingestion import (
+            create_alk_sim_test_execution,
+        )
+        from simulate.services.hosted_runner import build_start_runner_job
+
+        execution = create_alk_sim_test_execution(text_run_test)
+        check = CheckResult(
+            allowed=False,
+            reason="Simulation usage limit reached",
+            error_code="FREE_TIER_LIMIT",
+            dimension="text_sim_tokens",
+            current_usage=100,
+            limit=100,
+        )
+        monkeypatch.setattr(
+            "ee.usage.services.metering.check_usage",
+            lambda *_args, **_kwargs: check,
+        )
+
+        with patch(
+            "simulate.services.hosted_runner._load_scenarios"
+        ) as load_scenarios:
+            with pytest.raises(UsageLimitExceeded) as raised:
+                build_start_runner_job(
+                    test_execution_id=str(execution.id),
+                    run_test_id=str(text_run_test.id),
+                    scenario_ids=[str(scenario.id)],
+                    mode="chat",
+                )
+
+        assert raised.value.check_result is check
+        load_scenarios.assert_not_called()
+
+    def test_usage_event_ids_are_stable_per_call_and_action(self):
+        from uuid import UUID
+
+        from simulate.services.test_executor import _simulation_usage_event_id
+
+        call_id = "07e350e1-3e42-40d4-a272-ac0fd3911d21"
+        text_id = _simulation_usage_event_id(call_id, "text_call")
+        assert text_id == _simulation_usage_event_id(call_id, "text_call")
+        assert text_id != _simulation_usage_event_id(call_id, "voice_call")
+        assert str(UUID(text_id)) == text_id
+
 
 
 @pytest.mark.integration
@@ -3601,6 +3778,7 @@ class TestHostedRunnerActivityHelpers:
         child_env = _child_environment(job)
 
         assert child_env["FI_INTERNAL_SUBMIT_SECRET"] == "shared-service-secret"
+        assert child_env["ALK_SIMULATOR_FUNDING"] == "platform"
 
     def test_child_environment_denies_customer_provider_api_keys(self, monkeypatch):
         # Exact-key, not prefix: a chat job

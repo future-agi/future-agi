@@ -142,6 +142,7 @@ from simulate.services.test_executor import (
 )
 from simulate.tasks.eval_summary_tasks import run_eval_summary_task
 from simulate.utils.agent_optimiser import (
+    AnalysisUsageDenied,
     create_optimiser_run_for_test_execution,
     get_latest_optimiser_result,
     get_or_create_optimiser_for_test_execution,
@@ -6337,9 +6338,7 @@ class TestExecutionOptimiserAnalysisView(APIView):
                 run_test__deleted=False,
             )
 
-            optimiser = get_or_create_optimiser_for_test_execution(test_execution)
-
-            result_data = get_latest_optimiser_result(optimiser, test_execution)
+            result_data = get_latest_optimiser_result(test_execution.agent_optimiser)
 
             return self._gm.success_response(result_data)
 
@@ -6366,6 +6365,7 @@ class TestExecutionOptimiserAnalysisRefreshView(APIView):
         responses={
             200: OptimiserAnalysisRefreshResponseSerializer,
             400: ApiTextErrorResponseSerializer,
+            402: ApiTextErrorResponseSerializer,
             404: ApiTextErrorResponseSerializer,
             500: ApiTextErrorResponseSerializer,
         },
@@ -6408,6 +6408,8 @@ class TestExecutionOptimiserAnalysisRefreshView(APIView):
                     "Unable to prepare input data. Ensure test execution has completed calls."
                 )
 
+        except AnalysisUsageDenied as exc:
+            return self._gm.usage_limit_response(exc.check_result)
         except (TestExecution.DoesNotExist, Http404):
             return self._gm.not_found(get_error_message("TEST_EXECUTION_NOT_FOUND"))
         except Exception:
@@ -6888,7 +6890,6 @@ class CallExecutionRerunView(APIView):
             is_hosted = _hosted_execution_eligible(
                 test_execution.run_test, test_execution
             )
-
 
             repository_job_id = _repository_harness_job_id(test_execution)
 

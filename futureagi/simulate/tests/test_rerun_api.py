@@ -15,6 +15,7 @@ from django.test import override_settings
 from django.utils import timezone
 from rest_framework import status
 
+from ee.usage.schemas.events import CheckResult
 from accounts.models.workspace import Workspace
 from model_hub.models.choices import DatasetSourceChoices, SourceChoices, StatusType
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
@@ -408,9 +409,7 @@ class TestCallExecutionRerunView:
         rerun_saved_job.assert_called_once_with(
             str(job_id),
             {
-                "environment_values": {
-                    "LIVEKIT_URL": "wss://example.invalid"
-                },
+                "environment_values": {"LIVEKIT_URL": "wss://example.invalid"},
                 "secret_refs": {},
                 "only": [],
             },
@@ -1589,9 +1588,7 @@ class TestTestExecutionDeleteView:
 class TestEvalExplanationSummaryRefreshView:
     """Tests for POST /simulate/test-executions/<uuid>/eval-explanation-summary/refresh/"""
 
-    URL_TEMPLATE = (
-        "/simulate/test-executions/{}/eval-explanation-summary/refresh/"
-    )
+    URL_TEMPLATE = "/simulate/test-executions/{}/eval-explanation-summary/refresh/"
 
     @patch(
         "simulate.views.run_test.run_eval_summary_task.apply_async",
@@ -1635,8 +1632,10 @@ class TestOptimiserAnalysisRefreshView:
 
     @patch("simulate.utils.agent_optimiser.prepare_simulation_analysis_input")
     @patch("simulate.tasks.agent_optimiser_tasks.execute_optimiser_run")
+    @patch("simulate.utils.agent_optimiser._check_analysis_usage")
     def test_optimiser_analysis_refresh_marks_failed_when_dispatch_fails(
         self,
+        mock_check_usage,
         mock_task,
         mock_prepare,
         auth_client,
@@ -1646,6 +1645,7 @@ class TestOptimiserAnalysisRefreshView:
         from simulate.models import AgentOptimiserRun
 
         mock_prepare.return_value = {"test_execution_id": str(test_execution.id)}
+        mock_check_usage.return_value = CheckResult(allowed=True)
         mock_task.delay.side_effect = TimeoutError("temporal dispatch timed out")
 
         response = auth_client.post(
@@ -1654,8 +1654,13 @@ class TestOptimiserAnalysisRefreshView:
 
         assert response.status_code == status.HTTP_200_OK
         assert response.data["status"] is True
-        assert response.data["result"]["status"] == AgentOptimiserRun.OptimiserStatus.FAILED
-        mock_task.delay.assert_called_once()
+        assert (
+            response.data["result"]["status"]
+            == AgentOptimiserRun.OptimiserStatus.FAILED
+        )
+        mock_check_usage.assert_called_once_with(
+            str(test_execution.run_test.organization_id)
+        )
 
         run = AgentOptimiserRun.objects.order_by("-created_at").first()
         assert run is not None
@@ -1663,6 +1668,45 @@ class TestOptimiserAnalysisRefreshView:
         assert (run.metadata or {}).get("error", {}).get("dispatch_error") == (
             "temporal dispatch timed out"
         )
+
+    @patch("simulate.utils.agent_optimiser.prepare_simulation_analysis_input")
+    @patch("simulate.tasks.agent_optimiser_tasks.execute_optimiser_run")
+    @patch("simulate.utils.agent_optimiser._check_analysis_usage")
+    def test_optimiser_analysis_refresh_denial_preserves_usage_error(
+        self,
+        mock_check_usage,
+        mock_task,
+        mock_prepare,
+        auth_client,
+        test_execution,
+        call_execution,
+    ):
+        mock_check_usage.return_value = CheckResult(
+            allowed=False,
+            reason="Analysis budget paused",
+            error_code="BUDGET_PAUSED",
+            dimension="ai_credits",
+            current_usage=12,
+            limit=10,
+        )
+
+        response = auth_client.post(
+            self.URL_TEMPLATE.format(test_execution.id), {}, format="json"
+        )
+
+        assert response.status_code == status.HTTP_402_PAYMENT_REQUIRED
+        assert response.data["error_code"] == "BUDGET_PAUSED"
+        assert response.data["dimension"] == "ai_credits"
+        assert response.data["current_usage"] == 12
+        assert response.data["limit"] == 10
+        mock_prepare.assert_not_called()
+        mock_task.delay.assert_not_called()
+
+        from simulate.models import AgentOptimiserRun
+
+        assert not AgentOptimiserRun.objects.filter(
+            agent_optimiser__test_executions=test_execution
+        ).exists()
 
 
 # ============================================================================
