@@ -4,6 +4,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from django.conf import settings
+from django.core import signing
 from django.test import override_settings
 
 from tracer.serializers.observation_span import SpanObserveListQuerySerializer
@@ -12,6 +14,7 @@ from tracer.serializers.trace import (
     TraceVoiceCallListQuerySerializer,
 )
 from tracer.services.clickhouse.list_cursor import (
+    CURSOR_SALT,
     ListCursorError,
     cursor_page_metadata,
     cursor_scope_for_request,
@@ -666,3 +669,161 @@ def test_cursor_datetime_precision_matches_canonical_ch25_schema():
     # Python datetime preserves six fractional digits, so the signed cursor's
     # ordering timestamp is lossless for the canonical direct-write schema.
     assert "start_time          DateTime64(6, 'UTC')" in schema
+
+
+def test_a_cursor_carries_the_witness_slack_its_pagination_started_with():
+    """Candidacy must not move between two hops of one cursor.
+
+    The witness slack decides which traces are candidates at all, and it is a
+    runtime setting an operator may turn at any moment. A change between hops
+    would move that boundary under a half-published page: rows already returned
+    stop being candidates (the user sees a duplicate when the next hop
+    re-seeds) and rows already skipped start being them (the user never sees
+    them). So the first hop mints the slack it used and every later hop honours
+    it.
+    """
+
+    token, values = _token(witness_slack_hours=1)
+
+    cursor = decode_list_cursor(
+        token,
+        resource=values["resource"],
+        scope=values["scope"],
+        query=values["query"],
+        page_size=values["page_size"],
+    )
+
+    assert cursor.witness_slack_hours == 1
+
+
+def test_zero_witness_slack_survives_the_round_trip_as_zero_not_absence():
+    """Zero is the legacy escape hatch and a real, carryable choice."""
+
+    token, values = _token(witness_slack_hours=0)
+    cursor = decode_list_cursor(
+        token,
+        resource=values["resource"],
+        scope=values["scope"],
+        query=values["query"],
+        page_size=values["page_size"],
+    )
+
+    assert cursor.witness_slack_hours == 0
+    assert cursor.witness_slack_hours is not None
+
+
+def test_a_legacy_cursor_without_slack_decodes_and_keeps_the_current_setting():
+    """Absence is well defined, so this field is NOT a CURSOR_VERSION bump.
+
+    Rejecting live tokens would 400 the grid down to the numbered lane for a
+    field whose absence already means 'use the runtime setting' - which is
+    precisely what those tokens got before it existed.
+    """
+
+    token, values = _token()
+
+    cursor = decode_list_cursor(
+        token,
+        resource=values["resource"],
+        scope=values["scope"],
+        query=values["query"],
+        page_size=values["page_size"],
+    )
+
+    assert cursor.witness_slack_hours is None
+
+
+def test_a_cursor_with_no_slack_is_byte_identical_to_a_pre_field_cursor():
+    """No slack to carry means no payload change, so no fingerprint change."""
+
+    with patch("django.core.signing.time.time", return_value=1_700_000_000):
+        without, _ = _token()
+        explicit_none, _ = _token(witness_slack_hours=None)
+        with_slack, _ = _token(witness_slack_hours=2)
+
+    assert without == explicit_none
+    assert list_cursor_boundary_fingerprint(without) == (
+        list_cursor_boundary_fingerprint(explicit_none)
+    )
+    assert with_slack != without
+    assert list_cursor_boundary_fingerprint(with_slack) != (
+        list_cursor_boundary_fingerprint(without)
+    )
+
+
+@pytest.mark.parametrize("slack", [-1, 169, 1.5, True, "1"])
+def test_a_cursor_cannot_be_minted_with_an_unsupported_slack(slack):
+    with pytest.raises(ValueError, match="witness slack"):
+        _token(witness_slack_hours=slack)
+
+
+@pytest.mark.parametrize("slack", [-1, 169, "1", 1.5])
+def test_a_tampered_slack_is_rejected_as_an_invalid_cursor(slack):
+    """A payload outside the codec's own range was not minted by the codec."""
+
+    token, values = _token(witness_slack_hours=1)
+    payload = signing.loads(token, key=settings.SECRET_KEY, salt=CURSOR_SALT)
+    payload["witness_slack_hours"] = slack
+    forged = signing.dumps(
+        payload, key=settings.SECRET_KEY, salt=CURSOR_SALT, compress=True
+    )
+
+    with pytest.raises(ListCursorError) as excinfo:
+        decode_list_cursor(
+            forged,
+            resource=values["resource"],
+            scope=values["scope"],
+            query=values["query"],
+            page_size=values["page_size"],
+        )
+    assert excinfo.value.code == "invalid_cursor"
+
+
+def test_the_view_helpers_read_and_pin_the_witness_slack_they_are_given():
+    """The two seams the list views use, on builders that do and do not care.
+
+    ``getattr``-based on purpose: every list resource shares this cursor codec,
+    and only the lanes with a witness envelope answer. A builder that does not
+    publishes no slack, so its cursors stay byte-identical, and pinning one is
+    a no-op rather than an error.
+    """
+
+    from tracer.views.trace import (
+        _pin_cursor_filter_seed_witness_slack,
+        _read_filter_seed_witness_slack,
+    )
+
+    class _WithEnvelope:
+        def __init__(self):
+            self.pinned = "unset"
+
+        def filter_seed_witness_slack_hours(self):
+            return 2
+
+        def pin_filter_seed_witness_slack_hours(self, hours):
+            self.pinned = hours
+
+    builder = _WithEnvelope()
+    assert _read_filter_seed_witness_slack(builder) == 2
+
+    # No cursor: a first hop must not pin anything.
+    _pin_cursor_filter_seed_witness_slack(builder, None)
+    assert builder.pinned == "unset"
+
+    _pin_cursor_filter_seed_witness_slack(
+        builder, SimpleNamespace(witness_slack_hours=1)
+    )
+    assert builder.pinned == 1
+
+    # A legacy token clears the pin back to the runtime setting.
+    _pin_cursor_filter_seed_witness_slack(
+        builder, SimpleNamespace(witness_slack_hours=None)
+    )
+    assert builder.pinned is None
+
+    # A builder with no envelope answers nothing and is never pinned.
+    indifferent = SimpleNamespace()
+    assert _read_filter_seed_witness_slack(indifferent) is None
+    _pin_cursor_filter_seed_witness_slack(
+        indifferent, SimpleNamespace(witness_slack_hours=1)
+    )
