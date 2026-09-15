@@ -8,7 +8,7 @@ from simulate.serializers.hosted_harness import _reject_non_finite
 class HarnessUsageRecordSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     action = serializers.ChoiceField(
-        choices=("scenario_generation", "text_call", "voice_call", "managed_evaluation")
+        choices=("text_call", "voice_call", "managed_evaluation")
     )
     scenario_key = serializers.CharField(max_length=255)
     amount = serializers.FloatField(min_value=0, validators=[_reject_non_finite])
@@ -19,18 +19,9 @@ class HarnessUsageRecordSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         amount = attrs["amount"]
-        if (
-            attrs["action"] in {"scenario_generation", "managed_evaluation"}
-            and amount != 1
-        ):
+        if attrs["action"] == "managed_evaluation" and amount != 1:
             raise serializers.ValidationError(
                 "Each completed action reports exactly one unit."
-            )
-        if attrs["action"] == "scenario_generation" and (
-            attrs["funding"] != "platform" or attrs["infra_failed"]
-        ):
-            raise serializers.ValidationError(
-                "Generated rows are platform-funded successful actions."
             )
         if attrs["action"] == "managed_evaluation" and not attrs.get("model"):
             raise serializers.ValidationError(
@@ -51,12 +42,7 @@ class HarnessUsageTotalsSerializer(serializers.Serializer):
 class HarnessUsageRequestSerializer(serializers.Serializer):
     operation = serializers.ChoiceField(choices=("check", "report"))
     action = serializers.ChoiceField(
-        choices=(
-            "scenario_generation",
-            "text_call",
-            "voice_call",
-            "managed_evaluation",
-        ),
+        choices=("text_call", "voice_call", "managed_evaluation"),
         required=False,
     )
     amount = serializers.FloatField(

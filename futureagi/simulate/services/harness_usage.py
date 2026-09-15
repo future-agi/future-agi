@@ -23,7 +23,6 @@ from tfc.ee_gating import is_oss
 
 _EVENT_TYPES = {
     "harness_authoring": "harness_authoring",
-    "scenario_generation": "synthetic_data_generation",
     "text_call": "text_call",
     "voice_call": "voice_call",
 }
@@ -93,7 +92,6 @@ def require_harness_action(organization_id: str, action: str) -> None:
 
 def require_harness_authoring(organization_id: str) -> None:
     require_harness_action(organization_id, "harness_authoring")
-    require_harness_action(organization_id, "scenario_generation")
 
 
 def require_harness_run(job: HostedHarnessJob) -> None:

@@ -15239,7 +15239,7 @@ export interface AgentDefinitionCreateRequestApi {
   livekit_config_json?: AgentDefinitionCreateRequestApiLivekitConfigJson;
   /**
    * @minimum 1
-   * @maximum 25
+   * @maximum 5
    */
   livekit_max_concurrency?: number;
 }
@@ -15480,7 +15480,7 @@ export interface AgentDefinitionEditRequestApi {
   livekit_config_json?: AgentDefinitionEditRequestApiLivekitConfigJson;
   /**
    * @minimum 1
-   * @maximum 25
+   * @maximum 5
    */
   livekit_max_concurrency?: number;
 }
@@ -15593,7 +15593,7 @@ export interface AgentVersionCreateRequestApi {
   livekit_config_json?: AgentVersionCreateRequestApiLivekitConfigJson;
   /**
    * @minimum 1
-   * @maximum 25
+   * @maximum 5
    */
   livekit_max_concurrency?: number;
   commit_message?: string;
@@ -17661,7 +17661,6 @@ export type HarnessUsageRequestApiAction =
   (typeof HarnessUsageRequestApiAction)[keyof typeof HarnessUsageRequestApiAction];
 
 export const HarnessUsageRequestApiAction = {
-  scenario_generation: "scenario_generation",
   text_call: "text_call",
   voice_call: "voice_call",
   managed_evaluation: "managed_evaluation",
@@ -17678,7 +17677,6 @@ export type HarnessUsageRecordApiAction =
   (typeof HarnessUsageRecordApiAction)[keyof typeof HarnessUsageRecordApiAction];
 
 export const HarnessUsageRecordApiAction = {
-  scenario_generation: "scenario_generation",
   text_call: "text_call",
   voice_call: "voice_call",
   managed_evaluation: "managed_evaluation",

@@ -32,7 +32,7 @@ def metered_attempt(organization, monkeypatch, settings):
 
 
 def _record(
-    action="scenario_generation", *, amount=1, funding="platform", infra_failed=False
+    action="text_call", *, amount=1, funding="platform", infra_failed=False
 ):
     return {
         "id": str(uuid4()),
@@ -66,36 +66,6 @@ def _report(records):
         },
         "sandbox_seconds": 12.5,
     }
-
-
-@pytest.mark.django_db
-def test_repeated_generation_reports_reconcile_with_existing_billing_ledger(
-    metered_attempt, monkeypatch, django_capture_on_commit_callbacks
-):
-    consumer = pytest.importorskip("ee.cloud.billing.consumer")
-    from ee.usage.models.usage import UsageEventLog, UsageSummary
-
-    capability, redis = metered_attempt
-    monkeypatch.setattr(consumer, "get_redis", lambda: redis)
-    consumer._ensure_consumer_group()
-    # The same snapshot can arrive from HTTP and the final pre-delete poll.
-    report = _report([_record() for _ in range(31)])
-    with django_capture_on_commit_callbacks(execute=True):
-        harness_usage.record_harness_usage(capability.attempt, report)
-        harness_usage.record_harness_usage(capability.attempt, report)
-    consumer.process_batch()
-    assert (
-        UsageEventLog.objects.filter(
-            organization=capability.attempt.job.organization
-        ).count()
-        == 31
-    )
-    summary = UsageSummary.objects.get(
-        organization=capability.attempt.job.organization, dimension="ai_credits"
-    )
-    assert summary.total_usage_raw == 31
-    capability.attempt.job.refresh_from_db()
-    assert harness_usage.harness_consumption(capability.attempt.job)["ai_credits"] == 31
 
 
 @pytest.mark.django_db

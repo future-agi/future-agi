@@ -45533,7 +45533,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         livekit_max_concurrency: {
           title: "Livekit max concurrency",
           type: "integer",
-          maximum: 25,
+          maximum: 5,
           minimum: 1,
           "x-nullable": true,
         },
@@ -45687,7 +45687,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         livekit_max_concurrency: {
           title: "Livekit max concurrency",
           type: "integer",
-          maximum: 25,
+          maximum: 5,
           minimum: 1,
           "x-nullable": true,
         },
@@ -46678,7 +46678,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         livekit_max_concurrency: {
           title: "Livekit max concurrency",
           type: "integer",
-          maximum: 25,
+          maximum: 5,
           minimum: 1,
         },
         commit_message: {
@@ -60511,12 +60511,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         action: {
           title: "Action",
           type: "string",
-          enum: [
-            "scenario_generation",
-            "text_call",
-            "voice_call",
-            "managed_evaluation",
-          ],
+          enum: ["text_call", "voice_call", "managed_evaluation"],
         },
         amount: {
           title: "Amount",
@@ -88196,12 +88191,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         action: {
           title: "Action",
           type: "string",
-          enum: [
-            "scenario_generation",
-            "text_call",
-            "voice_call",
-            "managed_evaluation",
-          ],
+          enum: ["text_call", "voice_call", "managed_evaluation"],
         },
         scenario_key: {
           title: "Scenario key",
