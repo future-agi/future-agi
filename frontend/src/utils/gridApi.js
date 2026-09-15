@@ -19,3 +19,15 @@ export function withLiveGridApi(api, callback) {
   callback(api);
   return true;
 }
+
+/** Release a cancelled datasource request without publishing stale/empty rows. */
+export function settleCancelledGridRead(params, { retry = false } = {}) {
+  return withLiveGridApi(params.api, (api) => {
+    // AG Grid's shared concurrency slot is released only by a callback, even
+    // when the request's original store has already been replaced.
+    params.fail();
+    // A refresh retaining the store must retry after the old block settles;
+    // otherwise the old callback marks the newly refreshed block as failed.
+    if (retry) api.retryServerSideLoads?.();
+  });
+}

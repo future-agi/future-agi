@@ -781,12 +781,10 @@ const UsersView = ({
     searchState === "empty" &&
     !hasActiveFilter;
 
-  const shouldShowGrid =
-    hasData === true ||
-    (isLoading && searchState !== "empty") ||
-    searchState === "searching" ||
-    searchState === "error" ||
-    hasActiveFilter;
+  // Every state must show either the confirmed empty screen or the grid.
+  // A cancelled initial read can settle loading before it establishes hasData;
+  // hiding both containers then leaves the entire Users page blank.
+  const shouldShowGrid = !shouldShowEmptyLayout;
 
   return (
     <>
