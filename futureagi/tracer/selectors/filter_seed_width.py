@@ -16,10 +16,13 @@ older history to the next adjacent slice rather than skipping it.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import Any
 
 _HOUR = timedelta(hours=1)
+_ESTIMATE_COLUMNS = frozenset({"database", "table", "parts", "rows", "marks"})
 
 
 class EmptyDensityEstimate:
@@ -55,6 +58,60 @@ class EmptyDensityEstimate:
 
 
 EMPTY_DENSITY_ESTIMATE = EmptyDensityEstimate()
+
+
+def reduce_density_estimate(
+    rows: Iterable[Mapping[str, Any]],
+    columns: Iterable[str] | None,
+    *,
+    table: str,
+) -> int | EmptyDensityEstimate | None:
+    """Reduce one ``EXPLAIN ESTIMATE`` result to a policy's row bound.
+
+    The statement returns the estimate table, one row per part it would read:
+    ``database``, ``table``, ``parts``, ``rows``, ``marks``. A policy consumes
+    a single integer, so several part rows for ``table`` SUM.
+
+    Three shapes have to be told apart, and the ``columns`` the transport
+    reports are what separate the last one - not the row count:
+
+    * the estimate table with part rows is their summed ``rows``;
+    * the estimate table with NO rows is ``EMPTY_DENSITY_ESTIMATE``, which is
+      explicitly NOT the integer zero. A key condition selecting no part and a
+      plan that carried no readable step produce the identical answer here and
+      call for opposite decisions, so this function refuses to pick one: the
+      selector decides, and accepts the zero reading only when a completed
+      statement in the same request has already shown the newer region next
+      door to be empty;
+    * anything else - a transport that answered something other than this
+      statement, or a server whose estimate table changed shape - is ``None``,
+      meaning unknown, and the caller keeps the unprobed cap.
+
+    Only the naming lane's own table counts. A statement naming one table can
+    only answer for one table; a row naming another means the result is not
+    the one this function is documented to read.
+
+    It is a module-level function rather than a builder method because two
+    lanes now emit the same statement and the reading of an empty estimate is
+    the part that must not drift between them.
+    """
+
+    names = {str(name) for name in (columns or ())}
+    if not _ESTIMATE_COLUMNS.issubset(names):
+        return None
+    counted_any = False
+    estimate = 0
+    for row in rows or ():
+        counted_any = True
+        if not isinstance(row, Mapping):
+            return None
+        if str(row.get("table") or "") != table:
+            return None
+        counted = row.get("rows")
+        if isinstance(counted, bool) or not isinstance(counted, (int, float)):
+            return None
+        estimate += max(0, int(counted))
+    return estimate if counted_any else EMPTY_DENSITY_ESTIMATE
 
 
 def _snap_whole_hour_power_of_two(width: timedelta, *, round_up: bool) -> timedelta:

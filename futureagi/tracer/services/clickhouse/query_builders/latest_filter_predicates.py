@@ -234,6 +234,14 @@ class LatestFilterPredicate:
     # attribute value; the latest-state classifier still applies the complete
     # value predicate before a row can become a graph point.
     raw_key_witness_predicate: str | None = None
+    # The same companions with NO row-level comparison of any kind: every term
+    # is wrapped in ``indexHint``, so the expression is true for every row of
+    # every granule the skip indexes could not exclude and the statement reads
+    # no Map column at all. It is a GRANULE-level necessary condition of the
+    # same matches ``raw_witness_predicate`` selects, which is what a probe
+    # that only has to locate an interval needs; it can never be used to
+    # decide membership, and the classifier still applies the full predicate.
+    raw_index_witness_predicate: str | None = None
     # Stricter raw key/value witness for the optional exact-graph shortcut.
     # This is populated only when a missing Map key's physical default cannot
     # satisfy the value comparison. That keeps the witness exhaustive even if
@@ -614,6 +622,14 @@ def _attribute_plan(
         # (especially after FINAL, where mutable skip indexes are disabled).
         # indexHint is not membership truth; the exact comparison remains.
         seed_predicate = f"({seed_predicate}) AND indexHint({index_predicate})"
+        index_witness_predicate = (
+            f"(indexHint(has(mapKeys({map_column}), {bound_key})) "
+            f"AND indexHint({index_predicate}))"
+        )
+    else:
+        index_witness_predicate = (
+            f"(indexHint(has(mapKeys({map_column}), {bound_key})))"
+        )
 
     key_witness_predicate = (
         f"(indexHint(has(mapKeys({map_column}), {bound_key})) AND "
@@ -633,6 +649,9 @@ def _attribute_plan(
         key_witness_predicate
         if operation in _POSITIVE_RAW_WITNESS_OPS or negative_presence_witness
         else None
+    )
+    raw_index_witness_predicate = (
+        index_witness_predicate if raw_key_witness_predicate is not None else None
     )
     raw_witness_predicate = key_witness_predicate if negative_presence_witness else None
     raw_graph_value_witness_predicate = None
@@ -668,6 +687,7 @@ def _attribute_plan(
         scope=scope,
         raw_witness_predicate=raw_witness_predicate,
         raw_key_witness_predicate=raw_key_witness_predicate,
+        raw_index_witness_predicate=raw_index_witness_predicate,
         raw_graph_value_witness_predicate=raw_graph_value_witness_predicate,
         raw_witness_rank=(
             {"equals": 0, "in": 0}.get(operation, 10)
@@ -738,6 +758,7 @@ def _mixed_typed_attribute_plan(
     seed_exists: list[str] = []
     seed_matches: list[str] = []
     key_witnesses: list[str] = []
+    index_witnesses: list[str] = []
     typed_raw_witnesses: list[str] = []
     typed_graph_witnesses: list[str] = []
     storage_metadata: dict[str, tuple[str, Callable[[object], object], bool]] = {
@@ -786,6 +807,7 @@ def _mixed_typed_attribute_plan(
             f"(indexHint(has(mapKeys({map_column}), {bound_key})) "
             f"AND has({map_column}.keys, {bound_key}))"
         )
+        index_witnesses.append(f"(indexHint(has(mapKeys({map_column}), {bound_key})))")
         typed_witness = f"(({key_witnesses[-1]}) AND ({seed_matches[-1]}))"
         if operation == "in" and storage_type in {"string", "number"}:
             # Picker provenance changes parameter names, not the scalar IN
@@ -793,7 +815,8 @@ def _mixed_typed_attribute_plan(
             # hints only expose existing value indexes to raw acquisition.
             indexed_values = (
                 "arrayMap(x -> lowerUTF8(x), mapValues(span_attr_str))"
-                if case_insensitive else "mapValues(span_attr_num)"
+                if case_insensitive
+                else "mapValues(span_attr_num)"
             )
             placeholders = []
             for value_index, value in enumerate(normalized_values):
@@ -803,11 +826,16 @@ def _mixed_typed_attribute_plan(
             index_predicate = f"hasAny({indexed_values}, [{', '.join(placeholders)}])"
             if case_insensitive:
                 legacy = _legacy_ascii_lower_bloom_predicate(
-                    normalized_values=normalized_values, params=params, index=index,
+                    normalized_values=normalized_values,
+                    params=params,
+                    index=index,
                 )
                 if legacy:
                     index_predicate = f"({index_predicate}) AND ({legacy})"
             typed_witness = f"({typed_witness}) AND indexHint({index_predicate})"
+            index_witnesses[-1] = (
+                f"({index_witnesses[-1]} AND indexHint({index_predicate}))"
+            )
         typed_raw_witnesses.append(typed_witness)
         if operation == "in":
             typed_graph_witnesses.append(
@@ -841,6 +869,7 @@ def _mixed_typed_attribute_plan(
         # semantics.
         raw_witness_predicate = f"({' OR '.join(typed_raw_witnesses)})"
         raw_key_witness_predicate = f"({' OR '.join(key_witnesses)})"
+        raw_index_witness_predicate = f"({' OR '.join(index_witnesses)})"
         # The picker adds storage provenance and suffixed parameters, but its
         # positive membership semantics are otherwise identical to scalar IN.
         # Narrow each storage branch by value unless a missing Map key's
@@ -860,6 +889,11 @@ def _mixed_typed_attribute_plan(
             if allow_negative_presence_witness
             else None
         )
+        raw_index_witness_predicate = (
+            f"({' OR '.join(index_witnesses)})"
+            if allow_negative_presence_witness
+            else None
+        )
         raw_witness_predicate = raw_key_witness_predicate
         raw_graph_value_witness_predicate = None
         raw_witness_rank = 10 if allow_negative_presence_witness else None
@@ -872,6 +906,7 @@ def _mixed_typed_attribute_plan(
         scope=scope,
         raw_witness_predicate=raw_witness_predicate,
         raw_key_witness_predicate=raw_key_witness_predicate,
+        raw_index_witness_predicate=raw_index_witness_predicate,
         raw_graph_value_witness_predicate=raw_graph_value_witness_predicate,
         raw_witness_rank=raw_witness_rank,
     )

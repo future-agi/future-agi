@@ -473,6 +473,35 @@ INTERACTIVE_READ_SETTING_SPECS = {
             # Broad key-only span population proofs read thin raw columns;
             # their CPU budget is separate from the normal seed/classifier.
             ("FILTER_SELECTOR_POPULATION_MAX_THREADS", 2, 1, 4),
+            # The SPAN list's own two row budgets. The span lane has two
+            # statements whose cost tracks the rows inside an interval rather
+            # than the interval's width, and they read DIFFERENT columns, so
+            # one number cannot serve both: measured read-only against
+            # production on the high-volume tenant at one worker, the seed
+            # walks its typed Map at ~0.3M rows/s (3.73 KB/row: 755,996 rows =
+            # 2.82 GB) and the population-discovery proof walks ``start_time``
+            # alone at ~34M rows/s (a 30-day interval whose index estimate is
+            # 55.3M rows answered in about 1.6 s). Both are consumed as
+            # ``EXPLAIN ESTIMATE`` rows, which are an upper bound twice over -
+            # whole granules, and every physical version inside them - so both
+            # errors point at a NARROWER issued interval.
+            #
+            # 500,000 seed rows is about 1.7 s of that Map walk; 40,000,000
+            # discovery rows is about 1.2 s of the timestamp walk. Narrowing
+            # either never skips history: intervals are contiguous and
+            # half-open and the remainder is the next adjacent interval's work.
+            (
+                "FILTER_SELECTOR_SPAN_SEED_TARGET_READ_ROWS",
+                500_000,
+                50_000,
+                50_000_000,
+            ),
+            (
+                "FILTER_SELECTOR_SPAN_POPULATION_DISCOVERY_TARGET_READ_ROWS",
+                40_000_000,
+                1_000_000,
+                2_000_000_000,
+            ),
             ("FILTER_SELECTOR_MAX_NUMBERED_PAGE_WORK_ROWS", 5_000, 1, 100_000),
             ("OBSERVABILITY_NAVIGATION_CANDIDATE_LIMIT", 4_095, 1, 65_535),
             ("OBSERVABILITY_NAVIGATION_SCAN_PAGE_SIZE", 200, 1, 1_000),

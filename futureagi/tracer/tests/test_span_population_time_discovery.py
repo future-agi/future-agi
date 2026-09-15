@@ -251,7 +251,10 @@ def test_query_uses_only_scope_time_and_necessary_typed_presence(period, operati
     ]:
         assert forbidden not in sql
     if operation == "not_in":
-        assert "attrs_string.keys" in sql
+        # The witness is GRANULE level: key presence reaches the statement
+        # only as an ``indexHint``, never as a row-level Map read.
+        assert "indexHint(has(mapKeys(attrs_string), %(latest_filter_key_0)s))" in sql
+        assert "attrs_string.keys" not in sql
         assert "latest_filter_key_0" in sql
         assert "latest_filter_param_0" not in sql
         assert "NOT IN" not in sql
