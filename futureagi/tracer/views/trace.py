@@ -117,6 +117,7 @@ from tracer.services.clickhouse.list_cursor import (
     list_cursor_boundary_fingerprint,
     snapshot_cursor_supported,
 )
+from tracer.services.clickhouse.list_page_contract import list_page_exactness
 from tracer.services.clickhouse.list_request_deadline import bounded_list_request
 from tracer.services.clickhouse.page_dedup import paginate_deduped
 from tracer.services.clickhouse.query_builders.base import NIL_UUID
@@ -5561,6 +5562,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     "query_count": query_count,
                     "query_rows_returned": query_rows_returned,
                     "query_result_payload_bytes": query_result_payload_bytes,
+                    **list_page_exactness(complete=public_chunk_complete),
                 }
             )
         if bounded_page is None or bounded_page.complete or cursor_has_more:
@@ -5893,6 +5895,10 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         # one service. No broad FINAL scan is used.
         page_rows = result.data
         attrs_map = {}
+        # Statements issued past the selector, counted where they are made so
+        # the published ``query_count`` is the page's real ClickHouse cost.
+        content_query_attempts = 0
+        eval_query_attempts = 0
         if page_rows:
             normalized_root_identities = [
                 builder.bounded_filter_page_hydration_identity(row) for row in page_rows
@@ -5911,7 +5917,6 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     code="service_unavailable",
                 )
 
-            content_query_attempts = 0
             content_batch_size = settings.VOICE_CONTENT_MAX_BATCH_SIZE
 
             def hydrate_content_batch(
@@ -6038,6 +6043,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             if eval_query:
                 try:
                     eval_timeout_ms = read_deadline.remaining_ms(1_500)
+                    eval_query_attempts += 1
                     eval_result = analytics.execute_ch_query(
                         eval_query,
                         eval_params,
@@ -6409,6 +6415,10 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             "query_status": (
                 "complete" if public_chunk_complete else bounded_page.status
             ),
+            "query_count": (
+                bounded_page.query_count + content_query_attempts + eval_query_attempts
+            ),
+            **list_page_exactness(complete=public_chunk_complete),
         }
         if include_export_fields:
             response_data["_export_eval_names"] = sorted(
@@ -6914,6 +6924,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     "query_count": bounded_page.query_count,
                     "query_rows_returned": bounded_page.rows_returned,
                     "query_result_payload_bytes": bounded_page.result_payload_bytes,
+                    **list_page_exactness(complete=bounded_page.complete),
                 }
             )
         if metadata.get(

@@ -134,6 +134,7 @@ from tracer.services.clickhouse.list_cursor import (
     frozen_window_filter,
     snapshot_cursor_supported,
 )
+from tracer.services.clickhouse.list_page_contract import list_page_exactness
 from tracer.services.clickhouse.list_request_deadline import bounded_list_request
 from tracer.services.clickhouse.page_dedup import paginate_deduped
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
@@ -2764,6 +2765,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     "query_count": query_count,
                     "query_rows_returned": query_rows_returned,
                     "query_result_payload_bytes": query_result_payload_bytes,
+                    **list_page_exactness(complete=public_chunk_complete),
                 }
             )
         metadata.update(
@@ -3149,6 +3151,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     "query_count": bounded_page.query_count,
                     "query_rows_returned": bounded_page.rows_returned,
                     "query_result_payload_bytes": bounded_page.result_payload_bytes,
+                    **list_page_exactness(complete=bounded_page.complete),
                 }
             )
         if metadata.get(

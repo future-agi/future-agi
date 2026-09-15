@@ -74309,10 +74309,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           enum: ["complete", "degraded"],
         },
+        query_exact: {
+          title: "Query exact",
+          type: "boolean",
+        },
+        ordering_exact: {
+          title: "Ordering exact",
+          type: "boolean",
+        },
         query_error_code: {
           title: "Query error code",
           type: "string",
           minLength: 1,
+        },
+        query_count: {
+          title: "Query count",
+          type: "integer",
+          minimum: 0,
         },
         query_applied_filter_version: {
           title: "Query applied filter version",
@@ -103231,6 +103244,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "integer",
           minimum: 0,
         },
+        query_exact: {
+          title: "Query exact",
+          type: "boolean",
+        },
+        ordering_exact: {
+          title: "Ordering exact",
+          type: "boolean",
+        },
       },
     },
     SpendSummaryOrg: {
@@ -103643,6 +103664,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "integer",
           minimum: 0,
         },
+        query_exact: {
+          title: "Query exact",
+          type: "boolean",
+        },
+        ordering_exact: {
+          title: "Ordering exact",
+          type: "boolean",
+        },
       },
     },
     TraceSessionListMetadata: {
@@ -103733,14 +103762,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Query exact",
           type: "boolean",
         },
+        ordering_exact: {
+          title: "Ordering exact",
+          type: "boolean",
+        },
         query_provenance: {
           title: "Query provenance",
           type: "string",
           enum: ["spans_per_session_candidate"],
-        },
-        ordering_exact: {
-          title: "Ordering exact",
-          type: "boolean",
         },
       },
     },

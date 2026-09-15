@@ -41,7 +41,7 @@ def _isolate_optional_attribute_seed(monkeypatch):
     )
 
 
-def test_users_rollup_exactness_metadata_is_declared_on_users_response_only():
+def test_users_rollup_candidate_provenance_is_declared_on_rollup_responses_only():
     users_fields = UsersResultSerializer().fields
     trace_fields = TraceObserveListMetadataSerializer().fields
     session_fields = TraceSessionListMetadataSerializer().fields
@@ -70,8 +70,12 @@ def test_users_rollup_exactness_metadata_is_declared_on_users_response_only():
         }
     ).data
     assert rendered["table"][0]["num_sessions_is_approximate"] is True
+    # Exactness is the shared list-page contract on every Observe list; only
+    # the name of the approximate candidate-order source stays specific to the
+    # rollup-backed responses. Twin of the swagger assertion in
+    # test_trace_observe_list_contract.py.
+    assert {"query_exact", "ordering_exact"} <= trace_fields.keys()
     assert "query_provenance" not in trace_fields
-    assert "ordering_exact" not in trace_fields
     assert {
         "query_exact",
         "query_provenance",

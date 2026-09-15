@@ -439,6 +439,11 @@ class SpanListMetadataSerializer(serializers.Serializer):
         r"^[0-9a-f]{64}$", required=False
     )
     query_applied_filter_count = serializers.IntegerField(required=False, min_value=0)
+    # Exactness is published on every successful list page, next to the
+    # completeness it qualifies; see tracer.services.clickhouse.
+    # list_page_contract.
+    query_exact = serializers.BooleanField(required=False)
+    ordering_exact = serializers.BooleanField(required=False)
 
 
 class SpanListColumnConfigSerializer(serializers.Serializer):

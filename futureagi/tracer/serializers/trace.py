@@ -292,16 +292,19 @@ class TraceObserveListMetadataSerializer(serializers.Serializer):
         r"^[0-9a-f]{64}$", required=False
     )
     query_applied_filter_count = serializers.IntegerField(required=False, min_value=0)
+    # Exactness is published on every successful list page, next to the
+    # completeness it qualifies; see tracer.services.clickhouse.
+    # list_page_contract.
+    query_exact = serializers.BooleanField(required=False)
+    ordering_exact = serializers.BooleanField(required=False)
 
 
 class TraceSessionListMetadataSerializer(TraceObserveListMetadataSerializer):
-    """Session-list page completeness plus non-exact candidate ordering."""
+    """Session-list page contract plus its non-exact candidate ordering source."""
 
-    query_exact = serializers.BooleanField(required=False)
     query_provenance = serializers.ChoiceField(
         choices=("spans_per_session_candidate",), required=False
     )
-    ordering_exact = serializers.BooleanField(required=False)
 
 
 class TraceObserveColumnConfigSerializer(serializers.Serializer):
@@ -542,7 +545,15 @@ class TraceVoiceCallListResponseSerializer(serializers.Serializer):
     )
     query_complete = serializers.BooleanField()
     query_status = serializers.ChoiceField(choices=("complete", "degraded"))
+    # Additive fields on an already-published envelope: optional in the
+    # contract so a client generated from this branch still parses a response
+    # from a backend that has not deployed it yet, matching how the same
+    # decision is expressed on the other three list endpoints. The view
+    # publishes all three on every successful page.
+    query_exact = serializers.BooleanField(required=False)
+    ordering_exact = serializers.BooleanField(required=False)
     query_error_code = serializers.CharField(required=False)
+    query_count = serializers.IntegerField(required=False, min_value=0)
     query_applied_filter_version = serializers.ChoiceField(
         choices=("canonical-json-sha256-v1",), required=False
     )
