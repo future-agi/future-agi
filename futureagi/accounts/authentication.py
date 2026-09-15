@@ -11,7 +11,7 @@ import structlog
 from cryptography.fernet import Fernet
 from django.conf import settings
 from django.core.cache import cache
-from django.db import IntegrityError
+from django.db import IntegrityError, InterfaceError, OperationalError
 from django.http import JsonResponse
 from django.utils import timezone
 from rest_framework import status
@@ -31,6 +31,7 @@ from accounts.services.workspace_membership import create_workspace_membership
 from tfc.constants.roles import OrganizationRoles
 from tfc.ee_gating import is_oss
 from tfc.utils.api_errors import (
+    DatabaseUnavailable,
     build_error_envelope,
     error_details,
     exception_code,
@@ -165,8 +166,10 @@ class APIKeyAuthentication(BaseAuthentication):
                 # Set workspace context after JWT authentication
                 self._set_workspace_context(request, user)
                 return user, token
-            except PermissionDenied:
-                raise  # Let 403 propagate — don't wrap as 401
+            except (PermissionDenied, DatabaseUnavailable):
+                raise  # Let 403 and 503 propagate — don't wrap as 401
+            except (OperationalError, InterfaceError) as e:
+                raise DatabaseUnavailable() from e
             except Exception as e:
                 traceback.print_exc()
                 raise AuthenticationFailed(f"Invalid Token parsed: {e}") from e
@@ -930,6 +933,12 @@ def decode_token(token: str):
 
         return user, token
 
+    except (OperationalError, InterfaceError) as e:
+        # Every branch above touches PostgreSQL — the cache-hit path alone
+        # issues an ``AuthToken … last_used_at`` UPDATE on every authenticated
+        # request. A connection-level failure says nothing about the token, so
+        # it must not be reported as a credential problem.
+        raise DatabaseUnavailable() from e
     except Exception as e:
         raise AuthenticationFailed(f"Invalid Token parsed: {e}") from e
 

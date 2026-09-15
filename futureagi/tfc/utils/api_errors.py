@@ -3,6 +3,7 @@ from enum import StrEnum
 from typing import Any
 
 from rest_framework import status
+from rest_framework.exceptions import APIException
 
 
 class ApiErrorType(StrEnum):
@@ -40,6 +41,21 @@ class ApiErrorCode(StrEnum):
     # Domain-specific 413 variants: a specific cap was exceeded, so the FE can
     # distinguish "narrow your selection" from a generic request-too-large.
     ITEMS_TOO_LARGE = "items_too_large"
+
+
+class DatabaseUnavailable(APIException):
+    """The primary database is unreachable, so the request cannot be served.
+
+    Raise this wherever a connection-level database failure would otherwise
+    be reported as something it is not — for example a 401 from the
+    authentication layer, which tells a client its credentials are bad and
+    invites it to log the user out. ``detail`` is fixed so driver text
+    (host names, recovery-mode notices) never reaches a client.
+    """
+
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    default_detail = "Database connection error"
+    default_code = ApiErrorCode.SERVICE_UNAVAILABLE.value
 
 
 API_ERROR_TYPE_CHOICES = [(item.value, item.value) for item in ApiErrorType]
