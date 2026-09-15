@@ -599,8 +599,6 @@ export const getBlocks = (quill) => {
         type: "image_url",
         image_url: {
           ...imageObject,
-          img_name: imageObject.imgName,
-          img_size: imageObject.imgSize,
         },
       });
       imageObject = null;
@@ -610,9 +608,6 @@ export const getBlocks = (quill) => {
         type: "audio_url",
         audio_url: {
           ...audioObject,
-          audio_name: audioObject.audioName,
-          audio_size: audioObject.audioSize,
-          audio_type: audioObject.audioType,
         },
       });
       audioObject = null;
