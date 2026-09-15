@@ -12,6 +12,12 @@ COMPOSE=(docker compose --env-file "$ENV_FILE"
 # separately in `up` (compose --wait treats an exiting service as a failure).
 SERVICES=(frontend backend worker postgres clickhouse redis rabbitmq minio
   temporal agentcc-gateway fi-collector mock-llm
+  # The ALL_QUEUES worker above deliberately skips exact_aggregation
+  # (_DEDICATED_TASK_QUEUES in start_temporal_worker.py), so this dedicated one
+  # is the only thing that runs it. Without it every exact analytics read (eval
+  # usage, dashboards, observe) schedules a workflow nothing polls, and the UI
+  # sits on "Still preparing exact results" forever.
+  worker-exact-aggregation
   peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker
   # nothing depends_on peerdb-minio, but the CH peer validates by writing to
   # it and every mirror sync stages through it — without it ch_dest is never
@@ -92,6 +98,36 @@ wait_peerdb_init() {
   fi
 }
 
+# PeerDB creates usage_apicalllog from the PG column list alone, so the
+# eval_score / eval_trace_id MATERIALIZED columns that the eval-usage reader
+# selects never exist, and every Usage-tab read dies on ClickHouse code 47
+# "Unknown expression identifier". POST_DDL_ALTERS is the schema's own
+# idempotent remedy for exactly this case, but nothing in the boot path runs
+# it. It has to run AFTER the mirrors exist, or the ALTERs hit a table PeerDB
+# has not created yet.
+apply_post_ddl_alters() {
+  echo "Applying POST_DDL_ALTERS (materialized columns PeerDB does not create) ..."
+  "${COMPOSE[@]}" exec -T backend python -c "
+import sys, urllib.request
+sys.path.insert(0, '/app/backend')
+from tracer.services.clickhouse.schema import POST_DDL_ALTERS
+ok = err = 0
+for stmt in POST_DDL_ALTERS:
+    try:
+        urllib.request.urlopen('http://clickhouse:8123/', data=stmt.encode()).read()
+        ok += 1
+    except Exception as exc:
+        err += 1
+        print('  skipped:', stmt[:70], '->', str(exc)[:90])
+print(f'POST_DDL_ALTERS applied={ok} skipped={err}')
+"
+  # Fail closed on the one column the eval-usage read cannot run without,
+  # so a silently skipped ALTER never turns into a Usage-tab flow timing out.
+  curl -fsS -G "http://localhost:$(ch_port)/" \
+    --data-urlencode "query=SELECT eval_trace_id FROM usage_apicalllog LIMIT 0" >/dev/null \
+    || { echo "usage_apicalllog is still missing eval_trace_id; eval usage reads will fail"; exit 1; }
+}
+
 wait_ready() {
   # Measured cold boot 2026-08-25: first-run migrations take ~6.5 min before
   # /health/ answers; 300s was not enough.
@@ -132,7 +168,7 @@ cmd="${1:-}"; shift || true
 case "$cmd" in
   # wait_ready before wait_peerdb_init: mirrors can only be created once the
   # backend has migrated the tables they replicate (fresh volumes = CI path).
-  up)      "${COMPOSE[@]}" up -d --wait --wait-timeout 300 "${SERVICES[@]}"; wait_ready; wait_peerdb_init ;;
+  up)      "${COMPOSE[@]}" up -d --wait --wait-timeout 300 "${SERVICES[@]}"; wait_ready; wait_peerdb_init; apply_post_ddl_alters ;;
   down)    "${COMPOSE[@]}" down "$@" ;;
   build)   build_target "${1:?usage: bin/e2e build backend|frontend|collector|all}" ;;
   test)    (cd "$ROOT/e2e" && yarn playwright test "$@") ;;

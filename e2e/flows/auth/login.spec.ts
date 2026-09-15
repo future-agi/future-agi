@@ -32,7 +32,10 @@ base('AUTH-E2E-001: user signs in with email and password', {
   // only their growth proves the browser login persisted its own.
   const before = (await activeTokens()).length;
   const tokenResp = page.waitForResponse(r => r.url().includes('/accounts/token/') && r.status() === 200);
-  await page.getByRole('button', { name: 'Continue' }).click();
+  // Exact: EE renders SSO options the OSS login page has not got
+  // ("Continue with Google/Github/SSO/SAML"), so a substring match resolves
+  // to four buttons there and one here.
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
   const pair: Tokens = await (await tokenResp).json();
   expect(pair.access).toMatch(/.+/);
   expect(pair.refresh).toMatch(/.+/);

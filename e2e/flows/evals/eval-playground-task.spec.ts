@@ -4,16 +4,19 @@ import { sendTrace } from '../../lib/otlp';
 import { POLL } from '../../lib/state-probe';
 import { E2E } from '../../lib/env';
 import { flowAnnotation } from '../../lib/flow-meta';
+import { JUDGE_MODEL, ensureJudgeModel } from '../../lib/eval-model';
+
+// Browser-side waits. The stack slows several-fold when specs run in parallel
+// (CI runs two workers), so these are sized off that rather than the 10s
+// expect default.
+const UI_READY = 60_000;
 
 // The eval runs inside the worker container, so its judge model must reach the
 // gateway over the compose network — E2E.gatewayUrl is a host port the worker
 // cannot resolve. Address + shared key are the root compose defaults
 // (docker-compose.yml AGENTCC_INTERNAL_URL / AGENTCC_INTERNAL_API_KEY); the key
 // is the same one harness/mock-llm.spec.ts authenticates with.
-const GATEWAY_INTERNAL_URL = 'http://agentcc-gateway:8080/v1';
-const GATEWAY_INTERNAL_KEY = 'local-dev-only-shared-secret-replace-me';
 // One of the models the gateway maps to the mock provider (stack/gateway.e2e.yaml).
-const JUDGE_MODEL = 'gpt-4o-mini';
 // The only attribute lib/otlp.ts puts on a span, and only on the llm child —
 // the eval's single input variable maps to it.
 const MAPPED_ATTRIBUTE = 'fi.span.kind';
@@ -46,15 +49,19 @@ test('EVAL-E2E-001: eval task runs over ingested spans via the mock LLM', {
                     'the Pass verdict is parsed out of the model response into output_bool = true'],
   }),
 }, async ({ page, actor, probe }, testInfo) => {
+
   // The Temporal drain (EVAL_RESULT, 90s) then the CDC mirror (CDC_VISIBLE,
   // 180s) are a 270s floor on their own; the remaining 90s covers seeding, the
   // creates and the UI waits. That headroom is the point: without it the outer
   // timeout fires first and hides the CH poll's own "Expected: completed".
-  test.setTimeout(360_000);
+  test.setTimeout(480_000);
   const req = await request.newContext();
   const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
   const projectName = `e2e-eval1-${suffix}`;
-  const evalName = `e2e echo judge ${suffix}`;
+  // Hyphens, not spaces: create-v2 rejects anything outside [a-z0-9_-]
+  // with 400 "Name can only contain lowercase letters, numbers, hyphens
+  // (-), or underscores (_)."
+  const evalName = `e2e-echo-judge-${suffix}`;
   // Travels judge prompt → gateway → mock → parsed verdict → PG → CDC → CH, and
   // exists nowhere else, so finding it on the result proves the whole hop.
   const verdict = `e2e-verdict-${suffix}`;
@@ -63,6 +70,7 @@ test('EVAL-E2E-001: eval task runs over ingested spans via the mock LLM', {
     collectorUrl: E2E.collectorUrl, apiKey: actor.apiKey,
     secretKey: actor.secretKey, projectName,
   });
+  await testInfo.attach('seeded-trace', { body: JSON.stringify(seeded), contentType: 'application/json' });
   await expect.poll(async () => {
     const rows = await probe.ch<{ n: string }>(
       'SELECT count() AS n FROM spans FINAL WHERE trace_id = {t:String}', { t: seeded.traceId });
@@ -76,11 +84,7 @@ test('EVAL-E2E-001: eval task runs over ingested spans via the mock LLM', {
     // Settings → Models: an OpenAI-compatible endpoint of the user's own. The
     // backend runs a live completion before saving, so a broken
     // worker → gateway → mock hop fails here rather than inside the workflow.
-    await actor.api.post('/model-hub/custom_models/create/', {
-      model_provider: 'openai', model_name: JUDGE_MODEL,
-      input_token_cost: 0, output_token_cost: 0,
-      config_json: { key: GATEWAY_INTERNAL_KEY, api_base: GATEWAY_INTERNAL_URL },
-    });
+    await ensureJudgeModel(actor);
 
     // The mock answers `echo: <last user message>`, so the verdict this prompt
     // dictates is the verdict that comes back — and `{{output}}` is substituted
@@ -164,14 +168,14 @@ test('EVAL-E2E-001: eval task runs over ingested spans via the mock LLM', {
 
   await test.step('UI: the eval result shows on the span in Observe', async () => {
     await page.goto(`/dashboard/observe/${projectId}/llm-tracing?selectedTab=spans`);
-    await page.getByText('e2e.llm-call').first().click({ timeout: 30_000 });
+    await page.getByText('e2e.llm-call').first().click({ timeout: UI_READY });
     await page.getByRole('tab', { name: 'Evals' }).click();
-    await expect(page.getByText(evalName)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(evalName)).toBeVisible({ timeout: UI_READY });
     await expect(page.getByText('1/1 passed')).toBeVisible();
     // The row keeps the judge's explanation collapsed; opening it is the only
     // place the product renders the verdict text itself.
     await page.getByText(evalName).click();
-    await expect(page.getByText(`${verdict} saw llm`)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(`${verdict} saw llm`)).toBeVisible({ timeout: UI_READY });
   });
 
   await req.dispose();
