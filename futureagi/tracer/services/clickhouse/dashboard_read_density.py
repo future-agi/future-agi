@@ -150,18 +150,30 @@ def observe_completed_read(
         logger.warning("dashboard_read_density_observe_failed", exc_info=True)
 
 
+def _estimate_key(estimate_sql: str, params: dict) -> str:
+    """Identify one probe by the statement *and* the values bound into it.
+
+    Two metric groups filtering the same attribute for different values render
+    byte-identical candidate SQL and scan wildly different numbers of rows.
+    Keying on the text alone would hand one group's estimate to the other.
+    """
+
+    return f"{estimate_sql}\x00{sorted((params or {}).items(), key=repr)!r}"
+
+
 def probe_candidate_estimates(
     statements: Sequence[tuple[str, dict]],
     *,
     analytics: Any,
     deadline: ReadDeadline,
 ) -> dict[str, int]:
-    """Estimate each distinct candidate CTE these statements embed.
+    """Estimate each distinct candidate read these statements embed.
 
-    Returns a mapping of estimate statement to estimated rows, keyed so a
-    caller can recover the estimate for a statement by rendering its estimate
-    statement again. Any probe failure simply leaves that statement out: the
-    prediction is optional and its absence is today's behaviour.
+    The returned mapping is keyed by statement text together with the values
+    bound into it, so ``estimated_rows_for`` recovers a statement's own
+    estimate and never a sibling's. Any probe failure simply leaves that
+    statement out: the prediction is optional and its absence is the
+    pre-existing inline behaviour.
     """
 
     estimates: dict[str, int] = {}
@@ -189,17 +201,6 @@ def probe_candidate_estimates(
         except Exception:
             logger.info("dashboard_candidate_estimate_unavailable", exc_info=True)
     return estimates
-
-
-def _estimate_key(estimate_sql: str, params: dict) -> str:
-    """Identify one probe by the statement *and* the values bound into it.
-
-    Two metric groups filtering the same attribute for different values render
-    byte-identical candidate SQL and scan wildly different numbers of rows.
-    Keying on the text alone would hand one group's estimate to the other.
-    """
-
-    return f"{estimate_sql}\x00{sorted((params or {}).items(), key=repr)!r}"
 
 
 def estimated_rows_for(
