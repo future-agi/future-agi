@@ -8233,10 +8233,14 @@ class TestWidgetQueryExecution:
         self, mock_get_client, mock_enabled, auth_client, dashboard, observe_project
     ):
         mock_client = MagicMock()
-        mock_client.execute_read.return_value = (
+        # ``execute_ch_query`` reads through the progress-reporting transport
+        # (rows, columns, elapsed, rows read, bytes read).
+        mock_client.execute_read_with_progress.return_value = (
             [(datetime(2025, 1, 1), 50.0)],
             [("time_bucket", "DateTime"), ("value", "Float64")],
             3.0,
+            1,
+            64,
         )
         mock_get_client.return_value = mock_client
 
