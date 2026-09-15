@@ -16,7 +16,35 @@ vi.mock("react-router-dom", async () => {
   return { ...actual, useNavigate: () => navigate };
 });
 
+vi.mock("src/api/harness/harness", () => ({ listHarnessJobs: vi.fn() }));
+
+const { listHarnessJobs } = await import("src/api/harness/harness");
 const { default: MyEnvironmentsTab } = await import("../MyEnvironmentsTab");
+
+// A small harness-jobs payload: two stages beyond the terminal ones, a voice
+// connector (livekit/vapi) and a plain chat connector (http).
+const HARNESS_JOBS = [
+  {
+    job: { job_id: "job-support", metadata: { name: "Customer Support Line" } },
+    status: { stage: "completed", updated_at: "2026-09-15T09:00:00Z" },
+    credentials: { detected_connectors: ["livekit"] },
+  },
+  {
+    job: { job_id: "job-billing", metadata: { name: "Billing Chat Agent" } },
+    status: { stage: "running", updated_at: "2026-09-15T11:59:50Z" },
+    credentials: { detected_connectors: ["http"] },
+  },
+  {
+    job: { job_id: "job-triage", metadata: { name: "Repo Triage Bot" } },
+    status: { stage: "queued", updated_at: "2026-09-14T12:00:00Z" },
+    credentials: { detected_connectors: [] },
+  },
+  {
+    job: { job_id: "job-airline", metadata: { name: "Airline Rebooking" } },
+    status: { stage: "failed", updated_at: "2026-08-01T12:00:00Z" },
+    credentials: { detected_connectors: ["vapi"] },
+  },
+];
 
 const renderTab = () => {
   const client = new QueryClient({
@@ -43,55 +71,72 @@ describe("MyEnvironmentsTable", () => {
     vi.setSystemTime(new Date("2026-09-15T12:00:00Z"));
     enqueueSnackbar.mockReset();
     navigate.mockReset();
+    listHarnessJobs.mockReset();
+    listHarnessJobs.mockResolvedValue(HARNESS_JOBS);
   });
 
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  it("renders every environment with a relative updated time", async () => {
+  it("maps every harness job to a row with a relative updated time", async () => {
     renderTab();
 
     expect(await screen.findByText("Customer Support Line")).toBeInTheDocument();
-    [
-      "Billing Chat Agent",
-      "Repo Triage Bot",
-      "Browser Checkout Flow",
-      "Airline Rebooking",
-      "Onboarding Assistant",
-    ].forEach((name) => expect(screen.getByText(name)).toBeInTheDocument());
+    ["Billing Chat Agent", "Repo Triage Bot", "Airline Rebooking"].forEach(
+      (name) => expect(screen.getByText(name)).toBeInTheDocument(),
+    );
 
     expect(
       within(rowFor("Customer Support Line")).getByText("3 hours ago"),
     ).toBeInTheDocument();
     expect(
-      within(rowFor("Browser Checkout Flow")).getByText("just now"),
+      within(rowFor("Billing Chat Agent")).getByText("just now"),
     ).toBeInTheDocument();
     expect(
       within(rowFor("Airline Rebooking")).getByText("1 month ago"),
     ).toBeInTheDocument();
   });
 
-  it("shows each status pill once", async () => {
+  it("maps each stage to its status pill", async () => {
     renderTab();
     await screen.findByText("Customer Support Line");
 
-    ["Passed", "Failed", "Not run yet", "Running…", "Completed", "Building"].forEach(
-      (label) => expect(screen.getByText(label)).toBeInTheDocument(),
+    ["Completed", "Running…", "Building", "Failed"].forEach((label) =>
+      expect(screen.getByText(label)).toBeInTheDocument(),
     );
   });
 
-  it("labels the agent-type cells", async () => {
+  it("maps connectors to voice / chat agent-type cells", async () => {
     renderTab();
     await screen.findByText("Customer Support Line");
 
+    // livekit + vapi → Voice; http + none detected → Chat.
     expect(screen.getAllByText("Voice")).toHaveLength(2);
     expect(screen.getAllByText("Chat")).toHaveLength(2);
-    expect(screen.getByText("Code")).toBeInTheDocument();
-    expect(screen.getByText("Computer use")).toBeInTheDocument();
   });
 
-  it("offers Open + Re-run + Delete on a run environment", async () => {
+  it("marks the columns the harness API cannot fill with a dummy header pill", async () => {
+    renderTab();
+    await screen.findByText("Customer Support Line");
+
+    // Description, Tools, Scenarios, Sub-goals, Runs.
+    expect(screen.getAllByText("Dummy")).toHaveLength(5);
+    // The placeholder cells render a dash rather than a value.
+    expect(
+      within(rowFor("Customer Support Line")).getAllByText("—").length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("shows the empty state when the harness list resolves empty", async () => {
+    listHarnessJobs.mockResolvedValue([]);
+    renderTab();
+
+    expect(await screen.findByText("No environments yet")).toBeInTheDocument();
+    expect(screen.queryByText("Dummy")).toBeNull();
+  });
+
+  it("offers Open + Run + Delete on a completed environment", async () => {
     const user = userEvent.setup();
     renderTab();
     await screen.findByText("Customer Support Line");
@@ -99,41 +144,29 @@ describe("MyEnvironmentsTable", () => {
     await openMenu(user, "Customer Support Line");
 
     const menu = screen.getByRole("menu");
-    // All three actions are reachable menuitems: the enabled Run item is a direct
-    // child of the menu (not buried in a tooltip wrapper) so it stays focusable.
     expect(within(menu).getAllByRole("menuitem")).toHaveLength(3);
     expect(within(menu).getByText("Open")).toBeInTheDocument();
+    // Every harness row starts at runsTotal 0, so the run action reads "Run
+    // simulation", never "Re-run".
     expect(
-      within(menu).getByRole("menuitem", { name: /Re-run simulation/ }),
+      within(menu).getByRole("menuitem", { name: /Run simulation/ }),
     ).toBeInTheDocument();
     expect(within(menu).getByText("Delete")).toBeInTheDocument();
 
     await user.click(within(menu).getByText("Open"));
     expect(navigate).toHaveBeenCalledWith(
-      "/dashboard/simulate/environments/env-support-line",
+      "/dashboard/simulate/environments/job-support",
     );
   });
 
-  it("labels the action Run simulation when the environment has never run", async () => {
-    const user = userEvent.setup();
-    renderTab();
-    await screen.findByText("Repo Triage Bot");
-
-    await openMenu(user, "Repo Triage Bot");
-
-    expect(
-      within(screen.getByRole("menu")).getByText("Run simulation"),
-    ).toBeInTheDocument();
-  });
-
-  it("queues a run and snackbars when Re-run is chosen", async () => {
+  it("queues a run and snackbars when Run simulation is chosen", async () => {
     const user = userEvent.setup();
     renderTab();
     await screen.findByText("Customer Support Line");
 
     await openMenu(user, "Customer Support Line");
     await user.click(
-      within(screen.getByRole("menu")).getByText("Re-run simulation"),
+      within(screen.getByRole("menu")).getByText("Run simulation"),
     );
 
     await waitFor(() =>
@@ -144,9 +177,9 @@ describe("MyEnvironmentsTable", () => {
   it("disables the run action while the environment is building", async () => {
     const user = userEvent.setup();
     renderTab();
-    await screen.findByText("Onboarding Assistant");
+    await screen.findByText("Repo Triage Bot");
 
-    await openMenu(user, "Onboarding Assistant");
+    await openMenu(user, "Repo Triage Bot");
 
     expect(
       within(screen.getByRole("menu"))
@@ -172,13 +205,9 @@ describe("MyEnvironmentsTable", () => {
     await waitFor(() =>
       expect(screen.queryByText("Customer Support Line")).toBeNull(),
     );
-    [
-      "Billing Chat Agent",
-      "Repo Triage Bot",
-      "Browser Checkout Flow",
-      "Airline Rebooking",
-      "Onboarding Assistant",
-    ].forEach((name) => expect(screen.getByText(name)).toBeInTheDocument());
+    ["Billing Chat Agent", "Repo Triage Bot", "Airline Rebooking"].forEach(
+      (name) => expect(screen.getByText(name)).toBeInTheDocument(),
+    );
   });
 
   it("keeps the environment when delete is cancelled", async () => {
@@ -205,7 +234,7 @@ describe("MyEnvironmentsTable", () => {
     await user.click(screen.getByText("Customer Support Line"));
 
     expect(navigate).toHaveBeenCalledWith(
-      "/dashboard/simulate/environments/env-support-line",
+      "/dashboard/simulate/environments/job-support",
     );
   });
 });

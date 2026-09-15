@@ -4,8 +4,11 @@ import { relativeTime } from "src/utils/format-time";
 import StatusPill from "./StatusPill";
 import RunsPill from "./RunsPill";
 import { NumberCell, AgentTypeCell } from "./environmentTableCells";
+import DummyHeaderLabel from "./DummyHeaderLabel";
 
-// Rows arrive pre-flattened (see the fixture), so column accessors stay simple.
+// Rows arrive pre-flattened (see harnessJobToRow), so column accessors stay
+// simple. Columns the harness-jobs list has no field for render a placeholder
+// cell and a "dummy" header pill until the real endpoint lands (TH-7962).
 export function buildEnvironmentColumns({ onRowActions }) {
   return [
     {
@@ -24,6 +27,7 @@ export function buildEnvironmentColumns({ onRowActions }) {
       id: "description",
       accessorKey: "description",
       header: "Description",
+      renderHeader: () => <DummyHeaderLabel label="Description" />,
       meta: { flex: 1.6 },
       minSize: 240,
       enableSorting: false,
@@ -53,28 +57,32 @@ export function buildEnvironmentColumns({ onRowActions }) {
       id: "tools",
       accessorKey: "tools",
       header: "Tools",
-      size: 90,
+      renderHeader: () => <DummyHeaderLabel label="Tools" />,
+      size: 128,
       cell: NumberCell,
     },
     {
       id: "scenarios",
       accessorKey: "scenarios",
       header: "Scenarios",
-      size: 110,
+      renderHeader: () => <DummyHeaderLabel label="Scenarios" />,
+      size: 150,
       cell: NumberCell,
     },
     {
       id: "subgoals",
       accessorKey: "subgoals",
       header: "Sub-goals",
-      size: 110,
+      renderHeader: () => <DummyHeaderLabel label="Sub-goals" />,
+      size: 150,
       cell: NumberCell,
     },
     {
       id: "runs",
       accessorKey: "runsTotal",
       header: "Runs",
-      size: 100,
+      renderHeader: () => <DummyHeaderLabel label="Runs" />,
+      size: 128,
       cell: ({ row }) => <RunsPill total={row?.original?.runsTotal} />,
     },
     {
