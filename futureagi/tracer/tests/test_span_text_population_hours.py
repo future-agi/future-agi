@@ -1,4 +1,4 @@
-"""Thin discovery is a superset; exact physical membership/order is unchanged."""
+"""Index-witness discovery is a superset; exact membership/order is unchanged."""
 from datetime import timedelta
 
 import pytest
@@ -14,6 +14,7 @@ from tracer.tests.test_span_physical_identity_latest import (
     time_filter,
 )
 from tracer.tests.test_span_population_time_discovery import _engine_population_page
+from tracer.tests.test_span_probe_index_witness import without_index_hints
 
 
 def text_filter(key="company_id", op="in", value=None, **config):
@@ -33,7 +34,7 @@ def subject(filters, workspace=False):
 @pytest.mark.parametrize("workspace", [False, True])
 @pytest.mark.parametrize("op", ["equals", "in"])
 @pytest.mark.parametrize("kind", ["text", "string"])
-def test_text_discovery_is_daily_timestamp_only_and_seed_retains_all_values(workspace, op, kind):
+def test_text_discovery_is_daily_key_only_and_seed_retains_all_values(workspace, op, kind):
     filters = [time_filter(START - timedelta(days=365), START + timedelta(days=1)),
                text_filter(op=op, filter_type=kind), text_filter("region", "equals", "east")]
     target = subject(filters, workspace)
@@ -41,8 +42,13 @@ def test_text_discovery_is_daily_timestamp_only_and_seed_retains_all_values(work
     sql, params = target.build_filter_population_time_discovery_query(slice_start=START, slice_end=START + timedelta(days=1))
     assert "maxOrNull" in sql and "start_time" in sql
     assert "project_ids" in params if workspace else params["project_id"] == PROJECT
-    assert all(fragment not in sql for fragment in ("attrs_", "FINAL", "is_deleted", "LIMIT", "SAMPLE"))
-    assert not any(key.startswith("latest_filter_") for key in params)
+    assert all(fragment not in sql for fragment in ("FINAL", "is_deleted", "LIMIT", "SAMPLE"))
+    # Key presence is offered the deployed value blooms, but the probe never
+    # decompresses a Map value to locate an hour.
+    evaluated = without_index_hints(sql)
+    assert "has(attrs_string.keys, %(latest_filter_key_0)s)" in evaluated
+    assert "attrs_string[" not in evaluated and "mapValues(" not in evaluated
+    assert {params[key] for key in params if key.startswith("latest_filter_key_")} == {"company_id", "region"}
     seed, bound = target.build_filter_seed_page(slice_start=START, slice_end=START + timedelta(hours=1), limit=25)
     assert "FROM spans FINAL" in seed and "toStartOfHour(start_time)" in seed
     assert "company_id" in bound.values() and "region" in bound.values()
@@ -60,37 +66,40 @@ def test_text_discovery_is_daily_timestamp_only_and_seed_retains_all_values(work
     {"attribute_value_types": ["string", "number"], "filter_value": ["wanted", 1]},
     {"col_type": "SYSTEM_METRIC", "filter_value": ["native"]},
 ])
-def test_other_operator_type_and_source_policy_is_unchanged(extra):
-    filters = [time_filter(START - timedelta(days=7), START + timedelta(days=1)), text_filter("trace_id", **extra)]
-    class WitnessPolicy(SpanListQueryBuilderV2):
-        def _uses_thin_text_population_discovery(self):
-            return False
-    for leaves in (filters, [*filters, text_filter("region", "equals", "east")]):
-        target = subject(leaves)
-        previous = WitnessPolicy(project_id=PROJECT, filters=leaves, bounded_internal_scan=True)
-        assert target.recommended_filter_population_time_discovery_windows() == previous.recommended_filter_population_time_discovery_windows()
-        bounds = {"slice_start": START, "slice_end": START + timedelta(days=1)}
-        assert target.build_filter_population_time_discovery_query(**bounds) == previous.build_filter_population_time_discovery_query(**bounds)
+def test_no_operator_or_provenance_shape_widens_a_text_lane(extra):
+    # Operator and provenance carve-outs are gone. A text equality neighbour
+    # holds the whole lane at the daily rung whatever the other leaf's
+    # operator, type or source is, and that leaf still drops to key presence.
+    leaves = [time_filter(START - timedelta(days=7), START + timedelta(days=1)),
+              text_filter("trace_id", **extra), text_filter("region", "equals", "east")]
+    target = subject(leaves)
+    assert target.recommended_filter_population_time_discovery_windows() == (timedelta(days=1),)
+    sql, _ = target.build_filter_population_time_discovery_query(
+        slice_start=START, slice_end=START + timedelta(days=1))
+    evaluated = without_index_hints(sql)
+    assert "has(attrs_string.keys, %(latest_filter_key_1)s)" in evaluated
+    assert "attrs_string[%(latest_filter_key_1)s]" not in evaluated
 
 
 @pytest.mark.unit
 @pytest.mark.parametrize("type_key", ["attribute_value_types", "attributeValueTypes"])
 def test_explicit_string_provenance_admits_without_dropping_values(type_key):
-    leaf = text_filter(value=["wanted", "Kelvin", "FALSE"], **{type_key: ["string"] * 3})
+    leaf = text_filter(value=["wanted", "Kelvin", "FALSE"], **{type_key: ["string"] * 3})
     target = subject([time_filter(START - timedelta(days=7), START + timedelta(days=1)), leaf])
-    assert target._uses_thin_text_population_discovery()
+    assert target._has_text_attribute_leaf()
     sql, params = target.build_filter_population_time_discovery_query(slice_start=START, slice_end=START + timedelta(days=1))
-    assert "attrs_" not in sql and not any(k.startswith("latest_filter_") for k in params)
+    assert "attrs_string[" not in without_index_hints(sql)
+    assert "has(attrs_string.keys, %(latest_filter_key_0)s)" in without_index_hints(sql)
     seed, bound = target.build_filter_seed_page(slice_start=START, slice_end=START + timedelta(hours=1), limit=25)
     assert "attrs_string" in seed and ("wanted", "kelvin", "false") in bound.values()
 
 
 @pytest.mark.unit
 @pytest.mark.parametrize("types", [["string", "number"], ["string", None], [], ["string"]])
-def test_nonhomogeneous_or_misaligned_provenance_does_not_opt_in(types):
+def test_picker_provenance_still_reads_as_a_text_lane(types):
     target = subject([time_filter(START - timedelta(days=7), START + timedelta(days=1)),
                       text_filter(value=["wanted", "1"], attribute_value_types=types)])
-    assert not target._uses_thin_text_population_discovery()
+    assert target._has_text_attribute_leaf()
 
 
 @pytest.fixture(scope="module")
@@ -164,5 +173,5 @@ def test_native_sparse_latest_and_cross_property_pages(population, workspace, op
     assert all(r["trace_id"] == "trace" and r["observation_type"] == "span" for r in visible)
     assert all(int(r["_version"]) == (2 if r["id"] == "moved" else 1) for r in visible)
     probes = [(sql, p) for sql, p in calls if "population_start_us" in p]
-    assert probes and all("attrs_" not in sql for sql, _ in probes)
+    assert probes and all("attrs_string[" not in without_index_hints(sql) for sql, _ in probes)
     assert all(p["population_end_us"] - p["population_start_us"] <= 86400_000_000 for _, p in probes)

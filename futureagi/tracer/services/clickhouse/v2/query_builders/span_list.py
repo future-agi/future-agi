@@ -15,7 +15,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from tracer.services.clickhouse.query_builders.filters import normalize_filter_op
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     _parts,
     partition_span_filter_plans,
@@ -124,44 +123,24 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
             return 200
         return None
 
-    def _uses_thin_text_population_discovery(self):
-        # Text Map values can dwarf timestamp reads. Only change acquisition
-        # for explicit scalar positive text ANDs; exact seed/replay is unchanged.
-        configs = [
-            _parts(item)[1]
-            for item in self.filters
-            if not self.is_datetime_filter(item)
-        ]
-        return bool(configs) and all(
-            str(cfg.get("col_type") or cfg.get("colType") or "").upper()
+    def _has_text_attribute_leaf(self):
+        # Text Map values dwarf key and timestamp reads, so a text lane keeps
+        # the narrow rung whatever its operators are. Discovery itself no
+        # longer compares a value, so no leaf-shape carve-out is needed.
+        return any(
+            str(
+                (cfg := _parts(item)[1]).get("col_type") or cfg.get("colType") or ""
+            ).upper()
             == "SPAN_ATTRIBUTE"
-            and (cfg.get("filter_type") or cfg.get("filterType")) in {"text", "string"}
-            and normalize_filter_op(
-                str(cfg.get("filter_op") or cfg.get("filterOp") or "")
-            )
-            in {"equals", "in"}
-            and (
-                (
-                    value_types := cfg.get(
-                        "attribute_value_types", cfg.get("attributeValueTypes")
-                    )
-                )
-                is None
-                or (
-                    isinstance(
-                        values := cfg.get("filter_value", cfg.get("filterValue")), list
-                    )
-                    and bool(values)
-                    and value_types == ["string"] * len(values)
-                )
-            )
-            for cfg in configs
+            and (cfg.get("filter_type") or cfg.get("filterType"))
+            in {"text", "string"}
+            for item in self.filters
         )
 
     def recommended_filter_population_time_discovery_window(self):
         # Complete necessary-witness absence proofs avoid empty daily seeds.
-        # Thin text/time probes stay daily; other equality/IN witnesses reuse
-        # compiler-proven raw values and other supported leaves keep presence.
+        # Text lanes stay daily; other witness lanes reuse the compiler's
+        # index/key companions over the remaining request window.
         start, end = self._bounded_request_window
         if (
             self._bounded_sampling_rate is not None
@@ -172,55 +151,16 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
             return end - start
         return (
             end - start
-            if self._filter_population_plans()
-            and not self._uses_thin_text_population_discovery()
+            if self._filter_population_plans() and not self._has_text_attribute_leaf()
             else timedelta(hours=24)
         )
-
-    def _mixed_population_plans(self):
-        # Discovery needs necessary witnesses, not the full conjunction.
-        # Avoid loading a potentially large text Map just to locate an hour;
-        # seed acquisition and latest-state replay still apply every leaf.
-        raw_leaves = [
-            (item, cfg)
-            for item in self.filters
-            if str(
-                (cfg := _parts(item)[1]).get("col_type") or cfg.get("colType") or ""
-            ).upper()
-            == "SPAN_ATTRIBUTE"
-        ]
-        if not any(
-            (cfg.get("filter_type") or cfg.get("filterType")) in {"text", "string"}
-            for _, cfg in raw_leaves
-        ):
-            return []
-        # Keep every cheap necessary conjunct: using just one common value
-        # repeatedly visits hours with no joint match when results are sparse.
-        # Compile together so each predicate retains distinct parameter names.
-        plans, _ = partition_span_filter_plans(
-            [
-                item
-                for item, cfg in raw_leaves
-                if (cfg.get("filter_type") or cfg.get("filterType"))
-                in {"number", "boolean"}
-                # Never extract one branch from a picker OR across physical Maps.
-                and cfg.get("attribute_value_types", cfg.get("attributeValueTypes"))
-                is None
-            ]
-        )
-        return [
-            plan
-            for plan in plans
-            if not plan.exclude_group_matches
-            and self._filter_population_plan_predicate(plan, ordinary_seed=True)
-        ]
 
     def recommended_filter_population_time_discovery_windows(self):
         """Try adjacent recent ranges before a costly complete-year key scan.
 
-        Each completed NULL advances only its own proven interval. Thin text
-        probes retain daily widths; witness-filtered probes eventually widen
-        to the remaining request. Neither policy truncates older history.
+        Each completed NULL advances only its own proven interval. Text lanes
+        retain daily widths; other witness-filtered probes eventually widen to
+        the remaining request. Neither policy truncates older history.
         """
         plans = self._filter_population_plans()
         start, end = self._bounded_request_window
@@ -229,7 +169,7 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
         if not plans:
             return None
         width = end - start
-        if self._uses_thin_text_population_discovery():
+        if self._has_text_attribute_leaf():
             return (min(width, timedelta(days=1)),)
         return tuple(
             dict.fromkeys(
@@ -305,15 +245,19 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
                 """,
                 params,
             )
-        if self._uses_thin_text_population_discovery():
-            # NULL proves only this adjacent day. Every raw hit replays its
-            # complete physical hour; stale/missing values only add work.
-            population_plans = []
-        elif witnesses := self._mixed_population_plans():
-            population_plans = witnesses
+        # Discovery locates a populated interval; it never decides membership.
+        # A leaf carrying physical value indexes contributes key presence plus
+        # those index companions, so the probe prunes granules through the
+        # deployed blooms without decompressing the attribute value stream.
+        # NULL proves only this adjacent interval, and every raw hit replays
+        # its complete physical hour: stale or missing values only add work.
         population_predicates = [
-            f"({self._filter_population_plan_predicate(plan, ordinary_seed=True)})"
+            f"({predicate})"
             for plan in population_plans
+            if (
+                predicate := plan.raw_index_witness_predicate
+                or self._filter_population_plan_predicate(plan, ordinary_seed=True)
+            )
         ]
         if self._bounded_sampling_rate is not None:
             # Sampling is stable across physical versions, so stale versions

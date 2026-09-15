@@ -14,6 +14,7 @@ from tracer.services.clickhouse.query_builders.span_list import SpanListQueryBui
 from tracer.services.clickhouse.v2.query_builders.span_list import (
     SpanListQueryBuilderV2,
 )
+from tracer.tests.test_span_probe_index_witness import without_index_hints
 from tracer.tests.test_span_physical_identity_latest import (
     OTHER_PROJECT,
     PROJECT,
@@ -426,7 +427,7 @@ def reference_rows(reference, execute, filters):
     "kind,value", [("number", 0), ("boolean", False), ("text", "Kelvin")]
 )
 @pytest.mark.parametrize("op", ["equals", "in"])
-def test_value_population_keeps_seed_witness_and_uses_thin_text_discovery(kind, value, op):
+def test_value_population_keeps_seed_witness_and_uses_index_witness_discovery(kind, value, op):
     start, end = START - timedelta(days=365), START + timedelta(hours=1)
     leaf = scalar("value", [value] if op == "in" else value, kind, op)
     target = builder(filters=[time_filter(start, end), leaf])
@@ -436,13 +437,21 @@ def test_value_population_keeps_seed_witness_and_uses_thin_text_discovery(kind, 
         slice_end=end
     )
     assert "latest_filter_param_0" in raw
-    if kind == "text":
-        assert "attrs_" not in probe and "latest_filter_param_0" not in params
-        assert target.recommended_filter_population_time_discovery_windows() == (timedelta(days=1),)
-    else:
+    evaluated = without_index_hints(probe)
+    if kind == "boolean":
+        # Boolean Map values carry no physical value index and cost a byte a
+        # row, so the compiler's full raw witness stays the cheapest proof.
         assert raw.rsplit("WHERE ", 1)[-1].strip() in probe
-        assert "latest_filter_param_0" in params
-        assert target.recommended_filter_population_time_discovery_windows()[-1] == end - start
+    else:
+        # Indexed value types hand the planner their blooms and evaluate key
+        # presence only; the value comparison stays in the exact seed.
+        column = "attrs_string" if kind == "text" else "attrs_number"
+        assert f"has({column}.keys, %(latest_filter_key_0)s)" in evaluated
+        assert f"{column}[" not in evaluated
+    assert target.recommended_filter_population_time_discovery_windows() == (
+        (timedelta(days=1),) if kind == "text"
+        else (timedelta(days=7), timedelta(days=28), end - start)
+    )
     assert target.recommended_filter_cursor_seed_batch_size() is None
     assert target.recommended_filter_cursor_adaptive_seed_batch_size() is None
     assert "FINAL" not in probe and "LIMIT" not in raw + probe
@@ -540,11 +549,14 @@ def test_mixed_text_single_witness_does_not_change_joint_membership(
 
 
 def assert_mixed_result_queries_unchanged(target, filters, leaves):
-    class PreviousPopulationPolicy(SpanListQueryBuilderV2):
-        def _mixed_population_plans(self):
-            return []
+    # Discovery is built from its own witness metadata, so seed acquisition
+    # and the latest-state classifier keep the complete conjunction. Pin that
+    # against a builder whose discovery support is switched off entirely.
+    class NoDiscovery(SpanListQueryBuilderV2):
+        def supports_filter_population_time_discovery(self):
+            return False
 
-    previous = PreviousPopulationPolicy(
+    previous = NoDiscovery(
         project_id=PROJECT, filters=filters, bounded_internal_scan=True
     )
     assert query(target) == query(previous)
@@ -562,7 +574,7 @@ def assert_mixed_result_queries_unchanged(target, filters, leaves):
 @pytest.mark.parametrize("leaf_count", [2, 5, 10])
 @pytest.mark.parametrize("reverse", [False, True])
 @pytest.mark.parametrize("value", [0, 7])
-def test_mixed_gap_uses_one_numeric_witness_without_changing_seed_or_schedule(leaf_count, reverse, value):
+def test_mixed_gap_keeps_every_witness_at_the_text_lane_rung(leaf_count, reverse, value):
     start, end = START - timedelta(days=30), START + timedelta(days=1)
     leaves = [scalar("number", value), scalar("text", "wanted", "text")]
     leaves += [scalar(f"extra{i}", None, op="is_null") if i % 2 == 0
@@ -571,15 +583,20 @@ def test_mixed_gap_uses_one_numeric_witness_without_changing_seed_or_schedule(le
     target = builder(filters=filters)
     # Do not narrow the shared plan list used by actual seed/prefix acquisition.
     assert len(target._filter_population_plans()) >= 2
-    assert target.recommended_filter_population_time_discovery_windows() == (
-        timedelta(days=7), timedelta(days=28), end - start)
-    assert target.recommended_filter_population_time_discovery_window() == end - start
-    sql, params = target.build_filter_population_time_discovery_query(slice_start=START, slice_end=end)
-    assert "attrs_number" in sql and "attrs_string" not in sql and "attrs_bool" not in sql
-    assert {v for k, v in params.items() if k.startswith("latest_filter_key_")} == {"number"}
-    assert any(v == value for k, v in params.items() if k.startswith("latest_filter_param_"))
+    # A text leaf holds the lane at the daily rung; the widening ladder that
+    # used to hand this shape a month-wide probe is gone.
+    assert target.recommended_filter_population_time_discovery_windows() == (timedelta(days=1),)
+    assert target.recommended_filter_population_time_discovery_window() == timedelta(hours=24)
+    sql, params = target.build_filter_population_time_discovery_query(
+        slice_start=START, slice_end=START + timedelta(days=1))
+    evaluated = without_index_hints(sql)
+    # Every cheap necessary conjunct is kept: one common value alone revisits
+    # hours that hold no joint match. None of them opens a Map value stream.
+    assert "attrs_number" in sql and "attrs_string" in sql and "attrs_bool" not in sql
+    assert "attrs_string[" not in evaluated and "attrs_number[" not in evaluated
+    assert {v for k, v in params.items() if k.startswith("latest_filter_key_")} >= {"number", "text"}
     assert params["population_start_us"] == (START - datetime(1970, 1, 1)) // timedelta(microseconds=1)
-    assert params["population_end_us"] == (end - datetime(1970, 1, 1)) // timedelta(microseconds=1)
+    assert params["population_end_us"] == (START + timedelta(days=1) - datetime(1970, 1, 1)) // timedelta(microseconds=1)
     assert params["project_id"] == PROJECT and "FROM spans" in sql
     assert all(part not in sql for part in ("FINAL", "is_deleted", "project_version_id", "LIMIT", "SAMPLE"))
     seed, bound = query(target)
@@ -602,9 +619,14 @@ def test_mixed_gap_uses_all_explicit_raw_witnesses_and_skips_absence(first_kind,
     filters = [time_filter(START - timedelta(days=30), START + timedelta(days=1)), *leaves]
     target = builder(filters=filters)
     sql, params = target.build_filter_population_time_discovery_query(slice_start=START, slice_end=START + timedelta(days=1))
-    assert "attrs_number" in sql and "attrs_bool" in sql and "attrs_string" not in sql
-    assert params[f"latest_filter_key_{int(leading_null)}"] == "latency_ms"
-    assert {v for k, v in params.items() if k.startswith("latest_filter_key_")} == {"latency_ms", "later"}
+    assert all(column in sql for column in ("attrs_number", "attrs_bool", "attrs_string"))
+    # Indexed types evaluate key presence only; Boolean keeps its byte-wide
+    # value comparison. Absence leaves still have no necessary raw witness.
+    evaluated = without_index_hints(sql)
+    assert "attrs_string[" not in evaluated and "attrs_number[" not in evaluated
+    assert "attrs_bool[" in evaluated
+    assert params[f"latest_filter_key_{int(leading_null) + 1}"] == "latency_ms"
+    assert {v for k, v in params.items() if k.startswith("latest_filter_key_")} == {"text", "latency_ms", "later"}
     seed, bound = query(target)
     assert_mixed_result_queries_unchanged(target, filters, leaves)
     assert all(column in seed for column in ("attrs_string", "attrs_number", "attrs_bool"))

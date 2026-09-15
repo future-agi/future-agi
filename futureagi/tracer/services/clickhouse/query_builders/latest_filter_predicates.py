@@ -234,6 +234,13 @@ class LatestFilterPredicate:
     # attribute value; the latest-state classifier still applies the complete
     # value predicate before a row can become a graph point.
     raw_key_witness_predicate: str | None = None
+    # Key presence AND the physical value/ngram index companions, with no
+    # row-level value comparison. Population discovery only needs a temporal
+    # superset, so it may prune granules through the deployed value indexes
+    # without decompressing the attribute value stream. Set only where an
+    # index companion exists; the latest-state classifier still applies the
+    # complete value predicate before a row can become a published match.
+    raw_index_witness_predicate: str | None = None
     # Stricter raw key/value witness for the optional exact-graph shortcut.
     # This is populated only when a missing Map key's physical default cannot
     # satisfy the value comparison. That keeps the witness exhaustive even if
@@ -572,6 +579,7 @@ def _attribute_plan(
     # deployed string-value bloom uses ASCII-only ``lower()``, so it may only
     # join an exhaustive witness through the Unicode-safe variant helper below.
     params[key_param] = key
+    index_hint_predicate = None
     if map_column in {"span_attr_str", "span_attr_num"} and operation in {
         "equals",
         "in",
@@ -613,6 +621,7 @@ def _attribute_plan(
         # but do not re-evaluate/lower every Map value on each surviving row
         # (especially after FINAL, where mutable skip indexes are disabled).
         # indexHint is not membership truth; the exact comparison remains.
+        index_hint_predicate = index_predicate
         seed_predicate = f"({seed_predicate}) AND indexHint({index_predicate})"
 
     key_witness_predicate = (
@@ -635,6 +644,14 @@ def _attribute_plan(
         else None
     )
     raw_witness_predicate = key_witness_predicate if negative_presence_witness else None
+    # The companions above are already implied by the complete comparison, so
+    # pairing them with key presence alone stays an exhaustive superset while
+    # reading only the Map key stream.
+    raw_index_witness_predicate = (
+        f"({key_witness_predicate}) AND indexHint({index_hint_predicate})"
+        if index_hint_predicate is not None and raw_key_witness_predicate
+        else None
+    )
     raw_graph_value_witness_predicate = None
     if operation in _POSITIVE_RAW_WITNESS_OPS:
         raw_witness_predicate = key_witness_predicate
@@ -668,6 +685,7 @@ def _attribute_plan(
         scope=scope,
         raw_witness_predicate=raw_witness_predicate,
         raw_key_witness_predicate=raw_key_witness_predicate,
+        raw_index_witness_predicate=raw_index_witness_predicate,
         raw_graph_value_witness_predicate=raw_graph_value_witness_predicate,
         raw_witness_rank=(
             {"equals": 0, "in": 0}.get(operation, 10)
@@ -739,6 +757,7 @@ def _mixed_typed_attribute_plan(
     seed_matches: list[str] = []
     key_witnesses: list[str] = []
     typed_raw_witnesses: list[str] = []
+    typed_index_witnesses: list[str] = []
     typed_graph_witnesses: list[str] = []
     storage_metadata: dict[str, tuple[str, Callable[[object], object], bool]] = {
         "string": ("span_attr_str", _strict_text, True),
@@ -787,6 +806,7 @@ def _mixed_typed_attribute_plan(
             f"AND has({map_column}.keys, {bound_key}))"
         )
         typed_witness = f"(({key_witnesses[-1]}) AND ({seed_matches[-1]}))"
+        index_predicate = None
         if operation == "in" and storage_type in {"string", "number"}:
             # Picker provenance changes parameter names, not the scalar IN
             # implication. Keep exact membership authoritative; these implied
@@ -809,6 +829,15 @@ def _mixed_typed_attribute_plan(
                     index_predicate = f"({index_predicate}) AND ({legacy})"
             typed_witness = f"({typed_witness}) AND indexHint({index_predicate})"
         typed_raw_witnesses.append(typed_witness)
+        # Population discovery only locates an interval, so each storage
+        # branch contributes key presence plus its index companion. A branch
+        # with no value index (Boolean, long strings) keeps key presence
+        # alone, which is still an exhaustive superset of that branch.
+        typed_index_witnesses.append(
+            f"({key_witnesses[-1]}) AND indexHint({index_predicate})"
+            if index_predicate is not None
+            else key_witnesses[-1]
+        )
         if operation == "in":
             typed_graph_witnesses.append(
                 key_witnesses[-1]
@@ -841,6 +870,7 @@ def _mixed_typed_attribute_plan(
         # semantics.
         raw_witness_predicate = f"({' OR '.join(typed_raw_witnesses)})"
         raw_key_witness_predicate = f"({' OR '.join(key_witnesses)})"
+        raw_index_witness_predicate = f"({' OR '.join(typed_index_witnesses)})"
         # The picker adds storage provenance and suffixed parameters, but its
         # positive membership semantics are otherwise identical to scalar IN.
         # Narrow each storage branch by value unless a missing Map key's
@@ -861,6 +891,9 @@ def _mixed_typed_attribute_plan(
             else None
         )
         raw_witness_predicate = raw_key_witness_predicate
+        # The negative witness is already key-only; no companion can be
+        # cheaper, and a positive value index cannot witness an exclusion.
+        raw_index_witness_predicate = None
         raw_graph_value_witness_predicate = None
         raw_witness_rank = 10 if allow_negative_presence_witness else None
 
@@ -872,6 +905,7 @@ def _mixed_typed_attribute_plan(
         scope=scope,
         raw_witness_predicate=raw_witness_predicate,
         raw_key_witness_predicate=raw_key_witness_predicate,
+        raw_index_witness_predicate=raw_index_witness_predicate,
         raw_graph_value_witness_predicate=raw_graph_value_witness_predicate,
         raw_witness_rank=raw_witness_rank,
     )
