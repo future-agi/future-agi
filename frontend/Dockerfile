@@ -1,7 +1,7 @@
 # Dockerfile
 
 # Stage 1: Build the React app
-FROM node:22.18 AS build
+FROM futureagi/frontend-base:v1.0.0 AS build
 
 # Build args forwarded from docker-compose. Vite reads env vars prefixed
 # VITE_ at build time and bakes them into the bundle.
@@ -10,11 +10,6 @@ ARG VITE_ENVIRONMENT=production
 ENV VITE_HOST_API=${VITE_HOST_API} \
     VITE_ENVIRONMENT=${VITE_ENVIRONMENT}
 
-WORKDIR /app
-
-COPY package.json yarn.lock ./
-RUN yarn install --network-timeout 600000
-
 COPY . ./
 RUN yarn build
 
@@ -22,10 +17,7 @@ RUN yarn build
 # `target: dev` in docker-compose.dev.yml. Source is bind-mounted at runtime;
 # this stage just provides node + a baked-in node_modules so HMR works without
 # a host-side `yarn install`.
-FROM node:22.18 AS dev
-WORKDIR /app
-COPY package.json yarn.lock ./
-RUN yarn install
+FROM futureagi/frontend-base:v1.0.0 AS dev
 EXPOSE 3000
 CMD ["yarn", "dev", "--host", "--port", "3000"]
 

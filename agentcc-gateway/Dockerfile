@@ -1,9 +1,4 @@
-FROM golang:1.26-alpine AS builder
-
-WORKDIR /build
-
-COPY go.mod go.sum ./
-RUN go mod download
+FROM futureagi/agentcc-gateway-base:v1.0.0 AS builder
 
 COPY . .
 
