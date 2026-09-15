@@ -597,8 +597,13 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                     f"duplicate raw trace candidate params: {duplicate_params}"
                 )
             self.params.update(self.raw_trace_candidate_params)
+            # GLOBAL IN broadcasts one materialised set to every shard and is
+            # required only when the source is a cluster table. On a single
+            # node it forces that same temporary set where a plain IN lets the
+            # reader use the subquery as an index condition instead.
+            set_operator = "GLOBAL IN" if self.raw_replica_shard_cluster else "IN"
             candidate_trace_fragment = f"""
-              AND trace_id GLOBAL IN (
+              AND trace_id {set_operator} (
                   SELECT trace_id
                   FROM {candidate_source}
                   PREWHERE project_id = toUUID(%(project_id)s)
