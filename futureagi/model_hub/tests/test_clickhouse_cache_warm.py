@@ -104,9 +104,18 @@ def test_local_entrypoint_authorizes_explicit_database_commands(monkeypatch, com
 
 
 @pytest.mark.parametrize("env_type", ["prod", "production", "staging"])
-def test_hosted_backend_cannot_use_local_explicit_database_mode(monkeypatch, env_type):
+def test_hosted_backend_authorizes_explicit_database_mode(monkeypatch, env_type):
     monkeypatch.setenv("ENV_TYPE", env_type)
     monkeypatch.setenv("NO_STARTUP_DB_MUTATIONS", "false")
+
+    assert explicit_management_mutation_authorized(["manage.py", "migrate"]) is True
+
+
+@pytest.mark.parametrize("env_type", ["prod", "production"])
+def test_hosted_backend_without_explicit_opt_in_stays_mutation_free(
+    monkeypatch, env_type
+):
+    monkeypatch.setenv("ENV_TYPE", env_type)
 
     assert explicit_management_mutation_authorized(["manage.py", "migrate"]) is False
 

@@ -10,10 +10,11 @@ ENV_PROJECT_ROOT=${ENV_PROJECT_ROOT:-/app/backend}
 # Fast startup mode - skip non-essential checks for faster local dev
 FAST_STARTUP=${FAST_STARTUP:-false}
 
-# Hosted application startup is mutation-free by default. Production schema or
-# data bootstrap must run as a dedicated one-shot operator job using both
-# SERVICE_TYPE=bootstrap and STARTUP_DB_MUTATION_MODE=operator. Development and
-# self-hosted compose retain the existing default startup behavior.
+# Startup runs migrations by default everywhere, including hosted deployments.
+# A pod opts out of DB mutations by exporting the literal value "true" in
+# NO_STARTUP_DB_MUTATIONS (read-only test pods, mutation-free replicas). A
+# dedicated one-shot job can still bootstrap via SERVICE_TYPE=bootstrap and
+# STARTUP_DB_MUTATION_MODE=operator.
 CLOUD_STARTUP=false
 case "$ENV_TYPE" in
     "prod"|"production"|"staging"|"PROD"|"PRODUCTION"|"STAGING") CLOUD_STARTUP=true ;;
@@ -37,13 +38,7 @@ if [ "$CLOUD_STARTUP" = "true" ] && [ "$SERVICE_TYPE" = "bootstrap" ] && [ "$STA
 fi
 
 if [ "${NO_STARTUP_DB_MUTATIONS+x}" != "x" ]; then
-    if [ "$OPERATOR_BOOTSTRAP" = "true" ]; then
-        NO_STARTUP_DB_MUTATIONS=false
-    elif [ "$CLOUD_STARTUP" = "true" ]; then
-        NO_STARTUP_DB_MUTATIONS=true
-    else
-        NO_STARTUP_DB_MUTATIONS=false
-    fi
+    NO_STARTUP_DB_MUTATIONS=false
 fi
 case "$NO_STARTUP_DB_MUTATIONS" in
     "true"|"false") ;;
@@ -56,13 +51,6 @@ esac
 if [ "$OPERATOR_BOOTSTRAP" = "true" ] && [ "$NO_STARTUP_DB_MUTATIONS" != "false" ]; then
     echo "ERROR: operator bootstrap requires NO_STARTUP_DB_MUTATIONS=false"
     exit 64
-fi
-
-if [ "$CLOUD_STARTUP" = "true" ] && [ "$NO_STARTUP_DB_MUTATIONS" = "false" ]; then
-    if [ "$OPERATOR_BOOTSTRAP" != "true" ]; then
-        echo "ERROR: hosted database mutations require SERVICE_TYPE=bootstrap and STARTUP_DB_MUTATION_MODE=operator"
-        exit 64
-    fi
 fi
 
 if [ "$CLOUD_STARTUP" = "true" ] && [ "$SERVICE_TYPE" = "bootstrap" ] && [ "$OPERATOR_BOOTSTRAP" != "true" ]; then

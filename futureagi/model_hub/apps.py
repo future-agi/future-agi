@@ -30,9 +30,6 @@ STARTUP_SAFE_MANAGEMENT_COMMANDS = frozenset(
     }
 )
 
-HOSTED_ENV_TYPES = frozenset({"prod", "production", "staging"})
-HOSTED_DEPLOYMENTS = frozenset({"US", "EU", "DEV"})
-
 # Application processes are never schema/bootstrap runners. A one-shot operator
 # job may run one of these explicit management commands, but it does not enable
 # mutation hooks during AppConfig initialization.
@@ -71,15 +68,6 @@ def startup_db_mutations_disabled() -> bool:
     if value is not None and value not in {"true", "false"}:
         raise RuntimeError("NO_STARTUP_DB_MUTATIONS must be exactly 'true' or 'false'")
     return True
-
-
-def hosted_startup_environment() -> bool:
-    """Return whether this process belongs to a hosted deployment."""
-
-    return (
-        os.getenv("ENV_TYPE", "").strip().lower() in HOSTED_ENV_TYPES
-        or os.getenv("CLOUD_DEPLOYMENT", "").strip().upper() in HOSTED_DEPLOYMENTS
-    )
 
 
 def _management_command(argv: list[str]) -> str | None:
@@ -132,9 +120,10 @@ def operator_startup_mutation_authorized(argv: list[str]) -> bool:
 def explicit_management_mutation_authorized(argv: list[str]) -> bool:
     """Authorize one allowlisted explicit command, never an AppConfig hook.
 
-    Hosted deployments require the dedicated operator/bootstrap pair. Local
-    and self-hosted entrypoints preserve their documented migration workflow
-    only when they explicitly export ``NO_STARTUP_DB_MUTATIONS=false``.
+    Every entrypoint — local, self-hosted, and hosted pods alike — runs its
+    documented migration workflow when it explicitly exports
+    ``NO_STARTUP_DB_MUTATIONS=false``. The dedicated operator/bootstrap pair
+    remains valid for one-shot jobs.
     """
 
     command = _management_command(argv)
@@ -142,10 +131,7 @@ def explicit_management_mutation_authorized(argv: list[str]) -> bool:
         return False
     if operator_startup_mutation_authorized(argv):
         return True
-    return (
-        os.getenv("NO_STARTUP_DB_MUTATIONS") == "false"
-        and not hosted_startup_environment()
-    )
+    return os.getenv("NO_STARTUP_DB_MUTATIONS") == "false"
 
 
 def guarded_management_command(argv: list[str]) -> str | None:
