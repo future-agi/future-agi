@@ -847,6 +847,8 @@ def accept_invitation_mail(request, uidb64, token):
     reject_unknown_fields=True,
 )
 def resend_invitation_emails(request):
+    from accounts.models.organization_invite import InviteStatus, OrganizationInvite
+
     user_ids = [str(user_id) for user_id in request.validated_data.get("user_ids", [])]
     responses = []
 
@@ -861,7 +863,23 @@ def resend_invitation_emails(request):
             )
 
             if user:
+                invite = OrganizationInvite.objects.filter(
+                    target_email__iexact=user.email,
+                    organization=organization,
+                    status=InviteStatus.PENDING,
+                ).first()
+                if invite is None:
+                    responses.append(
+                        {
+                            "user_id": user_id,
+                            "error": "Pending invitation does not exist.",
+                        }
+                    )
+                    continue
+
                 logger.info(f"Resending invitation email to {user.email}")
+                invite.refresh_expiration()
+
                 # Generate a token
                 token = default_token_generator.make_token(user)
 
