@@ -22,9 +22,9 @@ from typing import Any
 from django.conf import settings
 
 from tracer.selectors.filter_seed_width import (
-    EMPTY_DENSITY_ESTIMATE,
     EmptyDensityEstimate,
     FilterSeedWidthPolicy,
+    reduce_density_estimate,
 )
 from tracer.services.clickhouse.query_builders.filter_seed_witness import (
     MAX_WITNESS_SLACK_HOURS,
@@ -152,14 +152,6 @@ def _replays_native_any_span_column(plan: LatestFilterPredicate) -> bool:
         if match is not None and match.group("column") in _NATIVE_ANY_SPAN_COLUMNS:
             return True
     return False
-
-
-# The column names ClickHouse 25.3 returns for ``EXPLAIN ESTIMATE``. They are
-# the discriminator the density probe's reducer uses to tell an empty estimate
-# (the answer "no part matched", i.e. zero rows) from a result it cannot read.
-_SEED_DENSITY_ESTIMATE_COLUMNS = frozenset(
-    {"database", "table", "parts", "rows", "marks"}
-)
 
 
 def _short_text_prefix_classify_batch_size(prefix_needed: int) -> int:
@@ -572,6 +564,7 @@ class _TraceRootReplayV2:
             raise ValueError("v2 content replay identity escaped requested traces")
         return self._root_replay_query(identities, content=True)
 
+
 class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
     """Schema-aware planner shared before the public SQL rewrite boundary."""
 
@@ -736,12 +729,16 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
             and values
             and isinstance(types, list)
             and (
-                (all(type(value) is bool for value in values)
-                 and types == ["boolean"] * len(values))
+                (
+                    all(type(value) is bool for value in values)
+                    and types == ["boolean"] * len(values)
+                )
                 or (
-                    all(type(value) is str
+                    all(
+                        type(value) is str
                         and 0 < len(value.strip()) < _SELECTIVE_EXACT_TEXT_MIN_LENGTH
-                        for value in values)
+                        for value in values
+                    )
                     and types == ["string"] * len(values)
                 )
             )
@@ -1486,7 +1483,9 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
         # V2 classifies ONE physical tuple, so even false requires a raw row
         # with this typed key and value. Keep the shared legacy/graph default
         # guard unchanged; never prune versions from the exact classifier.
-        plan = replace(plan, raw_graph_value_witness_predicate=plan.raw_witness_predicate)
+        plan = replace(
+            plan, raw_graph_value_witness_predicate=plan.raw_witness_predicate
+        )
         return plan if self._public_scalar_candidate_witness_predicate(plan) else None
 
     def _public_scalar_candidate_seed_plan(self):
@@ -1738,52 +1737,12 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
     ) -> int | EmptyDensityEstimate | None:
         """Reduce one ``EXPLAIN ESTIMATE`` result to the policy's row bound.
 
-        The statement above returns the estimate table, one row per part it
-        would read: ``database``, ``table``, ``parts``, ``rows``, ``marks``.
-        The policy consumes a single integer, so the lane that emitted the
-        statement is also the one that says how to read it back, and several
-        part rows for this table SUM.
-
-        Three shapes have to be told apart, and the ``columns`` the transport
-        reports are what separate the last one - not the row count:
-
-        * the estimate table with part rows is their summed ``rows``;
-        * the estimate table with NO rows is ``EMPTY_DENSITY_ESTIMATE``, which
-          is explicitly NOT the integer zero. A key condition selecting no part
-          and a plan that carried no readable step produce the identical
-          answer here, and they call for opposite decisions, so this method
-          refuses to pick one: the selector decides, and accepts the zero
-          reading only when a completed statement in the same request has
-          already shown the newer region next door to be empty. The repo's
-          other production ``EXPLAIN ESTIMATE`` consumer
-          (``clickhouse/graph_dispatch``) treats the same signal as unusable
-          and falls back; this lane may believe it, but only with that
-          corroboration;
-        * anything else - a transport that answered something other than this
-          statement, or a server whose estimate table changed shape - is
-          ``None``, meaning unknown, and the caller keeps the unprobed cap.
-
-        Only this builder's own table counts toward the estimate. A statement
-        naming one table can only answer for one table; a row naming another
-        would mean the result is not the one this method is documented to read.
+        The reading of that result - and in particular the refusal to read an
+        EMPTY estimate table as the integer zero - is shared with the span
+        lane's identical statement; see ``reduce_density_estimate``.
         """
 
-        names = {str(name) for name in (columns or ())}
-        if not _SEED_DENSITY_ESTIMATE_COLUMNS.issubset(names):
-            return None
-        counted_any = False
-        estimate = 0
-        for row in rows or ():
-            counted_any = True
-            if not isinstance(row, Mapping):
-                return None
-            if str(row.get("table") or "") != self.TABLE:
-                return None
-            counted = row.get("rows")
-            if isinstance(counted, bool) or not isinstance(counted, (int, float)):
-                return None
-            estimate += max(0, int(counted))
-        return estimate if counted_any else EMPTY_DENSITY_ESTIMATE
+        return reduce_density_estimate(rows, columns, table=self.TABLE)
 
     def supports_filter_windowed_candidate_seed_page(self) -> bool:
         return bool(

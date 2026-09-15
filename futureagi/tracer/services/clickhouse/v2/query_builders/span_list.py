@@ -16,9 +16,17 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime, timedelta
 
-from tracer.services.clickhouse.query_builders.filters import normalize_filter_op
+from django.conf import settings
+
+from tracer.selectors.filter_seed_width import (
+    FilterSeedWidthPolicy,
+    reduce_density_estimate,
+)
+from tracer.services.clickhouse.query_builders.filter_seed_witness import (
+    ceil_hour,
+    floor_hour,
+)
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
-    _parts,
     partition_span_filter_plans,
 )
 from tracer.services.clickhouse.query_builders.span_list import (
@@ -211,118 +219,244 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
             return 200
         return None
 
-    def _uses_thin_text_population_discovery(self):
-        # Text Map values can dwarf timestamp reads. Only change acquisition
-        # for explicit scalar positive text ANDs; exact seed/replay is unchanged.
-        configs = [
-            _parts(item)[1]
-            for item in self.filters
-            if not self.is_datetime_filter(item)
-        ]
-        return bool(configs) and all(
-            str(cfg.get("col_type") or cfg.get("colType") or "").upper()
-            == "SPAN_ATTRIBUTE"
-            and (cfg.get("filter_type") or cfg.get("filterType")) in {"text", "string"}
-            and normalize_filter_op(
-                str(cfg.get("filter_op") or cfg.get("filterOp") or "")
-            )
-            in {"equals", "in"}
-            and (
-                (
-                    value_types := cfg.get(
-                        "attribute_value_types", cfg.get("attributeValueTypes")
-                    )
-                )
-                is None
-                or (
-                    isinstance(
-                        values := cfg.get("filter_value", cfg.get("filterValue")), list
-                    )
-                    and bool(values)
-                    and value_types == ["string"] * len(values)
-                )
-            )
-            for cfg in configs
+    def _row_budgeted_span_lane(self):
+        """Whether this read's two wide statements are row-budgeted.
+
+        Exactly the reads whose filter compiles to a typed-Map population
+        witness - the shapes whose seed replays ``attrs_string`` for every row
+        of the coordinates the witness names, and whose absence proof this
+        change rebuilt. A time-only list has no attribute predicate to be
+        blind about; a native-column list's statements were never measured
+        here. Both keep the wall-clock schedule they ship with today.
+        """
+
+        return bool(self._filter_population_plans())
+
+    def filter_seed_width_policy(self):
+        """Budget the span seed by the rows it reads, not by hours.
+
+        WHAT THIS REPLACES. The seed used to double blindly from five minutes
+        to a two-day ceiling: the width of the next slice was chosen from
+        nothing at all, so a slice that would read gigabytes was issued exactly
+        like one that would read megabytes. Measured read-only against
+        production on the high-volume tenant, a 30-day span list whose seed
+        reached a 48-hour slice ended that statement at its deadline, and eight
+        empty slices had been spent getting there.
+
+        The budget is in ROWS because the seed's cost is in rows: this lane's
+        statement replays the typed Map of every physical row inside its slice
+        (3.73 KB of ``attrs_string`` per row, measured), and a project's
+        density varies by orders of magnitude across its own retention, so no
+        one hour count is right at both ends. Each following slice is sized
+        from the rows the previous statement actually read, and any width above
+        the policy's unprobed cap must first be costed by
+        ``build_filter_seed_density_probe_query``.
+
+        The floor is ONE HOUR and so is the opening width, because the seed's
+        own key predicate is on ``toStartOfHour(start_time)``: a five-minute
+        slice reads exactly the granules the whole hour reads, so the old
+        5m/10m/20m/40m schedule paid for one hour four times over before it
+        covered it once. An hour is the narrowest slice that buys anything.
+
+        Only the acquisition boundary moves. Slices stay contiguous and
+        half-open, predicates, ordering, the exact latest-state classifier and
+        the signed cursor payload are untouched, and a narrower slice defers
+        its older part to the next adjacent slice rather than skipping it.
+        """
+
+        if not self._row_budgeted_span_lane():
+            return None
+        hour = timedelta(hours=1)
+        return FilterSeedWidthPolicy(
+            initial_width=hour,
+            min_width=hour,
+            target_read_rows=settings.FILTER_SELECTOR_SPAN_SEED_TARGET_READ_ROWS,
         )
+
+    def filter_population_discovery_width_policy(self):
+        """The same budget, for the absence proof, at that statement's rate.
+
+        The proof and the seed read the same interval of the same table and
+        are both linear in the rows inside it, but they read DIFFERENT
+        columns: the proof reads ``start_time`` alone at roughly a hundred
+        times the seed's rows per second. One number cannot serve both, so
+        each declares its own; everything else - the width lattice, the floor,
+        the unprobed cap, the proportional fit and its one refinement - is the
+        same policy object doing the same arithmetic.
+        """
+
+        if not self._row_budgeted_span_lane():
+            return None
+        hour = timedelta(hours=1)
+        return FilterSeedWidthPolicy(
+            initial_width=hour,
+            min_width=hour,
+            target_read_rows=(
+                settings.FILTER_SELECTOR_SPAN_POPULATION_DISCOVERY_TARGET_READ_ROWS
+            ),
+        )
+
+    def supports_filter_seed_density_probe(self):
+        """A lane probes for density exactly when it declares a row budget."""
+
+        return self.filter_seed_width_policy() is not None
+
+    def build_filter_seed_density_probe_query(self, *, slice_start, slice_end):
+        """Cost a proposed interval from the primary index, reading no data.
+
+        This is the density proof both of this lane's row budgets require
+        before an interval wider than their unprobed cap may be issued.
+
+        IT READS NO COLUMN DATA. ``EXPLAIN ESTIMATE`` answers from the primary
+        index and the skip indexes: for every part they cannot exclude it
+        reports the parts, granules (``marks``) and ``rows`` a real statement
+        WOULD read. Measured read-only against production, it returns 54 bytes
+        read: the 30-day AND-2 shape on the high-volume tenant is answered in
+        about 0.4 s and the 12-month shape in under 0.8 s.
+
+        IT CARRIES THE CONJUNCTION, AS INDEX WITNESSES ONLY. The plain
+        time-range form would answer for a population this lane never reads:
+        on the measured 30-day AND-2 shape the plain estimate is 187 parts /
+        97.1M rows / 11,925 marks and the conjunction-carrying estimate is 66
+        parts / 55.3M rows / 9,224 marks - and the two diverge much further
+        over a year, where the same filter's key is absent from most of the
+        retained history (12 months: 314.6M plain against 96.4M with the
+        conjunction). Costing against the plain count would shrink every
+        interval by the ratio of the two and turn a page into a crawl.
+
+        Every conjunct is wrapped in ``indexHint`` and NOTHING is compared at
+        row level. That is deliberate and it is the whole difference between
+        this statement and the one it replaced: an ``indexHint`` argument is
+        used for index analysis and is true for every row of every surviving
+        granule, so the server reads marks, never the typed Map. A probe that
+        carried the value comparison would decompress the value stream, which
+        is exactly the 2.82 GB the old absence proof spent.
+
+        DO NOT "IMPROVE" THE TIME PREDICATE INTO ``toStartOfHour(start_time)``.
+        ``spans`` carries aggregate PROJECTIONs keyed on ``(project_id,
+        toStartOfHour(start_time) AS hour, ...)`` which do not store
+        ``start_time``; spelled as ``hour`` the optimizer could route this
+        statement to a projection and ``rows`` would then be that projection's
+        AGGREGATE rows - orders of magnitude below the interval, an estimate
+        far inside the budget, and the widest possible interval APPROVED. Raw
+        ``start_time`` bounds prune identically through the key expression's
+        monotonicity, plus the table's ``PARTITION BY toDate(start_time)``.
+
+        It answers a COST question only. It never decides membership, never
+        prunes a candidate and never reaches the published page.
+        """
+
+        request_start, request_end = self._bounded_request_window
+        if not request_start <= slice_start < slice_end <= request_end:
+            raise ValueError("seed density probe must stay inside the request window")
+        if not self.supports_filter_seed_density_probe():
+            raise ValueError("seed density probe is unavailable")
+        probe_start = max(request_start, floor_hour(slice_start))
+        probe_end = min(request_end, ceil_hour(slice_end))
+        params = {
+            **self.params,
+            "seed_density_start_us": _unix_microseconds(probe_start),
+            "seed_density_end_us": _unix_microseconds(probe_end),
+        }
+        witnesses = ""
+        for plan in self._filter_population_plans():
+            if not plan.raw_index_witness_predicate:
+                continue
+            witnesses += f"\n              AND ({plan.raw_index_witness_predicate})"
+            params.update(
+                {
+                    key: value
+                    for key, value in plan.params.items()
+                    if f"%({key})s" in plan.raw_index_witness_predicate
+                }
+            )
+        return (
+            f"""
+            EXPLAIN ESTIMATE
+            SELECT count()
+            FROM {self.TABLE}
+            WHERE {self.project_filter_sql()}
+              AND start_time >= fromUnixTimestamp64Micro(%(seed_density_start_us)s)
+              AND start_time < fromUnixTimestamp64Micro(%(seed_density_end_us)s){witnesses}
+            """,
+            params,
+        )
+
+    def filter_seed_density_probe_estimate(self, rows, columns=None):
+        """Reduce one ``EXPLAIN ESTIMATE`` result to a policy's row bound.
+
+        The reading of that result - and in particular the refusal to read an
+        EMPTY estimate table as the integer zero - is shared with the trace
+        lane's identical statement; see ``reduce_density_estimate``.
+        """
+
+        return reduce_density_estimate(rows, columns, table=self.TABLE)
+
+    def recommended_filter_initial_slice_width(self):
+        """Open a row-budgeted read at its policy's own width, not at five
+        minutes: below an hour a slice reads the same granules for less
+        coverage, because the seed's key predicate is hour-aligned."""
+
+        policy = self.filter_seed_width_policy()
+        if policy is None:
+            return super().recommended_filter_initial_slice_width()
+        start, end = self._bounded_request_window
+        return min(end - start, policy.initial_width)
 
     def recommended_filter_population_time_discovery_window(self):
-        # Complete necessary-witness absence proofs avoid empty daily seeds.
-        # Thin text/time probes stay daily; other equality/IN witnesses reuse
-        # compiler-proven raw values and other supported leaves keep presence.
-        start, end = self._bounded_request_window
-        if (
-            self._bounded_sampling_rate is not None
-            and not self._filter_population_plans()
-        ):
-            # The hourly raw population is a complete superset of the sampled
-            # task population without collapsing rows to latest state.
-            return end - start
-        return (
-            end - start
-            if self._filter_population_plans()
-            and not self._uses_thin_text_population_discovery()
-            else timedelta(hours=24)
-        )
+        """The widest interval one absence proof may cover: the request.
 
-    def _mixed_population_plans(self):
-        # Discovery needs necessary witnesses, not the full conjunction.
-        # Avoid loading a potentially large text Map just to locate an hour;
-        # seed acquisition and latest-state replay still apply every leaf.
-        raw_leaves = [
-            (item, cfg)
-            for item in self.filters
-            if str(
-                (cfg := _parts(item)[1]).get("col_type") or cfg.get("colType") or ""
-            ).upper()
-            == "SPAN_ATTRIBUTE"
-        ]
-        if not any(
-            (cfg.get("filter_type") or cfg.get("filterType")) in {"text", "string"}
-            for _, cfg in raw_leaves
-        ):
-            return []
-        # Keep every cheap necessary conjunct: using just one common value
-        # repeatedly visits hours with no joint match when results are sparse.
-        # Compile together so each predicate retains distinct parameter names.
-        plans, _ = partition_span_filter_plans(
-            [
-                item
-                for item, cfg in raw_leaves
-                if (cfg.get("filter_type") or cfg.get("filterType"))
-                in {"number", "boolean"}
-                # Never extract one branch from a picker OR across physical Maps.
-                and cfg.get("attribute_value_types", cfg.get("attributeValueTypes"))
-                is None
-            ]
-        )
-        return [
-            plan
-            for plan in plans
-            if not plan.exclude_group_matches
-            and self._filter_population_plan_predicate(plan, ordinary_seed=True)
-        ]
+        The proof reads ``start_time`` and the narrow columns a native leaf
+        names, and no typed Map at all - see
+        ``build_filter_population_time_discovery_query`` - so its cost tracks
+        the ROWS inside the interval, not the interval's width, and a fixed
+        wall-clock ceiling is the wrong bound for it. The interval actually
+        ISSUED is fitted to a row budget by
+        ``filter_population_discovery_width_policy``; this remains the outer
+        contract the statement validates itself against.
+
+        A read with NO necessary witness at all - ``is_null``, whose matches
+        include rows with no such key - keeps its inherited daily ceiling: its
+        proof carries no predicate, so a wider interval buys no proof, only
+        rows.
+        """
+
+        start, end = self._bounded_request_window
+        if not self._filter_population_plans() and self._bounded_sampling_rate is None:
+            # Unchanged: the inherited daily ceiling this lane already shipped
+            # for a witness-less proof. It is not a bound on a cost this change
+            # touches, so it is left exactly where it was.
+            return timedelta(hours=24)
+        return end - start
 
     def recommended_filter_population_time_discovery_windows(self):
-        """Try adjacent recent ranges before a costly complete-year key scan.
+        """One proposal - the whole remaining request - for the budget to fit.
 
-        Each completed NULL advances only its own proven interval. Thin text
-        probes retain daily widths; witness-filtered probes eventually widen
-        to the remaining request. Neither policy truncates older history.
+        THE LADDER THIS REPLACES. Absence proofs used to be tried at a fixed
+        (1 day) or (7 day, 28 day, request) ladder of widths, because the
+        statement carried the filter's full VALUE comparison and so
+        decompressed the typed Map of every row in its interval: measured
+        read-only against production, the 28-day rung of a 30-day request on
+        the high-volume tenant read 2.82 GB and hit its deadline without
+        answering, and the page returned nothing. The days in that ladder were
+        an attempt to bound a cost the statement's SHAPE should have bounded.
+
+        The statement now carries granule-level index witnesses only and reads
+        ``start_time`` alone, so its cost tracks the rows inside the interval,
+        and the honest bound is a ROW budget costed from the primary index -
+        the same mechanism, and the same ``EXPLAIN ESTIMATE`` statement, the
+        seed's own width uses. This method therefore proposes the widest
+        interval that could be useful and lets
+        ``filter_population_discovery_width_policy`` fit it; a proposal the
+        probe cannot cost is capped, and the next proof's own read rows widen
+        it again, so no history is skipped either way.
         """
+
         plans = self._filter_population_plans()
         start, end = self._bounded_request_window
-        if self._bounded_sampling_rate is not None and not plans:
-            return (end - start,)
-        if not plans:
+        if not plans and self._bounded_sampling_rate is None:
             return None
-        width = end - start
-        if self._uses_thin_text_population_discovery():
-            return (min(width, timedelta(days=1)),)
-        return tuple(
-            dict.fromkeys(
-                (min(width, timedelta(days=7)), min(width, timedelta(days=28)), width)
-            )
-        )
+        return (end - start,)
 
     def build_filter_population_time_discovery_query(self, *, slice_start, slice_end):
         start, end = self._bounded_request_window
@@ -392,15 +526,18 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
                 """,
                 params,
             )
-        if self._uses_thin_text_population_discovery():
-            # NULL proves only this adjacent day. Every raw hit replays its
-            # complete physical hour; stale/missing values only add work.
-            population_plans = []
-        elif witnesses := self._mixed_population_plans():
-            population_plans = witnesses
         population_predicates = [
-            f"({self._filter_population_plan_predicate(plan, ordinary_seed=True)})"
+            # A plan with no granule-level companion is DROPPED rather than
+            # carried at row level. Dropping weakens the necessary condition -
+            # a larger superset, still sound, and the seed re-applies every
+            # leaf - whereas carrying one would put a Map read back into the
+            # one statement whose whole purpose is not to have one. Today
+            # every plan that reaches this list has a companion, because the
+            # two compiler sites that publish a population witness publish
+            # both; this is the safe direction if that ever stops being true.
+            f"({witness})"
             for plan in population_plans
+            if (witness := plan.raw_index_witness_predicate)
         ]
         if self._bounded_sampling_rate is not None:
             # Sampling is stable across physical versions, so stale versions
