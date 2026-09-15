@@ -190,6 +190,38 @@ describe("WidgetChart — empty time-range state", () => {
     expect(screen.getByText(NO_DATA_MESSAGE)).toBeInTheDocument();
     expect(screen.queryByTestId("apex-pie")).not.toBeInTheDocument();
   });
+
+  it("renders distribution buckets as a categorical bar chart", () => {
+    const response = queryResult([
+      { bucket_start: 0, bucket_end: 0.5, value: 3 },
+      { bucket_start: 0.5, bucket_end: 1, value: 7 },
+    ]);
+    response.data.result.metrics[0].name = "Accuracy";
+    response.data.result.metrics[0].aggregation = "count";
+    h.query.data = response;
+
+    render(
+      <WidgetChart
+        widget={{
+          ...baseWidget,
+          query_config: {
+            metrics: [{ name: "Accuracy", aggregation: "count" }],
+            query_mode: "distribution",
+          },
+          chart_config: { chart_type: "distribution" },
+        }}
+        globalDateRange={null}
+      />,
+    );
+
+    expect(screen.getByTestId("apex-bar")).toBeInTheDocument();
+    const props = h.apex.mock.calls.at(-1)[0];
+    expect(props.options.xaxis.type).toBe("category");
+    expect(props.series[0].data).toEqual([
+      { x: "0 - 0.5", y: 3, bucketStart: 0, bucketEnd: 0.5 },
+      { x: "0.5 - 1", y: 7, bucketStart: 0.5, bucketEnd: 1 },
+    ]);
+  });
 });
 
 describe("WidgetChart — queued exact refresh", () => {

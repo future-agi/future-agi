@@ -1,12 +1,17 @@
 import { describe, it, expect } from "vitest";
 import {
+  buildDistributionQueryConfig,
+  formatDistributionBucketLabel,
+  formatDistributionCount,
   fromAxisConfigPayload,
   getAggColumnLabel,
   getExactDashboardResult,
   getDashboardMetricSeriesState,
+  getDistributionConfigError,
   getPlottedChartSeries,
   getSeriesScalar,
   groupPieSeries,
+  isDistributionMetric,
   isAdditiveAggregation,
   getYAxisRangeWarning,
   makeSeriesKey,
@@ -47,6 +52,75 @@ describe("axis config contract", () => {
 
   it("restores legacy camelCase axis configs during rollout", () => {
     expect(fromAxisConfigPayload(uiConfig)).toEqual(uiConfig);
+  });
+});
+
+describe("distribution chart helpers", () => {
+  const numericEval = {
+    type: "eval_metric",
+    source: "traces",
+    outputType: "SCORE",
+  };
+
+  it("accepts only numeric trace eval metrics", () => {
+    expect(isDistributionMetric(numericEval)).toBe(true);
+    expect(
+      isDistributionMetric({ ...numericEval, outputType: "NUMERIC" }),
+    ).toBe(true);
+    expect(
+      isDistributionMetric({ ...numericEval, outputType: "PASS_FAIL" }),
+    ).toBe(false);
+    expect(isDistributionMetric({ type: "system", source: "traces" })).toBe(
+      false,
+    );
+  });
+
+  it("validates the single-metric and no-breakdown contract", () => {
+    expect(getDistributionConfigError([numericEval], [])).toBeNull();
+    expect(getDistributionConfigError([], [])).toMatch(/exactly one/i);
+    expect(
+      getDistributionConfigError([numericEval], [{ id: "model" }]),
+    ).toMatch(/breakdowns/i);
+  });
+
+  it("builds the distribution query and formats bucket values", () => {
+    expect(
+      buildDistributionQueryConfig({
+        metrics: [{ name: "quality", aggregation: "avg" }],
+      }),
+    ).toEqual({
+      query_mode: "distribution",
+      metrics: [{ name: "quality", aggregation: "count" }],
+    });
+    expect(
+      formatDistributionBucketLabel({ bucket_start: 0, bucket_end: 0.5 }),
+    ).toBe("0 - 0.5");
+    expect(formatDistributionCount(1200)).toBe("1,200");
+  });
+
+  it("maps distribution buckets to categorical chart points", () => {
+    const state = getDashboardMetricSeriesState(
+      [
+        {
+          name: "Quality",
+          aggregation: "count",
+          query_complete: true,
+          query_status: "complete",
+          query_sampled: false,
+          series: [
+            {
+              name: "total",
+              data: [{ bucket_start: 0, bucket_end: 0.5, value: 3 }],
+            },
+          ],
+        },
+      ],
+      { distribution: true },
+    );
+
+    expect(state.series[0].data).toEqual([
+      { x: "0 - 0.5", y: 3, bucketStart: 0, bucketEnd: 0.5 },
+    ]);
   });
 });
 
