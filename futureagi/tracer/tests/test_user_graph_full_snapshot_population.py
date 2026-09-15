@@ -48,12 +48,33 @@ def _cte(sql, name):
     raise AssertionError("unclosed CTE")
 
 
+REPLACEMENT_KEY = (
+    "GROUP BY project_id, observation_type, service_name, "
+    "toStartOfHour(start_time), trace_id, id"
+)
+REPLAYED_STATE = (
+    "argMax(tuple(start_time, is_deleted, end_user_id, latency_ms, total_tokens, "
+    "cost, prompt_tokens, completion_tokens, status), _version) AS latest_state"
+)
+
+
+def _spans_reads(sql):
+    return sql.count("FROM spans")
+
+
+def _cte_references(sql, name):
+    """Count reads of a CTE, excluding its own definition."""
+    return len(re.findall(r"\bFROM " + re.escape(name) + r"\b", sql)) + len(
+        re.findall(r"\bIN \(SELECT [^()]*FROM " + re.escape(name) + r"\b", sql)
+    )
+
+
 @pytest.mark.parametrize("membership", [True, False])
 def test_equal_snapshot_bounds_remove_recursive_trace_population(membership):
     sql, params = _build(membership=membership)
     assert "candidate_trace_ids AS" not in sql
     assert "HAVING min(start_time)" not in sql
-    assert sql.count("FROM spans FINAL") == 1
+    assert _spans_reads(sql) == 1
     assert "trace_id IN (SELECT trace_id" not in sql
     assert "GROUP BY end_user_id, trace_id" in sql
     assert "GROUP BY time_bucket, end_user_id" in sql
@@ -67,6 +88,42 @@ def test_equal_snapshot_bounds_remove_recursive_trace_population(membership):
         assert params["selected_user"] == PROJECT
     placeholders = set(re.findall(r"%\((\w+)\)s", sql))
     assert placeholders <= params.keys()
+
+
+def test_exact_reader_replays_latest_state_in_one_ordered_pass_without_final():
+    """The graph's own population is an argMax reduction, read exactly once."""
+    sql, _ = _build()
+    assert "FROM spans FINAL" not in sql
+    assert _spans_reads(sql) == 1
+    # Three inlinings of this CTE (metric reduction plus both arms of the
+    # candidate-derived remap) were three scans of the same window.
+    assert _cte_references(sql, "latest_spans") == 1
+    population = _cte(sql, "latest_spans")
+    assert REPLAYED_STATE in population
+    assert REPLACEMENT_KEY in population
+    assert "ARRAY JOIN" not in population
+
+
+def test_replayed_projection_is_closed_and_carries_every_metric_column():
+    sql, _ = _build()
+    population = _cte(sql, "latest_spans")
+    projected = (
+        "start_time",
+        "is_deleted",
+        "end_user_id",
+        "latency_ms",
+        "total_tokens",
+        "cost",
+        "prompt_tokens",
+        "completion_tokens",
+        "status",
+    )
+    for position, column in enumerate(projected, 1):
+        assert f"latest_state.{position} AS {column}" in population
+    # SELECT * handed the whole row to the optimizer; a named projection also
+    # drops the columns this statement never reads.
+    assert "SELECT *" not in population
+    assert "trace_session_id" not in population
 
 
 @pytest.mark.parametrize(
@@ -92,27 +149,19 @@ def test_replacement_sees_full_hours_before_exact_timestamp_and_tombstone_filter
 ):
     sql, params = _build(start, end, snapshot_start=start, snapshot_end=end)
     population = _cte(sql, "latest_spans")
-    inner, outer = population.split(") AS snapshot_spans", 1)
-    assert "FROM spans FINAL PREWHERE project_id" in inner
-    physical = inner.split("FROM spans FINAL PREWHERE", 1)[1].split(") AS physical", 1)[
-        0
-    ]
-    assert "is_deleted" not in physical and "end_user_id" not in physical
-    assert "toStartOfHour(start_time) >= %(user_snapshot_scan_start)s" in physical
-    assert "toStartOfHour(start_time) < %(user_snapshot_scan_end)s" in physical
-    assert (
-        "ARRAY JOIN [tuple(physical.start_time, physical.is_deleted, physical.end_user_id, physical.trace_session_id)] AS latest_membership"
-        in inner
-    )
-    for index, field in enumerate(
-        ("start_time", "is_deleted", "end_user_id", "trace_session_id"), 1
-    ):
-        assert f"latest_membership.{index} AS {field}" in inner
-    assert "user_snapshot_start_us" not in inner
-    assert "user_snapshot_end_us" not in inner
-    assert "snapshot_spans.is_deleted = 0" in outer
-    assert "fromUnixTimestamp64Micro(%(user_snapshot_start_us)s, 'UTC')" in outer
-    assert "fromUnixTimestamp64Micro(%(user_snapshot_end_us)s, 'UTC')" in outer
+    scan, replayed = population.split("GROUP BY project_id", 1)
+    # Only immutable project/identity-hour predicates may precede the replay.
+    assert "FROM spans PREWHERE project_id" in scan
+    assert "is_deleted" not in scan.split("PREWHERE", 1)[1]
+    assert "toStartOfHour(start_time) >= %(user_snapshot_scan_start)s" in scan
+    assert "toStartOfHour(start_time) < %(user_snapshot_scan_end)s" in scan
+    assert "user_snapshot_start_us" not in scan
+    assert "user_snapshot_end_us" not in scan
+    # Mutable liveness and the exact interval are applied after the replay.
+    having = replayed.split("HAVING", 1)[1]
+    assert "latest_state.2 = 0" in having
+    assert "fromUnixTimestamp64Micro(%(user_snapshot_start_us)s, 'UTC')" in having
+    assert "fromUnixTimestamp64Micro(%(user_snapshot_end_us)s, 'UTC')" in having
     assert params["user_snapshot_scan_start"] == scan_start
     assert params["user_snapshot_scan_end"] == scan_end
     epoch = datetime(1970, 1, 1)
@@ -120,26 +169,21 @@ def test_replacement_sees_full_hours_before_exact_timestamp_and_tombstone_filter
         microseconds=1
     )
     assert params["user_snapshot_end_us"] == (end - epoch) // timedelta(microseconds=1)
-    assert "optimize_move_to_prewhere_if_final = 0" in sql
+    # The statement no longer pins optimize_move_to_prewhere_if_final itself:
+    # its own spans read has no FINAL, and the exact-graph read settings keep
+    # that defence for the dimension tables that still use one.
+    assert "optimize_move_to_prewhere_if_final" not in sql
     assert "use_skip_indexes_if_final = 0" in sql
 
 
-def test_full_snapshot_remap_references_candidate_population_only_once():
+def test_full_snapshot_remap_is_built_from_the_whole_remap_table():
     sql, _ = _build()
     remap = _cte(sql, "eu_survivor_map")
-    assert remap.count("FROM candidate_end_user_ids") == 1
-    assert "ARRAY JOIN [old_id, new_id] AS candidate_alias" in remap
-    assert (
-        "candidate_alias IN ( SELECT end_user_id FROM candidate_end_user_ids )" in remap
-    )
-    assert "SELECT DISTINCT new_id" in remap
-    assert "argMin(old_id, toString(old_id))" in remap
-    assert "arrayDistinct(arrayConcat(groupArray(old_id), [new_id]))" in remap
+    assert "candidate_end_user_ids" not in sql
+    assert "FROM end_user_id_remap FINAL" in remap
+    assert "argMin(old_id, toString(old_id)) OVER (PARTITION BY new_id)" in remap
     assert "GROUP BY new_id" in remap and "GROUP BY any_id" in remap
     assert "LIMIT" not in remap
-    candidates = _cte(sql, "candidate_end_user_ids")
-    assert "isNotNull(end_user_id)" in candidates
-    assert "00000000-0000-0000-0000-000000000000" in candidates
     assert "id_remap.survivor_id IS NULL" in sql
 
 
@@ -154,7 +198,8 @@ def test_narrow_output_partition_keeps_entity_safe_trace_ownership(edge):
     assert "HAVING min(start_time) >= fromUnixTimestamp64Micro(%(user_partition_start_us)s, 'UTC')" in candidates
     assert "min(start_time) < fromUnixTimestamp64Micro(%(user_partition_end_us)s, 'UTC')" in candidates
     assert "trace_id IN (SELECT trace_id FROM candidate_trace_ids)" in sql
-    assert sql.count("FROM spans FINAL") == 1
+    assert "FROM spans FINAL" not in sql
+    assert _spans_reads(sql) == 1
     assert "FROM snapshot_spans" in _cte(sql, "latest_spans")
     assert params["user_snapshot_scan_start"] == START.replace(minute=0, second=0, microsecond=0)
     assert params["user_snapshot_scan_end"] == END.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
@@ -162,12 +207,9 @@ def test_narrow_output_partition_keeps_entity_safe_trace_ownership(edge):
     assert params["user_partition_start_us"] == (start - epoch) // timedelta(microseconds=1)
     assert params["user_partition_end_us"] == (end - epoch) // timedelta(microseconds=1)
     population = _cte(sql, "snapshot_spans")
-    physical, barrier = population.split(") AS physical", 1)
-    assert "user_snapshot_start_us" not in physical
-    assert "user_snapshot_end_us" not in physical
-    assert "ARRAY JOIN [tuple(physical.start_time, physical.is_deleted, physical.end_user_id, physical.trace_session_id)] AS latest_membership" in barrier
-    assert "snapshot_spans.is_deleted = 0" in barrier
-    assert "optimize_move_to_prewhere_if_final = 0" in sql
+    assert REPLAYED_STATE in population
+    assert REPLACEMENT_KEY in population
+    assert "latest_state.2 = 0" in population.split("HAVING", 1)[1]
     assert "ARRAY JOIN [old_id, new_id]" not in sql
 
 
@@ -178,9 +220,18 @@ def test_legacy_non_snapshot_path_uses_full_physical_snapshot_replay():
     for key in ("user_snapshot_scan_start", "user_snapshot_scan_end", "user_snapshot_start_us", "user_snapshot_end_us"):
         assert params[key] == full_params[key]
     assert "LIMIT 1 BY" not in sql
-    assert sql.count("FROM spans FINAL") == 1
-    assert "optimize_move_to_prewhere_if_final = 0" in sql
+    assert _spans_reads(sql) == 1
+    assert "FROM spans FINAL" not in sql
     assert "ARRAY JOIN [old_id, new_id]" not in sql
+
+
+def test_caller_compiled_filter_path_keeps_the_whole_row_snapshot():
+    """An arbitrary compiled predicate may read any column, including its own
+    relational subquery over this CTE, so that path is not argMax-projectable."""
+    sql, _ = _build(membership=False)
+    population = _cte(sql, "latest_spans")
+    assert "FROM spans FINAL" in population
+    assert "latest_state" not in population
 
 
 @pytest.mark.parametrize("candidates", [{"old-b"}, {"z-new"}, {"old-b", "z-new"}])
@@ -189,7 +240,6 @@ def test_remap_fixture_expands_complete_touched_group_before_choosing_survivor(
 ):
     sql, _ = _build()
     remap = _cte(sql, "eu_survivor_map")
-    assert "ARRAY JOIN [old_id, new_id] AS candidate_alias" in remap
     assert "argMin(old_id, toString(old_id))" in remap
     rows = [
         ("old-a", "z-new"),
@@ -216,7 +266,7 @@ def test_remap_fixture_expands_complete_touched_group_before_choosing_survivor(
 def test_fixture_full_hour_replacement_does_not_revive_old_timestamp(outcome):
     """Model the SQL's scan->replacement->exact-window order; not live SQL."""
     sql, params = _build()
-    assert "FROM spans FINAL" in _cte(sql, "latest_spans")
+    assert REPLAYED_STATE in _cte(sql, "latest_spans")
     old = {
         "project_id": PROJECT,
         "observation_type": "span",
