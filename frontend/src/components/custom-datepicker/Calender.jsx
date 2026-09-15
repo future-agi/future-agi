@@ -11,6 +11,7 @@ export default function Calendar({
   onSelect,
   onPrevMonth,
   onNextMonth,
+  maxDate,
 }) {
   const monthStart = startOfMonth(currentDate);
   const startDate = startOfWeek(monthStart, { weekStartsOn: 0 });
@@ -29,6 +30,7 @@ export default function Calendar({
           monthStart={monthStart}
           range={range}
           onClick={() => onSelect(cloneDay)}
+          maxDate={maxDate}
         />,
       );
       day = addDays(day, 1);
@@ -110,4 +112,5 @@ Calendar.propTypes = {
   onSelect: PropTypes.func.isRequired,
   onPrevMonth: PropTypes.func.isRequired,
   onNextMonth: PropTypes.func.isRequired,
+  maxDate: PropTypes.instanceOf(Date),
 };
