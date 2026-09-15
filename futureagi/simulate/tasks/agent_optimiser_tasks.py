@@ -1,11 +1,48 @@
+import uuid
+
 import structlog
 
-logger = structlog.get_logger(__name__)
-from simulate.models import AgentOptimiserRun, AgentPromptOptimiserRun
+from simulate.models import AgentOptimiserRun, AgentPromptOptimiserRun, TestExecution
 from simulate.utils.agent_optimiser import execute_simulation_analysis
 from simulate.utils.agent_prompt_optimiser import run_agent_prompt_optimiser
 from tfc.temporal.drop_in import temporal_activity
 from tfc.utils.error_codes import get_error_message
+from tfc.ee_loader import has_ee
+
+logger = structlog.get_logger(__name__)
+
+
+def _build_analysis_usage_event(run: AgentOptimiserRun):
+    if not has_ee("ee.usage"):
+        return None
+    from ee.usage.schemas.event_types import BillingEventType
+    from ee.usage.schemas.events import UsageEvent
+
+    test_execution = TestExecution.no_workspace_objects.select_related("run_test").get(
+        id=run.input_data["test_execution_id"],
+        agent_optimiser_id=run.agent_optimiser_id,
+    )
+
+    return UsageEvent(
+        event_id=str(uuid.uuid5(uuid.NAMESPACE_URL, str(run.id))),
+        org_id=str(test_execution.run_test.organization_id),
+        event_type=BillingEventType.TRACE_ERROR_ANALYSIS,
+        amount=1,
+        properties={
+            "source": "fix_my_agent",
+            "source_id": str(test_execution.id),
+            "workspace_id": str(test_execution.run_test.workspace_id or ""),
+            "run_id": str(run.id),
+            "run_test_id": str(test_execution.run_test_id),
+        },
+    )
+
+
+def _emit_analysis_usage(event) -> None:
+    if event is not None:
+        from ee.usage.services.emitter import emit
+
+        emit(event)
 
 
 @temporal_activity(
@@ -28,10 +65,19 @@ def execute_optimiser_run(run_id: str):
 
     try:
         logger.info(f"Executing optimiser run {run_id} for {run.agent_optimiser.name}")
+        usage_event = _build_analysis_usage_event(run)
+        if run.status == AgentOptimiserRun.OptimiserStatus.COMPLETED:
+            _emit_analysis_usage(usage_event)
+            return {
+                "status": "success",
+                "run_id": str(run_id),
+                "result": run.result,
+            }
 
         run.mark_as_running()
         result = execute_simulation_analysis(run.input_data)
         run.mark_as_completed(result=result)
+        _emit_analysis_usage(usage_event)
 
         logger.info(f"Optimiser run {run_id} completed successfully")
 
