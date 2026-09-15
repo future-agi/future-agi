@@ -11,6 +11,24 @@ import { SectionCard } from "../components/primitives";
 import { useSimStore } from "../store";
 import DescribeFlowStep from "./intake/DescribeFlowStep";
 import MyEnvironmentsTable from "./MyEnvironmentsTable";
+import vapiLogo from "./platform-logos/vapi.svg?raw";
+import retellLogo from "./platform-logos/retell.svg?raw";
+import blandLogo from "./platform-logos/bland.svg?raw";
+import elevenlabsLogo from "./platform-logos/elevenlabs.svg?raw";
+import livekitLogo from "./platform-logos/livekit.svg?raw";
+
+/* Official brand marks for the hosted voice platforms, inlined so they inherit
+   `currentColor` (theme-aware). Each vendor's own published logo, used to
+   identify its integration — the same way the app labels its other service
+   integrations. `wordmark` logos already contain the brand name (so the chip
+   drops its text label); `mark` logos are a symbol only (chip keeps the name). */
+const PLATFORM_LOGOS = {
+  vapi: { svg: vapiLogo, type: "wordmark", maxWidth: 46 },
+  retell: { svg: retellLogo, type: "wordmark", maxWidth: 54 },
+  bland: { svg: blandLogo, type: "mark" },
+  elevenlabs: { svg: elevenlabsLogo, type: "mark" },
+  livekit: { svg: livekitLogo, type: "mark" },
+};
 
 /**
  * Variation B entry point.
@@ -676,12 +694,13 @@ function PanelHostedPlatform() {
     <Stack spacing={1.75} sx={{ p: 2.5 }}>
       <Box>
         <Label>Agent type</Label>
-        <Box sx={{ display: "grid", gap: 0.75, gridTemplateColumns: { xs: "1fr 1fr", sm: `repeat(${AGENT_TYPES.length}, 1fr)` }, mt: 0.75 }}>
+        <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75, mt: 0.75 }}>
           {AGENT_TYPES.map((t) => (
             <ChipCard
               key={t.id}
               icon={t.icon}
               label={t.label}
+              comingSoon={t.comingSoon}
               on={agentType === t.id}
               onClick={() => pickAgentType(t.id)}
             />
@@ -695,12 +714,13 @@ function PanelHostedPlatform() {
             No hosted platforms for this agent type yet. Try Running agent or Source repository instead.
           </Typography>
         ) : (
-          <Box sx={{ display: "grid", gap: 0.75, gridTemplateColumns: { xs: "1fr 1fr", sm: "repeat(3, 1fr)" }, mt: 0.75 }}>
+          <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75, mt: 0.75 }}>
             {platforms.map((p) => (
               <ChipCard
                 key={p.id}
-                icon={p.icon}
-                label={p.name}
+                logo={<PlatformLogo id={p.id} name={p.name} brand={p.brand} />}
+                /* Wordmark logos already spell the name — don't repeat it. */
+                label={PLATFORM_LOGOS[p.id]?.type === "wordmark" ? null : p.name}
                 on={platform === p.id}
                 onClick={() => setPlatform(p.id)}
               />
@@ -1258,13 +1278,15 @@ function ProviderRow({ options, value, onChange }) {
 }
 ProviderRow.propTypes = { options: PropTypes.array, value: PropTypes.string, onChange: PropTypes.func };
 
-function ChipCard({ icon, label, on, onClick }) {
-  return (
+function ChipCard({ icon, logo, label, on, onClick, comingSoon }) {
+  const chip = (
     <Stack
       direction="row" alignItems="center" spacing={0.75}
-      onClick={onClick}
+      onClick={comingSoon ? undefined : onClick}
       sx={{
-        px: 1.25, py: 0.75, borderRadius: 1, cursor: "pointer",
+        px: 1.25, py: 0.75, borderRadius: 1,
+        cursor: comingSoon ? "default" : "pointer",
+        opacity: comingSoon ? 0.6 : 1,
         border: "1px solid",
         borderColor: (th) => on
           ? (th.palette.mode === "dark" ? alpha(th.palette.text.primary, 0.4) : th.palette.primary.main)
@@ -1274,12 +1296,68 @@ function ChipCard({ icon, label, on, onClick }) {
           : "background.paper",
       }}
     >
-      {icon && <Iconify icon={icon} width={13} sx={{ color: on ? "primary.main" : "text.subtitle" }} />}
-      <Typography sx={{ typography: "s2", fontWeight: 600 }}>{label}</Typography>
+      {logo || (icon && <Iconify icon={icon} width={13} sx={{ color: on ? "primary.main" : "text.subtitle" }} />)}
+      {label != null && <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>{label}</Typography>}
     </Stack>
   );
+  if (comingSoon) {
+    return (
+      <Tooltip title="Coming soon" arrow placement="top">
+        <Box sx={{ display: "inline-flex" }}>{chip}</Box>
+      </Tooltip>
+    );
+  }
+  return chip;
 }
-ChipCard.propTypes = { icon: PropTypes.string, label: PropTypes.node, on: PropTypes.bool, onClick: PropTypes.func };
+ChipCard.propTypes = { icon: PropTypes.string, logo: PropTypes.node, label: PropTypes.node, on: PropTypes.bool, onClick: PropTypes.func, comingSoon: PropTypes.bool };
+
+/**
+ * A platform's brand mark.
+ *
+ * Renders the vendor's official logo (inlined, so it inherits `currentColor`
+ * and adapts to light/dark). Platforms without a bundled logo — e.g. the chat
+ * providers — fall back to a brand-coloured monogram tile so the picker still
+ * reads as branded.
+ */
+function PlatformLogo({ id, name, brand }) {
+  const spec = PLATFORM_LOGOS[id];
+  if (spec) {
+    const isMark = spec.type === "mark";
+    return (
+      <Box
+        aria-label={name}
+        dangerouslySetInnerHTML={{ __html: spec.svg }}
+        sx={{
+          flexShrink: 0,
+          display: "flex",
+          alignItems: "center",
+          ...(spec.keepColor ? {} : { color: "text.primary" }),
+          "& svg": {
+            height: isMark ? 15 : 14,
+            width: isMark ? 15 : "auto",
+            maxWidth: spec.maxWidth || 60,
+            display: "block",
+            ...(spec.keepColor ? {} : { fill: "currentColor" }),
+          },
+        }}
+      />
+    );
+  }
+  return (
+    <Box
+      sx={{
+        width: 15, height: 15, borderRadius: 0.5, flexShrink: 0,
+        bgcolor: brand || "text.disabled",
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}
+    >
+      <Typography sx={{ fontSize: 9, fontWeight: 800, color: "#fff", lineHeight: 1 }}>
+        {(name || "?").trim()[0]?.toUpperCase()}
+      </Typography>
+    </Box>
+  );
+}
+PlatformLogo.propTypes = { id: PropTypes.string, name: PropTypes.string, brand: PropTypes.string };
 
 function ContinueRow({ disabled, hint, label = "Build environment", onClick }) {
   return (
@@ -1414,18 +1492,18 @@ const REPO_PROVIDERS = [
 const AGENT_TYPES = [
   { id: "voice", label: "Voice", icon: "solar:phone-calling-rounded-linear" },
   { id: "chat", label: "Chat", icon: "solar:chat-round-linear" },
-  { id: "computer", label: "Computer use", icon: "solar:monitor-linear" },
-  { id: "code", label: "Code", icon: "solar:code-square-linear" },
-  { id: "robotics", label: "Robotics", icon: "solar:cpu-bolt-linear" },
+  { id: "computer", label: "Computer use", icon: "solar:monitor-linear", comingSoon: true },
+  { id: "code", label: "Code", icon: "solar:code-square-linear", comingSoon: true },
+  { id: "robotics", label: "Robotics", icon: "solar:cpu-bolt-linear", comingSoon: true },
 ];
 
 const HOSTED_PLATFORMS_BY_TYPE = {
   voice: [
-    { id: "vapi", name: "Vapi", icon: "solar:phone-calling-rounded-linear", idLabel: "Assistant ID", idPlaceholder: "asst_9f2c…", keyLabel: "Vapi API key" },
-    { id: "retell", name: "Retell AI", icon: "solar:microphone-3-linear", idLabel: "Agent ID", idPlaceholder: "agent_9f2c…", keyLabel: "Retell API key" },
-    { id: "bland", name: "Bland.ai", icon: "solar:phone-linear", idLabel: "Pathway ID", idPlaceholder: "pathway_9f2c…", keyLabel: "Bland API key" },
-    { id: "elevenlabs", name: "ElevenLabs", icon: "solar:soundwave-linear", idLabel: "Agent ID", idPlaceholder: "agent_9f2c…", keyLabel: "ElevenLabs API key" },
-    { id: "livekit", name: "LiveKit", icon: "solar:server-minimalistic-linear", idLabel: "Agent name", idPlaceholder: "returns-line-agent", keyLabel: "LiveKit API key" },
+    { id: "vapi", name: "Vapi", icon: "solar:phone-calling-rounded-linear", brand: "#12A594", idLabel: "Assistant ID", idPlaceholder: "asst_9f2c…", keyLabel: "Vapi API key" },
+    { id: "retell", name: "Retell AI", icon: "solar:microphone-3-linear", brand: "#635BFF", idLabel: "Agent ID", idPlaceholder: "agent_9f2c…", keyLabel: "Retell API key" },
+    { id: "bland", name: "Bland.ai", icon: "solar:phone-linear", brand: "#F26D5B", idLabel: "Pathway ID", idPlaceholder: "pathway_9f2c…", keyLabel: "Bland API key" },
+    { id: "elevenlabs", name: "ElevenLabs", icon: "solar:soundwave-linear", brand: "#111111", idLabel: "Agent ID", idPlaceholder: "agent_9f2c…", keyLabel: "ElevenLabs API key" },
+    { id: "livekit", name: "LiveKit", icon: "solar:server-minimalistic-linear", brand: "#1FD5F9", idLabel: "Agent name", idPlaceholder: "returns-line-agent", keyLabel: "LiveKit API key" },
   ],
   chat: [
     { id: "openai_assistants", name: "OpenAI Assistants", icon: "solar:magic-stick-3-linear", idLabel: "Assistant ID", idPlaceholder: "asst_9f2c…", keyLabel: "OpenAI API key" },
