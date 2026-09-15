@@ -559,6 +559,20 @@ def assert_mixed_result_queries_unchanged(target, filters, leaves):
     previous = PreviousPopulationPolicy(
         project_id=PROJECT, filters=filters, bounded_internal_scan=True
     )
+    # THE DOUBLE MUST DIVERGE FIRST. Everything below compares the builder to
+    # a subclass of itself, so it proves nothing at all unless that subclass
+    # actually carries a different population policy. Pin the exact divergence
+    # the old policy produced - it dropped the text witness from the proof -
+    # rather than a bare ``!=``, so a double that has quietly stopped
+    # overriding anything fails HERE instead of passing unconditionally.
+    start, end = target._bounded_request_window
+    proof = target.build_filter_population_time_discovery_query(
+        slice_start=start, slice_end=end
+    )[0]
+    previous_proof = previous.build_filter_population_time_discovery_query(
+        slice_start=start, slice_end=end
+    )[0]
+    assert "attrs_string" in proof and "attrs_string" not in previous_proof
     assert query(target) == query(previous)
     classified = target.build_filter_match_query(["seed"])
     assert classified == previous.build_filter_match_query(["seed"])
