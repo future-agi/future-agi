@@ -278,6 +278,25 @@ describe("PricingPage", () => {
     });
   });
 
+  it("clarifies monthly storage allowance and overage billing", async () => {
+    const { default: PricingPage } = await import("../PricingPage");
+    renderWithQuery(<PricingPage />);
+
+    expect(
+      await screen.findByText("Storage overages are billed monthly."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("First 50 GB included each month."),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/60 GB uses 10 extra GB/)).toHaveTextContent(
+      "$2.00/GB/mo",
+    );
+    expect(screen.getByText(/60 GB uses 10 extra GB/)).toHaveTextContent(
+      "$20.00/mo",
+    );
+    expect(screen.getAllByText("per GB/mo").length).toBeGreaterThan(0);
+  });
+
   it("renders custom pricing from the v2 camelCase contract", async () => {
     mockGet.mockResolvedValue({
       data: {
@@ -313,5 +332,6 @@ describe("PricingPage", () => {
     expect(screen.getByText("Your plan features")).toBeInTheDocument();
     expect(screen.getByText("Your pricing tiers")).toBeInTheDocument();
     expect(screen.queryByText("Choose your tier")).not.toBeInTheDocument();
+    expect(screen.getAllByText(/GB\/mo/).length).toBeGreaterThan(0);
   });
 });

@@ -66,6 +66,37 @@ function formatCompact(n) {
   return n.toLocaleString();
 }
 
+function getPricingDisplayUnit(dimKey, pricing) {
+  return pricing.display_unit || dimKey;
+}
+
+function getPricingRateUnit(dimKey, pricing) {
+  const displayUnit = getPricingDisplayUnit(dimKey, pricing);
+  return dimKey === "storage" ? `${displayUnit}/mo` : displayUnit;
+}
+
+function getStorageBillingCopy(storagePricing) {
+  const freeTier = storagePricing?.tiers?.find(
+    (tier) => tier.price_per_unit === 0 && Number.isFinite(tier.up_to),
+  );
+  const paidTier = storagePricing?.tiers?.find(
+    (tier) => Number.isFinite(tier.price_per_unit) && tier.price_per_unit > 0,
+  );
+
+  if (!freeTier || !paidTier) return null;
+
+  // This example assumes the first paid tier covers the first 10 units above the allowance.
+  const exampleOverage = 10;
+  const exampleUsage = freeTier.up_to + exampleOverage;
+  const exampleCost = paidTier.price_per_unit * exampleOverage;
+  const unit = storagePricing.display_unit || "GB";
+
+  return {
+    allowance: `First ${formatCompact(freeTier.up_to)} ${unit} included each month.`,
+    example: `Example: ${formatCompact(exampleUsage)} ${unit} uses ${formatCompact(exampleOverage)} extra ${unit}, billed at ${fCurrency(paidTier.price_per_unit)}/${unit}/mo for ${fCurrency(exampleCost)}/mo.`,
+  };
+}
+
 // Constants imported from ./constants.js
 
 // ── Tier Card (Free / PAYG) ────────────────────────────────────────────────
@@ -727,6 +758,7 @@ export default function PricingPage() {
   const currentAddon = addons.find((a) => a.key === currentPlan);
   const dialogAddon = addons.find((a) => a.key === addonDialog.plan);
   const isDialogLoading = addonMutation.isPending || removeMutation.isPending;
+  const storageBillingCopy = getStorageBillingCopy(data?.pricing?.storage);
 
   // Build plan data map for feature matrix
   const plansData = {};
@@ -912,7 +944,7 @@ export default function PricingPage() {
                               >
                                 {tier.start.toLocaleString()} -{" "}
                                 {tier.end ? tier.end.toLocaleString() : "+"}{" "}
-                                {dim.display_unit}
+                                {getPricingDisplayUnit(dimKey, dim)}
                               </TableCell>
                               <TableCell
                                 sx={{
@@ -921,7 +953,7 @@ export default function PricingPage() {
                                 }}
                               >
                                 {fCurrency(tier.rate, true)} per{" "}
-                                {dim.display_unit}
+                                {getPricingRateUnit(dimKey, dim)}
                               </TableCell>
                             </TableRow>
                           )),
@@ -1096,6 +1128,30 @@ export default function PricingPage() {
             All plans include free usage allowances. You only pay for what
             exceeds the free tier.
           </Typography>
+          {storageBillingCopy && (
+            <Paper
+              variant="outlined"
+              sx={{
+                p: 2,
+                mb: 2,
+                borderRadius: 1,
+                bgcolor: (theme) => alpha(theme.palette.info.main, 0.04),
+                borderColor: (theme) => alpha(theme.palette.info.main, 0.16),
+              }}
+            >
+              <Stack spacing={0.5}>
+                <Typography variant="body2" fontWeight={600}>
+                  Storage overages are billed monthly.
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {storageBillingCopy.allowance}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {storageBillingCopy.example}
+                </Typography>
+              </Stack>
+            </Paper>
+          )}
 
           {data?.pricing && (
             <TableContainer
@@ -1139,6 +1195,8 @@ export default function PricingPage() {
                 <TableBody>
                   {canonicalEntries(data.pricing).map(([dimKey, pricing]) => {
                     const isSingleTier = pricing.tiers.length === 1;
+                    const displayUnit = getPricingDisplayUnit(dimKey, pricing);
+                    const rateUnit = getPricingRateUnit(dimKey, pricing);
                     return pricing.tiers.map((tier, i) => (
                       <TableRow key={`${dimKey}-${i}`}>
                         {i === 0 ? (
@@ -1163,10 +1221,10 @@ export default function PricingPage() {
                           {isSingleTier
                             ? "Flat rate (non-tiered)"
                             : tier.price_per_unit === 0
-                              ? `First ${formatCompact(tier.up_to || 0)} ${pricing.display_unit} (free)`
+                              ? `First ${formatCompact(tier.up_to || 0)} ${displayUnit} (free)`
                               : tier.up_to
-                                ? `${formatCompact(pricing.tiers[i - 1]?.up_to || 0)} – ${formatCompact(tier.up_to)} ${pricing.display_unit}`
-                                : `${formatCompact(pricing.tiers[i - 1]?.up_to || 0)}+ ${pricing.display_unit}`}
+                                ? `${formatCompact(pricing.tiers[i - 1]?.up_to || 0)} – ${formatCompact(tier.up_to)} ${displayUnit}`
+                                : `${formatCompact(pricing.tiers[i - 1]?.up_to || 0)}+ ${displayUnit}`}
                         </TableCell>
                         <TableCell
                           sx={{
@@ -1195,7 +1253,7 @@ export default function PricingPage() {
                               variant="caption"
                               color="text.secondary"
                             >
-                              per {pricing.display_unit}
+                              per {rateUnit}
                             </Typography>
                           </Stack>
                         </TableCell>
