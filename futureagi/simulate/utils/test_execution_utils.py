@@ -78,6 +78,11 @@ class TestExecutionUtils:
             return queryset
 
         def apply_number_filter(queryset, field, op, value, transform=lambda v: v):
+            if op == "is_null":
+                return queryset.filter(**{f"{field}__isnull": True})
+            if op == "is_not_null":
+                return queryset.filter(**{f"{field}__isnull": False})
+
             values = as_list(value)
             if op == "equals":
                 return queryset.filter(**{field: transform(values[0])})
@@ -109,8 +114,6 @@ class TestExecutionUtils:
         def apply_number_any_field_filter(
             queryset, fields, op, value, transform=lambda v: v
         ):
-            values = as_list(value)
-
             def q_for(field, lookup, val):
                 key = field if lookup is None else f"{field}__{lookup}"
                 return models.Q(**{key: val})
@@ -121,6 +124,18 @@ class TestExecutionUtils:
                     condition |= q_for(field, lookup, val)
                 return condition
 
+            def all_fields_q(lookup, val):
+                condition = models.Q()
+                for field in fields:
+                    condition &= q_for(field, lookup, val)
+                return condition
+
+            if op == "is_null":
+                return queryset.filter(all_fields_q("isnull", True))
+            if op == "is_not_null":
+                return queryset.filter(any_field_q("isnull", False))
+
+            values = as_list(value)
             if op == "equals":
                 return queryset.filter(any_field_q(None, transform(values[0])))
             if op == "not_equals":
@@ -411,29 +426,38 @@ class TestExecutionUtils:
                 elif column_id in ["responseTime", "response_time"]:
                     # Filter by response time (convert to milliseconds for database comparison)
                     if filter_type == "number":
-                        filter_value = float(filter_value)
-                        # Convert seconds to milliseconds for database comparison
-                        filter_value_ms = filter_value * 1000
-                        if filter_op == "greater_than":
+                        if filter_op == "is_null":
                             call_executions = call_executions.filter(
-                                response_time_ms__gt=filter_value_ms
+                                response_time_ms__isnull=True
                             )
-                        elif filter_op == "less_than":
+                        elif filter_op == "is_not_null":
                             call_executions = call_executions.filter(
-                                response_time_ms__lt=filter_value_ms
+                                response_time_ms__isnull=False
                             )
-                        elif filter_op == "equals":
-                            call_executions = call_executions.filter(
-                                response_time_ms=filter_value_ms
-                            )
-                        elif filter_op == "greater_than_or_equal":
-                            call_executions = call_executions.filter(
-                                response_time_ms__gte=filter_value_ms
-                            )
-                        elif filter_op == "less_than_or_equal":
-                            call_executions = call_executions.filter(
-                                response_time_ms__lte=filter_value_ms
-                            )
+                        else:
+                            filter_value = float(filter_value)
+                            # Convert seconds to milliseconds for database comparison
+                            filter_value_ms = filter_value * 1000
+                            if filter_op == "greater_than":
+                                call_executions = call_executions.filter(
+                                    response_time_ms__gt=filter_value_ms
+                                )
+                            elif filter_op == "less_than":
+                                call_executions = call_executions.filter(
+                                    response_time_ms__lt=filter_value_ms
+                                )
+                            elif filter_op == "equals":
+                                call_executions = call_executions.filter(
+                                    response_time_ms=filter_value_ms
+                                )
+                            elif filter_op == "greater_than_or_equal":
+                                call_executions = call_executions.filter(
+                                    response_time_ms__gte=filter_value_ms
+                                )
+                            elif filter_op == "less_than_or_equal":
+                                call_executions = call_executions.filter(
+                                    response_time_ms__lte=filter_value_ms
+                                )
 
                 elif column_id == "status":
                     # Filter by status
@@ -1389,9 +1413,7 @@ def reconcile_scenario_column_order(*, scenarios, call_executions, column_order)
         )
         if fb_row_id:
             fb_row = (
-                Row.all_objects.filter(id=fb_row_id)
-                .select_related("dataset")
-                .first()
+                Row.all_objects.filter(id=fb_row_id).select_related("dataset").first()
             )
             if fb_row and fb_row.dataset and fb_row.dataset.column_order:
                 for col_obj in Column.all_objects.filter(
@@ -1404,10 +1426,7 @@ def reconcile_scenario_column_order(*, scenarios, call_executions, column_order)
     non_scenario_columns = [
         col
         for col in column_order
-        if not (
-            isinstance(col, dict)
-            and col.get("type") == "scenario_dataset_column"
-        )
+        if not (isinstance(col, dict) and col.get("type") == "scenario_dataset_column")
     ]
     if first_scenario_idx is None:
         # No scenario columns yet: place them before the first evaluation
@@ -1426,8 +1445,7 @@ def reconcile_scenario_column_order(*, scenarios, call_executions, column_order)
             1
             for col in column_order[:first_scenario_idx]
             if not (
-                isinstance(col, dict)
-                and col.get("type") == "scenario_dataset_column"
+                isinstance(col, dict) and col.get("type") == "scenario_dataset_column"
             )
         )
 
