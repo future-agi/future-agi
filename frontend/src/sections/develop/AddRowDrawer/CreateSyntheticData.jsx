@@ -241,7 +241,8 @@ const SyntheticDataDrawer = ({
           cols[item.name] = item.description;
         }
         const newItem = {
-          ...item,
+          name: item.name,
+          data_type: item.data_type,
           description: replaceColumn(item.description, item.name),
           property,
           ...(datasetId && { is_new: true, skip: true }),
