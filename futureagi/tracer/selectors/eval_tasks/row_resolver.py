@@ -57,6 +57,12 @@ _EVAL_TASK_TRACE_WITNESS_SECONDS_RESERVE = 14.0
 _EVAL_TASK_TRACE_WITNESS_WIDE_WALL_MS_PER_QUERY = 500
 _EVAL_TASK_BUFFERED_ID_LIMIT = 10_000
 _EVAL_TASK_WORKFLOW_EXACT_THRESHOLD = 10_000
+_EVAL_TASK_STATEMENT_BUDGET_ERROR_CODES = frozenset(
+    {"query_budget_exceeded", "scan_budget_exceeded"}
+)
+_EVAL_TASK_WORKFLOW_ESCALATION_ERROR_CODES = _EVAL_TASK_STATEMENT_BUDGET_ERROR_CODES | {
+    "deadline_exceeded"
+}
 # Reconciliation has a three-hour activity timeout. Keep ten minutes outside
 # the ClickHouse proof for Python buffering, witness validation, materializer
 # hand-off, heartbeats, and scheduler jitter.
@@ -940,6 +946,7 @@ def _resolve_bounded_historical_span_ids(
     batch_size: int,
     row_type: str = RowType.SPANS,
     include_trace_filter_witnesses: bool = False,
+    workflow_exact: bool = False,
 ) -> list[str] | _BoundedHistoricalResult:
     """Resolve a complete historical span/trace/session/voice set with bounded reads.
 
@@ -1009,7 +1016,7 @@ def _resolve_bounded_historical_span_ids(
     # Exactly 10k already exceeds the interactive 128-query proof for the
     # shape-specific classifiers (and for trace witness replay). Route the
     # boundary value through the background-workflow contract as well.
-    workflow_exact = limit >= _EVAL_TASK_WORKFLOW_EXACT_THRESHOLD
+    workflow_exact = workflow_exact or limit >= _EVAL_TASK_WORKFLOW_EXACT_THRESHOLD
     bounded_limit = int(limit)
 
     query_type, key_field = _BUILDER_BY_ROW_TYPE[row_type]
@@ -1258,10 +1265,28 @@ def _resolve_bounded_historical_span_ids(
             raise
         raise EvalTaskReadBudgetExceeded(_SAFE_READ_BUDGET_MESSAGE) from None
 
-    if not page.complete and page.error_code in {
-        "query_budget_exceeded",
-        "scan_budget_exceeded",
-    }:
+    if (
+        not page.complete
+        and not workflow_exact
+        and page.error_code in _EVAL_TASK_WORKFLOW_ESCALATION_ERROR_CODES
+    ):
+        # A filter matching fewer rows than the limit must classify the whole
+        # window, which can outgrow the interactive envelope at any row limit.
+        return _resolve_bounded_historical_span_ids(
+            analytics,
+            sql=sql,
+            params=params,
+            project_id=project_id,
+            salt=salt,
+            sampling_rate=sampling_rate,
+            filters=filters,
+            limit=limit,
+            batch_size=batch_size,
+            row_type=row_type,
+            include_trace_filter_witnesses=include_trace_filter_witnesses,
+            workflow_exact=True,
+        )
+    if not page.complete and page.error_code in _EVAL_TASK_STATEMENT_BUDGET_ERROR_CODES:
         # These codes mean the selector's fixed statement envelope cannot prove
         # this requested prefix. Re-running the same immutable task contract
         # cannot add query capacity, unlike a deadline/resource/drift failure.
