@@ -544,7 +544,15 @@ class DistributedEvaluationTracker(DistributedStateManager):
         cleaned = 0
         cutoff = datetime.utcnow().timestamp() - (max_age_hours * 3600)
 
-        for info in self.get_all_running():
+        try:
+            running = self.get_all_running()
+        except Exception as e:
+            # get_all_running() already handles RedisError. Keep cleanup
+            # best-effort if an unexpected enumeration error escapes it.
+            logger.exception(f"Failed to enumerate running evaluations: {e}")
+            return 0
+
+        for info in running:
             try:
                 started = datetime.fromisoformat(info.started_at).timestamp()
                 if started < cutoff:
