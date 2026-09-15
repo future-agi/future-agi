@@ -5,6 +5,7 @@ These activities process individual Evaluation objects immediately when
 triggered, rather than being polled by a scheduled job.
 """
 
+import structlog
 from django.db import close_old_connections
 from temporalio import activity
 
@@ -13,6 +14,8 @@ from tfc.temporal.evaluations.types import (
     RunSingleEvaluationInput,
     RunSingleEvaluationOutput,
 )
+
+logger = structlog.get_logger(__name__)
 
 # =============================================================================
 # Synchronous Helper Functions
@@ -28,8 +31,11 @@ def _run_single_evaluation_sync(evaluation_id: str) -> dict:
     """
     close_old_connections()
 
+    from model_hub.models.evaluation import Evaluation, StatusChoices
+    from sdk.utils.async_evaluations import mark_evaluation_failed
+
+    evaluation = None
     try:
-        from model_hub.models.evaluation import Evaluation, StatusChoices
         from model_hub.tasks.user_evaluation import (
             trigger_error_localization_for_standalone,
         )
@@ -79,8 +85,13 @@ def _run_single_evaluation_sync(evaluation_id: str) -> dict:
 
         evaluation.save()
 
-        # Trigger inline eval (for trace integration)
-        trigger_inline_eval(evaluation)
+        # Isolated: a trace-integration failure must not downgrade a completed run.
+        try:
+            trigger_inline_eval(evaluation)
+        except Exception:
+            logger.exception(
+                "evaluation_inline_eval_failed", evaluation_id=evaluation_id
+            )
 
         return {
             "evaluation_id": str(evaluation.id),
@@ -88,23 +99,28 @@ def _run_single_evaluation_sync(evaluation_id: str) -> dict:
         }
 
     except Exception as e:
-        # Mark as failed on any error (matches original behavior)
-        evaluation.status = StatusChoices.FAILED
-        evaluation.error_message = str(e)
-        # Don't return here - let finally block save and return
+        if evaluation is None:
+            mark_evaluation_failed(evaluation_id, str(e))
+        else:
+            evaluation.status = StatusChoices.FAILED
+            evaluation.error_message = str(e)
 
         return {
             "evaluation_id": evaluation_id,
-            "status": "FAILED",
+            "status": StatusChoices.FAILED,
             "error": str(e),
         }
 
     finally:
-        # Always save (matches original finally block behavior)
-        try:
-            evaluation.save()
-        except Exception:
-            pass  # evaluation might not be defined if initial get() failed
+        if evaluation is not None:
+            try:
+                evaluation.save()
+            except Exception:
+                logger.exception(
+                    "evaluation_status_save_failed", evaluation_id=evaluation_id
+                )
+                if evaluation.status == StatusChoices.FAILED:
+                    mark_evaluation_failed(evaluation_id, evaluation.error_message)
         close_old_connections()
 
 
@@ -151,9 +167,11 @@ async def run_single_evaluation_activity(
             f"Error running evaluation {input.evaluation_id}: {e}"
         )
 
+        from model_hub.models.evaluation import StatusChoices
+
         return RunSingleEvaluationOutput(
             evaluation_id=input.evaluation_id,
-            status="FAILED",
+            status=StatusChoices.FAILED,
             error=str(e),
         )
 
