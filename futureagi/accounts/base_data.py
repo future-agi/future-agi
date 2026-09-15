@@ -1,9 +1,17 @@
 import json
+from pathlib import Path
 
-with open("accounts/demo_dataset/table_data.json") as f:
+# Resolve the demo fixtures relative to this file, not the process CWD.
+# These loads run at import time, and this module is reached from
+# accounts/migrations/0020_reseed_broken_demo_data.py, so a CWD-relative
+# path makes any `migrate` (and any test that triggers it) fail with
+# FileNotFoundError unless it happens to be run from `futureagi/`.
+_DEMO_DATASET_DIR = Path(__file__).resolve().parent / "demo_dataset"
+
+with open(_DEMO_DATASET_DIR / "table_data.json") as f:
     dataset_data = json.load(f)
 
-with open("accounts/demo_dataset/run_prompt_config.json") as f:
+with open(_DEMO_DATASET_DIR / "run_prompt_config.json") as f:
     run_prompt_config = json.load(f)
 
 prompt_config = [
@@ -32,8 +40,8 @@ prompt_config = [
     }
 ]
 
-with open("accounts/demo_dataset/experiment.json") as f:
+with open(_DEMO_DATASET_DIR / "experiment.json") as f:
     experiment_data = json.load(f)
 
-with open("accounts/demo_dataset/img_dataset_data.json") as f:
+with open(_DEMO_DATASET_DIR / "img_dataset_data.json") as f:
     image_dataset_data = json.load(f)
