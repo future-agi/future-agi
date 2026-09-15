@@ -97,6 +97,7 @@ function Scenarios() {
 
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [scenarioToDelete, setScenarioToDelete] = useState(null);
+  const [rowSelection, setRowSelection] = useState({});
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [scenarioToEdit, setScenarioToEdit] = useState(null);
 
@@ -125,6 +126,21 @@ function Scenarios() {
 
   const items = useMemo(() => data?.results ?? [], [data]);
   const total = data?.count ?? 0;
+
+  const selectedItems = useMemo(
+    () =>
+      Object.keys(rowSelection)
+        .filter((k) => rowSelection[k])
+        .map((k) => items[parseInt(k, 10)])
+        .filter(Boolean),
+    [rowSelection, items],
+  );
+
+  useEffect(() => {
+    setRowSelection({});
+  }, [page, pageSize, debouncedSearchQuery]);
+
+  const handleCancelSelection = useCallback(() => setRowSelection({}), []);
 
   const showEmptyScreen =
     !isLoading && data && total === 0 && debouncedSearchQuery === "";
@@ -155,6 +171,8 @@ function Scenarios() {
 
   const handleMutationSuccess = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["scenarios"] });
+    setRowSelection({});
+    setDeleteDialogOpen(false);
   }, [queryClient]);
 
   const canManage =
@@ -346,6 +364,7 @@ function Scenarios() {
                 display: "flex",
                 justifyContent: "space-between",
                 alignItems: "center",
+                gap: 2,
               }}
             >
               <FormSearchField
@@ -361,6 +380,56 @@ function Scenarios() {
                   setPage(0);
                 }}
               />
+              {selectedItems.length > 0 ? (
+                <Box
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 1,
+                    backgroundColor: "background.neutral",
+                    px: 1.5,
+                    py: 0.5,
+                    borderRadius: "4px",
+                  }}
+                >
+                  <Typography
+                    typography="s2"
+                    fontWeight="fontWeightMedium"
+                    color="text.secondary"
+                  >
+                    {selectedItems.length} Selected
+                  </Typography>
+                  <Button
+                    variant="text"
+                    size="small"
+                    color="error"
+                    sx={{ p: 0, minWidth: 0 }}
+                    onClick={() => setDeleteDialogOpen(true)}
+                  >
+                    <Typography
+                      typography="s2"
+                      fontWeight="fontWeightSemiBold"
+                      color="error.main"
+                    >
+                      Delete
+                    </Typography>
+                  </Button>
+                  <Button
+                    variant="text"
+                    size="small"
+                    sx={{ p: 0, minWidth: 0 }}
+                    onClick={handleCancelSelection}
+                  >
+                    <Typography
+                      typography="s2"
+                      fontWeight="fontWeightRegular"
+                      color="text.primary"
+                    >
+                      Cancel
+                    </Typography>
+                  </Button>
+                </Box>
+              ) : null}
             </Box>
 
             {/* Table */}
@@ -369,8 +438,11 @@ function Scenarios() {
               data={items}
               isLoading={isLoading}
               rowCount={total}
+              rowSelection={rowSelection}
+              onRowSelectionChange={setRowSelection}
               onRowClick={handleRowClick}
               getRowId={(row) => row.id}
+              enableSelection
               rowHeight={44}
               emptyMessage="No scenarios found"
             />
@@ -396,6 +468,7 @@ function Scenarios() {
           setScenarioToDelete(null);
         }}
         scenario={scenarioToDelete}
+        scenarios={scenarioToDelete ? undefined : selectedItems}
         onDeleteSuccess={handleMutationSuccess}
       />
 
