@@ -1,0 +1,242 @@
+{
+  "id": "healthcare_scheduling",
+  "display_name": "Healthcare — Scheduling, Intake & Triage",
+  "channel": "voice",
+  "direction": "inbound",
+  "languages": ["en", "es"],
+  "description": "Inbound clinic front-desk agent: books/reschedules/cancels appointments, captures patient intake + insurance, and does basic symptom triage that routes red-flag symptoms to a nurse or 911. Modeled on LiveKit's medical_office_triage / frontdesk / healthcare examples and Vapi/Retell/Parloa healthcare agents. Never diagnoses or gives medical advice; PHI is disclosed only after identity verification.",
+  "runtime": {
+    "type": "pipeline",
+    "llm": { "provider": "openai", "model": "gpt-4o", "temperature": 0.3 },
+    "stt": { "provider": "deepgram", "model": "nova-2", "language": "multi" },
+    "tts": { "provider": "cartesia", "voice": "warm-reassuring" },
+    "vad": { "provider": "silero" },
+    "allow_interruptions": true
+  },
+  "session_state": {
+    "patient_name": "str",
+    "patient_id": "str=none",
+    "verified": "bool=false",
+    "is_new_patient": "bool=false",
+    "intent": "str=none",
+    "appointment_id": "str=none",
+    "outcome": "str=none"
+  },
+  "workflow": {
+    "entry_agent": "front_desk",
+    "agents": [
+      {
+        "id": "front_desk",
+        "title": "Front Desk — identify & route",
+        "first_message": "Thank you for calling the clinic. I can help you book, reschedule, or cancel an appointment, or get you to the right place. May I have your full name and date of birth?",
+        "instructions": "You are a clinic front-desk agent. FIRST, if the caller describes a medical emergency or any red-flag symptom (chest pain, difficulty breathing, signs of stroke such as face drooping or slurred speech, severe or uncontrolled bleeding, suicidal thoughts), immediately call advise_emergency — do not schedule. Otherwise, verify the patient with verify_patient (name + date of birth) and find out if they're a new or existing patient. Determine intent and hand off: booking/rescheduling/cancelling → scheduling; new-patient details or insurance → intake; describing symptoms to decide urgency → triage. Be warm and unhurried. Never diagnose or give medical advice.",
+        "tools": ["verify_patient", "advise_emergency"],
+        "handoffs": [
+          { "to": "scheduling", "when": "caller wants to book, reschedule, or cancel" },
+          { "to": "intake", "when": "new patient, or needs to give/update insurance & details" },
+          { "to": "triage", "when": "caller is describing symptoms to decide whether/when to be seen" }
+        ],
+        "terminal": false
+      },
+      {
+        "id": "scheduling",
+        "title": "Scheduling",
+        "instructions": "Handle booking, rescheduling, and cancellation. Ask the reason for visit and preferred provider/timeframe, call check_availability, offer 2-3 concrete slots, and confirm the choice before calling book_appointment (or reschedule_appointment / cancel_appointment). Read back the confirmed date, time, provider, and location. For a new patient, hand to intake to collect details and insurance. If the reason for visit sounds urgent, hand to triage.",
+        "tools": ["check_availability", "book_appointment", "reschedule_appointment", "cancel_appointment"],
+        "handoffs": [
+          { "to": "intake", "when": "new patient needs demographics/insurance captured" },
+          { "to": "triage", "when": "stated reason sounds potentially urgent" }
+        ],
+        "terminal": true
+      },
+      {
+        "id": "intake",
+        "title": "Patient Intake",
+        "instructions": "Collect intake details for a new or updating patient: contact info, reason for visit, and insurance (payer, member ID, group number) via capture_insurance. Offer to send the full intake/consent forms with send_intake_form_link. Keep it efficient and reassure them their information is handled privately. Do not ask for more clinical detail than needed to schedule; leave clinical questions to the provider.",
+        "tools": ["capture_insurance", "send_intake_form_link"],
+        "handoffs": [
+          { "to": "scheduling", "when": "intake complete and an appointment still needs booking" }
+        ],
+        "terminal": true
+      },
+      {
+        "id": "triage",
+        "title": "Symptom Triage (rules-based)",
+        "instructions": "Determine urgency to route correctly — NOT to diagnose. Ask a few structured questions about the main symptom, its severity, and duration, then call triage_check, which applies a fixed clinical rules table. If it returns 'emergency', call advise_emergency. If 'urgent', call transfer_to_nurse. If 'routine', reassure and hand to scheduling to book an appropriate visit. Never suggest a diagnosis, treatment, or medication.",
+        "tools": ["triage_check", "transfer_to_nurse", "advise_emergency"],
+        "handoffs": [
+          { "to": "scheduling", "when": "triage result is routine" }
+        ],
+        "terminal": true
+      }
+    ],
+    "global_handlers": [
+      { "id": "nurse", "tool": "transfer_to_nurse", "when": "caller asks for a nurse/clinician or triage is urgent", "then": "end:NURSE_ESCALATED" },
+      { "id": "emergency", "tool": "advise_emergency", "when": "any red-flag symptom or emergency", "then": "end:EMERGENCY_911" },
+      { "id": "human", "tool": "transfer_to_nurse", "when": "caller wants a human staff member", "then": "end:NURSE_ESCALATED" }
+    ]
+  },
+  "tools": [
+    {
+      "name": "verify_patient",
+      "description": "Verify the patient by name + date of birth. Required before reading or changing any patient record (PHI).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "dob": { "type": "string", "description": "date of birth" }
+        },
+        "required": ["name", "dob"]
+      },
+      "execution": { "type": "webhook", "method": "POST", "url": "{{FAI_TOOL_BASE}}/health/verify_patient" },
+      "mock": { "verified": true, "patient_id": "PT-3391", "is_new_patient": false },
+      "sets": { "verified": "$.verified", "patient_id": "$.patient_id", "is_new_patient": "$.is_new_patient" },
+      "errors": ["patient not found"]
+    },
+    {
+      "name": "check_availability",
+      "description": "Find open appointment slots for a provider type within a date range.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "provider_type": { "type": "string", "description": "e.g. primary care, dermatology" },
+          "date_range": { "type": "string", "description": "e.g. 'next week', or ISO range" }
+        },
+        "required": ["provider_type"]
+      },
+      "execution": { "type": "webhook", "method": "POST", "url": "{{FAI_TOOL_BASE}}/health/availability" },
+      "mock": [
+        { "slot_id": "S-101", "provider": "Dr. Nguyen", "when": "Tue 10:00", "location": "Main Clinic" },
+        { "slot_id": "S-102", "provider": "Dr. Nguyen", "when": "Wed 14:30", "location": "Main Clinic" }
+      ],
+      "errors": ["no availability in range"]
+    },
+    {
+      "name": "book_appointment",
+      "description": "Book a specific slot for the verified patient with a reason for visit.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "slot_id": { "type": "string" },
+          "reason": { "type": "string" }
+        },
+        "required": ["slot_id", "reason"]
+      },
+      "execution": { "type": "webhook", "method": "POST", "url": "{{FAI_TOOL_BASE}}/health/book" },
+      "mock": { "appointment_id": "AP-8842" },
+      "sets": { "appointment_id": "$.appointment_id" },
+      "errors": ["slot no longer available", "patient not verified"]
+    },
+    {
+      "name": "reschedule_appointment",
+      "description": "Move an existing appointment to a new slot.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "appointment_id": { "type": "string" },
+          "slot_id": { "type": "string" }
+        },
+        "required": ["appointment_id", "slot_id"]
+      },
+      "execution": { "type": "webhook", "method": "POST", "url": "{{FAI_TOOL_BASE}}/health/reschedule" },
+      "mock": { "ok": true, "appointment_id": "AP-8842" },
+      "errors": ["appointment not found", "slot no longer available"]
+    },
+    {
+      "name": "cancel_appointment",
+      "description": "Cancel an existing appointment.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "appointment_id": { "type": "string" },
+          "reason": { "type": "string" }
+        },
+        "required": ["appointment_id"]
+      },
+      "execution": { "type": "webhook", "method": "POST", "url": "{{FAI_TOOL_BASE}}/health/cancel" },
+      "mock": { "ok": true },
+      "errors": ["appointment not found"]
+    },
+    {
+      "name": "capture_insurance",
+      "description": "Record the patient's insurance (payer, member ID, group).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "payer": { "type": "string" },
+          "member_id": { "type": "string" },
+          "group": { "type": "string" }
+        },
+        "required": ["payer", "member_id"]
+      },
+      "execution": { "type": "webhook", "method": "POST", "url": "{{FAI_TOOL_BASE}}/health/insurance" },
+      "mock": { "ok": true },
+      "errors": ["patient not verified"]
+    },
+    {
+      "name": "send_intake_form_link",
+      "description": "Send the digital intake/consent forms by SMS or email.",
+      "parameters": {
+        "type": "object",
+        "properties": { "channel": { "type": "string", "enum": ["sms", "email"], "default": "sms" } },
+        "required": []
+      },
+      "execution": { "type": "webhook", "method": "POST", "url": "{{FAI_TOOL_BASE}}/health/intake_link" },
+      "mock": { "sent": true },
+      "errors": ["no contact channel on file"]
+    },
+    {
+      "name": "triage_check",
+      "description": "Apply the fixed clinical triage rules table to the reported symptoms and return a severity band (emergency | urgent | routine). This is a rules lookup, not a diagnosis.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "main_symptom": { "type": "string" },
+          "severity": { "type": "string", "description": "mild | moderate | severe" },
+          "duration": { "type": "string" }
+        },
+        "required": ["main_symptom", "severity"]
+      },
+      "execution": { "type": "webhook", "method": "POST", "url": "{{FAI_TOOL_BASE}}/health/triage" },
+      "mock": { "band": "routine", "advice": "Book a standard visit within a week." },
+      "errors": []
+    },
+    {
+      "name": "transfer_to_nurse",
+      "description": "Warm-transfer to the nurse line with a summary of the reported symptoms.",
+      "parameters": {
+        "type": "object",
+        "properties": { "reason": { "type": "string" } },
+        "required": ["reason"]
+      },
+      "execution": { "type": "transfer", "target": "{{NURSE_LINE_SIP}}", "pass_summary": true },
+      "mock": { "transferred": true },
+      "errors": []
+    },
+    {
+      "name": "advise_emergency",
+      "description": "Tell the caller to call 911 / go to the nearest ER now, offer to stay on the line, and end safely.",
+      "parameters": { "type": "object", "properties": {}, "required": [] },
+      "execution": { "type": "mock" },
+      "mock": { "advised": true },
+      "errors": []
+    }
+  ],
+  "guardrails": {
+    "deterministic": [
+      "No patient record (PHI) is read or changed until verify_patient returns verified == true.",
+      "Urgency is decided by the triage_check rules table, not by the model; an 'emergency' band forces advise_emergency and blocks scheduling.",
+      "Red-flag symptoms detected at any point route to advise_emergency before any other action."
+    ],
+    "content": [
+      "Never state a diagnosis, treatment, or medication.",
+      "Never interpret test/lab results.",
+      "Reassure and route; defer all clinical judgment to a nurse or provider."
+    ],
+    "notes": "Operates under applicable health-privacy rules (e.g. HIPAA in the US). Triage rules table is owned by the clinic's clinical team, not this agent."
+  },
+  "dispositions": [
+    "BOOKED", "RESCHEDULED", "CANCELLED", "INTAKE_DONE",
+    "NURSE_ESCALATED", "EMERGENCY_911", "WRONG_PATIENT", "REFUSED_VERIFY"
+  ]
+}
