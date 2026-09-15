@@ -27,6 +27,10 @@ try:
     from ee.voice.services.types.voice import TranscriptMessage
 except ImportError:
     TranscriptMessage = None
+try:
+    from ee.voice.services.vapi_service import VapiService
+except ImportError:
+    VapiService = None
 from tracer.models.observability_provider import ProviderChoices
 
 
@@ -65,6 +69,18 @@ class ToolEvalAgent:
                 max_tokens=max_tokens,
                 provider=provider,
             )
+        self._vapi_service_inst = None
+
+    @property
+    def vapi_service(self):
+        """Lazy-instantiated VapiService instance."""
+        if self._vapi_service_inst is None:
+            if VapiService is None:
+                from ee.voice.services.vapi_service import VapiService as LazyVapiService
+                self._vapi_service_inst = LazyVapiService()
+            else:
+                self._vapi_service_inst = VapiService()
+        return self._vapi_service_inst
 
     def evaluate_tool_calls(
         self, messages: list[TranscriptMessage]
@@ -271,9 +287,10 @@ class ToolEvalAgent:
         if not vapi_data:
             # Fetch from VAPI API if not stored
             try:
-                vapi_data = self.vapi_service.get_call(
-                    call_execution.service_provider_call_id
-                )
+                if call_execution.service_provider_call_id:
+                    vapi_data = self.vapi_service.fetch_call(
+                        call_execution.service_provider_call_id
+                    )
             except Exception as e:
                 logger.error(f"Error fetching VAPI data: {str(e)}")
 
@@ -304,10 +321,14 @@ class ToolEvalAgent:
 
             # Use provided API key or fall back to default vapi_service
             if api_key:
-                vapi_service = VapiService(api_key=api_key)
-                vapi_data = vapi_service.get_call(vapi_call_id)
+                if VapiService is None:
+                    from ee.voice.services.vapi_service import VapiService as LazyVapiService
+                    vapi_inst = LazyVapiService(api_key=api_key)
+                else:
+                    vapi_inst = VapiService(api_key=api_key)
+                vapi_data = vapi_inst.fetch_call(vapi_call_id)
             else:
-                vapi_data = self.vapi_service.get_call(vapi_call_id)
+                vapi_data = self.vapi_service.fetch_call(vapi_call_id)
 
             # Extract messages from artifact
             artifact = vapi_data.get("artifact", {})
