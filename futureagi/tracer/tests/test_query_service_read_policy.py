@@ -4,7 +4,10 @@ from django.test import override_settings
 
 from tracer.services.clickhouse import query_service as query_service_module
 from tracer.services.clickhouse.application_read_policy import application_read_settings
-from tracer.services.clickhouse.query_service import AnalyticsQueryService
+from tracer.services.clickhouse.query_service import (
+    AnalyticsQueryService,
+    QueryResult,
+)
 from tracer.services.clickhouse.v2.query_settings import (
     ch_query_settings,
     current_settings,
@@ -12,13 +15,15 @@ from tracer.services.clickhouse.v2.query_settings import (
 
 
 class _Client:
-    def __init__(self):
+    def __init__(self, *, read_rows=None, read_bytes=None):
         self.calls = []
         self.server_enforced_readonly = False
+        self.read_rows = read_rows
+        self.read_bytes = read_bytes
 
-    def execute_read(self, query, params, *, timeout_ms, settings):
+    def execute_read_with_progress(self, query, params, *, timeout_ms, settings):
         self.calls.append((query, params, timeout_ms, settings))
-        return [(1,)], [("value", "UInt8")], 1.0
+        return [(1,)], [("value", "UInt8")], 1.0, self.read_rows, self.read_bytes
 
 
 def test_application_query_service_normalizes_every_read_policy():
@@ -44,6 +49,34 @@ def test_application_query_service_normalizes_every_read_policy():
     assert query_settings["max_memory_usage"] == 2 * 1024 * 1024 * 1024
     assert query_settings["max_bytes_to_read"] == 0
     assert query_settings["max_threads"] == 2
+
+
+@pytest.mark.parametrize(
+    "read_rows,read_bytes",
+    [(3_664_921, 4_798_123_456), (None, None), (0, 0)],
+)
+def test_application_query_service_reports_native_read_progress(read_rows, read_bytes):
+    """A caller sizing its next read needs the work this statement actually did.
+
+    The transport reports rows and bytes together; only rows are carried on the
+    result, because only rows size anything. Bytes reach the log line and stop
+    there, so no caller can grow a dependency on a counter nothing decides on.
+    """
+
+    client = _Client(read_rows=read_rows, read_bytes=read_bytes)
+
+    result = AnalyticsQueryService(ch_client=client).execute_ch_query("SELECT 1", {})
+
+    assert result.read_rows == read_rows
+    assert not hasattr(result, "read_bytes")
+    # Progress is the statement's server-side work, never its result size.
+    assert result.row_count == 1
+
+
+def test_query_result_without_a_measured_transport_stays_unmeasured():
+    result = QueryResult.from_clickhouse_rows([(1,)], ["value"], query_time_ms=42.0)
+
+    assert result.read_rows is None
 
 
 def test_application_query_service_supplies_memory_policy_when_omitted():

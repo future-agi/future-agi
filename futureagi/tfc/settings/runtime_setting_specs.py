@@ -360,6 +360,30 @@ INTERACTIVE_READ_SETTING_SPECS = {
             ("FILTER_SELECTOR_MAX_OPT_IN_QUERY_TIMEOUT_MS", 3_000, 25, 30_000),
             ("FILTER_SELECTOR_MAX_BUILDER_QUERY_TIMEOUT_MS", 30_000, 25, 120_000),
             ("FILTER_SELECTOR_MAX_THREADS", 1, 1, 8),
+            # Rows one short exact-string seed statement should read. That
+            # seed's cost tracks the rows inside its slice, not the slice's
+            # width, and its child witness is time-unbounded, so read rows
+            # chiefly measure the ROOTS inside the slice through a trace-id
+            # bloom false-positive scan (~1 - 0.999 ** roots of a ~107M-row
+            # history; 52.4M rows / 4.29 GB measured once, over a dense
+            # fifteen-minute window at k=676 roots - a single point, not a
+            # measured saturation curve). The selector doubles a slice that
+            # reads under a quarter of this budget and halves one that
+            # overruns it, but never below the lane's own floor, which is the
+            # four-hour fixed ceiling this budget replaced. So in practice the
+            # knob decides how far the seed may WIDEN across near-empty
+            # history (four hours of sparse history cost 110-220 ms at any
+            # width); anywhere results actually live it holds at four hours,
+            # i.e. at least what the fixed ceiling gave. That floor is
+            # provisional, and bounding the dense statement itself is the
+            # pending owner decision on the child-witness contract, not this
+            # setting.
+            (
+                "FILTER_SELECTOR_TEXT_SEED_TARGET_READ_ROWS",
+                2_000_000,
+                100_000,
+                50_000_000,
+            ),
             # Broad key-only span population proofs read thin raw columns;
             # their CPU budget is separate from the normal seed/classifier.
             ("FILTER_SELECTOR_POPULATION_MAX_THREADS", 2, 1, 4),

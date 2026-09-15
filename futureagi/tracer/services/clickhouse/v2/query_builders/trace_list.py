@@ -14,14 +14,18 @@ table on the CH25 connection; annotations retain their own source boundary.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from django.conf import settings
+
+from tracer.selectors.filter_seed_width import FilterSeedWidthPolicy
 from tracer.services.clickhouse.query_builders.trace_list import (
     _LONG_WINDOW_ORDERED_ROOT_INITIAL_SLICE,
     _SELECTIVE_EXACT_TEXT_MIN_LENGTH,
+    LatestFilterPredicate,
     TraceListQueryBuilder,
     _unix_microseconds,
 )
@@ -41,6 +45,14 @@ class BoundedUserResolution:
 
 
 MAX_USER_PHYSICAL_IDENTITIES_PER_PAGE = 4_096
+
+# The width the short exact-string seed opens at and refuses to narrow below.
+# It is the fixed ceiling this lane's row budget replaced, kept as the floor so
+# the budget can only ever buy MORE coverage per statement than the ceiling did
+# - see ``filter_seed_width_policy``. Provisional: the dense per-statement cost
+# belongs to the pending owner decision on bounding this seed's child witness,
+# and no measurement here locates an optimum.
+_SHORT_TEXT_SEED_PROVISIONAL_FLOOR = timedelta(hours=4)
 
 
 def _caseless_ascii_ngram_anchor(value: str) -> str | None:
@@ -561,10 +573,87 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
         return self._public_boolean_candidate_seed_plan() is not None
 
     def recommended_filter_initial_slice_width(self):
+        # A row-budgeted lane opens at its policy's own initial width, clamped
+        # to the request: the shared candidate-witness contract declines any
+        # window of an hour or less, but a two-hour window still reaches this
+        # lane and is narrower than the floor the policy declares.
+        policy = self.filter_seed_width_policy()
+        if policy is not None:
+            start, end = self._bounded_request_window
+            return min(end - start, policy.initial_width)
         if self.filter_candidate_seed_requires_empty_prefix():
             start, end = self._bounded_request_window
             return min(end - start, _LONG_WINDOW_ORDERED_ROOT_INITIAL_SLICE)
         return super().recommended_filter_initial_slice_width()
+
+    def filter_seed_width_policy(self) -> FilterSeedWidthPolicy | None:
+        """Budget the short exact-string seed by rows read, not by hours.
+
+        The long-text and numeric lanes prune raw granules by value, so the
+        base builder lets them widen to the whole request window. A short exact
+        literal only prunes by key/value bloom, and this seed's cost has two
+        terms, neither of which a wall-clock ceiling tracks:
+
+        * A flat term, which dominates: the child witness in this CTE is
+          deliberately time-unbounded (any live span of a candidate trace may
+          carry the value), so every statement scans the trace-id bloom's
+          false positives across retained history. A measured unbounded child
+          lookup over a fifteen-minute dense root window read 52.4M rows /
+          4.29 GB after the trace-id, key and value blooms had each roughly
+          halved the granule count (55,689 -> 27,219 -> 14,528 -> 9,069 ->
+          7,902). Modelling the bloom pass rate as ``1 - 0.999 ** roots`` over
+          a ~107M-row history fits that funnel, so read rows here chiefly
+          measure the *roots inside the slice*. Extrapolating that one point
+          (k = 676 roots in fifteen minutes of the densest tenant) the term
+          would pass 90% of its ceiling within about an hour of the same
+          traffic, after which it is paid per statement whatever the width.
+          That is an extrapolation from a single measurement, not a measured
+          saturation curve: nothing has been read at two widths of the same
+          data.
+        * A linear term: the ``attrs_string`` materialized for the traces whose
+          raw roots fall inside the slice, ~0.48 GB per slice-hour on a dense
+          project. It grows with the slice's *row* population, not its width,
+          and a project's density varies by two orders of magnitude across its
+          own retention: four hours of the same project's sparse history cost
+          110-220 ms server-side whatever the width.
+
+        What the budget can and cannot do therefore follows from the flat
+        term. Doubling fires only below a quarter of the target, which at the
+        default is roughly four or five roots in the slice, so the budget
+        *widens across near-empty history* - the regime a fixed four-hour
+        ceiling walked one slice at a time down a 166 h sparse tail. Anywhere
+        the user's own results live, every width is over budget instead, and
+        there the budget must not be allowed to buy less coverage than the
+        fixed ceiling it replaces. Hence the floor, and the initial width, are
+        both the four hours that ceiling was: this lane only ever *widens* on
+        sparse history and otherwise holds at four hours, which is at least
+        the previous behaviour in both regimes. Halving therefore applies only
+        to a width that first grew above four hours and then ran into data.
+
+        The four-hour floor is provisional. It is a deliberately conservative
+        choice pending the owner decision on bounding this seed's child
+        witness, which is what actually owns the dense per-statement cost; it
+        is not a measured optimum, and no measurement here says where
+        narrowing stops paying. (The 3.66M rows / 4.47 GB / 3.8 s at
+        ``max_threads`` 1, 1.76 s at 2 sometimes quoted for a dense four-hour
+        slice belongs to that *bounded*-witness design experiment, whose child
+        lookup is confined to the window plus an hour of slack. It is not a
+        measurement of the seed this builder emits.)
+
+        Slices at or above an hour are whole-hour multiples of the immutable
+        ``toStartOfHour`` primary-key prefix; their boundaries snap onto an hour
+        only after an empty-seed root-time discovery hit. This changes only
+        physical chunking; predicates, order, pagination and the exact
+        latest-state classifier are untouched, and the cursor resumes the
+        remaining window on the next request.
+        """
+        if not self._uses_short_text_candidate_seed():
+            return None
+        return FilterSeedWidthPolicy(
+            initial_width=_SHORT_TEXT_SEED_PROVISIONAL_FLOOR,
+            min_width=_SHORT_TEXT_SEED_PROVISIONAL_FLOOR,
+            target_read_rows=settings.FILTER_SELECTOR_TEXT_SEED_TARGET_READ_ROWS,
+        )
 
     def recommended_filter_classify_batch_size(self) -> int | None:
         if self._uses_attribute_coordinate_replay():
@@ -608,16 +697,20 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
               )
         """
 
-    def _public_long_text_candidate_seed_plan(self):
-        """Find a selective, compiler-proven necessary typed-string witness.
+    def _positive_text_candidate_witnesses(
+        self,
+    ) -> Iterator[tuple[LatestFilterPredicate, str, list[str]]]:
+        """Yield compiler-proven positive string-only witnesses and their values.
 
-        Long positive text filters otherwise classify hundreds of unrelated
-        roots per read. Length selects an execution plan only, never semantics.
-        Missing-key defaults, negation, JSON and mixed-type witnesses must still
-        satisfy the existing compiler's exhaustive raw-witness contract.
+        Shared acquisition shape for both typed-string regimes below. It proves
+        only that a positive ``span_attr_str`` value witness exists and extracts
+        the bound literals it compares; no length, operation or index policy is
+        applied here. Numeric/Boolean branches, JSON, negation, missing-key
+        defaults and residual filters are rejected by the existing compiler and
+        ``_uses_scalar_coordinate_replay`` contract, not by this helper.
         """
         if not self._uses_scalar_coordinate_replay():
-            return None
+            return
         for plan in self._candidate_witness_plans():
             witness = self._public_scalar_candidate_witness_predicate(plan)
             if (
@@ -631,38 +724,130 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
                 re.findall(r"%\((\w+)\)s", plan.raw_key_witness_predicate or "")
             )
             value_params = set(re.findall(r"%\((\w+)\)s", witness)) - key_params
-            values = []
+            values: list[str] = []
             for name in sorted(value_params):
                 value = plan.params.get(name)
                 values.extend(value if isinstance(value, (list, tuple)) else [value])
-            if values and all(
-                isinstance(value, str)
-                and len(value.strip()) >= _SELECTIVE_EXACT_TEXT_MIN_LENGTH
+            if values and all(isinstance(value, str) for value in values):
+                yield plan, witness, values
+
+    def _public_long_text_candidate_seed_plan(self):
+        """Find a selective, compiler-proven necessary typed-string witness.
+
+        Long positive text filters otherwise classify hundreds of unrelated
+        roots per read. Length selects an execution plan only, never semantics.
+        Missing-key defaults, negation, JSON and mixed-type witnesses must still
+        satisfy the existing compiler's exhaustive raw-witness contract.
+        """
+        for plan, witness, values in self._positive_text_candidate_witnesses():
+            if not all(
+                len(value.strip()) >= _SELECTIVE_EXACT_TEXT_MIN_LENGTH
                 for value in values
             ):
-                anchors = [_caseless_ascii_ngram_anchor(value) for value in values]
-                if any(anchor is None for anchor in anchors):
-                    continue
-                params = dict(plan.params)
-                hints = []
-                for index, anchor in enumerate(anchors):
-                    name = f"long_text_ngram_{index}"
-                    params[name] = anchor
-                    # Match schema 023's index expression exactly. indexHint
-                    # only prunes impossible granules; it is never a value
-                    # predicate or a substitute for latest-state replay.
-                    hints.append(
-                        "arrayStringConcat(arrayMap(x -> lower(x), "
-                        f"mapValues(span_attr_str))) LIKE %({name})s"
-                    )
-                return replace(
-                    plan,
-                    params=params,
-                    raw_graph_value_witness_predicate=(
-                        "indexHint(" + " OR ".join(hints) + ") AND (" + witness + ")"
-                    ),
+                continue
+            anchors = [_caseless_ascii_ngram_anchor(value) for value in values]
+            if any(anchor is None for anchor in anchors):
+                continue
+            params = dict(plan.params)
+            hints = []
+            for index, anchor in enumerate(anchors):
+                name = f"long_text_ngram_{index}"
+                params[name] = anchor
+                # Match schema 023's index expression exactly. indexHint
+                # only prunes impossible granules; it is never a value
+                # predicate or a substitute for latest-state replay.
+                hints.append(
+                    "arrayStringConcat(arrayMap(x -> lower(x), "
+                    f"mapValues(span_attr_str))) LIKE %({name})s"
                 )
+            return replace(
+                plan,
+                params=params,
+                raw_graph_value_witness_predicate=(
+                    "indexHint(" + " OR ".join(hints) + ") AND (" + witness + ")"
+                ),
+            )
         return None
+
+    def _public_short_text_candidate_seed_plan(self):
+        """Seed short exact strings from the compiler's own typed value bloom.
+
+        Selectivity policy for positive typed-string acquisition. A seed is
+        worth running only when one usable value index already exists, and
+        which index that is depends on value length and operation alone:
+
+        * long values (and only they) can anchor schema 023's concatenated
+          lowercase LIKE index, so substring operations stay on the long
+          regime above;
+        * a short literal has no usable LIKE anchor, but exact membership does
+          carry the compiler's value companion over ``mapValues(span_attr_str)``
+          (``has``/``hasAny`` plus its ASCII legacy variant), emitted for
+          ``equals``/``in`` only. That companion is a necessary condition, so
+          it may prune raw granules; exact Unicode comparison and the complete
+          six-key latest-state classifier still decide membership.
+
+        Everything else — mixed value lengths, substring/negative operations,
+        JSON, structured overflow, versioned requests, relational or end-user
+        seeds — keeps the existing acquisition path unchanged. This is the same
+        flat scalar typed-map AND envelope the numeric lane requires: at most
+        ten leaves, each its own typed Map plan, and no residual filter.
+        """
+        leaves = self._active_non_time_filters()
+        if (
+            self.project_version_id is not None
+            or not 1 <= len(leaves) <= 10
+            or not self._uses_scalar_coordinate_replay()
+            or self._positive_exact_end_user_seed_filter() is not None
+            or self._positive_relational_seed_filter() is not None
+        ):
+            return None
+        plans, residual = self._partition_trace_filter_plans(self._bounded_filters())
+        if (
+            residual
+            or len(plans) != len(leaves)
+            or not all(
+                plan.scope == "any"
+                and plan.aggregates
+                and all(
+                    any(
+                        column in sql
+                        for column in (
+                            "span_attr_num",
+                            "span_attr_str",
+                            "span_attr_bool",
+                        )
+                    )
+                    for sql in plan.aggregates
+                )
+                for plan in plans
+            )
+        ):
+            return None
+        for plan, witness, values in self._positive_text_candidate_witnesses():
+            if (
+                all(
+                    0 < len(value.strip()) < _SELECTIVE_EXACT_TEXT_MIN_LENGTH
+                    for value in values
+                )
+                and "mapValues(span_attr_str)" in witness
+            ):
+                return plan
+        return None
+
+    def _public_text_candidate_seed_plan(self):
+        """Either typed-string regime, whichever value index is available."""
+        return (
+            self._public_long_text_candidate_seed_plan()
+            or self._public_short_text_candidate_seed_plan()
+        )
+
+    def _uses_short_text_candidate_seed(self) -> bool:
+        """True when the short exact-string lane is the active seed plan."""
+        return (
+            super()._public_scalar_candidate_seed_plan() is None
+            and self._public_long_text_candidate_seed_plan() is None
+            and self._public_short_text_candidate_seed_plan() is not None
+        )
 
     def _public_boolean_candidate_seed_plan(self):
         leaves = self._active_non_time_filters()
@@ -693,7 +878,7 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
     def _public_scalar_candidate_seed_plan(self):
         return (
             super()._public_scalar_candidate_seed_plan()
-            or self._public_long_text_candidate_seed_plan()
+            or self._public_text_candidate_seed_plan()
             or self._public_boolean_candidate_seed_plan()
         )
 
@@ -710,7 +895,7 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
         # policy. Memory safety, exact ordering and pagination are unchanged.
         if (
             super()._public_scalar_candidate_seed_plan() is None
-            and self._public_long_text_candidate_seed_plan() is not None
+            and self._public_text_candidate_seed_plan() is not None
         ):
             return False
         # One compiler-proven positive numeric value witness can seed up to ten
@@ -763,7 +948,7 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
         # witness. Stale values remain candidates for exact latest-state replay.
         if (
             super()._public_scalar_candidate_seed_plan() is None
-            and self._public_long_text_candidate_seed_plan() is not None
+            and self._public_text_candidate_seed_plan() is not None
             and self._positive_exact_end_user_seed_filter() is None
             and self._positive_relational_seed_filter() is None
         ):
@@ -780,6 +965,12 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
             self._uses_scalar_coordinate_replay()
             # Text already starts with this population. Do not repeat the same
             # failed query before falling back to the exact ordered-root walk.
+            # The selector also offers this fallback only for an *optional*
+            # candidate seed, and both text regimes are required, so the gate
+            # is unreachable for them by construction. Application reads
+            # deliberately strip statement time/scan caps, so there is no
+            # in-statement recovery to fall back to either: the short lane's
+            # declared row budget is what bounds a text seed's working set.
             and super()._public_scalar_candidate_seed_plan() is not None
         )
 

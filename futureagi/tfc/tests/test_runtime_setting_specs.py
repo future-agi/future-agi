@@ -57,6 +57,29 @@ def test_population_worker_budget_is_separate_and_can_be_lowered():
     assert reduced["FILTER_SELECTOR_POPULATION_MAX_THREADS"] == 1
 
 
+def test_text_seed_row_budget_is_operator_tunable_within_a_measured_range():
+    """The short exact-string seed is sized by rows read, not by slice hours."""
+
+    defaults = load_numeric_settings(INTERACTIVE_READ_SETTING_SPECS, source={})
+    assert defaults["FILTER_SELECTOR_TEXT_SEED_TARGET_READ_ROWS"] == 2_000_000
+
+    lowered = load_numeric_settings(
+        INTERACTIVE_READ_SETTING_SPECS,
+        source={"FILTER_SELECTOR_TEXT_SEED_TARGET_READ_ROWS": "100000"},
+    )
+    validate_interactive_read_settings(lowered)
+    assert lowered["FILTER_SELECTOR_TEXT_SEED_TARGET_READ_ROWS"] == 100_000
+
+
+@pytest.mark.parametrize("value", [0, -1, 99_999, 50_000_001, True, "unlimited"])
+def test_text_seed_row_budget_rejects_values_outside_the_measured_range(value):
+    with pytest.raises(ValueError):
+        load_numeric_settings(
+            INTERACTIVE_READ_SETTING_SPECS,
+            source={"FILTER_SELECTOR_TEXT_SEED_TARGET_READ_ROWS": value},
+        )
+
+
 @pytest.mark.parametrize("value", [0, -1, 5, True, "unlimited"])
 def test_population_worker_budget_rejects_unbounded_or_invalid_values(value):
     with pytest.raises(ValueError):
