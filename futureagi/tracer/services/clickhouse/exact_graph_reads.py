@@ -295,6 +295,16 @@ EXACT_GRAPH_TRACE_CLASSIFIER_READ_SETTINGS = {
     **EXACT_GRAPH_READ_SETTINGS,
     "max_threads": settings.EXACT_GRAPH_TRACE_CLASSIFIER_MAX_THREADS,
 }
+# The aggregate user graph is one ordered latest-state pass over a whole
+# window, not a filter-selector probe. It inherited the selector's single
+# thread from the shared dict, which a FINAL merge could not have used anyway;
+# an in-order argMax reduction can. Give it the same budget the dashboard
+# trace reader already runs at — an existing runtime setting, changed nowhere
+# — and leave every byte, memory, result and deadline ceiling untouched.
+EXACT_GRAPH_USER_READ_SETTINGS = {
+    **EXACT_GRAPH_READ_SETTINGS,
+    "max_threads": settings.DASHBOARD_TRACE_READ_MAX_THREADS,
+}
 EXACT_GRAPH_SPAN_PARTITION_READ_SETTINGS = {
     **EXACT_GRAPH_READ_SETTINGS,
     # Span partitions use the same large-tenant scan envelope; their time
@@ -4553,7 +4563,7 @@ def read_exact_user_system_graph(
         query=query,
         params=params,
         started=started,
-        settings=EXACT_GRAPH_READ_SETTINGS,
+        settings=EXACT_GRAPH_USER_READ_SETTINGS,
     )
     rows = list(result.data or [])
     columns = list(result.columns or [])
