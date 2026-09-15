@@ -11,6 +11,7 @@ network access or ML models inside the sandbox.
 import base64
 import json
 import os
+import threading
 
 import structlog
 
@@ -32,6 +33,10 @@ _BROWSER_UA = (
 # SVG can carry <script>; dropping the payload here keeps stored-XSS from
 # reaching downstream consumers that inline the resulting data: URI.
 _REJECTED_CONTENT_TYPES = frozenset({"image/svg+xml"})
+
+_DEFAULT_FID_BATCH_SIZE = 32
+_FID_METRICS = {}
+_FID_INFERENCE_LOCK = threading.Lock()
 
 
 def _fetch_url_bytes(url):
@@ -148,6 +153,61 @@ def _resolve_fid_input(value):
     if was_json_string:
         return json.dumps(resolved)
     return resolved
+
+
+def _fid_batch_size():
+    """Return the configured FID batch size, falling back to a safe default."""
+    configured = os.getenv("FID_BATCH_SIZE")
+    if configured is None:
+        return _DEFAULT_FID_BATCH_SIZE
+    try:
+        batch_size = int(configured)
+    except ValueError:
+        logger.warning(
+            "fid_invalid_batch_size",
+            value=configured,
+            default=_DEFAULT_FID_BATCH_SIZE,
+        )
+        return _DEFAULT_FID_BATCH_SIZE
+    if batch_size < 1:
+        logger.warning(
+            "fid_invalid_batch_size",
+            value=configured,
+            default=_DEFAULT_FID_BATCH_SIZE,
+        )
+        return _DEFAULT_FID_BATCH_SIZE
+    return batch_size
+
+
+def _get_fid_metric(FrechetInceptionDistance, device):
+    """Reuse one FID feature extractor per concrete device."""
+    metric = _FID_METRICS.get(device)
+    if metric is None:
+        metric = FrechetInceptionDistance(feature=2048).to(device)
+        _FID_METRICS[device] = metric
+    return metric
+
+
+def _fid_device(torch):
+    """Return a stable cache key and placement target for the active device."""
+    if not torch.cuda.is_available():
+        return "cpu"
+    return f"cuda:{torch.cuda.current_device()}"
+
+
+def _update_fid_in_batches(
+    metric, images, real, batch_size, device, torch, image_to_tensor
+):
+    """Update a FID metric with batched CPU preprocessing and device transfers."""
+    update_count = 0
+    for start in range(0, len(images), batch_size):
+        tensors = [
+            image_to_tensor(image) for image in images[start : start + batch_size]
+        ]
+        batch = torch.cat(tensors, dim=0).to(device)
+        metric.update(batch, real=real)
+        update_count += 1
+    return update_count
 
 
 def register_preprocessor(eval_name):
@@ -268,7 +328,6 @@ def _preprocess_fid(inputs):
         return inputs
 
     try:
-        import numpy as np
         import torch
         from torchmetrics.image.fid import FrechetInceptionDistance
 
@@ -291,27 +350,37 @@ def _preprocess_fid(inputs):
             inputs["_fid_error"] = f"FID requires at least 2 images per set (got {len(real_pil)} real, {len(fake_pil)} fake)"
             return inputs
 
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        device = _fid_device(torch)
 
-        # Extract Inception features using FID metric's feature extractor
-        fid_metric = FrechetInceptionDistance(feature=2048).to(device)
-
-        # Get features for real images
-        for img in real_pil:
-            x = _pil_to_uint8_tensor(img).to(device)
-            fid_metric.update(x, real=True)
-
-        for img in fake_pil:
-            x = _pil_to_uint8_tensor(img).to(device)
-            fid_metric.update(x, real=False)
-
-        # Extract the raw features
-        real_features = fid_metric.real_features_sum.cpu().numpy()
-        fake_features = fid_metric.fake_features_sum.cpu().numpy()
-
-        # Actually, we need per-image features, not sums.
-        # Simpler approach: compute FID directly and pass the score
-        score = float(fid_metric.compute().detach().cpu())
+        # The metric owns mutable running statistics, so serialize each complete
+        # calculation while reusing its Inception feature extractor.
+        with _FID_INFERENCE_LOCK:
+            fid_metric = _get_fid_metric(FrechetInceptionDistance, device)
+            fid_metric.reset()
+            try:
+                with torch.inference_mode():
+                    batch_size = _fid_batch_size()
+                    real_updates = _update_fid_in_batches(
+                        fid_metric,
+                        real_pil,
+                        real=True,
+                        batch_size=batch_size,
+                        device=device,
+                        torch=torch,
+                        image_to_tensor=_pil_to_uint8_tensor,
+                    )
+                    fake_updates = _update_fid_in_batches(
+                        fid_metric,
+                        fake_pil,
+                        real=False,
+                        batch_size=batch_size,
+                        device=device,
+                        torch=torch,
+                        image_to_tensor=_pil_to_uint8_tensor,
+                    )
+                    score = float(fid_metric.compute().detach().cpu())
+            finally:
+                fid_metric.reset()
 
         # Pass pre-computed score as a feature
         inputs["_fid_precomputed_score"] = score
@@ -319,7 +388,8 @@ def _preprocess_fid(inputs):
         inputs["_fake_features"] = [[1.0]]
 
         logger.info(
-            f"FID preprocessing: {len(real_pil)} real, {len(fake_pil)} fake images, score={score:.3f}"
+            f"FID preprocessing: {len(real_pil)} real, {len(fake_pil)} fake images, "
+            f"{real_updates + fake_updates} batched updates, score={score:.3f}"
         )
 
     except ImportError as e:
