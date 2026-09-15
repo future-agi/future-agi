@@ -204,6 +204,37 @@ def test_a_time_only_list_declares_no_budget_and_no_probe():
         )
 
 
+def test_a_native_column_list_declares_no_budget_either():
+    """The budget is declared for exactly the shapes it was measured on.
+
+    A native-column predicate compiles to no typed-Map population witness, so
+    neither the seed's ``attrs_string`` replay cost model nor the rebuilt
+    absence proof describes it. Nothing here was measured on that shape, so it
+    keeps the schedule it ships with.
+    """
+
+    subject = SpanListQueryBuilderV2(
+        project_id=PROJECT,
+        filters=[
+            time_filter(start=WINDOW[0], end=WINDOW[1]),
+            {
+                "column_id": "model",
+                "filter_config": {
+                    "col_type": "SYSTEM_METRIC",
+                    "filter_type": "text",
+                    "filter_op": "equals",
+                    "filter_value": "a-model",
+                },
+            },
+        ],
+        bounded_internal_scan=True,
+    )
+    assert subject._filter_population_plans() == []
+    assert subject.filter_seed_width_policy() is None
+    assert subject.filter_population_discovery_width_policy() is None
+    assert subject.supports_filter_seed_density_probe() is False
+
+
 def test_both_budgets_open_and_floor_at_one_hour():
     """The seed's key predicate is hour-aligned, so a slice below an hour
     reads exactly the granules the whole hour reads for a fraction of the

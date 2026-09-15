@@ -222,13 +222,15 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
     def _row_budgeted_span_lane(self):
         """Whether this read's two wide statements are row-budgeted.
 
-        Both the seed and the absence proof scan the raw span population of an
-        interval, so both are row-budgeted exactly when a filter narrows that
-        population at all. A time-only list has no attribute predicate to be
-        blind about and keeps the wall-clock schedule it ships with today.
+        Exactly the reads whose filter compiles to a typed-Map population
+        witness - the shapes whose seed replays ``attrs_string`` for every row
+        of the coordinates the witness names, and whose absence proof this
+        change rebuilt. A time-only list has no attribute predicate to be
+        blind about; a native-column list's statements were never measured
+        here. Both keep the wall-clock schedule they ship with today.
         """
 
-        return bool(self._active_non_time_filters())
+        return bool(self._filter_population_plans())
 
     def filter_seed_width_policy(self):
         """Budget the span seed by the rows it reads, not by hours.
@@ -401,21 +403,6 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
         start, end = self._bounded_request_window
         return min(end - start, policy.initial_width)
 
-    def _filter_population_witness(self, plan):
-        """The cheapest necessary witness this plan can lend an absence proof.
-
-        A typed-Map leaf lends its GRANULE-level companion: key presence and
-        the value index as ``indexHint``s, which prune granules and read no
-        Map column at all. Everything else - native columns, sampling - keeps
-        the witness it already lent, because those compare a narrow stored
-        column and are not what made this statement expensive.
-        """
-
-        return (
-            plan.raw_index_witness_predicate
-            or self._filter_population_plan_predicate(plan, ordinary_seed=True)
-        )
-
     def recommended_filter_population_time_discovery_window(self):
         """The widest interval one absence proof may cover: the request.
 
@@ -540,7 +527,17 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
                 params,
             )
         population_predicates = [
-            f"({self._filter_population_witness(plan)})" for plan in population_plans
+            # A plan with no granule-level companion is DROPPED rather than
+            # carried at row level. Dropping weakens the necessary condition -
+            # a larger superset, still sound, and the seed re-applies every
+            # leaf - whereas carrying one would put a Map read back into the
+            # one statement whose whole purpose is not to have one. Today
+            # every plan that reaches this list has a companion, because the
+            # two compiler sites that publish a population witness publish
+            # both; this is the safe direction if that ever stops being true.
+            f"({witness})"
+            for plan in population_plans
+            if (witness := plan.raw_index_witness_predicate)
         ]
         if self._bounded_sampling_rate is not None:
             # Sampling is stable across physical versions, so stale versions
