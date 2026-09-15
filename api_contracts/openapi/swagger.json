@@ -33874,27 +33874,6 @@
                 "description": "",
                 "parameters": [
                     {
-                        "name": "created_at",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
-                    {
-                        "name": "status",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
-                    {
-                        "name": "dataset_id",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
-                    {
                         "name": "ordering",
                         "in": "query",
                         "description": "Which field to use when ordering the results.",
@@ -34149,27 +34128,6 @@
                 "operationId": "model-hub_experiments_v2_list_list",
                 "description": "V2 experiment list with filtering, search, and pagination.",
                 "parameters": [
-                    {
-                        "name": "created_at",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
-                    {
-                        "name": "status",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
-                    {
-                        "name": "dataset_id",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
                     {
                         "name": "search",
                         "in": "query",
@@ -38989,20 +38947,6 @@
                 "description": "",
                 "parameters": [
                     {
-                        "name": "optimize_type",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
-                    {
-                        "name": "status",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
-                    {
                         "name": "search",
                         "in": "query",
                         "description": "A search term.",
@@ -41615,13 +41559,6 @@
                 "description": "",
                 "parameters": [
                     {
-                        "name": "name",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
-                    {
                         "name": "search",
                         "in": "query",
                         "description": "A search term.",
@@ -41944,27 +41881,6 @@
                 "description": "",
                 "parameters": [
                     {
-                        "name": "template_name",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
-                    {
-                        "name": "template_version",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
-                    {
-                        "name": "created_at",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
-                    {
                         "name": "search",
                         "in": "query",
                         "description": "A search term.",
@@ -42043,27 +41959,6 @@
                 "operationId": "model-hub_prompt-history-executions_get_execution_details",
                 "description": "Get detailed information about a specific PromptVersion",
                 "parameters": [
-                    {
-                        "name": "template_name",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
-                    {
-                        "name": "template_version",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
-                    {
-                        "name": "created_at",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
                     {
                         "name": "search",
                         "in": "query",
@@ -43098,27 +42993,6 @@
                 "description": "",
                 "parameters": [
                     {
-                        "name": "name",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
-                    {
-                        "name": "version",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
-                    {
-                        "name": "created_at",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
-                    {
                         "name": "search",
                         "in": "query",
                         "description": "A search term.",
@@ -43466,27 +43340,6 @@
                 "operationId": "model-hub_prompt-templates_get_template_by_name",
                 "description": "Retrieve a prompt template by name.\nIf no version is specified, returns the default version (is_default=True).\nIf a version is specified, returns that specific version.",
                 "parameters": [
-                    {
-                        "name": "name",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
-                    {
-                        "name": "version",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
-                    {
-                        "name": "created_at",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
                     {
                         "name": "search",
                         "in": "query",
@@ -50799,6 +50652,55 @@
                 }
             ]
         },
+        "/simulate/api/harness/attempts/{id}/usage/": {
+            "post": {
+                "operationId": "simulate_api_harness_attempts_usage",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessUsageRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessUsageResponse"
+                        }
+                    },
+                    "402": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessUsageResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/livekit/call-config/{call_id}/": {
             "get": {
                 "operationId": "simulate_api_livekit_call-config_read",
@@ -55691,6 +55593,12 @@
                         }
                     },
                     "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "402": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiTextErrorResponse"
@@ -62135,9 +62043,6 @@
                         }
                     }
                 },
-                "produces": [
-                    "text/csv"
-                ],
                 "tags": [
                     "tracer"
                 ],
@@ -66015,9 +65920,6 @@
                         }
                     }
                 },
-                "produces": [
-                    "text/csv"
-                ],
                 "tags": [
                     "tracer"
                 ],
@@ -67060,9 +66962,6 @@
                         }
                     }
                 },
-                "produces": [
-                    "text/csv"
-                ],
                 "tags": [
                     "tracer"
                 ],
@@ -69160,10 +69059,6 @@
                         }
                     }
                 },
-                "produces": [
-                    "application/json",
-                    "text/csv"
-                ],
                 "tags": [
                     "tracer"
                 ],
@@ -69221,10 +69116,6 @@
                         }
                     }
                 },
-                "produces": [
-                    "application/json",
-                    "text/csv"
-                ],
                 "tags": [
                     "tracer"
                 ],
@@ -119923,6 +119814,38 @@
                 }
             }
         },
+        "HarnessConsumption": {
+            "required": [
+                "text_sim_tokens",
+                "voice_sim_minutes",
+                "ai_credits",
+                "sandbox_seconds"
+            ],
+            "type": "object",
+            "properties": {
+                "text_sim_tokens": {
+                    "title": "Text sim tokens",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "voice_sim_minutes": {
+                    "title": "Voice sim minutes",
+                    "type": "number",
+                    "minimum": 0
+                },
+                "ai_credits": {
+                    "title": "Ai credits",
+                    "type": "number",
+                    "minimum": 0
+                },
+                "sandbox_seconds": {
+                    "title": "Sandbox seconds",
+                    "type": "number",
+                    "minimum": 0
+                }
+            },
+            "x-nullable": true
+        },
         "HarnessJobRead": {
             "required": [
                 "job",
@@ -119970,6 +119893,14 @@
                 },
                 "runtime": {
                     "$ref": "#/definitions/HarnessRuntimeRead"
+                },
+                "consumption": {
+                    "$ref": "#/definitions/HarnessConsumption"
+                },
+                "usage_limit": {
+                    "title": "Usage limit",
+                    "type": "object",
+                    "x-nullable": true
                 }
             }
         },
@@ -121294,6 +121225,185 @@
             "properties": {
                 "result": {
                     "$ref": "#/definitions/HarnessScenarioOperationResult"
+                }
+            }
+        },
+        "HarnessUsageRecord": {
+            "required": [
+                "id",
+                "action",
+                "scenario_key",
+                "amount",
+                "occurred_at",
+                "funding",
+                "infra_failed"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "action": {
+                    "title": "Action",
+                    "type": "string",
+                    "enum": [
+                        "scenario_generation",
+                        "text_call",
+                        "voice_call",
+                        "managed_evaluation"
+                    ]
+                },
+                "scenario_key": {
+                    "title": "Scenario key",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "amount": {
+                    "title": "Amount",
+                    "type": "number",
+                    "minimum": 0
+                },
+                "occurred_at": {
+                    "title": "Occurred at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "funding": {
+                    "title": "Funding",
+                    "type": "string",
+                    "enum": [
+                        "platform",
+                        "customer"
+                    ]
+                },
+                "infra_failed": {
+                    "title": "Infra failed",
+                    "type": "boolean"
+                },
+                "model": {
+                    "title": "Model",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessUsageTotals": {
+            "required": [
+                "text_sim_tokens",
+                "voice_sim_minutes"
+            ],
+            "type": "object",
+            "properties": {
+                "text_sim_tokens": {
+                    "title": "Text sim tokens",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "voice_sim_minutes": {
+                    "title": "Voice sim minutes",
+                    "type": "number",
+                    "minimum": 0
+                }
+            }
+        },
+        "HarnessUsageRequest": {
+            "required": [
+                "operation"
+            ],
+            "type": "object",
+            "properties": {
+                "operation": {
+                    "title": "Operation",
+                    "type": "string",
+                    "enum": [
+                        "check",
+                        "report"
+                    ]
+                },
+                "action": {
+                    "title": "Action",
+                    "type": "string",
+                    "enum": [
+                        "scenario_generation",
+                        "text_call",
+                        "voice_call",
+                        "managed_evaluation"
+                    ]
+                },
+                "amount": {
+                    "title": "Amount",
+                    "type": "number",
+                    "minimum": 0
+                },
+                "model": {
+                    "title": "Model",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "schema_version": {
+                    "title": "Schema version",
+                    "type": "string",
+                    "enum": [
+                        "futureagi.harness-usage.v1"
+                    ]
+                },
+                "records": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessUsageRecord"
+                    }
+                },
+                "totals": {
+                    "$ref": "#/definitions/HarnessUsageTotals"
+                },
+                "sandbox_seconds": {
+                    "title": "Sandbox seconds",
+                    "type": "number",
+                    "minimum": 0
+                }
+            }
+        },
+        "HarnessUsageResponse": {
+            "type": "object",
+            "properties": {
+                "allowed": {
+                    "title": "Allowed",
+                    "type": "boolean"
+                },
+                "accepted": {
+                    "title": "Accepted",
+                    "type": "boolean"
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string"
+                },
+                "error_code": {
+                    "title": "Error code",
+                    "type": "string"
+                },
+                "dimension": {
+                    "title": "Dimension",
+                    "type": "string"
+                },
+                "current_usage": {
+                    "title": "Current usage",
+                    "type": "number"
+                },
+                "limit": {
+                    "title": "Limit",
+                    "type": "number"
+                },
+                "upgrade_cta": {
+                    "title": "Upgrade cta",
+                    "type": "object",
+                    "x-nullable": true
                 }
             }
         },

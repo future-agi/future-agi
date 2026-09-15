@@ -565,6 +565,13 @@ class HarnessRuntimeReadSerializer(serializers.Serializer):
     diagnostics = HarnessDiagnosticsSerializer(required=False)
 
 
+class HarnessConsumptionSerializer(serializers.Serializer):
+    text_sim_tokens = serializers.IntegerField(min_value=0)
+    voice_sim_minutes = serializers.FloatField(min_value=0)
+    ai_credits = serializers.FloatField(min_value=0)
+    sandbox_seconds = serializers.FloatField(min_value=0)
+
+
 class HarnessJobReadSerializer(serializers.Serializer):
     """Consolidated public read DTO for list/create/retrieve/cancel/poll."""
 
@@ -576,3 +583,5 @@ class HarnessJobReadSerializer(serializers.Serializer):
     receipts = serializers.ListField(child=serializers.JSONField())
     platform = HarnessPlatformSerializer()
     runtime = HarnessRuntimeReadSerializer(required=False)
+    consumption = HarnessConsumptionSerializer(required=False, allow_null=True)
+    usage_limit = serializers.JSONField(required=False, allow_null=True)

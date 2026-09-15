@@ -17,7 +17,7 @@ const CREDIT_ERROR_CODES = [
 export function isCreditExhaustionError(error) {
   if (!error) return false;
   return (
-    error.statusCode === 402 || CREDIT_ERROR_CODES.includes(error.errorCode)
+    error.statusCode === 402 || CREDIT_ERROR_CODES.includes(error.error_code)
   );
 }
 
@@ -46,13 +46,20 @@ export function useCreditExhaustion({ feature = "unknown" } = {}) {
   const handleError = useCallback(
     (error) => {
       if (isCreditExhaustionError(error)) {
-        setExhaustionError(error);
+        const exhaustion = {
+          ...error,
+          errorCode: error.error_code,
+          currentUsage: error.current_usage,
+          upgradeCta: error.upgrade_cta,
+          result: error.result || error.reason,
+        };
+        setExhaustionError(exhaustion);
         trackPostHogEvent("credits_nudge_shown", {
           feature,
-          error_code: error.errorCode,
-          dimension: error.dimension,
-          current_usage: error.currentUsage,
-          limit: error.limit,
+          error_code: exhaustion.errorCode,
+          dimension: exhaustion.dimension,
+          current_usage: exhaustion.currentUsage,
+          limit: exhaustion.limit,
         });
         return true;
       }

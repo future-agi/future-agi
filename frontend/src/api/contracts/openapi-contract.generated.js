@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1025,
+  endpointCount: 1026,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -18419,24 +18419,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
-          created_at: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
-          status: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
-          dataset_id: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
           ordering: {
             required: false,
             schema: {
@@ -18597,24 +18579,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
-          created_at: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
-          status: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
-          dataset_id: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
           search: {
             required: false,
             schema: {
@@ -21305,18 +21269,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
-          optimize_type: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
-          status: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
           search: {
             required: false,
             schema: {
@@ -22818,12 +22770,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
-          name: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
           search: {
             required: false,
             schema: {
@@ -23037,24 +22983,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
-          template_name: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
-          template_version: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
-          created_at: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
           search: {
             required: false,
             schema: {
@@ -23120,24 +23048,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
-          template_name: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
-          template_version: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
-          created_at: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
           search: {
             required: false,
             schema: {
@@ -23745,24 +23655,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
-          name: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
-          version: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
-          created_at: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
           search: {
             required: false,
             schema: {
@@ -23974,24 +23866,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
-          name: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
-          version: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
-          created_at: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
           search: {
             required: false,
             schema: {
@@ -28016,6 +27890,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/api/harness/attempts/{id}/usage/": {
+      post: {
+        operationId: "simulate_api_harness_attempts_usage",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessUsageRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessUsageResponse",
+          },
+          402: {
+            $ref: "#/definitions/HarnessUsageResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/api/livekit/call-config/{call_id}/": {
       get: {
         operationId: "simulate_api_livekit_call-config_read",
@@ -30686,6 +30582,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
               $ref: "#/definitions/OptimiserAnalysisRefreshResponse",
             },
             400: {
+              $ref: "#/definitions/ApiTextErrorResponse",
+            },
+            402: {
               $ref: "#/definitions/ApiTextErrorResponse",
             },
             404: {
@@ -60239,6 +60138,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtime: {
           $ref: "#/definitions/HarnessRuntimeRead",
         },
+        consumption: {
+          $ref: "#/definitions/HarnessConsumption",
+        },
+        usage_limit: {
+          title: "Usage limit",
+          type: "object",
+          "x-nullable": true,
+        },
       },
     },
     HarnessManifest: {
@@ -60589,6 +60496,95 @@ export const OPENAPI_CONTRACT = Object.freeze({
         total_bytes: {
           title: "Total bytes",
           type: "integer",
+        },
+      },
+    },
+    HarnessUsageRequest: {
+      required: ["operation"],
+      type: "object",
+      properties: {
+        operation: {
+          title: "Operation",
+          type: "string",
+          enum: ["check", "report"],
+        },
+        action: {
+          title: "Action",
+          type: "string",
+          enum: [
+            "scenario_generation",
+            "text_call",
+            "voice_call",
+            "managed_evaluation",
+          ],
+        },
+        amount: {
+          title: "Amount",
+          type: "number",
+          minimum: 0,
+        },
+        model: {
+          title: "Model",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        schema_version: {
+          title: "Schema version",
+          type: "string",
+          enum: ["futureagi.harness-usage.v1"],
+        },
+        records: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessUsageRecord",
+          },
+        },
+        totals: {
+          $ref: "#/definitions/HarnessUsageTotals",
+        },
+        sandbox_seconds: {
+          title: "Sandbox seconds",
+          type: "number",
+          minimum: 0,
+        },
+      },
+    },
+    HarnessUsageResponse: {
+      type: "object",
+      properties: {
+        allowed: {
+          title: "Allowed",
+          type: "boolean",
+        },
+        accepted: {
+          title: "Accepted",
+          type: "boolean",
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+        },
+        error_code: {
+          title: "Error code",
+          type: "string",
+        },
+        dimension: {
+          title: "Dimension",
+          type: "string",
+        },
+        current_usage: {
+          title: "Current usage",
+          type: "number",
+        },
+        limit: {
+          title: "Limit",
+          type: "number",
+        },
+        upgrade_cta: {
+          title: "Upgrade cta",
+          type: "object",
+          "x-nullable": true,
         },
       },
     },
@@ -87661,6 +87657,38 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessConsumption: {
+      required: [
+        "text_sim_tokens",
+        "voice_sim_minutes",
+        "ai_credits",
+        "sandbox_seconds",
+      ],
+      type: "object",
+      properties: {
+        text_sim_tokens: {
+          title: "Text sim tokens",
+          type: "integer",
+          minimum: 0,
+        },
+        voice_sim_minutes: {
+          title: "Voice sim minutes",
+          type: "number",
+          minimum: 0,
+        },
+        ai_credits: {
+          title: "Ai credits",
+          type: "number",
+          minimum: 0,
+        },
+        sandbox_seconds: {
+          title: "Sandbox seconds",
+          type: "number",
+          minimum: 0,
+        },
+      },
+      "x-nullable": true,
+    },
     HarnessJobEvent: {
       required: [
         "event_id",
@@ -88145,6 +88173,83 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Purpose",
           type: "string",
           enum: ["target_provider", "simulator_provider", "source_checkout"],
+        },
+      },
+    },
+    HarnessUsageRecord: {
+      required: [
+        "id",
+        "action",
+        "scenario_key",
+        "amount",
+        "occurred_at",
+        "funding",
+        "infra_failed",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        action: {
+          title: "Action",
+          type: "string",
+          enum: [
+            "scenario_generation",
+            "text_call",
+            "voice_call",
+            "managed_evaluation",
+          ],
+        },
+        scenario_key: {
+          title: "Scenario key",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        amount: {
+          title: "Amount",
+          type: "number",
+          minimum: 0,
+        },
+        occurred_at: {
+          title: "Occurred at",
+          type: "string",
+          format: "date-time",
+        },
+        funding: {
+          title: "Funding",
+          type: "string",
+          enum: ["platform", "customer"],
+        },
+        infra_failed: {
+          title: "Infra failed",
+          type: "boolean",
+        },
+        model: {
+          title: "Model",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    HarnessUsageTotals: {
+      required: ["text_sim_tokens", "voice_sim_minutes"],
+      type: "object",
+      properties: {
+        text_sim_tokens: {
+          title: "Text sim tokens",
+          type: "integer",
+          minimum: 0,
+        },
+        voice_sim_minutes: {
+          title: "Voice sim minutes",
+          type: "number",
+          minimum: 0,
         },
       },
     },

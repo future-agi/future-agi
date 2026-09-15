@@ -137,6 +137,8 @@ def _validate_known_daytona_egress(payload: dict[str, Any], callback_url: str) -
 
 
 def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
+    from simulate.services.harness_usage import harness_consumption
+
     attempt = job.attempts.order_by("-attempt_number").first()
     events: list[dict[str, Any]] = []
     if attempt:
@@ -262,6 +264,8 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
         "scenarios": scenarios,
         "receipts": receipts,
         "runtime": runtime,
+        "consumption": harness_consumption(job),
+        "usage_limit": (job.payload.get("metadata") or {}).get("usage_limit"),
         "adjustments": list(
             (job.payload.get("metadata") or {}).get("adjustments") or []
         ),
@@ -480,6 +484,9 @@ class DaytonaHarnessProvider:
                 status=status.HTTP_400_BAD_REQUEST,
             )
         payload = request.validated_data
+        from simulate.services.harness_usage import require_harness_action
+
+        require_harness_action(str(organization.id), "scenario_generation")
         base_url = (
             getattr(settings, "HARNESS_PUBLIC_BASE_URL", "")
             or request.build_absolute_uri("/")
@@ -685,6 +692,9 @@ class DaytonaHarnessProvider:
                     "and scenarios.",
                     status_code=409,
                 )
+            from simulate.services.harness_usage import require_harness_run
+
+            require_harness_run(job)
 
             payload = copy.deepcopy(job.payload)
             # The indexed column is authoritative. This also repairs jobs created before chat
@@ -707,6 +717,7 @@ class DaytonaHarnessProvider:
                 }
             payload.setdefault("agent", {})["secret_refs"] = secret_refs
             metadata = payload.setdefault("metadata", {})
+            metadata.pop("usage_limit", None)
             # Retry limits are per user-triggered run, not over the lifetime of
             # the durable job. The gateway uses this marker when deciding if a
             # fresh infrastructure attempt remains available.
@@ -833,6 +844,9 @@ class DaytonaHarnessProvider:
                         "end-to-end run; its follow-ups can then add scenarios.",
                         status_code=409,
                     )
+                from simulate.services.harness_usage import require_harness_action
+
+                require_harness_action(str(organization.id), "scenario_generation")
                 # Add relative to what the environment actually holds: the scenarios
                 # registered by the last successful run are exactly what the saved authoring
                 # archive contains (it is only re-frozen on success). ``job.scenario_count``

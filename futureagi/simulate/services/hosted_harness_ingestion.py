@@ -142,6 +142,8 @@ def ingest_result_receipt(
     *,
     digest_body: dict[str, Any] | None = None,
 ) -> tuple[HostedHarnessReceipt, bool]:
+    from simulate.services.harness_usage import replay_harness_usage
+
     # The guest signs the JSON object it transmits. Verify that wire object, not
     # DRF's validated representation: serializers legitimately coerce UUIDs and
     # datetimes and trim strings, which must not turn a valid signed request into
@@ -194,6 +196,7 @@ def ingest_result_receipt(
                 # requiring another customer call.
                 _apply_receipt_to_call(registration, body)
                 update_execution_counts(attempt.job)
+                transaction.on_commit(lambda: replay_harness_usage(attempt))
                 return existing, False
             if existing.attempt_number >= attempt.attempt_number:
                 raise HostedHarnessError(
@@ -232,6 +235,7 @@ def ingest_result_receipt(
             )
         _apply_receipt_to_call(registration, body)
         update_execution_counts(attempt.job)
+        transaction.on_commit(lambda: replay_harness_usage(attempt))
         return receipt, True
 
 

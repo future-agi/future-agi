@@ -35,6 +35,11 @@ from simulate.services.hosted_harness_ingestion import (
     ingest_manifest,
     ingest_result_receipt,
 )
+from simulate.serializers.harness_usage import (
+    HarnessUsageRequestSerializer,
+    HarnessUsageResponseSerializer,
+)
+from simulate.services.harness_usage import check_harness_usage, record_harness_usage
 from tfc.utils.api_contracts import validated_request
 
 logger = logging.getLogger(__name__)
@@ -61,6 +66,27 @@ class HostedHarnessAttemptViewSet(viewsets.ViewSet):
     @property
     def _attempt(self):
         return self.request.auth
+
+    @validated_request(
+        request_serializer=HarnessUsageRequestSerializer,
+        responses={
+            200: HarnessUsageResponseSerializer,
+            402: HarnessUsageResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"])
+    def usage(self, request, pk=None):
+        payload = request.validated_data
+        if payload["operation"] == "check":
+            decision = check_harness_usage(
+                self._attempt,
+                payload["action"],
+                payload.get("amount", 0),
+                payload.get("model"),
+            )
+            return Response(decision, status=200 if decision["allowed"] else 402)
+        return Response(record_harness_usage(self._attempt, payload))
 
     @validated_request(
         request_serializer=HarnessEventBatchSerializer,
@@ -134,9 +160,7 @@ class HostedHarnessAttemptViewSet(viewsets.ViewSet):
                     api_key=getattr(settings, "DAYTONA_API_KEY", ""),
                     api_url=getattr(settings, "DAYTONA_API_URL", None),
                     target=getattr(settings, "DAYTONA_TARGET", None),
-                    organization_id=getattr(
-                        settings, "DAYTONA_ORGANIZATION_ID", None
-                    ),
+                    organization_id=getattr(settings, "DAYTONA_ORGANIZATION_ID", None),
                 )
             )
             sandbox = client.get(str(attempt.provider_ref))
@@ -161,9 +185,7 @@ class HostedHarnessAttemptViewSet(viewsets.ViewSet):
                 status_code=502,
                 retryable=True,
             ) from exc
-        return Response(
-            {"url": preview_url, "expires_in_seconds": expires_in_seconds}
-        )
+        return Response({"url": preview_url, "expires_in_seconds": expires_in_seconds})
 
     @validated_request(
         request_serializer=HarnessManifestSerializer,
