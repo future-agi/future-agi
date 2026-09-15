@@ -360,6 +360,88 @@ INTERACTIVE_READ_SETTING_SPECS = {
             ("FILTER_SELECTOR_MAX_OPT_IN_QUERY_TIMEOUT_MS", 3_000, 25, 30_000),
             ("FILTER_SELECTOR_MAX_BUILDER_QUERY_TIMEOUT_MS", 30_000, 25, 120_000),
             ("FILTER_SELECTOR_MAX_THREADS", 1, 1, 8),
+            # Rows one short exact-string seed statement should read. That
+            # seed's cost tracks the rows inside its slice, not the slice's
+            # width, and its child witness is time-unbounded, so read rows
+            # chiefly measure the ROOTS inside the slice through a trace-id
+            # bloom false-positive scan (~1 - 0.999 ** roots of a ~107M-row
+            # history; 52.4M rows / 4.29 GB measured once, over a dense
+            # fifteen-minute window at k=676 roots - a single point, not a
+            # measured saturation curve). The selector doubles a slice that
+            # reads under a quarter of this budget and halves one that
+            # overruns it, but never below the lane's own floor, which is the
+            # four-hour fixed ceiling this budget replaced. So in practice the
+            # knob decides how far the seed may WIDEN across near-empty
+            # history (four hours of sparse history cost 110-220 ms at any
+            # width); anywhere results actually live it holds at four hours,
+            # i.e. at least what the fixed ceiling gave. That floor is
+            # provisional, and bounding the dense statement itself is the
+            # pending owner decision on the child-witness contract, not this
+            # setting.
+            (
+                "FILTER_SELECTOR_TEXT_SEED_TARGET_READ_ROWS",
+                2_000_000,
+                100_000,
+                50_000_000,
+            ),
+            # Hours of slack the same seed's child-witness scan is allowed
+            # around the roots one statement can publish. The default is 1 h,
+            # the approved bounded-witness contract. ZERO is the legacy
+            # any-span escape hatch: that scan then carries no time bound at
+            # all - a trace is a candidate when ANY raw span of it carries the
+            # value, whenever that span started - and the generated SQL and its
+            # parameters are byte-identical to what shipped before this
+            # setting, so an operator can restore the old contract without a
+            # deploy.
+            #
+            # Above zero the seed statement additionally requires a witness to
+            # start inside the envelope
+            #     [hour_floor(slice_start) - slack, hour_ceil(slice_end) + slack)
+            # where the roots that statement can publish are the ones inside
+            # the slice, tightened on a keyset continuation to the cursor's own
+            # position - so the envelope is the tightest one that still carries
+            # every publishable root's own witness. Every published row is
+            # still an exact any-span match: the latest-state classifier
+            # (``build_filter_match_query``) stays UNBOUNDED, so the switch can
+            # only OMIT a trace whose sole witness lies outside the envelope
+            # and can never admit one the unbounded contract would reject.
+            #
+            # Why it is a switch and not a tuning knob: the unbounded witness
+            # was measured (read-only, against production) to cost a flat
+            # ~4-5 GB bloom false-positive scan per seed statement whatever the
+            # slice's width, with no measured path to a page under five
+            # seconds; the bounded shape's cost is instead LINEAR in envelope
+            # hours (~0.46-0.49 GB per hour - a dense four-hour slice reads
+            # 3.66M rows / 4.47 GB in 3.8 s at ``max_threads`` 1 and 1.76 s at
+            # 2, sparse hours 30-116 MB / 0.4 s), and at one hour of slack it
+            # reproduced the unbounded results exactly on the measured cohort
+            # (3 of 3 page digests, 150 of 150 classifier rows). What one hour
+            # rests on there: the root itself carried the value in 165 of 165
+            # matching traces, the largest child-witness lag was 468 s, and 0
+            # of 1,000 sampled traces held a span more than two days from their
+            # root. That is one project over one burst - bounds, not
+            # guarantees - which is why narrowing the contract was an owner
+            # decision, taken as the 1 h default; a per-project override is a
+            # follow-up. The 168 h ceiling is one week;
+            # beyond that the envelope stops bounding this lane's own windows.
+            # See ``filter_seed_width_policy`` for the width schedule each mode
+            # uses, which differs because only the bounded shape's cost tracks
+            # the slice.
+            # Default one hour as of the bounded-witness owner decision. The
+            # measured cohort puts the largest child-witness lag at 468 s and
+            # carries the value on the root itself in 165 of 165 matching
+            # traces, so one hour of envelope omitted nothing there while
+            # reading 28.7x fewer bytes than the unbounded shape (1.14 MB vs
+            # 32.8 MB over the same sparse hours; one 4 h unbounded slice read
+            # 521,441 rows where the bounded 1 h slice read 1,233). ZERO
+            # remains the legacy escape hatch and emits no envelope at all, so
+            # a tenant whose spans really do arrive more than an hour after
+            # their root can be put back on the old contract without a deploy.
+            # FOLLOW-UP: this is one global number for a property that is
+            # per-tenant (how long after its root a trace's spans may still
+            # arrive). A per-project override belongs here, so the escape hatch
+            # does not have to be pulled for the whole install.
+            ("FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS", 1, 0, 168),
             # Broad key-only span population proofs read thin raw columns;
             # their CPU budget is separate from the normal seed/classifier.
             ("FILTER_SELECTOR_POPULATION_MAX_THREADS", 2, 1, 4),
@@ -385,6 +467,39 @@ INTERACTIVE_READ_SETTING_SPECS = {
             ("SESSION_LIST_MAX_RESULT_BYTES", 32 * 1024**2, 64 * 1024, 512 * 1024**2),
             ("SESSION_LIST_ATTRIBUTE_MAX_RESULT_ROWS", 50_000, 1, 1_000_000),
             ("SESSION_LIST_FILTER_MAX_CANDIDATES", 200, 1, 5_000),
+            # Whether the bounded session seed narrows candidacy by the
+            # filter's own any-span witness, and how many hours of slack that
+            # witness scan is allowed around the roots one seed statement can
+            # publish.
+            #
+            # NEGATIVE (the default) is today's contract: the seed carries no
+            # attribute predicate at all and groups every root span of its
+            # slice, so the generated SQL and its parameters are byte-identical
+            # to what shipped before this setting.
+            #
+            # ZERO seeds the identity superset with a time-UNBOUNDED witness: a
+            # session is a candidate when any raw span of it carries the value,
+            # whenever that span started. That publishes exactly the same rows
+            # as the default - the witness is a necessary condition of a match
+            # and ``build_filter_match_query`` stays authoritative - but its
+            # cost is unmeasured on this surface and the trace lane's
+            # equivalent scan read tens of millions of rows per statement.
+            #
+            # ABOVE ZERO additionally requires the witness to start inside
+            #     [hour_floor(slice_start) - slack, hour_ceil(slice_end) + slack)
+            # On sessions this is WEAKER than the trace list's bounded-witness
+            # contract and is NOT approved. A session is discovered by any of
+            # its roots but ranked by its oldest, and a continuation hop
+            # resumes at the rank the previous page last published, C, so every
+            # envelope that hop emits ends at or below the end of the hour
+            # holding C plus the slack (its first slice ends at C + 1us). A
+            # session is therefore dropped when every trace of it that carries
+            # a witnessing span is rooted above C: the loss is governed by the
+            # session's root-to-root spread, which can be as wide as the
+            # request window, so no slack short of the window closes it. Zero
+            # stays exact. Needs the owner's decision before a deployment moves
+            # off the default.
+            ("SESSION_LIST_FILTER_SEED_WITNESS_SLACK_HOURS", -1, -1, 168),
             ("SESSION_LIST_FILTER_MAX_SEED_ATTEMPTS", 24, 1, 512),
             ("SESSION_LIST_FILTER_MAX_QUERIES", 48, 1, 1_024),
             ("ANNOTATION_QUEUE_ADD_ITEMS_SYNC_MAX", 1_000, 1, 10_000),

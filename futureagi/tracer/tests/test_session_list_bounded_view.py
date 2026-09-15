@@ -1392,6 +1392,8 @@ def test_positive_user_cursor_uses_exact_keyset_pages_without_duplicates():
     builder.supports_candidate_first_page.return_value = True
     builder.supports_candidate_cursor_page.return_value = True
     builder.supports_bounded_filter_scan.return_value = True
+    # The real builder answers ``None`` unless the seed witness lane is on.
+    builder.filter_seed_witness_slack_hours.return_value = None
     builder.parse_time_range.return_value = (window_start, window_end)
     builder.build_candidate_cursor_page_query.side_effect = [
         ("candidate cursor first", {}),
@@ -1590,6 +1592,8 @@ def test_sparse_session_cursor_follows_checkpoint_without_skip_or_duplicate(
     builder.supports_candidate_first_page.return_value = True
     builder.supports_candidate_cursor_page.return_value = False
     builder.supports_bounded_filter_scan.return_value = True
+    # The real builder answers ``None`` unless the seed witness lane is on.
+    builder.filter_seed_witness_slack_hours.return_value = None
     builder.recommended_filter_classify_batch_size.return_value = 50
     builder.parse_time_range.return_value = (window_start, window_end)
     builder.build_page_metrics_query.return_value = ("page metrics", {})
