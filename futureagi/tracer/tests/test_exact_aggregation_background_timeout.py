@@ -15,9 +15,9 @@ class _DedicatedClient:
         self.server_profile_locked = False
         self.instances.append(self)
 
-    def execute_read(self, query, params, *, timeout_ms, settings):
+    def execute_read_with_progress(self, query, params, *, timeout_ms, settings):
         self.calls.append((query, params, timeout_ms, settings))
-        return [(1,)], [("value", "UInt8")], 1.0
+        return [(1,)], [("value", "UInt8")], 1.0, 1, 8
 
     def close(self):
         self.closed = True
