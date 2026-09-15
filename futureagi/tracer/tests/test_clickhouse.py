@@ -6586,6 +6586,11 @@ class TestFilterBuilderEdgeCases:
         trace_session_id filter raised AttributeError (e.g. the
         list_traces_of_session endpoint). ClickHouse also rejects direct
         UUID-vs-String comparisons, so the cast is required for correctness.
+
+        ``end_user_id`` with ``equals``/``in`` is the documented exception: it
+        compiles against the bare column and ``toUUID`` literals so the
+        ``idx_end_user_id`` bloom filter can prune. See
+        ``test_end_user_uuid_equality.py``.
         """
         from tracer.services.clickhouse.query_builders.filters import (
             ClickHouseFilterBuilder,
@@ -6594,8 +6599,11 @@ class TestFilterBuilderEdgeCases:
         # ``session_id`` is a frontend alias normalized to ``trace_session_id``
         # before it reaches the column condition, so assert on the canonical
         # columns that actually surface in the SQL.
-        for column in ("trace_session_id", "end_user_id"):
-            for op in ("contains", "equals", "starts_with", "in", "not_in"):
+        for column, ops in (
+            ("trace_session_id", ("contains", "equals", "starts_with", "in", "not_in")),
+            ("end_user_id", ("contains", "starts_with", "not_in")),
+        ):
+            for op in ops:
                 builder = ClickHouseFilterBuilder()
                 value = ["abc", "def"] if op in ("in", "not_in") else "0f57a0c2"
                 filters = [
@@ -6611,6 +6619,35 @@ class TestFilterBuilderEdgeCases:
                 ]
                 where, _ = builder.translate(filters)
                 assert f"toString({column})" in where, (column, op, where)
+
+    def test_end_user_id_equality_never_casts_the_column(self):
+        """The one carve-out from the cast above, asserted where it is stated.
+
+        These literals are not UUIDs, so under ``equals``/``in`` they can match
+        no row and the condition folds accordingly — but it must never fall
+        back to the ``toString`` form.
+        """
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        for op in ("equals", "in"):
+            builder = ClickHouseFilterBuilder()
+            value = ["abc", "def"] if op == "in" else "0f57a0c2"
+            filters = [
+                {
+                    "column_id": "end_user_id",
+                    "filter_config": {
+                        "filter_type": "categorical",
+                        "filter_op": op,
+                        "filter_value": value,
+                        "col_type": "SYSTEM_METRIC",
+                    },
+                }
+            ]
+            where, _ = builder.translate(filters)
+            assert "toString(end_user_id)" not in where, (op, where)
+            assert "0 = 1" in where, (op, where)
 
     def test_nullable_uuid_column_is_null_uses_bare_column(self):
         """is_null/is_not_null on a nullable-UUID column skip the toString cast."""
