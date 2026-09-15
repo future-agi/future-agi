@@ -789,7 +789,7 @@ def test_session_candidate_equals_keeps_one_microsecond_window(builder_class):
     )
 
     candidate_sql, candidate_params = builder.build_candidate_page_query()
-    metrics_sql, metrics_params = builder.build_page_metrics_query(
+    metrics_sql, metrics_params = builder.build_page_hydration_query(
         ["bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"]
     )
 

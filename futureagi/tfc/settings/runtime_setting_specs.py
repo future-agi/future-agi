@@ -506,7 +506,6 @@ INTERACTIVE_READ_SETTING_SPECS = {
             ("VOICE_FILTER_TEXT_SEED_WITNESS_SLACK_HOURS", 0, 0, 168),
             ("SESSION_LIST_READ_MAX_THREADS", 2, 1, 16),
             ("SESSION_LIST_MAX_RESULT_BYTES", 32 * 1024**2, 64 * 1024, 512 * 1024**2),
-            ("SESSION_LIST_ATTRIBUTE_MAX_RESULT_ROWS", 50_000, 1, 1_000_000),
             ("SESSION_LIST_FILTER_MAX_CANDIDATES", 200, 1, 5_000),
             # Whether the bounded session seed narrows candidacy by the
             # filter's own any-span witness, and how many hours of slack that

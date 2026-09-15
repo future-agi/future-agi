@@ -27,7 +27,7 @@ from tracer.services.clickhouse.v2.query_builders.session_list import (
 
 PROJECT = str(UUID(int=1))
 SESSION = str(UUID(int=100))
-METHODS = ("page", "cursor", "count", "match", "metrics", "content", "attributes")
+METHODS = ("page", "cursor", "count", "match", "hydration")
 
 
 @pytest.fixture(autouse=True, scope="session")
@@ -59,13 +59,8 @@ def _filters(start, end):
 def _query(builder, method):
     if method == "match":
         return builder.build_filter_match_query([SESSION])
-    if method in {"metrics", "content", "attributes"}:
-        name = {
-            "metrics": "build_page_metrics_query",
-            "content": "build_content_query",
-            "attributes": "build_span_attributes_query",
-        }[method]
-        return getattr(builder, name)([SESSION])
+    if method == "hydration":
+        return builder.build_page_hydration_query([SESSION])
     return getattr(
         builder,
         {
@@ -352,32 +347,25 @@ def test_inline_exact_session_pages_and_hydration_over_adversarial_versions(days
         ids
     )
     expected_costs = {100: 5, 101: 7, 102: 9, 107: 1, 109: 10, 110: 1, 200: 9}
-    for method in (
-        "build_page_metrics_query",
-        "build_content_query",
-        "build_span_attributes_query",
-    ):
-        sql, params = getattr(builder, method)(
-            [str(UUID(int=n)) for n in expected_costs]
-        )
-        result = _inline_execute(chdb, sql, params, rows, remaps)
-        assert {r["session_id"] for r in result} == {
-            str(UUID(int=n)) for n in expected_costs
-        }
-        if method == "build_page_metrics_query":
-            assert {
-                int(UUID(r["session_id"])): r["total_cost"] for r in result
-            } == expected_costs
-            moved = next(r for r in result if int(UUID(r["session_id"])) == 101)
-            assert datetime.fromisoformat(moved["session_start"]) == start + timedelta(
-                minutes=6
-            )
-        if method == "build_content_query":
-            moved = next(r for r in result if int(UUID(r["session_id"])) == 101)
-            assert moved["first_message"] == moved["last_message"] == "v2-moved"
-        if method == "build_span_attributes_query":
-            moved = [r for r in result if int(UUID(r["session_id"])) == 101]
-            assert len(moved) == 1 and moved[0]["attrs_number"]["amount"] == 7
+    # One hydration statement now carries the metrics, the messages and the
+    # attribute payloads that three separate statements used to re-read.
+    sql, params = builder.build_page_hydration_query(
+        [str(UUID(int=n)) for n in expected_costs]
+    )
+    result = _inline_execute(chdb, sql, params, rows, remaps)
+    assert {r["session_id"] for r in result} == {
+        str(UUID(int=n)) for n in expected_costs
+    }
+    assert {int(UUID(r["session_id"])): r["total_cost"] for r in result} == (
+        expected_costs
+    )
+    moved = next(r for r in result if int(UUID(r["session_id"])) == 101)
+    assert datetime.fromisoformat(moved["session_start"]) == start + timedelta(
+        minutes=6
+    )
+    assert moved["first_message"] == moved["last_message"] == "v2-moved"
+    attributes = type(builder).expand_page_attribute_rows([moved])
+    assert len(attributes) == 1 and attributes[0]["attrs_number"]["amount"] == 7
     # An excluded latest timestamp must not expose its older allowed version.
     excluded = {
         "column_id": "start_time",

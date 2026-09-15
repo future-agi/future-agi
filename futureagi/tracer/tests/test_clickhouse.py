@@ -3698,14 +3698,14 @@ class TestSessionListQueryBuilder:
 
         builder = SessionListQueryBuilderV2(project_id="test-project-id")
         builder.build()
-        query, _ = builder.build_span_attributes_query(["session-1"])
+        query, _ = builder.build_page_hydration_query(["session-1"])
 
-        assert "attributes_extra AS span_attributes_raw" in query
+        assert "latest_attributes_extra AS session_attribute_json" in query
         assert "attrs_string" in query
         assert "attrs_number" in query
         assert "span_attr_str" not in query
         assert "span_attr_num" not in query
-        assert "toJSONString(attributes_extra) AS span_attributes_raw" not in query
+        assert "toJSONString(attributes_extra)" not in query
 
     def test_content_query_reuses_session_time_window(self):
         from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
@@ -3738,9 +3738,9 @@ class TestSessionListQueryBuilder:
         )
         expected_start, expected_end = builder.parse_time_range(builder.filters)
 
-        query, params = builder.build_content_query(["session-1"])
+        query, params = builder.build_page_hydration_query(["session-1"])
 
-        assert "trace_session_id IN %(content_session_ids)s" in query
+        assert "trace_session_id IN %(candidate_session_ids)s" in query
         # Legacy start_time is a replacement-key column: precise acquisition
         # is safe, but native exclusions still bind only after latest replay.
         assert (
@@ -3757,18 +3757,18 @@ class TestSessionListQueryBuilder:
             "latest_start_time < fromUnixTimestamp64Micro(%(end_date_us)s, 'UTC')"
             in query
         )
-        assert query.count("build_content_query_latest_time_0_start") == 1
-        assert query.count("build_content_query_latest_time_0_end") == 1
+        assert query.count("build_page_hydration_query_latest_time_0_start") == 1
+        assert query.count("build_page_hydration_query_latest_time_0_end") == 1
         latest = query.split("latest_roots AS (", 1)[1].split("resolved_roots AS (", 1)[
             0
         ]
-        assert "build_content_query_latest_time_0_start" not in latest
+        assert "build_page_hydration_query_latest_time_0_start" not in latest
 
-        assert params["content_session_ids"] == ("session-1",)
-        assert params["content_start_date"] == expected_start
-        assert params["content_end_date"] == expected_end
-        assert "build_content_query_latest_time_0_start" in params
-        assert "build_content_query_latest_time_0_end" in params
+        assert params["candidate_session_ids"] == ("session-1",)
+        assert params["start_date"] == expected_start
+        assert params["end_date"] == expected_end
+        assert "build_page_hydration_query_latest_time_0_start" in params
+        assert "build_page_hydration_query_latest_time_0_end" in params
 
     def test_span_attributes_query_reuses_session_time_window(self):
         from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
@@ -3804,9 +3804,9 @@ class TestSessionListQueryBuilder:
         )
         expected_start, expected_end = builder.parse_time_range(builder.filters)
 
-        query, params = builder.build_span_attributes_query(["session-1"])
+        query, params = builder.build_page_hydration_query(["session-1"])
 
-        assert "trace_session_id IN %(attr_session_ids)s" in query
+        assert "trace_session_id IN %(candidate_session_ids)s" in query
         assert "candidate_root_identities AS (" in query
         assert "latest_roots AS (" in query
         assert "AS latest_start_time" in query
@@ -3819,10 +3819,10 @@ class TestSessionListQueryBuilder:
             in query
         )
         assert "latest_is_deleted = 0" in query
-        assert query.count("session_attr_latest_time_0_start") == 1
-        assert query.count("session_attr_latest_time_0_end") == 1
+        assert query.count("build_page_hydration_query_latest_time_0_start") == 1
+        assert query.count("build_page_hydration_query_latest_time_0_end") == 1
         latest = query.split("latest_roots AS (", 1)[1].split("GROUP BY", 1)[0]
-        assert "session_attr_latest_time_0_start" not in latest
+        assert "build_page_hydration_query_latest_time_0_start" not in latest
         assert (
             query.count(
                 "AND start_time >= fromUnixTimestamp64Micro(%(start_date_us)s, 'UTC')"
@@ -3834,11 +3834,11 @@ class TestSessionListQueryBuilder:
             "argMax(_peerdb_is_deleted, _peerdb_version) AS latest_is_deleted" in query
         )
 
-        assert params["attr_session_ids"] == ("session-1",)
-        assert params["attr_start_date"] == expected_start
-        assert params["attr_end_date"] == expected_end
-        assert "session_attr_latest_time_0_start" in params
-        assert "session_attr_latest_time_0_end" in params
+        assert params["candidate_session_ids"] == ("session-1",)
+        assert params["start_date"] == expected_start
+        assert params["end_date"] == expected_end
+        assert "build_page_hydration_query_latest_time_0_start" in params
+        assert "build_page_hydration_query_latest_time_0_end" in params
 
     def test_v2_span_attributes_query_reuses_session_time_window(self):
         from tracer.services.clickhouse.v2.query_builders.session_list import (
@@ -3873,9 +3873,9 @@ class TestSessionListQueryBuilder:
         )
         expected_start, expected_end = builder.parse_time_range(builder.filters)
 
-        query, params = builder.build_span_attributes_query(["session-1"])
+        query, params = builder.build_page_hydration_query(["session-1"])
 
-        assert "trace_session_id IN %(attr_session_ids)s" in query
+        assert "trace_session_id IN %(candidate_session_ids)s" in query
         assert "candidate_root_identities AS (" in query
         assert "latest_roots AS (" in query
         assert "AS latest_start_time" in query
@@ -3888,10 +3888,10 @@ class TestSessionListQueryBuilder:
             in query
         )
         assert "latest_is_deleted = 0" in query
-        assert query.count("session_attr_latest_time_0_start") == 1
-        assert query.count("session_attr_latest_time_0_end") == 1
+        assert query.count("build_page_hydration_query_latest_time_0_start") == 1
+        assert query.count("build_page_hydration_query_latest_time_0_end") == 1
         latest = query.split("latest_roots AS (", 1)[1].split("GROUP BY", 1)[0]
-        assert "session_attr_latest_time_0_start" not in latest
+        assert "build_page_hydration_query_latest_time_0_start" not in latest
         assert (
             query.count(
                 "AND start_time >= toStartOfHour(fromUnixTimestamp64Micro(%(start_date_us)s, 'UTC'))"
@@ -3905,11 +3905,11 @@ class TestSessionListQueryBuilder:
         )
         assert "argMax(is_deleted, _version) AS latest_is_deleted" in query
 
-        assert params["attr_session_ids"] == ("session-1",)
-        assert params["attr_start_date"] == expected_start
-        assert params["attr_end_date"] == expected_end
-        assert "session_attr_latest_time_0_start" in params
-        assert "session_attr_latest_time_0_end" in params
+        assert params["candidate_session_ids"] == ("session-1",)
+        assert params["start_date"] == expected_start
+        assert params["end_date"] == expected_end
+        assert "build_page_hydration_query_latest_time_0_start" in params
+        assert "build_page_hydration_query_latest_time_0_end" in params
 
     def test_build_uses_uniqExact_for_deterministic_totals(self):
         """Session trace counts are exact; approximation is not publishable."""
@@ -3976,7 +3976,7 @@ class TestSessionListQueryBuilder:
             page_size=10,
         )
         builder.build()
-        query, params = builder.build_span_attributes_query(["session-1", "session-2"])
+        query, params = builder.build_page_hydration_query(["session-1", "session-2"])
         assert "(parent_span_id IS NULL OR parent_span_id = '')" in query
 
     def test_span_attributes_query_is_scoped_to_exact_page(self):
@@ -3990,9 +3990,9 @@ class TestSessionListQueryBuilder:
             page_size=10,
         )
         builder.build()
-        query, params = builder.build_span_attributes_query(["session-1", "session-2"])
-        assert "IN %(attr_session_ids)s" in query
-        assert params["attr_session_ids"] == ("session-1", "session-2")
+        query, params = builder.build_page_hydration_query(["session-1", "session-2"])
+        assert "IN %(candidate_session_ids)s" in query
+        assert params["candidate_session_ids"] == ("session-1", "session-2")
         assert "LIMIT 500" not in query
 
     def test_span_attributes_query_empty_sessions(self):
@@ -4006,7 +4006,7 @@ class TestSessionListQueryBuilder:
             page_size=10,
         )
         builder.build()
-        query, params = builder.build_span_attributes_query([])
+        query, params = builder.build_page_hydration_query([])
         assert query == ""
         assert params == {}
 

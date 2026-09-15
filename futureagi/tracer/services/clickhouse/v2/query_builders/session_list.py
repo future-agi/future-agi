@@ -5,22 +5,18 @@ Subclass + post-rewrite, same as v2/span_list.py and v2/trace_list.py.
 The v1 SessionList builder aggregates spans by trace_session_id; v2's
 materialized `trace_session_id` column is queried unchanged. `V2RewriteMixin`
 routes every inherited `build*` method's SQL through the v2 rewriter at one
-boundary. All of this builder's queries target the migrated `spans` schema, so
-only the native CH25 span-attribute query is excluded from rewriting.
+boundary, so only the span-attribute columns of the page hydration — which
+have no legacy counterpart for the boolean map — are declared here.
 """
 
 from __future__ import annotations
 
-from typing import Any
-
 from tracer.services.clickhouse.query_builders.session_list import (
     SessionListQueryBuilder,
 )
-from tracer.services.clickhouse.v2.id_remap_sql import resolved_id_expr
 from tracer.services.clickhouse.v2.query_builders._rewrite import V2RewriteMixin
 from tracer.services.clickhouse.v2.query_builders.filters import (
     ClickHouseFilterBuilderV2,
-    _append_v2_settings,
 )
 
 
@@ -28,6 +24,15 @@ class SessionListQueryBuilderV2(V2RewriteMixin, SessionListQueryBuilder):
     """Drop-in v2 SessionList builder."""
 
     _FILTER_BUILDER_CLS = ClickHouseFilterBuilderV2
+
+    # CH25 keeps booleans in their own typed map, so the page hydration carries
+    # one array the legacy schema has no source for.
+    PAGE_ATTRIBUTE_ARRAY_COLUMNS: tuple[tuple[str, str], ...] = (
+        ("session_attribute_json_list", "span_attributes_raw"),
+        ("session_attribute_string_list", "attrs_string"),
+        ("session_attribute_number_list", "attrs_number"),
+        ("session_attribute_bool_list", "attrs_bool"),
+    )
 
     def _physical_identity_fields(self) -> tuple[tuple[str, str], ...]:
         # CH25 replaces by storage hour, not the mutable microsecond timestamp.
@@ -49,93 +54,38 @@ class SessionListQueryBuilderV2(V2RewriteMixin, SessionListQueryBuilder):
             "toStartOfHour(fromUnixTimestamp64Micro(%(end_date_us)s - 1, 'UTC')) + INTERVAL 1 HOUR",
         )
 
-    # This method already emits native CH25 SQL. The generic rewrite would
-    # reinterpret the compatibility alias `span_attributes_raw`.
-    _v2_rewrite_exclude = frozenset({"build_span_attributes_query"})
+    def _page_attribute_fragments(self) -> dict[str, str]:
+        """Native CH25 attribute columns for the fused page hydration.
 
-    def build_span_attributes_query(
-        self, session_ids: list[str]
-    ) -> tuple[str, dict[str, Any]]:
-        ids = tuple(dict.fromkeys(str(value) for value in session_ids if value))
-        if not ids:
-            return "", {}
-        if len(ids) > 200:
-            raise ValueError("attribute session page exceeds bounded limit")
-
-        # The bounded endpoint does not call ``build`` before page hydration.
-        # Bind its exact request window here and apply it to both candidate
-        # acquisition and the authoritative storage-key latest-state replay.
-        attr_start_date, attr_end_date = self.parse_time_range(self.filters)
-        params = {
-            **self.params,
-            "attr_session_ids": ids,
-            "attr_start_date": attr_start_date,
-            "attr_end_date": attr_end_date,
-        }
-        physical_time_scope = self._physical_time_scope_sql()
-        latest_time_scope = self._latest_time_scope_sql(
-            params, param_prefix="session_attr_latest_time"
-        )
-        ts_map_ctes = self._candidate_survivor_map_ctes(params, ids)
-        resolved_ts = resolved_id_expr("latest_trace_session_id", "ts_remap")
-        sql = f"""
-        WITH
-        {ts_map_ctes},
-        candidate_root_identities AS (
-            SELECT DISTINCT {self._physical_identity_select_sql()}
-            FROM {self.TABLE}
-            PREWHERE {self.project_filter_sql()}{physical_time_scope}
-              AND (
-                  trace_session_id IN %(attr_session_ids)s
-                  OR trace_session_id IN (
-                      SELECT any_id
-                      FROM ts_survivor_map
-                      WHERE survivor_id IN %(attr_session_ids)s
-                  )
-              )
-              AND (parent_span_id IS NULL OR parent_span_id = '')
-        ),
-        latest_roots AS (
-            SELECT
-                project_id,
-                trace_id,
-                id,
-                argMax(start_time, _version) AS latest_start_time,
-                argMax(tuple(parent_span_id), _version).1 AS latest_parent_span_id,
-                argMax(tuple(trace_session_id), _version).1 AS latest_trace_session_id,
+        These carry no legacy token, so the single rewrite boundary leaves
+        them untouched while it still translates the rest of the statement.
+        """
+        return {
+            "latest": """
                 argMax(tuple(attributes_extra), _version).1 AS latest_attributes_extra,
                 argMax(attrs_string, _version) AS latest_attrs_string,
                 argMax(attrs_number, _version) AS latest_attrs_number,
                 argMax(attrs_bool, _version) AS latest_attrs_bool,
-                argMax(is_deleted, _version) AS latest_is_deleted
-            FROM {self.TABLE}
-            PREWHERE {self.project_filter_sql()}{physical_time_scope}
-              AND ({self._physical_group_by_sql()}) IN (
-                  SELECT {self._physical_identity_names_sql()}
-                  FROM candidate_root_identities
-              )
-            GROUP BY {self._physical_group_by_sql()}
-        )
-        SELECT
-            {resolved_ts} AS session_id,
-            latest_attributes_extra AS span_attributes_raw,
-            latest_attrs_string AS attrs_string,
-            latest_attrs_number AS attrs_number,
-            latest_attrs_bool AS attrs_bool
-        FROM latest_roots
-        LEFT JOIN ts_survivor_map AS ts_remap
-            ON latest_trace_session_id = ts_remap.any_id
-        WHERE latest_is_deleted = 0{latest_time_scope}
-          AND (latest_parent_span_id IS NULL OR latest_parent_span_id = '')
-          AND (
-            (latest_attributes_extra != '{{}}' AND latest_attributes_extra != '')
-            OR length(mapKeys(latest_attrs_string)) > 0
-            OR length(mapKeys(latest_attrs_number)) > 0
-            OR length(mapKeys(latest_attrs_bool)) > 0
-          )
-          AND {resolved_ts} IN %(attr_session_ids)s
-        """
-        return _append_v2_settings(sql), params
+            """.strip(),
+            "projection": """
+                latest_attributes_extra AS session_attribute_json,
+                latest_attrs_string AS session_attribute_string,
+                latest_attrs_number AS session_attribute_number,
+                latest_attrs_bool AS session_attribute_bool,
+            """.strip(),
+            "present": """
+                (latest_attributes_extra != '{}' AND latest_attributes_extra != '')
+                OR length(mapKeys(latest_attrs_string)) > 0
+                OR length(mapKeys(latest_attrs_number)) > 0
+                OR length(mapKeys(latest_attrs_bool)) > 0
+            """.strip(),
+            "arrays": """
+            groupArrayIf(session_attribute_json, has_span_attributes) AS session_attribute_json_list,
+            groupArrayIf(session_attribute_string, has_span_attributes) AS session_attribute_string_list,
+            groupArrayIf(session_attribute_number, has_span_attributes) AS session_attribute_number_list,
+            groupArrayIf(session_attribute_bool, has_span_attributes) AS session_attribute_bool_list
+            """.strip(),
+        }
 
 
 __all__ = ["SessionListQueryBuilderV2"]
