@@ -58,9 +58,11 @@ def test_application_query_service_normalizes_every_read_policy():
 def test_application_query_service_reports_native_read_progress(read_rows, read_bytes):
     """A caller sizing its next read needs the work this statement actually did.
 
-    The transport reports rows and bytes together; only rows are carried on the
-    result, because only rows size anything. Bytes reach the log line and stop
-    there, so no caller can grow a dependency on a counter nothing decides on.
+    The transport reports rows and bytes together and both are carried on the
+    result: rows size a caller's next read, bytes are what a read density is
+    learned from. Either counter describes the statement's server-side work,
+    never its result, and an unreporting transport leaves it unmeasured rather
+    than claiming the statement read nothing.
     """
 
     client = _Client(read_rows=read_rows, read_bytes=read_bytes)
@@ -68,7 +70,7 @@ def test_application_query_service_reports_native_read_progress(read_rows, read_
     result = AnalyticsQueryService(ch_client=client).execute_ch_query("SELECT 1", {})
 
     assert result.read_rows == read_rows
-    assert not hasattr(result, "read_bytes")
+    assert result.read_bytes == read_bytes
     # Progress is the statement's server-side work, never its result size.
     assert result.row_count == 1
 
@@ -77,6 +79,7 @@ def test_query_result_without_a_measured_transport_stays_unmeasured():
     result = QueryResult.from_clickhouse_rows([(1,)], ["value"], query_time_ms=42.0)
 
     assert result.read_rows is None
+    assert result.read_bytes is None
 
 
 def test_application_query_service_supplies_memory_policy_when_omitted():

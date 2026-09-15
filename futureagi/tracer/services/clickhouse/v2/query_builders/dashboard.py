@@ -103,6 +103,10 @@ _EXACT_REPLAY_UNPACKED_COLUMNS = frozenset(
     }
 )
 
+# The identity-discovery CTE is addressed by name from outside the builder, so
+# the statement and its cost estimate cannot drift apart on a rename.
+_EXACT_FILTER_CANDIDATE_CTE = "dashboard_filter_candidate_identities"
+
 
 @dataclass(frozen=True)
 class DashboardMetricGroupQuery:
@@ -271,6 +275,46 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
             )
         )
 
+    @staticmethod
+    def candidate_estimate_statement(sql: str) -> str | None:
+        """Return ``EXPLAIN ESTIMATE`` over this statement's own candidate CTE.
+
+        The identity-discovery CTE is the part-scanning half of an exact
+        filtered read: the replay half only resolves the identities it yields.
+        Estimating it therefore has to read the same text the statement will
+        execute, not a reconstruction of it, so the body is lifted verbatim
+        out of the rendered SQL and the caller reuses the statement's own
+        parameters. ``None`` means this statement embeds no candidate CTE (no
+        exhaustive raw witness), so there is nothing cheap to estimate.
+        """
+
+        marker = f"WITH {_EXACT_FILTER_CANDIDATE_CTE} AS ("
+        start = sql.find(marker)
+        if start < 0:
+            return None
+        index = start + len(marker)
+        depth = 1
+        quoted = False
+        while index < len(sql):
+            char = sql[index]
+            if quoted:
+                if char == "'":
+                    if sql[index + 1 : index + 2] == "'":
+                        index += 1
+                    else:
+                        quoted = False
+            elif char == "'":
+                quoted = True
+            elif char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth == 0:
+                    body = sql[start + len(marker) : index].strip()
+                    return f"EXPLAIN ESTIMATE {body}" if body else None
+            index += 1
+        return None
+
     def _exact_filter_replay_source(
         self,
         per_metric_filters: list[dict],
@@ -378,7 +422,7 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
         # unpacking it in the same SELECT aliases a winner element to a name
         # argMax itself reads, which the CH 25.3 analyzer rejects.
         return f"""(
-            WITH dashboard_filter_candidate_identities AS (
+            WITH {_EXACT_FILTER_CANDIDATE_CTE} AS (
                 SELECT
                     dashboard_candidate_source.project_id AS project_id,
                     dashboard_candidate_source.observation_type
@@ -434,7 +478,7 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
                     any(dashboard_candidate_state.dashboard_candidate_winner)
                         AS dashboard_candidate_winner
                 FROM spans AS dashboard_replay_source
-                INNER JOIN dashboard_filter_candidate_identities
+                INNER JOIN {_EXACT_FILTER_CANDIDATE_CTE}
                         AS dashboard_candidate_state
                     ON dashboard_replay_source.project_id
                         = dashboard_candidate_state.project_id

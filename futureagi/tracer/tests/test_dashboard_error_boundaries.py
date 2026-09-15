@@ -539,13 +539,15 @@ def test_dashboard_query_uses_direct_write_backend_independent_of_routing(
     v2_client = MagicMock()
     # ``execute_ch_query`` reads through the progress-reporting transport
     # (rows, columns, elapsed, rows read, bytes read); the legacy
-    # ``execute_read`` must stay untouched.
+    # ``execute_read`` must stay untouched. This double leaves both counters
+    # unmeasured: the assertions below are about which backend ran the
+    # statement, not about what the statement cost.
     v2_client.execute_read_with_progress.return_value = (
         [(datetime(2026, 8, 1, tzinfo=UTC), 123.0)],
         [("time_bucket", "DateTime('UTC')"), ("metric_0", "Float64")],
         1.0,
-        1,
-        64,
+        None,
+        None,
     )
     v2_client.server_enforced_readonly = False
     v2_client.server_profile_locked = False
@@ -611,15 +613,17 @@ def test_widget_trace_queries_use_direct_write_backend_independent_of_routing(
 
     v2_client = MagicMock()
     # ``execute_ch_query`` reads through the progress-reporting transport so
-    # the result can carry the server's rows-read counter; the fake answers
-    # with that transport's five-tuple (rows, columns, elapsed, rows read,
-    # bytes read) and the legacy ``execute_read`` must stay untouched.
+    # the result can carry the server's rows- and bytes-read counters; the fake
+    # answers with that transport's five-tuple (rows, columns, elapsed, rows
+    # read, bytes read) and the legacy ``execute_read`` must stay untouched.
+    # This double leaves both counters unmeasured: the assertions below are
+    # about which backend ran the statement, not about what it cost.
     v2_client.execute_read_with_progress.return_value = (
         [(datetime(2026, 8, 1, tzinfo=UTC), 123.0)],
         [("time_bucket", "DateTime('UTC')"), ("metric_0", "Float64")],
         1.0,
-        1,
-        64,
+        None,
+        None,
     )
     v2_client.server_enforced_readonly = False
     v2_client.server_profile_locked = False
