@@ -10,7 +10,20 @@ import { resetEnvironmentsStore } from "../store/useEnvironmentsStore";
 
 vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
 
+vi.mock("src/api/harness/harness", () => ({ listHarnessJobs: vi.fn() }));
+
+const { listHarnessJobs } = await import("src/api/harness/harness");
 const { default: EnvironmentsHome } = await import("../EnvironmentsHome");
+
+// The My Environments tab now reads from the harness-jobs list; one job whose
+// name is a table-only value proves the list rendered.
+const HARNESS_JOBS = [
+  {
+    job: { job_id: "job-billing", metadata: { name: "Billing Chat Agent" } },
+    status: { stage: "running", updated_at: "2026-09-15T11:00:00Z" },
+    credentials: { detected_connectors: ["http"] },
+  },
+];
 
 const theme = createTheme({
   palette: palette("light"),
@@ -48,6 +61,8 @@ describe("EnvironmentsHome", () => {
   beforeEach(() => {
     resetEnvironmentsStore();
     lastSearch = "";
+    listHarnessJobs.mockReset();
+    listHarnessJobs.mockResolvedValue(HARNESS_JOBS);
   });
 
   it("defaults to the Build environment tab with the matrix", () => {
@@ -57,7 +72,7 @@ describe("EnvironmentsHome", () => {
       screen.getByRole("tab", { name: "Build environment" }),
     ).toHaveAttribute("aria-selected", "true");
     expect(screen.getByText("Source repository")).toBeInTheDocument();
-    // A table-only fixture name proves the My Environments list is absent.
+    // A table-only harness-job name proves the My Environments list is absent.
     expect(screen.queryByText("Billing Chat Agent")).toBeNull();
   });
 
@@ -71,7 +86,7 @@ describe("EnvironmentsHome", () => {
     // 2 hero + 5 option cards; tabs are role="tab", not button.
     expect(screen.getAllByRole("button")).toHaveLength(7);
     // "Customer Support Line" doubles as a Prebuilt hero chip, so assert a
-    // table-only fixture name to prove the My Environments list is absent.
+    // table-only harness-job name to prove the My Environments list is absent.
     expect(screen.queryByText("Billing Chat Agent")).toBeNull();
   });
 

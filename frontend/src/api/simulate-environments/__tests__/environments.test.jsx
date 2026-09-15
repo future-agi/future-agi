@@ -1,16 +1,33 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import PropTypes from "prop-types";
 import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
+
+vi.mock("src/api/harness/harness", () => ({ listHarnessJobs: vi.fn() }));
+
+const { listHarnessJobs } = await import("src/api/harness/harness");
+const {
   useMyEnvironments,
   useDeleteEnvironment,
   useBuildEnvironment,
   useUploadSecretFile,
   useRunSimulation,
   myEnvironmentsQueryKey,
-} from "../environments";
-import { MY_ENVIRONMENTS_FIXTURE } from "../_fixtures/myEnvironments";
+} = await import("../environments");
+
+// The raw harness-jobs payload the hook maps into table rows.
+const HARNESS_JOBS = [
+  {
+    job: { job_id: "job-voice", metadata: { name: "Customer Support Line" } },
+    status: { stage: "completed", updated_at: "2026-09-15T09:00:00Z" },
+    credentials: { detected_connectors: ["livekit"] },
+  },
+  {
+    job: { job_id: "job-chat", metadata: { name: "Billing Chat Agent" } },
+    status: { stage: "running", updated_at: "2026-09-15T11:00:00Z" },
+    credentials: { detected_connectors: ["http"] },
+  },
+];
 
 const makeWrapper = () => {
   const queryClient = new QueryClient({
@@ -23,21 +40,46 @@ const makeWrapper = () => {
   return { queryClient, Wrapper };
 };
 
+beforeEach(() => {
+  listHarnessJobs.mockReset();
+  listHarnessJobs.mockResolvedValue(HARNESS_JOBS);
+});
+
 describe("useMyEnvironments", () => {
-  it("resolves the six fixture rows as a cloned array", async () => {
+  it("maps the harness-jobs list into flat table rows", async () => {
     const { Wrapper } = makeWrapper();
     const { result } = renderHook(() => useMyEnvironments(), {
       wrapper: Wrapper,
     });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data).toHaveLength(6);
-    expect(result.current.data[0].id).toBe("env-support-line");
-    expect(result.current.data).not.toBe(MY_ENVIRONMENTS_FIXTURE);
+    expect(result.current.data).toHaveLength(2);
+    expect(result.current.data[0]).toMatchObject({
+      id: "job-voice",
+      name: "Customer Support Line",
+      status: "completed",
+      agentType: "voice",
+      updatedAt: "2026-09-15T09:00:00Z",
+    });
+    expect(result.current.data[1]).toMatchObject({
+      id: "job-chat",
+      status: "running",
+      agentType: "text",
+    });
+  });
+
+  it("maps a non-array payload to an empty list", async () => {
+    listHarnessJobs.mockResolvedValue(null);
+    const { Wrapper } = makeWrapper();
+    const { result } = renderHook(() => useMyEnvironments(), {
+      wrapper: Wrapper,
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toEqual([]);
   });
 });
 
 describe("useDeleteEnvironment", () => {
-  it("removes a row from the cached list without mutating the fixture", async () => {
+  it("removes the matching raw job from the cached list", async () => {
     const { queryClient, Wrapper } = makeWrapper();
     const { result } = renderHook(
       () => ({
@@ -48,12 +90,12 @@ describe("useDeleteEnvironment", () => {
     );
     await waitFor(() => expect(result.current.list.isSuccess).toBe(true));
 
-    await result.current.del.mutateAsync("env-billing-chat");
+    await result.current.del.mutateAsync("job-chat");
 
+    // The cache holds the RAW { job, status } items, not the mapped rows.
     const cached = queryClient.getQueryData(myEnvironmentsQueryKey());
-    expect(cached).toHaveLength(5);
-    expect(cached.some((r) => r.id === "env-billing-chat")).toBe(false);
-    expect(MY_ENVIRONMENTS_FIXTURE).toHaveLength(6);
+    expect(cached).toHaveLength(1);
+    expect(cached.some((item) => item?.job?.job_id === "job-chat")).toBe(false);
   });
 });
 

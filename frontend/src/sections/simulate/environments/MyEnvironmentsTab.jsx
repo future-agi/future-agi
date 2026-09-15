@@ -1,13 +1,16 @@
-import { Box } from "@mui/material";
+import { Box, Stack, Typography, Button } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 import { useNavigate } from "react-router-dom";
+import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import {
   useMyEnvironments,
   useDeleteEnvironment,
   useRunSimulation,
 } from "src/api/simulate-environments/environments";
-import { RUN_SIMULATION_COPY } from "./environmentOptions";
+import { RUN_SIMULATION_COPY, ENTRY_TAB } from "./environmentOptions";
+import { EMPTY_MESSAGE } from "./myEnvironments.constants";
+import useEnvironmentsTab from "./hooks/useEnvironmentsTab";
 import MyEnvironmentsTable from "./MyEnvironmentsTable";
 
 /**
@@ -17,7 +20,11 @@ import MyEnvironmentsTable from "./MyEnvironmentsTable";
  */
 export default function MyEnvironmentsTab() {
   const navigate = useNavigate();
-  const { data, isLoading } = useMyEnvironments();
+  const { setTab } = useEnvironmentsTab();
+  const { data, isLoading, isPending } = useMyEnvironments();
+  const rows = data || [];
+  const loading = isLoading || isPending;
+
   const deleteEnvironment = useDeleteEnvironment();
   const runSimulation = useRunSimulation();
 
@@ -43,13 +50,42 @@ export default function MyEnvironmentsTab() {
         pb: 2,
       }}
     >
-      <MyEnvironmentsTable
-        rows={data || []}
-        isLoading={isLoading}
-        onOpen={onOpen}
-        onRun={onRun}
-        onDelete={onDelete}
-      />
+      {!loading && rows.length === 0 ? (
+        <Box
+          sx={{
+            flex: 1,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <Stack spacing={1.75} alignItems="center">
+            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+              {EMPTY_MESSAGE}
+            </Typography>
+            <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+              Bring your agent in to create your first environment.
+            </Typography>
+            <Button
+              variant="contained"
+              size="small"
+              onClick={() => setTab(ENTRY_TAB.BUILD)}
+              startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
+              sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
+            >
+              Build an environment
+            </Button>
+          </Stack>
+        </Box>
+      ) : (
+        <MyEnvironmentsTable
+          rows={rows}
+          isLoading={loading}
+          onOpen={onOpen}
+          onRun={onRun}
+          onDelete={onDelete}
+        />
+      )}
     </Box>
   );
 }

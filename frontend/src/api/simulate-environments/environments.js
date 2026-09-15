@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { MY_ENVIRONMENTS_FIXTURE } from "./_fixtures/myEnvironments";
+import { listHarnessJobs } from "src/api/harness/harness";
+import { harnessJobToRow } from "src/sections/simulate/environments/helpers/harnessJobToRow";
 
 export const SIMULATE_ENVIRONMENTS_KEY = ["simulate-environments"];
 export const myEnvironmentsQueryKey = () => [
@@ -7,16 +8,25 @@ export const myEnvironmentsQueryKey = () => [
   "list",
 ];
 
-// The hooks below mock TH-7962's endpoints behind a react-query surface so the
-// UI consumes the final shape today; swapping each queryFn/mutationFn to axios
-// is a one-file change once the backend lands.
-const cloneFixture = () => structuredClone(MY_ENVIRONMENTS_FIXTURE);
+// The mutation hooks below still mock TH-7962's endpoints behind a react-query
+// surface; swapping each mutationFn to axios is a one-file change once the
+// backend lands.
 
-// TODO(TH-7962): swap queryFn to axios.get(endpoints.simulateEnvironments.list)
+// The query cache holds the RAW harness-jobs payload ({ job, status }[]);
+// `select` maps it to table rows on read, so the delete updater below must
+// filter the raw shape, not the mapped rows.
+const toRows = (data) =>
+  (Array.isArray(data) ? data : []).map(harnessJobToRow);
+
+// TODO(TH-7962): interim source — the My Environments table reads from the
+// harness-jobs list and maps each job to a flat row. Several columns (see
+// harnessJobToRow) have no field in this payload and render as placeholders;
+// replace with the dedicated environments endpoint once it lands.
 export function useMyEnvironments() {
   return useQuery({
     queryKey: myEnvironmentsQueryKey(),
-    queryFn: async () => cloneFixture(),
+    queryFn: listHarnessJobs,
+    select: toRows,
   });
 }
 
@@ -26,8 +36,9 @@ export function useDeleteEnvironment() {
   return useMutation({
     mutationFn: async (envId) => ({ id: envId }),
     onSuccess: ({ id }) => {
-      queryClient.setQueryData(myEnvironmentsQueryKey(), (rows) =>
-        (rows || []).filter((r) => r.id !== id),
+      // The cache holds raw { job, status } items, so match on job.job_id.
+      queryClient.setQueryData(myEnvironmentsQueryKey(), (items) =>
+        (items || []).filter((item) => item?.job?.job_id !== id),
       );
     },
   });
