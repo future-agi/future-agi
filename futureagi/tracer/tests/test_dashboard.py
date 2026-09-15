@@ -5124,8 +5124,8 @@ class TestDashboardQueryBuilder:
         assert "tupleElement(latest_metric_state, 3) = 1" in unknown_sql
         assert "dashboard_filter_candidate_identities AS" in filtered_sql
         assert "FROM spans FINAL" not in filtered_sql
-        assert "LIMIT 1 BY" in filtered_sql
-        assert "dashboard_replay_source._version DESC" in filtered_sql
+        assert "LIMIT 1 BY" not in filtered_sql
+        assert "HAVING max(dashboard_replay_source._version)" in filtered_sql
         assert "tuple(" in filtered_sql
         assert "IN (" in filtered_sql
         assert "attrs_number" in unknown_sql
@@ -5240,7 +5240,11 @@ class TestDashboardQueryBuilder:
         # applied exactly after every candidate identity resolves to latest.
         assert "dashboard_filter_candidate_identities AS" in sql
         assert "FROM spans FINAL" not in sql
-        assert "LIMIT 1 BY" in sql
+        assert "LIMIT 1 BY" not in sql
+        assert "HAVING max(dashboard_replay_source._version)" in sql
+        # Overflow-JSON attribute filters read attributes_extra after replay,
+        # so the winner tuple must carry that column for this shape alone.
+        assert "dashboard_candidate_source.attributes_extra" in sql
         assert not any(key.startswith("_raw_attr_") for key in params)
         assert "query_status" not in metric_info
         assert "True" not in sql
@@ -5332,14 +5336,23 @@ class TestDashboardQueryBuilder:
 
         assert "dashboard_filter_candidate_identities AS" in sql
         assert "FROM spans FINAL" not in sql
-        assert "dashboard_replay_source._version DESC" in sql
-        assert "LIMIT 1 BY" in sql
+        assert "dashboard_replay_source._version DESC" not in sql
+        assert "LIMIT 1 BY" not in sql
         assert (
-            "tuple( dashboard_replay_source.project_id, "
-            "dashboard_replay_source.observation_type, "
-            "dashboard_replay_source.service_name, "
-            "toStartOfHour(dashboard_replay_source.start_time), "
-            "dashboard_replay_source.trace_id, dashboard_replay_source.id ) IN ("
+            "FROM spans AS dashboard_replay_source "
+            "INNER JOIN dashboard_filter_candidate_identities "
+            "AS dashboard_candidate_state "
+            "ON dashboard_replay_source.project_id "
+            "= dashboard_candidate_state.project_id "
+            "AND dashboard_replay_source.observation_type "
+            "= dashboard_candidate_state.observation_type "
+            "AND dashboard_replay_source.service_name "
+            "= dashboard_candidate_state.service_name "
+            "AND toStartOfHour(dashboard_replay_source.start_time) "
+            "= dashboard_candidate_state.identity_hour "
+            "AND dashboard_replay_source.trace_id "
+            "= dashboard_candidate_state.trace_id "
+            "AND dashboard_replay_source.id = dashboard_candidate_state.id"
             in compact_sql
         )
         # The candidate witness and outer exact predicate have separate
@@ -5408,8 +5421,8 @@ class TestDashboardQueryBuilder:
             latest_state=True,
         )
 
-        assert "dashboard_replay_source._version DESC" in sql
-        assert "LIMIT 1 BY" in sql
+        assert "HAVING max(dashboard_replay_source._version)" in sql
+        assert "LIMIT 1 BY" not in sql
         assert "UNION ALL" not in sql
         assert "LIMIT %(_raw_attr_" not in sql
         assert not any(key.startswith("_raw_attr_") for key in params)
@@ -5418,8 +5431,8 @@ class TestDashboardQueryBuilder:
         assert "query_status" not in metric_info
         stripped = without_query_settings(sql)
         assert "SETTINGS" not in stripped
-        assert "dashboard_replay_source._version DESC" in stripped
-        assert "LIMIT 1 BY" in stripped
+        assert "HAVING max(dashboard_replay_source._version)" in stripped
+        assert "LIMIT 1 BY" not in stripped
 
     def test_raw_attribute_exact_source_keeps_latest_state_inside_id_remap(
         self, sample_query_config, settings
@@ -5835,8 +5848,10 @@ class TestDashboardQueryBuilder:
         assert "dashboard_filter_candidate_identities AS" in sql
         assert "FROM spans FINAL" not in sql
         assert ") AS s" in sql
-        assert "dashboard_replay_source._version DESC" in sql
-        assert "LIMIT 1 BY" in sql
+        assert "HAVING max(dashboard_replay_source._version)" in sql
+        # The legacy usage scan keeps its own LIMIT 1 BY; the spans replay has
+        # none.
+        assert "ORDER BY dashboard_replay_source" not in sql
         assert "usage_span_trace_candidates" in sql
         assert "s.project_id IN %(project_ids)s" in sql
         assert "s.trace_id IN (SELECT toString(trace_id) AS trace_id" in sql
@@ -10131,8 +10146,8 @@ class TestDashboardV2RewriteRouting:
         assert "SELECT DISTINCT s.trace_id FROM spans AS s FINAL" not in compact_sql
         assert "LEFT JOIN ( SELECT * FROM spans AS s FINAL" not in compact_sql
         assert ") AS s PREWHERE s.project_id IN %(project_ids)s" in compact_sql
-        assert "dashboard_replay_source._version DESC" in compact_sql
-        assert "LIMIT 1 BY" in compact_sql
+        assert "HAVING max(dashboard_replay_source._version)" in compact_sql
+        assert "LIMIT 1 BY" not in compact_sql
         assert "PREWHERE s.project_id IN %(project_ids)s" in compact_sql
         assert "s.trace_id IN (" in compact_sql
         assert "(s.parent_span_id IS NULL OR s.parent_span_id = '')" in compact_sql
