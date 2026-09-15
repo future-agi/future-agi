@@ -65,6 +65,7 @@ export default function MyEnvironmentsTable({
       <RowActionsMenu
         menuFor={menuFor}
         onClose={() => setMenuFor(null)}
+        onOpen={onOpen}
         onRun={onRun}
         onDeleteRequest={setConfirmDelete}
       />

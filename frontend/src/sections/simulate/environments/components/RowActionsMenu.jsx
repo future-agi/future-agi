@@ -1,12 +1,7 @@
 import PropTypes from "prop-types";
-import {
-  Tooltip,
-  Menu,
-  MenuItem,
-  ListItemIcon,
-  ListItemText,
-} from "@mui/material";
+import { Menu, MenuItem, ListItemIcon, ListItemText } from "@mui/material";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import {
   ENV_STATUS,
   ROW_ACTION_LABEL,
@@ -14,7 +9,11 @@ import {
   DELETE_TONE,
 } from "../myEnvironments.constants";
 
-export default function RowActionsMenu({ menuFor, onClose, onRun, onDeleteRequest }) {
+// Icon sits tight against the label — a bare icon width plus one step of margin,
+// not MUI's default 56px list-icon gutter.
+const ICON_SX = { minWidth: 0, mr: 1 };
+
+export default function RowActionsMenu({ menuFor, onClose, onOpen, onRun, onDeleteRequest }) {
   const active = menuFor?.row;
   const buildingActive = active?.status === ENV_STATUS.BUILDING;
   const runLabel =
@@ -31,7 +30,7 @@ export default function RowActionsMenu({ menuFor, onClose, onRun, onDeleteReques
       }}
       sx={{ typography: "s2" }}
     >
-      <ListItemIcon sx={{ minWidth: 28 }}>
+      <ListItemIcon sx={ICON_SX}>
         <Iconify icon="solar:play-linear" width={16} />
       </ListItemIcon>
       <ListItemText
@@ -50,10 +49,25 @@ export default function RowActionsMenu({ menuFor, onClose, onRun, onDeleteReques
       transformOrigin={{ vertical: "top", horizontal: "right" }}
       slotProps={{ paper: { sx: { minWidth: 200 } } }}
     >
+      <MenuItem
+        onClick={() => {
+          onOpen?.(active);
+          onClose?.();
+        }}
+        sx={{ typography: "s2" }}
+      >
+        <ListItemIcon sx={ICON_SX}>
+          <Iconify icon="solar:arrow-right-linear" width={16} />
+        </ListItemIcon>
+        <ListItemText
+          primary={ROW_ACTION_LABEL.open}
+          primaryTypographyProps={{ sx: { typography: "s2" } }}
+        />
+      </MenuItem>
       {buildingActive ? (
-        <Tooltip arrow placement="left" title={BUILDING_TOOLTIP}>
+        <CustomTooltip arrow placement="left" size="small" title={BUILDING_TOOLTIP}>
           <span>{runItem}</span>
-        </Tooltip>
+        </CustomTooltip>
       ) : (
         runItem
       )}
@@ -64,7 +78,7 @@ export default function RowActionsMenu({ menuFor, onClose, onRun, onDeleteReques
         }}
         sx={{ typography: "s2", color: DELETE_TONE.main }}
       >
-        <ListItemIcon sx={{ minWidth: 28, color: DELETE_TONE.main }}>
+        <ListItemIcon sx={{ ...ICON_SX, color: DELETE_TONE.main }}>
           <Iconify icon="solar:trash-bin-trash-linear" width={16} />
         </ListItemIcon>
         <ListItemText
@@ -89,6 +103,7 @@ RowActionsMenu.propTypes = {
     anchorEl: PropTypes.object,
   }),
   onClose: PropTypes.func,
+  onOpen: PropTypes.func,
   onRun: PropTypes.func,
   onDeleteRequest: PropTypes.func,
 };

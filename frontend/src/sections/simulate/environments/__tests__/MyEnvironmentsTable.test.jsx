@@ -91,7 +91,7 @@ describe("MyEnvironmentsTable", () => {
     expect(screen.getByText("Computer use")).toBeInTheDocument();
   });
 
-  it("offers Re-run + Delete (no Open) on a run environment", async () => {
+  it("offers Open + Re-run + Delete on a run environment", async () => {
     const user = userEvent.setup();
     renderTab();
     await screen.findByText("Customer Support Line");
@@ -99,15 +99,19 @@ describe("MyEnvironmentsTable", () => {
     await openMenu(user, "Customer Support Line");
 
     const menu = screen.getByRole("menu");
-    // Both actions are reachable menuitems: the enabled Run item is a direct
+    // All three actions are reachable menuitems: the enabled Run item is a direct
     // child of the menu (not buried in a tooltip wrapper) so it stays focusable.
-    expect(within(menu).getAllByRole("menuitem")).toHaveLength(2);
+    expect(within(menu).getAllByRole("menuitem")).toHaveLength(3);
+    expect(within(menu).getByText("Open")).toBeInTheDocument();
     expect(
       within(menu).getByRole("menuitem", { name: /Re-run simulation/ }),
     ).toBeInTheDocument();
     expect(within(menu).getByText("Delete")).toBeInTheDocument();
-    expect(within(menu).queryByText("Open")).toBeNull();
-    expect(navigate).not.toHaveBeenCalled();
+
+    await user.click(within(menu).getByText("Open"));
+    expect(navigate).toHaveBeenCalledWith(
+      "/dashboard/simulate/environments/env-support-line",
+    );
   });
 
   it("labels the action Run simulation when the environment has never run", async () => {

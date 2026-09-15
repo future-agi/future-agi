@@ -2,9 +2,10 @@ import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
 import {
-  Box, Stack, Typography, IconButton, Tooltip, TextField,
+  Box, Stack, Typography, IconButton, TextField,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import { paths } from "src/routes/paths";
 import { usePrebuiltEnvironments } from "src/api/simulate-environments/prebuilt";
 import CategoryHeader from "./components/CategoryHeader";
@@ -59,11 +60,11 @@ export default function PrebuiltEnvironmentsBrowse() {
         sx={{ mb: 3 }}
       >
         <Stack direction="row" alignItems="flex-start" spacing={1.5} flex={1} minWidth={0}>
-          <Tooltip arrow title="Back to how you want to start">
-            <IconButton size="small" onClick={() => navigate(paths.dashboard.simulate.environments.root)} sx={{ mt: 0.25 }}>
+          <CustomTooltip arrow size="small" title="Back to how you want to start">
+            <IconButton aria-label="Back to how you want to start" size="small" onClick={() => navigate(paths.dashboard.simulate.environments.root)} sx={{ mt: 0.25 }}>
               <Iconify icon="solar:alt-arrow-left-linear" width={18} />
             </IconButton>
-          </Tooltip>
+          </CustomTooltip>
           <Box>
             <Typography sx={{ typography: "m2", fontWeight: "fontWeightSemiBold" }}>
               Use our template
