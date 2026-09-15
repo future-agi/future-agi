@@ -1552,6 +1552,15 @@ def read_bounded_filter_page(
     seed_read_rows_signalled = False
     page_complete = False
     degraded_error_code: str | None = None
+    # Set when a cap ended the seed walk, so the rollback that follows the
+    # progress flush can still tell an exception apart from an ordinary
+    # unfinished exit.
+    walk_hit_a_budget = False
+    # Set when a classifier chunk was popped out of the buffer and then failed.
+    # Those candidates are in neither place afterwards, so the buffer that
+    # remains is not a smaller buffer - it is an INCOMPLETE one, and no
+    # position may be committed on the strength of emptying it.
+    classifier_flush_interrupted = False
     safe_slice_end = slice_end
     safe_active_slice_start = active_slice_start
     safe_before_start_time = before_start_time
@@ -1559,9 +1568,10 @@ def read_bounded_filter_page(
     safe_seen_seed_ids: set[Hashable] = set()
     safe_seen_candidate_ids: set[Hashable] = set()
     safe_matched_by_id: dict[Hashable, dict[str, Any]] = {}
-    safe_pending_identity_candidates: dict[
-        Hashable, tuple[dict[str, Any], datetime, datetime]
-    ] = {}
+    # No ``safe_pending_identity_candidates``: a committed position is now by
+    # construction one at which the classifier buffer was EMPTY, so there is
+    # never buffered work to restore alongside it, and a rollback empties the
+    # buffer instead of repopulating it.
     continuation_progressed = False
     root_discovery_builder = getattr(
         builder, "build_filter_root_time_discovery_query", None
@@ -1667,8 +1677,121 @@ def read_bounded_filter_page(
         | None
     ) = None
 
+    def classifier_flush_is_worth_a_statement() -> bool:
+        """Whether the walk should classify its buffer at this boundary.
+
+        The walk used to answer YES at every keyset and slice advance, and pay
+        a classifier statement for whatever that one step happened to acquire.
+        On a public page that is the wrong unit: the classifier's cost is
+        dominated by a fixed per-statement term, so a sparse cursor hop that
+        crossed four widening slices to find fifty rows bought four statements
+        where one would have answered the same question about the same
+        candidates. The buffer exists precisely to amortize that, and the
+        per-advance flush was emptying it before it could.
+
+        Three reasons survive, and they are the three the flush was really for.
+
+        * A reader that publishes a page at EACH slice boundary
+          (``not fill_bounded_cursor_page_across_slices``) decides there
+          whether it has a page, and that decision reads ``matched_by_id``.
+          For it the flush is the decision, not an optimisation, so it keeps
+          the statement unconditionally.
+        * Any reader whose buffered tail could now COMPLETE the public prefix.
+          This is the walk's stopping rule: the proof that the page is finished
+          can only be taken after a classifier chunk, so a buffer that might
+          close the page must be spent or the walk acquires history it does not
+          need. It is the same sufficiency test the eager prefix flush already
+          applies after a seed batch - written here too because that one fires
+          at most once per page unless the builder opts into repeats.
+        * An ARMED root-time discovery probe. That probe's gate refuses to run
+          while candidates are pending, and it is the mechanism that skips a
+          proven-empty tail in one cheap indexed statement instead of seeding
+          it slice by slice. Holding the buffer here to save one classifier
+          statement would cost several seeds, so this is the one place the
+          amortization loses and must not be taken.
+
+        Everything else waits: for the buffer's own ``classify_batch_size``
+        flush, for the completion flush after the seed loop, or - on a walk
+        that ends without a page - for the progress flush the acquisition
+        reserve in ``execute`` keeps affordable.
+        """
+
+        if not pending_identity_candidates:
+            return False
+        if not fill_bounded_cursor_page_across_slices:
+            return True
+        if root_discovery_enabled and discovery_ready:
+            return True
+        return len(matched_by_id) + len(pending_identity_candidates) >= prefix_needed
+
+    def continuation_reacquires_buffered_candidates() -> bool:
+        """Whether resuming at the CURRENT position re-reads the whole buffer.
+
+        THE RULE, and it is a rule about the resume boundary rather than about
+        the rows this request happened to see. A continuation resumes with an
+        exclusive upper bound: the signed keyset ``(before_start_time,
+        before_id)`` when one exists, and otherwise the open slice's own
+        ``slice_end``. Every acquired-but-unclassified candidate in
+        ``pending_identity_candidates`` is re-acquired by the next hop exactly
+        when its seed key lies strictly below that bound - so a position is
+        committable when that holds for ALL of them, and for no other reason.
+
+        Stated the other way round, this is what makes the cheap answer safe:
+        a committed position may be older than the scan has actually reached,
+        because a continuation that re-reads is exact and one that skips is
+        not. It may never be NEWER than a candidate nobody classified.
+
+        The load-bearing invariant is that the buffer's insertion order is
+        strictly newest-first: seed slices walk strictly older, the keyset walks
+        strictly older inside a slice, and each batch is sorted by
+        ``seed_row_key`` descending before it is buffered. So the front of the
+        buffer is always its newest end.
+
+        Both existing commit sites satisfy the rule for structural reasons,
+        which is why it costs nothing where the old flushes were not needed. The
+        classifier commits ``before`` = the last row of the chunk it just
+        classified, and ``flush`` always takes the NEWEST entries of the
+        buffer, so every survivor is older than that row. The walk's own
+        commits instead move ``before`` to the OLDEST row of the seed batch,
+        which is below everything the same batch left buffered - those are the
+        offers this declines, and declining them is what removes the
+        per-advance classifier statement that used to buy them.
+        """
+
+        if not pending_identity_candidates:
+            return True
+        buffered = [
+            seed_row_key(entry[0]) for entry in pending_identity_candidates.values()
+        ]
+        if before_start_time is None:
+            return all(key[0] < slice_end for key in buffered)
+        bound = (before_start_time, before_id)
+        return all(key < bound for key in buffered)
+
     def checkpoint_continuation() -> None:
-        """Commit only a fully classified candidate-prefix scan position."""
+        """Commit only a fully classified candidate-prefix scan position.
+
+        ENFORCED HERE, not at the call sites. The keyset walks ahead of the
+        classifier whenever a seed batch is buffered rather than classified on
+        the spot, and a committed keyset is a promise to the NEXT hop that
+        everything newer than it has already been published or rejected.
+
+        There are two ways to keep the promise. The walk used to buy it: flush
+        the buffer with a classifier statement at every keyset and slice
+        advance, so the position offered was always clean. That is the
+        expensive one, because the classifier's cost is dominated by a fixed
+        per-statement term - a cursor page that advanced four times paid four
+        classifier statements for one page's worth of candidates. The cheap one
+        is to DECLINE an offer that ``continuation_reacquires_buffered_candidates``
+        refuses: the buffer's own flush at ``classify_batch_size``, the
+        classifier's post-chunk commit and the completion flush after the seed
+        loop each restore a committable position soon enough.
+
+        The refusal also closes a hole the flushes only papered over: the
+        root-time-discovery branch checkpoints WITHOUT a preceding flush, so a
+        buffer held across a discovery jump could commit a position past
+        unclassified candidates.
+        """
 
         nonlocal safe_slice_end
         nonlocal safe_active_slice_start
@@ -1677,8 +1800,9 @@ def read_bounded_filter_page(
         nonlocal safe_seen_seed_ids
         nonlocal safe_seen_candidate_ids
         nonlocal safe_matched_by_id
-        nonlocal safe_pending_identity_candidates
         nonlocal continuation_progressed
+        if not continuation_reacquires_buffered_candidates():
+            return
         safe_slice_end = slice_end
         safe_active_slice_start = active_slice_start
         safe_before_start_time = before_start_time
@@ -1686,7 +1810,6 @@ def read_bounded_filter_page(
         safe_seen_seed_ids = set(seen_seed_ids)
         safe_seen_candidate_ids = set(seen_candidate_ids)
         safe_matched_by_id = dict(matched_by_id)
-        safe_pending_identity_candidates = dict(pending_identity_candidates)
         continuation_progressed = True
 
     def rollback_unhydrated_page() -> None:
@@ -1766,6 +1889,35 @@ def read_bounded_filter_page(
             if use_reserved_query_budget or not hydration_reserve_is_active
             else classification_deadline
         )
+        # THE FIRST-CHECKPOINT RESERVE, and the reason an unfinished hop is
+        # never a stopped one. Buffering a candidate instead of classifying it
+        # on the spot is a promise to spend one classifier before the request
+        # ends: no position may be committed past an unclassified candidate,
+        # so a hop that never spends it commits NOTHING - zero rows, four null
+        # continuation fields - and the identical retry does the identical
+        # empty work. A walk that acquires until its wall or its acquisition
+        # budget is gone cannot keep the promise, so while it owes one an
+        # ACQUIRING statement runs one statement envelope and one slot short.
+        # Nothing here predicts what the classifier will cost; the room is
+        # simply held back, exactly as the hydration reserve below holds back
+        # the room the public page needs.
+        #
+        # It is owed only until this hop has committed SOMETHING. Once
+        # ``continuation_progressed`` is set the hop already carries a
+        # position its next hop can resume from, a stranded buffer costs that
+        # hop re-acquisition rather than the whole list, and the walk goes
+        # back to spending its full envelope. Classification is what the
+        # reserve is FOR, so it spends it, and the reserve evaporates with the
+        # buffer, so a page that classifies as it goes never sees it.
+        classifier_reserve_is_active = bool(
+            bounded_continuation
+            and pending_identity_candidates
+            and not continuation_progressed
+            and not use_reserved_query_budget
+            and kind not in {"classify", "prefilter"}
+        )
+        if classifier_reserve_is_active:
+            active_deadline -= _BOUNDED_CONTINUATION_MIN_QUERY_HEADROOM_MS / 1000
         remaining_ms = int((active_deadline - monotonic()) * 1000)
         minimum_query_headroom_ms = (
             _BOUNDED_CONTINUATION_MIN_QUERY_HEADROOM_MS
@@ -1792,7 +1944,7 @@ def read_bounded_filter_page(
                 max_query_count
                 if use_reserved_query_budget or not hydration_reserve_is_active
                 else max_query_count - reserved_hydration_queries
-            )
+            ) - (1 if classifier_reserve_is_active else 0)
             if budgeted_query_count() >= active_query_limit:
                 raise _BudgetExceeded("query_budget_exceeded")
         attempt_started = monotonic()
@@ -2626,19 +2778,30 @@ def read_bounded_filter_page(
             )
 
         def flush(batch_size: int) -> bool:
-            nonlocal identity_refill_limit
+            nonlocal identity_refill_limit, classifier_flush_interrupted
             batch_identities = list(pending_identity_candidates)[:batch_size]
             batch_entries = [
                 pending_identity_candidates.pop(identity)
                 for identity in batch_identities
             ]
             matches_before_flush = len(matched_by_id)
-            prefix_proven = classify_seed_rows(
-                [entry[0] for entry in batch_entries],
-                active_start=min(entry[1] for entry in batch_entries),
-                active_end=max(entry[2] for entry in batch_entries),
-                stop_on_ordered_prefix=stop_on_ordered_prefix,
-            )
+            try:
+                prefix_proven = classify_seed_rows(
+                    [entry[0] for entry in batch_entries],
+                    active_start=min(entry[1] for entry in batch_entries),
+                    active_end=max(entry[2] for entry in batch_entries),
+                    stop_on_ordered_prefix=stop_on_ordered_prefix,
+                )
+            except _BudgetExceeded:
+                # The chunk was POPPED before it was classified and is already
+                # marked seen, so what stays behind is only the older
+                # leftovers. Resolving those does not make the buffer empty -
+                # it makes it LOOK empty, above a chunk nobody classified and
+                # no page published. Record that, so the progress flush after
+                # the walk declines this hop and the rollback restores the
+                # last position at which the buffer really was empty.
+                classifier_flush_interrupted = True
+                raise
             if ordered_identity_refill and not pending_identity_candidates:
                 gained = len(matched_by_id) - matches_before_flush
                 remaining = prefix_needed - len(matched_by_id)
@@ -3623,7 +3786,7 @@ def read_bounded_filter_page(
                     seed_before_id,
                 ):
                     break
-                if bounded_continuation and pending_identity_candidates:
+                if bounded_continuation and classifier_flush_is_worth_a_statement():
                     classify_or_buffer_seed_rows(
                         [],
                         active_start=slice_start,
@@ -3660,7 +3823,7 @@ def read_bounded_filter_page(
                 )
                 page_complete = True
                 break
-            if bounded_continuation and pending_identity_candidates:
+            if bounded_continuation and classifier_flush_is_worth_a_statement():
                 classify_or_buffer_seed_rows(
                     [],
                     active_start=slice_start,
@@ -3729,26 +3892,101 @@ def read_bounded_filter_page(
                     # publication gate and the signed checkpoint proves that
                     # the window is not exhausted.
                     break
+
+        if (
+            page_complete
+            and pending_identity_candidates
+            and len(matched_by_id) < prefix_needed
+        ):
+            # THE COMPLETION FLUSH, and the only one left on a page that fills
+            # across slices. A page may claim completeness only once every
+            # candidate whose classification could still change it has been
+            # classified. The walk no longer flushes at each keyset and slice
+            # advance, so that last partial chunk is resolved here, once, on
+            # whichever exit declared the walk finished. The classifier window
+            # is the request's own - the window the sibling exhaustion flush
+            # under ``slice_start <= request_start`` already uses - and every
+            # buffered slice lies inside it.
+            #
+            # The two exclusions are the two ways a buffered candidate cannot
+            # matter. A page that already holds a full prefix has proven its
+            # cutoff against the last row it classified, and ``flush`` always
+            # consumes the NEWEST entries, so every survivor sorts below that
+            # cutoff - classifying them could not change a published row. And
+            # a page that is NOT complete leaves its buffer alone on purpose:
+            # those rows are neither published nor committed past, and the
+            # continuation resumes at the last position where the commit rule
+            # allowed a checkpoint, which lies before them, so the next hop
+            # re-acquires them rather than skipping them.
+            classify_or_buffer_seed_rows(
+                [],
+                active_start=request_start,
+                active_end=request_end,
+                stop_on_ordered_prefix=seed_proves_result_order,
+                force=True,
+            )
     except _BudgetExceeded as exc:
         page_complete = False
         degraded_error_code = exc.error_code
-        if bounded_continuation:
-            # A classifier may have completed one sub-batch before the next
-            # sub-batch hits a cap. Roll unfinished work back to the last fully
-            # classified ordered prefix; the signed continuation resumes after
-            # it, so no row can be skipped or published twice.
-            seen_seed_ids.clear()
-            seen_seed_ids.update(safe_seen_seed_ids)
-            seen_candidate_ids.clear()
-            seen_candidate_ids.update(safe_seen_candidate_ids)
-            matched_by_id.clear()
-            matched_by_id.update(safe_matched_by_id)
-            pending_identity_candidates.clear()
-            pending_identity_candidates.update(safe_pending_identity_candidates)
-            slice_end = safe_slice_end
-            active_slice_start = safe_active_slice_start
-            before_start_time = safe_before_start_time
-            before_id = safe_before_id
+        walk_hit_a_budget = True
+
+    if (
+        bounded_continuation
+        and not page_complete
+        and pending_identity_candidates
+        and not classifier_flush_interrupted
+    ):
+        # THE PROGRESS FLUSH, and the reason an unfinished hop is never a
+        # STOPPED one. A walk that ends without a page ends holding whatever
+        # its last boundary declined to classify, and that buffer is what
+        # ``checkpoint_continuation`` refuses to commit past. Refuse for the
+        # whole request and the hop commits nothing at all: zero rows, four
+        # null continuation fields, and a transport that reads an unfinished
+        # list as a finished one because the identical retry does the
+        # identical empty work. So spend the statement the deferral was always
+        # promising, here, once, on whichever exit ended the walk.
+        #
+        # Progress is the SCAN position, not the last published row: the
+        # explicit checkpoint below commits where the walk actually reached,
+        # so a flush that classifies its whole buffer and matches nothing
+        # still moves the next hop forward. Only a hop whose every flush RAN
+        # to completion earns that - ``classifier_flush_interrupted`` above
+        # is the one case where the buffer left behind is incomplete rather
+        # than merely smaller, and emptying it would commit past a chunk
+        # nobody classified. Such a hop declines and takes the rollback.
+        #
+        # Nothing here outranks the reserve: this statement is charged to the
+        # ordinary acquisition budget and the ordinary classification wall, so
+        # a hop with neither left simply declines again and is no worse off
+        # than before it asked.
+        try:
+            classify_or_buffer_seed_rows(
+                [],
+                active_start=request_start,
+                active_end=request_end,
+                force=True,
+            )
+        except _BudgetExceeded as exc:
+            degraded_error_code = degraded_error_code or exc.error_code
+        else:
+            checkpoint_continuation()
+
+    if walk_hit_a_budget and bounded_continuation:
+        # A classifier may have completed one sub-batch before the next
+        # sub-batch hits a cap. Roll unfinished work back to the last fully
+        # classified ordered prefix; the signed continuation resumes after
+        # it, so no row can be skipped or published twice.
+        seen_seed_ids.clear()
+        seen_seed_ids.update(safe_seen_seed_ids)
+        seen_candidate_ids.clear()
+        seen_candidate_ids.update(safe_seen_candidate_ids)
+        matched_by_id.clear()
+        matched_by_id.update(safe_matched_by_id)
+        pending_identity_candidates.clear()
+        slice_end = safe_slice_end
+        active_slice_start = safe_active_slice_start
+        before_start_time = safe_before_start_time
+        before_id = safe_before_id
 
     # A response may never claim completeness after a required ClickHouse
     # statement failed, even if a later narrower fallback found a sufficient
