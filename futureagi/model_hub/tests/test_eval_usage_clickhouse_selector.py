@@ -763,10 +763,18 @@ def test_eval_usage_empty_project_set_fails_closed_for_trace_rows(monkeypatch):
     )
 
 
+# Native port from the environment only: CH25_NATIVE_PORT (CI names it), then
+# the port tfc/settings/test.py resolved, then 1 -- unserved, so the gate below
+# skips rather than reaching a developer's port-forward to a shared cluster.
+CH_NATIVE_PORT = int(
+    os.environ.get("CH25_NATIVE_PORT") or os.environ.get("CH25_TCP_PORT") or "1"
+)
+
+
 @pytest.fixture(scope="module")
 def ch_client():
     host = os.environ.get("CH25_HOST", "127.0.0.1")
-    port = int(os.environ.get("CH25_NATIVE_PORT", "19000"))
+    port = CH_NATIVE_PORT
     client = Client(host=host, port=port, connect_timeout=3)
     try:
         client.execute("SELECT 1")
@@ -922,7 +930,7 @@ def test_eval_usage_real_ch25_latest_tombstone_and_project_scope(
         monkeypatch.setattr(trace_project_scope, "_TRACE_TABLE", trace_source)
         read_client = ClickHouseClient(
             host=os.environ.get("CH25_HOST", "127.0.0.1"),
-            port=int(os.environ.get("CH25_NATIVE_PORT", "19000")),
+            port=CH_NATIVE_PORT,
             database="default",
         )
         monkeypatch.setattr(

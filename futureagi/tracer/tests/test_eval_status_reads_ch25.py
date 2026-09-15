@@ -13,13 +13,20 @@ from tracer.services.clickhouse import query_service as query_service_config
 from tracer.services.clickhouse.client import ClickHouseClient
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
 
+# Native port from the environment only: CH25_NATIVE_PORT (CI names it), then
+# the port tfc/settings/test.py resolved, then 1 -- unserved, so the gate below
+# skips rather than reaching a developer's port-forward to a shared cluster.
+CH_NATIVE_PORT = int(
+    os.environ.get("CH25_NATIVE_PORT") or os.environ.get("CH25_TCP_PORT") or "1"
+)
+
 pytestmark = pytest.mark.integration
 
 
 @pytest.fixture(scope="module")
 def ch_client():
     host = os.environ.get("CH25_HOST", "127.0.0.1")
-    port = int(os.environ.get("CH25_NATIVE_PORT", "19000"))
+    port = CH_NATIVE_PORT
     client = Client(host=host, port=port, connect_timeout=3)
     try:
         client.execute("SELECT 1")
@@ -97,7 +104,7 @@ def _service() -> AnalyticsQueryService:
     service = AnalyticsQueryService()
     service._ch_client = ClickHouseClient(
         host=os.environ.get("CH25_HOST", "127.0.0.1"),
-        port=int(os.environ.get("CH25_NATIVE_PORT", "19000")),
+        port=CH_NATIVE_PORT,
         database="default",
     )
     return service
