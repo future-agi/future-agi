@@ -43,6 +43,19 @@ config:
                 i = j+1
             return ranks
         rx, ry = _rank(x), _rank(y)
-        d2 = sum((a-b)**2 for a,b in zip(rx,ry))
-        rho = 1 - 6*d2/(n*(n**2-1))
+        # Spearman's rho is Pearson's r over the ranks. The
+        # 1 - 6*sum(d^2)/(n*(n^2-1)) shortcut is an algebraic simplification that
+        # only holds when both rank vectors are permutations of 1..n. _rank
+        # returns midranks for tied values, which breaks that assumption and
+        # yielded a wrong rho -- x=[1,2,2,3] vs y=[1,2,3,4] gave 0.9500 instead
+        # of 0.9129. A constant vector made every d zero, reporting rho=1.0 for
+        # an input whose correlation is undefined.
+        mx, my = sum(rx)/n, sum(ry)/n
+        num = sum((a-mx)*(b-my) for a,b in zip(rx,ry))
+        den = (sum((a-mx)**2 for a in rx) * sum((b-my)**2 for b in ry))**0.5
+        if den <= 0:
+            # Zero variance in the ranks: rho is undefined, not perfect. Matches
+            # pearson_correlation.yaml, which reports no correlation here.
+            return {"score": 0.5, "reason": "Zero variance in one or both inputs"}
+        rho = num/den
         return {"score": float((rho+1)/2), "reason": f"Spearman rho={rho:.4f}"}
