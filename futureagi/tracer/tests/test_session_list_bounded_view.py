@@ -1399,6 +1399,15 @@ def test_positive_user_cursor_uses_exact_keyset_pages_without_duplicates():
         ("candidate cursor first", {}),
         ("candidate cursor next", {}),
     ]
+    # The candidate cursor route costs every candidate slice width against an
+    # index-only probe before it narrows anything. This double answers with an
+    # unreadable estimate, which is the explicit "do not narrow" case, so both
+    # pages below are the whole-window statement exactly as before.
+    builder.build_candidate_slice_density_probe_query.return_value = (
+        "candidate density probe",
+        {},
+    )
+    builder.candidate_slice_density_estimate.return_value = None
     builder.build_page_metrics_query.side_effect = lambda ids: (
         "page metrics",
         {"ids": tuple(ids)},
@@ -1468,6 +1477,9 @@ def test_positive_user_cursor_uses_exact_keyset_pages_without_duplicates():
                 ]
             )
         if query == "page attributes":
+            return SimpleNamespace(data=[])
+        if query == "candidate density probe":
+            # No ``columns``: the width reducer reports "unknown", not zero.
             return SimpleNamespace(data=[])
         raise AssertionError(f"unexpected ClickHouse query: {query}")
 
@@ -1563,10 +1575,12 @@ def test_positive_user_cursor_uses_exact_keyset_pages_without_duplicates():
     assert first_call.kwargs == {
         "before_start_time": None,
         "before_session_id": None,
+        "scan_start_time": None,
     }
     assert second_call.kwargs == {
         "before_start_time": newest_start,
         "before_session_id": newest_id,
+        "scan_start_time": None,
     }
 
 
@@ -1745,7 +1759,11 @@ def test_string_page_public_dispatch_and_old_order_token(org, cursor, kind, pref
               "org_project_ids": [PROJECT, OTHER] if org else None}
     with mock.patch("tracer.views.trace_session._read_session_filter_page", return_value=_bounded_page()) as bounded:
         selected = TraceSessionView._select_session_page(view, request, validated_data=data, **kwargs)
-    assert bounded.call_count == int(preferred) and analytics.execute_ch_query.call_count == int(not preferred)
+    # The candidate cursor route costs its slice width against an index-only
+    # density probe before the page statement; this double reports no columns,
+    # so the width reducer says "unknown" and the page is read unnarrowed.
+    expected_reads = 0 if preferred else (2 if cursor else 1)
+    assert bounded.call_count == int(preferred) and analytics.execute_ch_query.call_count == expected_reads
     assert selected.candidate_cursor is (cursor and not preferred)
     assert selected.cursor_query["session_order_contract"] == "latest-root-physical-key-v2-string-page-first"
     if cursor:

@@ -141,20 +141,30 @@ def test_session_replay_uses_schema_key_and_post_collapse_microsecond_window(
     )
     sql, params = _query(builder, method)
     compact = " ".join(sql.split())
+    # A candidate statement's root scan carries its own window bindings so a
+    # bounded slice can raise its floor without moving the request window every
+    # other scan in the same statement reads.  Unsliced - which is every
+    # statement here - they are the request window, asserted below.  The
+    # page-scoped hydration statements are never sliced and bind it directly.
+    low, high = (
+        ("candidate_root_scan_start_us", "candidate_root_scan_end_us")
+        if method in {"page", "cursor", "count", "match"}
+        else ("start_date_us", "end_date_us")
+    )
     key = "project_id, trace_id, id, start_time"
     if cls is SessionListQueryBuilderV2:
         key = "project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id"
-        assert "toStartOfHour(fromUnixTimestamp64Micro(%(start_date_us)s" in sql
-        assert "%(end_date_us)s - 1" in sql
+        assert f"toStartOfHour(fromUnixTimestamp64Micro(%({low})s" in sql
+        assert f"%({high})s - 1" in sql
         assert "toStartOfHour(start_time) AS start_hour" in sql
     else:
         assert "toStartOfHour" not in sql
     assert f"GROUP BY {key}" in compact
     assert "AS latest_start_time" in sql
-    assert (
-        "latest_start_time >= fromUnixTimestamp64Micro(%(start_date_us)s, 'UTC')" in sql
-    )
-    assert "latest_start_time < fromUnixTimestamp64Micro(%(end_date_us)s, 'UTC')" in sql
+    assert f"latest_start_time >= fromUnixTimestamp64Micro(%({low})s, 'UTC')" in sql
+    assert f"latest_start_time < fromUnixTimestamp64Micro(%({high})s, 'UTC')" in sql
+    assert params[low] == params["start_date_us"]
+    assert params[high] == params["end_date_us"]
     assert params["start_date_us"] % 1_000_000 == 123456
     assert "spans_per_session" not in sql
     assert not re.search(r"FROM\s+spans(?:\s+AS\s+\w+)?\s+FINAL\b", sql)
@@ -442,6 +452,12 @@ def test_public_default_session_dispatch_uses_real_exact_builder_and_signed_cano
     def execute(sql, params, **kwargs):
         calls.append((sql, params))
         assert "spans_per_session" not in sql and "_seed_order" not in sql
+        if sql.lstrip().startswith("EXPLAIN ESTIMATE"):
+            # The candidate slice width probe reads the primary index only, so
+            # it carries no physical replacement key and no data read at all.
+            # Answering with no ``columns`` is the reducer's "unknown" case,
+            # which keeps this page on the unnarrowed statement asserted below.
+            return SimpleNamespace(data=[])
         assert (
             "GROUP BY project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id"
             in sql
