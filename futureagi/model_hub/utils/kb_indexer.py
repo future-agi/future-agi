@@ -160,8 +160,20 @@ class KBIndexer:
 
     @log_performance
     def process_content(
-        self, text: str, file_id: str, kb_id: str, organization_id: str
+        self,
+        text: str,
+        file_id: str,
+        kb_id: str,
+        organization_id: str,
+        executor: concurrent.futures.ThreadPoolExecutor | None = None,
     ):
+        """Chunk, embed and upsert one document's text.
+
+        By default spins up its own worker pool for this call. Pass an
+        existing ``executor`` (e.g. one shared across a batch of documents)
+        to submit onto that instead — this call never shuts down an
+        executor it didn't create itself.
+        """
         # Optimize chunk size based on text length
         chunk_size = 800
         chunk_overlap = 150
@@ -242,10 +254,12 @@ class KBIndexer:
         # Wrap function with OTel context propagation for thread safety
         wrapped_process_batch = wrap_for_thread(process_batch)
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+        owns_pool = executor is None
+        pool = executor or concurrent.futures.ThreadPoolExecutor(max_workers=20)
+        try:
             # Submit all batch processing tasks
             future_to_batch = {
-                executor.submit(wrapped_process_batch, i): i
+                pool.submit(wrapped_process_batch, i): i
                 for i in range((len(documents) + batch_size - 1) // batch_size)
             }
 
@@ -259,6 +273,9 @@ class KBIndexer:
                     error_msg = f"Error in batch {batch_idx}: {str(e)}"
                     logger.exception(error_msg)
                     errors.append(error_msg)
+        finally:
+            if owns_pool:
+                pool.shutdown(wait=True)
 
         # After all batches are processed, check for errors
         if errors:
