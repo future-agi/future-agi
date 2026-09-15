@@ -5426,6 +5426,92 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         """
         return query, params
 
+    def build_aggregate_query(self) -> tuple[str, dict[str, Any]]:
+        """Build trace-level cost, token, latency, and count aggregates.
+
+        The root-span CTE applies the same project, version, time, and trace
+        filters as the paginated list. The outer query then folds all spans of
+        each matching trace before calculating averages, so multi-span traces
+        cannot skew request-level metrics.
+        """
+        if self.search:
+            raise ValueError(
+                "unsafe legacy filtered trace aggregate blocked: bounded_search_required"
+            )
+        if error_code := self.bounded_filter_degraded_error_code():
+            raise ValueError(
+                f"unsafe legacy filtered trace aggregate blocked: {error_code}"
+            )
+
+        self.start_date, self.end_date = self.parse_time_range(self.filters)
+        params = dict(self.params)
+        params["start_date"] = self.start_date
+        params["end_date"] = self.end_date
+
+        fb = self._FILTER_BUILDER_CLS(
+            table=self.TABLE,
+            annotation_label_ids=self.annotation_label_ids,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
+            span_date_scope=True,
+        )
+        extra_where, extra_params = fb.translate(self.filters)
+        params.update(extra_params)
+        datetime_predicate, datetime_params = (
+            BaseQueryBuilder.bounded_datetime_exclusion_sql(
+                self.filters,
+                column=TIME_FILTER_COLUMN,
+                param_prefix="trace_aggregate_time_exclusion",
+            )
+        )
+        params.update(datetime_params)
+
+        filter_fragment = f"AND {extra_where}" if extra_where else ""
+        datetime_fragment = (
+            f"\n              AND {datetime_predicate}" if datetime_predicate else ""
+        )
+        pv_fragment = ""
+        if self.project_version_id:
+            pv_fragment = "AND project_version_id = %(project_version_id)s"
+            params["project_version_id"] = self.project_version_id
+
+        identity_columns = (
+            "project_id, trace_id" if self.project_ids is not None else "trace_id"
+        )
+        project_filter = self.project_where()
+        query = f"""
+        WITH matching_traces AS (
+            SELECT DISTINCT {identity_columns}
+            FROM {self.TABLE}
+            {project_filter}
+              AND (parent_span_id IS NULL OR parent_span_id = '')
+              AND {TIME_FILTER_COLUMN} >= %(start_date)s
+              AND {TIME_FILTER_COLUMN} < %(end_date)s{datetime_fragment}
+              {pv_fragment}
+              {filter_fragment}
+        ), per_trace AS (
+            SELECT
+                {identity_columns},
+                sum(cost) AS trace_cost,
+                sum(total_tokens) AS trace_tokens,
+                sum(latency_ms) AS trace_latency
+            FROM {self.TABLE} FINAL
+            {project_filter}
+              AND ({identity_columns}) IN (
+                  SELECT {identity_columns} FROM matching_traces
+              )
+            GROUP BY {identity_columns}
+        )
+        SELECT
+            count() AS total_traces,
+            sum(trace_cost) AS total_cost,
+            avg(trace_cost) AS avg_cost,
+            avg(trace_tokens) AS avg_tokens,
+            avg(trace_latency) AS avg_latency
+        FROM per_trace
+        """
+        return query, params
+
     # ------------------------------------------------------------------
     # Span count per trace (optional — only if columns include span_count)
     # ------------------------------------------------------------------

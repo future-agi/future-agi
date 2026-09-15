@@ -39,11 +39,16 @@ const presentPrototypeResult = (result, identity) => {
 };
 
 /** Validate and project the prototype trace-list HTTP response. */
-export const parsePrototypeTraceListResponse = (payload) =>
-  parsePrototypeResponse(TracerTraceListTracesResponse.parse(payload), {
-    label: "trace_id",
-    value: (row) => row.trace_id,
-  });
+export const parsePrototypeTraceListResponse = (payload) => {
+  const response = TracerTraceListTracesResponse.parse(payload);
+  return {
+    ...parsePrototypeResponse(response, {
+      label: "trace_id",
+      value: (row) => row.trace_id,
+    }),
+    aggregates: payload.result?.aggregates ?? null,
+  };
+};
 
 /** Validate and project the prototype span-list HTTP response. */
 export const parsePrototypeSpanListResponse = (payload) =>
