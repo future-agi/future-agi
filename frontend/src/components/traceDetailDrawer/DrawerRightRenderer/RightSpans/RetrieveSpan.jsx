@@ -99,7 +99,7 @@ const RetreiveSpan = ({
       </AccordionSummary>
       <AccordionDetails sx={{ paddingY: 1, paddingX: 0 }}>
         <Box sx={{ paddingX: 2, paddingBottom: 1 }}>
-          {(docsArray.length > 1
+          {(docsArray.length > 0
             ? docsArray
             : [{ id: "default", value: formattedValue }]
           ).map((doc, index) => {
