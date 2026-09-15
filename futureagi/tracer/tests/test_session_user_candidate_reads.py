@@ -168,7 +168,7 @@ def test_session_candidate_page_is_physical_latest_and_page_metrics_are_scoped()
     )
 
     page_sql, page_params = builder.build_candidate_page_query()
-    metrics_sql, metrics_params = builder.build_page_metrics_query([session_id])
+    metrics_sql, metrics_params = builder.build_page_hydration_query([session_id])
 
     assert builder.supports_candidate_first_page() is True
     assert "argMax(is_deleted, _version) AS latest_is_deleted" in page_sql
@@ -1855,16 +1855,13 @@ def test_session_page_enrichments_replay_tombstones_and_resolve_remaps():
     )
     session_id = str(uuid.uuid4())
 
-    metrics_sql, metrics_params = builder.build_page_metrics_query([session_id])
-    content_sql, content_params = builder.build_content_query([session_id])
-    attrs_sql, attrs_params = builder.build_span_attributes_query([session_id])
+    hydration_sql, hydration_params = builder.build_page_hydration_query([session_id])
 
-    for params in (metrics_params, content_params, attrs_params):
-        assert params["candidate_filter_session_id_array"] == [session_id]
+    assert hydration_params["candidate_filter_session_id_array"] == [session_id]
     # One primary-key old-ID probe plus one authoritative reverse new-ID pass.
     # The scalar tuple-array wrapper executes those source arms once even though
-    # content hydration consumes the tiny map in multiple CTE stages.
-    for sql in (metrics_sql, content_sql, attrs_sql):
+    # page hydration consumes the tiny map in multiple CTE stages.
+    for sql in (hydration_sql,):
         assert sql.count("FROM trace_session_id_remap FINAL") == 2
         assert "WHERE new_id IN (" in sql
         assert "candidate_target_new_ids AS" in sql
@@ -1872,10 +1869,10 @@ def test_session_page_enrichments_replay_tombstones_and_resolve_remaps():
         assert "AS candidate_session_pairs" in sql
         assert "SELECT arrayJoin(candidate_session_pairs) AS pair" in sql
         assert "OVER (PARTITION BY new_id)" not in sql
-    assert "trace_session_id IN %(content_session_ids)s" in content_sql
-    assert "if(ts_remap.survivor_id IS NULL OR ts_remap.survivor_id = " in content_sql
+    assert "trace_session_id IN %(candidate_session_ids)s" in hydration_sql
+    assert "if(ts_remap.survivor_id IS NULL OR ts_remap.survivor_id = " in hydration_sql
 
-    for sql in (metrics_sql, content_sql, attrs_sql):
+    for sql in (hydration_sql,):
         candidate_sql = sql.split("candidate_root_identities AS (", 1)[1].split(
             "),\n        latest_roots AS (", 1
         )[0]
@@ -2714,30 +2711,28 @@ def test_candidate_reads_on_ch25_preserve_remap_and_tombstone_semantics():
         )
         assert client.execute(derived_count_sql, derived_count_params)[0][0] == 1
 
+    # One statement now carries every payload the page used to re-read three
+    # times; the attribute rows are unzipped from its arrays.
     phase_timings = []
-    results = {}
-    for name, (sql, params) in {
-        "metrics": session_builder.build_page_metrics_query([old_session_id]),
-        "content": session_builder.build_content_query([old_session_id]),
-        "attributes": session_builder.build_span_attributes_query([old_session_id]),
-    }.items():
-        started = time.monotonic()
-        raw, returned_columns = client.execute(sql, params, with_column_types=True)
-        phase_timings.append((time.monotonic() - started) * 1000)
-        results[name] = _dict_rows(raw, returned_columns)
+    sql, params = session_builder.build_page_hydration_query([old_session_id])
+    started = time.monotonic()
+    raw, returned_columns = client.execute(sql, params, with_column_types=True)
+    phase_timings.append((time.monotonic() - started) * 1000)
+    hydrated = _dict_rows(raw, returned_columns)
+    attributes = type(session_builder).expand_page_attribute_rows(hydrated)
 
-    assert results["metrics"][0]["total_cost"] == 2.0
-    assert results["metrics"][0]["total_tokens"] == 20
-    assert results["metrics"][0]["traces_count"] == 1
-    assert results["content"][0]["first_message"] == "live-message"
-    assert results["content"][0]["last_message"] == "live-message"
-    assert len(results["attributes"]) == 1
-    assert results["attributes"][0]["attrs_string"] == {
+    assert hydrated[0]["total_cost"] == 2.0
+    assert hydrated[0]["total_tokens"] == 20
+    assert hydrated[0]["traces_count"] == 1
+    assert hydrated[0]["first_message"] == "live-message"
+    assert hydrated[0]["last_message"] == "live-message"
+    assert len(attributes) == 1
+    assert attributes[0]["attrs_string"] == {
         "live_key": "yes",
         "final_status": "Rejected",
     }
-    assert "deleted_key" not in results["attributes"][0]["span_attributes_raw"]
-    assert "outside_key" not in results["attributes"][0]["span_attributes_raw"]
+    assert "deleted_key" not in attributes[0]["span_attributes_raw"]
+    assert "outside_key" not in attributes[0]["span_attributes_raw"]
 
     # Generous CI ceilings; local disposable runs are normally <1s for Users
     # and <100ms per Session phase. Production A/B remains a separate sealed

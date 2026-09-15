@@ -115,7 +115,7 @@ def test_explicit_raw_reserved_keys_do_not_become_native_session_filters(key, or
     assert "HAVING countIf(" in _cte(sql, "matching_scalar_sessions")
     # Page attribute hydration must not reinterpret a raw timestamp key as
     # another request-window constraint in the V2 subclass either.
-    builder.build_span_attributes_query([SESSION])
+    builder.build_page_hydration_query([SESSION])
 
 
 @pytest.mark.parametrize(

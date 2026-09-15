@@ -2465,10 +2465,83 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         """
         return query, params
 
-    def build_page_metrics_query(
+    # Column carrying each attribute payload out of the fused page hydration,
+    # paired with the key the page's attribute merge reads it back under.
+    PAGE_ATTRIBUTE_ARRAY_COLUMNS: tuple[tuple[str, str], ...] = (
+        ("session_attribute_json_list", "span_attributes_raw"),
+        ("session_attribute_string_list", "span_attr_str"),
+        ("session_attribute_number_list", "span_attr_num"),
+    )
+
+    def _page_attribute_fragments(self) -> dict[str, str]:
+        """Root-span attribute SQL the fused page hydration carries.
+
+        Only the physical attribute columns differ between the legacy and the
+        CH25 span schemas, so the v2 builder overrides this fragment set and
+        inherits the rest of the statement unchanged.  The projection aliases
+        are deliberately schema-neutral: a legacy alias in an emitted SELECT
+        list is rewritten by the v2 boundary and would rename the result key.
+        """
+        return {
+            "latest": """
+                argMax(tuple(span_attributes_raw), _peerdb_version).1 AS latest_span_attributes_raw,
+                argMax(span_attr_str, _peerdb_version) AS latest_span_attr_str,
+                argMax(span_attr_num, _peerdb_version) AS latest_span_attr_num,
+            """.strip(),
+            "projection": """
+                latest_span_attributes_raw AS session_attribute_json,
+                latest_span_attr_str AS session_attribute_string,
+                latest_span_attr_num AS session_attribute_number,
+            """.strip(),
+            "present": """
+                (latest_span_attributes_raw != '{}' AND latest_span_attributes_raw != '')
+                OR length(mapKeys(latest_span_attr_str)) > 0
+                OR length(mapKeys(latest_span_attr_num)) > 0
+            """.strip(),
+            "arrays": """
+            groupArrayIf(session_attribute_json, has_span_attributes) AS session_attribute_json_list,
+            groupArrayIf(session_attribute_string, has_span_attributes) AS session_attribute_string_list,
+            groupArrayIf(session_attribute_number, has_span_attributes) AS session_attribute_number_list
+            """.strip(),
+        }
+
+    @classmethod
+    def expand_page_attribute_rows(cls, rows) -> list[dict[str, Any]]:
+        """Expand the fused hydration's attribute arrays back to root rows.
+
+        The statement reads each page root once and returns its attribute
+        payloads as parallel per-session arrays (one entry per root that
+        carries attributes, in the pre-fusion row order of a single read).
+        The page's attribute merge still consumes one dict per root, and is
+        insensitive to row order, so the arrays are unzipped here.
+        """
+        expanded: list[dict[str, Any]] = []
+        for row in rows:
+            session_id = str(row.get("session_id", ""))
+            columns = [
+                (key, list(row.get(array_column) or []))
+                for array_column, key in cls.PAGE_ATTRIBUTE_ARRAY_COLUMNS
+            ]
+            width = max((len(values) for _key, values in columns), default=0)
+            for index in range(width):
+                entry: dict[str, Any] = {"session_id": session_id}
+                for key, values in columns:
+                    if index < len(values):
+                        entry[key] = values[index]
+                expanded.append(entry)
+        return expanded
+
+    def build_page_hydration_query(
         self, session_ids: list[str]
     ) -> tuple[str, dict[str, Any]]:
-        """Hydrate aggregates for an already selected <=200-session page."""
+        """Hydrate an already selected <=200-session page in one statement.
+
+        The page aggregates, its first/last message and its root-span
+        attributes all replay the SAME page-scoped latest-state roots.  Reading
+        them once and projecting every payload from that one scan returns the
+        same rows, in the same order, with the union of the columns the three
+        separate hydrations used to return.
+        """
 
         ids = tuple(dict.fromkeys(str(value) for value in session_ids if value))
         if not ids:
@@ -2488,8 +2561,9 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         resolved_session = resolved_id_expr("latest_trace_session_id", "ts_remap")
         physical_time_scope = self._physical_time_scope_sql()
         latest_time_scope = self._latest_time_scope_sql(
-            params, param_prefix="build_page_metrics_query_latest_time"
+            params, param_prefix="build_page_hydration_query_latest_time"
         )
+        attributes = self._page_attribute_fragments()
         query = f"""
         WITH
         {ts_map_ctes},
@@ -2518,6 +2592,8 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 argMax(tuple(end_time), _peerdb_version).1 AS latest_end_time,
                 argMax(tuple(cost), _peerdb_version).1 AS latest_cost,
                 argMax(tuple(total_tokens), _peerdb_version).1 AS latest_total_tokens,
+                argMax(tuple(input), _peerdb_version).1 AS latest_input,
+                {attributes["latest"]}
                 argMax(_peerdb_is_deleted, _peerdb_version) AS latest_is_deleted
             FROM {self.TABLE}
             PREWHERE {self.project_filter_sql()}{physical_time_scope}
@@ -2534,7 +2610,10 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 latest_start_time AS start_time,
                 latest_end_time AS end_time,
                 latest_cost AS cost,
-                latest_total_tokens AS total_tokens
+                latest_total_tokens AS total_tokens,
+                latest_input AS input,
+                {attributes["projection"]}
+                ({attributes["present"]}) AS has_span_attributes
             FROM latest_roots
             LEFT JOIN ts_survivor_map AS ts_remap
                 ON latest_trace_session_id = ts_remap.any_id
@@ -2549,7 +2628,10 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             dateDiff('second', min(start_time), max(end_time)) AS duration,
             sum(cost) AS total_cost,
             sum(total_tokens) AS total_tokens,
-            uniqExact(trace_id) AS traces_count
+            uniqExact(trace_id) AS traces_count,
+            argMin(input, start_time) AS first_message,
+            argMax(input, start_time) AS last_message,
+            {attributes["arrays"]}
         FROM resolved_roots
         GROUP BY session_id
         """
@@ -2726,103 +2808,6 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         """
         return query, self.params
 
-    def build_content_query(self, session_ids: list[str]) -> tuple[str, dict[str, Any]]:
-        """Fetch first/last messages for a page of session IDs.
-
-        P3b step1.5 (DESIGN §3 / id_remap_sql): ``session_ids`` are the OLD
-        curated ids emitted by the (resolved) browse ``build()``. A straddler's
-        NEW-deterministic-id spans carry ``trace_session_id = new_id``, so we
-        resolve each span's ``trace_session_id`` new→old through
-        ``trace_session_id_remap`` and BOTH filter (``IN session_ids``) and
-        ``GROUP BY`` the RESOLVED id — else the new-id spans are missed and a
-        straddler's first/last message is computed off only its old-id half.
-        Pre-flip the remap is a no-op → byte-identical (gate B).
-        """
-        ids = tuple(dict.fromkeys(str(value) for value in session_ids if value))
-        if not ids:
-            return "", {}
-        if len(ids) > 200:
-            raise ValueError("content session page exceeds bounded limit")
-        # The bounded endpoint calls this method without calling ``build`` first.
-        # Derive its exact request window here so both the raw candidate read and
-        # schema-specific latest-state replay can prune complete replacement keys.
-        content_start_date, content_end_date = self.parse_time_range(self.filters)
-        params = {
-            **self.params,
-            "content_session_ids": ids,
-            "content_start_date": content_start_date,
-            "content_end_date": content_end_date,
-        }
-        # The page contains at most 200 canonical session IDs.  Building the
-        # global survivor map here scans ``trace_session_id_remap`` twice even
-        # though hydration can only return those finite sessions.  Expand only
-        # their consolidation groups and materialize the finite map once,
-        # preserving the identical old/new -> survivor mapping while keeping
-        # the span read page-scoped.
-        # An unmapped direct-CH session still follows the explicit raw-ID arm
-        # below and ``resolved_id_expr`` falls back to that raw ID.
-        ts_map_ctes = self._candidate_survivor_map_ctes(params, ids)
-        resolved_ts = resolved_id_expr("latest_trace_session_id", "ts_remap")
-        physical_time_scope = self._physical_time_scope_sql()
-        latest_time_scope = self._latest_time_scope_sql(
-            params, param_prefix="build_content_query_latest_time"
-        )
-        query = f"""
-        WITH
-        {ts_map_ctes},
-        candidate_root_identities AS (
-            SELECT DISTINCT {self._physical_identity_select_sql()}
-            FROM {self.TABLE}
-            PREWHERE {self.project_filter_sql()}{physical_time_scope}
-              AND (
-                  trace_session_id IN %(content_session_ids)s
-                  OR trace_session_id IN (
-                      SELECT any_id
-                      FROM ts_survivor_map
-                      WHERE survivor_id IN %(content_session_ids)s
-                  )
-              )
-              AND (parent_span_id IS NULL OR parent_span_id = '')
-        ),
-        latest_roots AS (
-            SELECT
-                project_id,
-                trace_id,
-                id,
-                argMax(start_time, _peerdb_version) AS latest_start_time,
-                argMax(tuple(parent_span_id), _peerdb_version).1 AS latest_parent_span_id,
-                argMax(tuple(trace_session_id), _peerdb_version).1 AS latest_trace_session_id,
-                argMax(tuple(input), _peerdb_version).1 AS latest_input,
-                argMax(_peerdb_is_deleted, _peerdb_version) AS latest_is_deleted
-            FROM {self.TABLE}
-            PREWHERE {self.project_filter_sql()}{physical_time_scope}
-              AND ({self._physical_group_by_sql()}) IN (
-                  SELECT {self._physical_identity_names_sql()}
-                  FROM candidate_root_identities
-              )
-            GROUP BY {self._physical_group_by_sql()}
-        ),
-        resolved_roots AS (
-            SELECT
-                {resolved_ts} AS session_id,
-                latest_start_time AS start_time,
-                latest_input AS input
-            FROM latest_roots
-            LEFT JOIN ts_survivor_map AS ts_remap
-                ON latest_trace_session_id = ts_remap.any_id
-            WHERE latest_is_deleted = 0{latest_time_scope}
-              AND (latest_parent_span_id IS NULL OR latest_parent_span_id = '')
-              AND {resolved_ts} IN %(content_session_ids)s
-        )
-        SELECT
-            session_id,
-            argMin(input, start_time) AS first_message,
-            argMax(input, start_time) AS last_message
-        FROM resolved_roots
-        GROUP BY session_id
-        """
-        return query, params
-
     def has_having_filters(self) -> bool:
         """Return True if any filters target aggregate columns (requiring HAVING)."""
         for f in self._native_session_filters():
@@ -2952,87 +2937,6 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         )
         """
         return query, params
-
-    def build_span_attributes_query(
-        self, session_ids: list[str]
-    ) -> tuple[str, dict[str, Any]]:
-        ids = tuple(dict.fromkeys(str(value) for value in session_ids if value))
-        if not ids:
-            return "", {}
-        if len(ids) > 200:
-            raise ValueError("attribute session page exceeds bounded limit")
-
-        # The bounded endpoint does not call ``build`` before page hydration.
-        # Bind its exact request window here and apply it to both candidate
-        # acquisition and the authoritative storage-key latest-state replay.
-        attr_start_date, attr_end_date = self.parse_time_range(self.filters)
-        params = {
-            **self.params,
-            "attr_session_ids": ids,
-            "attr_start_date": attr_start_date,
-            "attr_end_date": attr_end_date,
-        }
-        physical_time_scope = self._physical_time_scope_sql()
-        latest_time_scope = self._latest_time_scope_sql(
-            params, param_prefix="session_attr_latest_time"
-        )
-        ts_map_ctes = self._candidate_survivor_map_ctes(params, ids)
-        resolved_ts = resolved_id_expr("latest_trace_session_id", "ts_remap")
-        sql = f"""
-        WITH
-        {ts_map_ctes},
-        candidate_root_identities AS (
-            SELECT DISTINCT {self._physical_identity_select_sql()}
-            FROM {self.TABLE}
-            PREWHERE {self.project_filter_sql()}{physical_time_scope}
-              AND (
-                  trace_session_id IN %(attr_session_ids)s
-                  OR trace_session_id IN (
-                      SELECT any_id
-                      FROM ts_survivor_map
-                      WHERE survivor_id IN %(attr_session_ids)s
-                  )
-              )
-              AND (parent_span_id IS NULL OR parent_span_id = '')
-        ),
-        latest_roots AS (
-            SELECT
-                project_id,
-                trace_id,
-                id,
-                argMax(start_time, _peerdb_version) AS latest_start_time,
-                argMax(tuple(parent_span_id), _peerdb_version).1 AS latest_parent_span_id,
-                argMax(tuple(trace_session_id), _peerdb_version).1 AS latest_trace_session_id,
-                argMax(tuple(span_attributes_raw), _peerdb_version).1 AS latest_span_attributes_raw,
-                argMax(span_attr_str, _peerdb_version) AS latest_span_attr_str,
-                argMax(span_attr_num, _peerdb_version) AS latest_span_attr_num,
-                argMax(_peerdb_is_deleted, _peerdb_version) AS latest_is_deleted
-            FROM {self.TABLE}
-            PREWHERE {self.project_filter_sql()}{physical_time_scope}
-              AND ({self._physical_group_by_sql()}) IN (
-                  SELECT {self._physical_identity_names_sql()}
-                  FROM candidate_root_identities
-              )
-            GROUP BY {self._physical_group_by_sql()}
-        )
-        SELECT
-            {resolved_ts} AS session_id,
-            latest_span_attributes_raw AS span_attributes_raw,
-            latest_span_attr_str AS span_attr_str,
-            latest_span_attr_num AS span_attr_num
-        FROM latest_roots
-        LEFT JOIN ts_survivor_map AS ts_remap
-            ON latest_trace_session_id = ts_remap.any_id
-        WHERE latest_is_deleted = 0{latest_time_scope}
-          AND (latest_parent_span_id IS NULL OR latest_parent_span_id = '')
-          AND (
-            (latest_span_attributes_raw != '{{}}' AND latest_span_attributes_raw != '')
-            OR length(mapKeys(latest_span_attr_str)) > 0
-            OR length(mapKeys(latest_span_attr_num)) > 0
-          )
-          AND {resolved_ts} IN %(attr_session_ids)s
-        """
-        return sql, params
 
     # ------------------------------------------------------------------
     # Result formatting

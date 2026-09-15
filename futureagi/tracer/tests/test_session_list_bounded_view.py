@@ -476,9 +476,7 @@ def test_org_session_relational_collision_fails_before_id_only_hydration():
         "Session data is temporarily unavailable. Please retry.",
         "service_unavailable",
     )
-    builder.build_page_metrics_query.assert_not_called()
-    builder.build_content_query.assert_not_called()
-    builder.build_span_attributes_query.assert_not_called()
+    builder.build_page_hydration_query.assert_not_called()
     analytics.execute_ch_query.assert_not_called()
 
 
@@ -530,9 +528,7 @@ def test_default_org_session_collision_fails_before_id_only_hydration():
         "Session data is temporarily unavailable. Please retry.",
         "service_unavailable",
     )
-    builder.build_page_metrics_query.assert_not_called()
-    builder.build_content_query.assert_not_called()
-    builder.build_span_attributes_query.assert_not_called()
+    builder.build_page_hydration_query.assert_not_called()
 
 
 @pytest.mark.unit
@@ -613,13 +609,20 @@ def test_direct_write_session_attribute_query_replays_all_typed_maps():
         ],
     )
 
-    query, _ = builder.build_span_attributes_query([str(uuid.uuid4())])
+    query, _ = builder.build_page_hydration_query([str(uuid.uuid4())])
 
     assert "argMax(attrs_string, _version) AS latest_attrs_string" in query
     assert "argMax(attrs_number, _version) AS latest_attrs_number" in query
     assert "argMax(attrs_bool, _version) AS latest_attrs_bool" in query
-    assert "latest_attrs_bool AS attrs_bool" in query
+    assert "latest_attrs_bool AS session_attribute_bool" in query
     assert "length(mapKeys(latest_attrs_bool)) > 0" in query
+    assert (
+        "groupArrayIf(session_attribute_bool, has_span_attributes)"
+        " AS session_attribute_bool_list" in query
+    )
+    assert ("session_attribute_bool_list", "attrs_bool") in (
+        SessionListQueryBuilderV2.PAGE_ATTRIBUTE_ARRAY_COLUMNS
+    )
 
 
 @pytest.mark.unit
@@ -884,9 +887,8 @@ def test_attribute_session_list_uses_bounded_protocol_and_page_scoped_hydration(
     builder.supports_candidate_first_page.return_value = False
     builder.supports_bounded_filter_scan.return_value = True
     builder.recommended_filter_classify_batch_size.return_value = 50
-    builder.build_page_metrics_query.return_value = ("page metrics", {})
-    builder.build_content_query.return_value = ("page content", {})
-    builder.build_span_attributes_query.return_value = ("page attributes", {})
+    builder.build_page_hydration_query.return_value = ("page hydration", {})
+    builder.expand_page_attribute_rows.return_value = []
     builder.format_sessions.side_effect = lambda rows, columns: [
         dict(zip(columns, row, strict=True)) for row in rows
     ]
@@ -912,7 +914,7 @@ def test_attribute_session_list_uses_bounded_protocol_and_page_scoped_hydration(
     ]
 
     def _execute(query, _params, **_kwargs):
-        if query == "page metrics":
+        if query == "page hydration":
             return SimpleNamespace(
                 data=[
                     {
@@ -923,23 +925,14 @@ def test_attribute_session_list_uses_bounded_protocol_and_page_scoped_hydration(
                         "total_cost": 0,
                         "total_tokens": 0,
                         "traces_count": 1,
-                    }
-                ]
-            )
-        if query == "page content":
-            return SimpleNamespace(
-                data=[
-                    {
-                        "session_id": session_id,
                         "first_message": "first",
                         "last_message": "last",
                     }
                 ]
             )
-        if query == "page attributes":
-            return SimpleNamespace(data=attribute_rows)
         raise AssertionError(f"unexpected broad ClickHouse query: {query}")
 
+    builder.expand_page_attribute_rows.return_value = attribute_rows
     analytics.execute_ch_query.side_effect = _execute
     view._fetch_session_names = mock.MagicMock(return_value={})
     view._fetch_end_user_info = mock.MagicMock(return_value={})
@@ -1068,9 +1061,7 @@ def test_attribute_session_list_uses_bounded_protocol_and_page_scoped_hydration(
     assert bounded_kwargs["classify_batch_size"] == 50
     builder.build_candidate_page_query.assert_not_called()
     builder.build.assert_not_called()
-    assert builder.build_page_metrics_query.call_count == 4
-    assert builder.build_content_query.call_count == 4
-    assert builder.build_span_attributes_query.call_count == 4
+    assert builder.build_page_hydration_query.call_count == 4
 
 
 @pytest.mark.unit
@@ -1139,9 +1130,8 @@ def test_session_list_keeps_exact_page_when_end_user_label_enrichment_exhausts_b
     builder = mock.MagicMock()
     builder.supports_candidate_first_page.return_value = True
     builder.build_candidate_page_query.return_value = ("candidate page", {})
-    builder.build_page_metrics_query.return_value = ("page metrics", {})
-    builder.build_content_query.return_value = ("page content", {})
-    builder.build_span_attributes_query.return_value = ("page attributes", {})
+    builder.build_page_hydration_query.return_value = ("page hydration", {})
+    builder.expand_page_attribute_rows.return_value = []
     builder.format_sessions.side_effect = lambda rows, columns: [
         dict(zip(columns, row, strict=True)) for row in rows
     ]
@@ -1150,7 +1140,7 @@ def test_session_list_keeps_exact_page_when_end_user_label_enrichment_exhausts_b
     def _execute(query, _params, **_kwargs):
         if query == "candidate page":
             return SimpleNamespace(data=[{"session_id": session_id, "total_count": 1}])
-        if query == "page metrics":
+        if query == "page hydration":
             return SimpleNamespace(
                 data=[
                     {
@@ -1161,13 +1151,11 @@ def test_session_list_keeps_exact_page_when_end_user_label_enrichment_exhausts_b
                         "total_cost": 0,
                         "total_tokens": 0,
                         "traces_count": 1,
+                        "first_message": "",
+                        "last_message": "",
                     }
                 ]
             )
-        if query == "page content":
-            return SimpleNamespace(data=[])
-        if query == "page attributes":
-            return SimpleNamespace(data=[])
         raise AssertionError(f"unexpected ClickHouse query: {query}")
 
     analytics.execute_ch_query.side_effect = _execute
@@ -1219,9 +1207,8 @@ def test_session_export_rejects_truncated_exact_first_page():
     builder = mock.MagicMock()
     builder.supports_candidate_first_page.return_value = True
     builder.build_candidate_page_query.return_value = ("candidate page", {})
-    builder.build_page_metrics_query.return_value = ("page metrics", {})
-    builder.build_content_query.return_value = ("page content", {})
-    builder.build_span_attributes_query.return_value = ("page attributes", {})
+    builder.build_page_hydration_query.return_value = ("page hydration", {})
+    builder.expand_page_attribute_rows.return_value = []
     builder.format_sessions.side_effect = lambda rows, columns: [
         dict(zip(columns, row, strict=True)) for row in rows
     ]
@@ -1230,7 +1217,7 @@ def test_session_export_rejects_truncated_exact_first_page():
     def _execute(query, _params, **_kwargs):
         if query == "candidate page":
             return SimpleNamespace(data=[{"session_id": session_id, "total_count": 2}])
-        if query == "page metrics":
+        if query == "page hydration":
             return SimpleNamespace(
                 data=[
                     {
@@ -1241,21 +1228,11 @@ def test_session_export_rejects_truncated_exact_first_page():
                         "total_cost": 0,
                         "total_tokens": 0,
                         "traces_count": 1,
-                    }
-                ]
-            )
-        if query == "page content":
-            return SimpleNamespace(
-                data=[
-                    {
-                        "session_id": session_id,
                         "first_message": "first",
                         "last_message": "last",
                     }
                 ]
             )
-        if query == "page attributes":
-            return SimpleNamespace(data=[])
         raise AssertionError(f"unexpected ClickHouse query: {query}")
 
     analytics.execute_ch_query.side_effect = _execute
@@ -1342,7 +1319,7 @@ def test_incomplete_bounded_session_list_returns_sanitized_503_without_hydration
     analytics.execute_ch_query.assert_not_called()
     builder.build_candidate_page_query.assert_not_called()
     builder.build.assert_not_called()
-    builder.build_page_metrics_query.assert_not_called()
+    builder.build_page_hydration_query.assert_not_called()
 
 
 @pytest.mark.unit
@@ -1397,15 +1374,11 @@ def test_positive_user_cursor_uses_exact_keyset_pages_without_duplicates():
         ("candidate cursor first", {}),
         ("candidate cursor next", {}),
     ]
-    builder.build_page_metrics_query.side_effect = lambda ids: (
-        "page metrics",
+    builder.build_page_hydration_query.side_effect = lambda ids: (
+        "page hydration",
         {"ids": tuple(ids)},
     )
-    builder.build_content_query.side_effect = lambda ids: (
-        "page content",
-        {"ids": tuple(ids)},
-    )
-    builder.build_span_attributes_query.return_value = ("page attributes", {})
+    builder.expand_page_attribute_rows.return_value = []
     builder.format_sessions.side_effect = lambda rows, columns: [
         dict(zip(columns, row, strict=True)) for row in rows
     ]
@@ -1450,23 +1423,17 @@ def test_positive_user_cursor_uses_exact_keyset_pages_without_duplicates():
                     }
                 ]
             )
-        if query == "page metrics":
-            return SimpleNamespace(
-                data=[_metrics_row(sid, starts[sid]) for sid in params["ids"]]
-            )
-        if query == "page content":
+        if query == "page hydration":
             return SimpleNamespace(
                 data=[
-                    {
-                        "session_id": sid,
+                    _metrics_row(sid, starts[sid])
+                    | {
                         "first_message": f"first-{sid}",
                         "last_message": f"last-{sid}",
                     }
                     for sid in params["ids"]
                 ]
             )
-        if query == "page attributes":
-            return SimpleNamespace(data=[])
         raise AssertionError(f"unexpected ClickHouse query: {query}")
 
     analytics.execute_ch_query.side_effect = _execute
@@ -1592,16 +1559,15 @@ def test_sparse_session_cursor_follows_checkpoint_without_skip_or_duplicate(
     builder.supports_bounded_filter_scan.return_value = True
     builder.recommended_filter_classify_batch_size.return_value = 50
     builder.parse_time_range.return_value = (window_start, window_end)
-    builder.build_page_metrics_query.return_value = ("page metrics", {})
-    builder.build_content_query.return_value = ("page content", {})
-    builder.build_span_attributes_query.return_value = ("page attributes", {})
+    builder.build_page_hydration_query.return_value = ("page hydration", {})
+    builder.expand_page_attribute_rows.return_value = []
     builder.format_sessions.side_effect = lambda rows, columns: [
         dict(zip(columns, row, strict=True)) for row in rows
     ]
     analytics = mock.MagicMock()
 
     def _execute(query, _params, **_kwargs):
-        if query == "page metrics":
+        if query == "page hydration":
             return SimpleNamespace(
                 data=[
                     {
@@ -1612,21 +1578,11 @@ def test_sparse_session_cursor_follows_checkpoint_without_skip_or_duplicate(
                         "total_cost": 0,
                         "total_tokens": 0,
                         "traces_count": 1,
-                    }
-                ]
-            )
-        if query == "page content":
-            return SimpleNamespace(
-                data=[
-                    {
-                        "session_id": session_id,
                         "first_message": "first",
                         "last_message": "last",
                     }
                 ]
             )
-        if query == "page attributes":
-            return SimpleNamespace(data=[])
         raise AssertionError(f"unexpected ClickHouse query: {query}")
 
     analytics.execute_ch_query.side_effect = _execute
