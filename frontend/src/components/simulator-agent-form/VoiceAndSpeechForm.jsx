@@ -347,7 +347,7 @@ const VoiceAndSpeechForm = ({ control, errors }) => {
           max={10}
           step={0.5}
           sliderContainerStyles={{}}
-          marks={generateNMarks(1, 10)}
+          marks={generateNMarks(0, 10, 0.5)}
           inputSectionStyles={undefined}
         />
       </Box>
@@ -373,7 +373,7 @@ const VoiceAndSpeechForm = ({ control, errors }) => {
           max={10}
           step={1}
           sliderContainerStyles={{}}
-          marks={generateNMarks(1, 10)}
+          marks={generateNMarks(0, 10, 1)}
           inputSectionStyles={undefined}
         />
       </Box>
