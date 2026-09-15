@@ -86,6 +86,11 @@ jobs:
       LITELLM_MODE: PRODUCTION
       CH25_DATABASE: test_tfc
       CH_DATABASE: test_tfc
+      # tfc/settings/test.py no longer defaults the native port; the runner
+      # that owns a ClickHouse names it. The compose sidecar this job boots
+      # publishes 9000 on 19000. Unset, the CH-backed suites cannot connect.
+      CH_PORT: "19000"
+      CH25_TCP_PORT: "19000"
       PYTHONHASHSEED: "0"
       FI_CH25_SCHEMA_APPLY_STRICT: "1"
       EE_REPO_BRANCH: ${{ github.head_ref || github.ref_name }}
