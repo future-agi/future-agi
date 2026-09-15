@@ -18,6 +18,7 @@ import SalesforceSandboxMock from "../twins/SalesforceSandboxMock";
 import GenericSandboxMock from "../twins/GenericSandboxMock";
 import { OpenApiDialog, OpenSurfaceDialog } from "../twins/TwinSandboxDialogs";
 import TwinConnectDialog from "../twins/TwinConnectDialog";
+import { currentAgentVersion, environmentVersions, nextEnvVersion } from "../_mock/versions";
 
 const SANDBOX_MOCKS = {
   slack: SlackSandboxMock,
@@ -194,6 +195,8 @@ export default function OverviewPanel({ buildMode, env, envState, patch, onGo, a
         onManageVersions={() => setAgentDrawerOpen(true)}
         agentConnected={agentConnected}
       />
+
+      <AgentRefreshBanner env={env} envState={envState} patch={patch} />
 
       {/*
         Getting-started checklist for envs that haven't been seeded
@@ -525,6 +528,71 @@ function Fact({ label, value, color }) {
   );
 }
 Fact.propTypes = { label: PropTypes.string, value: PropTypes.node, color: PropTypes.string };
+
+/* ── agent-moved-ahead banner ────────────────────────────────────────────────
+   When the active agent version is newer than the version the environment was
+   derived against, offer to re-derive. It's the user's choice: refresh (mint a
+   new env version that re-reads the contract/scenarios/evals against the latest
+   agent — it then shows in the env-version dropdown up top), or just run the
+   new agent version against the existing world as-is (scenarios are shared
+   across agent versions, so nothing forces a refresh). */
+function AgentRefreshBanner({ env, envState, patch }) {
+  const agentV = currentAgentVersion(envState);
+  const derivedFor = envState?.envDerivedForAgent || "v1";
+  if (!agentV || agentV.label === derivedFor) return null;
+
+  const refresh = () => {
+    const list = envState?.envVersions?.length
+      ? envState.envVersions
+      : [...environmentVersions(env, envState)].reverse();
+    const version = nextEnvVersion(env, envState, {
+      changed: ["seed", "checks", "contract"],
+      note: `Re-derived against agent ${agentV.label}`,
+    });
+    patch({
+      envVersions: [...list, version],
+      activeEnvVersion: version.label,
+      envDerivedForAgent: agentV.label,
+    });
+  };
+
+  return (
+    <Stack
+      direction={{ xs: "column", sm: "row" }}
+      alignItems={{ sm: "center" }}
+      spacing={1.5}
+      sx={{
+        mt: -0.5, mb: 2, p: 1.75, borderRadius: 1.5, border: "1px solid",
+        borderColor: "divider",
+        bgcolor: "background.neutral",
+      }}
+    >
+      <Iconify icon="solar:refresh-circle-linear" width={20} sx={{ color: "text.subtitle", flexShrink: 0 }} />
+      <Box flex={1} minWidth={0}>
+        <Typography sx={{ typography: "s2", fontWeight: 700 }}>
+          Agent {agentV.label} is newer than this environment
+        </Typography>
+        <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>
+          Optional — re-derive the world against {agentV.label}, or keep running the current one.
+        </Typography>
+      </Box>
+      <Button
+        variant="outlined"
+        size="small"
+        onClick={refresh}
+        startIcon={<Iconify icon="solar:refresh-linear" width={14} />}
+        sx={{
+          flexShrink: 0, typography: "s2", fontWeight: 600,
+          color: "text.primary", borderColor: "divider",
+          "&:hover": { borderColor: "text.disabled", bgcolor: "action.hover" },
+        }}
+      >
+        Refresh environment
+      </Button>
+    </Stack>
+  );
+}
+AgentRefreshBanner.propTypes = { env: PropTypes.object, envState: PropTypes.object, patch: PropTypes.func };
 
 /* ── agent summary section ──────────────────────────────────────────────────
    Compact card that reflects Nikhil's env-first feedback: the agent is a

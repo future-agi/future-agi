@@ -77,44 +77,6 @@ export default function VersionBar({ env, envState, scenarioCount = 0, onAddVers
 
       <Box flex={1} />
 
-      {/* Stated where the versions are, because that is where someone decides
-          they have changed the agent. */}
-      <Tooltip
-        arrow
-        title={envState?.autoRun
-          ? "Every new agent version starts a run of this suite automatically"
-          : "Turn on to run this suite automatically whenever a version is added"}
-      >
-        <Stack
-          direction="row" alignItems="center" spacing={0.625}
-          onClick={() => patch?.({ autoRun: !envState?.autoRun })}
-          sx={{
-            px: 0.875, py: 0.375, borderRadius: 0.75, cursor: "pointer", flexShrink: 0,
-            border: "1px solid",
-            borderColor: envState?.autoRun ? alpha("#16A34A", 0.4) : "divider",
-            bgcolor: (t) => (envState?.autoRun ? alpha("#16A34A", t.palette.mode === "dark" ? 0.12 : 0.06) : "transparent"),
-          }}
-        >
-          <Iconify
-            icon={envState?.autoRun ? "solar:play-circle-bold" : "solar:play-circle-linear"}
-            width={14}
-            sx={{ color: envState?.autoRun ? "#16A34A" : "text.subtitle" }}
-          />
-          <Typography sx={{ typography: "s3", fontWeight: 600, color: envState?.autoRun ? "#16A34A" : "text.subtitle" }}>
-            Run on new version
-          </Typography>
-        </Stack>
-      </Tooltip>
-
-      <Button
-        size="small"
-        onClick={() => setAdding(true)}
-        startIcon={<Iconify icon="solar:add-circle-linear" width={15} />}
-        sx={{ typography: "s2", fontWeight: 600, color: "text.secondary", flexShrink: 0 }}
-      >
-        Add version
-      </Button>
-
       <NewAgentVersion
         env={env}
         envState={envState}

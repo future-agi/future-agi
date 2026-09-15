@@ -139,9 +139,11 @@ export const agentVersions = (envState) => {
   return stored?.length ? stored : [firstAgentVersion()];
 };
 
-/** The one the next run will use. */
+/** The one the next run will use — the active pin if set, else the newest. */
 export const currentAgentVersion = (envState) => {
   const list = agentVersions(envState);
+  const activeLabel = envState?.activeAgentVersion;
+  if (activeLabel) return list.find((v) => v.label === activeLabel) || list[list.length - 1];
   return list[list.length - 1];
 };
 

@@ -8,7 +8,6 @@ import { getEval, EVAL_CATALOG } from "../_mock/evals";
 import { useAppliedEvals, EvalRow } from "./evals/appliedEvals";
 import AddEvalsDrawer from "./evals/AddEvalsDrawer";
 import TwinEvalEditor from "./evals/TwinEvalEditor";
-import ReleaseGate from "./ReleaseGate";
 
 /**
  * Evals.
@@ -22,7 +21,7 @@ import ReleaseGate from "./ReleaseGate";
  * matter for it, so the fastest correct set is one click, and the drawer is
  * there for everything else.
  */
-export default function EvalsStep({ env, envState, patch, onGo, buildMode }) {
+export default function EvalsStep({ env, envState, patch, onGo }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [twinEditorOpen, setTwinEditorOpen] = useState(false);
   const twinBacked = !!envState?.twinBacking;
@@ -235,13 +234,6 @@ export default function EvalsStep({ env, envState, patch, onGo, buildMode }) {
           </Stack>
         )}
       </SectionCard>
-
-      {/* Release gate — post-run only. */}
-      {!buildMode && appliedEvals.length > 0 && (
-        <Box sx={{ mt: 2 }}>
-          <ReleaseGate envState={envState} patch={patch} />
-        </Box>
-      )}
 
       {/* Select many, map them one at a time. */}
       <AddEvalsDrawer

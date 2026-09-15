@@ -28,6 +28,7 @@ import DerivedPanels from "./DerivedPanels";
 import AddEvalsDrawer from "../workspace/evals/AddEvalsDrawer";
 import DynamicField from "../workspace/connect/DynamicField";
 import AgentReadReceipt from "./AgentReadReceipt";
+import EnvVersionPin from "../workspace/EnvVersionPin";
 
 /**
  * Stage 1 — connect an agent source.
@@ -398,6 +399,38 @@ export default function BuildFromAgent() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [env?.id]);
+
+  /*
+    A build from an agent is a *fresh* environment at v1 — for both the agent
+    and the environment version — with no run history. But the derived env
+    reuses a fixed id that also seeds a demo (3 agent versions, a synthesised
+    v3 lineage, prior runs), so on first-see we reset the version state to v1
+    and clear the seeded runs. Fires once per env id, so drawer-added versions
+    and real runs later in the session are safe.
+  */
+  const versionsSeededRef = useRef(null);
+  useEffect(() => {
+    if (!env?.id) return;
+    if (versionsSeededRef.current === env.id) return;
+    versionsSeededRef.current = env.id;
+    const now = new Date().toISOString();
+    dispatch({
+      type: "patchEnvState",
+      envId: env.id,
+      patch: {
+        agentVersions: [
+          { id: "agent-v1", label: "v1", note: "First version connected to this environment.", reach: "endpoint", createdAt: now },
+        ],
+        activeAgentVersion: "v1",
+        envVersions: [
+          { id: `${env.id}-v1`, label: "v1", createdAt: now, note: "First build from the agent.", scenarios: envState.scenarios?.length || 0, changed: ["contract", "seed"] },
+        ],
+        envDerivedForAgent: "v1",
+        runs: [],
+      },
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [env?.id]);
   useEffect(() => {
     if (!env?.id) return;
     const understandDone = done.includes("understand");
@@ -474,6 +507,7 @@ export default function BuildFromAgent() {
         source={source}
         env={env}
         envState={envState}
+        patch={envPatch}
         done={done}
         scenarioCount={scenarios?.length || 0}
         name={name} setName={setName}
@@ -639,7 +673,7 @@ function buildQuestions(env) {
 /* ── header ──────────────────────────────────────────────────────────────── */
 
 function Header({
-  onBack, backLabel, source, env, envState, done, running, scenarioCount,
+  onBack, backLabel, source, env, envState, patch, done, running, scenarioCount,
   name, setName, editingName, setEditingName,
   onRun, canGo, blockedReason,
 }) {
@@ -661,6 +695,10 @@ function Header({
   const [pipeAnchor, setPipeAnchor] = useState(null);
   const pipeline = pipelineStatus(done, running, "setup");
   const pipeSummary = pipelineSummary(pipeline);
+  /* True once every setup-phase stage has finished — the environment is built.
+     Hoisted to the Header body so both the status chip and the Run-simulation
+     button (which is hidden until the env is built) can read it. */
+  const setupDone = pipeline.filter((st) => st.phase === "setup").every((st) => st.status === "done");
 
 
   return (
@@ -704,6 +742,12 @@ function Header({
                     <Iconify icon="solar:pen-new-square-linear" width={14} sx={{ color: "text.subtitle" }} />
                   </IconButton>
                 </Tooltip>
+                {/* Environment-version pin — same control the workspace carries,
+                    shown once the env is built so this flow matches the
+                    template-to-environment build. */}
+                {setupDone && env && envState && patch && (
+                  <EnvVersionPin env={env} envState={envState} patch={patch} />
+                )}
               </>
             )}
           </Stack>
@@ -721,7 +765,6 @@ function Header({
           <Box sx={{ flex: 1, display: { xs: "none", md: "flex" }, justifyContent: "center" }}>
             {(() => {
               const running = pipeline.find((st) => st.status === "running");
-              const setupDone = pipeline.filter((st) => st.phase === "setup").every((st) => st.status === "done");
               /*
                 "Ready to run" was only checking pipeline status —
                 it flipped green the moment derivation finished, even
@@ -835,16 +878,15 @@ function Header({
         </>
       )}
 
-      {source && (
+      {source && setupDone && (
         /*
-          One path out of setup: run the simulation. The old "Go to environment"
-          secondary sent the user to the workspace shell, but that surface is a
-          post-run one — Runs, Optimizations, Amendments — and the environment
-          gets filed under My environments the moment the first run lands, so
-          there is nowhere useful to go from here that the run doesn't reach
-          first.
+          Only once the environment is actually built. Before that — connecting,
+          the read-audit, the derivation still streaming — there is nothing to
+          run yet, so the button is absent rather than present-but-disabled.
+          The path out of setup is running the simulation; the environment gets
+          filed under My environments the moment the first run lands.
         */
-        <Tooltip arrow title={canGo ? "" : (blockedReason || "Finish the three stages on the left first")}>
+        <Tooltip arrow title={canGo ? "" : (blockedReason || "")}>
           <span>
             <Button
               variant="contained" color="primary"
@@ -864,7 +906,7 @@ function Header({
 
 Header.propTypes = {
   onBack: PropTypes.func, backLabel: PropTypes.string,
-  source: PropTypes.object, env: PropTypes.object, envState: PropTypes.object, scenarioCount: PropTypes.number, done: PropTypes.array, running: PropTypes.bool,
+  source: PropTypes.object, env: PropTypes.object, envState: PropTypes.object, patch: PropTypes.func, scenarioCount: PropTypes.number, done: PropTypes.array, running: PropTypes.bool,
   name: PropTypes.string, setName: PropTypes.func,
   editingName: PropTypes.bool, setEditingName: PropTypes.func,
   onRun: PropTypes.func, canGo: PropTypes.bool, blockedReason: PropTypes.string,

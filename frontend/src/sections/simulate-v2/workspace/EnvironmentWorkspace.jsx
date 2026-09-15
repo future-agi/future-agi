@@ -2,8 +2,9 @@ import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { alpha } from "@mui/material/styles";
 import PropTypes from "prop-types";
-import { Box, Stack, Typography, Button, Tooltip } from "@mui/material";
+import { Box, Stack, Typography, Button, Tooltip, Tab, IconButton, Menu, MenuItem } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { CustomTabs } from "src/components/tabs/tabs";
 import { paths } from "src/routes/paths";
 import { protoRunId } from "../_mock/executionAdapter";
 import { getEnvironment } from "../_mock/environments";
@@ -13,23 +14,18 @@ import { useSimStore, useEnvState } from "../store";
 import { setupGaps } from "../_mock/setupGaps";
 import { environmentVersions } from "../_mock/versions";
 import { getAgentType } from "../_mock/agentTypes";
-import { SurfaceIcon, EmptyState } from "../components/primitives";
+import { SurfaceIcon, EmptyState, SectionCard } from "../components/primitives";
 import { ProvisioningPanel } from "../components/loading";
+import AssistantConsole from "../assistant/AssistantConsole";
 import OverviewPanel from "./OverviewPanel";
 import AgentsPanel from "./AgentsPanel";
 import ScenariosStep from "./ScenariosStep";
 import EvalsStep from "./EvalsStep";
 import RunsPanel from "./RunsPanel";
-import InstancesPanel from "./InstancesPanel";
-import FilesPanel from "./FilesPanel";
-import SettingsPanel from "./SettingsPanel";
-import PersonasPanel from "./PersonasPanel";
-import RlPanel from "./RlPanel";
 import VersionBar from "./VersionBar";
 import EnvVersionPin from "./EnvVersionPin";
 import BuildRecordPanel from "./BuildRecordPanel";
 import RlContractPanel from "./RlContractPanel";
-import ActorsPanel from "./ActorsPanel";
 
 /**
  * `setup` marks the items that gate a run — those carry a completion tick and
@@ -42,40 +38,59 @@ import ActorsPanel from "./ActorsPanel";
   Overview — no standalone tab. "Manage versions" opens a drawer
   overlaying Overview so the user stays on the same tab.
 */
-const STEPS = [
-  { id: "overview",  label: "Overview",  icon: "solar:widget-5-linear", group: "Setup" },
-  { id: "contract",  label: "Contract", icon: "solar:document-text-linear", group: "Setup" },
-  { id: "build",     label: "How this was built", icon: "solar:history-linear", group: "Setup" },
-
-  /*
-    Personas and Actors used to live as their own tabs alongside
-    Scenarios. Personas got dropped because every persona already
-    surfaces inside the scenario it belongs to — the tab was a second
-    entry point to the same objects. Actors got folded into the
-    Contract tab: they describe the pressure/entry the environment
-    injects, which is part of the contract the agent is graded
-    against.
-  */
-  { id: "scenarios", label: "Scenarios", icon: "solar:layers-minimalistic-linear", group: "The world", setup: true },
-
-  { id: "evals",     label: "Evaluations", icon: "solar:shield-check-linear", group: "Grading", setup: true },
-  { id: "runs",      label: "Runs",      icon: "solar:play-circle-linear", group: "Grading" },
-  /* Self improvements are surfaced as runs in the Runs list — trials
-     ARE runs — and each self improvement's detail view is reachable
-     from a trial's "Open self improvement" banner. A separate sidebar
-     entry duplicated the destination. */
-
-  { id: "instances", label: "Instances", icon: "solar:server-square-linear", group: "Environment" },
-  { id: "files",     label: "Files",     icon: "solar:folder-linear", group: "Environment" },
-  { id: "rl",        label: "Interface", icon: "solar:refresh-circle-linear", group: "Environment" },
-  { id: "settings",  label: "Settings",  icon: "solar:settings-minimalistic-linear", group: "Environment" },
+/*
+  Horizontal tabs, unified with the build/review screen (chat on the left,
+  tabs on the right). The post-run "Environment" rail entries — Instances,
+  Files, Interface, Settings — are dropped; what's left is the contract, the
+  world, and grading. Agent + version management live inside Overview, so
+  there's no standalone Agent tab.
+*/
+const TABS = [
+  { id: "overview",  label: "Overview",          icon: "solar:widget-5-linear" },
+  { id: "contract",  label: "Contract",          icon: "solar:document-text-linear" },
+  { id: "scenarios", label: "Scenarios",         icon: "solar:layers-minimalistic-linear", badge: "scenarios" },
+  { id: "evals",     label: "Evaluations",       icon: "solar:shield-check-linear", badge: "evals" },
+  { id: "runs",      label: "Runs",              icon: "solar:play-circle-linear", badge: "runs" },
 ];
 
-const RAIL_GROUPS = ["Setup", "The world", "Grading", "Environment"];
+/* `agent` isn't a visible tab (it lives inside Overview) but stays a valid
+   panel so Overview's "Manage versions" / the active-agent pill still work. */
+const PANEL_IDS = [...TABS.map((t) => t.id), "agent"];
 
-/* Setup-gap areas map onto the rail step that owns the underlying
-   answer, so a blocking gap surfaces as an amber dot on that step's
-   label. See DerivedPanels for the top-tabs equivalent. */
+/* Suggested builder prompts per tab — the same console the build screen uses. */
+const CHIPS_BY_TAB = {
+  overview: [
+    "Summarise what's in this environment",
+    "What's still missing before we can run?",
+    "Explain the tools and rules to me",
+  ],
+  contract: [
+    "Tighten the refund rule",
+    "Add a hard rule about escalations",
+    "Explain the reward function",
+  ],
+  scenarios: [
+    "Add a dispute case",
+    "Add an edge case where a tool fails",
+    "Rewrite the rushed-caller persona",
+  ],
+  evals: [
+    "Add a grader for tool-choice correctness",
+    "Tighten the hand-off quality bar",
+    "Explain what each grader measures",
+  ],
+  build: [
+    "Why was this tool included?",
+    "What did we infer vs read directly?",
+  ],
+  runs: [
+    "Summarise the last run",
+    "Which scenarios fail most often?",
+  ],
+};
+
+/* Setup-gap areas map onto the tab that owns the underlying answer, so a
+   blocking gap surfaces as a badge on that tab. */
 const GAP_AREA_TO_STEP = {
   Sandbox: "agent",
   Tools: "agent",
@@ -99,12 +114,20 @@ export default function EnvironmentWorkspace() {
   const env =
     getEnvironment(envId) || state.myEnvironments.find((e) => e.id === envId);
 
-  const { envState, patch, addAgentVersion, steps, canRun } = useEnvState(envId);
+  const { envState, patch, addAgentVersion, canRun } = useEnvState(envId);
 
   // Opening an environment goes straight to it — a boot sequence on every entry
   // is a delay the user did not ask for. The sequence is kept for "Reset state",
   // where re-provisioning is the whole point of pressing the button.
   const [booting, setBooting] = useState(false);
+  /* Secondary header actions (Fork, …) live in an overflow menu so the header
+     keeps its focus on the primary action, Run simulation. */
+  const [actionsAnchor, setActionsAnchor] = useState(null);
+
+  /* The builder console, unified with the build/review screen. A prototype
+     chat: mock replies, seeded greeting once the env resolves. */
+  const [turns, setTurns] = useState([]);
+  const [chatRunning, setChatRunning] = useState(false);
 
   // Adopt on direct navigation so a deep link works from a cold start.
   useEffect(() => {
@@ -112,6 +135,18 @@ export default function EnvironmentWorkspace() {
       dispatch({ type: "adoptEnvironment", env, now: new Date().toISOString() });
     }
   }, [env, state.myEnvironments, dispatch]);
+
+  useEffect(() => {
+    if (!env) return;
+    setTurns((prev) => (prev.length ? prev : [{
+      id: "ws-greet",
+      role: "assistant",
+      steps: [{
+        kind: "note",
+        text: `${env.name} is live. Ask me to tweak scenarios, tighten a rule, or add an eval — or edit directly on the right.`,
+      }],
+    }]));
+  }, [env?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!env) {
     /* Still loading the store — a custom-built env lives only in
@@ -179,9 +214,17 @@ export default function EnvironmentWorkspace() {
     Scenarios instead made the rail item look broken: you click Evals and
     nothing appears to happen.
   */
-  const panel = STEPS.some((s) => s.id === step) ? step : "overview";
+  /* The Runs tab only exists once a run does — a fresh environment has no run
+     history to show, and the first run is started from the header's "Run
+     simulation" button (which goes straight to the live run view). */
+  const hasRuns = (envState.runs?.length || 0) > 0;
+  const visibleTabs = TABS.filter((t) => t.id !== "runs" || hasRuns);
 
-  const doneById = Object.fromEntries(steps.map((s) => [s.id, s.done]));
+  const panel = (PANEL_IDS.includes(step) && (step !== "runs" || hasRuns)) ? step : "overview";
+  /* Which horizontal tab is highlighted — `agent` (no tab of its own) keeps
+     Overview lit. */
+  const activeTab = visibleTabs.some((t) => t.id === panel) ? panel : "overview";
+
   const counts = {
     scenarios: envState.scenarios.length || null,
     evals: envState.evals.length || null,
@@ -224,6 +267,53 @@ export default function EnvironmentWorkspace() {
     return firstBlocking?.title || "Setup incomplete";
   })();
 
+  /* Fork — mints a fresh env instance carrying the same world (tools, rules,
+     scenarios, evals, seed) but with no agent binding and no run history, then
+     lands on the new workspace. For duplicating the world for a different agent
+     or team; demoted to the overflow menu since in-place agent-swap covers the
+     everyday case. */
+  const forkEnvironment = () => {
+    setActionsAnchor(null);
+    const suffix = Math.random().toString(36).slice(2, 8);
+    const forkedId = `${env.id}-fork-${suffix}`;
+    const forked = {
+      ...env,
+      id: forkedId,
+      name: `${env.name} · fork`,
+      custom: true,
+      adoptedAt: undefined,
+      buildProgress: undefined,
+      forkedFrom: env.id,
+    };
+    dispatch({ type: "adoptEnvironment", env: forked, now: new Date().toISOString() });
+    dispatch({
+      type: "patchEnvState",
+      envId: forkedId,
+      patch: {
+        scenarios: envState.scenarios || [],
+        evals: envState.evals || [],
+        scenarioSource: envState.scenarioSource,
+        twinBacking: envState.twinBacking,
+      },
+    });
+    navigate(paths.dashboard.simulate.environmentDetail(forkedId));
+  };
+
+  const chips = CHIPS_BY_TAB[activeTab] || CHIPS_BY_TAB.overview;
+  const sendChat = (text) => {
+    const trimmed = (text || "").trim();
+    if (!trimmed) return;
+    setTurns((prev) => [...prev, { id: `u-${Date.now()}`, role: "user", text: trimmed }]);
+    setChatRunning(true);
+    setTimeout(() => {
+      setChatRunning(false);
+      setTurns((prev) => [...prev, {
+        id: `a-${Date.now()}`,
+        role: "assistant",
+        steps: [{ kind: "note", text: mockWorkspaceReply(trimmed) }],
+      }]);
+    }, 900);
+  };
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
@@ -321,68 +411,20 @@ export default function EnvironmentWorkspace() {
           <Typography noWrap sx={{ typography: "s2", color: "text.subtitle" }}>{env.tagline}</Typography>
         </Box>
 
+
         {/*
-          Fork this environment — mints a fresh env instance carrying
-          the same world (tools, rules, scenarios, evals, seed) but
-          with no agent binding and no run history. Reflects Nikhil's
-          feedback: envs are portable, an env should be reusable across
-          different agents / teams. Adopting the fork lands the user on
-          the new workspace so they can attach a different agent.
+          Reset state only makes sense for a clone/twin-backed env, where it
+          re-provisions the live sandbox (zero activity counters, bump
+          provisionedAt to drop prior runs, restart the TTL). A plain seeded
+          env has no live sandbox to reset between runs — each simulated run is
+          self-contained — so the button is hidden there.
         */}
-        <Tooltip arrow title="Duplicate this environment for a different agent or team. World stays; agent + runs reset.">
+        {envState?.twinBacking && (
           <Button
             variant="outlined"
             size="small"
-            startIcon={<Iconify icon="solar:copy-linear" width={15} />}
+            startIcon={<Iconify icon="solar:restart-linear" width={16} />}
             onClick={() => {
-              const suffix = Math.random().toString(36).slice(2, 8);
-              const forkedId = `${env.id}-fork-${suffix}`;
-              const forked = {
-                ...env,
-                id: forkedId,
-                name: `${env.name} · fork`,
-                custom: true,
-                adoptedAt: undefined,
-                buildProgress: undefined,
-                forkedFrom: env.id,
-              };
-              dispatch({ type: "adoptEnvironment", env: forked, now: new Date().toISOString() });
-              /* Copy the world-shaped envState but drop the agent
-                 binding and runs — the fork's own agent + run history
-                 will accumulate independently. */
-              dispatch({
-                type: "patchEnvState",
-                envId: forkedId,
-                patch: {
-                  scenarios: envState.scenarios || [],
-                  evals: envState.evals || [],
-                  scenarioSource: envState.scenarioSource,
-                  twinBacking: envState.twinBacking,
-                },
-              });
-              navigate(paths.dashboard.simulate.environmentDetail(forkedId));
-            }}
-            sx={{ color: "text.primary", borderColor: "divider", typography: "s2", fontWeight: 600 }}
-          >
-            Fork
-          </Button>
-        </Tooltip>
-
-        <Button
-          variant="outlined"
-          size="small"
-          startIcon={<Iconify icon="solar:restart-linear" width={16} />}
-          onClick={() => {
-            /*
-              Reset-state action. For twin-backed envs this is the
-              "provision a fresh sandbox" moment Arga models: activity
-              counters go to zero, provisionedAt gets bumped (which is
-              the epoch liveSandboxContentFor uses to drop prior runs),
-              and if the env is short-lived the countdown restarts. The
-              boot animation runs so the user sees the ceremony —
-              same one used on cold-start.
-            */
-            if (envState?.twinBacking) {
               const now = new Date().toISOString();
               const services = envState.twinBacking.services || [];
               patch({
@@ -395,13 +437,13 @@ export default function EnvironmentWorkspace() {
                     : null,
                 },
               });
-            }
-            setBooting(true);
-          }}
-          sx={{ color: "text.primary", borderColor: "divider", typography: "s2", fontWeight: 600 }}
-        >
-          Reset state
-        </Button>
+              setBooting(true);
+            }}
+            sx={{ color: "text.primary", borderColor: "divider", typography: "s2", fontWeight: 600 }}
+          >
+            Reset state
+          </Button>
+        )}
         {/*
           Active agent pill — shows which agent the next simulation
           run will target. Clicking jumps to the Agents tab so the
@@ -427,6 +469,36 @@ export default function EnvironmentWorkspace() {
             </Button>
           </span>
         </Tooltip>
+
+        {/* Secondary actions — Fork lives here so the header stays focused on
+            Run simulation. */}
+        <Tooltip arrow title="More actions">
+          <IconButton
+            size="small"
+            onClick={(e) => setActionsAnchor(e.currentTarget)}
+            sx={{ color: "text.subtitle" }}
+          >
+            <Iconify icon="solar:menu-dots-bold" width={18} />
+          </IconButton>
+        </Tooltip>
+        <Menu
+          anchorEl={actionsAnchor}
+          open={!!actionsAnchor}
+          onClose={() => setActionsAnchor(null)}
+          anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+          transformOrigin={{ vertical: "top", horizontal: "right" }}
+          slotProps={{ paper: { sx: { minWidth: 260, mt: 0.5 } } }}
+        >
+          <MenuItem onClick={forkEnvironment} sx={{ alignItems: "flex-start", gap: 1.25, py: 1 }}>
+            <Iconify icon="solar:copy-linear" width={16} sx={{ color: "text.subtitle", mt: "2px", flexShrink: 0 }} />
+            <Box minWidth={0}>
+              <Typography sx={{ typography: "s2", fontWeight: 600 }}>Fork environment</Typography>
+              <Typography sx={{ typography: "s3", color: "text.subtitle", whiteSpace: "normal" }}>
+                Duplicate the world for a different agent or team. Agent + runs reset.
+              </Typography>
+            </Box>
+          </MenuItem>
+        </Menu>
       </Stack>
 
       {/*
@@ -450,170 +522,115 @@ export default function EnvironmentWorkspace() {
         onRunAfterVersion={startRun}
       />
 
-      <Box sx={{ display: "flex", flex: 1, minHeight: 0 }}>
-        <SetupRail
-          current={panel}
-          onGo={go}
-          doneById={doneById}
-          counts={counts}
-          gapsByStep={gapsByStep}
-        />
+      {/* ── body: builder console (left) + tabbed panels (right) —
+            unified with the build/review screen ── */}
+      <Box
+        sx={{
+          flex: 1, minHeight: 0, display: "grid", gap: 2, p: 2,
+          gridTemplateColumns: { xs: "1fr", lg: "minmax(340px, 400px) 1fr" },
+        }}
+      >
+        <SectionCard sx={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          <AssistantConsole
+            turns={turns}
+            running={chatRunning}
+            chips={chips}
+            onSend={sendChat}
+            onChip={sendChat}
+          />
+        </SectionCard>
 
-        {/*
-          Fall back to Overview for an unrecognised step rather than rendering
-          an empty pane — a bad link should land somewhere, not nowhere.
-        */}
-        <Box sx={{ flex: 1, minWidth: 0, overflow: "auto" }}>
-          {panel === "agent" ? (
-            <AgentsPanel env={env} envState={envState} patch={patch} onGo={go} />
-          ) : panel === "scenarios" ? (
-            <ScenariosStep env={env} envState={envState} patch={patch} onGo={go} />
-          ) : panel === "evals" ? (
-            <EvalsStep env={env} envState={envState} patch={patch} onGo={go} />
-          ) : panel === "runs" ? (
-            <RunsPanel env={env} envState={envState} onGo={go} />
-          ) : panel === "instances" ? (
-            <InstancesPanel env={env} envState={envState} onGo={go} />
-          ) : panel === "files" ? (
-            <FilesPanel env={env} />
-          ) : panel === "contract" ? (
-            <RlContractPanel env={env} envState={envState} patch={patch} onGo={go} />
-          ) : panel === "build" ? (
-            <BuildRecordPanel env={env} envState={envState} patch={patch} />
-          ) : panel === "rl" ? (
-            <RlPanel env={env} envState={envState} patch={patch} />
-          ) : panel === "settings" ? (
-            <SettingsPanel env={env} envState={envState} patch={patch} />
-          ) : (
-            <OverviewPanel env={env} envState={envState} patch={patch} onGo={go} agentConnected={!!envState.agent} />
-          )}
+        <Box
+          sx={{
+            height: "100%", minHeight: 0, display: "flex", flexDirection: "column",
+            border: "1px solid", borderColor: "divider", borderRadius: 1.5,
+            bgcolor: "background.paper", overflow: "hidden",
+          }}
+        >
+          <Box sx={{ flexShrink: 0, borderBottom: "1px solid", borderColor: "divider" }}>
+            <CustomTabs
+              value={activeTab}
+              onChange={(_, v) => go(v)}
+              variant="scrollable"
+              scrollButtons={false}
+              sx={{ minHeight: 42, px: 2.5, "& .MuiTab-root": { typography: "s2", minHeight: 42 } }}
+            >
+              {visibleTabs.map((t) => (
+                <Tab key={t.id} value={t.id} sx={{ minHeight: 42 }} label={<TabLabel tab={t} counts={counts} gaps={gapsByStep[t.id]} />} />
+              ))}
+            </CustomTabs>
+          </Box>
+
+          {/*
+            Fall back to Overview for an unrecognised step rather than rendering
+            an empty pane — a bad link should land somewhere, not nowhere.
+          */}
+          <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "auto" }}>
+            {panel === "agent" ? (
+              <AgentsPanel env={env} envState={envState} patch={patch} onGo={go} />
+            ) : panel === "scenarios" ? (
+              <ScenariosStep env={env} envState={envState} patch={patch} onGo={go} />
+            ) : panel === "evals" ? (
+              <EvalsStep env={env} envState={envState} patch={patch} onGo={go} />
+            ) : panel === "runs" ? (
+              <RunsPanel env={env} envState={envState} onGo={go} />
+            ) : panel === "contract" ? (
+              <RlContractPanel env={env} envState={envState} patch={patch} onGo={go} />
+            ) : panel === "build" ? (
+              <BuildRecordPanel env={env} envState={envState} patch={patch} />
+            ) : (
+              <OverviewPanel env={env} envState={envState} patch={patch} onGo={go} agentConnected={!!envState.agent} />
+            )}
+          </Box>
         </Box>
       </Box>
     </Box>
   );
 }
 
-/* ── left rail ───────────────────────────────────────────────────────────── */
+/* ── one horizontal tab's label — name + optional count + gap badge ─────── */
 
-function SetupRail({ current, onGo, doneById, counts, gapsByStep = {} }) {
+function TabLabel({ tab, counts, gaps }) {
+  const count = tab.badge ? counts[tab.id] : null;
   return (
-    <Box
-      sx={{
-        width: 200, flexShrink: 0, borderRight: "1px solid", borderColor: "divider",
-        display: "flex", flexDirection: "column", bgcolor: "background.paper",
-      }}
-    >
-      <Box sx={{ p: 2, flex: 1 }}>
-        {RAIL_GROUPS.map((group) => (
-          <Box key={group} sx={{ mb: 2 }}>
-            <Typography
-              sx={{
-                typography: "s3", fontWeight: 700, color: "text.subtitle",
-                letterSpacing: .4, textTransform: "uppercase", mb: 1,
-              }}
-            >
-              {group}
-            </Typography>
-            <Stack spacing={0.25}>
-              {STEPS.filter((s) => s.group === group).map((s) => {
-                const active = current === s.id;
-                const done = doneById[s.id];
-                return (
-                  <Stack
-                    key={s.id}
-                    direction="row"
-                    alignItems="center"
-                    spacing={1.25}
-                    onClick={() => onGo(s.id)}
-                    sx={{
-                      px: 1.25, py: 0.875, borderRadius: 1,
-                      cursor: "pointer",
-                      // Same selected treatment as the app's left nav
-                      // (nav-section/vertical/nav-item): brand primary at 0.1
-                      // for fill and border, primary.dark for the label. The
-                      // rail used the environment's own accent, so selection
-                      // changed colour depending on which environment you were
-                      // in — two different answers to "what does selected look
-                      // like" on one screen.
-                      // text.primary, not text.secondary: this rail sits
-                      // directly beside the app's left nav, which paints its
-                      // idle items at full strength. Two lists of the same
-                      // kind at two different weights read as one being
-                      // disabled.
-                      color: active ? "primary.dark" : "text.primary",
-                      bgcolor: active ? (t) => alpha(t.palette.primary.main, 0.1) : "transparent",
-                      border: "1px solid",
-                      borderColor: active ? (t) => alpha(t.palette.primary.main, 0.1) : "transparent",
-                      transition: "background-color .15s ease",
-                      "&:hover": { bgcolor: active ? undefined : "action.hover" },
-                    }}
-                  >
-                    <Iconify icon={s.icon} width={17} sx={{ color: active ? "primary.main" : "text.primary", flexShrink: 0 }} />
-                    <Typography sx={{ flex: 1, typography: "s2", fontWeight: active ? 600 : 500, color: "inherit" }}>
-                      {s.label}
-                    </Typography>
-                    {gapsByStep[s.id]?.length > 0 && (
-                      /*
-                        Filled red pencil in a soft red halo — "needs
-                        your input" is now shown on the step that owns
-                        the missing answer, not a separate tab. The
-                        tooltip lists exactly what's missing.
-                      */
-                      <Tooltip
-                        arrow
-                        title={
-                          <Box>
-                            <Typography sx={{ typography: "s3", fontWeight: 700, mb: 0.375 }}>
-                              Needs your input before you can run:
-                            </Typography>
-                            {gapsByStep[s.id].map((g) => (
-                              <Typography key={g.id} sx={{ typography: "s3", opacity: 0.9 }}>
-                                · {g.title}
-                              </Typography>
-                            ))}
-                          </Box>
-                        }
-                      >
-                        <Box
-                          sx={{
-                            display: "grid", placeItems: "center", flexShrink: 0,
-                            minWidth: 16, height: 16, px: "5px",
-                            borderRadius: "8px",
-                            bgcolor: (t) => alpha("#DC2626", t.palette.mode === "dark" ? 0.2 : 0.12),
-                            color: "#DC2626",
-                            typography: "s3", fontWeight: 700, lineHeight: 1,
-                            fontVariantNumeric: "tabular-nums",
-                            fontSize: 10,
-                          }}
-                        >
-                          {gapsByStep[s.id].length}
-                        </Box>
-                      </Tooltip>
-                    )}
-                    {counts[s.id] != null && !done && (
-                      <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{counts[s.id]}</Typography>
-                    )}
-                    {done && (
-                      <Iconify icon="solar:check-circle-bold" width={15} sx={{ color: "#16A34A", flexShrink: 0 }} />
-                    )}
-                  </Stack>
-                );
-              })}
-            </Stack>
+    <Stack direction="row" alignItems="center" spacing={0.75}>
+      <Typography component="span" sx={{ typography: "s2", color: "inherit" }}>{tab.label}</Typography>
+      {count != null && count > 0 && (
+        <Typography component="span" sx={{ typography: "s3", color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
+          {count}
+        </Typography>
+      )}
+      {gaps?.length > 0 && (
+        <Tooltip
+          arrow
+          title={
+            <Box>
+              <Typography sx={{ typography: "s3", fontWeight: 700, mb: 0.375 }}>
+                Needs your input before you can run:
+              </Typography>
+              {gaps.map((g) => (
+                <Typography key={g.id} sx={{ typography: "s3", opacity: 0.9 }}>· {g.title}</Typography>
+              ))}
+            </Box>
+          }
+        >
+          <Box
+            sx={{
+              display: "grid", placeItems: "center", flexShrink: 0,
+              minWidth: 16, height: 16, px: "5px", borderRadius: "8px",
+              bgcolor: (th) => alpha("#DC2626", th.palette.mode === "dark" ? 0.2 : 0.12),
+              color: "#DC2626", typography: "s3", fontWeight: 700, lineHeight: 1,
+              fontVariantNumeric: "tabular-nums", fontSize: 10,
+            }}
+          >
+            {gaps.length}
           </Box>
-        ))}
-      </Box>
-    </Box>
+        </Tooltip>
+      )}
+    </Stack>
   );
 }
-
-SetupRail.propTypes = {
-  current: PropTypes.string,
-  onGo: PropTypes.func,
-  doneById: PropTypes.object,
-  counts: PropTypes.object,
-  gapsByStep: PropTypes.object,
-};
+TabLabel.propTypes = { tab: PropTypes.object, counts: PropTypes.object, gaps: PropTypes.array };
 
 /**
  * Two banners that change how everything below reads:
@@ -626,6 +643,27 @@ SetupRail.propTypes = {
  *                  the reminder because an hour of editing off v1 while
  *                  v3 exists is otherwise silent.
  */
+/* Prototype builder replies for the workspace console. */
+function mockWorkspaceReply(userText) {
+  const t = userText.toLowerCase();
+  if (/drop|remove|cut/.test(t) && /scenario/.test(t)) {
+    return "Dropped the matching scenarios — the Scenarios tab on the right is updated.";
+  }
+  if (/add/.test(t) && /scenario/.test(t)) {
+    return "Added a scenario. You'll see it in the Scenarios tab on the right.";
+  }
+  if (/rule|refund|escalat/.test(t)) {
+    return "Updated the rule. The grader will enforce the new wording on the next run.";
+  }
+  if (/eval|grader|grade/.test(t)) {
+    return "Added that grader on the Evaluations tab — it'll score every scenario on the next run.";
+  }
+  if (/run|fail|last/.test(t)) {
+    return "Pulled that from the latest run — open the Runs tab on the right for the full breakdown.";
+  }
+  return "Applied that to the environment — the panels on the right reflect the change.";
+}
+
 function SystemBanners({ env, envState, patch }) {
   const versions = environmentVersions(env, envState);
   const newest = versions[0];

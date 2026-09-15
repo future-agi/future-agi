@@ -163,30 +163,8 @@ export default function AgentReadReceipt({
   const issueCount = Object.keys(sectionIssues).length;
 
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, bgcolor: "background.default" }}>
-      {/* ── top bar ── */}
-      <Stack
-        direction="row" alignItems="center" spacing={2}
-        sx={{ px: 3, py: 1.75, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
-      >
-        <Tooltip title="Back" arrow>
-          <IconButton size="small" onClick={onBack}>
-            <Iconify icon="solar:alt-arrow-left-linear" width={17} />
-          </IconButton>
-        </Tooltip>
-        <Box flex={1} minWidth={0}>
-          <Typography noWrap sx={{ typography: "s2", color: "text.subtitle", fontFamily: "ui-monospace, Menlo, monospace" }}>
-            {agentRef}
-          </Typography>
-        </Box>
-        {questions.length > 0 && (
-          <Typography sx={{ typography: "s3", color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
-            {resolvedCount + skippedCount} of {questions.length} resolved
-          </Typography>
-        )}
-      </Stack>
-
-      {/* ── warning band — slim strip between top bar and doc body ── */}
+    <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, bgcolor: "background.paper" }}>
+      {/* ── warning band — slim strip above the doc body ── */}
       {issueCount > 0 && (
         <ReaderStatusBand
           issueCount={issueCount}
@@ -195,39 +173,43 @@ export default function AgentReadReceipt({
         />
       )}
 
-      {/* ── document body — centred column, vertically centred when it fits ── */}
-      <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", justifyContent: "center" }}>
-        <Box sx={{ maxWidth: 1120, width: "100%", mx: "auto", px: { xs: 3, md: 4 }, py: 3 }}>
+      {/* ── document body — two columns so the build action never falls below
+            the fold: "what we read" scrolls on the left, the open questions +
+            build stay visible on the right. Collapses to one column when there
+            are no questions, or on small screens. ── */}
+      <Box
+        sx={{
+          flex: 1, minHeight: 0, display: "grid",
+          gridTemplateColumns: questions.length > 0
+            ? { xs: "1fr", lg: "minmax(0, 1.35fr) minmax(0, 1fr)" }
+            : "1fr",
+        }}
+      >
+        <Box sx={{ minWidth: 0, overflowY: "auto", px: { xs: 3, md: 4 }, py: 3 }}>
 
-          {/* Title block — compact single row: title on the left, meta strip on the right */}
+          {/* Title block */}
+          <Box sx={{ mb: 2 }}>
+            <Typography sx={{ typography: "m2", fontWeight: 700 }}>
+              What we read from your agent
+            </Typography>
+            <Typography sx={{ typography: "s2", color: "text.subtitle", mt: 0.25 }}>
+              Every fact below is tagged by how we know it — resolve the open questions on the right before we build.
+            </Typography>
+          </Box>
+
+          {/* Summary stat bar — one glance at what the read produced. A section
+              the reader couldn't complete shows "—" (amber) rather than a count. */}
           <Stack
-            direction={{ xs: "column", md: "row" }}
-            alignItems={{ md: "center" }}
-            spacing={2}
-            sx={{ mb: 2 }}
+            direction="row" alignItems="center" flexWrap="wrap" rowGap={1.25}
+            sx={{ mb: 2.5, px: 2, py: 1.25, borderRadius: 1.5, border: "1px solid", borderColor: "divider", bgcolor: "background.neutral" }}
+            divider={<Box sx={{ width: "1px", height: 18, bgcolor: "divider", mx: 2 }} />}
           >
-            <Box flex={1} minWidth={0}>
-              <Typography sx={{ typography: "m2", fontWeight: 700 }}>
-                What we read from your agent
-              </Typography>
-              <Typography sx={{ typography: "s2", color: "text.subtitle", mt: 0.25 }}>
-                Every fact below is tagged by how we know it. Resolve open questions before we build against them.
-              </Typography>
-            </Box>
-            <Stack
-              direction="row" alignItems="center" spacing={0} divider={<MetaSep />}
-              sx={{ flexWrap: "wrap", rowGap: 0.5 }}
-            >
-              {/* A section the reader couldn't complete shows "—" (amber), not
-                  a count — otherwise the header claimed "Rules 6" while the
-                  Rules section said "No policy.yaml found in the repo". */}
-              <Meta label="Tools" value={sectionIssues.tools ? "—" : counts.tools} tint={sectionIssues.tools ? "#CA8A04" : undefined} />
-              <Meta label="Rules" value={sectionIssues.rules ? "—" : counts.rules} tint={sectionIssues.rules ? "#CA8A04" : undefined} />
-              <Meta label="Data" value={sectionIssues.data ? "—" : counts.data} tint={sectionIssues.data ? "#CA8A04" : undefined} />
-              <Meta label="Behavior" value={sectionIssues.behavior ? "—" : counts.behavior} tint={sectionIssues.behavior ? "#CA8A04" : undefined} />
-              {inferredCount > 0 && <Meta label="Inferred" value={inferredCount} tint="#CA8A04" />}
-              {openCount > 0 && <Meta label="Open" value={openCount} tint="#DC2626" />}
-            </Stack>
+            <StatChip label="Tools" value={sectionIssues.tools ? "—" : counts.tools} tone={sectionIssues.tools ? "amber" : "neutral"} />
+            <StatChip label="Rules" value={sectionIssues.rules ? "—" : counts.rules} tone={sectionIssues.rules ? "amber" : "neutral"} />
+            <StatChip label="Data" value={sectionIssues.data ? "—" : counts.data} tone={sectionIssues.data ? "amber" : "neutral"} />
+            <StatChip label="Behavior" value={sectionIssues.behavior ? "—" : counts.behavior} tone={sectionIssues.behavior ? "amber" : "neutral"} />
+            {inferredCount > 0 && <StatChip label="Inferred" value={inferredCount} tone="amber" />}
+            {openCount > 0 && <StatChip label="Open" value={openCount} tone="red" />}
           </Stack>
 
           {/* Fact sections — 2×2 grid keeps everything above the fold on a laptop */}
@@ -246,10 +228,11 @@ export default function AgentReadReceipt({
               </Grid>
             ))}
           </Grid>
+        </Box>
 
-          {/* Open questions section */}
-          {questions.length > 0 && (
-            <Box sx={{ mt: 2.5 }}>
+        {/* right column — open questions + the build action, kept in view */}
+        {questions.length > 0 && (
+          <Box sx={{ minWidth: 0, overflowY: "auto", px: { xs: 3, md: 4 }, py: 3, borderLeft: { lg: "1px solid" }, borderColor: { lg: "divider" } }}>
               <SectionHead
                 icon="solar:question-circle-linear"
                 title="Open questions"
@@ -293,9 +276,8 @@ export default function AgentReadReceipt({
                 resolvedCount={resolvedCount}
                 skippedCount={skippedCount}
               />
-            </Box>
-          )}
-        </Box>
+          </Box>
+        )}
       </Box>
     </Box>
   );
@@ -357,21 +339,19 @@ BuildFooter.propTypes = {
 
 /* ── metadata strip ───────────────────────────────────────────────────────── */
 
-function Meta({ label, value, tint }) {
+function StatChip({ label, value, tone = "neutral" }) {
+  const color = tone === "red" ? "#DC2626" : tone === "amber" ? "#CA8A04" : null;
   return (
-    <Stack direction="row" alignItems="baseline" spacing={0.75}>
-      <Typography sx={{ typography: "s2", color: tint || "text.primary", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+    <Stack direction="row" alignItems="center" spacing={0.875}>
+      <Box sx={{ width: 7, height: 7, borderRadius: "50%", flexShrink: 0, bgcolor: color || "text.disabled" }} />
+      <Typography sx={{ typography: "s2", fontWeight: 700, color: color || "text.primary", fontVariantNumeric: "tabular-nums" }}>
         {value}
       </Typography>
       <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{label}</Typography>
     </Stack>
   );
 }
-Meta.propTypes = { label: PropTypes.string, value: PropTypes.node, tint: PropTypes.string };
-
-function MetaSep() {
-  return <Box sx={{ width: "1px", height: 14, bgcolor: "divider", mx: 1.5 }} />;
-}
+StatChip.propTypes = { label: PropTypes.string, value: PropTypes.node, tone: PropTypes.oneOf(["neutral", "amber", "red"]) };
 
 /* ── section head + fact table ────────────────────────────────────────────── */
 
@@ -416,59 +396,83 @@ function FactSection({ icon, title, subtitle, count, facts, issue, onRetry }) {
   const isIssued = !!issue;
   const showFacts = !isIssued && facts.length > 0;
   return (
-    <Box>
-      <SectionHead
-        icon={icon}
-        title={title}
-        subtitle={subtitle}
-        count={isIssued ? undefined : count}
-        accent={isIssued ? "#CA8A04" : undefined}
-      />
-      {isIssued ? (
-        <SectionIssue issue={issue} onRetry={onRetry} />
-      ) : showFacts ? (
-        <Stack divider={<Divider />}>
-          {facts.map((f) => (
-            <Stack
-              key={f.name}
-              direction="row" alignItems="center" spacing={1.25}
-              sx={{
-                py: 0.625, px: 0.5,
-                transition: "background-color .1s ease",
-                "&:hover": { bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.03 : 0.02) },
-              }}
-            >
-              <Typography
-                noWrap
+    <Box
+      sx={{
+        height: "100%", display: "flex", flexDirection: "column",
+        border: "1px solid", borderColor: "divider", borderRadius: 1.5, overflow: "hidden",
+      }}
+    >
+      {/* card header */}
+      <Stack
+        direction="row" alignItems="center" spacing={1}
+        sx={{ px: 1.75, py: 1.25, borderBottom: "1px solid", borderColor: "divider" }}
+      >
+        <Box
+          sx={{
+            width: 22, height: 22, borderRadius: 0.75, display: "grid", placeItems: "center", flexShrink: 0,
+            bgcolor: (t) => alpha(isIssued ? "#CA8A04" : t.palette.text.primary, isIssued ? 0.14 : (t.palette.mode === "dark" ? 0.08 : 0.06)),
+            color: isIssued ? "#CA8A04" : "text.secondary",
+          }}
+        >
+          <Iconify icon={icon} width={13} />
+        </Box>
+        <Typography noWrap sx={{ typography: "s2", fontWeight: 700, minWidth: 0 }}>{title}</Typography>
+        {!isIssued && count != null && (
+          <Box sx={{ px: 0.625, height: 16, borderRadius: 0.5, display: "inline-flex", alignItems: "center", flexShrink: 0, bgcolor: (t) => alpha(t.palette.text.primary, 0.08) }}>
+            <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.secondary", fontVariantNumeric: "tabular-nums" }}>{count}</Typography>
+          </Box>
+        )}
+        {subtitle && (
+          <Tooltip arrow title={subtitle}>
+            <Box sx={{ ml: "auto", display: "flex", flexShrink: 0, color: "text.disabled" }}>
+              <Iconify icon="solar:info-circle-linear" width={13} />
+            </Box>
+          </Tooltip>
+        )}
+      </Stack>
+
+      {/* card body */}
+      <Box sx={{ flex: 1, minHeight: 0, px: 1.75, py: isIssued ? 1.5 : 0.25 }}>
+        {isIssued ? (
+          <SectionIssue issue={issue} onRetry={onRetry} />
+        ) : showFacts ? (
+          <Stack divider={<Divider sx={{ borderColor: (t) => alpha(t.palette.divider, 0.6) }} />}>
+            {facts.map((f) => (
+              <Stack
+                key={f.name}
+                direction="row" alignItems="center" spacing={1.25}
                 sx={{
-                  typography: "s2", fontWeight: 500,
-                  fontFamily: "ui-monospace, Menlo, monospace",
-                  flex: 1, minWidth: 0, color: "text.primary",
+                  py: 0.75, mx: -0.75, px: 0.75, borderRadius: 0.75,
+                  transition: "background-color .1s ease",
+                  "&:hover": { bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.04 : 0.03) },
                 }}
               >
-                {f.name}
-              </Typography>
-              {f.warning && (
-                <Tooltip arrow title={f.warning}>
-                  <Box sx={{ display: "flex", alignItems: "center", color: "#CA8A04", flexShrink: 0 }}>
-                    <Iconify icon="solar:danger-triangle-bold" width={13} />
-                  </Box>
-                </Tooltip>
-              )}
-              {f.note && (
-                <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0 }}>
-                  {f.note}
+                <Typography
+                  noWrap
+                  sx={{ typography: "s2", fontWeight: 500, fontFamily: "ui-monospace, Menlo, monospace", flex: 1, minWidth: 0, color: "text.primary" }}
+                >
+                  {f.name}
                 </Typography>
-              )}
-              <OriginChip origin={f.origin} showPath={false} />
-            </Stack>
-          ))}
-        </Stack>
-      ) : (
-        <Typography sx={{ typography: "s3", color: "text.subtitle", py: 1 }}>
-          Nothing read from this dimension.
-        </Typography>
-      )}
+                {f.warning && (
+                  <Tooltip arrow title={f.warning}>
+                    <Box sx={{ display: "flex", alignItems: "center", color: "#CA8A04", flexShrink: 0 }}>
+                      <Iconify icon="solar:danger-triangle-bold" width={13} />
+                    </Box>
+                  </Tooltip>
+                )}
+                {f.note && (
+                  <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0 }}>{f.note}</Typography>
+                )}
+                <OriginChip origin={f.origin} showPath={false} />
+              </Stack>
+            ))}
+          </Stack>
+        ) : (
+          <Typography sx={{ typography: "s3", color: "text.subtitle", py: 1 }}>
+            Nothing read from this dimension.
+          </Typography>
+        )}
+      </Box>
     </Box>
   );
 }
@@ -564,7 +568,7 @@ ReaderStatusBand.propTypes = {
 
 function HardFailPage({ agentRef, reason, onRetry, onChangeSource, onContinueWithDefaults }) {
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, bgcolor: "background.default" }}>
+    <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, bgcolor: "background.paper" }}>
       <Stack
         direction="row" alignItems="center" spacing={2}
         sx={{ px: 3, py: 1.75, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}

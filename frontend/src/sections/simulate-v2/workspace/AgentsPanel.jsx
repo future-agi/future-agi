@@ -136,12 +136,19 @@ export default function AgentsPanel({ env, envState, patch, onGo, buildMode, onB
     if (agentId === "source") {
       if (!source) return;
       const next = mintNextVersion(source, record);
+      const nextVersions = [...(source.versions || []), next];
       patch({
         agent: applyActiveVersion({
           ...source,
-          versions: [...(source.versions || []), next],
+          versions: nextVersions,
           activeVersionId: next.id,
         }),
+        /* Keep the env-level version list (read by the header pill and the
+           Overview agent summary) in step with the source agent's own
+           versions[], so adding v2 here shows v2 everywhere — not just in
+           this drawer. */
+        agentVersions: nextVersions.map(toEnvAgentVersion),
+        activeAgentVersion: next.label,
       });
       /*
         A new source version implicitly re-derives the environment:
@@ -189,6 +196,9 @@ export default function AgentsPanel({ env, envState, patch, onGo, buildMode, onB
       const previous = (source.versions || []).find((v) => v.id === source.activeVersionId);
       patch({
         agent: applyActiveVersion({ ...source, activeVersionId: versionId }),
+        /* Mirror the active pin to the env-level pointer the header and
+           Overview read, so a rollback shows there too. */
+        activeAgentVersion: target?.label,
       });
       if (onBuilderTurn && target) {
         const prevIdx = (source.versions || []).findIndex((v) => v.id === source.activeVersionId);
@@ -1557,6 +1567,18 @@ function normalizeAgentVersions(agent) {
  * the existing stack (`v1` → `v2` → `v3`). Not tied to time so the
  * label reads the same regardless of when the version was minted.
  */
+/* Map a source-agent version record onto the env-level agentVersions shape
+   the header pill + Overview summary read (see _mock/versions.js). */
+function toEnvAgentVersion(v) {
+  return {
+    id: v.id,
+    label: v.label,
+    note: v.note,
+    reach: v.via || v.reach || "endpoint",
+    createdAt: v.connectedAt || v.createdAt || new Date().toISOString(),
+  };
+}
+
 function mintNextVersion(agent, record) {
   const existing = agent.versions || [];
   const nextNumber = existing.length + 1;
