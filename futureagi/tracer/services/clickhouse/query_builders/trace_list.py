@@ -3589,6 +3589,28 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                 if _restrict_scalar_root_population
                 else ""
             )
+            # The roots THIS statement can publish are the ones inside the
+            # slice, tightened to the cursor on a keyset continuation: an
+            # older-direction resume can never publish a root above the
+            # cursor, a newer-direction one never below it. A lane that
+            # declares a witness envelope derives it from those bounds, so its
+            # envelope is the tightest one that still carries every
+            # publishable root's own witness.
+            witness_envelope_fragment, witness_envelope_params = (
+                self._scalar_candidate_witness_envelope(
+                    root_start=(
+                        before_start_time
+                        if before_start_time is not None and direction == "newer"
+                        else slice_start
+                    ),
+                    root_end=(
+                        before_start_time
+                        if before_start_time is not None and direction == "older"
+                        else slice_end
+                    ),
+                )
+            )
+            params.update(witness_envelope_params)
             # All child timestamps and physical versions must participate.
             # No inner LIMIT: truncating raw witnesses could hide an older
             # matching root. Statement limits throw instead of proving absence.
@@ -3597,7 +3619,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             SELECT DISTINCT trace_id
             FROM {self.TABLE}
             PREWHERE {self.project_filter_sql()}
-              {project_version_fragment}
+              {project_version_fragment}{witness_envelope_fragment}
               {root_population}
             WHERE {raw_witness}
         )
@@ -3650,6 +3672,24 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         """Storage-specific necessary trace population; never leaf semantics."""
 
         return ""
+
+    def _scalar_candidate_witness_envelope(
+        self, *, root_start: datetime, root_end: datetime
+    ) -> tuple[str, dict[str, Any]]:
+        """Optional time bound on the candidate witness scan; none by default.
+
+        The shipped contract lets any raw span of a candidate trace carry the
+        value whatever its own start time, so this emits nothing and the
+        witness CTE stays time-unbounded. A lane may declare an envelope
+        around ``[root_start, root_end]`` - the roots the calling statement can
+        publish - which narrows *candidacy*, never membership: the exact
+        latest-state classifier is a separate statement and is unaffected.
+
+        An empty fragment must leave the statement byte-identical, so the
+        fragment carries its own leading newline and indentation.
+        """
+
+        return "", {}
 
     def build_filter_candidate_seed_page(
         self,
