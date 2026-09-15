@@ -171,3 +171,72 @@ class TestAnUnfinishedScanIsNotPersisted:
 
         assert written == 1
         assert filter_already_scanned([trace_id]) == []
+
+    def test_unknown_retains_report_and_actual_version(self, project):
+        from ee.agenthub.trace_scanner.scanner import ScanResult
+
+        trace_id = str(uuid.uuid4())
+        report = {"outcome": {"status": "unknown"}, "findings": []}
+        result = ScanResult(
+            trace_id=trace_id,
+            has_issues=False,
+            outcome="unknown",
+            investigation=report,
+            scan_version="v2-adaptive-1",
+        )
+        assert write_scan_results([result], str(project.id), "v7.2") == 1
+        row = TraceScanResult.objects.get(trace_id=trace_id)
+        assert row.status == TraceScanStatus.COMPLETED
+        assert row.scan_version == "v2-adaptive-1"
+        assert row.meta["outcome"] == "unknown"
+        assert row.meta["investigation"] == report
+
+    def test_issue_write_failure_rolls_back_parent(self, project):
+        from ee.agenthub.trace_scanner.scanner import ScanIssue, ScanResult
+
+        trace_id = str(uuid.uuid4())
+        result = ScanResult(
+            trace_id=trace_id,
+            has_issues=True,
+            issues=[ScanIssue("", "", "", "M", "Wrong recipient")],
+        )
+        with patch(
+            "tracer.models.trace_scan.TraceScanIssue.objects.bulk_create",
+            side_effect=RuntimeError("unavailable"),
+        ):
+            assert write_scan_results([result], str(project.id), "v2-adaptive-1") == 0
+        assert not TraceScanResult.objects.filter(trace_id=trace_id).exists()
+        assert filter_already_scanned([trace_id]) == [trace_id]
+
+    def test_unknown_and_failed_scans_never_enter_success_embedding_input(
+        self, project
+    ):
+        from tracer.queries.scan_clustering import get_trace_input_data
+
+        ids = [str(uuid.uuid4()) for _ in range(5)]
+        states = [
+            ("completed", False, {"outcome": "unknown"}),
+            ("completed", False, {"outcome": "satisfied"}),
+            ("failed", False, {}),
+            ("completed", True, {"outcome": "unknown"}),
+            ("completed", False, {}),  # legacy successful scan
+        ]
+        for tid, (status, issues, meta) in zip(ids, states, strict=True):
+            TraceScanResult.objects.create(
+                trace_id=tid,
+                project=project,
+                status=status,
+                has_issues=issues,
+                meta=meta,
+            )
+        with patch("tracer.queries.scan_clustering.get_reader") as reader:
+            instance = reader.return_value.__enter__.return_value
+            instance.roots_by_trace_ids.return_value = [
+                SimpleNamespace(
+                    trace_id=tid, parent_span_id="", input="request", attrs_string={}
+                )
+                for tid in ids
+            ]
+            result = get_trace_input_data(ids, str(project.id))
+        assert {r.trace_id for r in result} == {ids[1], ids[3], ids[4]}
+        assert {r.trace_id for r in result if not r.has_issues} == {ids[1], ids[4]}

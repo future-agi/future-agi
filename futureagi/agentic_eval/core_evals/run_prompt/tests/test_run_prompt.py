@@ -1372,6 +1372,13 @@ class TestAvailableModels:
         assert "turing_large" in model_names
         assert "protect_toxicity" in model_names
 
+    def test_gemini_3_8_flash_catalog_entries_are_available(self):
+        from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
+
+        model_names = {model["model_name"] for model in AVAILABLE_MODELS}
+
+        assert "vertex_ai/gemini-3.8-flash" in model_names
+
     def test_openai_models_present(self):
         """Test that OpenAI models are present."""
         from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS

@@ -2713,7 +2713,9 @@ def _fetch_events_over_time_with_passing(
             project_id=project_id,
             has_issues=False,
             created_at__gte=since,
+            status="completed",
         )
+        .filter(Q(meta__outcome="satisfied") | ~Q(meta__has_key="outcome"))
         .annotate(bucket=TruncDate("created_at"))
         .values("bucket")
         .annotate(passing=Count("id"))
