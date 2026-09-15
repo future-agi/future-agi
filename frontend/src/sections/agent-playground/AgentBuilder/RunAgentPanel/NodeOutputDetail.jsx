@@ -13,6 +13,8 @@ import { AgGridReact } from "ag-grid-react";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { useGetNodeExecutionDetail } from "src/api/agent-playground/agent-playground";
 import CustomJsonViewer from "src/components/custom-json-viewer/CustomJsonViewer";
+import { formatDuration } from "src/utils/format-time";
+import SvgColor from "src/components/svg-color";
 
 const tryParseJson = (str) => {
   if (typeof str !== "string") return null;
@@ -239,6 +241,24 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
   );
   const hasErrorMessage = !!errorMessage && outputs.length === 0;
   const isPairedMode = inputs.length > 0 && inputs.length === outputs.length;
+
+  const rawDuration =
+    nodeDetail?.duration_seconds ?? nodeDetail?.duration;
+  const isNodeFinished =
+    !isNodeRunning &&
+    nodeStatus !== "skipped" &&
+    nodeStatus !== "idle" &&
+    rawDuration != null &&
+    Number.isFinite(Number(rawDuration)) &&
+    Number(rawDuration) >= 0;
+
+  const formattedDuration = isNodeFinished
+    ? formatDuration(
+        Number(rawDuration) >= 1
+          ? Math.round(Number(rawDuration))
+          : Math.round(Number(rawDuration) * 10) / 10,
+      )
+    : null;
 
   // Map API response to AG Grid row data
   const rowData = useMemo(() => {
@@ -511,7 +531,7 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
           mb: 2,
         }}
       >
-        <Box>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           <Typography
             typography="m3"
             fontWeight="fontWeightMedium"
@@ -519,6 +539,28 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
           >
             Agent flow results
           </Typography>
+          {formattedDuration && (
+            <Box
+              data-testid="node-execution-duration"
+              sx={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 0.5,
+              }}
+            >
+              <SvgColor
+                src="/assets/icons/navbar/ic_new_clock.svg"
+                sx={{ width: 14, height: 14, bgcolor: "text.disabled" }}
+              />
+              <Typography
+                typography="s2"
+                color="text.secondary"
+                fontWeight="fontWeightRegular"
+              >
+                {formattedDuration}
+              </Typography>
+            </Box>
+          )}
         </Box>
 
         <FormControlLabel
