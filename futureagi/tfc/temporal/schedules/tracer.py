@@ -41,13 +41,6 @@ TRACER_SCHEDULES: list[ScheduleConfig] = [
         description="Run evaluations on observation spans",
     ),
     ScheduleConfig(
-        schedule_id="process-external-evals",
-        activity_name="process_external_evals",
-        interval_seconds=30,
-        queue="default",
-        description="Process external evaluation configs",
-    ),
-    ScheduleConfig(
         schedule_id="fetch-observability-logs",
         activity_name="fetch_observability_logs",
         interval_seconds=600,

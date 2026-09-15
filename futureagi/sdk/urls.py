@@ -7,7 +7,6 @@ from sdk.views.analytics import (
 )
 from sdk.views.eval_ci_cd import CICDEvaluationsView
 from sdk.views.evaluations import (
-    ConfigureEvaluationsView,
     GetEvalStructureEvalIdView,
     GetEvalsView,
     StandaloneEvalView,
@@ -31,11 +30,6 @@ urlpatterns = [
                     name="standalone-eval-v2",
                 ),
                 path("get-evals/", GetEvalsView.as_view(), name="get-evals"),
-                path(
-                    "configure-evaluations/",
-                    ConfigureEvaluationsView.as_view(),
-                    name="configure-evaluations",
-                ),
                 path(
                     "evaluate-pipeline/",
                     CICDEvaluationsView.as_view(),

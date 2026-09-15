@@ -12,11 +12,6 @@ from model_hub.models.evaluation import Evaluation
 from model_hub.models.run_prompt import PromptEvalConfig, PromptTemplate
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 from tracer.models.custom_eval_config import CustomEvalConfig, InlineEval
-from tracer.models.external_eval_config import (
-    ExternalEvalConfig,
-    PlatformChoices,
-    StatusChoices,
-)
 from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.models.project import Project
 from tracer.models.trace import Trace
@@ -123,22 +118,6 @@ def _create_related_rows(template, organization, workspace, user):
         filters={},
     )
 
-    external_config = ExternalEvalConfig.no_workspace_objects.create(
-        organization=organization,
-        workspace=workspace,
-        eval_template=template,
-        name=f"Eval action external config {uuid.uuid4()}",
-        mapping={"response": "response"},
-        model="turing_large",
-        platform=PlatformChoices.LANGFUSE.value,
-        credentials={
-            "langfuse_secret_key": "secret",
-            "langfuse_public_key": "public",
-            "langfuse_host": "https://example.test",
-        },
-        status=StatusChoices.PENDING.value,
-    )
-
     evaluation = Evaluation.no_workspace_objects.create(
         user=user,
         organization=organization,
@@ -195,7 +174,6 @@ def _create_related_rows(template, organization, workspace, user):
         "metric": metric,
         "prompt_config": prompt_config,
         "custom_config": custom_config,
-        "external_config": external_config,
         "inline_eval": inline_eval,
         "eval_logger": eval_logger,
         "api_log": api_log,
@@ -274,7 +252,6 @@ def test_legacy_delete_eval_template_soft_deletes_related_rows(
     _assert_soft_deleted(UserEvalMetric, related["metric"])
     _assert_soft_deleted(PromptEvalConfig, related["prompt_config"])
     _assert_soft_deleted(CustomEvalConfig, related["custom_config"])
-    _assert_soft_deleted(ExternalEvalConfig, related["external_config"])
     _assert_soft_deleted(InlineEval, related["inline_eval"])
     _assert_soft_deleted(EvalLogger, related["eval_logger"])
     if related["api_log"] is not None:
