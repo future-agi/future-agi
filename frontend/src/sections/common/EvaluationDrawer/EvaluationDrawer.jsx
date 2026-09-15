@@ -77,6 +77,7 @@ const EvaluationDrawerChild = ({
   const [confirmRunEvaluationsOpen, setConfirmRunEvaluationsOpen] =
     useState(false);
   const [evalPickerOpen, setEvalPickerOpen] = useState(false);
+  const [addedEvalNames, setAddedEvalNames] = useState(new Set());
   // When editing an existing eval, pre-select it so the picker opens at config step
   const [editingEval, setEditingEval] = useState(null);
 
@@ -368,6 +369,7 @@ const EvaluationDrawerChild = ({
                     evals={SavedEvals}
                     allColumns={allColumns}
                     onClose={onClose}
+                    autoSelectedNames={addedEvalNames}
                     disableDelete={
                       module === "experiment" &&
                       Array.isArray(SavedEvals) &&
@@ -760,6 +762,9 @@ const EvaluationDrawerChild = ({
                 });
               }
               refreshGrid?.(null, true);
+              if (evalConfig.name) {
+                setAddedEvalNames((prev) => new Set([...prev, evalConfig.name]));
+              }
               setEvalPickerOpen(false);
               setVisibleSection("list");
             } catch (err) {
@@ -777,7 +782,11 @@ const EvaluationDrawerChild = ({
           }
           // await so errors propagate to EvalPickerDrawer's handleSaveEval
           // catch block — keeps the drawer open on failure.
+          const addedName = payload.name;
           await handleRun(payload, () => {
+            if (addedName) {
+              setAddedEvalNames((prev) => new Set([...prev, addedName]));
+            }
             setEvalPickerOpen(false);
             setVisibleSection("list");
           });
