@@ -14,14 +14,16 @@ under a shared deadline/cap before it is returned.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable, Hashable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, TypeVar
 
 from tracer.models.eval_task import RowType
 from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.services.clickhouse.read_budget import (
     is_clickhouse_query_error,
+    is_clickhouse_query_size_error,
     is_read_budget_error,
 )
 from tracer.services.clickhouse.v2.id_remap_sql import (
@@ -33,6 +35,9 @@ from tracer.services.clickhouse.v2.id_remap_sql import (
 _MAX_PUBLIC_CANDIDATES = 10_000
 _MAX_QUERY_ATTEMPTS = 128
 _SAMPLE_CHUNK = 1_000
+# Three identity IN lists must fit ClickHouse's default 256 KiB parser cap.
+_SPAN_IDENTITY_BATCH_SIZE = 1_000
+_CANDIDATE_ID_BATCH_SIZE = 1_000
 _RELATION_PAGE_SIZE = 200
 _MAX_STATEMENT_TIMEOUT_MS = 30_000
 _READ_SETTINGS = {
@@ -43,6 +48,9 @@ _READ_SETTINGS = {
     "read_overflow_mode": "throw",
     "timeout_overflow_mode": "throw",
 }
+
+_BatchInput = TypeVar("_BatchInput")
+_BatchResult = TypeVar("_BatchResult", bound=Hashable)
 
 
 class ContinuousCandidateReadError(RuntimeError):
@@ -415,8 +423,54 @@ def _expand_changed_span_identities(
     identities: tuple[tuple[str, str, int], ...],
     budget: _ReadBudget,
 ) -> list[tuple[str, str, str]]:
-    if not identities:
-        return []
+    return _read_candidate_batches(
+        identities,
+        lambda batch: _expand_changed_span_identity_batch(
+            analytics, project_id=project_id, identities=batch, budget=budget
+        ),
+        batch_size=_SPAN_IDENTITY_BATCH_SIZE,
+    )
+
+
+def _read_candidate_batches(
+    values: Sequence[_BatchInput],
+    read_batch: Callable[[tuple[_BatchInput, ...]], Iterable[_BatchResult]],
+    *,
+    batch_size: int,
+) -> list[_BatchResult]:
+    # Buffer the complete union before exposing candidates to reconciliation.
+    # Multiple inputs can map to the same public result across batches. Keep
+    # SELECT DISTINCT semantics and the global cap, including after splitting.
+    pending = [
+        tuple(values[offset : offset + batch_size])
+        for offset in reversed(range(0, len(values), batch_size))
+    ]
+    affected: dict[_BatchResult, None] = {}
+    while pending:
+        batch = pending.pop()
+        try:
+            rows = read_batch(batch)
+        except Exception as exc:
+            # Nonstandard/escaped IDs can exceed the cap even in a small batch.
+            # Retry only the canonical size error, sharing the original budget.
+            if len(batch) <= 1 or not is_clickhouse_query_size_error(exc):
+                raise
+            midpoint = len(batch) // 2
+            pending.extend((batch[midpoint:], batch[:midpoint]))
+            continue
+        affected.update(dict.fromkeys(rows))
+        if len(affected) > _MAX_PUBLIC_CANDIDATES:
+            raise ContinuousCandidateOverflow("continuous candidate cap exceeded")
+    return list(affected)
+
+
+def _expand_changed_span_identity_batch(
+    analytics,
+    *,
+    project_id: str,
+    identities: tuple[tuple[str, str, int], ...],
+    budget: _ReadBudget,
+) -> list[tuple[str, str, str]]:
     rows = _execute(
         analytics,
         """
@@ -612,6 +666,24 @@ def _expand_relation_ref_page(
     refs: list[tuple[str, str, str]],
     budget: _ReadBudget,
 ) -> list[tuple[str, str, str]]:
+    # Eval/annotation callers already page 200 refs, but session remaps can
+    # supply the entire 10,000-ID window here. Bound every caller's SQL.
+    return _read_candidate_batches(
+        refs,
+        lambda batch: _expand_relation_ref_batch(
+            analytics, project_id=project_id, refs=batch, budget=budget
+        ),
+        batch_size=_RELATION_PAGE_SIZE,
+    )
+
+
+def _expand_relation_ref_batch(
+    analytics,
+    *,
+    project_id: str,
+    refs: tuple[tuple[str, str, str], ...],
+    budget: _ReadBudget,
+) -> list[tuple[str, str, str]]:
     if not refs:
         return []
     trace_ids = tuple(dict.fromkeys(row[0] for row in refs if row[0]))
@@ -771,41 +843,46 @@ def _expand_end_user_ids(
     end_user_ids: tuple[str, ...],
     budget: _ReadBudget,
 ) -> list[tuple[str, str, str]]:
-    if not end_user_ids:
-        return []
-    affected: list[tuple[str, str, str]] = []
-    for offset in range(0, len(end_user_ids), _RELATION_PAGE_SIZE):
-        ids = end_user_ids[offset : offset + _RELATION_PAGE_SIZE]
-        rows = _execute(
-            analytics,
-            """
-            SELECT DISTINCT
-                trace_id,
-                id,
-                toString(ifNull(trace_session_id, toUUID(%(nil_uuid)s))) AS session_id
-            FROM spans
-            PREWHERE project_id = toUUID(%(project_id)s)
-              AND end_user_id IN %(candidate_end_user_ids)s
-            LIMIT %(candidate_limit)s
-            """,
-            {
-                "project_id": project_id,
-                "nil_uuid": NIL_UUID,
-                "candidate_end_user_ids": ids,
-                "candidate_limit": _MAX_PUBLIC_CANDIDATES + 1,
-            },
-            budget,
-        )
-        _raise_if_overflow(rows)
-        affected.extend(
-            (str(row["trace_id"]), str(row["id"]), str(row["session_id"]))
-            for row in rows
-        )
-        _bounded_unique(
-            f"{trace_id}\x00{span_id}\x00{session_id}"
-            for trace_id, span_id, session_id in affected
-        )
-    return list(dict.fromkeys(affected))
+    return _read_candidate_batches(
+        end_user_ids,
+        lambda batch: _expand_end_user_id_batch(
+            analytics, project_id=project_id, end_user_ids=batch, budget=budget
+        ),
+        batch_size=_RELATION_PAGE_SIZE,
+    )
+
+
+def _expand_end_user_id_batch(
+    analytics,
+    *,
+    project_id: str,
+    end_user_ids: tuple[str, ...],
+    budget: _ReadBudget,
+) -> list[tuple[str, str, str]]:
+    rows = _execute(
+        analytics,
+        """
+        SELECT DISTINCT
+            trace_id,
+            id,
+            toString(ifNull(trace_session_id, toUUID(%(nil_uuid)s))) AS session_id
+        FROM spans
+        PREWHERE project_id = toUUID(%(project_id)s)
+          AND end_user_id IN %(candidate_end_user_ids)s
+        LIMIT %(candidate_limit)s
+        """,
+        {
+            "project_id": project_id,
+            "nil_uuid": NIL_UUID,
+            "candidate_end_user_ids": end_user_ids,
+            "candidate_limit": _MAX_PUBLIC_CANDIDATES + 1,
+        },
+        budget,
+    )
+    _raise_if_overflow(rows)
+    return [
+        (str(row["trace_id"]), str(row["id"]), str(row["session_id"])) for row in rows
+    ]
 
 
 def _resolve_session_ids(
@@ -814,8 +891,21 @@ def _resolve_session_ids(
     *,
     budget: _ReadBudget,
 ) -> tuple[str, ...]:
-    if not raw_ids:
-        return ()
+    return _bounded_unique(
+        _read_candidate_batches(
+            raw_ids,
+            lambda batch: _resolve_session_id_batch(analytics, batch, budget=budget),
+            batch_size=_CANDIDATE_ID_BATCH_SIZE,
+        )
+    )
+
+
+def _resolve_session_id_batch(
+    analytics,
+    raw_ids: tuple[str, ...],
+    *,
+    budget: _ReadBudget,
+) -> tuple[str, ...]:
     placeholders = ", ".join(
         f"toUUID(%(session_id_{index})s)" for index in range(len(raw_ids))
     )
@@ -848,8 +938,24 @@ def _read_root_ids_for_traces(
     trace_ids: tuple[str, ...],
     budget: _ReadBudget,
 ) -> tuple[str, ...]:
-    if not trace_ids:
-        return ()
+    return _bounded_unique(
+        _read_candidate_batches(
+            trace_ids,
+            lambda batch: _read_root_id_batch(
+                analytics, project_id=project_id, trace_ids=batch, budget=budget
+            ),
+            batch_size=_CANDIDATE_ID_BATCH_SIZE,
+        )
+    )
+
+
+def _read_root_id_batch(
+    analytics,
+    *,
+    project_id: str,
+    trace_ids: tuple[str, ...],
+    budget: _ReadBudget,
+) -> tuple[str, ...]:
     rows = _execute(
         analytics,
         """
@@ -884,33 +990,46 @@ def _sample_ids(
         return unique_ids
     if sampling_rate <= 0 or not unique_ids:
         return ()
-    sampled: list[str] = []
-    for offset in range(0, len(unique_ids), _SAMPLE_CHUNK):
-        chunk = unique_ids[offset : offset + _SAMPLE_CHUNK]
-        placeholders = ", ".join(
-            f"%(sample_id_{index})s" for index in range(len(chunk))
+    return _bounded_unique(
+        _read_candidate_batches(
+            unique_ids,
+            lambda batch: _sample_id_batch(
+                analytics, batch, salt=salt, sampling_rate=sampling_rate, budget=budget
+            ),
+            batch_size=_SAMPLE_CHUNK,
         )
-        params: dict[str, Any] = {
-            f"sample_id_{index}": value for index, value in enumerate(chunk)
-        }
-        params.update({"sampling_salt": salt, "sampling_rate": sampling_rate})
-        rows = _execute(
-            analytics,
-            f"""
-            SELECT row_id
-            FROM (
-                SELECT arrayJoin([{placeholders}]) AS row_id
-            )
-            WHERE modulo(
-                cityHash64(%(sampling_salt)s, toString(row_id)), 100
-            ) < %(sampling_rate)s
-            ORDER BY row_id
-            """,
-            params,
-            budget,
+    )
+
+
+def _sample_id_batch(
+    analytics,
+    ids: tuple[str, ...],
+    *,
+    salt: str,
+    sampling_rate: float,
+    budget: _ReadBudget,
+) -> tuple[str, ...]:
+    placeholders = ", ".join(f"%(sample_id_{index})s" for index in range(len(ids)))
+    params: dict[str, Any] = {
+        f"sample_id_{index}": value for index, value in enumerate(ids)
+    }
+    params.update({"sampling_salt": salt, "sampling_rate": sampling_rate})
+    rows = _execute(
+        analytics,
+        f"""
+        SELECT row_id
+        FROM (
+            SELECT arrayJoin([{placeholders}]) AS row_id
         )
-        sampled.extend(str(row["row_id"]) for row in rows)
-    return tuple(sorted(dict.fromkeys(sampled)))
+        WHERE modulo(
+            cityHash64(%(sampling_salt)s, toString(row_id)), 100
+        ) < %(sampling_rate)s
+        ORDER BY row_id
+        """,
+        params,
+        budget,
+    )
+    return tuple(str(row["row_id"]) for row in rows)
 
 
 def _trigger_domains(filters: list[dict[str, Any]]) -> tuple[bool, bool]:
