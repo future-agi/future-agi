@@ -2,7 +2,6 @@
 
 import json
 import uuid
-from unittest.mock import patch
 
 import pytest
 from rest_framework import status
@@ -533,24 +532,9 @@ class TestTestExecutionOptimiserAnalysisView:
         assert result["last_updated"] is not None
         # last_updated is the run.updated_at isoformat
         run.refresh_from_db()
-        assert result["last_updated"].startswith(run.updated_at.isoformat()[:19])
-
-    @patch("simulate.utils.agent_optimiser._check_analysis_usage")
-    def test_optimiser_analysis_read_does_not_create_or_dispatch(
-        self, mock_check_usage, auth_client, test_execution
-    ):
-        response = auth_client.get(self.URL_TEMPLATE.format(test_execution.id))
-
-        assert response.status_code == status.HTTP_200_OK
-        assert response.json()["result"] == {
-            "response": None,
-            "status": "completed",
-            "message": "No optimiser runs found. Trigger a refresh to start analysis.",
-        }
-        test_execution.refresh_from_db()
-        assert test_execution.agent_optimiser_id is None
-        assert not AgentOptimiserRun.objects.exists()
-        mock_check_usage.assert_not_called()
+        assert result["last_updated"].startswith(
+            run.updated_at.isoformat()[:19]
+        )
 
     def test_optimiser_analysis_other_workspace_returns_404(
         self, auth_client, organization, user, agent_definition, simulator_agent
@@ -636,7 +620,9 @@ class TestRunTestEvalSummaryView:
             100.0, abs=0.01
         )
         # te2 scores 1.0 + 0.9 -> avg 95.0
-        assert templates_by_type["score"]["total_avg"] == pytest.approx(95.0, abs=0.01)
+        assert templates_by_type["score"]["total_avg"] == pytest.approx(
+            95.0, abs=0.01
+        )
 
     def test_eval_summary_no_eval_configs_returns_empty_list(
         self, auth_client, run_test

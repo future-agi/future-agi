@@ -672,7 +672,6 @@ export default function HarnessDetail() {
                       ["Text simulation tokens", "text_sim_tokens"],
                       ["Voice simulation minutes", "voice_sim_minutes"],
                       ["AI credits", "ai_credits"],
-                      ["Sandbox seconds", "sandbox_seconds"],
                     ].map(([label, key]) => (
                       <Stack
                         key={key}

@@ -1,8 +1,5 @@
-from typing import Any
-
 import structlog
 
-from tfc.ee_loader import has_ee
 from tfc.ee_stub import _ee_stub
 
 try:
@@ -28,21 +25,6 @@ from simulate.utils.eval_explaination_summary import (
 from simulate.utils.test_execution import calculate_aggregate_metrics
 
 logger = structlog.get_logger(__name__)
-
-
-def _check_analysis_usage(organization_id: str) -> Any | None:
-    if not has_ee("ee.usage"):
-        return None
-    from ee.usage.schemas.event_types import BillingEventType
-    from ee.usage.services.metering import check_usage
-
-    return check_usage(organization_id, BillingEventType.TRACE_ERROR_ANALYSIS)
-
-
-class AnalysisUsageDenied(Exception):
-    def __init__(self, check_result: Any) -> None:
-        self.check_result = check_result
-        super().__init__(check_result.reason or "Usage limit exceeded")
 
 
 def _resolve_simulation_type(
@@ -627,15 +609,31 @@ def get_or_create_optimiser_for_test_execution(
     return optimiser
 
 
-def get_latest_optimiser_result(optimiser: AgentOptimiser | None) -> dict:
-    """Return the latest stored optimiser result without starting analysis."""
-    latest_run = optimiser.latest_run if optimiser else None
+def get_latest_optimiser_result(
+    optimiser: AgentOptimiser, test_execution: TestExecution
+) -> dict:
+    """
+    Get the latest optimiser run result.
+
+    Args:
+        optimiser: AgentOptimiser instance
+        test_execution: TestExecution instance
+    Returns:
+        dict with response data including status and result
+    """
+    latest_run = optimiser.latest_run
+
     if not latest_run:
-        return {
-            "response": None,
-            "status": "completed",
-            "message": "No optimiser runs found. Trigger a refresh to start analysis.",
-        }
+        run = create_optimiser_run_for_test_execution(test_execution, optimiser)
+
+        if not run:
+            return {
+                "response": None,
+                "status": "completed",
+                "message": "No optimiser runs found. Trigger a refresh to start analysis.",
+            }
+
+        latest_run = run
 
     return {
         "response": latest_run.result,
@@ -657,9 +655,6 @@ def create_optimiser_run_for_test_execution(
     Returns:
         AgentOptimiserRun instance or None if input data couldn't be prepared
     """
-    usage_check = _check_analysis_usage(str(test_execution.run_test.organization_id))
-    if usage_check is not None and not usage_check.allowed:
-        raise AnalysisUsageDenied(usage_check)
     input_data = prepare_simulation_analysis_input(str(test_execution.id))
 
     if not input_data:
@@ -1104,7 +1099,9 @@ def get_full_test_execution_data(test_execution_id: str) -> dict | None:
             test_execution.agent_definition_id, test_execution.agent_version_id
         )
         if agent_prompt is None:
-            agent_prompt = _get_prompt_from_run_test(test_execution.run_test)
+            agent_prompt = _get_prompt_from_run_test(
+                test_execution.run_test
+            )
         call_executions = get_call_executions_with_details(test_execution_id)
 
         return {

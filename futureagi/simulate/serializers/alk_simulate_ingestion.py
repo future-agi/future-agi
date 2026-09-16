@@ -84,32 +84,6 @@ class ALKSimulateResultSerializer(serializers.Serializer):
             return value
         return value
 
-    def validate_call_metadata(self, value):
-        if value is None:
-            return value
-        if not isinstance(value, dict):
-            raise serializers.ValidationError("call_metadata must be a dict")
-        usage = value.get("simulator_usage")
-        if usage is None:
-            return value
-        if not isinstance(usage, dict):
-            raise serializers.ValidationError("simulator_usage must be a dict")
-        if usage.get("funding") not in {"platform", "customer"}:
-            raise serializers.ValidationError(
-                "simulator_usage.funding must be platform or customer"
-            )
-        for field in ("input_tokens", "output_tokens", "cached_input_tokens"):
-            tokens = usage.get(field, 0)
-            if isinstance(tokens, bool) or not isinstance(tokens, int) or tokens < 0:
-                raise serializers.ValidationError(
-                    f"simulator_usage.{field} must be a non-negative integer"
-                )
-        if "infra_failed" in usage and not isinstance(usage["infra_failed"], bool):
-            raise serializers.ValidationError(
-                "simulator_usage.infra_failed must be a boolean"
-            )
-        return value
-
 
 class ALKSimulateResultOutcomeSerializer(serializers.Serializer):
     call_execution_id = serializers.UUIDField()

@@ -692,9 +692,6 @@ class DaytonaHarnessProvider:
                     "and scenarios.",
                     status_code=409,
                 )
-            from simulate.services.harness_usage import require_harness_run
-
-            require_harness_run(job)
 
             payload = copy.deepcopy(job.payload)
             # The indexed column is authoritative. This also repairs jobs created before chat

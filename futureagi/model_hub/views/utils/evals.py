@@ -52,44 +52,6 @@ def _canonical_playground_output(value, response, template, api_call_log_row):
     return payload
 
 
-_PLATFORM_MANAGED_EVALUATOR_MODELS = frozenset(
-    {
-        ModelChoices.TURING_LARGE.value,
-        ModelChoices.TURING_SMALL.value,
-        ModelChoices.TURING_FLASH.value,
-    }
-)
-
-_PLATFORM_MANAGED_AGENT_MODELS = _PLATFORM_MANAGED_EVALUATOR_MODELS | frozenset(
-    {
-        ModelChoices.PROTECT.value,
-        ModelChoices.PROTECT_FLASH.value,
-    }
-)
-
-
-def _simulation_evaluator_is_managed(template, model: str | None) -> bool:
-    """Match the evaluator factory's actual credential-resolution branches.
-
-    Simulation code/heuristic evaluators are local. Custom prompt judges using
-    a non-Turing model resolve an organization API key in
-    ``prepare_eval_config`` and are BYOK. Agent evaluators likewise use customer
-    credentials for non-Turing/Protect models.
-    """
-    template_config = template.config if isinstance(template.config, dict) else {}
-    eval_type_id = template_config.get("eval_type_id", "")
-    eval_type = getattr(template, "eval_type", "")
-    if eval_type == "code" or eval_type_id == "CustomCodeEval":
-        return False
-    if eval_type == "agent" or eval_type_id == "AgentEvaluator":
-        return model in _PLATFORM_MANAGED_AGENT_MODELS
-    if eval_type_id in FUTUREAGI_EVAL_TYPES:
-        return True
-    if eval_type_id == "CustomPromptEvaluator" or eval_type == "llm":
-        return model in _PLATFORM_MANAGED_EVALUATOR_MODELS
-    return False
-
-
 def run_eval_func(
     config,
     mappings,
@@ -97,14 +59,8 @@ def run_eval_func(
     org,
     model=ModelChoices.TURING_LARGE.value,
     *args,
-    billing_event_id: str | None = None,
-    billing_test_execution_id: str | None = None,
-    billing_call_execution_id: str | None = None,
     **kwargs,
 ):
-    bill_evaluator = billing_event_id is None or _simulation_evaluator_is_managed(
-        template, model
-    )
     api_call_log_row = None
     try:
         # Agent-type evals need the ee/ AgentEvaluator. Gate via the
@@ -340,7 +296,7 @@ def run_eval_func(
         except ImportError:
             check_usage = None
 
-        if bill_evaluator and check_usage is not None:
+        if check_usage is not None:
             usage_check = check_usage(str(org.id), api_call_type)
             if not usage_check.allowed:
                 if UsageLimitExceeded is not None:
@@ -348,7 +304,7 @@ def run_eval_func(
                 else:
                     raise ValueError(str(usage_check))
 
-        if bill_evaluator and log_and_deduct_cost_for_api_request is not None:
+        if log_and_deduct_cost_for_api_request is not None:
             api_call_log_row = log_and_deduct_cost_for_api_request(
                 organization=org,
                 api_call_type=api_call_type,
@@ -568,9 +524,9 @@ def run_eval_func(
                 and UsageEvent is not None
                 and BillingEventType is not None
             ):
+
                 emit(
                     UsageEvent(
-                        event_id=billing_event_id or str(uuid.uuid4()),
                         org_id=str(org.id),
                         event_type=api_call_type,
                         amount=credits,
@@ -578,16 +534,6 @@ def run_eval_func(
                             "source": source,
                             "source_id": str(template.id),
                             "raw_cost_usd": str(actual_cost),
-                            **(
-                                {"test_execution_id": billing_test_execution_id}
-                                if billing_test_execution_id
-                                else {}
-                            ),
-                            **(
-                                {"call_execution_id": billing_call_execution_id}
-                                if billing_call_execution_id
-                                else {}
-                            ),
                             **cost_properties,
                             **token_usage_properties(_token_usage),
                         },

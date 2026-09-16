@@ -210,7 +210,6 @@ describe("HarnessDetail run checklist", () => {
         text_sim_tokens: 1250,
         voice_sim_minutes: 0.25,
         ai_credits: 3,
-        sandbox_seconds: 45,
       },
     };
     getHarnessJob.mockResolvedValue(recovered);

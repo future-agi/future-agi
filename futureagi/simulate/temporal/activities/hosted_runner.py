@@ -434,9 +434,6 @@ def _child_environment(job: dict[str, Any]) -> dict[str, str]:
     # leak without that breakage risk. TODO: tighten to an allowlist once the
     # child's required env is enumerated.
     env = {k: v for k, v in os.environ.items() if not _is_backend_only_secret(k)}
-    # This worker injects the simulator credentials. Customer provider refs below belong to
-    # the target under test and never change who funded the simulator model calls.
-    env["ALK_SIMULATOR_FUNDING"] = "platform"
     # Deny every CUSTOMER-provider secret key by its EXACT name — derived
     # from the same profile table as the hoisted customer-key raise in
     # _resolve_voice_secret_env, so a new provider with an api_key_env is

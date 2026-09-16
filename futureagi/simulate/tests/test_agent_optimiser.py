@@ -12,8 +12,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 from model_hub.models.evals_metric import EvalTemplate
 from simulate.models import (
-    AgentOptimiser,
-    AgentOptimiserRun,
     CallExecution,
     RunTest,
     Scenarios,
@@ -34,7 +32,6 @@ from simulate.utils.agent_optimiser import (
     get_or_create_optimiser_for_test_execution,
     prepare_simulation_analysis_input,
 )
-from simulate.tasks.agent_optimiser_tasks import execute_optimiser_run
 
 
 class TestResolveSimulationType:
@@ -75,11 +72,7 @@ class TestBuildChatAggregateMetrics:
         assert _build_chat_aggregate_metrics([]) == {}
 
     def test_skips_voice_calls(self):
-        calls = [
-            MagicMock(
-                simulation_call_type="voice", conversation_metrics_data={"latency": 100}
-            )
-        ]
+        calls = [MagicMock(simulation_call_type="voice", conversation_metrics_data={"latency": 100})]
         assert _build_chat_aggregate_metrics(calls) == {}
 
     def test_averages_metrics(self):
@@ -260,75 +253,24 @@ class TestGetLatestOptimiserResult:
         run.status = "completed"
         run.updated_at.isoformat.return_value = "2024-01-01T00:00:00"
         optimiser.latest_run = run
+        te = MagicMock()
 
-        result = get_latest_optimiser_result(optimiser)
+        result = get_latest_optimiser_result(optimiser, te)
         assert result["response"] == {"agent_level": {}}
 
-    def test_returns_empty_result_without_creating_run(self):
+    @patch("simulate.utils.agent_optimiser.create_optimiser_run_for_test_execution")
+    def test_creates_run_when_none(self, mock_create):
         optimiser = MagicMock()
         optimiser.latest_run = None
+        te = MagicMock()
+        mock_run = MagicMock()
+        mock_run.result = None
+        mock_run.status = "pending"
+        mock_run.updated_at.isoformat.return_value = "2024-01-01T00:00:00"
+        mock_create.return_value = mock_run
 
-        result = get_latest_optimiser_result(optimiser)
-
-        assert result == {
-            "response": None,
-            "status": "completed",
-            "message": "No optimiser runs found. Trigger a refresh to start analysis.",
-        }
-
-
-@pytest.mark.integration
-@pytest.mark.django_db(transaction=True)
-def test_execute_optimiser_run_emits_one_stable_event_without_reanalysis(
-    organization, workspace
-):
-    run_test = RunTest.objects.create(
-        name="Metered analysis",
-        organization=organization,
-        workspace=workspace,
-    )
-    optimiser = AgentOptimiser.objects.create(
-        name="Metered optimiser",
-        configuration={"type": "simulation_analysis"},
-    )
-    test_execution = TestExecution.objects.create(
-        run_test=run_test,
-        agent_optimiser=optimiser,
-        status=TestExecution.ExecutionStatus.COMPLETED,
-    )
-    optimiser_run = AgentOptimiserRun.objects.create(
-        agent_optimiser=optimiser,
-        input_data={"test_execution_id": str(test_execution.id)},
-    )
-
-    with (
-        patch(
-            "simulate.tasks.agent_optimiser_tasks.execute_simulation_analysis",
-            return_value={"insights": ["done"]},
-        ) as mock_analyse,
-        patch("simulate.tasks.agent_optimiser_tasks._emit_analysis_usage") as mock_emit,
-    ):
-        result = execute_optimiser_run.run_sync(str(optimiser_run.id))
-        retry_result = execute_optimiser_run.run_sync(str(optimiser_run.id))
-        first_event = mock_emit.call_args_list[0].args[0]
-        retry_event = mock_emit.call_args_list[1].args[0]
-
-    assert result["result"] == {"insights": ["done"]}
-    assert retry_result["result"] == result["result"]
-    mock_analyse.assert_called_once()
-    assert mock_emit.call_count == 2
-    assert first_event.event_id == str(
-        uuid.uuid5(uuid.NAMESPACE_URL, str(optimiser_run.id))
-    )
-    assert retry_event.event_id == first_event.event_id
-    assert first_event.amount == retry_event.amount == 1
-    assert first_event.properties == {
-        "source": "fix_my_agent",
-        "source_id": str(test_execution.id),
-        "workspace_id": str(workspace.id),
-        "run_id": str(optimiser_run.id),
-        "run_test_id": str(run_test.id),
-    }
+        result = get_latest_optimiser_result(optimiser, te)
+        assert result["status"] == "pending"
 
 
 class TestPrepareSimulationAnalysisInput:
@@ -429,8 +371,8 @@ class TestGetFullTestExecutionData:
     @patch("simulate.utils.agent_optimiser.TestExecution")
     def test_exception_returns_none(self, mock_te):
         mock_te.DoesNotExist = self._DNE
-        mock_te.objects.select_related.return_value.get.side_effect = RuntimeError(
-            "failure"
+        mock_te.objects.select_related.return_value.get.side_effect = (
+            RuntimeError("failure")
         )
         assert get_full_test_execution_data(str(uuid.uuid4())) is None
 

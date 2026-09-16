@@ -77,7 +77,8 @@ def _leased_room_run_seconds(case_count: int, max_seconds: float) -> float:
     outer deadline.
     """
     return (
-        case_count * (max_seconds + _leased_overhead_seconds()) + _BASE_CLEANUP_SECONDS
+        case_count * (max_seconds + _leased_overhead_seconds())
+        + _BASE_CLEANUP_SECONDS
     )
 
 
@@ -262,25 +263,6 @@ def hosted_runner_supports(agent_definition, agent_version=None) -> bool:
     return column not in _HOSTED_UNSUPPORTED_PROVIDERS
 
 
-def _admit_hosted_usage(organization_id, mode: str) -> None:
-    """Apply the standard billing admission before assembling any run cases."""
-    try:
-        from ee.usage.exceptions import UsageLimitExceeded
-        from ee.usage.schemas.event_types import BillingEventType
-        from ee.usage.services.metering import check_usage
-    except ImportError:
-        return
-
-    event_type = (
-        BillingEventType.TEXT_CALL
-        if mode == _CHAT_MODE
-        else BillingEventType.VOICE_CALL
-    )
-    usage_check = check_usage(str(organization_id), event_type.value)
-    if not usage_check.allowed:
-        raise UsageLimitExceeded(usage_check)
-
-
 def build_start_runner_job(
     *,
     test_execution_id: str,
@@ -304,8 +286,6 @@ def build_start_runner_job(
     agent_definition = run_test.agent_definition
     if agent_definition is None:
         raise HostedRunnerBuildError("run test has no agent definition")
-
-    _admit_hosted_usage(run_test.organization_id, mode)
 
     ordered_ids = [str(sid) for sid in (scenario_ids or test_execution.scenario_ids)]
     scenarios = _load_scenarios(ordered_ids)

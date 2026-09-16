@@ -79,12 +79,7 @@ class HostedHarnessAttemptViewSet(viewsets.ViewSet):
     def usage(self, request, pk=None):
         payload = request.validated_data
         if payload["operation"] == "check":
-            decision = check_harness_usage(
-                self._attempt,
-                payload["action"],
-                payload.get("amount", 0),
-                payload.get("model"),
-            )
+            decision = check_harness_usage(self._attempt, payload["action"])
             return Response(decision, status=200 if decision["allowed"] else 402)
         return Response(record_harness_usage(self._attempt, payload))
 

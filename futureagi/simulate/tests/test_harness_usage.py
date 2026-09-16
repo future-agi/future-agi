@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import fakeredis
@@ -31,16 +31,13 @@ def metered_attempt(organization, monkeypatch, settings):
     return capability, redis
 
 
-def _record(
-    action="text_call", *, amount=1, funding="platform", infra_failed=False
-):
+def _record(action="text_call", *, amount=1, funding="platform"):
     return {
         "id": str(uuid4()),
         "action": action,
         "scenario_key": "case-one",
         "amount": amount,
         "funding": funding,
-        "infra_failed": infra_failed,
         "occurred_at": datetime.now(UTC).isoformat(),
     }
 
@@ -50,22 +47,41 @@ def _report(records):
         "schema_version": "futureagi.harness-usage.v1",
         "operation": "report",
         "records": records,
-        "totals": {
-            "text_sim_tokens": sum(
-                item["amount"]
-                for item in records
-                if item["action"] == "text_call"
-                and item["funding"] == "platform"
-                and not item["infra_failed"]
-            ),
-            "voice_sim_minutes": sum(
-                item["amount"]
-                for item in records
-                if item["action"] == "voice_call" and not item["infra_failed"]
-            ),
-        },
-        "sandbox_seconds": 12.5,
     }
+
+
+def _receipt(attempt, *, failure_domain="simulator"):
+    registration = attempt.job.scenario_registrations.get()
+    return HostedHarnessReceipt.objects.create(
+        job=attempt.job,
+        attempt=attempt,
+        scenario=registration,
+        attempt_number=attempt.attempt_number,
+        status="errored",
+        digest="sha256:" + "0" * 64,
+        body={
+            "call": {"duration_ms": 15000},
+            "failure": {"domain": failure_domain, "code": "run_failed"},
+        },
+    )
+
+
+def _provision(attempt):
+    provision_scenarios(
+        attempt,
+        {
+            "name": "Usage suite",
+            "modality": "voice",
+            "personas": [
+                {
+                    "scenario_key": "case-one",
+                    "name": "Caller",
+                    "situation": "Ask",
+                    "outcome": "Answer",
+                }
+            ],
+        },
+    )
 
 
 @pytest.mark.django_db
@@ -100,22 +116,8 @@ def test_authoring_tokens_become_idempotent_ai_credits(
     )
     assert row.dimension == "ai_credits"
     assert row.amount_raw == pytest.approx(70.2)
-    assert row.properties == {
-        "source": "rl_environment",
-        "source_id": str(capability.attempt.job_id),
-        "harness_job_id": str(capability.attempt.job_id),
-        "attempt_id": str(capability.attempt.id),
-        "workspace_id": "",
-        "test_execution_id": "",
-        "phase": "authoring",
-        "authoring_stage": "build-environment",
-        "model": "gemini-3.7-flash",
-        "input_tokens": 1_000_000,
-        "output_tokens": 100_000,
-        "cached_input_tokens": 800_000,
-        "raw_cost_usd": 0.585,
-        "pricing_source": "available_models",
-    }
+    assert row.properties["model"] == "gemini-3.7-flash"
+    assert row.properties["cached_input_tokens"] == 800_000
     capability.attempt.job.refresh_from_db()
     assert harness_usage.harness_consumption(capability.attempt.job)[
         "ai_credits"
@@ -143,54 +145,57 @@ def test_stale_snapshot_cannot_erase_or_change_finalized_usage(
 
 
 @pytest.mark.django_db
-def test_run_usage_waits_for_receipt_and_exempts_customer_tokens_not_voice(
+def test_receipt_replay_bills_platform_text_and_all_voice_minutes(
     metered_attempt, django_capture_on_commit_callbacks
 ):
     capability, redis = metered_attempt
     attempt = capability.attempt
-    provision_scenarios(
-        attempt,
-        {
-            "name": "Usage suite",
-            "modality": "voice",
-            "personas": [
-                {
-                    "scenario_key": "case-one",
-                    "name": "Caller",
-                    "situation": "Ask",
-                    "outcome": "Answer",
-                }
-            ],
-        },
-    )
+    _provision(attempt)
     records = [
         _record("text_call", amount=200, funding="customer"),
         _record("text_call", amount=35),
         _record("voice_call", amount=0.25, funding="customer"),
-        _record("voice_call", amount=2, infra_failed=True),
+        _record("voice_call", amount=2),
     ]
     with django_capture_on_commit_callbacks(execute=True):
         harness_usage.record_harness_usage(attempt, _report(records))
     assert redis.xlen("usage:events") == 0
-    registration = attempt.job.scenario_registrations.get()
-    HostedHarnessReceipt.objects.create(
-        job=attempt.job,
-        attempt=attempt,
-        scenario=registration,
-        attempt_number=attempt.attempt_number,
-        status="errored",
-        digest="sha256:" + "0" * 64,
-        body={
-            "call": {"duration_ms": 15000},
-            "failure": {"domain": "simulator", "code": "evidence_missing"},
-        },
-    )
+
+    _receipt(attempt)
     harness_usage.replay_harness_usage(attempt)
+
     events = [data for _, data in redis.xrange("usage:events")]
     assert {(event["event_type"], float(event["amount"])) for event in events} == {
         ("text_call", 35.0),
         ("voice_call", 0.25),
+        ("voice_call", 2.0),
     }
+    attempt.job.refresh_from_db()
+    assert harness_usage.harness_consumption(attempt.job) == {
+        "text_sim_tokens": 35,
+        "voice_sim_minutes": 2.25,
+        "ai_credits": 0,
+    }
+
+
+@pytest.mark.django_db
+def test_infrastructure_receipt_does_not_bill_measured_call(
+    metered_attempt, django_capture_on_commit_callbacks
+):
+    capability, redis = metered_attempt
+    attempt = capability.attempt
+    _provision(attempt)
+    with django_capture_on_commit_callbacks(execute=True):
+        harness_usage.record_harness_usage(
+            attempt, _report([_record("voice_call", amount=0.25)])
+        )
+    _receipt(attempt, failure_domain="infrastructure")
+
+    harness_usage.replay_harness_usage(attempt)
+
+    assert redis.xlen("usage:events") == 0
+    attempt.job.refresh_from_db()
+    assert harness_usage.harness_consumption(attempt.job)["voice_sim_minutes"] == 0
 
 
 @pytest.mark.django_db
@@ -256,27 +261,3 @@ def test_successful_admission_clears_persisted_budget_refusal(
     assert harness_usage.check_harness_usage(capability.attempt, "text_call")["allowed"]
     capability.attempt.job.refresh_from_db()
     assert "usage_limit" not in capability.attempt.job.payload["metadata"]
-
-
-@pytest.mark.django_db
-def test_sandbox_runtime_stops_at_verified_teardown_without_billing(
-    metered_attempt, monkeypatch
-):
-    capability, redis = metered_attempt
-    started = datetime.now(UTC)
-    moment = [started]
-    monkeypatch.setattr(harness_usage.timezone, "now", lambda: moment[0])
-    harness_usage.record_sandbox_runtime(capability.attempt, started=True)
-    moment[0] = started + timedelta(seconds=30)
-    harness_usage.record_sandbox_runtime(capability.attempt)
-    moment[0] = started + timedelta(seconds=60)
-    harness_usage.record_sandbox_runtime(capability.attempt, final=True)
-    # A later cleanup/poll cannot extend a finalized observation.
-    moment[0] = started + timedelta(seconds=90)
-    harness_usage.record_sandbox_runtime(capability.attempt)
-    capability.attempt.job.refresh_from_db()
-    assert (
-        harness_usage.harness_consumption(capability.attempt.job)["sandbox_seconds"]
-        == 60
-    )
-    assert redis.xlen("usage:events") == 0

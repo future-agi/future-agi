@@ -563,8 +563,6 @@ def _resolve_scenario_modality(job: HostedHarnessJob, payload: dict[str, Any]) -
 def begin_scenarios(
     attempt: HostedHarnessAttempt, payload: dict[str, Any]
 ) -> dict[str, Any]:
-    from simulate.services.harness_usage import require_harness_run
-
     job = attempt.job
     if not job.run_test_id or str(job.run_test_id) != str(payload["run_test_id"]):
         raise HostedHarnessError(
@@ -586,7 +584,6 @@ def begin_scenarios(
         unlinked = [item for item in registrations if item.call_execution_id is None]
         if not unlinked:
             return _begin_response(job, registrations)
-        require_harness_run(job)
         # A chat "add scenarios" follow-up appends the new personas' calls to the existing
         # execution: extend its scenario set, create only the missing calls (the batch is
         # idempotent + additive), and link the new registrations. Existing calls stay.
@@ -628,7 +625,6 @@ def begin_scenarios(
                 item.call_execution = call
                 item.save(update_fields=["call_execution", "updated_at"])
         return _begin_response(job, registrations)
-    require_harness_run(job)
 
     test_execution = create_alk_sim_test_execution(
         job.run_test,
@@ -715,9 +711,6 @@ def record_cleanup(
         if attempt.state != HostedHarnessAttempt.State.SUPERSEDED:
             attempt.state = _attempt_terminal_state(attempt)
         attempt.save(update_fields=["cleanup_verified_at", "state", "updated_at"])
-        from simulate.services.harness_usage import record_sandbox_runtime
-
-        record_sandbox_runtime(attempt, final=True)
         job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
             id=attempt.job_id
         )
