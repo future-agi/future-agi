@@ -12,10 +12,11 @@ to separate the correct trace-level gate from the wrong per-span one:
 * ``no-anchor`` - both keys, but not the anchor value.
 * ``late``    - the anchor value, both keys, but the child that carries them
                 starts three hours after the root, outside the one-hour
-                envelope. The classifier accepts it; the bounded-witness
-                contract omits it, exactly as it already omits a late VALUE
-                witness. This is the one observable difference and it is
-                pinned here as such.
+                envelope. The classifier accepts it - its any-span leaves
+                look at the trace's whole history - and so must the gate:
+                a gate confined to the envelope dropped this trace, which is
+                what made it broaden the shipped contract. The gate resolves
+                ``split`` inside the envelope and ``late`` against history.
 """
 
 from __future__ import annotations
@@ -222,9 +223,7 @@ def _rows(project_id: str, root_at: datetime):
 
 
 @pytest.mark.integration
-def test_ch25_conjunction_gate_keeps_split_witnesses_and_omits_only_the_late_one() -> (
-    None
-):
+def test_ch25_conjunction_gate_keeps_split_and_late_witnesses() -> None:
     admin = _local_ch25_client()
     database = f"test_conjunction_seed_gate_{uuid4().hex}"
     project_id = str(uuid4())
@@ -264,19 +263,22 @@ def test_ch25_conjunction_gate_keeps_split_witnesses_and_omits_only_the_late_one
                     slice_start=slice_[0], slice_end=slice_[1], limit=200
                 )
             assert ("GROUP BY trace_id" in query) is bool(slack)
+            assert ("unconfirmed_scalar_trace_ids" in query) is bool(slack)
             return {row[0] for row in admin.execute(query, params)}
 
-        # The bounded contract: the gate keeps the trace whose witnesses sit on
-        # two different rows in two different key ranges, rejects the partial
-        # and anchorless traces before any classifier runs, and omits only the
-        # trace whose presence witness starts outside the envelope.
-        assert candidates(slack=1) == {"split"}
+        # The gate keeps the trace whose witnesses sit on two different rows
+        # in two different key ranges, keeps the trace whose presence witness
+        # starts three hours after its root - outside the envelope, inside the
+        # history the classifier reads - and rejects the partial and anchorless
+        # traces before any classifier runs. Candidates are exactly what the
+        # classifier publishes; the shipped contract is unchanged.
+        assert candidates(slack=1) == {"split", "late"}
         # The legacy contract seeds from the anchor alone and is unchanged.
         assert candidates(slack=0) == {"split", "partial", "late"}
 
         # The gate only ever narrows candidacy: the unchanged classifier, asked
         # about every trace, accepts exactly the traces that satisfy the whole
-        # conjunction in latest state - the gated set plus the late witness.
+        # conjunction in latest state - and that is the gated set.
         query, params = builder.build_filter_match_query(
             ["split", "partial", "no-anchor", "late"]
         )

@@ -38,6 +38,7 @@ from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
 from tracer.services.clickhouse.query_builders.trace_list import (
     _LONG_WINDOW_ORDERED_ROOT_INITIAL_SLICE,
     _SELECTIVE_EXACT_TEXT_MIN_LENGTH,
+    ConjunctionGate,
     LatestFilterPredicate,
     TraceListQueryBuilder,
     _unix_microseconds,
@@ -1140,12 +1141,8 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
         """
 
     def _scalar_candidate_conjunction_gate(
-        self,
-        anchor: LatestFilterPredicate,
-        *,
-        witness_envelope_fragment: str,
-        project_version_fragment: str,
-    ) -> tuple[str, dict[str, Any]]:
+        self, anchor: LatestFilterPredicate, *, bounded_witness: bool
+    ) -> ConjunctionGate | None:
         """Gate a conjunction's candidates on every other leaf's key, per trace.
 
         THE SHAPE THIS EXISTS FOR. A conjunction of one short exact-string
@@ -1158,21 +1155,20 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
         each batch, and re-read the whole slice's witness for every keyset
         continuation - the same statements over the first day and a half
         whatever the window, and thirty-two statements before the harness
-        gave up. On the twelve-month window the anchor's own witness read 7.5
-        GB for 8.5k candidates of which the classifier accepted none.
+        gave up.
 
         THE GATE. Each other positive any-scope leaf compiles to a typed-Map
         key witness - ``has(span_attr_str.keys, key)`` behind the deployed
         ``mapKeys`` bloom - which is a NECESSARY condition of that leaf's
         latest-state truth: a latest state that carries the key is a version
-        of some raw row that carries it. So the candidate CTE additionally
-        requires, per trace, one raw row per leaf inside the anchor's own
-        witness envelope:
+        of some raw row that carries it, and that row's ``start_time`` is
+        immutable. So the candidate CTE additionally requires, per trace, one
+        raw row per leaf:
 
-            trace_id IN (SELECT trace_id FROM spans PREWHERE <envelope>
-                         WHERE w_1 OR ... OR w_n
-                         GROUP BY trace_id
-                         HAVING countIf(w_1) > 0 AND ... AND countIf(w_n) > 0)
+            SELECT trace_id FROM spans PREWHERE project AND trace_id IN <set>
+            WHERE w_1 OR ... OR w_n
+            GROUP BY trace_id
+            HAVING countIf(w_1) > 0 AND ... AND countIf(w_n) > 0
 
         PER TRACE, NEVER PER SPAN. The leaves are independent existence
         predicates over one trace's spans, so the conjunction holds at the
@@ -1183,44 +1179,62 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
         bloom skip granules carrying none of the keys; the HAVING is the
         conjunction.
 
+        THE RANGE IS THE CLASSIFIER'S. ``build_filter_match_query`` binds only
+        the canonical root to the request window; every any-span leaf is
+        ``countIf(latest_attr_exists_N) > 0`` over ALL of the trace's spans,
+        and its physical scan is ``trace_id IN candidates`` with no time
+        predicate. A gate confined to the anchor's envelope would therefore
+        be necessary only inside the envelope: the live fixture's ``late``
+        trace carries its keys on a child three hours after the root, the
+        classifier publishes it, and an envelope-confined gate dropped it.
+        This gate looks at the whole history, so what it keeps is exactly
+        what the classifier can publish: exact over every trace whose root
+        the slice can publish, whatever its children's start times.
+        ``_scalar_candidate_gated_cte_sql`` resolves the envelope's part
+        first and consults history only for the residue, which is what keeps
+        the exact range affordable on a dense tenant.
+
         KEYS ONLY. The gate never compares a value, so it reads the keys
-        subcolumn and nothing else - measured at about forty bytes per row
-        against kilobytes for the anchor's value read. Value semantics stay
-        with the anchor witness and, as ever, the unchanged classifier.
+        subcolumn and nothing else. Value semantics stay with the anchor
+        witness and, as ever, the unchanged classifier.
 
-        WHAT IT COSTS AND BUYS, measured read-only on production over the
-        twelve-month window of the tenant that failed: the gate alone read
-        forty megabytes in under half a second and left 599 traces; the gated
-        anchor statement read 4.7 GB in 3.3 s against 7.5 GB in 6.3 s ungated,
-        and published no candidate, so no classifier statement and no keyset
-        re-read follow. The slices of one walk partition the window, so a
-        walk's seed cost sums to about that one statement.
+        WHAT IT COSTS AND BUYS, measured read-only on production at two
+        threads. Sparse tenant, the 256-hour slice of the twelve-month walk
+        that failed: the ungated statement 1.49 s for 200 candidates the
+        classifier would reject, this gate 1.59 s publishing none, so no
+        classifier statement and no keyset re-read follow; the envelope-only
+        gate this replaces was 0.97 s because its set, being independent of
+        the anchor, could also prune the anchor scan - an exact set cannot,
+        and that difference is the price of the shipped contract. Dense
+        tenant, where the keys are on every trace and nothing is pruned: the
+        fill slice 1.46 s against 1.09 s ungated and 1.65 s envelope-only,
+        an empty hour slice 92 ms against 26 ms and 46 ms; a whole-history
+        set without the residue split cost about 175 ms on every statement
+        there, empty or not.
 
-        THE CONTRACT IT EXTENDS. The gate is confined to the anchor's witness
-        envelope and is therefore emitted only when that envelope is - a
-        lane on the legacy unbounded contract emits no gate and its statement
-        stays byte-identical. Under the bounded contract a filtered list
-        already omits a trace whose only value witness starts more than the
-        slack after its root; with the gate the same holds for every other
-        positive leaf's key witness. That is the one observable change, and
-        it is the existing contract applied to the whole conjunction rather
-        than to one leaf of it.
+        THE CONTRACT IS UNCHANGED. Under the bounded contract a filtered list
+        omits a trace whose only VALUE witness for the anchor starts more
+        than the slack after its root; nothing else. The gate is emitted only
+        while that envelope is - slack zero, the legacy escape hatch, returns
+        the previous release's statement byte for byte - and never omits a
+        trace the classifier would publish.
 
         A PURE FUNCTION OF THE FILTERS. Which leaves gate is decided by the
         compiled plans alone - no probe, no estimate, no setting - so every
         hop of one pagination emits the same gate and the boundary cannot
-        move under a half-published page. Leaves without a typed-Map key
-        witness (absence, JSON, root-scoped, grouped-absence) simply do not
-        take part; the gate is still exact with any subset of the leaves, and
+        move under a half-published page; the gate's CONTENTS vary with the
+        data exactly as the seeds do. Leaves without a typed-Map key witness
+        (absence, JSON, root-scoped, grouped-absence) simply do not take
+        part; the gate is still exact with any subset of the leaves, and
         with none there is no gate.
         """
 
-        if not witness_envelope_fragment:
-            return "", {}
+        if not bounded_witness:
+            return None
         anchor_key_witness = str(anchor.raw_key_witness_predicate or "")
         plans, residual = self._partition_trace_filter_plans(self._bounded_filters())
         if residual:
-            return "", {}
+            return None
         witnesses: list[str] = []
         params: dict[str, Any] = {}
         for plan in plans:
@@ -1245,20 +1259,14 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
                 }
             )
         if not witnesses:
-            return "", {}
-        union = " OR ".join(witnesses)
-        conjunction = " AND ".join(f"countIf({witness}) > 0" for witness in witnesses)
-        fragment = f"""
-              AND trace_id IN (
-                  SELECT trace_id
-                  FROM {self.TABLE}
-                  PREWHERE {self.project_filter_sql()}
-                    {project_version_fragment}{witness_envelope_fragment}
-                  WHERE {union}
-                  GROUP BY trace_id
-                  HAVING {conjunction}
-              )"""
-        return fragment, params
+            return None
+        return ConjunctionGate(
+            union=" OR ".join(witnesses),
+            conjunction=" AND ".join(
+                f"countIf({witness}) > 0" for witness in witnesses
+            ),
+            params=params,
+        )
 
     def _positive_text_candidate_witnesses(
         self,

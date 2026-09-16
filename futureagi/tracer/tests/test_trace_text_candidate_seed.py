@@ -3670,22 +3670,30 @@ def test_a_page_above_the_floor_publishes_exactly_the_flat_batch_page(page_size)
 
 
 # ---------------------------------------------------------------------------
-# A conjunction gates its candidates on every other leaf's key, PER TRACE.
+# A conjunction gates its candidates on every other leaf's key, PER TRACE, over
+# the span-time range the classifier evaluates: the trace's whole history.
 #
 # The anchor leaf's value witness seeds the candidate set; each other positive
 # leaf's typed-Map key witness is a necessary condition of that leaf's truth,
-# so the CTE may require, per trace, one raw row per leaf inside the anchor's
-# own envelope. Trace-level, never per-span: a trace whose witnesses sit on
-# different rows must still be a candidate. The gate is a pure function of the
-# filters and needs the envelope; without one the statement is byte-identical.
+# so the CTE may require, per trace, one raw row per leaf. Trace-level, never
+# per-span: a trace whose witnesses sit on different rows must still be a
+# candidate. The classifier binds no time to an any-span leaf, so neither may
+# the gate: it confirms what it can inside the anchor's envelope and resolves
+# only the residue against history, which changes cost and never the set. The
+# gate is a pure function of the filters and is emitted only beside the
+# envelope; without one the statement is byte-identical.
 # ---------------------------------------------------------------------------
 
-_GATE_HEAD = (
-    "\n              AND trace_id IN ("
-    "\n                  SELECT trace_id"
-    "\n                  FROM spans"
-    "\n                  PREWHERE project_id = %(project_id)s"
+_ANCHORED_HEAD = (
+    "\n        WITH"
+    "\n        ("
+    "\n            SELECT groupArray(trace_id)"
+    "\n            FROM ("
 )
+_ANCHORED_TAIL = "\n            )\n        ) AS anchored_scalar_trace_ids,"
+_CONFIRMED_TAIL = "\n        ) AS confirmed_scalar_trace_ids,"
+_RESIDUE_HEAD = "\n        matching_scalar_trace_identities AS ("
+_ROOTS_HEAD = "SELECT trace_id, id AS root_span_id"
 
 
 def _presence_leaf(key: str, *, filter_type: str = "text") -> dict[str, Any]:
@@ -3702,14 +3710,45 @@ def _conjunction_seed(*extra_leaves: dict[str, Any], slack: int = 1, **kwargs):
 
 
 def _gate(sql: str) -> str:
-    """The presence gate of one seed statement, or ``''`` when there is none."""
+    """The gated candidate CTE of one seed statement, or ``''`` when ungated."""
 
-    cte, _roots = sql.split("SELECT trace_id, id AS root_span_id", 1)
-    start = cte.find(_GATE_HEAD)
-    if start < 0:
-        return ""
-    end = cte.index("\n              )", start) + len("\n              )")
-    return cte[start:end]
+    cte, _roots = sql.split(_ROOTS_HEAD, 1)
+    return cte if "unconfirmed_scalar_trace_ids" in cte else ""
+
+
+def _anchor_witness(gate: str) -> str:
+    """The anchor's own witness scan inside the gated CTE."""
+
+    start = gate.index(_ANCHORED_HEAD) + len(_ANCHORED_HEAD)
+    return gate[start : gate.index(_ANCHORED_TAIL)]
+
+
+def _single_leaf_witness(sql: str) -> str:
+    """The same scan as the whole of an ungated single-leaf statement's CTE."""
+
+    head = "WITH matching_scalar_trace_identities AS ("
+    start = sql.index(head) + len(head)
+    return sql[start : sql.index("\n        )\n", start)]
+
+
+def _confirm_stage(gate: str) -> str:
+    start = gate.index(_ANCHORED_TAIL) + len(_ANCHORED_TAIL)
+    return gate[start : gate.index(_CONFIRMED_TAIL)]
+
+
+def _residue_stage(gate: str) -> str:
+    return gate[gate.index(_RESIDUE_HEAD) :]
+
+
+def _union_and_having(stage: str) -> tuple[str, str]:
+    lines = stage.splitlines()
+    group = next(
+        i for i, line in enumerate(lines) if line.strip() == "GROUP BY trace_id"
+    )
+    return (
+        lines[group - 1].strip().removeprefix("WHERE "),
+        lines[group + 1].strip().removeprefix("HAVING "),
+    )
 
 
 def _key_witness(index: int) -> str:
@@ -3720,56 +3759,90 @@ def _key_witness(index: int) -> str:
 
 
 def test_a_conjunction_seed_gates_candidates_on_every_other_key_per_trace():
-    """The gate is one grouped subquery: the union in WHERE, the AND in HAVING.
+    """Each stage is one grouped subquery: the union in WHERE, the AND in HAVING.
 
     Three siblings - two presence leaves and one exact value leaf - become
     three key witnesses. They are OR-ed in the WHERE so the ``mapKeys`` bloom
     skips granules carrying none of them, and AND-ed as ``countIf(...) > 0``
     under ``GROUP BY trace_id``, which is the trace-level conjunction. A
-    per-span conjunction in the outer WHERE would have no group at all.
+    per-span conjunction in the outer WHERE would have no group at all. The
+    envelope stage and the history stage carry the same witnesses.
     """
 
     sql, params = _conjunction_seed(
         _presence_leaf("k_a"), _presence_leaf("k_b"), _attribute_filter("k_c", "acct-9")
     )
     gate = _gate(sql)
-
     assert gate, sql
-    assert gate.count("GROUP BY trace_id") == 1
-    where = gate.split("\n                  WHERE ", 1)[1].split("\n", 1)[0]
-    having = gate.split("\n                  HAVING ", 1)[1].split("\n", 1)[0]
-    assert where == " OR ".join(_key_witness(index) for index in (1, 2, 3))
-    assert having == " AND ".join(
-        f"countIf({_key_witness(index)}) > 0" for index in (1, 2, 3)
-    )
+    stages = (_confirm_stage(gate), _residue_stage(gate))
+
+    for stage in stages:
+        assert stage.count("GROUP BY trace_id") == 1
+        union, having = _union_and_having(stage)
+        assert union == " OR ".join(_key_witness(index) for index in (1, 2, 3))
+        assert having == " AND ".join(
+            f"countIf({_key_witness(index)}) > 0" for index in (1, 2, 3)
+        )
     assert params["latest_filter_key_1"] == "k_a"
     assert params["latest_filter_key_2"] == "k_b"
     assert params["latest_filter_key_3"] == "k_c"
+    gating = "".join(stages)
     # The anchor never gates itself: its value witness already implies its key.
-    assert "latest_filter_key_0" not in gate
+    assert "latest_filter_key_0" not in gating
     # Keys only. The exact sibling's VALUE is bound for the classifier, but the
     # gate compares no value and reads no Map value column.
-    assert "latest_filter_param_3" not in gate
-    assert "attrs_string[" not in gate
-    assert "mapValues" not in gate
-    assert "mapContains" not in gate
-    # The gate is confined to the anchor witness's own envelope, spelled with
-    # the same bound parameters, and inspects raw rows only: no tombstone, no
-    # version and no page keyset may prune a witness.
-    assert _ENVELOPE_SQL in gate
-    assert "is_deleted" not in gate
-    assert "_version" not in gate
-    assert "filter_before" not in gate
-    assert "LIMIT" not in gate
+    assert "latest_filter_param_3" not in gating
+    assert "attrs_string[" not in gating
+    assert "mapValues" not in gating
+    assert "mapContains" not in gating
+    # Raw rows only: no tombstone, no version and no page keyset may prune a
+    # witness, and no LIMIT may truncate one.
+    assert "is_deleted" not in gating
+    assert "_version" not in gating
+    assert "filter_before" not in gating
+    assert "LIMIT" not in gating
+
+
+def test_the_gate_looks_at_the_whole_history_the_classifier_looks_at():
+    """Envelope first, history for the residue, no time bound on history.
+
+    The classifier's any-span leaves carry no time predicate, so a gate that
+    is a necessary condition of publication may not either. The envelope
+    stage is an optimisation - a trace whose keys are witnessed inside the
+    envelope is certainly witnessed somewhere - and the residue stage, over
+    ``anchored`` minus ``confirmed``, is the exact condition; its guard folds
+    to a constant so an empty residue reads nothing.
+    """
+
+    sql, _ = _conjunction_seed(_presence_leaf("k_a"), _presence_leaf("k_b"))
+    gate = _gate(sql)
+    confirm, residue = _confirm_stage(gate), _residue_stage(gate)
+
+    assert _ENVELOPE_SQL in confirm
+    assert "length(anchored_scalar_trace_ids) > 0" in confirm
+    assert "trace_id IN (SELECT arrayJoin(anchored_scalar_trace_ids))" in confirm
+    assert "start_time" not in residue
+    assert "filter_witness" not in residue
+    assert "length(unconfirmed_scalar_trace_ids) > 0" in residue
+    assert "trace_id IN (SELECT arrayJoin(unconfirmed_scalar_trace_ids))" in residue
+    assert residue.startswith(
+        _RESIDUE_HEAD
+        + "\n            SELECT arrayJoin(confirmed_scalar_trace_ids) AS trace_id"
+        + "\n            UNION ALL"
+    )
+    assert (
+        "WHERE trace_id NOT IN (SELECT arrayJoin(confirmed_scalar_trace_ids))" in gate
+    )
 
 
 def test_everything_but_the_gate_is_the_single_leaf_statement():
     """The gate is the whole difference: same anchor witness, same roots.
 
-    Removing the gate from the conjunction's statement yields, byte for byte,
-    the single-leaf statement under the same envelope, and the parameters
-    differ only by the gated keys. This is what pins the anchor witness and
-    the root population against being rewritten around the gate.
+    The anchor's witness scan inside the gated CTE is, byte for byte, the
+    single-leaf statement's CTE under the same envelope; the roots query is
+    identical; and the parameters differ only by the gated keys. This pins
+    the anchor witness and the root population against being rewritten
+    around the gate.
     """
 
     sql, params = _conjunction_seed(_presence_leaf("k_a"), _presence_leaf("k_b"))
@@ -3777,7 +3850,8 @@ def test_everything_but_the_gate_is_the_single_leaf_statement():
 
     gate = _gate(sql)
     assert gate
-    assert sql.replace(gate, "", 1) == single_sql
+    assert _anchor_witness(gate) == _single_leaf_witness(single_sql)
+    assert sql.split(_ROOTS_HEAD, 1)[1] == single_sql.split(_ROOTS_HEAD, 1)[1]
     assert {
         name: value
         for name, value in params.items()
@@ -3788,9 +3862,10 @@ def test_everything_but_the_gate_is_the_single_leaf_statement():
 def test_the_gate_needs_the_anchor_envelope():
     """No envelope, no gate: the legacy unbounded statement is byte-identical.
 
-    Off is the escape hatch that restores the any-span contract without a
-    deploy, and a gate confined to no envelope would scan the whole retained
-    history per statement, so the two switch together.
+    Off is the escape hatch that restores the previous release's statement
+    without a deploy, and it must restore all of it: the gate switches with
+    the envelope so slack zero means the statement the previous release
+    issued, byte for byte.
     """
 
     sql, params = _conjunction_seed(
@@ -3834,9 +3909,10 @@ def test_leaves_without_a_typed_key_witness_do_not_gate():
     )
     gate = _gate(sql)
     assert gate
-    assert gate.count("countIf(") == 1
-    assert "latest_filter_key_2" in gate
-    assert "latest_filter_key_1" not in gate
+    for stage in (_confirm_stage(gate), _residue_stage(gate)):
+        assert stage.count("countIf(") == 1
+        assert "latest_filter_key_2" in stage
+        assert "latest_filter_key_1" not in stage
     assert params["latest_filter_key_2"] == "k_b"
 
 
@@ -3845,16 +3921,17 @@ def test_a_numeric_presence_leaf_gates_through_its_own_typed_map():
     gate = _gate(sql)
 
     assert gate
-    assert "has(attrs_number.keys, %(latest_filter_key_1)s)" in gate
-    assert "indexHint(has(mapKeys(attrs_number), %(latest_filter_key_1)s))" in gate
+    residue = _residue_stage(gate)
+    assert "has(attrs_number.keys, %(latest_filter_key_1)s)" in residue
+    assert "indexHint(has(mapKeys(attrs_number), %(latest_filter_key_1)s))" in residue
     assert params["latest_filter_key_1"] == "n_a"
 
 
 def test_every_hop_of_a_pagination_emits_the_same_gate():
     """Which leaves gate is decided by the filters, so a cursor need not pin it.
 
-    A keyset continuation tightens the envelope, and the gate follows that
-    envelope through the same bound parameters; the gate's own text is
+    A keyset continuation tightens the envelope, and the envelope stage
+    follows it through the same bound parameters; the gate's own text is
     identical on every hop, so candidacy under it cannot move between hops.
     """
 

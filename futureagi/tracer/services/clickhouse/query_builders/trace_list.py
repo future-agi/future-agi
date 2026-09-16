@@ -16,7 +16,7 @@ The two result sets are merged in Python.
 import math
 import re
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, NamedTuple
 
 from tracer.services.clickhouse.eval_logger_table import (
     eval_logger_live_state_columns,
@@ -158,6 +158,21 @@ def _unix_microseconds(value: datetime) -> int:
     )
     delta = utc_value - datetime(1970, 1, 1, tzinfo=UTC)
     return delta.days * 86_400_000_000 + delta.seconds * 1_000_000 + delta.microseconds
+
+
+class ConjunctionGate(NamedTuple):
+    """One conjunction's per-trace presence gate, compiled from its leaves.
+
+    ``union`` is every gated leaf's key witness OR-ed, for the ``WHERE`` that
+    lets the ``mapKeys`` bloom skip granules carrying none of the keys;
+    ``conjunction`` is the same witnesses as ``countIf(...) > 0`` AND-ed, for
+    the ``HAVING`` under ``GROUP BY trace_id`` that is the trace-level
+    conjunction. ``params`` binds the keys the witnesses name.
+    """
+
+    union: str
+    conjunction: str
+    params: dict[str, Any]
 
 
 class TraceListQueryBuilder(BaseQueryBuilder):
@@ -3611,30 +3626,38 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                 )
             )
             params.update(witness_envelope_params)
-            # A conjunction may additionally require, per trace, that every
-            # other positive leaf's key is witnessed inside the same envelope.
-            # A lane declares that gate only when it also declares an envelope.
-            conjunction_gate_fragment, conjunction_gate_params = (
-                self._scalar_candidate_conjunction_gate(
-                    scalar_anchor,
-                    witness_envelope_fragment=witness_envelope_fragment,
-                    project_version_fragment=project_version_fragment,
-                )
-            )
-            params.update(conjunction_gate_params)
             # All child timestamps and physical versions must participate.
             # No inner LIMIT: truncating raw witnesses could hide an older
             # matching root. Statement limits throw instead of proving absence.
-            candidate_cte = f"""
-        WITH matching_scalar_trace_identities AS (
+            anchor_witness_sql = f"""
             SELECT DISTINCT trace_id
             FROM {self.TABLE}
             PREWHERE {self.project_filter_sql()}
               {project_version_fragment}{witness_envelope_fragment}
-              {root_population}{conjunction_gate_fragment}
-            WHERE {raw_witness}
+              {root_population}
+            WHERE {raw_witness}"""
+            # A conjunction may additionally require, per candidate trace,
+            # that every other positive leaf's key is witnessed by some raw
+            # row of that trace - anywhere in its history, exactly the range
+            # the classifier evaluates. A lane declares that gate only while
+            # it also declares an envelope; without one the statement is the
+            # previous release's, byte for byte.
+            conjunction_gate = self._scalar_candidate_conjunction_gate(
+                scalar_anchor, bounded_witness=bool(witness_envelope_fragment)
+            )
+            if conjunction_gate is None:
+                candidate_cte = f"""
+        WITH matching_scalar_trace_identities AS ({anchor_witness_sql}
         )
             """
+            else:
+                params.update(conjunction_gate.params)
+                candidate_cte = self._scalar_candidate_gated_cte_sql(
+                    anchor_witness_sql,
+                    conjunction_gate,
+                    project_version_fragment=project_version_fragment,
+                    witness_envelope_fragment=witness_envelope_fragment,
+                )
             candidate_membership_fragment = """
           AND trace_id IN (
               SELECT trace_id FROM matching_scalar_trace_identities
@@ -3685,27 +3708,102 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         return ""
 
     def _scalar_candidate_conjunction_gate(
-        self,
-        anchor: LatestFilterPredicate,
-        *,
-        witness_envelope_fragment: str,
-        project_version_fragment: str,
-    ) -> tuple[str, dict[str, Any]]:
+        self, anchor: LatestFilterPredicate, *, bounded_witness: bool
+    ) -> "ConjunctionGate | None":
         """Optional per-trace presence gate on the candidate CTE; none by default.
 
         The candidate CTE seeds a conjunction from ONE anchor leaf's raw value
         witness and leaves every other leaf to the exact classifier. A lane
         may additionally require, per candidate trace, that each other
-        positive leaf's typed-Map key is witnessed by some raw row inside the
-        same envelope the anchor's witness is confined to. That narrows
-        candidacy only, never membership: the classifier stays the authority.
-
-        An empty fragment must leave the statement byte-identical, so the
-        fragment carries its own leading newline and indentation.
+        positive leaf's typed-Map key is witnessed by some raw row of that
+        trace. The gate looks at the same span-time range the classifier
+        does - the trace's whole history - so it is a NECESSARY condition of
+        publication and narrows candidacy only, never membership: the
+        classifier stays the authority. ``bounded_witness`` says whether the
+        calling statement confines the anchor's own witness to an envelope;
+        ``None`` leaves the statement byte-identical to the ungated one.
         """
 
-        del anchor, witness_envelope_fragment, project_version_fragment
-        return "", {}
+        del anchor, bounded_witness
+        return None
+
+    def _scalar_candidate_gated_cte_sql(
+        self,
+        anchor_witness_sql: str,
+        gate: "ConjunctionGate",
+        *,
+        project_version_fragment: str,
+        witness_envelope_fragment: str,
+    ) -> str:
+        """The candidate CTE with a conjunction gate: envelope first, then history.
+
+        The gate's range is the trace's whole history, because that is the
+        range the classifier evaluates a presence leaf over (its any-span
+        ``HAVING`` carries no time bound and its physical scan is
+        ``trace_id IN candidates`` across every partition). A whole-history
+        scan, however, pays a fixed index-analysis cost proportional to the
+        tenant's history on EVERY statement - measured at about 175 ms on the
+        densest production tenant even when the candidate set is empty - so
+        the gate resolves as much as it can inside the anchor's envelope
+        first and consults history only for what the envelope left open:
+
+        * ``anchored``: the anchor witness CTE as before, one array.
+        * ``confirmed``: anchored traces whose every gated key is witnessed
+          INSIDE the envelope. Certainly gated - presence inside the envelope
+          is presence somewhere - and read within the envelope's partitions.
+        * ``unconfirmed``: anchored minus confirmed; only these are checked
+          against the whole history, and ``length(...) > 0`` folds to a
+          constant before index analysis, so an empty residue reads nothing
+          (about 30 ms against 175 ms measured for an empty set without it).
+
+        ``confirmed ∪ (unconfirmed ∩ history)`` is exactly
+        ``anchored ∩ history``: the split changes cost, never the set. The
+        three arrays are scalar subqueries, each evaluated once; the anchor
+        witness is therefore scanned once, and ``IN (SELECT arrayJoin(...))``
+        is the table-expression form the analyzer accepts for a set built
+        from a scalar.
+        """
+
+        return f"""
+        WITH
+        (
+            SELECT groupArray(trace_id)
+            FROM ({anchor_witness_sql}
+            )
+        ) AS anchored_scalar_trace_ids,
+        (
+            SELECT groupArray(trace_id)
+            FROM (
+                SELECT trace_id
+                FROM {self.TABLE}
+                PREWHERE {self.project_filter_sql()}
+                  {project_version_fragment}{witness_envelope_fragment}
+                  AND length(anchored_scalar_trace_ids) > 0
+                  AND trace_id IN (SELECT arrayJoin(anchored_scalar_trace_ids))
+                WHERE {gate.union}
+                GROUP BY trace_id
+                HAVING {gate.conjunction}
+            )
+        ) AS confirmed_scalar_trace_ids,
+        (
+            SELECT groupArray(trace_id)
+            FROM (SELECT arrayJoin(anchored_scalar_trace_ids) AS trace_id)
+            WHERE trace_id NOT IN (SELECT arrayJoin(confirmed_scalar_trace_ids))
+        ) AS unconfirmed_scalar_trace_ids,
+        matching_scalar_trace_identities AS (
+            SELECT arrayJoin(confirmed_scalar_trace_ids) AS trace_id
+            UNION ALL
+            SELECT trace_id
+            FROM {self.TABLE}
+            PREWHERE {self.project_filter_sql()}
+              {project_version_fragment}
+              AND length(unconfirmed_scalar_trace_ids) > 0
+              AND trace_id IN (SELECT arrayJoin(unconfirmed_scalar_trace_ids))
+            WHERE {gate.union}
+            GROUP BY trace_id
+            HAVING {gate.conjunction}
+        )
+            """
 
     def _scalar_candidate_witness_envelope(
         self, *, root_start: datetime, root_end: datetime
