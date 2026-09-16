@@ -318,6 +318,29 @@ class GatewayProviderUpdateRequestSerializer(serializers.Serializer):
     name = serializers.CharField()
     config = serializers.DictField(child=JsonValueField())
 
+    _POSITIVE_LIMIT_FIELDS = (
+        "default_timeout",
+        "default_timeout_seconds",
+        "max_concurrent",
+        "conn_pool_size",
+    )
+
+    def validate_config(self, value):
+        """Validate known limits without rejecting provider-specific options."""
+        config = dict(value)
+        limit = serializers.IntegerField(min_value=1)
+        errors = {}
+        for field_name in self._POSITIVE_LIMIT_FIELDS:
+            if field_name not in config:
+                continue
+            try:
+                config[field_name] = limit.run_validation(config[field_name])
+            except serializers.ValidationError as exc:
+                errors[field_name] = exc.detail
+        if errors:
+            raise serializers.ValidationError(errors)
+        return config
+
 
 class GatewayNameRequestSerializer(serializers.Serializer):
     name = serializers.CharField()
