@@ -39,10 +39,16 @@ export default function DatasetLoader({
   gridApiRef,
   isSyntheticDataset,
   updateProcessingSyntheticData,
+  failureReason,
 }) {
   const theme = useTheme();
   const [progress, setProgress] = useState(0);
-  const { title, description, buttonTitle } = textStatusMapper[status];
+  const {
+    title,
+    description: fallbackDescription,
+    buttonTitle,
+  } = textStatusMapper[status];
+  const description = failureReason || fallbackDescription;
   const hideProgress = status === "failed-to-generate-synthetic";
 
   useEffect(() => {
@@ -183,4 +189,5 @@ DatasetLoader.propTypes = {
   gridApiRef: PropTypes.any,
   isSyntheticDataset: PropTypes.bool,
   updateProcessingSyntheticData: PropTypes.func,
+  failureReason: PropTypes.string,
 };
