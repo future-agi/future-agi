@@ -100,6 +100,10 @@ from tracer.services.clickhouse.query_builders.dataset_dashboard import (
     DATASET_METRIC_UNITS,
     DatasetQueryBuilder,
 )
+from tracer.services.clickhouse.query_builders.hourly_aggregate_states import (
+    ERROR_RATE_MERGE_EXPRESSION,
+    hourly_aggregate_state_source,
+)
 from tracer.services.clickhouse.query_builders.simulation_dashboard import (
     _STRING_DIMENSION_METRICS,
     SIMULATION_FILTER_COLUMNS,
@@ -1227,6 +1231,13 @@ _DASHBOARD_ROLLUP_READ_SETTINGS = {
     "timeout_overflow_mode": "throw",
 }
 
+# Token of the physical source that answers span metrics: ``spans``'s own
+# hourly aggregate states, merged from the projections maintained inside the
+# table. It replaced ``spans_hourly_rollup``, a separate materialized view
+# that counted insert deliveries the ReplacingMergeTree base had already
+# collapsed, so unfiltered widgets read a multiple of the filtered truth.
+_DASHBOARD_SPAN_STATE_SOURCE = "spans_hourly_states"
+
 _DASHBOARD_ROLLUP_SUM_COLUMNS = {
     "tokens": "total_tokens_sum",
     "total_tokens": "total_tokens_sum",
@@ -1290,10 +1301,17 @@ def _dashboard_metric_key(metric):
 
 
 def _dashboard_rollup_expression(metric):
-    """Return (physical source, aggregate expression, estimate strategy).
+    """Return (physical source, aggregate expression, strategy, exact).
 
     Expressions are selected only from this code-owned whitelist. No request
     value is interpolated as a table, column, function, or alias.
+
+    ``exact`` says whether the published value is a count or a sum over the
+    selected rows rather than an approximation. Every ``latency`` aggregation
+    is a stored tDigest quantile — and the ``avg`` case additionally publishes
+    the median under an average's name — so latency is never exact. The
+    ``trace_count`` source is untouched by this route and keeps the claim it
+    has always made.
     """
 
     if metric.get("type", "system_metric") != "system_metric":
@@ -1311,9 +1329,10 @@ def _dashboard_rollup_expression(metric):
             else "hourly_tdigest"
         )
         return (
-            "spans_hourly_rollup",
+            _DASHBOARD_SPAN_STATE_SOURCE,
             f"(quantilesTDigestMerge(0.5, 0.95, 0.99)(latency_q))[{quantile_index}]",
             strategy,
+            False,
         )
 
     if metric_name in _DASHBOARD_ROLLUP_SUM_COLUMNS:
@@ -1326,30 +1345,48 @@ def _dashboard_rollup_expression(metric):
             expression = "countMerge(n)"
         else:
             return None
-        return "spans_hourly_rollup", expression, "hourly_aggregate_states"
+        return (
+            _DASHBOARD_SPAN_STATE_SOURCE,
+            expression,
+            "hourly_aggregate_states",
+            True,
+        )
 
     if metric_name == "error_rate":
         if aggregation == "avg":
-            expression = (
-                "countIfMerge(error_count) * 100.0 / greatest(countMerge(n), 1)"
-            )
+            expression = ERROR_RATE_MERGE_EXPRESSION
         elif aggregation == "sum":
-            expression = "countIfMerge(error_count)"
+            expression = "countMergeIf(n, status = 'ERROR')"
         elif aggregation == "count":
             expression = "countMerge(n)"
         else:
             return None
-        return "spans_hourly_rollup", expression, "hourly_aggregate_states"
+        return (
+            _DASHBOARD_SPAN_STATE_SOURCE,
+            expression,
+            "hourly_aggregate_states",
+            True,
+        )
 
     if metric_name in {"span_count", "traffic"} and aggregation in {
         "count",
         "count_distinct",
         "sum",
     }:
-        return "spans_hourly_rollup", "countMerge(n)", "hourly_aggregate_states"
+        return (
+            _DASHBOARD_SPAN_STATE_SOURCE,
+            "countMerge(n)",
+            "hourly_aggregate_states",
+            True,
+        )
 
     if metric_name == "project" and aggregation in {"count", "count_distinct"}:
-        return "spans_hourly_rollup", "uniqExact(project_id)", "hourly_rollup_keys"
+        return (
+            _DASHBOARD_SPAN_STATE_SOURCE,
+            "uniqExact(project_id)",
+            "hourly_state_keys",
+            True,
+        )
 
     if metric_name == "trace_count" and aggregation in {
         "count",
@@ -1359,6 +1396,7 @@ def _dashboard_rollup_expression(metric):
             "trace_count_rollup",
             "uniqExactMerge(uniq_traces_state)",
             "hourly_exact_trace_states",
+            False,
         )
     return None
 
@@ -1553,7 +1591,7 @@ def _read_dashboard_rollup_fast_path(
                 refresh_state=refresh_state,
                 error_code="bounded_shape_unavailable",
             )
-        source, aggregate_expression, strategy = expression
+        source, aggregate_expression, strategy, exact = expression
         prepared.append(
             {
                 "index": index,
@@ -1562,6 +1600,7 @@ def _read_dashboard_rollup_fast_path(
                 "alias": f"metric_{index}",
                 "expression": aggregate_expression,
                 "strategy": strategy,
+                "exact": exact,
             }
         )
 
@@ -1648,8 +1687,9 @@ def _read_dashboard_rollup_fast_path(
     query_count = 0
     rows_returned = 0
     try:
-        # These materialized views are fed by the direct-write CH25 spans table;
-        # bind the query to the same physical generation explicitly.
+        # Span metrics come from `spans`'s own hourly aggregate states and
+        # trace counts from a materialized view over the same direct-write
+        # table; bind both to that physical generation explicitly.
         analytics = V2AnalyticsQueryService()
         if not bool(getattr(analytics, "supports_per_query_read_settings", True)):
             return _dashboard_refresh_or_degraded(
@@ -1661,23 +1701,35 @@ def _read_dashboard_rollup_fast_path(
             select_values = ",\n       ".join(
                 f"{item['expression']} AS {item['alias']}" for item in items
             )
-            if source == "spans_hourly_rollup":
-                table = "spans_hourly_rollup"
+            if source == _DASHBOARD_SPAN_STATE_SOURCE:
+                # The inner source carries its own project and window scope:
+                # its predicates have to sit on the projection's own key
+                # expressions for the states to be readable at all.
+                from_clause = hourly_aggregate_state_source(
+                    "project_id IN %(project_ids)s"
+                )
+                query = (
+                    f"SELECT {bucket_fn}(hour) AS time_bucket,\n"
+                    f"       {select_values}\n"
+                    f"FROM {from_clause}\n"
+                    "GROUP BY time_bucket\n"
+                    "ORDER BY time_bucket\n"
+                    "LIMIT %(result_limit)s"
+                )
             elif source == "trace_count_rollup":
-                table = "trace_count_rollup"
+                query = (
+                    f"SELECT {bucket_fn}(hour) AS time_bucket,\n"
+                    f"       {select_values}\n"
+                    "FROM trace_count_rollup\n"
+                    "PREWHERE project_id IN %(project_ids)s\n"
+                    "WHERE hour >= %(start_date)s\n"
+                    "  AND hour < %(end_date)s\n"
+                    "GROUP BY time_bucket\n"
+                    "ORDER BY time_bucket\n"
+                    "LIMIT %(result_limit)s"
+                )
             else:  # Defensive fence; source values are code-owned above.
                 raise DashboardBoundedReadError("bounded_shape_unavailable")
-            query = (
-                f"SELECT {bucket_fn}(hour) AS time_bucket,\n"
-                f"       {select_values}\n"
-                f"FROM {table}\n"
-                "PREWHERE project_id IN %(project_ids)s\n"
-                "WHERE hour >= %(start_date)s\n"
-                "  AND hour < %(end_date)s\n"
-                "GROUP BY time_bucket\n"
-                "ORDER BY time_bucket\n"
-                "LIMIT %(result_limit)s"
-            )
             expected_columns = ["time_bucket", *(item["alias"] for item in items)]
             result = analytics.execute_ch_query(
                 query,
@@ -1752,7 +1804,10 @@ def _read_dashboard_rollup_fast_path(
             "query_complete": True,
             "query_status": "complete",
             "query_sampled": False,
-            "query_exact": False,
+            # A payload is exact only when every metric in it is; a single
+            # tDigest latency series or a trace-count metric keeps the whole
+            # response honest about being an approximation.
+            "query_exact": all(item["exact"] for item in prepared),
             "query_provenance": "materialized_rollup",
             "query_count": query_count,
             "query_rows_returned": rows_returned,
@@ -1766,7 +1821,7 @@ def _read_dashboard_rollup_fast_path(
     for item, formatted_metric in zip(prepared, formatted["metrics"], strict=True):
         formatted_metric.update(
             {
-                "query_exact": False,
+                "query_exact": item["exact"],
                 "query_provenance": "materialized_rollup",
                 "query_sampling_strategy": item["strategy"],
                 "query_sampling_interval_seconds": 3_600,

@@ -100,7 +100,7 @@ can't be created on top of a 24.x data directory.
 | Component                                                               | Source                                                             | Status                                          |
 | ----------------------------------------------------------------------- | ------------------------------------------------------------------ | ----------------------------------------------- |
 | Voice trace list (Phase 1b attrs hydration)                             | `tracer/views/trace.py:4144`                                       | ✅ v2 `spans`                                   |
-| Dashboard time-series                                                   | `query_builders/time_series.py`                                    | ✅ v2 `spans_hourly_rollup`                     |
+| Dashboard time-series                                                   | `query_builders/time_series.py`                                    | ✅ v2 `spans` hourly aggregate states           |
 | Span attribute keys discovery                                           | `query_service.get_span_attribute_keys_ch`                         | ✅ v2 typed Maps                                |
 | CDC lag health check                                                    | `services/clickhouse/client.py`                                    | ✅ no longer tracks `tracer_observation_span`   |
 | PG↔CH consistency monitor                                              | `services/clickhouse/consistency.py`                               | ✅ no longer tracks `tracer_observation_span`   |
@@ -244,7 +244,7 @@ Unit tests pinning the migration (all under `tracer/tests/test_clickhouse.py`):
 
 | Class                                               | Tests | Purpose                                                                                                |
 | --------------------------------------------------- | ----- | ------------------------------------------------------------------------------------------------------ |
-| `TestTimeSeriesQueryBuilder`                        | 13    | v2 `spans_hourly_rollup` path: `*Merge` combinators, partition column, response contract               |
+| `TestTimeSeriesQueryBuilder`                        | —     | v2 `spans` state path: paired `*State`/`*Merge` combinators, hour key expression, response contract    |
 | `TestVoiceCallListPhase1bMigration`                 | 4     | Voice list Phase 1b reads `spans FINAL` not the CDC mirror; typed-Map reconstruction                   |
 | `TestSchemaCreation` (~`test_clickhouse.py:72-300`) | —     | Asserts the legacy DDL still exists in the registry; **these break** when step 5 of the playbook lands |
 
@@ -285,8 +285,11 @@ is independent and doesn't gate this PR.
 2. **`spans` is populated.** True if PeerDB CDC is still flowing OR
    fi-collector is live. Check:
    `SELECT count() FROM spans WHERE created_at >= now() - INTERVAL 1 HOUR`.
-3. **`spans_hourly_rollup` is backfilled for the dashboard window.** ⚠️
-   This is the one prerequisite that can silently break dashboards.
+3. ~~**`spans_hourly_rollup` is backfilled for the dashboard window.**~~
+   No longer a prerequisite. The unfiltered time-series reads `spans`'s own
+   hourly aggregate states, which are maintained inside the table itself and
+   so cover every hour the table does. The backfill note below is kept as a
+   record of the CH25 cutover, not as a step to run.
 
 #### The backfill landmine
 
@@ -323,7 +326,7 @@ In order of "fastest to catch a regression":
 3. **`get_span_attribute_keys_ch`** — open any "add filter" dropdown
    that exposes span-attribute keys. Empty for an active project = bug.
 4. **CH error rate** — watch query-failure rate for 30 min post-deploy.
-   New queries (`spans FINAL`, `spans_hourly_rollup` GROUP BY) should
+   New queries (`spans FINAL`, `spans` hourly-state GROUP BY) should
    be cheaper than legacy, not more expensive.
 
 ### Rollback

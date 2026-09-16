@@ -2562,8 +2562,9 @@ class TestTimeSeriesQueryBuilder:
         assert isinstance(query, str)
         assert isinstance(params, dict)
         assert "project_id" in params
-        # Unfiltered query should use the v2 pre-aggregated rollup
-        assert "spans_hourly_rollup" in query
+        # Unfiltered query reads `spans`'s own hourly aggregate states.
+        assert "spans_hourly_rollup" not in query
+        assert "FROM spans\n" in query
 
     def test_build_with_filters_uses_spans_table(self):
         """When attribute filters are present, should fall back to raw spans table."""
@@ -2589,8 +2590,14 @@ class TestTimeSeriesQueryBuilder:
         assert "spans" in query
         assert "model" in query or "gpt-4" in str(params.values())
 
-    def test_build_unfiltered_uses_agg_table(self):
-        """Without filters, should use the v2 pre-aggregated spans_hourly_rollup."""
+    def test_build_unfiltered_reads_in_table_hourly_states(self):
+        """Without filters, read `spans`'s own hourly aggregate states.
+
+        The retired `spans_hourly_rollup` was a separate materialized view
+        that counted insert deliveries; `spans` collapses those back to one
+        row per dedup key, so the two drifted apart permanently. The states
+        merged here live inside `spans` and are rebuilt with its parts.
+        """
         from tracer.services.clickhouse.query_builders import TimeSeriesQueryBuilder
 
         builder = TimeSeriesQueryBuilder(
@@ -2599,11 +2606,55 @@ class TestTimeSeriesQueryBuilder:
             interval="hour",
         )
         query, params = builder.build()
-        assert "spans_hourly_rollup" in query
-        # Should use AggregatingMergeTree combinators
+        assert "spans_hourly_rollup" not in query
+        assert "FROM spans\n" in query
+        # Inner level writes states, outer level merges them. Both halves are
+        # required: a projection body applies `-State` a second time, so a
+        # plainly-written `count()` can never match one.
+        for state in (
+            "countState() AS n",
+            "sumState(cost) AS cost_sum",
+            "sumState(total_tokens) AS total_tokens_sum",
+            "sumState(prompt_tokens) AS prompt_tokens_sum",
+            "sumState(completion_tokens) AS completion_tokens_sum",
+            "quantilesTDigestState(0.5, 0.95, 0.99)(latency_ms) AS latency_q",
+        ):
+            assert state in query
         assert "countMerge" in query
         assert "sumMerge" in query
         assert "quantilesTDigestMerge" in query
+        assert "GROUP BY project_id, hour, status" in query
+
+    def test_build_unfiltered_never_casts_the_token_columns(self):
+        """A cast changes the aggregate signature and stops the states matching.
+
+        The retired view body wrote `sumState(toInt64(total_tokens))`; the
+        stored states are `sumState` over the raw Int32 column.
+        """
+        from tracer.services.clickhouse.query_builders import TimeSeriesQueryBuilder
+
+        builder = TimeSeriesQueryBuilder(
+            project_id="test-project-id",
+            filters=[],
+            interval="hour",
+        )
+        query, _ = builder.build()
+        assert "toInt64(" not in query
+
+    def test_build_unfiltered_names_no_projection_and_adds_no_final(self):
+        """The optimiser chooses the target; the query only writes the shape."""
+        from tracer.services.clickhouse.query_builders import TimeSeriesQueryBuilder
+
+        builder = TimeSeriesQueryBuilder(
+            project_id="test-project-id",
+            filters=[],
+            interval="hour",
+        )
+        query, _ = builder.build()
+        assert "proj_" not in query
+        assert "PROJECTION" not in query.upper()
+        assert "FINAL" not in query.upper()
+        assert "SAMPLE" not in query.upper()
 
     def test_build_sets_start_and_end_dates(self):
         """build() should populate start_date and end_date in params."""
@@ -2634,24 +2685,44 @@ class TestTimeSeriesQueryBuilder:
         assert "ORDER BY" in query
 
     # ------------------------------------------------------------------
-    # CH25 close-out: v2 spans_hourly_rollup specifics
+    # In-table hourly aggregate states: the shape that can be read at all
     # ------------------------------------------------------------------
-    # The rollup table partitions/orders by `hour` (DateTime, schema 010)
-    # rather than `start_time`. If the WHERE clause uses the wrong column
-    # the query still runs but skips no partitions — silent perf regression.
+    # The stored states are keyed on `toStartOfHour(start_time)`. A window
+    # predicate written against bare `start_time` is not that key expression,
+    # so the states become unreadable and the query degrades to a full scan.
 
-    def test_agg_query_filters_on_hour_not_start_time(self):
-        """Rollup queries must filter on `hour`, the partition/order key."""
+    def test_agg_query_filters_on_the_hour_key_expression(self):
+        """The window predicate must sit on the states' own key expression.
+
+        This is also the boundary the retired rollup used (`hour >= from AND
+        hour < to`), so which rows land in which bucket does not change.
+        """
         from tracer.services.clickhouse.query_builders import TimeSeriesQueryBuilder
 
         builder = TimeSeriesQueryBuilder(
             project_id="test-project-id", filters=[], interval="hour"
         )
         query, _ = builder.build()
-        # The rollup table has no `start_time` column — that lives on raw spans.
-        assert "hour >= %(start_date)s" in query
-        assert "hour < %(end_date)s" in query
-        assert "start_time" not in query
+        assert "toStartOfHour(start_time) >= %(start_date)s" in query
+        assert "toStartOfHour(start_time) < %(end_date)s" in query
+        assert "start_time >= %(start_date)s" not in query
+
+    def test_agg_query_does_not_filter_on_is_deleted(self):
+        """`is_deleted` is not a projection column; a predicate un-routes it.
+
+        Soft deletes are therefore counted on this path, where the retired
+        view body excluded them. Production measurement puts live tombstones
+        at zero, and unlike the rollup's permanent inflation this one clears
+        when they are collapsed — but it is a real difference and is pinned
+        here so it cannot be introduced or removed by accident.
+        """
+        from tracer.services.clickhouse.query_builders import TimeSeriesQueryBuilder
+
+        builder = TimeSeriesQueryBuilder(
+            project_id="test-project-id", filters=[], interval="hour"
+        )
+        query, _ = builder.build()
+        assert "is_deleted" not in query
 
     def test_agg_query_extracts_median_quantile(self):
         """avg_latency should be the median (index [1]) of the tDigest tuple.
@@ -2693,7 +2764,12 @@ class TestTimeSeriesQueryBuilder:
             project_id="test-project-id", filters=[], interval="hour"
         )
         query, _ = builder.build()
-        assert "countIfMerge(error_count) * 100.0 / greatest(countMerge(n), 1)" in query
+        assert (
+            "countMergeIf(n, status = 'ERROR') * 100.0 / greatest(countMerge(n), 1)"
+            in query
+        )
+        # `error_count` was a rollup column; the states carry `status` instead.
+        assert "error_count" not in query
 
     def test_agg_query_does_not_reference_legacy_table(self):
         """No path back to the legacy CDC-fed aggregate or its source."""
@@ -2705,6 +2781,7 @@ class TestTimeSeriesQueryBuilder:
         query, _ = builder.build()
         assert "span_metrics_hourly" not in query
         assert "tracer_observation_span" not in query
+        assert "spans_hourly_rollup" not in query
 
     def test_format_result_emits_all_metric_keys(self):
         """The response dict must include every metric the dashboard reads.

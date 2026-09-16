@@ -156,10 +156,13 @@ def test_trace_primary_date_only_uses_one_interactive_rollup_query(
     analytics.execute_ch_query.assert_called_once()
     call = analytics.execute_ch_query.call_args
     query = call.args[0]
-    assert "FROM spans_hourly_rollup" in query
-    assert "FROM spans\n" not in query
+    assert "spans_hourly_rollup" not in query
+    assert "FROM spans\n" in query
+    assert "countState() AS n" in query
+    assert "countMerge(n) AS traffic_count" in query
     assert "trace_session_id_remap" not in query
-    assert "countIfMerge(error_count)" in query
+    assert "countMergeIf(n, status = 'ERROR')" in query
+    assert "countIfMerge(error_count)" not in query
     assert "countMerge(error_count)" not in query
     assert (
         0
@@ -1257,7 +1260,8 @@ def test_trace_rollup_failure_propagates_without_exact_or_raw_fallback(monkeypat
 
     assert raised.value is failure
     exact_read.assert_not_called()
-    assert "FROM spans_hourly_rollup" in analytics.execute_ch_query.call_args.args[0]
+    assert "spans_hourly_rollup" not in analytics.execute_ch_query.call_args.args[0]
+    assert "countState() AS n" in analytics.execute_ch_query.call_args.args[0]
 
 
 @pytest.mark.unit

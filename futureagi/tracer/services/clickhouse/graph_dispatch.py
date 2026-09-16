@@ -131,9 +131,10 @@ _GRAPH_SEED_SCALAR_FILTER_TYPES = frozenset({"boolean", "number", "string", "tex
 # is the probe's doing either way; this keeps the real read's budget stated
 # instead of collapsing it.
 _GRAPH_BASE_READ_SETTINGS = {
-    # The retained hourly rollup is already row-reduced. Four workers keep the
-    # interactive scan parallel without leaving concurrency unbounded on the
-    # largest reference projects.
+    # The unfiltered route reads pre-aggregated hourly states, so it is
+    # already row-reduced. Four workers keep the interactive scan parallel
+    # without leaving concurrency unbounded on the largest reference
+    # projects; the filtered routes below share the same ceiling.
     "max_threads": settings.DASHBOARD_TRACE_READ_MAX_THREADS,
     "max_block_size": settings.OBSERVABILITY_LIST_MAX_BLOCK_SIZE,
     "max_memory_usage": settings.OBSERVABILITY_LIST_MAX_MEMORY_BYTES,
@@ -532,14 +533,28 @@ _SYSTEM_METRIC_FIELDS: dict[str, tuple[str, tuple[str, ...]]] = {
 }
 
 
-def format_system_metric_graph(
+# Series whose published value is an approximation rather than a count or a
+# sum over the selected rows. ``latency`` is rendered from stored tDigest
+# quantile states on the unfiltered route, as it always has been.
+_APPROXIMATE_SYSTEM_METRICS = frozenset({"latency"})
+
+
+def _resolved_system_metric(
     ch_data: dict[str, list[dict[str, Any]]], metric_id: str
-) -> dict[str, Any]:
+) -> tuple[str, tuple[str, ...]]:
+    """Resolve a requested metric id to the series that will be published."""
+
     normalized = str(metric_id or "latency").strip().lower()
-    metric_key, value_fields = _SYSTEM_METRIC_FIELDS.get(
+    return _SYSTEM_METRIC_FIELDS.get(
         normalized,
         (normalized if normalized in ch_data else "latency", ("value", normalized)),
     )
+
+
+def format_system_metric_graph(
+    ch_data: dict[str, list[dict[str, Any]]], metric_id: str
+) -> dict[str, Any]:
+    metric_key, value_fields = _resolved_system_metric(ch_data, metric_id)
     metric_points = ch_data.get(metric_key, [])
     traffic_points = ch_data.get("traffic", [])
     traffic_by_timestamp = {
@@ -1247,17 +1262,18 @@ def _fetch_rollup_system_metric_graph(
 ) -> dict[str, Any]:
     """Serve the main-compatible date-only system graph in one request.
 
-    The hourly rollup is the established fast path for an empty filter set or
-    a positive date window. Relational, attribute, complement-datetime, eval,
-    and annotation filters are handled by the bounded candidate dispatcher.
+    ``spans``'s own hourly aggregate states are the fast path for an empty
+    filter set or a positive date window. Relational, attribute,
+    complement-datetime, eval, and annotation filters are handled by the
+    bounded candidate dispatcher.
     """
 
     started = monotonic()
     # Bind the normalized window explicitly and pass no filters to the query
     # builder. This is a physical-source invariant: even if the general
     # builder learns another filter shape later, this interactive route can
-    # only emit the ``spans_hourly_rollup`` query and can never fall back to a
-    # raw ``spans`` scan.
+    # only emit the bounded aggregate-state query and can never fall back to
+    # an unbounded per-row ``spans`` scan.
     start_date, end_date = BaseQueryBuilder.parse_time_range(filters, strict=True)
     if (
         start_date is not None
@@ -1302,10 +1318,9 @@ def _fetch_rollup_system_metric_graph(
             expected_columns=_TRACE_ROLLUP_RESULT_COLUMNS,
         )
         query_count = 1
-    response = format_system_metric_graph(
-        builder.format_result(rows, columns),
-        metric_id,
-    )
+    metrics = builder.format_result(rows, columns)
+    metric_key, _ = _resolved_system_metric(metrics, metric_id)
+    response = format_system_metric_graph(metrics, metric_id)
     response.update(
         _complete_metadata(
             started=started,
@@ -1315,8 +1330,14 @@ def _fetch_rollup_system_metric_graph(
     )
     response.update(
         {
+            # Still a materialized pre-aggregate, but one maintained inside
+            # ``spans`` rather than a separate delivery-counting view, so the
+            # traffic, token, cost and error-rate series are the same numbers
+            # a base-table scan returns over the deduplicated rows.
+            # ``latency`` stays the stored tDigest median it has always been:
+            # approximate, unchanged by this route, and reported as such.
             "query_provenance": "materialized_rollup",
-            "query_exact": False,
+            "query_exact": metric_key not in _APPROXIMATE_SYSTEM_METRICS,
         }
     )
     return enforce_exact_graph_data_contract(response)

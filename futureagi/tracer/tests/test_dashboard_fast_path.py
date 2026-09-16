@@ -79,12 +79,17 @@ def test_w1_w6_simple_metrics_use_bounded_rollup(monkeypatch, preset, granularit
     )
 
     assert result["query_status"] == "complete"
-    assert result["query_exact"] is False
+    # A summed token series off the in-table states is the base table's own
+    # number, so the payload may finally say so.
+    assert result["query_exact"] is True
+    assert result["metrics"][0]["query_exact"] is True
     assert result["query_provenance"] == "materialized_rollup"
     assert len(analytics.calls) == 1
     query, params, timeout_ms, settings = analytics.calls[0]
-    assert "FROM spans_hourly_rollup" in query
-    assert "FROM spans\n" not in query
+    assert "spans_hourly_rollup" not in query
+    assert "FROM spans\n" in query
+    assert "countState() AS n" in query
+    assert "sumMerge(total_tokens_sum)" in query
     assert params["start_date"] < params["end_date"]
     assert 0 < timeout_ms <= _DASHBOARD_INTERACTIVE_TIMEOUT_MS
     assert settings == _DASHBOARD_ROLLUP_READ_SETTINGS
@@ -141,12 +146,19 @@ def test_span_and_trace_rollups_share_one_deadline(monkeypatch):
     assert result["query_status"] == "complete"
     assert len(analytics.calls) == 2
     assert [call[2] for call in analytics.calls] == [8_000, 7_000]
-    assert {"spans_hourly_rollup", "trace_count_rollup"} == {
-        "spans_hourly_rollup"
-        if "spans_hourly_rollup" in call[0]
-        else "trace_count_rollup"
+    assert {"spans", "trace_count_rollup"} == {
+        "trace_count_rollup" if "FROM trace_count_rollup" in call[0] else "spans"
         for call in analytics.calls
     }
+    assert all("spans_hourly_rollup" not in call[0] for call in analytics.calls)
+    # The trace-count source is a different table this change does not touch,
+    # so a payload carrying it stays inexact even though the token series is
+    # now the base table's own number.
+    assert result["query_exact"] is False
+    exactness = {
+        metric["name"]: metric["query_exact"] for metric in result["metrics"]
+    }
+    assert exactness == {"tokens": True, "trace_count": False}
 
 
 @pytest.mark.unit
