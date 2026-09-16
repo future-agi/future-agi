@@ -1446,6 +1446,27 @@ def read_bounded_filter_page(
         and callable(seed_density_probe_support)
         and seed_density_probe_support() is True
     )
+    # A lane whose ABSENCE PROOF is also linear in the rows of the interval it
+    # covers declares a second budget for it. It is a second budget rather than
+    # a second mechanism: the proof reads far narrower columns than the seed,
+    # so the row count that fills a statement's time differs by two orders of
+    # magnitude, but the lattice, the floor, the unprobed cap, the density
+    # probe and the proportional fit are the same policy doing the same
+    # arithmetic. A lane that declares none keeps its builder's own widths.
+    discovery_width_policy_builder = getattr(
+        builder, "filter_population_discovery_width_policy", None
+    )
+    discovery_width_policy: FilterSeedWidthPolicy | None = (
+        discovery_width_policy_builder()
+        if callable(discovery_width_policy_builder)
+        else None
+    )
+    if discovery_width_policy is not None and not isinstance(
+        discovery_width_policy, FilterSeedWidthPolicy
+    ):
+        raise ValueError("discovery width policy must be a FilterSeedWidthPolicy")
+    last_discovery_width: timedelta | None = None
+    last_discovery_read_rows: int | None = None
     # THE PROBE ALLOWANCE, AND WHY IT IS NOT THE SEED BUDGET.
     #
     # ``max_query_count`` is the budget for the statements that ACQUIRE and
@@ -1839,21 +1860,12 @@ def read_bounded_filter_page(
                     timeout_overflow_mode="throw",
                 )
             if kind in {"root_time_discovery", "population_time_discovery"}:
-                if (
-                    kind == "population_time_discovery"
-                    and discovery_windows
-                    and active_end - active_start > timedelta(days=1)
-                ):
-                    # Thin indexed key proofs over a broad interval are CPU
-                    # work, not the small root/time-only metadata probes. An
-                    # explicit caller worker budget remains an upper bound.
-                    population_workers = _POPULATION_TIME_DISCOVERY_MAX_THREADS
-                    explicit_workers = (read_settings or {}).get("max_threads")
-                    if explicit_workers is not None and int(explicit_workers) > 0:
-                        population_workers = min(
-                            population_workers, int(explicit_workers)
-                        )
-                    settings["max_threads"] = population_workers
+                if kind == "population_time_discovery":
+                    # Indexed key-presence proofs are CPU work over pruned
+                    # granules, not the small root/time-only metadata probes.
+                    # The probe owns its worker budget: a caller's page-read
+                    # worker setting sizes hydration, not this proof.
+                    settings["max_threads"] = _POPULATION_TIME_DISCOVERY_MAX_THREADS
                 else:
                     settings["max_threads"] = min(int(settings["max_threads"]), 1)
                 if kind == "root_time_discovery":
@@ -1929,6 +1941,7 @@ def read_bounded_filter_page(
         boundary: datetime,
         *,
         newer_neighbour_read_rows: int | None = None,
+        policy: FilterSeedWidthPolicy | None = None,
     ) -> timedelta:
         """Refuse to issue a slice wider than the cap without a density proof.
 
@@ -1986,19 +1999,18 @@ def read_bounded_filter_page(
         not turn an otherwise exact page into a degraded one.
         """
 
-        if seed_width_policy is None or not seed_width_policy.requires_density_probe(
-            width
-        ):
+        policy = policy or seed_width_policy
+        if policy is None or not policy.requires_density_probe(width):
             return width
         if not seed_density_probe_enabled:
-            return min(width, seed_width_policy.unprobed_cap)
+            return min(width, policy.unprobed_cap)
         empty_estimate_is_zero = newer_neighbour_read_rows == 0
         counted = probed_slice_rows(
             width, boundary, empty_estimate_is_zero=empty_estimate_is_zero
         )
         if counted is None:
-            return min(width, seed_width_policy.unprobed_cap)
-        if counted <= seed_width_policy.target_read_rows:
+            return min(width, policy.unprobed_cap)
+        if counted <= policy.target_read_rows:
             # THE PROPOSAL STOOD, so there is nothing left to ask. An estimate
             # inside the budget - zero included - fits the candidate slice as
             # proposed, and a refinement question can only ever NARROW a width
@@ -2006,8 +2018,8 @@ def read_bounded_filter_page(
             # first cut of this guard did on the sparse tail: two index reads
             # per refused proposal that changed no width at all.
             return width
-        fitted = seed_width_policy.probed_width(width, counted)
-        if fitted >= width or fitted <= seed_width_policy.min_width:
+        fitted = policy.probed_width(width, counted)
+        if fitted >= width or fitted <= policy.min_width:
             # Either the proposal stood, or the fit already reached the floor -
             # and nothing a refinement could answer would narrow a floor-width
             # slice, so asking would be a statement with no decision behind it.
@@ -2028,7 +2040,7 @@ def read_bounded_filter_page(
         )
         if refined is None:
             return fitted
-        return seed_width_policy.refined_width(fitted, refined)
+        return policy.refined_width(fitted, refined)
 
     def probed_slice_rows(
         width: timedelta,
@@ -3217,6 +3229,42 @@ def read_bounded_filter_page(
                     if discovery_windows
                     else discovery_window
                 )
+                if discovery_width_policy is not None:
+                    # THE SAME BUDGET, ON THE OTHER WIDE STATEMENT. The proof
+                    # about to be issued is linear in the rows of its interval,
+                    # so the builder proposes the widest interval that could be
+                    # useful and the budget fits it: the first proof of a read
+                    # is costed from the primary index, and every later one is
+                    # sized from the rows the PREVIOUS proof actually read and
+                    # then costed again. A proposal the probe cannot cost is
+                    # capped at the unprobed cap, and the next proof's own read
+                    # rows widen it back, so an unreadable estimate costs
+                    # statements and never history: proofs walk strictly older
+                    # over contiguous intervals, and a narrower one leaves the
+                    # rest to the next.
+                    proposed_discovery_window = min(
+                        active_discovery_window,
+                        slice_end - request_start,
+                        (
+                            discovery_width_policy.next_width(
+                                last_discovery_width,
+                                last_discovery_read_rows,
+                                request_width=slice_end - request_start,
+                            )
+                            if last_discovery_width is not None
+                            else active_discovery_window
+                        ),
+                    )
+                    active_discovery_window = probe_guarded_width(
+                        proposed_discovery_window,
+                        slice_end,
+                        newer_neighbour_read_rows=(
+                            last_discovery_read_rows
+                            if last_discovery_read_rows is not None
+                            else last_seed_read_rows
+                        ),
+                        policy=discovery_width_policy,
+                    )
                 probe_start = max(request_start, slice_end - active_discovery_window)
                 probe_query, probe_params = root_discovery_builder(
                     slice_start=probe_start, slice_end=slice_end
@@ -3249,6 +3297,8 @@ def read_bounded_filter_page(
                     root_discovery_enabled = False
                     population_resume_below = None
                 else:
+                    last_discovery_width = active_discovery_window
+                    last_discovery_read_rows = getattr(probe_result, "read_rows", None)
                     probe_rows = list(probe_result.data or [])
                     if len(probe_rows) != 1 or discovery_field not in probe_rows[0]:
                         raise ValueError(

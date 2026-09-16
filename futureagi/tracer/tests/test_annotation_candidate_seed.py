@@ -206,8 +206,21 @@ def test_span_annotation_candidate_path_excludes_unsupported_acquisition(mode):
     elif mode == "custom_sort":
         kwargs["sort_params"] = [{"column_id": "cost"}]
     builder = SpanListQueryBuilderV2(**kwargs)
+    start, end = builder._bounded_request_window
     assert not builder.supports_filter_candidate_seed_page()
-    assert builder.recommended_filter_initial_slice_width() is None
+    if mode == "raw":
+        # Still off the Score candidate path - which is what this test is
+        # about - but a raw attribute lane now declares its OWN row budget and
+        # names that policy's opening width. The property that matters here is
+        # unchanged and is asserted directly: it is not the Score lane's
+        # full-window slice.
+        opening = builder.filter_seed_width_policy().initial_width
+        assert opening == timedelta(hours=1)
+        assert builder.recommended_filter_initial_slice_width() == opening
+        assert opening != end - start
+    else:
+        assert builder.filter_seed_width_policy() is None
+        assert builder.recommended_filter_initial_slice_width() is None
     assert builder.recommended_filter_query_timeout_ms() is None
 
 

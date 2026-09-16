@@ -473,6 +473,44 @@ INTERACTIVE_READ_SETTING_SPECS = {
             # Broad key-only span population proofs read thin raw columns;
             # their CPU budget is separate from the normal seed/classifier.
             ("FILTER_SELECTOR_POPULATION_MAX_THREADS", 2, 1, 4),
+            # The SPAN list's own two row budgets. The span lane has two
+            # statements whose cost tracks the rows inside an interval rather
+            # than the interval's width, and they read DIFFERENT columns, so
+            # one number cannot serve both.
+            #
+            # THE SEED replays the typed Map of every physical row inside its
+            # slice - 3.73 KB of ``attrs_string`` per row measured (755,996
+            # rows = 2.82 GB), about 0.3M rows/s at one worker - so 500,000
+            # rows is roughly 1.7 s of that Map walk.
+            #
+            # THE POPULATION-DISCOVERY PROOF reads ``start_time`` plus the thin
+            # Map ``.keys`` stream its witness evaluates, and no Map VALUE at
+            # all. Measured read-only against production at one worker:
+            # 831,771 rows in 0.567 s (36.5 MB, 43.9 B/row), i.e. ~1.5M rows/s,
+            # so 2,000,000 rows is about 1.4 s - less at this proof's own
+            # two-worker budget above. The number is calibrated for the witness
+            # the proof actually CARRIES: a proof reading ``start_time`` alone
+            # walks more than an order of magnitude faster, and a budget chosen
+            # for that shape would not bound this statement.
+            #
+            # Both are consumed as ``EXPLAIN ESTIMATE`` rows, which are an
+            # upper bound twice over - whole granules, and every physical
+            # version inside them - so both errors point at a NARROWER issued
+            # interval. Narrowing either never skips history: intervals are
+            # contiguous and half-open and the remainder is the next adjacent
+            # interval's work.
+            (
+                "FILTER_SELECTOR_SPAN_SEED_TARGET_READ_ROWS",
+                500_000,
+                50_000,
+                50_000_000,
+            ),
+            (
+                "FILTER_SELECTOR_SPAN_POPULATION_DISCOVERY_TARGET_READ_ROWS",
+                2_000_000,
+                100_000,
+                2_000_000_000,
+            ),
             ("FILTER_SELECTOR_MAX_NUMBERED_PAGE_WORK_ROWS", 5_000, 1, 100_000),
             ("OBSERVABILITY_NAVIGATION_CANDIDATE_LIMIT", 4_095, 1, 65_535),
             ("OBSERVABILITY_NAVIGATION_SCAN_PAGE_SIZE", 200, 1, 1_000),
