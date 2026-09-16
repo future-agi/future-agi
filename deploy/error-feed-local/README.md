@@ -28,6 +28,8 @@ until the release checks below are complete.
    matching the Node worker's `OMEGA_ENGINE_VERSION`. Projects still configured
    as `legacy` will not be scanned in this v2-only stack; migrate their configs
    deliberately before using this setting beyond the local stack.
+   Remove the existing `sweep-scannable-traces` Temporal schedule during cutover;
+   the v2-only schedule registry no longer includes it.
 
 Keep runtime env files and secrets outside the repository. Set these Compose
 variables in your shell; paths must be absolute:
