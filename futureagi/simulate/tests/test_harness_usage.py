@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -164,6 +164,7 @@ def test_receipt_replay_bills_platform_text_and_all_voice_minutes(
         "text_sim_tokens": 35,
         "voice_sim_minutes": 2.25,
         "ai_credits": 0,
+        "sandbox_seconds": 0,
     }
 
 
@@ -185,6 +186,30 @@ def test_infrastructure_receipt_does_not_bill_measured_call(
     assert events == []
     attempt.job.refresh_from_db()
     assert harness_usage.harness_consumption(attempt.job)["voice_sim_minutes"] == 0
+
+
+@pytest.mark.django_db
+def test_sandbox_runtime_stops_at_verified_teardown_without_billing(
+    metered_attempt, monkeypatch
+):
+    capability, events = metered_attempt
+    started = datetime.now(UTC)
+    moment = [started]
+    monkeypatch.setattr(harness_usage.timezone, "now", lambda: moment[0])
+    harness_usage.record_sandbox_runtime(capability.attempt, started=True)
+    moment[0] = started + timedelta(seconds=30)
+    harness_usage.record_sandbox_runtime(capability.attempt)
+    moment[0] = started + timedelta(seconds=60)
+    harness_usage.record_sandbox_runtime(capability.attempt, final=True)
+    moment[0] = started + timedelta(seconds=90)
+    harness_usage.record_sandbox_runtime(capability.attempt)
+
+    capability.attempt.job.refresh_from_db()
+    assert (
+        harness_usage.harness_consumption(capability.attempt.job)["sandbox_seconds"]
+        == 60
+    )
+    assert events == []
 
 
 @pytest.mark.django_db

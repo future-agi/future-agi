@@ -8,6 +8,7 @@ from uuid import UUID, uuid5
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db import transaction
 from django.utils.dateparse import parse_datetime
+from django.utils import timezone
 
 from simulate.models import HostedHarnessAttempt, HostedHarnessJob
 from simulate.services.hosted_harness import HostedHarnessError
@@ -311,7 +312,8 @@ def harness_consumption(job: HostedHarnessJob) -> dict | None:
     metadata = job.payload.get("metadata") or {}
     reports = metadata.get(_REPORT_KEY) or {}
     authoring_reports = metadata.get(_AUTHORING_REPORT_KEY) or {}
-    if not reports and not authoring_reports:
+    runtimes = metadata.get("sandbox_runtime") or {}
+    if not reports and not authoring_reports and not runtimes:
         return None
 
     consumption = {"text_sim_tokens": 0, "voice_sim_minutes": 0, "ai_credits": 0}
@@ -335,4 +337,34 @@ def harness_consumption(job: HostedHarnessJob) -> dict | None:
         for report in authoring_reports.values()
         for record in report["records"]
     )
+    consumption["sandbox_seconds"] = sum(
+        observation["seconds"] for observation in runtimes.values()
+    )
     return consumption
+
+
+def record_sandbox_runtime(
+    attempt: HostedHarnessAttempt, *, started: bool = False, final: bool = False
+) -> None:
+    """Observe provision-to-confirmed-teardown duration without billing it."""
+    with transaction.atomic():
+        job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+            id=attempt.job_id
+        )
+        metadata = dict(job.payload.get("metadata") or {})
+        runtimes = dict(metadata.get("sandbox_runtime") or {})
+        key = str(attempt.id)
+        observation = dict(runtimes.get(key) or {})
+        if observation.get("ended_at") or (not observation and not started):
+            return
+        now = timezone.now()
+        observation.setdefault("started_at", now.isoformat())
+        began = parse_datetime(observation["started_at"])
+        observation["seconds"] = max(0.0, (now - began).total_seconds())
+        observation["observed_at"] = now.isoformat()
+        if final:
+            observation["ended_at"] = now.isoformat()
+        runtimes[key] = observation
+        metadata["sandbox_runtime"] = runtimes
+        job.payload = {**job.payload, "metadata": metadata}
+        job.save(update_fields=["payload", "updated_at"])

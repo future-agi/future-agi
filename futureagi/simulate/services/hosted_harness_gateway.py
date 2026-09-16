@@ -1785,6 +1785,9 @@ class DaytonaHostedGateway:
             attempt.provider_ref = sandbox.id
             attempt.state = HostedHarnessAttempt.State.PROVISIONING
             attempt.save(update_fields=["provider_ref", "state", "updated_at"])
+            from simulate.services.harness_usage import record_sandbox_runtime
+
+            record_sandbox_runtime(attempt, started=True)
             sandbox.fs.upload_file(source_archive, "/work/source.tar.gz")
             sandbox.fs.upload_file(
                 json.dumps(
@@ -3206,7 +3209,12 @@ def _secret_safe(value: Any, *, key: str = "") -> Any:
 def _read_harness_usage(attempt: HostedHarnessAttempt, sandbox) -> None:
     """Recover the structured ALK journal during polling and before teardown."""
     from simulate.serializers.harness_usage import HarnessUsageRequestSerializer
-    from simulate.services.harness_usage import record_harness_usage
+    from simulate.services.harness_usage import (
+        record_harness_usage,
+        record_sandbox_runtime,
+    )
+
+    record_sandbox_runtime(attempt)
 
     try:
         body = sandbox.fs.download_file(

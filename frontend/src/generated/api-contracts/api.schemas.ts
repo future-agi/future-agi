@@ -16965,6 +16965,8 @@ export interface HarnessConsumptionApi {
   voice_sim_minutes: number;
   /** @minimum 0 */
   ai_credits: number;
+  /** @minimum 0 */
+  sandbox_seconds: number;
 }
 
 export interface HarnessJobReadApi {

@@ -87634,7 +87634,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessConsumption: {
-      required: ["text_sim_tokens", "voice_sim_minutes", "ai_credits"],
+      required: [
+        "text_sim_tokens",
+        "voice_sim_minutes",
+        "ai_credits",
+        "sandbox_seconds",
+      ],
       type: "object",
       properties: {
         text_sim_tokens: {
@@ -87649,6 +87654,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         ai_credits: {
           title: "Ai credits",
+          type: "number",
+          minimum: 0,
+        },
+        sandbox_seconds: {
+          title: "Sandbox seconds",
           type: "number",
           minimum: 0,
         },

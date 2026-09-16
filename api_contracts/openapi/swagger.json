@@ -119818,7 +119818,8 @@
             "required": [
                 "text_sim_tokens",
                 "voice_sim_minutes",
-                "ai_credits"
+                "ai_credits",
+                "sandbox_seconds"
             ],
             "type": "object",
             "properties": {
@@ -119834,6 +119835,11 @@
                 },
                 "ai_credits": {
                     "title": "Ai credits",
+                    "type": "number",
+                    "minimum": 0
+                },
+                "sandbox_seconds": {
+                    "title": "Sandbox seconds",
                     "type": "number",
                     "minimum": 0
                 }
