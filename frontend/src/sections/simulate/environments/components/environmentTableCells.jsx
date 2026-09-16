@@ -23,7 +23,7 @@ const AGENT_ICON_SX = {
 export const NumberCell = ({ getValue }) => {
   const value = getValue?.();
   // A dummy column (tools/scenarios/sub-goals) has no value in the harness
-  // payload; show a dash rather than an empty cell (TH-7962).
+  // payload; show a dash rather than an empty cell.
   return <Typography sx={NUM_SX}>{value ?? "—"}</Typography>;
 };
 NumberCell.propTypes = { getValue: PropTypes.func };

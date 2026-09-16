@@ -18,7 +18,7 @@ export default function StatusPill({ status, progress }) {
   const isAnimated = status === "building" || status === "running";
 
   return (
-    <CustomTooltip arrow size="small" title={detail}>
+    <CustomTooltip show={!!detail} arrow size="small" title={detail}>
       <Stack
         direction="row"
         alignItems="center"

@@ -34,7 +34,7 @@ export default function ChipCard({ icon, logo, label, on, onClick, comingSoon })
   );
   if (comingSoon) {
     return (
-      <CustomTooltip title="Coming soon" arrow placement="top" size="small">
+      <CustomTooltip show title="Coming soon" arrow placement="top" size="small">
         {/* CustomTooltip doesn't mirror its title onto the child as an
             aria-label (MUI's does), so name the wrapper explicitly. */}
         <Box aria-label="Coming soon" sx={{ display: "inline-flex" }}>{chip}</Box>

@@ -148,8 +148,6 @@ export const ENVIRONMENTS_HEADER = {
   connectSub: "We work with what you already have — no rewrite, no adapter.",
 };
 
-// Phase-1 handoff snackbars — the build/run screens land in later phases.
-export const BUILD_HANDOFF_COPY =
-  "Environment build queued — the build page lands in Phase-2.";
+// Phase-1 handoff snackbar — the run screen lands in a later phase.
 export const RUN_SIMULATION_COPY =
   "Run queued — the run screen lands in Phase-3.";
