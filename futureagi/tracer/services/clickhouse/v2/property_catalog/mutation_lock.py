@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import os
 from collections.abc import Callable
@@ -34,6 +33,12 @@ class FileCatalogMutationSerializer:
         self._directory = path
 
     def serialize(self, key: str, operation: Callable[[], T]) -> T:
+        # Imported here, not at module scope: fcntl is POSIX-only, and this
+        # module is pulled in by tfc.temporal (via Django migration
+        # 0093_register_eval_task_search_attributes) on every Windows test
+        # run whether or not this class is ever instantiated.
+        import fcntl
+
         if not isinstance(key, str) or not key or len(key.encode("utf-8")) > 4096:
             raise ValueError("catalog mutation lock key is invalid")
         filename = hashlib.sha256(key.encode("utf-8")).hexdigest() + ".lock"
