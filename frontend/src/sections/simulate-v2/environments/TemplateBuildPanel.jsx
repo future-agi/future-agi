@@ -105,6 +105,10 @@ export default function TemplateBuildPanel({ template, showName = false }) {
            Suggested on the Evaluations tab, and the user adds the ones they
            want to score against (same as the build-from-agent flow). */
         evals: [],
+        /* Sticker: this env came straight from a template. Locks agent- and
+           env-version editing until the user forks it into a personal copy —
+           templates are meant to be run as-shipped, not modified in place. */
+        seededFromTemplate: true,
       },
     });
 
@@ -199,7 +203,7 @@ export default function TemplateBuildPanel({ template, showName = false }) {
                 startIcon={<Iconify icon="solar:magic-stick-3-bold" width={16} />}
                 sx={{ typography: "s2", fontWeight: 700, whiteSpace: "nowrap" }}
               >
-                Build environment
+                Use environment
               </Button>
             </Stack>
           </SectionCard>

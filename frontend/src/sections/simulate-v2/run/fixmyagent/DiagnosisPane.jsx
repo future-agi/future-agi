@@ -48,9 +48,9 @@ const priorityOf = (p, tasks) => {
 const analyzedRuns = new Set();
 
 export default function DiagnosisPane({
-  tasks, report, trace, proposals, checks, verdict,
+  tasks, report, trace, proposals, verdict,
   applied, setApplied, current, projected, willFix,
-  measured, failing, onOpenTask, onViewIssue, onOptimize, onApplyChecks, checksApplied, onClose,
+  measured, failing, onOpenTask, onViewIssue, onOptimize, onClose,
   env, envState, patch, onHandOff, onCreateAgentVersion, onRunNewVersion, runId,
 }) {
   /* First open of this runId: play the analyzer animation. Every
@@ -73,7 +73,7 @@ export default function DiagnosisPane({
      drawer dropped this branch and left an empty recommendation list under a
      live "Optimize my agent" button — a search over an empty candidate pool
      that would have burned episodes to re-confirm the score it started from. */
-  const nothingToFix = !failing.length && !checks.length;
+  const nothingToFix = !failing.length;
 
   const sorted = useMemo(() => (
     [...proposals].sort((a, b) =>
@@ -134,7 +134,7 @@ export default function DiagnosisPane({
           <Iconify icon="solar:magic-stick-3-linear" width={16} />
         </Box>
         <Box flex={1} minWidth={0}>
-          <Typography sx={{ typography: "s1", fontWeight: 700 }}>Summarize failures</Typography>
+          <Typography sx={{ typography: "s1", fontWeight: 700 }}>Debug failures</Typography>
           <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
             {failing.length} failing of {measured.length} measured
             {tasks.length - measured.length ? ` · ${tasks.length - measured.length} not measured` : ""}
@@ -226,37 +226,27 @@ export default function DiagnosisPane({
                     return (
                       <Box key={a.id}>
                         <Stack
-                          direction="row" alignItems="flex-start" spacing={1.25}
+                          direction="row" alignItems="center" spacing={1}
                           onClick={() => setOpen((o) => ({ ...o, [a.id]: !o[a.id] }))}
-                          sx={{ px: 1.75, py: 1.375, cursor: "pointer", "&:hover": { bgcolor: "action.hover" } }}
+                          sx={{ px: 1.25, py: 0.625, cursor: "pointer", "&:hover": { bgcolor: "action.hover" } }}
                         >
-                          <Iconify icon={tone.icon} width={15} sx={{ color: tone.color, flexShrink: 0, mt: "1px" }} />
-                          <Box flex={1} minWidth={0}>
-                            <Stack direction="row" alignItems="center" spacing={0.75} flexWrap="wrap" rowGap={0.25}>
-                              <Typography sx={{ typography: "s2", fontWeight: 700 }}>{a.label}</Typography>
-                              {a.always && (
-                                <Chip
-                                  size="small" label="always on"
-                                  sx={{
-                                    height: 16, borderRadius: 0.5, color: "text.subtitle",
-                                    border: "1px solid", borderColor: "divider", bgcolor: "transparent",
-                                    "& .MuiChip-label": { px: 0.5, typography: "s3", fontWeight: 600 },
-                                  }}
-                                />
-                              )}
-                            </Stack>
-                            <Typography
-                              sx={{
-                                typography: "s2", fontWeight: 600, mt: 0.125,
-                                color: tone.color === "text.disabled" ? "text.secondary" : tone.color,
-                              }}
-                            >
-                              {a.headline}
-                            </Typography>
-                          </Box>
+                          <Iconify icon={tone.icon} width={13} sx={{ color: tone.color, flexShrink: 0 }} />
+                          <Typography sx={{ typography: "s2", fontWeight: 700, flexShrink: 0 }}>{a.label}</Typography>
+                          {a.always && (
+                            <Typography sx={{ typography: "s3", color: "text.disabled", flexShrink: 0 }}>· always on</Typography>
+                          )}
+                          <Typography
+                            noWrap
+                            sx={{
+                              typography: "s3", fontWeight: 500, flex: 1, minWidth: 0,
+                              color: "text.secondary",
+                            }}
+                          >
+                            {a.headline}
+                          </Typography>
                           <Iconify
                             icon={open[a.id] ? "eva:arrow-ios-upward-fill" : "eva:arrow-ios-downward-fill"}
-                            width={14} sx={{ color: "text.subtitle", flexShrink: 0 }}
+                            width={12} sx={{ color: "text.subtitle", flexShrink: 0 }}
                           />
                         </Stack>
                         <Collapse in={!!open[a.id]}>
@@ -323,75 +313,6 @@ export default function DiagnosisPane({
                 </Typography>
               )}
             </Box>
-
-            {/* ── not fixable by a prompt: the measurement ── */}
-            {!!checks.length && (
-              <Box sx={{ px: 2.5, pt: 2.5 }}>
-                <Typography sx={{ typography: "s2", fontWeight: 700 }}>Fix the measurement first</Typography>
-                <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 1 }}>
-                  These change the environment, not the agent — and no prompt edit substitutes for them.
-                </Typography>
-                <Stack
-                  spacing={0}
-                  divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}
-                  sx={{ border: "1px solid", borderColor: alpha("#DC2626", 0.3), borderRadius: 1 }}
-                >
-                  {checks.map((c) => (
-                    <Box key={c.id} sx={{ p: 1.75 }}>
-                      <Chip
-                        size="small" label={c.kind}
-                        sx={{
-                          height: 18, borderRadius: 0.5, color: "text.secondary", mb: 0.5,
-                          border: "1px solid", borderColor: "divider", bgcolor: "transparent",
-                          "& .MuiChip-label": { px: 0.625, typography: "s3", fontWeight: 600 },
-                        }}
-                      />
-                      <Typography sx={{ typography: "s2", fontWeight: 700 }}>{c.title}</Typography>
-                      <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>{c.why}</Typography>
-                      <Stack direction="row" alignItems="center" spacing={1.5} sx={{ mt: 1 }}>
-                        <Stack direction="row" alignItems="center" spacing={0.5}>
-                          <Iconify icon="solar:play-circle-linear" width={13} sx={{ color: "text.subtitle" }} />
-                          <Typography sx={{
-                            typography: "s3", fontWeight: 600, color: "text.secondary",
-                            fontVariantNumeric: "tabular-nums",
-                          }}>
-                            {c.addresses.length} call{c.addresses.length === 1 ? "" : "s"} affected
-                          </Typography>
-                        </Stack>
-                        {onViewIssue && c.addresses.length > 0 && (
-                          <Button
-                            size="small" variant="outlined"
-                            onClick={() => onViewIssue(c.title, c.addresses)}
-                            startIcon={<Iconify icon="solar:eye-linear" width={14} />}
-                            sx={{
-                              typography: "s3", fontWeight: 700,
-                              color: "text.primary", borderColor: "divider",
-                              height: 26, px: 1,
-                              "&:hover": { borderColor: "text.primary", bgcolor: "transparent" },
-                            }}
-                          >
-                            View affected calls
-                          </Button>
-                        )}
-                      </Stack>
-                    </Box>
-                  ))}
-                  <Stack direction="row" alignItems="center" spacing={1.25} sx={{ px: 1.75, py: 1.375 }}>
-                    <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1 }}>
-                      {checksApplied
-                        ? `Applied as environment ${checksApplied}.`
-                        : "Expect the pass rate to fall — these stop counting passes that were never earned."}
-                    </Typography>
-                    <Button
-                      size="small" variant="outlined" disabled={!!checksApplied} onClick={onApplyChecks}
-                      sx={{ typography: "s2", fontWeight: 700, flexShrink: 0, color: "text.primary", borderColor: "divider" }}
-                    >
-                      {checksApplied ? "Updated" : "Apply to checks"}
-                    </Button>
-                  </Stack>
-                </Stack>
-              </Box>
-            )}
 
             {/*
               Create a new agent version from the diagnosis.
@@ -646,7 +567,6 @@ DiagnosisPane.propTypes = {
   report: PropTypes.array,
   trace: PropTypes.array,
   proposals: PropTypes.array,
-  checks: PropTypes.array,
   verdict: PropTypes.string,
   applied: PropTypes.object,
   setApplied: PropTypes.func,
@@ -659,8 +579,6 @@ DiagnosisPane.propTypes = {
   onViewIssue: PropTypes.func,
   runId: PropTypes.string,
   onOptimize: PropTypes.func,
-  onApplyChecks: PropTypes.func,
-  checksApplied: PropTypes.string,
   onClose: PropTypes.func,
   env: PropTypes.object,
   envState: PropTypes.object,

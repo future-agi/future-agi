@@ -276,6 +276,7 @@ export default function EnvironmentWorkspace() {
     setActionsAnchor(null);
     const suffix = Math.random().toString(36).slice(2, 8);
     const forkedId = `${env.id}-fork-${suffix}`;
+    const now = new Date().toISOString();
     const forked = {
       ...env,
       id: forkedId,
@@ -285,7 +286,11 @@ export default function EnvironmentWorkspace() {
       buildProgress: undefined,
       forkedFrom: env.id,
     };
-    dispatch({ type: "adoptEnvironment", env: forked, now: new Date().toISOString() });
+    dispatch({ type: "adoptEnvironment", env: forked, now });
+    /* A fork of a template-seeded env inherits the world but becomes
+       editable — the template sticker is peeled off, agent + env version
+       management come back, and history restarts at v1 against the seeded
+       baseline agent so the fork's lineage is its own. */
     dispatch({
       type: "patchEnvState",
       envId: forkedId,
@@ -294,10 +299,30 @@ export default function EnvironmentWorkspace() {
         evals: envState.evals || [],
         scenarioSource: envState.scenarioSource,
         twinBacking: envState.twinBacking,
+        agent: envState.agent,
+        agentVersions: envState.agentVersions
+          ? envState.agentVersions.map((v) => ({ ...v }))
+          : undefined,
+        envVersions: [{
+          id: `${forkedId}-v1`,
+          label: "v1",
+          createdAt: now,
+          note: `Forked from ${env.name}.`,
+          scenarios: (envState.scenarios || []).length,
+          changed: ["fork"],
+        }],
+        envDerivedForAgent: "v1",
+        activeAgentVersion: "v1",
+        seededFromTemplate: false,
       },
     });
     navigate(paths.dashboard.simulate.environmentDetail(forkedId));
   };
+
+  /* Template-seeded envs are read-only until forked. Locks the env-version
+     dropdown, the Manage-versions button, and the refresh banner; promotes
+     Fork from the overflow menu to a top-level action beside Run simulation. */
+  const isSeededTemplate = !!envState.seededFromTemplate;
 
   const chips = CHIPS_BY_TAB[activeTab] || CHIPS_BY_TAB.overview;
   const sendChat = (text) => {
@@ -358,7 +383,7 @@ export default function EnvironmentWorkspace() {
               "editing off v1 while v3 exists" is a visible state rather
               than a silent one.
             */}
-            <EnvVersionPin env={env} envState={envState} patch={patch} />
+            <EnvVersionPin env={env} envState={envState} patch={patch} readOnly={isSeededTemplate} />
             {/*
               Twin-backing badge. Present on every tab so the reader
               always knows "this env's world is a live sandbox, not a
@@ -470,35 +495,43 @@ export default function EnvironmentWorkspace() {
           </span>
         </Tooltip>
 
-        {/* Secondary actions — Fork lives here so the header stays focused on
-            Run simulation. */}
-        <Tooltip arrow title="More actions">
-          <IconButton
-            size="small"
-            onClick={(e) => setActionsAnchor(e.currentTarget)}
-            sx={{ color: "text.subtitle" }}
-          >
-            <Iconify icon="solar:menu-dots-bold" width={18} />
-          </IconButton>
-        </Tooltip>
-        <Menu
-          anchorEl={actionsAnchor}
-          open={!!actionsAnchor}
-          onClose={() => setActionsAnchor(null)}
-          anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
-          transformOrigin={{ vertical: "top", horizontal: "right" }}
-          slotProps={{ paper: { sx: { minWidth: 260, mt: 0.5 } } }}
-        >
-          <MenuItem onClick={forkEnvironment} sx={{ alignItems: "flex-start", gap: 1.25, py: 1 }}>
-            <Iconify icon="solar:copy-linear" width={16} sx={{ color: "text.subtitle", mt: "2px", flexShrink: 0 }} />
-            <Box minWidth={0}>
-              <Typography sx={{ typography: "s2", fontWeight: 600 }}>Fork environment</Typography>
-              <Typography sx={{ typography: "s3", color: "text.subtitle", whiteSpace: "normal" }}>
-                Duplicate the world for a different agent or team. Agent + runs reset.
-              </Typography>
-            </Box>
-          </MenuItem>
-        </Menu>
+        {/*
+          Template-seeded envs surface Fork inside the Test-subject card on
+          Overview (the primary way out of the locked template), so the
+          header overflow is suppressed for them. Regular envs keep the
+          overflow menu with Fork tucked inside.
+        */}
+        {!isSeededTemplate && (
+          <>
+            <Tooltip arrow title="More actions">
+              <IconButton
+                size="small"
+                onClick={(e) => setActionsAnchor(e.currentTarget)}
+                sx={{ color: "text.subtitle" }}
+              >
+                <Iconify icon="solar:menu-dots-bold" width={18} />
+              </IconButton>
+            </Tooltip>
+            <Menu
+              anchorEl={actionsAnchor}
+              open={!!actionsAnchor}
+              onClose={() => setActionsAnchor(null)}
+              anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+              transformOrigin={{ vertical: "top", horizontal: "right" }}
+              slotProps={{ paper: { sx: { minWidth: 260, mt: 0.5 } } }}
+            >
+              <MenuItem onClick={forkEnvironment} sx={{ alignItems: "flex-start", gap: 1.25, py: 1 }}>
+                <Iconify icon="solar:copy-linear" width={16} sx={{ color: "text.subtitle", mt: "2px", flexShrink: 0 }} />
+                <Box minWidth={0}>
+                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>Fork environment</Typography>
+                  <Typography sx={{ typography: "s3", color: "text.subtitle", whiteSpace: "normal" }}>
+                    Duplicate the world for a different agent or team. Agent + runs reset.
+                  </Typography>
+                </Box>
+              </MenuItem>
+            </Menu>
+          </>
+        )}
       </Stack>
 
       {/*
@@ -579,7 +612,7 @@ export default function EnvironmentWorkspace() {
             ) : panel === "build" ? (
               <BuildRecordPanel env={env} envState={envState} patch={patch} />
             ) : (
-              <OverviewPanel env={env} envState={envState} patch={patch} onGo={go} agentConnected={!!envState.agent} />
+              <OverviewPanel env={env} envState={envState} patch={patch} onGo={go} agentConnected={!!envState.agent} locked={isSeededTemplate} onFork={forkEnvironment} />
             )}
           </Box>
         </Box>

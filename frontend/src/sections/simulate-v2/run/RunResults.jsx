@@ -486,11 +486,11 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
         */}
         <Button
           variant="contained" color="primary" size="small"
-          startIcon={<Iconify icon="solar:document-text-linear" width={15} />}
+          startIcon={<Iconify icon="solar:magnifer-linear" width={15} />}
           onClick={() => { setFixOptId(null); setFixOpen(true); }}
           sx={{ typography: "s2", fontWeight: 700 }}
         >
-          Summarize failures
+          Debug failures
         </Button>
       </Stack>
 
@@ -522,8 +522,6 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
             </Box>
           )}
 
-          {/* ── compact summary strip ── */}
-          <RunSummaryStrip tasks={tasks} evals={shownEvals} />
 
           {/* ── tabs ── */}
           <CustomTabs
@@ -794,14 +792,13 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
           setOpenTask(t);
         }}
         onViewIssue={(label, ids) => {
-          /* Filter the trace table to the exact task ids the
-             finding addresses, then close the drawer and jump the
-             user to the Test runs tab so they land on the filtered
-             evidence. */
+          /* Filter the trace table to the exact task ids the finding
+             addresses and jump to Test runs — but keep the debug drawer
+             open so the user can compare the finding against the calls
+             side-by-side without having to reopen it. */
           const idSet = new Set(ids);
           setBucketFilter({ label, match: (t) => idSet.has(t.id) });
           setTab("tasks");
-          setFixOpen(false);
         }}
       />
 

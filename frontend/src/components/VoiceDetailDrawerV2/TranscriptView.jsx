@@ -309,17 +309,22 @@ const TurnRow = React.forwardRef(
             bgcolor: isPlaying ? "rgba(123, 86, 219, 0.12)" : "action.hover",
           },
           "&:hover .turn-actions": { opacity: 1 },
-          "&::before": {
-            content: '""',
-            position: "absolute",
-            left: 0,
-            top: 6,
-            bottom: 6,
-            width: "3px",
-            borderRadius: "2px",
-            bgcolor: color,
-            opacity: isPlaying ? 1 : 0.7,
-          },
+          /* Speaker accent — dropped for tool rows because a function call
+             is a system event, not a speaker; a strip there reads as
+             "another voice" and the amber clashes with the block below. */
+          ...(turn.role === "tool" ? {} : {
+            "&::before": {
+              content: '""',
+              position: "absolute",
+              left: 0,
+              top: 6,
+              bottom: 6,
+              width: "3px",
+              borderRadius: "2px",
+              bgcolor: color,
+              opacity: isPlaying ? 1 : 0.7,
+            },
+          }),
         }}
       >
         {/* Meta row: timestamp · duration · actions */}

@@ -5,10 +5,10 @@ import { paths } from "src/routes/paths";
 import SideDrawer from "../../components/SideDrawer";
 import { omegaReport, omegaVerdict, diagnosisTrace } from "../../_mock/omega";
 import {
-  proposalsFor, projectedRate, addressedCount, optimisable, verifierFixes, projectedWithGeneralisation,
+  proposalsFor, projectedRate, addressedCount, optimisable, projectedWithGeneralisation,
 } from "../../_mock/optimize";
 import { runSearch, splitScenarios } from "../../_mock/optimizer";
-import { nextEnvVersion, environmentVersions, nextAgentVersion } from "../../_mock/versions";
+import { nextAgentVersion } from "../../_mock/versions";
 import { optimizationId, OPT_STATUS, nextOptimizationName } from "../../_mock/optimizationRuns";
 import { protoRunId } from "../../_mock/executionAdapter";
 import DiagnosisPane from "./DiagnosisPane";
@@ -52,7 +52,6 @@ export default function FixMyAgentDrawer({
     unlock. Users still uncheck anything they don't want to bundle.
   */
   const [applied, setApplied] = useState({});
-  const [checksApplied, setChecksApplied] = useState(null);
 
   const measured = useMemo(() => tasks.filter((t) => t.status !== "unmeasured"), [tasks]);
   const failing = useMemo(() => optimisable(tasks), [tasks]);
@@ -62,7 +61,6 @@ export default function FixMyAgentDrawer({
     [env, tasks],
   );
   const proposals = useMemo(() => proposalsFor(env, failing, measured), [env, failing, measured]);
-  const checks = useMemo(() => verifierFixes(report), [report]);
 
   /*
     Seed `applied` with every proposal id checked, so the primary CTA is
@@ -86,8 +84,8 @@ export default function FixMyAgentDrawer({
     });
   }, [proposals]);
   const trace = useMemo(
-    () => diagnosisTrace({ report, tasks, proposals, checks }),
-    [report, tasks, proposals, checks],
+    () => diagnosisTrace({ report, tasks, proposals, checks: [] }),
+    [report, tasks, proposals],
   );
 
   const included = proposals.filter((p) => applied[p.id]);
@@ -164,18 +162,6 @@ export default function FixMyAgentDrawer({
           : o
       )),
     });
-  };
-
-  const applyChecks = () => {
-    const list = envState?.envVersions?.length
-      ? envState.envVersions
-      : [...environmentVersions(env, envState)].reverse();
-    const version = nextEnvVersion(env, envState, {
-      changed: ["evals"],
-      note: checks.length === 1 ? checks[0].title : `${checks.length} verifier fixes`,
-    });
-    patch({ envVersions: [...list, version] });
-    setChecksApplied(version.label);
   };
 
   /*
@@ -282,7 +268,6 @@ export default function FixMyAgentDrawer({
             report={report}
             trace={trace}
             proposals={proposals}
-            checks={checks}
             verdict={omegaVerdict(report, failing)}
             applied={applied}
             setApplied={setApplied}
@@ -301,8 +286,6 @@ export default function FixMyAgentDrawer({
             env={env}
             envState={envState}
             patch={patch}
-            onApplyChecks={applyChecks}
-            checksApplied={checksApplied}
             onClose={close}
           />
         )}

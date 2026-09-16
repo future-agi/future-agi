@@ -20,7 +20,7 @@ const ACCENT = "#7857FC";
  * older version is pinned — a valid thing to do (rollback / comparing worlds),
  * surfaced rather than hidden.
  */
-export default function EnvVersionPin({ env, envState, patch }) {
+export default function EnvVersionPin({ env, envState, patch, readOnly = false }) {
   const [anchor, setAnchor] = useState(null);
   const versions = environmentVersions(env, envState);
   const active = currentEnvVersion(env, envState);
@@ -36,22 +36,26 @@ export default function EnvVersionPin({ env, envState, patch }) {
       {/*
         Colour discipline: neutral when active is the latest. Amber stays
         reserved for the actual anomaly (editing off latest).
+        readOnly = template-seeded env; no dropdown, no menu — fork first.
       */}
       <Stack
         direction="row" alignItems="center" spacing={0.625}
-        onClick={(e) => setAnchor(e.currentTarget)}
+        onClick={readOnly ? undefined : (e) => setAnchor(e.currentTarget)}
         sx={{
-          px: 0.875, height: 22, borderRadius: 0.75, cursor: "pointer",
+          px: 0.875, height: 22, borderRadius: 0.75,
+          cursor: readOnly ? "default" : "pointer",
           border: "1px solid",
           color: "text.secondary",
           borderColor: "divider",
           bgcolor: "transparent",
-          "&:hover": { borderColor: "text.disabled" },
+          "&:hover": readOnly ? undefined : { borderColor: "text.disabled" },
         }}
       >
         <Iconify icon="solar:code-linear" width={11} sx={{ opacity: 0.75 }} />
         <Typography sx={{ typography: "s3", fontWeight: 700 }}>env {active.label}</Typography>
-        <Iconify icon="solar:alt-arrow-down-linear" width={10} sx={{ opacity: 0.65 }} />
+        {!readOnly && (
+          <Iconify icon="solar:alt-arrow-down-linear" width={10} sx={{ opacity: 0.65 }} />
+        )}
       </Stack>
 
       <Menu
@@ -134,6 +138,7 @@ EnvVersionPin.propTypes = {
   env: PropTypes.object.isRequired,
   envState: PropTypes.object.isRequired,
   patch: PropTypes.func.isRequired,
+  readOnly: PropTypes.bool,
 };
 
 /* Small pill — neutral outline by default, tinted when a tone is given. */

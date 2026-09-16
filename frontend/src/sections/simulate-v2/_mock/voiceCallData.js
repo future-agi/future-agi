@@ -22,6 +22,123 @@ const speakerRole = (role) =>
   role === "agent" ? "assistant" : role === "customer" ? "user" : role || "user";
 
 /**
+ * Synthesize a tool-call turn to sit before an assistant reply.
+ *
+ * A simulated call has no captured tool events — the steps only carry
+ * text — but tool use is a first-class part of what the agent did, and
+ * the reader needs to see it. We infer a plausible tool from the
+ * environment's tool list plus a keyword scan of the assistant text
+ * ("shipment" → shipment_status, "refund" → issue_refund, etc.) and
+ * mint a compact function-call payload the transcript renders in the
+ * `tool` speaker style (amber accent). This is Observe-drawer-compatible
+ * data (speaker_role: "tool"), not a bespoke new event type.
+ *
+ * Returns null when no tool intent is detected — most assistant turns
+ * are pure conversation, so we don't want a tool row before every one.
+ */
+const TOOL_INTENT_RULES = [
+  { pat: /shipment|carrier|deliver|tracking|arrival|eta|package/i, name: "shipment_status", argsFor: (ctx) => ({ order_id: ctx.orderId }), result: (ctx) => ({ status: "in_transit", eta: ctx.eta || "today 8pm", carrier: "UPS" }) },
+  { pat: /refund|reimburs|money\s*back|charge\s*back/i, name: "issue_refund", argsFor: (ctx) => ({ order_id: ctx.orderId, amount_cents: 4999 }), result: () => ({ ok: true, refund_id: "rf_9c3e4a" }) },
+  { pat: /return\s*(window|label|policy|eligib)|eligib/i, name: "check_return_eligibility", argsFor: (ctx) => ({ order_id: ctx.orderId }), result: () => ({ eligible: true, window_days: 30, days_remaining: 4 }) },
+  { pat: /escalat|supervisor|manager|human\s*agent|transfer/i, name: "escalate_to_human", argsFor: () => ({ queue: "supervisor" }), result: () => ({ queued: true, wait_seconds: 42 }) },
+  { pat: /cancel|stop\s*(the\s*)?order/i, name: "cancel_order", argsFor: (ctx) => ({ order_id: ctx.orderId }), result: () => ({ cancelled: true, cancelled_at: new Date().toISOString() }) },
+  { pat: /return\s*label|print|email\s*(it|the)?\s*(label)?/i, name: "generate_return_label", argsFor: (ctx) => ({ order_id: ctx.orderId }), result: () => ({ url: "https://ship.futureagi.com/labels/rl_1a2b3c.pdf" }) },
+  { pat: /order|number|status|placed|invoice/i, name: "lookup_order", argsFor: (ctx) => ({ query: ctx.orderId || "AB-102401" }), result: (ctx) => ({ order_id: ctx.orderId || "AB-102401", status: "shipped", total_cents: 4999 }) },
+];
+
+function inferToolCall(assistantText, ctx, allowedTools) {
+  if (!assistantText) return null;
+  const rule = TOOL_INTENT_RULES.find((r) => r.pat.test(assistantText));
+  if (!rule) return null;
+  if (allowedTools && allowedTools.length && !allowedTools.includes(rule.name)) return null;
+  const args = rule.argsFor(ctx);
+  const result = rule.result(ctx);
+  const latencyMs = 80 + Math.floor(Math.random() * 240);
+  return { name: rule.name, args, result, latencyMs };
+}
+
+/**
+ * Render a tool call as its own compact block — a separate transcript row
+ * that sits directly under the assistant turn that used it. The drawer's
+ * TurnRow gives each row its own bordered container with a speaker-coloured
+ * accent, so this reads as a visually distinct card attached to the previous
+ * turn rather than a footer stuffed inside its bubble.
+ */
+function formatToolTurnContent({ name, args, result, latencyMs }) {
+  const argsLine = JSON.stringify(args);
+  const resultLine = JSON.stringify(result);
+  return [
+    `🛠 **Function call** · \`${name}\` · ${latencyMs}ms`,
+    "```json",
+    `→ args: ${argsLine}`,
+    `← result: ${resultLine}`,
+    "```",
+  ].join("\n");
+}
+
+/**
+ * From a chronological list of run steps, produce a transcript array that
+ * interleaves tool-call turns before the assistant replies that used them.
+ * Returns entries with the observability-drawer shape (speaker_role: "tool"
+ * for tool turns) plus `tool_meta` so downstream views can key off it.
+ */
+function buildTranscriptWithTools(steps, env, task) {
+  const allowedTools = (env?.tools || []).map((t) => t.id || t.name).filter(Boolean);
+  // Pick a stable order id per task so every tool call within a call references the same order.
+  const orderId = task?.attributes?.order_id
+    || (task?.id ? `AB-${(task.id.split("-").pop() || "102401").slice(0, 6).toUpperCase()}` : "AB-102401");
+  const ctx = { orderId, eta: task?.attributes?.eta };
+
+  const out = [];
+  let cursor = 0;
+
+  steps.forEach((s, i) => {
+    const role = speakerRole(s.role);
+    const turnDur = 3;
+
+    out.push({
+      id: s.id || `${task?.id || "t"}-t${i}`,
+      speaker_role: role,
+      role,
+      message: s.text,
+      content: s.text,
+      start_time_seconds: cursor,
+      end_time_seconds: cursor + turnDur,
+      duration_seconds: turnDur,
+    });
+    cursor += turnDur;
+
+    /* Tool-call rows follow the assistant reply that used them — a
+       separate transcript row so TurnRow renders each in its own
+       bordered container (its "own box"), not stuffed into the
+       assistant bubble as a footer. Amber accent (the drawer's `tool`
+       role color) keeps them visually attached to the turn above. */
+    if (role === "assistant") {
+      const tool = inferToolCall(s.text, ctx, allowedTools);
+      if (tool) {
+        const dur = Math.max(0.2, tool.latencyMs / 1000);
+        out.push({
+          id: `${task?.id || "t"}-tool-${i}`,
+          speaker_role: "tool",
+          role: "tool",
+          message: formatToolTurnContent(tool),
+          content: formatToolTurnContent(tool),
+          start_time_seconds: cursor,
+          end_time_seconds: cursor + dur,
+          duration_seconds: dur,
+          tool_meta: tool,
+        });
+        cursor += dur;
+      }
+    }
+
+    cursor += 1; // 1s pause before the next speaker
+  });
+
+  return out;
+}
+
+/**
  * A stand-in recording for a simulated call.
  *
  * A sim call produced no audio, so the drawer's recording player would show
@@ -89,22 +206,12 @@ export function taskToVoiceData(task, { env, voice = true } = {}) {
   const agentTurns = steps.filter((s) => s.role === "agent").length;
   const talkAgent = steps.length ? Math.round((agentTurns / steps.length) * 100) : 50;
 
-  /* Each turn becomes a transcript entry. Timings are synthesised at a
-     steady cadence so the analytics view has something to plot; a simulated
-     call has no real per-word timing. */
-  const transcript = steps.map((s, i) => {
-    const role = speakerRole(s.role);
-    return {
-      id: s.id || `${task.id}-t${i}`,
-      speaker_role: role,
-      role,
-      message: s.text,
-      content: s.text,
-      start_time_seconds: i * 4,
-      end_time_seconds: i * 4 + 3,
-      duration_seconds: 3,
-    };
-  });
+  /* Each turn becomes a transcript entry, and where an assistant reply
+     depended on a tool the tool-call is minted as its own row directly
+     before it — same speaker-timeline surface, no separate tab. Timings
+     are synthesised at a steady cadence so the analytics view has
+     something to plot; a simulated call has no real per-word timing. */
+  const transcript = buildTranscriptWithTools(steps, env, task);
 
   /* Per-eval map keyed by id — the drawer accepts either an array or an
      `{ id: { name, score, reason } }` map and normalises a 0..1 score to a

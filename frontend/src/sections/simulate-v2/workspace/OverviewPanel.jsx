@@ -45,7 +45,7 @@ import CapabilityGraph from "./CapabilityGraph";
 const seedBlurb = (rows) =>
   `${rows.toLocaleString()} rows that fill this environment before your agent arrives — the world it actually works in. Rebuilt for every task, so nothing carries over.`;
 
-export default function OverviewPanel({ buildMode, env, envState, patch, onGo, agentConnected }) {
+export default function OverviewPanel({ buildMode, env, envState, patch, onGo, agentConnected, locked = false, onFork }) {
 
   /*
     Nikhil's env-first feedback: agent version management stays inside
@@ -194,9 +194,11 @@ export default function OverviewPanel({ buildMode, env, envState, patch, onGo, a
         onGo={onGo}
         onManageVersions={() => setAgentDrawerOpen(true)}
         agentConnected={agentConnected}
+        locked={locked}
+        onFork={onFork}
       />
 
-      <AgentRefreshBanner env={env} envState={envState} patch={patch} />
+      {!locked && <AgentRefreshBanner env={env} envState={envState} patch={patch} />}
 
       {/*
         Getting-started checklist for envs that haven't been seeded
@@ -501,6 +503,8 @@ OverviewPanel.propTypes = {
   patch: PropTypes.func.isRequired,
   onGo: PropTypes.func,
   agentConnected: PropTypes.bool,
+  locked: PropTypes.bool,
+  onFork: PropTypes.func,
 };
 
 function GroupHeading({ children }) {
@@ -602,7 +606,7 @@ AgentRefreshBanner.propTypes = { env: PropTypes.object, envState: PropTypes.obje
    route. The tab was retired from the rail but the panel is reachable
    from this button, and from any deep link that arrives with step=agent. */
 
-function AgentSummarySection({ env, envState, onGo, onManageVersions, agentConnected }) {
+function AgentSummarySection({ env, envState, onGo, onManageVersions, agentConnected, locked, onFork }) {
   const agent = envState?.agent;
   const versions = envState?.agentVersions || [];
   const activeLabel = envState?.activeAgentVersion
@@ -649,19 +653,32 @@ function AgentSummarySection({ env, envState, onGo, onManageVersions, agentConne
             {agent ? `Agent ${activeLabel}` : "No agent attached"}
           </Typography>
           <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>
-            {agent
-              ? `${versionCount} version${versionCount === 1 ? "" : "s"} on record${endpoint ? ` · ${endpoint}` : ""}. This environment stays put — swap in another agent to compare.`
-              : "This environment is portable. Attach an agent as the test subject; you can swap in different agents later without rebuilding the env."}
+            {locked
+              ? "Seeded baseline shipped with this template. Fork the environment to add your own agent versions."
+              : agent
+                ? `${versionCount} version${versionCount === 1 ? "" : "s"} on record${endpoint ? ` · ${endpoint}` : ""}. This environment stays put — swap in another agent to compare.`
+                : "This environment is portable. Attach an agent as the test subject; you can swap in different agents later without rebuilding the env."}
           </Typography>
         </Box>
         <Stack direction="row" spacing={1} sx={{ flexShrink: 0 }}>
-          <Button
-            variant="outlined" size="small"
-            onClick={onManageVersions}
-            sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider" }}
-          >
-            {agent ? "Manage versions" : "Attach agent"}
-          </Button>
+          {locked ? (
+            <Button
+              variant="outlined" size="small"
+              onClick={onFork}
+              startIcon={<Iconify icon="solar:copy-linear" width={14} />}
+              sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider" }}
+            >
+              Fork to edit
+            </Button>
+          ) : (
+            <Button
+              variant="outlined" size="small"
+              onClick={onManageVersions}
+              sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider" }}
+            >
+              {agent ? "Manage versions" : "Attach agent"}
+            </Button>
+          )}
         </Stack>
       </Stack>
     </Box>
@@ -673,6 +690,8 @@ AgentSummarySection.propTypes = {
   onGo: PropTypes.func,
   onManageVersions: PropTypes.func,
   agentConnected: PropTypes.bool,
+  locked: PropTypes.bool,
+  onFork: PropTypes.func,
 };
 
 /* ── twin backing surface panel ───────────────────────────────────────────── */

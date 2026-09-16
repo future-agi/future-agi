@@ -170,6 +170,8 @@ TraceColumnsPicker.propTypes = {
 
 export const GROUPINGS = [
   { id: "useCase", label: "Goal",              icon: "solar:target-linear" },
+  { id: "persona", label: "Persona",           icon: "solar:user-rounded-linear" },
+  { id: "rule",    label: "Rule broken",       icon: "solar:shield-cross-linear" },
   { id: "subGoal", label: "Failure sub-goal", icon: "solar:map-linear" },
   { id: "pattern", label: "Failure pattern",   icon: "solar:danger-triangle-linear" },
   { id: "status",  label: "Status",            icon: "solar:check-circle-linear" },
@@ -271,6 +273,24 @@ const groupOfTask = (t, mode, env) => {
     if (t.status === "unmeasured") return "Not measured";
     if (t.status === "error") return "Errored";
     return "Failed";
+  }
+  if (mode === "persona") {
+    /* Persona attaches at the scenario level; if the seed didn't populate one
+       (a plain twin scenario without a persona), the task lands in "No
+       persona" rather than dropping out — otherwise the reader would think
+       those tasks were skipped. */
+    return t.persona?.name || "No persona";
+  }
+  if (mode === "rule") {
+    /* Rule-broken is a view of policy violations: the rule the agent was
+       supposed to hold. The rule-enforcement scenarios use titles shaped as
+       "Refuse a request that would break: <the rule>" — everything after the
+       colon is the rule text. Tasks that aren't rule-checks (a happy-path
+       call, an edge-case trap) have no rule to break here and drop out. */
+    const title = t.title || "";
+    const m = title.match(/^Refuse a request that would break:\s*(.+)$/);
+    if (m) return m[1].trim();
+    return null;
   }
   return "All";
 };
