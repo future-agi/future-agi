@@ -295,14 +295,14 @@ class SessionListQueryBuilder(BaseQueryBuilder):
     def _is_non_native_filter(item: dict[str, Any]) -> bool:
         config = item.get("filter_config") or item.get("filterConfig") or {}
         return str(config.get("col_type") or config.get("colType") or "").upper() in {
-            "SPAN_ATTRIBUTE", "EVAL_METRIC", "ANNOTATION",
+            "SPAN_ATTRIBUTE",
+            "EVAL_METRIC",
+            "ANNOTATION",
         }
 
     def _native_session_filters(self) -> list[dict[str, Any]]:
         """Keep explicit non-native sources out of name-based session routing."""
-        return [
-            item for item in self.filters if not self._is_non_native_filter(item)
-        ]
+        return [item for item in self.filters if not self._is_non_native_filter(item)]
 
     @classmethod
     def bounded_datetime_exclusion_sql(
@@ -1228,16 +1228,19 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             return None
         configs = [
             item.get("filter_config") or item.get("filterConfig") or {}
-            for item in self.filters if self._is_raw_attribute_filter(item)
+            for item in self.filters
+            if self._is_raw_attribute_filter(item)
         ]
         if not configs or any(
             (config.get("filter_type") or config.get("filterType"))
-            not in {"text", "string", "number", "boolean"} for config in configs
+            not in {"text", "string", "number", "boolean"}
+            for config in configs
         ):
             return None
         plans, residual = self._bounded_span_filter_parts()
         if (
-            residual or len(plans) != len(configs)
+            residual
+            or len(plans) != len(configs)
             or self._bounded_root_witness_plan(plans) is None
         ):
             return None
@@ -1669,10 +1672,16 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             # Cost tie-break only; retain every plan for latest group membership.
             # Prefer the compiler's proven numeric value-index companion, not
             # a same-span conjunction or a new discovery scan.
-            witness_plans = sorted(root_filter_plans, key=lambda plan: not (
-                plan.raw_graph_value_witness_predicate
-                and "mapValues(span_attr_num)" in plan.raw_graph_value_witness_predicate
-            ))
+            witness_plans = sorted(
+                root_filter_plans,
+                key=lambda plan: (
+                    not (
+                        plan.raw_graph_value_witness_predicate
+                        and "mapValues(span_attr_num)"
+                        in plan.raw_graph_value_witness_predicate
+                    )
+                ),
+            )
             witness = self._bounded_root_witness_plan(witness_plans)
             if witness is not None:
                 # Complete any-span candidates, materialized once. Values only
@@ -1791,6 +1800,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
 
         scalar_filter_ctes = ""
         scalar_filter_membership = ""
+        combined_scalar_roots = False
         if root_filter_plans:
             # A user witness can occur on another child/root or session alias.
             # Expand the complete touched session groups, then acquire scalar
@@ -1815,18 +1825,41 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             scalar_filter_having = " AND ".join(
                 plan.grouped_match_predicate() for plan in root_filter_plans
             )
-            # Reuse the all-span replay for root order only on the separately
-            # qualified finite String page-first route. Other routes are unchanged.
+            # Reuse the all-span replay for root order on the finite String
+            # page-first route and on the user-detail scalar route. Both seed
+            # ``candidate_scalar_span_identities`` by ``trace_session_id``, and
+            # a session's roots are a subset of the spans that scan already
+            # acquires, so a second ``trace_session_id`` scan for the roots
+            # reads the same granules again for nothing. That scan is a bloom
+            # scatter whose false-positive granules grow with the number of
+            # seeded sessions, and on a high-volume tenant it was the single
+            # largest read in the user-detail Sessions statement. Root-ness is
+            # decided on the latest version here exactly as ``latest_roots``
+            # decides it, over the same identity population, and ``minIf`` sees
+            # the session's complete live root set. Other routes are unchanged.
             combined_scalar_roots = (
-                bool(candidate_session_ids) and self.project_ids is None
-                and not candidate_full_state and not include_trace_id
-                and not additional_root_ctes and not root_membership_predicates
-                and getattr(self, "prefers_bounded_filter_page", lambda: False)()
+                self.project_ids is None
+                and not candidate_full_state
+                and not include_trace_id
+                and not additional_root_ctes
+                and not root_membership_predicates
+                and (
+                    (
+                        bool(candidate_session_ids)
+                        and getattr(
+                            self, "prefers_bounded_filter_page", lambda: False
+                        )()
+                    )
+                    or bool(scalar_user_scope)
+                )
+            )
+            combined_membership = (
+                "matching_user_sessions"
+                if scalar_user_scope
+                else "candidate_filter_sessions"
             )
             if combined_scalar_roots:
-                scalar_aggregate_select += (
-                    ", argMax(tuple(parent_span_id), _peerdb_version).1 AS latest_parent_span_id"
-                )
+                scalar_aggregate_select += ", argMax(tuple(parent_span_id), _peerdb_version).1 AS latest_parent_span_id"
                 scalar_alias_select += (
                     ", latest_start_time, (isNull(latest_parent_span_id) "
                     "OR latest_parent_span_id = '') AS is_root"
@@ -1873,12 +1906,10 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         ),
         {"sessions" if combined_scalar_roots else "matching_scalar_sessions"} AS (
             SELECT project_id, session_id{", minIf(latest_start_time, is_root) AS session_start" if combined_scalar_roots else ""}
-            FROM resolved_candidate_scalar_spans{" WHERE session_id IN (SELECT session_id FROM candidate_filter_sessions)" if combined_scalar_roots else ""}
+            FROM resolved_candidate_scalar_spans{f" WHERE session_id IN (SELECT session_id FROM {combined_membership})" if combined_scalar_roots else ""}
             GROUP BY project_id, session_id
             HAVING {scalar_filter_having}{" AND countIf(is_root) > 0" if combined_scalar_roots else ""}
         )"""
-            if combined_scalar_roots:
-                return f"{ts_map_ctes}{candidate_session_cte}{scalar_filter_ctes}"
             if self.project_ids is not None:
                 scalar_filter_membership = (
                     "(resolved_root_sessions.project_id, session_id) IN ("
@@ -2148,6 +2179,14 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 "(SELECT session_id FROM matching_user_sessions)"
             )
 
+        if combined_scalar_roots:
+            # ``sessions`` already stands on the all-span replay above, so no
+            # root scan, root replay or relational/org tail is emitted. This
+            # return waits for the user block: on the user-detail route the
+            # scalar CTEs are seeded by ``matching_user_root_ids``, which that
+            # block declares inside ``ts_map_ctes``.
+            return f"{ts_map_ctes}{candidate_session_cte}{scalar_filter_ctes}"
+
         session_predicate = (
             f"AND {resolved_session_clause}" if resolved_session_clause else ""
         )
@@ -2215,7 +2254,9 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             # collision guard proves this aggregate has exactly one project
             # before the view consumes it.
             # Qualify input membership too: CH25 aliases are visible in WHERE.
-            org_project_evidence_select = ", any(resolved_root_sessions.project_id) AS project_id"
+            org_project_evidence_select = (
+                ", any(resolved_root_sessions.project_id) AS project_id"
+            )
         return f"""
         {ts_map_ctes}
         {candidate_session_cte}

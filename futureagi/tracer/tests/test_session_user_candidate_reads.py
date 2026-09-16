@@ -2047,7 +2047,10 @@ def test_positive_end_user_cursor_with_scalar_filter_uses_scoped_exact_path():
     assert builder.supports_candidate_cursor_page() is True
     sql, _ = builder.build_candidate_cursor_page_query()
     assert "candidate_user_raw_session_pairs" in sql
-    assert "matching_scalar_sessions AS" in sql
+    # Roots are read from the same all-span replay the scalar predicate uses.
+    assert "matching_scalar_sessions AS" not in sql
+    assert "candidate_root_identities AS" not in sql
+    assert "countIf(is_root) > 0" in sql
     scalar_seed = sql.split("candidate_scalar_span_identities AS (", 1)[1].split(
         "latest_candidate_scalar_spans AS (", 1
     )[0]
