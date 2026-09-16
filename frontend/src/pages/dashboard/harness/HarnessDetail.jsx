@@ -694,7 +694,7 @@ export default function HarnessDetail() {
                     sx={{ display: "block", mt: 0.75 }}
                   >
                     Text tokens include only platform-funded simulator calls; AI
-                    credits cover managed evaluation. Voice minutes follow call
+                    credits cover harness authoring. Voice minutes follow call
                     duration regardless of provider credentials.
                   </Typography>
                 </>

@@ -13,14 +13,9 @@ from simulate.models import HostedHarnessAttempt, HostedHarnessJob
 from simulate.services.hosted_harness import HostedHarnessError
 from tfc.ee_gating import is_oss
 
-_EVENT_TYPES = {
-    "harness_authoring": "harness_authoring",
-    "text_call": "text_call",
-    "voice_call": "voice_call",
-}
+_ACTIONS = frozenset({"harness_authoring", "text_call", "voice_call"})
 _REPORT_KEY = "usage_reports"
 _AUTHORING_REPORT_KEY = "authoring_usage_reports"
-_MAX_AUTHORING_STAGE_TOKENS = 1_000_000_000
 _NON_BILLABLE_FAILURE_DOMAINS = frozenset(
     {"infrastructure", "connectivity", "platform_sync"}
 )
@@ -45,17 +40,15 @@ def check_harness_usage(attempt: HostedHarnessAttempt, action: str) -> dict:
 
 
 def check_harness_action(organization_id: str, action: str) -> dict:
-    try:
-        event_type = _EVENT_TYPES[action]
-    except KeyError as exc:
+    if action not in _ACTIONS:
         raise HostedHarnessError(
             "usage_action_invalid", "Unsupported hosted harness usage action."
-        ) from exc
+        )
     if is_oss():
         return {"allowed": True}
     from ee.usage.services.metering import check_usage
 
-    return check_usage(organization_id, event_type).model_dump(mode="json")
+    return check_usage(organization_id, action).model_dump(mode="json")
 
 
 def require_harness_authoring(organization_id: str) -> None:
@@ -145,7 +138,7 @@ def emit_harness_usage(attempt: HostedHarnessAttempt, report: dict) -> None:
             UsageEvent(
                 event_id=str(event_id),
                 org_id=str(job.organization_id),
-                event_type=_EVENT_TYPES[item["action"]],
+                event_type=item["action"],
                 amount=item["amount"],
                 timestamp=parse_datetime(item["occurred_at"]),
                 properties={
@@ -184,12 +177,7 @@ def _authoring_stage_record(item: dict) -> dict | None:
     counts = {}
     for field in ("tokens_in", "tokens_out", "tokens_cached"):
         value = item.get(field, 0)
-        if (
-            isinstance(value, bool)
-            or not isinstance(value, int)
-            or value < 0
-            or value > _MAX_AUTHORING_STAGE_TOKENS
-        ):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
             raise HostedHarnessError(
                 "authoring_usage_invalid",
                 f"Authoring {field} must be a non-negative integer.",

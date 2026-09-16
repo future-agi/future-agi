@@ -155,7 +155,9 @@ class HostedHarnessAttemptViewSet(viewsets.ViewSet):
                     api_key=getattr(settings, "DAYTONA_API_KEY", ""),
                     api_url=getattr(settings, "DAYTONA_API_URL", None),
                     target=getattr(settings, "DAYTONA_TARGET", None),
-                    organization_id=getattr(settings, "DAYTONA_ORGANIZATION_ID", None),
+                    organization_id=getattr(
+                        settings, "DAYTONA_ORGANIZATION_ID", None
+                    ),
                 )
             )
             sandbox = client.get(str(attempt.provider_ref))
@@ -180,7 +182,9 @@ class HostedHarnessAttemptViewSet(viewsets.ViewSet):
                 status_code=502,
                 retryable=True,
             ) from exc
-        return Response({"url": preview_url, "expires_in_seconds": expires_in_seconds})
+        return Response(
+            {"url": preview_url, "expires_in_seconds": expires_in_seconds}
+        )
 
     @validated_request(
         request_serializer=HarnessManifestSerializer,

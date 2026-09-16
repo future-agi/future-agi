@@ -16,9 +16,8 @@ const CREDIT_ERROR_CODES = [
  */
 export function isCreditExhaustionError(error) {
   if (!error) return false;
-  return (
-    error.statusCode === 402 || CREDIT_ERROR_CODES.includes(error.error_code)
-  );
+  const errorCode = error.errorCode ?? error.error_code;
+  return error.statusCode === 402 || CREDIT_ERROR_CODES.includes(errorCode);
 }
 
 /**
@@ -48,9 +47,9 @@ export function useCreditExhaustion({ feature = "unknown" } = {}) {
       if (isCreditExhaustionError(error)) {
         const exhaustion = {
           ...error,
-          errorCode: error.error_code,
-          currentUsage: error.current_usage,
-          upgradeCta: error.upgrade_cta,
+          errorCode: error.errorCode ?? error.error_code,
+          currentUsage: error.currentUsage ?? error.current_usage,
+          upgradeCta: error.upgradeCta ?? error.upgrade_cta,
           result: error.result || error.reason,
         };
         setExhaustionError(exhaustion);

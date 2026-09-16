@@ -16965,8 +16965,6 @@ export interface HarnessConsumptionApi {
   voice_sim_minutes: number;
   /** @minimum 0 */
   ai_credits: number;
-  /** @minimum 0 */
-  sandbox_seconds: number;
 }
 
 export interface HarnessJobReadApi {
@@ -17663,7 +17661,6 @@ export type HarnessUsageRequestApiAction =
 export const HarnessUsageRequestApiAction = {
   text_call: "text_call",
   voice_call: "voice_call",
-  managed_evaluation: "managed_evaluation",
 } as const;
 
 export type HarnessUsageRequestApiSchemaVersion =
@@ -17679,7 +17676,6 @@ export type HarnessUsageRecordApiAction =
 export const HarnessUsageRecordApiAction = {
   text_call: "text_call",
   voice_call: "voice_call",
-  managed_evaluation: "managed_evaluation",
 } as const;
 
 export type HarnessUsageRecordApiFunding =
@@ -17702,36 +17698,13 @@ export interface HarnessUsageRecordApi {
   amount: number;
   occurred_at: string;
   funding: HarnessUsageRecordApiFunding;
-  infra_failed: boolean;
-  /**
-   * @minLength 1
-   * @maxLength 255
-   */
-  model?: string;
-}
-
-export interface HarnessUsageTotalsApi {
-  /** @minimum 0 */
-  text_sim_tokens: number;
-  /** @minimum 0 */
-  voice_sim_minutes: number;
 }
 
 export interface HarnessUsageRequestApi {
   operation: HarnessUsageRequestApiOperation;
   action?: HarnessUsageRequestApiAction;
-  /** @minimum 0 */
-  amount?: number;
-  /**
-   * @minLength 1
-   * @maxLength 255
-   */
-  model?: string;
   schema_version?: HarnessUsageRequestApiSchemaVersion;
   records?: HarnessUsageRecordApi[];
-  totals?: HarnessUsageTotalsApi;
-  /** @minimum 0 */
-  sandbox_seconds?: number;
 }
 
 export type HarnessUsageResponseApiUpgradeCta = { [key: string]: unknown };

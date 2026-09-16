@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import uuid4
 
-import fakeredis
 import pytest
 from rest_framework.test import APIClient
 
@@ -22,13 +21,12 @@ from simulate.tests.test_hosted_harness_channels import BASE, _headers, _payload
 def metered_attempt(organization, monkeypatch, settings):
     from ee.usage.services import emitter
 
+    events = []
     monkeypatch.setattr(harness_usage, "is_oss", lambda: False)
-    monkeypatch.setattr(emitter, "_consumer_started", True)
-    redis = fakeredis.FakeRedis(decode_responses=True)
-    monkeypatch.setattr(emitter, "_redis_client", redis)
+    monkeypatch.setattr(emitter, "emit", events.append)
     job, _ = create_hosted_job(organization, _payload(), idempotency_key=str(uuid4()))
     capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
-    return capability, redis
+    return capability, events
 
 
 def _record(action="text_call", *, amount=1, funding="platform"):
@@ -85,15 +83,10 @@ def _provision(attempt):
 
 
 @pytest.mark.django_db
-def test_authoring_tokens_become_idempotent_ai_credits(
-    metered_attempt, monkeypatch, django_capture_on_commit_callbacks
+def test_authoring_tokens_become_deterministic_ai_credit_events(
+    metered_attempt, django_capture_on_commit_callbacks
 ):
-    consumer = pytest.importorskip("ee.cloud.billing.consumer")
-    from ee.usage.models.usage import UsageEventLog
-
-    capability, redis = metered_attempt
-    monkeypatch.setattr(consumer, "get_redis", lambda: redis)
-    consumer._ensure_consumer_group()
+    capability, events = metered_attempt
     spend = {
         "stages": [
             {
@@ -108,16 +101,13 @@ def test_authoring_tokens_become_idempotent_ai_credits(
     with django_capture_on_commit_callbacks(execute=True):
         harness_usage.record_harness_authoring_usage(capability.attempt, spend)
         harness_usage.record_harness_authoring_usage(capability.attempt, spend)
-    consumer.process_batch()
 
-    row = UsageEventLog.objects.get(
-        organization=capability.attempt.job.organization,
-        event_type="harness_authoring",
-    )
-    assert row.dimension == "ai_credits"
-    assert row.amount_raw == pytest.approx(70.2)
-    assert row.properties["model"] == "gemini-3.7-flash"
-    assert row.properties["cached_input_tokens"] == 800_000
+    assert len(events) == 2
+    assert events[0].event_id == events[1].event_id
+    assert events[0].event_type == "harness_authoring"
+    assert events[0].amount == pytest.approx(70.2)
+    assert events[0].properties["model"] == "gemini-3.7-flash"
+    assert events[0].properties["cached_input_tokens"] == 800_000
     capability.attempt.job.refresh_from_db()
     assert harness_usage.harness_consumption(capability.attempt.job)[
         "ai_credits"
@@ -148,7 +138,7 @@ def test_stale_snapshot_cannot_erase_or_change_finalized_usage(
 def test_receipt_replay_bills_platform_text_and_all_voice_minutes(
     metered_attempt, django_capture_on_commit_callbacks
 ):
-    capability, redis = metered_attempt
+    capability, events = metered_attempt
     attempt = capability.attempt
     _provision(attempt)
     records = [
@@ -159,13 +149,12 @@ def test_receipt_replay_bills_platform_text_and_all_voice_minutes(
     ]
     with django_capture_on_commit_callbacks(execute=True):
         harness_usage.record_harness_usage(attempt, _report(records))
-    assert redis.xlen("usage:events") == 0
+    assert events == []
 
     _receipt(attempt)
     harness_usage.replay_harness_usage(attempt)
 
-    events = [data for _, data in redis.xrange("usage:events")]
-    assert {(event["event_type"], float(event["amount"])) for event in events} == {
+    assert {(event.event_type, float(event.amount)) for event in events} == {
         ("text_call", 35.0),
         ("voice_call", 0.25),
         ("voice_call", 2.0),
@@ -182,7 +171,7 @@ def test_receipt_replay_bills_platform_text_and_all_voice_minutes(
 def test_infrastructure_receipt_does_not_bill_measured_call(
     metered_attempt, django_capture_on_commit_callbacks
 ):
-    capability, redis = metered_attempt
+    capability, events = metered_attempt
     attempt = capability.attempt
     _provision(attempt)
     with django_capture_on_commit_callbacks(execute=True):
@@ -193,7 +182,7 @@ def test_infrastructure_receipt_does_not_bill_measured_call(
 
     harness_usage.replay_harness_usage(attempt)
 
-    assert redis.xlen("usage:events") == 0
+    assert events == []
     attempt.job.refresh_from_db()
     assert harness_usage.harness_consumption(attempt.job)["voice_sim_minutes"] == 0
 
@@ -205,7 +194,7 @@ def test_usage_refusal_preserves_budget_dimension_without_starting_work(
     from ee.usage.schemas.events import CheckResult
     from ee.usage.services import metering
 
-    capability, redis = metered_attempt
+    capability, events = metered_attempt
     monkeypatch.setattr(
         metering,
         "check_usage",
@@ -226,7 +215,7 @@ def test_usage_refusal_preserves_budget_dimension_without_starting_work(
     body = response.json()
     assert body["error_code"] == "BUDGET_PAUSED"
     assert body["dimension"] == "voice_sim_minutes"
-    assert redis.xlen("usage:events") == 0
+    assert events == []
     assert not capability.attempt.job.scenario_registrations.exists()
 
 
