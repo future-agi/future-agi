@@ -26,7 +26,7 @@ const agentTypeFor = (connectors = []) =>
 // Map one harness-jobs list item ({ job, status, credentials }) to the flat row
 // the My Environments table reads. The list payload carries no description,
 // tools, scenarios, sub-goals, run count or build progress, so those are left
-// as placeholders until the real environments endpoint lands (TH-7962).
+// as placeholders until the real environments endpoint lands.
 export function harnessJobToRow(item) {
   return {
     id: item?.job?.job_id,

@@ -1,7 +1,7 @@
 // The prebuilt environment catalog the browse page renders. Ported verbatim
 // from the designer's ENVIRONMENT_TEMPLATES, minus the twin-backed entries the
 // twin service generates (t.agentType !== "twin_backed").
-// TODO(TH-7962): drop this fixture once the templates endpoint lands and the
+// TODO: drop this fixture once the templates endpoint lands and the
 // query hook reads from axios instead.
 export const PREBUILT_ENVIRONMENTS_FIXTURE = [
   {

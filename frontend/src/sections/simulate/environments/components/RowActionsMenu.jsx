@@ -65,7 +65,7 @@ export default function RowActionsMenu({ menuFor, onClose, onOpen, onRun, onDele
         />
       </MenuItem>
       {buildingActive ? (
-        <CustomTooltip arrow placement="left" size="small" title={BUILDING_TOOLTIP}>
+        <CustomTooltip show arrow placement="left" size="small" title={BUILDING_TOOLTIP}>
           <span>{runItem}</span>
         </CustomTooltip>
       ) : (

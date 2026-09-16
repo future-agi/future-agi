@@ -15,4 +15,8 @@ describe("simulate.environments path constants", () => {
   it("builds a detail path from an env id", () => {
     expect(env.detail("abc")).toBe("/dashboard/simulate/environments/abc");
   });
+
+  it("declares the build path", () => {
+    expect(env.build).toBe("/dashboard/simulate/environments/build");
+  });
 });

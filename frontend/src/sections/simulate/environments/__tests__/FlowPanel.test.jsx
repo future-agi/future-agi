@@ -5,10 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { render } from "src/utils/test-utils";
 import { useEnvironmentsStore, resetEnvironmentsStore } from "../store/useEnvironmentsStore";
-import { BUILD_HANDOFF_COPY } from "../environmentOptions";
 
-const enqueueSnackbar = vi.fn();
-vi.mock("notistack", () => ({ enqueueSnackbar: (...a) => enqueueSnackbar(...a) }));
+const navigate = vi.fn();
+vi.mock("react-router-dom", async () => {
+  const actual = await vi.importActual("react-router-dom");
+  return { ...actual, useNavigate: () => navigate };
+});
 
 const { default: FlowPanel } = await import("../panels/FlowPanel");
 
@@ -26,7 +28,7 @@ const renderPanel = (choice) => {
 describe("FlowPanel", () => {
   beforeEach(() => {
     resetEnvironmentsStore();
-    enqueueSnackbar.mockReset();
+    navigate.mockReset();
   });
 
   afterEach(() => {
@@ -65,7 +67,7 @@ describe("FlowPanel", () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it("hands the draft to the store and snackbars on submit", async () => {
+  it("hands the draft to the store and navigates to the build page", async () => {
     const user = userEvent.setup();
     renderPanel("source");
 
@@ -75,9 +77,8 @@ describe("FlowPanel", () => {
     await waitFor(() => {
       expect(useEnvironmentsStore.getState().draft?.kind).toBe("repo");
     });
-    expect(enqueueSnackbar).toHaveBeenCalledTimes(1);
-    expect(enqueueSnackbar).toHaveBeenCalledWith(BUILD_HANDOFF_COPY, {
-      variant: "info",
-    });
+    expect(navigate).toHaveBeenCalledWith(
+      "/dashboard/simulate/environments/build",
+    );
   });
 });

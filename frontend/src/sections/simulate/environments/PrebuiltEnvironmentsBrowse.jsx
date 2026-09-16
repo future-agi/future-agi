@@ -60,7 +60,7 @@ export default function PrebuiltEnvironmentsBrowse() {
         sx={{ mb: 3 }}
       >
         <Stack direction="row" alignItems="flex-start" spacing={1.5} flex={1} minWidth={0}>
-          <CustomTooltip arrow size="small" title="Back to how you want to start">
+          <CustomTooltip show arrow size="small" title="Back to how you want to start">
             <IconButton aria-label="Back to how you want to start" size="small" onClick={() => navigate(paths.dashboard.simulate.environments.root)} sx={{ mt: 0.25 }}>
               <Iconify icon="solar:alt-arrow-left-linear" width={18} />
             </IconButton>

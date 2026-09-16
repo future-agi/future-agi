@@ -97,6 +97,7 @@ export const paths = {
       environments: {
         root: `${ROOTS.DASHBOARD}/simulate/environments`,
         templates: `${ROOTS.DASHBOARD}/simulate/environments/templates`,
+        build: `${ROOTS.DASHBOARD}/simulate/environments/build`,
         detail: (envId) => `${ROOTS.DASHBOARD}/simulate/environments/${envId}`,
       },
     },

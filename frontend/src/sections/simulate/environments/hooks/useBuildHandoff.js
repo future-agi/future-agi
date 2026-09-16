@@ -1,7 +1,6 @@
-import { enqueueSnackbar } from "notistack";
-import { useBuildEnvironment } from "src/api/simulate-environments/environments";
+import { useNavigate } from "react-router-dom";
+import { paths } from "src/routes/paths";
 import { useEnvironmentsStore } from "../store/useEnvironmentsStore";
-import { BUILD_HANDOFF_COPY } from "../environmentOptions";
 
 /**
  * Strip raw secrets before anything is persisted. `apiKey` and `envText` carry
@@ -17,22 +16,16 @@ export function redactSource(source) {
 }
 
 /**
- * Every "Build environment" CTA funnels through here. It redacts the source
- * up front and hands that safe copy to both the (mocked) build mutation — so
- * react-query never retains the raw secrets as `mutation.state.variables` —
- * and the store draft, then confirms with a snackbar. The real build page
- * lands in Phase-2, which will read the draft from the store.
+ * Every "Build environment" CTA funnels through here. It redacts the source up
+ * front, hands that safe copy to the store draft, then routes to the build
+ * page. The Phase-2 build page reads the draft from the store; it mints the env
+ * id when the audit is accepted.
  */
 export default function useBuildHandoff() {
-  const build = useBuildEnvironment();
+  const navigate = useNavigate();
   const setDraft = useEnvironmentsStore((s) => s.setDraft);
   return (source) => {
-    const safe = redactSource(source);
-    build.mutate(safe, {
-      onSuccess: () => {
-        setDraft(safe);
-        enqueueSnackbar(BUILD_HANDOFF_COPY, { variant: "info" });
-      },
-    });
+    setDraft(redactSource(source));
+    navigate(paths.dashboard.simulate.environments.build);
   };
 }

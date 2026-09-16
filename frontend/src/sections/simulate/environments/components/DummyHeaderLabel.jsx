@@ -3,7 +3,7 @@ import { alpha } from "@mui/material/styles";
 import { Box, Stack } from "@mui/material";
 import CustomTooltip from "src/components/tooltip";
 
-const DUMMY_TOOLTIP = "Placeholder — not provided by the current API (TH-7962)";
+const DUMMY_TOOLTIP = "Placeholder — not provided by the current API";
 
 // A column header the harness-jobs list cannot fill: the plain label plus a
 // muted "dummy" pill. The label carries the DataGrid header class so it keeps
@@ -12,7 +12,7 @@ export default function DummyHeaderLabel({ label }) {
   return (
     <Stack direction="row" alignItems="center" spacing={0.75} sx={{ minWidth: 0 }}>
       <span className="MuiDataGrid-columnHeaderTitle">{label}</span>
-      <CustomTooltip arrow size="small" title={DUMMY_TOOLTIP}>
+      <CustomTooltip show arrow size="small" title={DUMMY_TOOLTIP}>
         <Box
           component="span"
           sx={{

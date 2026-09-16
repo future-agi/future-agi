@@ -8,7 +8,7 @@ export const ENV_STATUS = {
 };
 
 // Semantic status colours the designer chose for the run-state pill. Kept as
-// literals in this one module (see TH-7961 C7) — error.main is a different red
+// literals in this one module — error.main is a different red
 // and accent tokens shift in dark mode, so neither substitutes cleanly.
 export const STATUS_META = {
   building: { label: "Building", color: "#7857FC" },

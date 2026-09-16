@@ -9,9 +9,11 @@ import { ENTRY_TAB, ENVIRONMENTS_HEADER, ENV_TABS_SX } from "./environmentOption
 export default function EnvironmentsHome() {
   const { tab, setTab } = useEnvironmentsTab();
 
-  // Client state (open entry card + draft) is per-visit; clear it on unmount so
-  // the next visit starts clean.
-  useEffect(() => () => resetEnvironmentsStore(), []);
+  // The draft must survive the hop to the build page, so the matrix starts clean
+  // on mount instead of clearing on unmount.
+  useEffect(() => {
+    resetEnvironmentsStore();
+  }, []);
 
   return (
     <Box sx={{ height: "100%", display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden" }}>
