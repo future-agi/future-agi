@@ -27,7 +27,9 @@ until the release checks below are complete.
    scanner configuration to `engine=omega`, `enabled=true`, and a `scan_version`
    matching the Node worker's `OMEGA_ENGINE_VERSION`. Projects still configured
    as `legacy` will not be scanned in this v2-only stack; migrate their configs
-   deliberately before using this setting beyond the local stack.
+   deliberately before using this setting beyond the local stack. Updating a
+   project's sampling rate through the project API creates or converts that
+   project's config to `omega-v1` while this v2-only setting is active.
    Remove the existing `sweep-scannable-traces` Temporal schedule during cutover;
    the v2-only schedule registry no longer includes it.
 

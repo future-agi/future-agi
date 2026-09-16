@@ -2,6 +2,7 @@ from datetime import timedelta
 from functools import wraps
 
 import structlog
+from django.conf import settings
 from django.db import models
 from django.db.models import Count
 from django.utils import timezone
@@ -23,7 +24,7 @@ from tracer.db_routing import DATABASE_FOR_PROJECT_LIST
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.monitor import UserAlertMonitor
 from tracer.models.project import Project
-from tracer.models.trace_scan import TraceScanConfig
+from tracer.models.trace_scan import TraceScanConfig, TraceScanEngine
 from tracer.queries.projects import apply_project_list_filters
 from tracer.serializers.filters import (
     ObserveGraphDataQuerySerializer,
@@ -451,14 +452,28 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
 
                 # Update sampling rate if provided
                 if sampling_rate is not None:
-                    scan_config, _ = TraceScanConfig.objects.get_or_create(
+                    v2_only = (
+                        settings.ERROR_FEED_OMEGA_ENABLED
+                        and not settings.ERROR_FEED_LEGACY_SCANNER_ENABLED
+                    )
+                    defaults = {"sampling_rate": sampling_rate}
+                    if v2_only:
+                        defaults.update(
+                            engine=TraceScanEngine.OMEGA, scan_version="omega-v1"
+                        )
+                    scan_config, created = TraceScanConfig.objects.get_or_create(
                         project=project,
-                        defaults={"sampling_rate": sampling_rate},
+                        defaults=defaults,
                     )
                     old_rate = scan_config.sampling_rate
-                    if not _:
+                    if not created:
                         scan_config.sampling_rate = sampling_rate
-                        scan_config.save(update_fields=["sampling_rate"])
+                        update_fields = ["sampling_rate"]
+                        if v2_only and scan_config.engine != TraceScanEngine.OMEGA:
+                            scan_config.engine = TraceScanEngine.OMEGA
+                            scan_config.scan_version = "omega-v1"
+                            update_fields.extend(["engine", "scan_version"])
+                        scan_config.save(update_fields=update_fields)
 
                     response_data["sampling_rate"] = {
                         "old_rate": old_rate,
