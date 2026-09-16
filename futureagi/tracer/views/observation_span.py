@@ -200,8 +200,14 @@ logger = structlog.get_logger(__name__)
 SPAN_LIST_WALL_DEADLINE_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
 SPAN_LIST_CANDIDATE_DEADLINE_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
 SPAN_LIST_ENRICHMENT_TIMEOUT_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
+# The bounded selector sizes workers per statement kind: one for a narrow seed,
+# a classifier and every probe; FILTER_SELECTOR_WIDE_SEED_MAX_THREADS for a
+# seed over a slice wider than one day; FILTER_SELECTOR_POPULATION_MAX_THREADS
+# for a broad population proof. This dict therefore carries no worker pin: the
+# selector merges it OVER its own defaults, so a "max_threads" here would cap
+# every kind to that one number - which is what kept the span list's 48 h seeds
+# on a single worker.
 SPAN_LIST_READ_SETTINGS = {
-    "max_threads": 1,
     "max_block_size": settings.OBSERVABILITY_LIST_MAX_BLOCK_SIZE,
     "max_memory_usage": settings.OBSERVABILITY_LIST_MAX_MEMORY_BYTES,
     "max_bytes_to_read": settings.OBSERVABILITY_LIST_MAX_BYTES,
@@ -210,6 +216,10 @@ SPAN_LIST_READ_SETTINGS = {
     "result_overflow_mode": "throw",
     "timeout_overflow_mode": "throw",
 }
+# The statements this view issues itself - count, evals, annotations, end
+# users, page content and the unbounded fallback list - keep the single worker
+# they always had; only the bounded selector's wide seeds gain workers.
+SPAN_LIST_SINGLE_WORKER_READ_SETTINGS = {**SPAN_LIST_READ_SETTINGS, "max_threads": 1}
 
 
 def _span_filtered_page_depth_exceeded(
@@ -2261,7 +2271,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 query,
                 params,
                 timeout_ms=read_deadline.remaining_ms(1_200),
-                settings=page_read_settings,
+                settings=SPAN_LIST_SINGLE_WORKER_READ_SETTINGS,
             )
 
             result.data, has_more = paginate_deduped(
@@ -2358,7 +2368,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 content_query,
                 content_params,
                 timeout_ms=read_deadline.remaining_ms(SPAN_LIST_ENRICHMENT_TIMEOUT_MS),
-                settings=page_read_settings,
+                settings=SPAN_LIST_SINGLE_WORKER_READ_SETTINGS,
             )
             return _stats(content_result.data, content_result.data, True)
 
@@ -2401,7 +2411,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 count_query,
                 count_params,
                 timeout_ms=read_deadline.remaining_ms(SPAN_LIST_ENRICHMENT_TIMEOUT_MS),
-                settings=SPAN_LIST_READ_SETTINGS,
+                settings=SPAN_LIST_SINGLE_WORKER_READ_SETTINGS,
             )
             total = count_result.data[0].get("total", 0) if count_result.data else 0
             django_cache.set(count_key, total, timeout=60)
@@ -2421,7 +2431,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 eval_query,
                 eval_params,
                 timeout_ms=read_deadline.remaining_ms(SPAN_LIST_ENRICHMENT_TIMEOUT_MS),
-                settings=SPAN_LIST_READ_SETTINGS,
+                settings=SPAN_LIST_SINGLE_WORKER_READ_SETTINGS,
             )
             external_map = SpanListQueryBuilder.pivot_eval_results(
                 eval_result.data, key_by_trace=True
@@ -2447,7 +2457,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 ann_query,
                 ann_params,
                 timeout_ms=read_deadline.remaining_ms(SPAN_LIST_ENRICHMENT_TIMEOUT_MS),
-                settings=SPAN_LIST_READ_SETTINGS,
+                settings=SPAN_LIST_SINGLE_WORKER_READ_SETTINGS,
             )
             external_map = SpanListQueryBuilder.pivot_annotation_results(
                 ann_result.data, label_types, key_by_trace=True
@@ -2465,7 +2475,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             value = resolve_end_user_fields(
                 end_user_ids,
                 timeout_ms=read_deadline.remaining_ms(SPAN_LIST_ENRICHMENT_TIMEOUT_MS),
-                settings=SPAN_LIST_READ_SETTINGS,
+                settings=SPAN_LIST_SINGLE_WORKER_READ_SETTINGS,
             )
             return _stats(value, list(value.items()), True)
 

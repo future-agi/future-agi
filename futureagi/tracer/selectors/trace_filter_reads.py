@@ -30,7 +30,7 @@ _ABSOLUTE_MAX_QUERIES = 128
 # Historical eval reconciliation runs as a heartbeating Temporal activity and
 # may need to select a genuine 100k-row prefix. Its larger envelope is opt-in,
 # still finite, and keeps every physical statement on the same 512-row,
-# single-threaded, caller-capped ClickHouse limits. Reconciliation owns a
+# caller-capped ClickHouse limits and per-kind worker rules. Reconciliation owns a
 # three-hour activity timeout; this hard wall leaves ten minutes for buffered
 # validation, materializer hand-off, heartbeats, and scheduler jitter.
 _WORKFLOW_MAX_SEED_ATTEMPTS = 16_384
@@ -89,6 +89,16 @@ _SEED_DENSITY_PROBE_MAX_BYTES = 1024 * 1024 * 1024
 # raising through the exact page.
 _SEED_DENSITY_PROBE_MAX_RESULT_ROWS = 64
 _POPULATION_TIME_DISCOVERY_MAX_THREADS = settings.FILTER_SELECTOR_POPULATION_MAX_THREADS
+# A seed over a slice wider than one day - the doubling walk's 32 h and 48 h
+# steps and any adaptive width beyond them - replays every physical row the
+# value bloom could not exclude through its latest-state state: CPU work over
+# pruned granules, like a broad population proof, not the small first-slice
+# read. Workers change only how fast the SAME granules are read; the rows,
+# bytes, memory caps and result are the statement's own. The gain is bounded
+# by the slice's independent mark ranges (2-13 parts, 26-48 marks measured on
+# the span list's 48 h seeds), which is why four workers finish what eight
+# would. The one-day threshold mirrors the population proof's rule below.
+_WIDE_SEED_MAX_THREADS = settings.FILTER_SELECTOR_WIDE_SEED_MAX_THREADS
 # Trace/span list queries fetch one additional page-sized de-duplication
 # margin; 5,000 is also the existing server-side result ceiling used by those
 # endpoints.  Keeping one public ceiling makes numbered-page work finite for
@@ -1823,6 +1833,18 @@ def read_bounded_filter_page(
                     int(settings["max_bytes_to_read"]),
                     max_bytes_to_read_cap,
                 )
+            if kind == "seed" and active_end - active_start > timedelta(days=1):
+                # Mirrors the broad population proof below: a seed over more
+                # than one day is CPU work over the granules the value bloom
+                # left, so it runs with the wide seed worker budget instead of
+                # the single narrow-seed worker. Same rows, same bytes, same
+                # result - only the worker count differs. An explicit caller
+                # worker budget remains an upper bound.
+                seed_workers = _WIDE_SEED_MAX_THREADS
+                explicit_workers = (read_settings or {}).get("max_threads")
+                if explicit_workers is not None and int(explicit_workers) > 0:
+                    seed_workers = min(seed_workers, int(explicit_workers))
+                settings["max_threads"] = seed_workers
             if kind == "seed_density_probe":
                 # A cost question, never a membership one: one worker, a
                 # gibibyte, and never a partial count (a truncated count would

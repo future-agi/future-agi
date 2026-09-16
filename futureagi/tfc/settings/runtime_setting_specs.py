@@ -360,6 +360,15 @@ INTERACTIVE_READ_SETTING_SPECS = {
             ("FILTER_SELECTOR_MAX_OPT_IN_QUERY_TIMEOUT_MS", 3_000, 25, 30_000),
             ("FILTER_SELECTOR_MAX_BUILDER_QUERY_TIMEOUT_MS", 30_000, 25, 120_000),
             ("FILTER_SELECTOR_MAX_THREADS", 1, 1, 8),
+            # Workers for a seed statement over a slice wider than one day, the
+            # doubling walk's 32 h and 48 h steps. Measured read-only against
+            # production on the span list's 48 h seeds (2-13 parts, 26-48
+            # marks per slice): four workers took the heaviest statement from
+            # 1.64 s to 0.49 s reading the same 311k rows / 957 MB, and eight
+            # gained nothing over four because a slice has only that many
+            # independent mark ranges. Rows, bytes and results never depend on
+            # this number; peak memory per statement roughly doubles.
+            ("FILTER_SELECTOR_WIDE_SEED_MAX_THREADS", 4, 1, 8),
             # Rows one short exact-string seed statement should read. That
             # seed's cost tracks the rows inside its slice, not the slice's
             # width, and its child witness is time-unbounded, so read rows

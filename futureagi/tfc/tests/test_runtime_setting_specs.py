@@ -57,6 +57,25 @@ def test_population_worker_budget_is_separate_and_can_be_lowered():
     assert reduced["FILTER_SELECTOR_POPULATION_MAX_THREADS"] == 1
 
 
+def test_wide_seed_worker_budget_defaults_to_four_and_is_bounded():
+    defaults = load_numeric_settings(INTERACTIVE_READ_SETTING_SPECS, source={})
+    assert defaults["FILTER_SELECTOR_WIDE_SEED_MAX_THREADS"] == 4
+    # Separate from the narrow-seed worker and the population proof's budget.
+    assert defaults["FILTER_SELECTOR_MAX_THREADS"] == 1
+    assert defaults["FILTER_SELECTOR_POPULATION_MAX_THREADS"] == 2
+    lowered = load_numeric_settings(
+        INTERACTIVE_READ_SETTING_SPECS,
+        source={"FILTER_SELECTOR_WIDE_SEED_MAX_THREADS": "1"},
+    )
+    validate_interactive_read_settings(lowered)
+    assert lowered["FILTER_SELECTOR_WIDE_SEED_MAX_THREADS"] == 1
+    with pytest.raises(ValueError):
+        load_numeric_settings(
+            INTERACTIVE_READ_SETTING_SPECS,
+            source={"FILTER_SELECTOR_WIDE_SEED_MAX_THREADS": "9"},
+        )
+
+
 def test_text_seed_row_budget_is_operator_tunable_within_a_measured_range():
     """The short exact-string seed is sized by rows read, not by slice hours."""
 
