@@ -3611,6 +3611,17 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                 )
             )
             params.update(witness_envelope_params)
+            # A conjunction may additionally require, per trace, that every
+            # other positive leaf's key is witnessed inside the same envelope.
+            # A lane declares that gate only when it also declares an envelope.
+            conjunction_gate_fragment, conjunction_gate_params = (
+                self._scalar_candidate_conjunction_gate(
+                    scalar_anchor,
+                    witness_envelope_fragment=witness_envelope_fragment,
+                    project_version_fragment=project_version_fragment,
+                )
+            )
+            params.update(conjunction_gate_params)
             # All child timestamps and physical versions must participate.
             # No inner LIMIT: truncating raw witnesses could hide an older
             # matching root. Statement limits throw instead of proving absence.
@@ -3620,7 +3631,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             FROM {self.TABLE}
             PREWHERE {self.project_filter_sql()}
               {project_version_fragment}{witness_envelope_fragment}
-              {root_population}
+              {root_population}{conjunction_gate_fragment}
             WHERE {raw_witness}
         )
             """
@@ -3672,6 +3683,29 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         """Storage-specific necessary trace population; never leaf semantics."""
 
         return ""
+
+    def _scalar_candidate_conjunction_gate(
+        self,
+        anchor: LatestFilterPredicate,
+        *,
+        witness_envelope_fragment: str,
+        project_version_fragment: str,
+    ) -> tuple[str, dict[str, Any]]:
+        """Optional per-trace presence gate on the candidate CTE; none by default.
+
+        The candidate CTE seeds a conjunction from ONE anchor leaf's raw value
+        witness and leaves every other leaf to the exact classifier. A lane
+        may additionally require, per candidate trace, that each other
+        positive leaf's typed-Map key is witnessed by some raw row inside the
+        same envelope the anchor's witness is confined to. That narrows
+        candidacy only, never membership: the classifier stays the authority.
+
+        An empty fragment must leave the statement byte-identical, so the
+        fragment carries its own leading newline and indentation.
+        """
+
+        del anchor, witness_envelope_fragment, project_version_fragment
+        return "", {}
 
     def _scalar_candidate_witness_envelope(
         self, *, root_start: datetime, root_end: datetime

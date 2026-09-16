@@ -572,6 +572,7 @@ class _TraceRootReplayV2:
             raise ValueError("v2 content replay identity escaped requested traces")
         return self._root_replay_query(identities, content=True)
 
+
 class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
     """Schema-aware planner shared before the public SQL rewrite boundary."""
 
@@ -736,12 +737,16 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
             and values
             and isinstance(types, list)
             and (
-                (all(type(value) is bool for value in values)
-                 and types == ["boolean"] * len(values))
+                (
+                    all(type(value) is bool for value in values)
+                    and types == ["boolean"] * len(values)
+                )
                 or (
-                    all(type(value) is str
+                    all(
+                        type(value) is str
                         and 0 < len(value.strip()) < _SELECTIVE_EXACT_TEXT_MIN_LENGTH
-                        for value in values)
+                        for value in values
+                    )
                     and types == ["string"] * len(values)
                 )
             )
@@ -1134,6 +1139,127 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
               )
         """
 
+    def _scalar_candidate_conjunction_gate(
+        self,
+        anchor: LatestFilterPredicate,
+        *,
+        witness_envelope_fragment: str,
+        project_version_fragment: str,
+    ) -> tuple[str, dict[str, Any]]:
+        """Gate a conjunction's candidates on every other leaf's key, per trace.
+
+        THE SHAPE THIS EXISTS FOR. A conjunction of one short exact-string
+        leaf and several presence leaves seeds from the string leaf alone:
+        every trace carrying the value in the slice is a candidate, and the
+        exact classifier rejects the ones that miss a presence leaf. Where the
+        conjunction is sparser than its anchor that walk is unbounded by the
+        window: a ten-leaf filter measured on production seeded two hundred
+        candidates per statement, spent four classifier statements rejecting
+        each batch, and re-read the whole slice's witness for every keyset
+        continuation - the same statements over the first day and a half
+        whatever the window, and thirty-two statements before the harness
+        gave up. On the twelve-month window the anchor's own witness read 7.5
+        GB for 8.5k candidates of which the classifier accepted none.
+
+        THE GATE. Each other positive any-scope leaf compiles to a typed-Map
+        key witness - ``has(span_attr_str.keys, key)`` behind the deployed
+        ``mapKeys`` bloom - which is a NECESSARY condition of that leaf's
+        latest-state truth: a latest state that carries the key is a version
+        of some raw row that carries it. So the candidate CTE additionally
+        requires, per trace, one raw row per leaf inside the anchor's own
+        witness envelope:
+
+            trace_id IN (SELECT trace_id FROM spans PREWHERE <envelope>
+                         WHERE w_1 OR ... OR w_n
+                         GROUP BY trace_id
+                         HAVING countIf(w_1) > 0 AND ... AND countIf(w_n) > 0)
+
+        PER TRACE, NEVER PER SPAN. The leaves are independent existence
+        predicates over one trace's spans, so the conjunction holds at the
+        trace level; a trace whose witnesses sit on different rows (a root
+        and a tool child, say, in different key ranges) still matches. ANDing
+        the key witnesses inside one WHERE, or inside one ``indexHint``,
+        would drop exactly those traces. The union in the WHERE lets the
+        bloom skip granules carrying none of the keys; the HAVING is the
+        conjunction.
+
+        KEYS ONLY. The gate never compares a value, so it reads the keys
+        subcolumn and nothing else - measured at about forty bytes per row
+        against kilobytes for the anchor's value read. Value semantics stay
+        with the anchor witness and, as ever, the unchanged classifier.
+
+        WHAT IT COSTS AND BUYS, measured read-only on production over the
+        twelve-month window of the tenant that failed: the gate alone read
+        forty megabytes in under half a second and left 599 traces; the gated
+        anchor statement read 4.7 GB in 3.3 s against 7.5 GB in 6.3 s ungated,
+        and published no candidate, so no classifier statement and no keyset
+        re-read follow. The slices of one walk partition the window, so a
+        walk's seed cost sums to about that one statement.
+
+        THE CONTRACT IT EXTENDS. The gate is confined to the anchor's witness
+        envelope and is therefore emitted only when that envelope is - a
+        lane on the legacy unbounded contract emits no gate and its statement
+        stays byte-identical. Under the bounded contract a filtered list
+        already omits a trace whose only value witness starts more than the
+        slack after its root; with the gate the same holds for every other
+        positive leaf's key witness. That is the one observable change, and
+        it is the existing contract applied to the whole conjunction rather
+        than to one leaf of it.
+
+        A PURE FUNCTION OF THE FILTERS. Which leaves gate is decided by the
+        compiled plans alone - no probe, no estimate, no setting - so every
+        hop of one pagination emits the same gate and the boundary cannot
+        move under a half-published page. Leaves without a typed-Map key
+        witness (absence, JSON, root-scoped, grouped-absence) simply do not
+        take part; the gate is still exact with any subset of the leaves, and
+        with none there is no gate.
+        """
+
+        if not witness_envelope_fragment:
+            return "", {}
+        anchor_key_witness = str(anchor.raw_key_witness_predicate or "")
+        plans, residual = self._partition_trace_filter_plans(self._bounded_filters())
+        if residual:
+            return "", {}
+        witnesses: list[str] = []
+        params: dict[str, Any] = {}
+        for plan in plans:
+            key_witness = str(plan.raw_key_witness_predicate or "")
+            if (
+                plan.scope != "any"
+                or plan.exclude_group_matches
+                or not key_witness
+                or key_witness == anchor_key_witness
+                or "JSONExtract" in key_witness
+                or not re.search(
+                    r"\bhas\(span_attr_(?:str|num|bool)\.keys,", key_witness
+                )
+            ):
+                continue
+            witnesses.append(key_witness)
+            params.update(
+                {
+                    name: value
+                    for name, value in plan.params.items()
+                    if f"%({name})s" in key_witness
+                }
+            )
+        if not witnesses:
+            return "", {}
+        union = " OR ".join(witnesses)
+        conjunction = " AND ".join(f"countIf({witness}) > 0" for witness in witnesses)
+        fragment = f"""
+              AND trace_id IN (
+                  SELECT trace_id
+                  FROM {self.TABLE}
+                  PREWHERE {self.project_filter_sql()}
+                    {project_version_fragment}{witness_envelope_fragment}
+                  WHERE {union}
+                  GROUP BY trace_id
+                  HAVING {conjunction}
+              )"""
+        return fragment, params
+
     def _positive_text_candidate_witnesses(
         self,
     ) -> Iterator[tuple[LatestFilterPredicate, str, list[str]]]:
@@ -1486,7 +1612,9 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
         # V2 classifies ONE physical tuple, so even false requires a raw row
         # with this typed key and value. Keep the shared legacy/graph default
         # guard unchanged; never prune versions from the exact classifier.
-        plan = replace(plan, raw_graph_value_witness_predicate=plan.raw_witness_predicate)
+        plan = replace(
+            plan, raw_graph_value_witness_predicate=plan.raw_witness_predicate
+        )
         return plan if self._public_scalar_candidate_witness_predicate(plan) else None
 
     def _public_scalar_candidate_seed_plan(self):
