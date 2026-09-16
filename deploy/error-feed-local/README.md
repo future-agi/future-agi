@@ -20,10 +20,14 @@ until the release checks below are complete.
    notifications off. Recreate only the collector after changing its environment;
    do not launch another database or broker. The collector image must include this
    branch's notifier code, not just the new environment variables.
-4. Enable `ERROR_FEED_OMEGA_ENABLED` in the Django API. Set the chosen project's
+4. Enable `ERROR_FEED_OMEGA_ENABLED` and set
+   `ERROR_FEED_LEGACY_SCANNER_ENABLED=false` in the existing application Compose
+   stack (API and Temporal workers); recreate those services so neither inline
+   ingestion nor the periodic sweep runs the legacy scanner. Set the chosen project's
    scanner configuration to `engine=omega`, `enabled=true`, and a `scan_version`
-   matching the Node worker's `OMEGA_ENGINE_VERSION`. Other projects keep the
-   existing scanner.
+   matching the Node worker's `OMEGA_ENGINE_VERSION`. Projects still configured
+   as `legacy` will not be scanned in this v2-only stack; migrate their configs
+   deliberately before using this setting beyond the local stack.
 
 Keep runtime env files and secrets outside the repository. Set these Compose
 variables in your shell; paths must be absolute:

@@ -33,6 +33,20 @@ class LocalRuntimeConfigTests(unittest.TestCase):
             "${FI_ERROR_FEED_KAFKA_TOPIC:-error-feed.trace-available.v1}",
         )
 
+    def test_v2_maintenance_disables_legacy_scanner(self):
+        for name in ("reconciliation", "grouping", "usage"):
+            self.assertEqual(
+                self.services[name]["environment"]["ERROR_FEED_LEGACY_SCANNER_ENABLED"],
+                "false",
+            )
+        application = yaml.safe_load(
+            (ROOT.parents[1] / "docker-compose.yml").read_text()
+        )
+        self.assertEqual(
+            application["x-backend-env"]["ERROR_FEED_LEGACY_SCANNER_ENABLED"],
+            "${ERROR_FEED_LEGACY_SCANNER_ENABLED:-true}",
+        )
+
     def test_runtime_never_builds_pulls_or_exposes_ports(self):
         self.assertEqual(
             set(self.services), {"omega", "grouping", "reconciliation", "usage"}

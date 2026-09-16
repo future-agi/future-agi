@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Any
 
 import structlog
+from django.conf import settings
 from django.db import IntegrityError, connection, models, transaction
 from django.utils import timezone
 
@@ -739,6 +740,8 @@ def _trigger_trace_scanner(spans: list[ObservationSpan]):
     Only "observe" projects are scanned — experiment projects are throwaway
     evaluation runs and shouldn't burn scanner LLM tokens or surface in the feed.
     """
+    if not settings.ERROR_FEED_LEGACY_SCANNER_ENABLED:
+        return
     complete_traces_by_project: dict[str, set[str]] = defaultdict(set)
     for span in spans:
         if span.parent_span_id is None and span.end_time is not None:

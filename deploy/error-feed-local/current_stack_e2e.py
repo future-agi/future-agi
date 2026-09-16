@@ -494,6 +494,7 @@ def _run(args: argparse.Namespace) -> None:
     )
     if preflight != {
         "billing_emission_enabled": False,
+        "legacy_scanner_enabled": False,
         "omega_enabled": True,
         "omega_tables_ready": True,
         "api_key_scoped": True,

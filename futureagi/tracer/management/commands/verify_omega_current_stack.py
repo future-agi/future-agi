@@ -70,6 +70,7 @@ def preflight():
         model.no_workspace_objects.values_list("pk", flat=True).first()
     state = {
         "billing_emission_enabled": settings.ERROR_FEED_OMEGA_BILLING_EMIT_ENABLED,
+        "legacy_scanner_enabled": settings.ERROR_FEED_LEGACY_SCANNER_ENABLED,
         "omega_enabled": settings.ERROR_FEED_OMEGA_ENABLED,
         "omega_tables_ready": True,
         "api_key_scoped": api_key is not None,
