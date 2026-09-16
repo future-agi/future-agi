@@ -336,6 +336,12 @@ const SimulateEnvironmentsHome = lazyWithRetry(
 const SimulatePrebuiltEnvironments = lazyWithRetry(
   () => import("src/pages/dashboard/simulate/environments/PrebuiltEnvironments"),
 );
+const SimulateUseTemplate = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate/environments/UseTemplate"),
+);
+const SimulateBuildEnvironment = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate/environments/BuildEnvironment"),
+);
 const SimulateEnvironmentDetail = lazyWithRetry(
   () => import("src/pages/dashboard/simulate/environments/EnvironmentDetail"),
 );
@@ -1351,6 +1357,14 @@ export const dashboardRoutes = (
         {
           path: "environments/templates",
           element: <SimulatePrebuiltEnvironments />,
+        },
+        {
+          path: "environments/templates/:templateId",
+          element: <SimulateUseTemplate />,
+        },
+        {
+          path: "environments/build",
+          element: <SimulateBuildEnvironment />,
         },
         {
           path: "environments/:envId",

@@ -8,7 +8,7 @@ import DummyHeaderLabel from "./DummyHeaderLabel";
 
 // Rows arrive pre-flattened (see harnessJobToRow), so column accessors stay
 // simple. Columns the harness-jobs list has no field for render a placeholder
-// cell and a "dummy" header pill until the real endpoint lands (TH-7962).
+// cell and a "dummy" header pill until the real endpoint lands.
 export function buildEnvironmentColumns({ onRowActions }) {
   return [
     {

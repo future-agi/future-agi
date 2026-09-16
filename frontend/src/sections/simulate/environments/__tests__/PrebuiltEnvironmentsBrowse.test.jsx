@@ -78,21 +78,30 @@ describe("PrebuiltEnvironmentsBrowse", () => {
     expect(screen.getByText("Code")).toBeInTheDocument();
   });
 
-  it("stubs the adopt flow with a snackbar and does not navigate", async () => {
+  it("hides the build panel until a template is selected", async () => {
+    renderBrowse();
+    await screen.findByText("Customer Support Line");
+
+    expect(screen.queryByRole("tab", { name: /Build here/ })).not.toBeInTheDocument();
+  });
+
+  it("opens the inline build panel for the clicked row without navigating", async () => {
     const user = userEvent.setup();
     renderBrowse();
     await screen.findByText("Customer Support Line");
 
     await user.click(tile("Customer Support Line"));
 
-    expect(enqueueSnackbar).toHaveBeenCalledWith(
-      "Opening a prebuilt environment lands in a later phase.",
-      { variant: "info" },
-    );
+    expect(screen.getByRole("tab", { name: /Build here/ })).toBeInTheDocument();
+    expect(screen.getByText("Build in the cloud")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Build environment/ }),
+    ).toBeInTheDocument();
     expect(navigate).not.toHaveBeenCalled();
+    expect(enqueueSnackbar).not.toHaveBeenCalled();
   });
 
-  it("activates a tile from the keyboard (Enter)", async () => {
+  it("selects a row from the keyboard (Enter)", async () => {
     renderBrowse();
     await screen.findByText("Customer Support Line");
 
@@ -100,9 +109,25 @@ describe("PrebuiltEnvironmentsBrowse", () => {
     expect(target).toHaveAttribute("tabindex", "0");
     fireEvent.keyDown(target, { key: "Enter" });
 
-    expect(enqueueSnackbar).toHaveBeenCalledWith(
-      "Opening a prebuilt environment lands in a later phase.",
-      { variant: "info" },
+    expect(await screen.findByRole("tab", { name: /Build here/ })).toBeInTheDocument();
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("collapses the selection when search filters it out", async () => {
+    const user = userEvent.setup();
+    renderBrowse();
+    await screen.findByText("Customer Support Line");
+
+    await user.click(tile("Customer Support Line"));
+    expect(screen.getByRole("tab", { name: /Build here/ })).toBeInTheDocument();
+
+    await user.type(
+      screen.getByPlaceholderText("Search templates…"),
+      "Verilog",
+    );
+
+    await waitFor(() =>
+      expect(screen.queryByRole("tab", { name: /Build here/ })).not.toBeInTheDocument(),
     );
   });
 

@@ -6,7 +6,10 @@ import { ThemeProvider, createTheme } from "@mui/material/styles";
 import CssBaseline from "@mui/material/CssBaseline";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { palette } from "src/theme/palette";
-import { resetEnvironmentsStore } from "../store/useEnvironmentsStore";
+import {
+  resetEnvironmentsStore,
+  useEnvironmentsStore,
+} from "../store/useEnvironmentsStore";
 
 vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
 
@@ -101,6 +104,19 @@ describe("EnvironmentsHome", () => {
     await user.click(screen.getByRole("tab", { name: "Build environment" }));
     expect(lastSearch).toContain("tab=build");
     expect(screen.getByText("Source repository")).toBeInTheDocument();
+  });
+
+  it("clears the draft on mount so the matrix starts clean", () => {
+    useEnvironmentsStore.getState().setDraft({ kind: "repo" });
+    renderHome("/dashboard/simulate/environments");
+    expect(useEnvironmentsStore.getState().draft).toBeNull();
+  });
+
+  it("keeps the draft on unmount (it must survive the hop to /build)", () => {
+    const { unmount } = renderHome("/dashboard/simulate/environments");
+    useEnvironmentsStore.getState().setDraft({ kind: "repo" });
+    unmount();
+    expect(useEnvironmentsStore.getState().draft).toEqual({ kind: "repo" });
   });
 
   it("renders the header and no scratch button", () => {

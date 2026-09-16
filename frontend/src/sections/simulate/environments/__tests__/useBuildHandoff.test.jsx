@@ -1,26 +1,23 @@
 import PropTypes from "prop-types";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const enqueueSnackbar = vi.fn();
-vi.mock("notistack", () => ({ enqueueSnackbar: (...a) => enqueueSnackbar(...a) }));
+const navigate = vi.fn();
+vi.mock("react-router-dom", async () => {
+  const actual = await vi.importActual("react-router-dom");
+  return { ...actual, useNavigate: () => navigate };
+});
 
 const { default: useBuildHandoff, redactSource } = await import("../hooks/useBuildHandoff");
 const { useEnvironmentsStore, resetEnvironmentsStore } = await import(
   "../store/useEnvironmentsStore"
 );
-const { BUILD_HANDOFF_COPY } = await import("../environmentOptions");
 
 const makeWrapper = () => {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  const Wrapper = ({ children }) => (
-    <QueryClientProvider client={client}>{children}</QueryClientProvider>
-  );
+  const Wrapper = ({ children }) => <MemoryRouter>{children}</MemoryRouter>;
   Wrapper.propTypes = { children: PropTypes.node };
-  return { Wrapper, client };
+  return { Wrapper };
 };
 
 describe("redactSource", () => {
@@ -45,10 +42,10 @@ describe("redactSource", () => {
 describe("useBuildHandoff", () => {
   beforeEach(() => {
     resetEnvironmentsStore();
-    enqueueSnackbar.mockReset();
+    navigate.mockReset();
   });
 
-  it("stores a redacted draft (no raw secrets) and fires the snackbar", async () => {
+  it("stores a redacted draft (no raw secrets) and navigates to the build page", async () => {
     const { Wrapper } = makeWrapper();
     const { result } = renderHook(() => useBuildHandoff(), {
       wrapper: Wrapper,
@@ -71,33 +68,8 @@ describe("useBuildHandoff", () => {
     expect(draft).not.toHaveProperty("apiKey");
     expect(draft).not.toHaveProperty("envText");
     expect(draft.agentId).toBe("agent-1");
-    expect(enqueueSnackbar).toHaveBeenCalledWith(BUILD_HANDOFF_COPY, {
-      variant: "info",
-    });
-  });
-
-  it("hands react-query a redacted source, so no raw secrets linger as mutation variables", async () => {
-    const { Wrapper, client } = makeWrapper();
-    const { result } = renderHook(() => useBuildHandoff(), {
-      wrapper: Wrapper,
-    });
-
-    act(() => {
-      result.current({
-        kind: "platform",
-        apiKey: "sk-secret",
-        envText: "TOKEN=leak",
-        agentId: "agent-1",
-      });
-    });
-
-    await waitFor(() =>
-      expect(useEnvironmentsStore.getState().draft).not.toBeNull(),
+    expect(navigate).toHaveBeenCalledWith(
+      "/dashboard/simulate/environments/build",
     );
-
-    const [mutation] = client.getMutationCache().getAll();
-    expect(mutation.state.variables).not.toHaveProperty("apiKey");
-    expect(mutation.state.variables).not.toHaveProperty("envText");
-    expect(mutation.state.variables.agentId).toBe("agent-1");
   });
 });
