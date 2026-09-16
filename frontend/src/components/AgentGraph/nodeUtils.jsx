@@ -3,6 +3,7 @@ import { Handle, Position } from "@xyflow/react";
 import { alpha, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import { EXECUTION_STATUS } from "src/sections/agent-playground/utils/workflowExecution";
+import { START_ID, END_ID } from "./layoutUtils";
 
 // eslint-disable-next-line react-refresh/only-export-components
 export const handleBaseStyle = {
@@ -28,6 +29,8 @@ export const getStatusBorderColor = (status, theme, isDark, defaultColor) => {
     case EXECUTION_STATUS.FAILED:
     case EXECUTION_STATUS.ERROR:
       return theme.palette.red[500];
+    case EXECUTION_STATUS.SKIPPED:
+      return theme.palette.red[500];
     default:
       return isDark ? defaultColor.dark : defaultColor.light;
   }
@@ -46,9 +49,31 @@ export const getStatusBackgroundColor = (status, theme, isDark) => {
       return isDark
         ? alpha(theme.palette.red[700], 0.3)
         : theme.palette.red[50];
+    case EXECUTION_STATUS.SKIPPED:
+      return isDark
+        ? alpha(theme.palette.red[500], 0.16)
+        : alpha(theme.palette.red[500], 0.08);
     default:
       return null;
   }
+};
+
+// eslint-disable-next-line react-refresh/only-export-components
+export const isSkippedExecutionStatus = (status) =>
+  status?.toLowerCase() === EXECUTION_STATUS.SKIPPED;
+
+/**
+ * Run-canvas nodes that should not open the detail panel.
+ * Start/end markers and skipped nodes are inert.
+ */
+// eslint-disable-next-line react-refresh/only-export-components
+export const isSelectableExecutionNode = (node) => {
+  if (!node || node.id === START_ID || node.id === END_ID) return false;
+  const status =
+    node.data?.nodeExecution?.status ||
+    node.nodeExecution?.status ||
+    node.node_execution?.status;
+  return !isSkippedExecutionStatus(status);
 };
 
 const PORT_LABEL_OFFSET = 14;
