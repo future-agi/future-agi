@@ -22,6 +22,10 @@ from tracer.services.eval_tasks.entries import soft_delete_live
 from tracer.services.eval_tasks.reconciler import (
     _CONTINUOUS_CURSOR_OVERLAP,
     _advance_continuous_cursor,
+    _apply_resolved,
+    _continuous_requires_full_reclassification,
+    _evals_revision,
+    _requeue_and_drop,
     reconcile,
 )
 from tracer.tests._ch_seed import seed_ch_spans
@@ -279,23 +283,145 @@ class TestEvalChanges:
         assert result.requeued == 0
         assert _live(task, status=EvalEntryStatus.COMPLETED).count() == 4
 
-    def test_errored_entries_requeued(self, project, custom_eval_config):
+    def test_errored_entries_not_requeued_when_config_unchanged(
+        self, project, custom_eval_config
+    ):
+        # A terminal error under the *current* config is a converged result:
+        # re-running it every pass cannot change the outcome (and on a
+        # continuous task it would loop forever, re-downloading media).
         _make_spans(project, 4)
         task = _task(project, evals=[custom_eval_config])
         reconcile(task)
         _mark(task, EvalEntryStatus.ERRORED)
         result = reconcile(task)
-        assert result.requeued == 4
-        assert _live(task, status=EvalEntryStatus.PENDING).count() == 4
+        assert result.requeued == 0
+        assert _live(task, status=EvalEntryStatus.ERRORED).count() == 4
 
-    def test_skipped_entries_requeued(self, project, custom_eval_config):
+    def test_skipped_entries_not_requeued_when_config_unchanged(
+        self, project, custom_eval_config
+    ):
         _make_spans(project, 4)
         task = _task(project, evals=[custom_eval_config])
         reconcile(task)
         _mark(task, EvalEntryStatus.SKIPPED)
         result = reconcile(task)
+        assert result.requeued == 0
+        assert _live(task, status=EvalEntryStatus.SKIPPED).count() == 4
+
+    def test_errored_and_skipped_entries_requeued_when_config_hash_stale(
+        self, project, custom_eval_config
+    ):
+        # An eval edit (hash changes) is the signal to give failures another go.
+        _make_spans(project, 4)
+        task = _task(project, evals=[custom_eval_config])
+        reconcile(task)
+        _mark(task, EvalEntryStatus.ERRORED)
+        _live(task).update(config_hash="stale-hash")
+        result = reconcile(task)
         assert result.requeued == 4
         assert _live(task, status=EvalEntryStatus.PENDING).count() == 4
+
+    def test_skipped_entry_requeued_when_its_row_changed_in_delta_pass(
+        self, project, custom_eval_config
+    ):
+        # A continuous delta names the rows that changed in the arrival window
+        # (candidates). A skipped entry whose row changed may now have the
+        # attribute it lacked, so it gets exactly one more attempt; skipped
+        # entries whose row did not change stay put.
+        spans = _make_spans(project, 3)
+        task = _task(project, evals=[custom_eval_config])
+        reconcile(task)
+        _mark(task, EvalEntryStatus.SKIPPED)
+        changed = spans[0].id
+        requeued, dropped = _requeue_and_drop(
+            task,
+            resolved=ResolvedRowSet(
+                candidate_ids=(changed,),
+                matched_ids=tuple(s.id for s in spans),
+                full_state=False,
+            ),
+        )
+        assert (requeued, dropped) == (1, 0)
+        assert list(
+            _live(task, status=EvalEntryStatus.PENDING).values_list(
+                "observation_span_id", flat=True
+            )
+        ) == [changed]
+
+
+@pytest.mark.integration
+@pytest.mark.django_db
+class TestContinuousReclassification:
+    """A cursor-less full pass is expensive (whole history) and re-queues every
+    in-scope stale entry, so it must run once per eval-config revision, not on
+    every poll. The trigger is the persisted revision marker, never the entry
+    table: legacy NULL hashes and out-of-scope completed rows carrying an old
+    hash can never be re-stamped and used to latch the trigger permanently."""
+
+    def _continuous_with_entries(self, project, custom_eval_config):
+        _make_spans(project, 3)
+        task = _task(project, evals=[custom_eval_config])
+        reconcile(task)
+        _mark(task, EvalEntryStatus.COMPLETED)
+        EvalTask.objects.filter(id=task.id).update(
+            run_type=RunType.CONTINUOUS, continuous_cursor=timezone.now()
+        )
+        task.refresh_from_db()
+        return task
+
+    def test_unstamped_task_adopts_current_revision_as_baseline(
+        self, project, custom_eval_config
+    ):
+        # Rollout / first-cursor case: nothing is known to have changed, so no
+        # surprise full pass (which would re-admit pre-cursor history); the
+        # current eval set becomes the baseline the next edit is compared to.
+        task = self._continuous_with_entries(project, custom_eval_config)
+        assert task.reclassified_evals_revision is None
+        assert _continuous_requires_full_reclassification(task) is False
+        task.refresh_from_db()
+        assert task.reclassified_evals_revision == _evals_revision(task)
+
+    def test_stamped_revision_suppresses_full_pass_despite_stale_rows(
+        self, project, custom_eval_config
+    ):
+        task = self._continuous_with_entries(project, custom_eval_config)
+        # Legacy NULL hashes and an out-of-scope stale hash both present.
+        first = _live(task).order_by("id").first()
+        _live(task, id=first.id).update(config_hash=None)
+        _live(task).exclude(id=first.id).update(config_hash="stale-hash")
+        EvalTask.objects.filter(id=task.id).update(
+            reclassified_evals_revision=_evals_revision(task)
+        )
+        task.refresh_from_db()
+        assert _continuous_requires_full_reclassification(task) is False
+
+    def test_eval_config_edit_changes_revision_and_forces_full_pass(
+        self, project, custom_eval_config
+    ):
+        task = self._continuous_with_entries(project, custom_eval_config)
+        EvalTask.objects.filter(id=task.id).update(
+            reclassified_evals_revision=_evals_revision(task)
+        )
+        task.refresh_from_db()
+        CustomEvalConfig.objects.filter(id=custom_eval_config.id).update(
+            config={"threshold": 0.9}
+        )
+        task = EvalTask.objects.get(id=task.id)
+        assert _continuous_requires_full_reclassification(task) is True
+
+    def test_full_state_pass_stamps_revision_but_delta_does_not(
+        self, project, custom_eval_config
+    ):
+        task = self._continuous_with_entries(project, custom_eval_config)
+        now = timezone.now()
+        _apply_resolved(
+            task, resolved=ResolvedRowSet((), (), False), now=now
+        )
+        task.refresh_from_db()
+        assert task.reclassified_evals_revision is None
+        _apply_resolved(task, resolved=ResolvedRowSet((), (), True), now=now)
+        task.refresh_from_db()
+        assert task.reclassified_evals_revision == _evals_revision(task)
 
 
 @pytest.mark.integration
