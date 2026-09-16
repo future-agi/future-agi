@@ -21,6 +21,7 @@ from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     UnsupportedFilterShapeError,
 )
 from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
+from tracer.tests._graph_cost_stub import AffordableScanAnalytics
 from tracer.tests.test_trace_root_physical_replay import assert_coherent_classifier
 
 PROJECT_ID = "00000000-0000-4000-8000-000000000901"
@@ -3781,7 +3782,9 @@ def test_public_primary_graph_wrappers_use_inline_reads(
     monkeypatch.setattr(graph_dispatch, reader_name, direct_reader)
     filters = [_date_filter(), _attribute_filter("final_status", "Rejected")]
     common = {
-        "analytics": object(),
+        # The wrapper costs its scan before it picks a lane; this test is about
+        # which inline reader it then calls, so the probe gets an answer.
+        "analytics": AffordableScanAnalytics(),
         "project_id": PROJECT_ID,
         "filters": filters,
         "interval": "hour",

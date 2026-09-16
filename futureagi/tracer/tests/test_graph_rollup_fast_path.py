@@ -13,6 +13,32 @@ from tracer.services.clickhouse.session_graph import fetch_session_graph_ch
 PROJECT_ID = "22222222-2222-4222-8222-222222222222"
 
 
+@pytest.fixture(autouse=True)
+def _cost_probe_gets_an_answer(monkeypatch):
+    """Let this module test the STATEMENTS, not the routing decision.
+
+    Every fake here answers `execute_ch_query` with a generic graph-shaped
+    ``Mock``, which is not an ``EXPLAIN ESTIMATE`` result, so the cost probe
+    reads "unknown" - and an unknown cost is deliberately no longer a licence
+    to issue the read inline, so without this every filtered case below would
+    route to the background lane and stop exercising any SQL at all.
+
+    The probe is still ISSUED through the same analytics object: statement
+    counts, timeouts and deadline calls stay exactly what the product does.
+    Only the answer is supplied, and only as an affordable one. The gate's own
+    behaviour - including what an unanswerable probe must do - is pinned in
+    ``test_graph_read_cost_gate.py``.
+    """
+
+    real_estimate = graph_dispatch.estimate_raw_graph_scan_rows
+
+    def _affordable(**kwargs):
+        real_estimate(**kwargs)
+        return 1_000_000
+
+    monkeypatch.setattr(graph_dispatch, "estimate_raw_graph_scan_rows", _affordable)
+
+
 def _date_filter(start: str, end: str) -> dict:
     return {
         "column_id": "created_at",
@@ -1042,10 +1068,15 @@ def test_filtered_raw_graph_statement_uses_one_interactive_deadline(
         django_settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
     )
     assert len(observed_analytics) == 1
-    assert deadline.remaining_ms.call_count == 1
+    # One deadline object, and every consumer asks it rather than the clock:
+    # the routing cost probe asks twice (for its own grant, and again for what
+    # the wall has left AFTER it spent), then once more when its statement is
+    # clamped, and the read's statement once. What must not happen is a second
+    # ReadDeadline, which ``deadline_start`` above pins.
+    assert deadline.remaining_ms.call_count == 4
     assert [
         call.kwargs["timeout_ms"] for call in analytics.execute_ch_query.call_args_list
-    ] == [9_300]
+    ] == [9_300, 9_300]
     for call in analytics.execute_ch_query.call_args_list:
         read_settings = call.kwargs["settings"]
         assert "max_rows_to_read" not in read_settings

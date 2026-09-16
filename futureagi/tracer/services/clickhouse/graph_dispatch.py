@@ -9,6 +9,7 @@ from time import monotonic
 from typing import Any
 from uuid import UUID
 
+import structlog
 from django.conf import settings
 
 from model_hub.models.choices import AnnotationTypeChoices
@@ -32,18 +33,26 @@ from tracer.services.clickhouse.exact_graph_reads import (
     read_exact_eval_graph,
     read_exact_user_system_graph,
 )
+from tracer.services.clickhouse.graph_read_cost import (
+    estimate_raw_graph_scan_rows,
+    raw_graph_scan_fits_wall,
+    raw_graph_scan_window,
+)
 from tracer.services.clickhouse.query_builders import (
     TimeSeriesQueryBuilder,
 )
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.read_budget import (
     ReadDeadline,
+    ReadDeadlineExceeded,
     is_clickhouse_query_error,
     is_read_budget_error,
 )
 from tracer.services.exact_aggregation_cache import (
     read_or_schedule_exact_snapshot,
 )
+
+logger = structlog.get_logger(__name__)
 
 GRAPH_WALL_DEADLINE_MS = settings.GRAPH_BACKGROUND_WALL_MS
 GRAPH_QUERY_TIMEOUT_MS = settings.GRAPH_BACKGROUND_WALL_MS
@@ -302,9 +311,12 @@ def _select_raw_trace_seed_candidate(
     re-clamp in :class:`_DeadlineBoundGraphAnalytics` (every statement is
     asked for ``ReadDeadline.remaining_ms(...)``, and the deadline raises
     below 25 ms) and, on the unwrapped background lane, the graph statement's
-    arithmetic floor. Single-node walls too short for that floor to be worth
-    anything do not reach this function at all - see
-    ``_GRAPH_SEED_SINGLE_NODE_MIN_WALL_MS``.
+    arithmetic floor. On the read path, single-node walls too short for that
+    floor to be worth anything do not reach this function at all - see
+    ``_GRAPH_SEED_SINGLE_NODE_MIN_WALL_MS``. The interactive routing gate
+    calls this function directly and does not apply that floor: there the seed
+    is not optional pruning but the last lever before the statement is
+    scheduled rather than issued, so it is worth probing on any wall.
     """
 
     candidates = _raw_trace_seed_candidates(filters)
@@ -344,18 +356,39 @@ def _select_raw_trace_seed_candidate(
                 timeout_ms=min(_GRAPH_SEED_ESTIMATE_QUERY_MS, remaining_ms),
                 settings={
                     **GRAPH_READ_SETTINGS,
-                    "max_threads": 1,
+                    # Index analysis parallelises over parts, and this probe is
+                    # nothing but index analysis: the witness carries
+                    # ``indexHint`` over the deployed attribute-value bloom
+                    # indexes, so the server reads and evaluates a skip-index
+                    # granule for every granule the key condition selects.
+                    # Measured on production against the highest-volume
+                    # reference tenant, pinning one worker cost 831 ms at
+                    # thirty days and 2,777 ms at twelve months - past this
+                    # probe's own 1,500 ms budget, which is exactly how a
+                    # bounded probe came to time out and hand the read no
+                    # bound at all. At the same worker count the graph
+                    # statement already uses, the identical estimate takes
+                    # 63 ms and 314 ms.
+                    "max_threads": settings.DASHBOARD_TRACE_READ_MAX_THREADS,
+                    # ``spans`` carries projections the optimizer will route an
+                    # estimate to. Admission compares this estimate against the
+                    # rows and granules the BASE-table seed subquery would
+                    # read, so the estimate has to describe that table.
+                    "optimize_use_projections": 0,
                     "max_result_rows": 32,
                     "max_result_bytes": 64 * 1024,
                 },
             )
         except Exception:
-            # Pruning is optional, so a failed probe must mean "no candidate",
-            # never a failed request: the unseeded statement is still correct.
-            # Classifying the failure here would propagate ClickHouse codes
-            # the narrow read-budget/transport helpers deliberately reject
-            # (type mismatch, unknown identifier, no common type) out of a
-            # request that succeeds without any probe at all.
+            # A probe that cannot answer is not a licence to read everything.
+            # It means this candidate is unproven, so it is not admitted; the
+            # caller decides what an unadmitted candidate implies, and on the
+            # interactive route - where the read has already been costed and
+            # found unaffordable unseeded - that decision is to schedule the
+            # statement rather than issue an unbounded one. Classifying the
+            # failure here would propagate ClickHouse codes the narrow
+            # read-budget/transport helpers deliberately reject (type
+            # mismatch, unknown identifier, no common type).
             continue
 
         estimate_rows = list(result.data or [])
@@ -606,6 +639,30 @@ def _ensure_point_budget(
     ):
         if index >= GRAPH_MAX_POINTS:
             raise BoundedGraphReadError("sample_limit")
+
+
+def _validated_raw_graph_interval(
+    *, interval: str, start_date: datetime, end_date: datetime
+) -> str:
+    """Return the interval a raw graph will really bucket on, budget checked.
+
+    Both the statement and the routing decision in front of it have to agree
+    on this, or a request the point budget rejects could be scheduled instead
+    of refused and wait for a worker that raises the same refusal.
+    """
+
+    effective = (
+        "week"
+        if end_date - start_date
+        > timedelta(days=settings.DASHBOARD_WEEKLY_AGGREGATION_AFTER_DAYS)
+        else str(interval)
+    )
+    _ensure_point_budget(
+        start_date=start_date,
+        end_date=end_date,
+        interval=effective,
+    )
+    return effective
 
 
 def _candidate_trace_ids(sample: GraphCandidateSample) -> tuple[str, ...]:
@@ -1331,21 +1388,25 @@ def _fetch_direct_raw_system_metric_graph(
     metric_id: str,
     observe_type: str,
     timeout_ms: int,
+    seed: tuple[_GraphRawTraceCandidate | None, int] | None = None,
 ) -> dict[str, Any]:
-    """Run one complete append-only filtered graph statement."""
+    """Run one complete append-only filtered graph statement.
+
+    ``seed`` hands over a candidate the caller has already probed, with the
+    number of probes it spent. The interactive route probes before it decides
+    which lane runs this statement, so passing the result through keeps one
+    request to one set of probes. The background worker passes nothing and
+    probes here exactly as it always has.
+    """
 
     started = monotonic()
     start_date, end_date = BaseQueryBuilder.parse_time_range(filters, strict=True)
     if start_date is None or end_date is None:
         raise ValueError("filtered graph requires a bounded time range")
-    if end_date - start_date > timedelta(
-        days=settings.DASHBOARD_WEEKLY_AGGREGATION_AFTER_DAYS
-    ):
-        interval = "week"
-    _ensure_point_budget(
+    interval = _validated_raw_graph_interval(
+        interval=interval,
         start_date=start_date,
         end_date=end_date,
-        interval=interval,
     )
     seed_candidate: _GraphRawTraceCandidate | None = None
     seed_probe_count = 0
@@ -1362,7 +1423,9 @@ def _fetch_direct_raw_system_metric_graph(
     seed_wall_admits = bool(shard_cluster) or (
         int(timeout_ms) >= _GRAPH_SEED_SINGLE_NODE_MIN_WALL_MS
     )
-    if start_date < end_date and observe_type == "trace" and seed_wall_admits:
+    if seed is not None:
+        seed_candidate, seed_probe_count = seed
+    elif start_date < end_date and observe_type == "trace" and seed_wall_admits:
         seed_candidate, seed_probe_count = _select_raw_trace_seed_candidate(
             analytics=analytics,
             project_id=project_id,
@@ -1452,6 +1515,269 @@ def _fetch_direct_raw_system_metric_graph(
         }
     )
     return enforce_exact_graph_data_contract(response)
+
+
+@dataclass(frozen=True)
+class _GraphReadUnaffordable:
+    """This statement is not admitted to the interactive wall.
+
+    ``estimated_rows`` is the index's own answer, carried forward because the
+    next question - whether the BACKGROUND wall can absorb it either - is the
+    same arithmetic against a different deadline, and asking it once from one
+    probe is cheaper and more honest than probing again.
+
+    ``None`` means the read could not be costed at all. That is a reason to
+    schedule, never a reason to issue the statement inline and never on its own
+    a reason to refuse: an uncosted read goes to the bounded worker, which can
+    survive being wrong about it.
+    """
+
+    estimated_rows: int | None
+
+
+def _affordable_raw_graph_seed(
+    *,
+    analytics: Any,
+    project_id: str,
+    filters: list[dict[str, Any]],
+    interval: str,
+    observe_type: str,
+    interactive_deadline_ms: int,
+) -> tuple[_GraphRawTraceCandidate | None, int] | _GraphReadUnaffordable | None:
+    """Decide, before the statement, whether this wall can run it at all.
+
+    Three outcomes, in the order the evidence arrives:
+
+    * the unseeded scan fits the wall - return ``None``, which is the read
+      path's own word for "no decision taken here". It then probes and seeds
+      for optional pruning exactly as it does today, because a read that fits
+      is still worth making faster and this function has not looked;
+    * it does not fit, but a compiler-proven positive witness is selective
+      enough to be admitted - return that candidate with the probes it cost,
+      so the statement issues with its trace-ID set, reads a fraction of the
+      window, and never pays for the same probes twice;
+    * it does not fit, or could not be costed at all, and no candidate is
+      admitted - return the unaffordable sentinel. Spending the wall to prove
+      what the index already said, and publishing nothing, is what this
+      function exists to stop; and a read nobody could cost is the one least
+      safe to issue on the wall that cannot survive being wrong about it.
+
+    Both probes read part metadata and no parts. They are charged to the same
+    request deadline the statement is, so one request stays on one budget.
+    """
+
+    start_date, end_date = BaseQueryBuilder.parse_time_range(filters, strict=True)
+    scan_window = raw_graph_scan_window(start_date, end_date)
+    if scan_window is None:
+        return None
+    # Refuse a series the graph contract cannot carry before routing it: a
+    # scheduled request would otherwise wait for a worker that raises the
+    # identical refusal.
+    _validated_raw_graph_interval(
+        interval=interval,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    estimated_rows: int | None = None
+    try:
+        estimated_rows = estimate_raw_graph_scan_rows(
+            analytics=analytics,
+            project_id=project_id,
+            scan_start=scan_window[0],
+            scan_end=scan_window[1],
+            timeout_ms=analytics.remaining_read_ms(interactive_deadline_ms),
+        )
+        if raw_graph_scan_fits_wall(
+            estimated_rows,
+            remaining_ms=analytics.remaining_read_ms(interactive_deadline_ms),
+        ):
+            return None
+        if observe_type != "trace":
+            # A span graph compiles no trace-ID witness, so there is no second
+            # lever to try: the window is the read.
+            return _GraphReadUnaffordable(estimated_rows)
+        seed_candidate, seed_probe_count = _select_raw_trace_seed_candidate(
+            analytics=analytics,
+            project_id=project_id,
+            filters=filters,
+            start_date=start_date,
+            end_date=end_date,
+            timeout_ms=analytics.remaining_read_ms(interactive_deadline_ms),
+        )
+    except ReadDeadlineExceeded:
+        # The request wall is already gone. That is the plainest possible
+        # proof that this statement cannot run on it.
+        return _GraphReadUnaffordable(estimated_rows)
+    if seed_candidate is None:
+        return _GraphReadUnaffordable(estimated_rows)
+    return seed_candidate, seed_probe_count
+
+
+def _schedule_unaffordable_graph_read(
+    *,
+    metric_id: str,
+    verdict: _GraphReadUnaffordable,
+    identity: dict[str, Any],
+    pending_payload: dict[str, Any],
+    refresh: bool,
+    organization_id: str | None,
+    workspace_id: str | None,
+) -> dict[str, Any]:
+    """Hand a read the interactive wall cannot run to the background lane.
+
+    The background lane is a wider wall, not an unbounded one, so the same
+    arithmetic is asked again against the deadline the worker would actually
+    have. Only a scan the index PROVES will outlast ``GRAPH_BACKGROUND_WALL_MS``
+    too is refused outright; a read that could not be costed is scheduled,
+    because the worker's wall is exactly the place an unknown read belongs and
+    the worker costs it again there against its own deadline.
+
+    Scheduling never re-enqueues behind a failed refresh: ``refresh`` is the
+    user's own flag, so a cold miss schedules once, a poll after a failed
+    refresh gets that sanitized failed envelope back from the cache without
+    starting a second full-window scan, and an explicit user refresh is what
+    retries. The worker's own cost gate then makes an unaffordable read
+    terminal in one attempt rather than in one attempt per poll.
+    """
+
+    unaffordable = BoundedGraphReadError("read_budget_exceeded", retryable=True)
+    # Unknown is not "too big": it is "not costed here". Route it to the wider
+    # wall rather than refusing a read that may well fit.
+    schedulable = verdict.estimated_rows is None or raw_graph_scan_fits_wall(
+        verdict.estimated_rows,
+        remaining_ms=GRAPH_WALL_DEADLINE_MS,
+    )
+    if organization_id and schedulable:
+        try:
+            scheduled = _read_or_refresh_exact_graph(
+                namespace="observe-system-graph",
+                identity=dict(identity),
+                refresh=refresh,
+                pending_payload=pending_payload,
+                organization_id=organization_id,
+                workspace_id=workspace_id,
+            )
+            if not (
+                isinstance(scheduled, dict)
+                and scheduled.get("query_refresh_failed") is True
+                and scheduled.get("query_status") != "complete"
+            ):
+                return scheduled
+            # The worker has already tried this read and could not finish it,
+            # and the cache is right not to re-enqueue it on a poll. What it
+            # hands back is a PENDING envelope carrying that failure, and the
+            # browser polls a pending envelope - so returning it would be a
+            # spinner the cache can never complete. An explicit user refresh
+            # still retries; until then this read has a terminal answer and
+            # the user is owed it.
+            logger.info("graph_unaffordable_refresh_already_failed")
+        except Exception:
+            # Cache/worker transport availability must not turn a routing
+            # decision into a raw API exception.
+            logger.info("graph_unaffordable_schedule_unavailable", exc_info=True)
+    # Either there is no background lane to hand this read to, or no wall the
+    # product owns is wide enough for it. The index has already proved the
+    # read cannot complete, so returning the degraded payload now rather than
+    # in thirty seconds costs the user nothing and costs the cluster one
+    # full-window scan - or one per poll - less.
+    return degraded_graph_response(
+        metric_id,
+        unaffordable,
+        provenance="read_cost_gate",
+    )
+
+
+class _BackgroundWallGraphAnalytics:
+    """Charge the worker's probes to the worker's own wall.
+
+    The interactive wrapper cannot be reused here: it clamps every statement to
+    ``GRAPH_INTERACTIVE_QUERY_TIMEOUT_MS``, which is the wall the background lane
+    exists to escape. This one adds the single method the cost gate needs -
+    ``remaining_read_ms`` against ``GRAPH_BACKGROUND_WALL_MS`` - and delegates
+    everything else, statements included, untouched.
+    """
+
+    def __init__(self, delegate: Any, deadline: ReadDeadline) -> None:
+        self._delegate = delegate
+        self._deadline = deadline
+
+    def remaining_read_ms(self, cap_ms: int) -> int:
+        return self._deadline.remaining_ms(cap_ms)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._delegate, name)
+
+
+def fetch_background_raw_system_metric_graph(
+    *,
+    analytics: Any,
+    project_id: str,
+    filters: list[dict[str, Any]],
+    interval: str,
+    metric_id: str,
+    observe_type: str,
+) -> dict[str, Any]:
+    """Run one filtered graph statement on the BACKGROUND wall, cost-gated.
+
+    The interactive gate removed the unbounded read from one door. This closes
+    the other: the worker entered the identical raw statement with no cost check
+    at all, and its own seed probe swallows a failure and issues the unseeded
+    full-window read - the production defect, wearing the worker's wall instead
+    of the browser's. Gating here rather than at any caller covers EVERY way the
+    worker is reached: the cold-miss schedule, the front-door explicit refresh
+    (which is not costed before it enqueues), and the post-failure schedule.
+
+    The background wall is wide, not infinite. A read the index PROVES it cannot
+    absorb raises instead of running, which the refresh activity turns into a
+    sanitized failed state - one attempt, terminal - rather than 180 s of scan
+    that publishes nothing and is asked for again on the next poll.
+
+    A read that could not be costed is a different case and runs here. "Absence
+    of proof means schedule" has to end somewhere, and this is where it ends:
+    the worker is the lane an uncosted read was scheduled to, its wall is
+    bounded, and a read that outlasts it costs one deduplicated attempt and a
+    terminal state - not a user's whole request, and not a scan per poll. What
+    the principle forbids is issuing an uncosted read on the wall that cannot
+    survive being wrong about it, and that wall is the interactive one.
+
+    The probes are charged to the same 180 s deadline the statement is, so the
+    statement's own budget is the remainder: a few hundred milliseconds of
+    metadata reads, stated rather than hidden.
+    """
+
+    bounded_analytics = _BackgroundWallGraphAnalytics(
+        analytics,
+        ReadDeadline.start(GRAPH_WALL_DEADLINE_MS),
+    )
+    seed = _affordable_raw_graph_seed(
+        analytics=bounded_analytics,
+        project_id=project_id,
+        filters=filters,
+        interval=interval,
+        observe_type=observe_type,
+        interactive_deadline_ms=GRAPH_WALL_DEADLINE_MS,
+    )
+    if isinstance(seed, _GraphReadUnaffordable):
+        if seed.estimated_rows is not None:
+            logger.info(
+                "graph_background_read_refused_by_cost_gate",
+                estimated_rows=int(seed.estimated_rows),
+            )
+            raise BoundedGraphReadError("read_budget_exceeded", retryable=True)
+        # Uncosted, and no admitted witness. Run it unseeded on this bounded
+        # wall without paying for the probes a second time.
+        logger.info("graph_background_read_uncosted_on_bounded_wall")
+        seed = (None, 0)
+    return _fetch_direct_raw_system_metric_graph(
+        analytics=bounded_analytics,
+        project_id=project_id,
+        filters=filters,
+        interval=interval,
+        metric_id=metric_id,
+        observe_type=observe_type,
+        timeout_ms=bounded_analytics.remaining_read_ms(GRAPH_WALL_DEADLINE_MS),
+        seed=seed,
+    )
 
 
 def fetch_system_metric_graph_ch(
@@ -1564,6 +1890,27 @@ def fetch_system_metric_graph_ch(
         analytics,
         ReadDeadline.start(interactive_deadline_ms),
     )
+    seed = _affordable_raw_graph_seed(
+        analytics=bounded_analytics,
+        project_id=project_id,
+        filters=filters,
+        interval=interval,
+        observe_type=normalized_observe_type,
+        interactive_deadline_ms=interactive_deadline_ms,
+    )
+    if isinstance(seed, _GraphReadUnaffordable):
+        # Nothing ran in the foreground, so the background worker - which owns
+        # the same statement under GRAPH_BACKGROUND_WALL_MS instead of this
+        # interactive wall - is its first and only execution.
+        return _schedule_unaffordable_graph_read(
+            metric_id=str(metric_id or ""),
+            verdict=seed,
+            identity=identity,
+            pending_payload=pending_payload,
+            refresh=refresh,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+        )
     try:
         response = _fetch_direct_raw_system_metric_graph(
             analytics=bounded_analytics,
@@ -1573,6 +1920,7 @@ def fetch_system_metric_graph_ch(
             metric_id=str(metric_id or ""),
             observe_type=normalized_observe_type,
             timeout_ms=interactive_deadline_ms,
+            seed=seed,
         )
         return response
     except ExactGraphReadError as exc:

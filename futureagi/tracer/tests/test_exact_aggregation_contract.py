@@ -56,6 +56,7 @@ from tracer.services.exact_aggregation_cache import (
     refresh_claim_is_current,
     snapshot_cache_key,
 )
+from tracer.tests._graph_cost_stub import AffordableScanAnalytics
 
 
 def _time_filter(start: datetime, end: datetime) -> dict:
@@ -163,7 +164,9 @@ def test_exact_span_scan_aligns_partial_window_to_storage_identity_hour():
 @pytest.mark.unit
 def test_exact_span_sparse_partitions_grow_without_gaps_or_duplicates(monkeypatch):
     # Exercise the adaptive fallback even when a compiler witness is available.
-    monkeypatch.setattr(TimeSeriesQueryBuilder, "_exact_span_candidate_plan", lambda _: None)
+    monkeypatch.setattr(
+        TimeSeriesQueryBuilder, "_exact_span_candidate_plan", lambda _: None
+    )
     start = datetime(2026, 8, 1, 0, 2)
     end = datetime(2026, 8, 1, 3, 14)
 
@@ -229,7 +232,9 @@ def test_exact_span_sparse_partitions_grow_without_gaps_or_duplicates(monkeypatc
 @pytest.mark.unit
 def test_exact_span_budget_retry_halves_same_cursor_and_learns_ceiling(monkeypatch):
     # Exercise the adaptive fallback even when a compiler witness is available.
-    monkeypatch.setattr(TimeSeriesQueryBuilder, "_exact_span_candidate_plan", lambda _: None)
+    monkeypatch.setattr(
+        TimeSeriesQueryBuilder, "_exact_span_candidate_plan", lambda _: None
+    )
     start = datetime(2026, 8, 1)
     end = start + timedelta(hours=8)
 
@@ -289,7 +294,9 @@ def test_exact_span_budget_retry_halves_same_cursor_and_learns_ceiling(monkeypat
 @pytest.mark.unit
 def test_exact_span_adaptive_reader_does_not_retry_programming_errors(monkeypatch):
     # Exercise the adaptive fallback even when a compiler witness is available.
-    monkeypatch.setattr(TimeSeriesQueryBuilder, "_exact_span_candidate_plan", lambda _: None)
+    monkeypatch.setattr(
+        TimeSeriesQueryBuilder, "_exact_span_candidate_plan", lambda _: None
+    )
     start = datetime(2026, 8, 1)
     end = start + timedelta(hours=2)
 
@@ -3667,13 +3674,18 @@ def test_exact_system_graph_combines_scalar_array_map_and_legacy_json(observe_ty
     assert params["graph_filter_4_latest_filter_key_4"] == "legacy_payload"
     assert "additional_table_filters" not in settings
     assert query.count("FROM spans") == 2
-    assert "SELECT project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id" in query
+    assert (
+        "SELECT project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id"
+        in query
+    )
     assert "FROM spans FINAL" not in query
     assert "argMax(" in query
     assert "toUInt8(is_deleted)" in query
     assert "tupleElement(graph_latest_row, 8) = 0" in query
     assert "PREWHERE project_id = %(project_id)s" in query
-    prewhere = query.split("PREWHERE", 1)[1].split("AND (project_id, observation_type", 1)[0]
+    prewhere = query.split("PREWHERE", 1)[1].split(
+        "AND (project_id, observation_type", 1
+    )[0]
     assert "project_id" in prewhere
     assert "start_time" in prewhere
     assert "attrs_" not in prewhere
@@ -6019,7 +6031,9 @@ def test_exact_span_graph_merges_additive_partitions_only_after_all_succeed():
 def test_exact_span_graph_fails_closed_before_merging_a_partial_partition(
     monkeypatch,
 ):
-    monkeypatch.setattr(TimeSeriesQueryBuilder, "_exact_span_candidate_plan", lambda _: None)
+    monkeypatch.setattr(
+        TimeSeriesQueryBuilder, "_exact_span_candidate_plan", lambda _: None
+    )
     from tracer.services.clickhouse import exact_graph_reads as exact_module
 
     start = datetime(2026, 8, 1)
@@ -6255,7 +6269,9 @@ def test_public_filtered_graph_runs_direct_raw_reader_inline_without_scheduling(
         side_effect=direct_read,
     ):
         result = graph_dispatch.fetch_system_metric_graph_ch(
-            analytics=object(),
+            # The routing cost probe runs before the reader is chosen; this
+            # test is about the reader, so the probe is answered and cheaply.
+            analytics=AffordableScanAnalytics(),
             project_id="11111111-1111-4111-8111-111111111111",
             filters=_exact_multi_filters(start, end),
             interval="day",
@@ -6732,8 +6748,14 @@ def test_exact_session_scalar_filters_intersect_after_session_membership():
     assert params["snapshot_scan_end_date"] == datetime(2026, 3, 15, 4)
     assert "start_time >= %(snapshot_scan_start_date)s" in matching_sql
     assert "start_time < %(snapshot_scan_end_date)s" in matching_sql
-    assert "latest_start_time >= fromUnixTimestamp64Micro(%(snapshot_start_date_us)s)" in matching_sql
-    assert "latest_start_time < fromUnixTimestamp64Micro(%(snapshot_end_date_us)s)" in matching_sql
+    assert (
+        "latest_start_time >= fromUnixTimestamp64Micro(%(snapshot_start_date_us)s)"
+        in matching_sql
+    )
+    assert (
+        "latest_start_time < fromUnixTimestamp64Micro(%(snapshot_end_date_us)s)"
+        in matching_sql
+    )
     assert "%(start_date)s" not in matching_sql
     assert "%(end_date)s" not in matching_sql
 
@@ -6957,8 +6979,14 @@ def _assert_session_membership_sql(query, params, start, end):
     assert "AS snapshot_members" in query
     assert "start_time >= %(snapshot_scan_start_date)s" in query
     assert "start_time < %(snapshot_scan_end_date)s" in query
-    assert "snapshot_members.start_time >= fromUnixTimestamp64Micro(%(snapshot_start_date_us)s)" in query
-    assert "snapshot_members.start_time < fromUnixTimestamp64Micro(%(snapshot_end_date_us)s)" in query
+    assert (
+        "snapshot_members.start_time >= fromUnixTimestamp64Micro(%(snapshot_start_date_us)s)"
+        in query
+    )
+    assert (
+        "snapshot_members.start_time < fromUnixTimestamp64Micro(%(snapshot_end_date_us)s)"
+        in query
+    )
     assert "FROM (" in query and "AS selected_sessions" in query
     assert "argMin(rs.input, rs.start_time) AS first_message" in query
     assert "session_duration >= %(session_having_1)s" in query
@@ -7248,7 +7276,9 @@ def test_annotation_reader_sets_readonly_snapshot_without_statement_timeout(
     monkeypatch.setattr(
         exact_module,
         "get_annotation_labels_for_project",
-        lambda _project_id: SimpleNamespace(get=lambda **_kwargs: (pg.execute("SELECT label"), label)[1]),
+        lambda _project_id: SimpleNamespace(
+            get=lambda **_kwargs: (pg.execute("SELECT label"), label)[1]
+        ),
     )
     monkeypatch.setattr(exact_module.transaction, "atomic", pg.atomic)
     monkeypatch.setattr(exact_module, "connection", pg)
@@ -7309,7 +7339,9 @@ def test_annotation_slow_empty_postgres_partition_exhausts_shared_deadline(
     monkeypatch.setattr(
         exact_module,
         "get_annotation_labels_for_project",
-        lambda _project_id: SimpleNamespace(get=lambda **_kwargs: (pg.execute("SELECT label"), label)[1]),
+        lambda _project_id: SimpleNamespace(
+            get=lambda **_kwargs: (pg.execute("SELECT label"), label)[1]
+        ),
     )
     monkeypatch.setattr(exact_module.transaction, "atomic", pg.atomic)
     monkeypatch.setattr(exact_module, "connection", pg)
