@@ -395,21 +395,21 @@ _USERS_ORIGIN_SHAPES = {
     # ``filter_type`` text or string, a single non-empty ASCII value). That
     # qualifies a scalar text witness, so ``scalar_witness_identities`` is
     # present and the manager's own first batch is 65 rows.
-    "equals_legacy_hint": "2ed448d2766b8c308fa1b0444e60ecb3f8e029b271d16d8213c273962071efff",
+    "equals_legacy_hint": "cf5885012141d198be1f076d3eb7e4b0ec35e7d66df68d61f657123ca51ef830",
     # The same ``equals`` page where the legacy ASCII bloom companion declines:
     # its Kelvin-sign enumeration would exceed 256 variants, which happens from
     # nine letters ``k`` in the value upward.
-    "equals_hint_declined": "7c0d4b58ce47ec327a81c24823fc244c2ea53db321a6a300c7047c51812e0e41",
+    "equals_hint_declined": "7d4e56e5d31df4b8eea3a1befcc8ce17e2abffa2d1cd04d69497d89a888fdf45",
     # ONE SPAN_ATTRIBUTE ``in`` filter over N non-empty ASCII values, no
     # ``attribute_value_types``: the multi-value text picker.
-    "in_untyped_legacy_hint": "2425607883cc46c175bfc90c2d8ee893197652689efa820aa35e2c6d47118459",
+    "in_untyped_legacy_hint": "bd0a16e33368db71b1b8c5b679eb6b5bcad53a0528ee71694a6085f6b692fabf",
     # The same picker page with the legacy companion declined.
-    "in_untyped_hint_declined": "c13be35214e3ee409cbe1c507b3bf14b0ec70b8f77415a3e71194b2bcea8e535",
+    "in_untyped_hint_declined": "50b8d3eb8756fd5e1f9cde25f8073601019be992bb95a7b8be715af47243d95b",
     # The typed picker: the same filter plus ``attribute_value_types``
     # ["string"] * N, which spells its own parameter suffix.
-    "in_typed_legacy_hint": "c9548fd80a39b70b7fd03bc9278882030d38a8311f5477d79bdade711f49930a",
+    "in_typed_legacy_hint": "7085e00d16e3f98fc67bdcc135f3220e50a2241e281497560a1c66bfecf85797",
     # The typed picker with the legacy companion declined.
-    "in_typed_hint_declined": "d52ec8b85ceeef5d29812a48840542ab692634367dafc777caea629be1a97352",
+    "in_typed_hint_declined": "aaed4b2b45d9de114c1a36d68d1065fb078089139578bf715663e2069a4c7639",
 }
 _USERS_ORIGIN_SHAS = frozenset(_USERS_ORIGIN_SHAPES.values())
 _USERS_REMAP_SHA = "090df268267944b22e713077c59d4836e4046fadb60bfbb78116f3a43af46676"
@@ -419,7 +419,7 @@ _USERS_REMAP_SHA = "090df268267944b22e713077c59d4836e4046fadb60bfbb78116f3a43af4
 # ``UsersSourcePinTests`` fails the moment these drift from the tree again.
 _USERS_SOURCE_PINS = {
     "tracer.services.users_list_manager": "b5da3657a94ab71710a8db384990e018269929e80c2f651cf8a25b02df3eb831",
-    "tracer.services.clickhouse.query_builders.user_list": "94ab7ca8a68c391a3dd147b6a43d2d9cae6f134c2b4a022033d9cb77aef11bf5",
+    "tracer.services.clickhouse.query_builders.user_list": "8dbca1c9857f04b062a53dc8d862a19a689629630426c8521b4b8c5b42e046dc",
     "tracer.services.clickhouse.v2.query_builders.user_list": "d5024fe5a46b7cbdf2621d04dfd02027c17816f7250f84120c920a0dd3c9908e",
     "tracer.services.clickhouse.v2.id_remap_sql": "56903f382c0f8dc40099e5ebfda45a8ab853c0b8f7ec16b5712f9c11092fe24a",
 }

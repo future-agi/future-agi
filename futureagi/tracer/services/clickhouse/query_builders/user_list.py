@@ -724,9 +724,16 @@ class UserListQueryBuilder(BaseQueryBuilder):
             WHERE isNotNull(witness.end_user_id)
         ),
             """
-            candidate_end_user_filter = (
-                "HAVING end_user_id IN (SELECT end_user_id FROM scalar_candidate_users)"
-            )
+            # The curated dimension carries no HAVING on the witness set. The
+            # acquisition already binds it once, in the span filter below, and
+            # ClickHouse inlines a CTE at every use: a second binding replays
+            # the whole witness scan a second time. Membership is unchanged
+            # because `base_rows` INNER JOINs `exact_usage`, whose users are
+            # exactly the resolved users of the spans that filter admits. A row
+            # that survives the join without belonging to the witness set is a
+            # user whose latest state carries no witnessed span at all, so it
+            # cannot match the request; the manager's exact per-batch check
+            # rejects it and it is never published.
             candidate_span_filter = """
               AND end_user_id IN (
                   SELECT arrayJoin(if(ifNull(aliases.present, 0) = 1,
