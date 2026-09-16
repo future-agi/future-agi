@@ -762,6 +762,11 @@ def read_bounded_filter_page(
         identity_only_classification or unhydrated_candidate_witness_prefilter
     )
     candidate_witness_fallback_batch_size = classify_batch_size
+    # Whether a builder has named the exact classifier batch that must stand
+    # behind its optional witness probe. That is a declared ceiling for a lane
+    # whose probe may be unavailable, fail one stratum or find a broad value -
+    # not the ordered-prefix economy - so it is never revised upward.
+    candidate_witness_fallback_ceiling_declared = False
     if (
         candidate_witness_prefilter_allowed
         and callable(candidate_witness_probe_preference)
@@ -771,6 +776,7 @@ def read_bounded_filter_page(
         raw_fallback_batch_size = candidate_witness_fallback_batch_builder()
         if raw_fallback_batch_size is not None:
             candidate_witness_fallback_batch_size = int(raw_fallback_batch_size)
+            candidate_witness_fallback_ceiling_declared = True
             if not 1 <= candidate_witness_fallback_batch_size <= classify_batch_size:
                 raise ValueError(
                     "candidate witness fallback batch size exceeds classifier batch"
@@ -1218,6 +1224,49 @@ def read_bounded_filter_page(
     adaptive_identity_start = False
     empty_prefix_seed = False
     last_classifier_empty = False
+    # Whether the classifier statement this read ran most recently resolved
+    # its whole chunk without publishing one candidate. Unlike
+    # ``last_classifier_empty`` this survives between acquisition batches, so
+    # ``classifier_batch_after_empty_chunk`` reads the last classifier
+    # statement of the READ rather than of the current batch.
+    classifier_chunk_resolved_empty = False
+
+    def classifier_batch_after_empty_chunk(size: int) -> int:
+        """Revise one prefix-sized classifier chunk once a chunk yields none.
+
+        A classifier statement's cost is a fixed per-partition fan-out, not a
+        per-candidate one: its unbounded ``key IN`` harvest opens the same
+        files over the same parts whether it carries one candidate or the
+        whole acquisition batch. Production receipts for one twelve-month
+        ten-leaf conjunction show a classifier statement that read 1,821 rows
+        and one that read 124,982 rows finishing within sixteen milliseconds
+        of each other. Sizing the chunk to the ordered prefix therefore buys a
+        real saving only while chunks YIELD, because a chunk that publishes
+        the prefix never classifies the surplus behind it. Once a chunk has
+        resolved its candidates and published none, that trade is already
+        lost, and every further prefix-sized chunk pays a whole statement's
+        fan-out for a fraction of the batch.
+
+        The revised size is ``candidate_limit``, the widest candidate set one
+        seed statement of this read may hold, so no statement classifies more
+        than the seed lane's own declared working set. Nothing else moves:
+        the same exact oracle over the same candidates in the same order, at
+        most one row per candidate, the same ``max_candidates`` result
+        ceiling, the same hydration and the same signed continuation - only
+        how many of this read's candidates one statement carries. A chunk
+        that yields restores the prefix-sized chunk.
+
+        A lane whose builder has named the exact classifier batch that must
+        stand behind its optional witness probe has declared a ceiling rather
+        than an economy, and is left alone entirely.
+        """
+
+        if not classifier_chunk_resolved_empty:
+            return size
+        if candidate_witness_fallback_ceiling_declared:
+            return size
+        return max(size, candidate_limit)
+
     # Request-local acquisition sizing only; classification and ordered-prefix
     # proofs remain authoritative. Leave special acquisition/buffering modes alone.
     ordered_identity_refill = bool(
@@ -2235,6 +2284,7 @@ def read_bounded_filter_page(
         nonlocal before_start_time
         nonlocal pre_match_continuation
         nonlocal last_classifier_empty
+        nonlocal classifier_chunk_resolved_empty
 
         last_classifier_empty = False
 
@@ -2462,6 +2512,9 @@ def read_bounded_filter_page(
             )
             else classify_batch_size
         )
+        active_classify_batch_size = classifier_batch_after_empty_chunk(
+            active_classify_batch_size
+        )
         for batch_offset in range(
             0, len(candidate_identities), active_classify_batch_size
         ):
@@ -2511,6 +2564,7 @@ def read_bounded_filter_page(
                     result_limit=max_candidates,
                 )
                 last_classifier_empty = not match_result.data
+                classifier_chunk_resolved_empty = last_classifier_empty
                 had_matches_before_query = bool(matched_by_id)
                 for row in match_result.data:
                     identity = row_identity(row)
@@ -2676,6 +2730,11 @@ def read_bounded_filter_page(
             and callable(candidate_witness_probe_builder)
             else classify_batch_size
         )
+        # The same revision, at the buffering boundary that decides how many
+        # candidates one classifier statement of this lane is handed in the
+        # first place; the chunk loop can only re-split what the flush gives
+        # it.
+        pending_flush_size = classifier_batch_after_empty_chunk(pending_flush_size)
         if (
             initial_identity_flush_pending
             and stop_on_ordered_prefix

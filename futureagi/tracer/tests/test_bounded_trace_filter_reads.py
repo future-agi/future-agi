@@ -13757,9 +13757,17 @@ def test_ordered_trace_seed_uses_two_hundred_but_stops_after_proven_prefix() -> 
     assert page.query_count == 2
 
 
-def test_ordered_trace_seed_closes_sparse_query_33_tail_with_unchanged_classifier() -> (
-    None
-):
+def test_ordered_trace_seed_closes_sparse_query_33_tail_with_same_coverage() -> None:
+    """The sparse tail is still classified whole, in fewer statements.
+
+    Nothing about the classifier's reach changes: the same eight hundred
+    ordered roots cross the same exact oracle in the same order and the page
+    is still complete and empty. Only the number of statements that carry
+    them falls, because a chunk that resolved its candidates and published
+    none has already proven the ordered-prefix chunk is not buying this read
+    anything.
+    """
+
     window_start = END - timedelta(minutes=5)
     rows = [
         {
@@ -13795,8 +13803,20 @@ def test_ordered_trace_seed_closes_sparse_query_33_tail_with_unchanged_classifie
     assert page.complete is True
     assert page.rows == []
     assert [call["limit"] for call in seed_calls] == [200] * 5
-    assert [len(call["candidate_ids"]) for call in classify_calls] == [50] * 16
-    assert page.query_count == 21
+    assert [len(call["candidate_ids"]) for call in classify_calls] == [
+        50,
+        50,
+        50,
+        50,
+        200,
+        200,
+        200,
+    ]
+    classified = [
+        identity for call in classify_calls for identity in call["candidate_ids"]
+    ]
+    assert classified == [row["id"] for row in rows]
+    assert page.query_count == 12
 
 
 def test_ordered_trace_inner_prefix_is_exact_for_page_n() -> None:
@@ -16129,3 +16149,103 @@ def test_attempt_ledger_exposes_separate_timing_query_rows_and_bytes() -> None:
         sum(attempt.result_payload_bytes for attempt in page.attempts)
         == page.result_payload_bytes
     )
+
+
+@dataclass
+class _WideAcquisitionIdentityHydrationFakeBuilder(_IdentityHydrationFakeBuilder):
+    """A cursor lane that acquires far more roots than one chunk classifies."""
+
+    @staticmethod
+    def recommended_filter_cursor_seed_batch_size() -> int:
+        return 20
+
+
+def _classifier_chunk_sizes(executor) -> list[int]:
+    return [
+        len(params["candidate_ids"])
+        for query, params in executor.calls
+        if query == "match_identity"
+    ]
+
+
+def _wide_acquisition_rows(count: int) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": f"trace-{index:03d}",
+            "root_span_id": f"root-{index:03d}",
+            "start_time": END - timedelta(seconds=index + 1),
+        }
+        for index in range(count)
+    ]
+
+
+def _wide_acquisition_page(builder, executor):
+    return read_bounded_filter_page(
+        builder=builder,
+        analytics=executor,
+        filters=[_time_filter()],
+        key_field="id",
+        page_number=0,
+        page_size=5,
+        deadline_ms=30_000,
+        max_seed_attempts=6,
+        max_candidates=20,
+        max_query_count=24,
+        include_incomplete_rows=True,
+        bounded_continuation=True,
+    )
+
+
+def test_classifier_chunk_grows_to_the_acquisition_batch_after_an_empty_chunk() -> None:
+    """A zero-yield chunk retires the ordered-prefix chunk for this read.
+
+    The ordered-prefix chunk exists so a page that can publish five rows does
+    not make the classifier confirm a whole twenty-root acquisition batch
+    first. That trade is only available while chunks yield. A chunk that
+    resolves its candidates and publishes none has already spent a whole
+    classifier statement - whose cost is a fixed per-partition fan-out, not a
+    per-candidate one - on a quarter of the batch, so the next acquisition
+    batch is classified whole. Every candidate is still classified, once, in
+    the same order, by the same oracle.
+    """
+
+    rows = _wide_acquisition_rows(40)
+    builder = _WideAcquisitionIdentityHydrationFakeBuilder(
+        rows,
+        match_rows=[],
+        recommended_batch_size=5,
+    )
+    executor = _IdentityHydrationFakeExecutor(builder)
+
+    page = _wide_acquisition_page(builder, executor)
+
+    # The first acquisition batch still pays the ordered-prefix chunk: its
+    # size is chosen before any chunk of this read has been answered. Every
+    # chunk after the first empty answer is the acquisition batch itself.
+    assert _classifier_chunk_sizes(executor) == [5, 5, 5, 5, 20]
+    classified = [
+        identity
+        for query, params in executor.calls
+        if query == "match_identity"
+        for identity in params["candidate_ids"]
+    ]
+    assert classified == [row["id"] for row in rows]
+    assert page.rows == []
+
+
+def test_classifier_chunk_keeps_the_ordered_prefix_while_chunks_yield() -> None:
+    """A publishing page never widens: the prefix chunk proves it and stops."""
+
+    rows = _wide_acquisition_rows(40)
+    builder = _WideAcquisitionIdentityHydrationFakeBuilder(
+        rows,
+        recommended_batch_size=5,
+    )
+    executor = _IdentityHydrationFakeExecutor(builder)
+
+    page = _wide_acquisition_page(builder, executor)
+
+    # Two chunks, because the page's own has-more sentinel needs a sixth
+    # match; both yield, so neither widens.
+    assert _classifier_chunk_sizes(executor) == [5, 5]
+    assert [row["id"] for row in page.rows] == [row["id"] for row in rows[:5]]
