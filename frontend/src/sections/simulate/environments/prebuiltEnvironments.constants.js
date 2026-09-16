@@ -41,3 +41,17 @@ export const SURFACE_ICON = {
   code: "solar:code-linear",
   api: "solar:cloud-linear",
 };
+
+// Copy for the master/detail browse. A template is a world that already
+// exists, so the browse folds the old separate "use template" screen in as an
+// inline detail pane — pick a row on the left, its build panel opens on the right.
+export const BROWSE_COPY = {
+  backTooltip: "Back to how you want to start",
+  title: "Use our template",
+  subtitle:
+    "Prebuilt worlds with seeded state, tools, and rules. Pick one, then build it — here or locally.",
+  searchPlaceholder: "Search templates…",
+  emptyLibrary: "No prebuilt environments yet.",
+  noMatch: (query) => `No templates match "${query}". Try a different search.`,
+  popular: "Popular",
+};

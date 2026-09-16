@@ -67,6 +67,18 @@ export function useUploadSecretFile() {
   });
 }
 
+// TODO: swap to axios.post(endpoints.simulateEnvironments.adopt, { templateId })
+// Adopting a prebuilt template mints a fresh environment instance from the
+// library entry. Return only the server-minted id — never echo the template
+// back into the mutation cache.
+export function useAdoptTemplate() {
+  return useMutation({
+    mutationFn: async () => ({
+      envId: `env-${Math.random().toString(36).slice(2, 10)}`,
+    }),
+  });
+}
+
 // TODO: axios.post(endpoints.simulateEnvironments.run(envId))
 export function useRunSimulation() {
   return useMutation({
