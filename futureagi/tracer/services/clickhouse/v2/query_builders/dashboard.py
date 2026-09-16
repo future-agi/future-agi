@@ -143,9 +143,6 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
     mixed queries such as a system metric with an annotation/eval breakdown.
     """
 
-    # dashboard_attr_rollup ships only in the v2 schema, so the fast-path is safe only here.
-    _attr_rollup_available: bool = True
-
     # Product reads use the direct-write curated dimension. This avoids a
     # runtime dependency on the optional ClickHouse dictionary (the locked
     # read-only production identity is intentionally not granted dictionary
