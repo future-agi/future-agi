@@ -20,6 +20,25 @@ class UnsupportedBoundedUserListQuery(ValueError):
     """Raised when an exact user page cannot use the bounded query path."""
 
 
+# Execution shape of a SEEDED candidate page (a scalar attribute witness or a
+# finite candidate id set). In-order reads (``optimize_*_in_order``) stream a
+# DISTINCT or GROUP BY over the sorting key without a hash table, at the price
+# of one merged stream per selected part. For the UNSEEDED page that is the
+# right trade: its collapse spans the whole window, and a hash table over every
+# identity in it would be the unbounded structure. A seeded page replays only
+# the population its seed bounds, and there the per-part streams are the
+# footprint: measured on production, the seeded acquisition held most of its
+# peak memory in the in-order machinery alone and released it, with a third of
+# its wall, under hash execution - identical rows and bytes, since the
+# statement's DISTINCT and GROUP BY are unchanged. Stated on the statement so
+# the primary-key IN sets ClickHouse builds while planning run under it too;
+# the v2 boundary keeps an explicit aggregation choice.
+_SEEDED_PAGE_READ_SETTINGS = (
+    "SETTINGS optimize_aggregation_in_order = 0, "
+    "optimize_distinct_in_order = 0, optimize_read_in_order = 0"
+)
+
+
 def _touched_survivor_map_subquery(
     *, remap_table: str, candidate_cte: str, candidate_column: str
 ) -> str:
@@ -996,6 +1015,8 @@ class UserListQueryBuilder(BaseQueryBuilder):
         FROM candidate_users
         {order_by}
         """
+        if self.candidate_end_user_ids or scalar_witness:
+            query = f"{query.rstrip()}\n        {_SEEDED_PAGE_READ_SETTINGS}"
         return query, params
 
     def build_relation_filter_user_query(
