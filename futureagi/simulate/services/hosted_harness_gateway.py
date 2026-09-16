@@ -800,7 +800,8 @@ def _mark_stage(job: HostedHarnessJob, stage: str) -> None:
     if job.current_stage == stage or job.current_stage not in _PRE_RUNTIME_STAGES:
         return
     job.current_stage = stage
-    job.save(update_fields=["current_stage", "updated_at"])
+    job.content_updated_at = timezone.now()
+    job.save(update_fields=["current_stage", "content_updated_at", "updated_at"])
 
 
 def _hostname_from_url(value: Any) -> str | None:
@@ -2316,6 +2317,8 @@ class DaytonaHostedGateway:
         # scenarios.json.  ``store_authoring_archive`` has already materialized
         # that snapshot, so a later heartbeat must enrich the visible stages
         # instead of deleting stages whose source file is not present here.
+        previous_stage = job.current_stage
+        previous_outputs = job.stage_outputs
         merged = {
             item.get("kind"): item
             for item in (job.stage_outputs or [])
@@ -2326,7 +2329,15 @@ class DaytonaHostedGateway:
         job.stage_outputs = sorted(
             merged.values(), key=lambda item: order.get(item.get("kind"), 99)
         )
-        job.save(update_fields=["current_stage", "stage_outputs", "updated_at"])
+        update_fields = ["current_stage", "stage_outputs", "updated_at"]
+        # This runs on every poll tick and re-reads the same files, so the common
+        # case is that nothing moved. Only a real change counts as the
+        # environment being updated; otherwise the list would report a fresh
+        # timestamp every fifteen seconds for a run sitting still.
+        if job.current_stage != previous_stage or job.stage_outputs != previous_outputs:
+            job.content_updated_at = timezone.now()
+            update_fields.append("content_updated_at")
+        job.save(update_fields=update_fields)
 
     @staticmethod
     def _sync_adjustment_progress(job: HostedHarnessJob, sandbox) -> None:
@@ -3349,7 +3360,8 @@ def store_authoring_archive(
     metadata.pop("scenario_extend", None)
     payload["metadata"] = metadata
     job.payload = payload
-    update_fields = ["payload", "updated_at"]
+    job.content_updated_at = timezone.now()
+    update_fields = ["payload", "content_updated_at", "updated_at"]
     if advance_lifecycle:
         job.stage_outputs = authoring_stage_outputs_from_archive(
             body, scenario_limit=job.scenario_count

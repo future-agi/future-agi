@@ -724,6 +724,7 @@ class DaytonaHarnessProvider:
             job.cancel_reason = None
             job.terminal_at = None
             job.failure = None
+            job.content_updated_at = timezone.now()
             job.save(
                 update_fields=[
                     "payload",
@@ -737,6 +738,7 @@ class DaytonaHarnessProvider:
                     "cancel_reason",
                     "terminal_at",
                     "failure",
+                    "content_updated_at",
                     "updated_at",
                 ]
             )
