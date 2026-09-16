@@ -12,6 +12,7 @@ x-maintenance: &maintenance
   env_file: ${OMEGA_BACKEND_ENV_FILE:?set an absolute backend runtime env-file path}
   environment: &maintenance-environment
     ERROR_FEED_OMEGA_ENABLED: "true"
+    ERROR_FEED_LEGACY_SCANNER_ENABLED: "false"
     SERVICE_TYPE: bootstrap
     STARTUP_DB_MUTATION_MODE: operator
     NO_STARTUP_DB_MUTATIONS: "false"

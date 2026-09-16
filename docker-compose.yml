@@ -195,6 +195,7 @@ x-backend-env: &backend-env
   FUTURE_AGI_CLOUD_API_KEY: ${FUTURE_AGI_CLOUD_API_KEY:-}
   FUTURE_AGI_CLOUD_API_URL: ${FUTURE_AGI_CLOUD_API_URL:-https://api.futureagi.com}
   TEMPORAL_TEST_EXECUTION_ENABLED: ${TEMPORAL_TEST_EXECUTION_ENABLED:-true}
+  ERROR_FEED_LEGACY_SCANNER_ENABLED: ${ERROR_FEED_LEGACY_SCANNER_ENABLED:-true}
 x-fi-collector-image: &fi-collector-image
   # OSS installs build this image from the checked-out source. Keeping a
   # dedicated local tag prevents an old registry `latest` image from masking

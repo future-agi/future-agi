@@ -906,6 +906,9 @@ ERROR_FEED_OMEGA_ENABLED = os.getenv("ERROR_FEED_OMEGA_ENABLED", "false").lower(
     "1",
     "yes",
 )
+ERROR_FEED_LEGACY_SCANNER_ENABLED = os.getenv(
+    "ERROR_FEED_LEGACY_SCANNER_ENABLED", "true"
+).lower() in ("true", "1", "yes")
 # Default-off until the separately deployed cloud usage consumer's duplicate
 # event handling has been verified against deterministic Omega event IDs.
 ERROR_FEED_OMEGA_BILLING_EMIT_ENABLED = os.getenv(

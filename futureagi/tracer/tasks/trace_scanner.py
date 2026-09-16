@@ -9,9 +9,9 @@ Activity 3: cluster_scan_issues_task — cluster unclustered issues + match succ
 import time
 from contextlib import contextmanager
 from datetime import timedelta
-from typing import List
 
 import structlog
+from django.conf import settings
 from django.db.models import F
 
 from tfc.temporal.drop_in import temporal_activity
@@ -26,9 +26,9 @@ from tracer.services.clickhouse.v2 import get_reader
 from tracer.services.clickhouse.v2.query_settings import ch_query_settings
 from tracer.utils.trace_scanner import (
     cluster_issues,
-    merge_duplicate_clusters,
     embed_trace_inputs,
     match_success_traces,
+    merge_duplicate_clusters,
     scan_and_write,
 )
 
@@ -66,7 +66,7 @@ def scan_ch_guardrails():
 
 
 @temporal_activity(time_limit=600, queue="agent_compass", max_retries=1)
-def scan_traces_task(trace_ids: List[str], project_id: str, from_sweep: bool = False):
+def scan_traces_task(trace_ids: list[str], project_id: str, from_sweep: bool = False):
     """
     Scan completed traces for issues.
 
@@ -79,6 +79,8 @@ def scan_traces_task(trace_ids: List[str], project_id: str, from_sweep: bool = F
     terminal so it can't pin the sweep watermark. Inline batches leave it off —
     an unreplicated trace may just be lagging, and the sweep catches it later.
     """
+    if not settings.ERROR_FEED_LEGACY_SCANNER_ENABLED:
+        return
     time.sleep(SCAN_DELAY_SECONDS)
 
     logger.info(
@@ -107,7 +109,7 @@ def scan_traces_task(trace_ids: List[str], project_id: str, from_sweep: bool = F
 
 @temporal_activity(time_limit=300, queue="agent_compass", max_retries=1)
 def embed_trace_inputs_task(
-    trace_ids: List[str], project_id: str, trigger_clustering: bool
+    trace_ids: list[str], project_id: str, trigger_clustering: bool
 ):
     """
     Kevinify + embed root span inputs for all scanned traces.
@@ -207,6 +209,8 @@ def sweep_scannable_traces():
     system-wide job and must not be scoped to a leaked workspace.
     ``max_retries=0``: the next tick recovers a sweep-level failure.
     """
+    if not settings.ERROR_FEED_LEGACY_SCANNER_ENABLED:
+        return
     configs = list(
         TraceScanConfig.no_workspace_objects.filter(
             enabled=True,
