@@ -666,39 +666,28 @@ export default function HarnessDetail() {
                   Usage unavailable
                 </Typography>
               ) : (
-                <>
-                  <Stack spacing={0.25} sx={{ mt: 0.5 }}>
-                    {[
-                      ["Text simulation tokens", "text_sim_tokens"],
-                      ["Voice simulation minutes", "voice_sim_minutes"],
-                      ["AI credits", "ai_credits"],
-                      ["Sandbox seconds", "sandbox_seconds"],
-                    ].map(([label, key]) => (
-                      <Stack
-                        key={key}
-                        direction="row"
-                        justifyContent="space-between"
-                        spacing={1}
-                      >
-                        <Typography variant="caption" color="text.secondary">
-                          {label}
-                        </Typography>
-                        <Typography variant="caption">
-                          {consumptionValue(current.consumption[key])}
-                        </Typography>
-                      </Stack>
-                    ))}
-                  </Stack>
-                  <Typography
-                    variant="caption"
-                    color="text.disabled"
-                    sx={{ display: "block", mt: 0.75 }}
-                  >
-                    Text tokens include only platform-funded simulator calls; AI
-                    credits cover harness authoring. Voice minutes follow call
-                    duration regardless of provider credentials.
-                  </Typography>
-                </>
+                <Stack spacing={0.25} sx={{ mt: 0.5 }}>
+                  {[
+                    ["Text simulation tokens", "text_sim_tokens"],
+                    ["Voice simulation minutes", "voice_sim_minutes"],
+                    ["AI credits", "ai_credits"],
+                    ["Sandbox seconds", "sandbox_seconds"],
+                  ].map(([label, key]) => (
+                    <Stack
+                      key={key}
+                      direction="row"
+                      justifyContent="space-between"
+                      spacing={1}
+                    >
+                      <Typography variant="caption" color="text.secondary">
+                        {label}
+                      </Typography>
+                      <Typography variant="caption">
+                        {consumptionValue(current.consumption[key])}
+                      </Typography>
+                    </Stack>
+                  ))}
+                </Stack>
               )}
             </Box>
             <Divider sx={{ my: 2 }} />

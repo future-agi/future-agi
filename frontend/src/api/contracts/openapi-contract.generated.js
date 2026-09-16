@@ -87656,6 +87656,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Ai credits",
           type: "number",
           minimum: 0,
+          "x-nullable": true,
         },
         sandbox_seconds: {
           title: "Sandbox seconds",

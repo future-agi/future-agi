@@ -12,6 +12,7 @@ from simulate.services.hosted_harness import (
     HostedHarnessError,
     create_hosted_job,
     provision_scenarios,
+    record_cleanup,
     register_attempt,
 )
 from simulate.tests.test_hosted_harness_channels import BASE, _headers, _payload
@@ -112,6 +113,78 @@ def test_authoring_tokens_become_deterministic_ai_credit_events(
     assert harness_usage.harness_consumption(capability.attempt.job)[
         "ai_credits"
     ] == pytest.approx(70.2)
+
+
+@pytest.mark.django_db
+def test_live_authoring_estimates_refresh_without_charging_or_double_counting(
+    metered_attempt, django_capture_on_commit_callbacks
+):
+    capability, events = metered_attempt
+    job = capability.attempt.job
+    first_stage = {
+        "stage": "understand-agent",
+        "models": ["gemini-3.7-flash"],
+        "tokens_in": 1_000_000,
+        "tokens_out": 100_000,
+        "tokens_cached": 800_000,
+    }
+    first_spend = {"stages": [first_stage]}
+    job.payload["metadata"] = {
+        "harness_spend": {"attempts": {"1": first_spend}},
+    }
+    job.save(update_fields=["payload"])
+
+    consumption = harness_usage.harness_consumption(job)
+    assert consumption["ai_credits"] == pytest.approx(70.2)
+    assert events == []
+
+    second = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    second_spend = {"stages": [{**first_stage, "tokens_out": 200_000}]}
+    job.refresh_from_db()
+    job.payload["metadata"]["harness_spend"]["attempts"]["2"] = second_spend
+    job.save(update_fields=["payload"])
+    assert harness_usage.harness_consumption(job)["ai_credits"] == pytest.approx(
+        185.4
+    )
+    assert events == []
+
+    with django_capture_on_commit_callbacks(execute=True):
+        record_cleanup(
+            capability.attempt.id, provider_ref="", verified_absent=True
+        )
+    job.refresh_from_db()
+    consumption = harness_usage.harness_consumption(job)
+    assert consumption["ai_credits"] == pytest.approx(185.4)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        record_cleanup(second.attempt.id, provider_ref="", verified_absent=True)
+    job.refresh_from_db()
+    consumption = harness_usage.harness_consumption(job)
+    assert consumption["ai_credits"] == pytest.approx(185.4)
+    assert sum(event.amount for event in events) == pytest.approx(185.4)
+
+
+@pytest.mark.django_db
+def test_unpriceable_live_authoring_is_unavailable_not_zero(metered_attempt):
+    capability, events = metered_attempt
+    job = capability.attempt.job
+    job.payload["metadata"] = {
+        "harness_spend": {
+            "attempts": {
+                "1": {
+                    "stages": [{
+                        "stage": "understand-agent",
+                        "models": ["not-a-priced-model"],
+                        "tokens_in": 1000,
+                        "tokens_out": 100,
+                    }],
+                },
+            },
+        },
+    }
+    consumption = harness_usage.harness_consumption(job)
+    assert consumption["ai_credits"] is None
+    assert events == []
 
 
 @pytest.mark.django_db

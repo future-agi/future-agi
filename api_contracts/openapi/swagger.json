@@ -119836,7 +119836,8 @@
                 "ai_credits": {
                     "title": "Ai credits",
                     "type": "number",
-                    "minimum": 0
+                    "minimum": 0,
+                    "x-nullable": true
                 },
                 "sandbox_seconds": {
                     "title": "Sandbox seconds",

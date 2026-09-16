@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import json
 from uuid import UUID, uuid5
 
@@ -20,6 +21,8 @@ _AUTHORING_REPORT_KEY = "authoring_usage_reports"
 _NON_BILLABLE_FAILURE_DOMAINS = frozenset(
     {"infrastructure", "connectivity", "platform_sync"}
 )
+
+logger = logging.getLogger(__name__)
 
 
 def check_harness_usage(attempt: HostedHarnessAttempt, action: str) -> dict:
@@ -306,6 +309,12 @@ def replay_harness_usage(attempt: HostedHarnessAttempt) -> None:
     authoring = (metadata.get(_AUTHORING_REPORT_KEY) or {}).get(str(attempt.id))
     if authoring is not None:
         emit_harness_authoring_usage(attempt, authoring)
+    elif attempt.cleanup_verified_at is not None:
+        spend = (
+            (metadata.get("harness_spend") or {}).get("attempts") or {}
+        ).get(str(attempt.attempt_number))
+        if spend is not None:
+            record_harness_authoring_usage(attempt, spend)
 
 
 def harness_consumption(job: HostedHarnessJob) -> dict | None:
@@ -313,7 +322,8 @@ def harness_consumption(job: HostedHarnessJob) -> dict | None:
     reports = metadata.get(_REPORT_KEY) or {}
     authoring_reports = metadata.get(_AUTHORING_REPORT_KEY) or {}
     runtimes = metadata.get("sandbox_runtime") or {}
-    if not reports and not authoring_reports and not runtimes:
+    authoring_spend = (metadata.get("harness_spend") or {}).get("attempts") or {}
+    if not reports and not authoring_reports and not runtimes and not authoring_spend:
         return None
 
     consumption = {"text_sim_tokens": 0, "voice_sim_minutes": 0, "ai_credits": 0}
@@ -337,6 +347,21 @@ def harness_consumption(job: HostedHarnessJob) -> dict | None:
         for report in authoring_reports.values()
         for record in report["records"]
     )
+    if authoring_spend and not is_oss():
+        try:
+            for attempt_id, attempt in attempts.items():
+                if attempt_id in authoring_reports:
+                    continue
+                spend = authoring_spend.get(str(attempt.attempt_number)) or {}
+                for stage in spend.get("stages") or []:
+                    record = _authoring_stage_record(stage)
+                    if record is not None:
+                        consumption["ai_credits"] += record["credits"]
+        except HostedHarnessError:
+            logger.warning(
+                "Authoring credit estimate unavailable for job %s", job.id, exc_info=True
+            )
+            consumption["ai_credits"] = None
     consumption["sandbox_seconds"] = sum(
         observation["seconds"] for observation in runtimes.values()
     )

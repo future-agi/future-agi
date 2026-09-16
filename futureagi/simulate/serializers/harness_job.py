@@ -568,7 +568,7 @@ class HarnessRuntimeReadSerializer(serializers.Serializer):
 class HarnessConsumptionSerializer(serializers.Serializer):
     text_sim_tokens = serializers.IntegerField(min_value=0)
     voice_sim_minutes = serializers.FloatField(min_value=0)
-    ai_credits = serializers.FloatField(min_value=0)
+    ai_credits = serializers.FloatField(min_value=0, allow_null=True)
     sandbox_seconds = serializers.FloatField(min_value=0)
 
 
