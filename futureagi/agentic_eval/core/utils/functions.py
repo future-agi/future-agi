@@ -51,6 +51,8 @@ except ImportError:
 
 model_name = "anthropic"
 _MEDIA_DOWNLOAD_TIMEOUT_SECONDS = 30
+# Leading bytes fetched to sniff a URL's media type in ``detect_input_type``.
+_URL_SNIFF_BYTES = 8192
 
 
 def encode_image(image_path):
@@ -504,9 +506,15 @@ def detect_input_type(input_item: Any) -> dict:
             # check for URLs first
             if isinstance(item, str) and (item.startswith(('http://', 'https://')) or (urlparse(item).scheme and urlparse(item).netloc)):
                 logger.info(' ----- HANDLING URL First Condition----- ')
-                with requests.get(item, timeout=100) as response:
+                # Sniff from the leading bytes only. ``filetype`` needs a few
+                # hundred bytes of header; pulling the whole object here made
+                # every eval entry download its full media just to learn the
+                # type (the actual media fetch happens later, once).
+                with requests.get(item, timeout=100, stream=True) as response:
                     if response.status_code == 200:
-                        content = response.content
+                        content = next(
+                            response.iter_content(chunk_size=_URL_SNIFF_BYTES), b""
+                        )
                         kind = filetype.guess(content)
                         header_type = response.headers.get('Content-Type', '').lower()
 
