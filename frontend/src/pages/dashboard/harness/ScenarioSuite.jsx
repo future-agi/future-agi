@@ -110,17 +110,12 @@ export default function ScenarioSuite({ scenarios, jobId, editable, onChanged })
   const [waiting, setWaiting] = useState(false);
 
   const [chosen, setChosen] = useState(() => new Set());
-  const [opened, setOpened] = useState(() => new Set());
   const [query, setQuery] = useState("");
-  const toggleOpen = (name) =>
-    setOpened((prev) => {
-      const next = new Set(prev);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
-      return next;
-    });
 
   // Every keyword in the suite, most used first, so the row reads as the suite's own vocabulary.
+  // Keywords are written onto each scenario at generation, so this list is the suite's, not a fixed
+  // vocabulary somebody has to maintain. The count is on the chip because it is the only honest
+  // measure of whether a filter is worth clicking.
   const keywords = useMemo(() => {
     const seen = new Map();
     scenarios.forEach((one) =>
@@ -225,11 +220,14 @@ export default function ScenarioSuite({ scenarios, jobId, editable, onChanged })
     const changes = [
       { op: "set_field", scenario: target, field: "tests", value: form.tests },
       { op: "set_field", scenario: target, field: "branch", value: form.branch },
+      { op: "set_field", scenario: target, field: "max_turns", value: form.max_turns },
       {
         op: "set_field",
         scenario: target,
         field: "background_noise",
-        value: form.background_noise,
+        // The form names a place, and off is the absence of one. The harness stores either a place
+        // or false, so it goes over the wire the way it is stored.
+        value: form.background_noise === "off" ? false : form.background_noise,
       },
     ];
     if (editing.persona) {
@@ -261,7 +259,7 @@ export default function ScenarioSuite({ scenarios, jobId, editable, onChanged })
   let counter = 0;
 
   return (
-    <Stack spacing={1.5}>
+    <Stack spacing={1.5} sx={{ minWidth: 0 }}>
       {waiting && (
         <Typography variant="caption" color="text.secondary">
           The harness is re-checking a scenario, rewriting its setup and checks where the change
@@ -298,28 +296,38 @@ export default function ScenarioSuite({ scenarios, jobId, editable, onChanged })
       </Stack>
 
       {keywords.length > 0 && (
-        <Stack direction="row" gap={0.75} flexWrap="wrap" alignItems="center">
-          {keywords.map(([word, count]) => (
-            <Chip
-              key={word}
-              size="small"
-              label={`${word} ${count}`}
-              variant={chosen.has(word) ? "filled" : "outlined"}
-              color={chosen.has(word) ? "primary" : "default"}
-              onClick={() =>
-                setChosen((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(word)) next.delete(word);
-                  else next.add(word);
-                  return next;
-                })
-              }
-            />
-          ))}
+        <Stack direction="row" gap={0.5} flexWrap="wrap" alignItems="center">
+          {keywords.map(([word, count]) => {
+            const on = chosen.has(word);
+            return (
+              <Chip
+                key={word}
+                icon={<Iconify icon="solar:tag-linear" width={14} />}
+                label={`${word} ${count}`}
+                size="small"
+                variant={on ? "filled" : "outlined"}
+                color={on ? "primary" : "default"}
+                onClick={() =>
+                  setChosen((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(word)) next.delete(word);
+                    else next.add(word);
+                    return next;
+                  })
+                }
+                sx={{ fontSize: "11px", height: 26, cursor: "pointer" }}
+              />
+            );
+          })}
           {chosen.size > 0 && (
-            <Button size="small" onClick={() => setChosen(new Set())}>
-              Clear filter
-            </Button>
+            <Chip
+              label="Clear"
+              size="small"
+              variant="outlined"
+              onClick={() => setChosen(new Set())}
+              onDelete={() => setChosen(new Set())}
+              sx={{ fontSize: "11px", height: 26, cursor: "pointer" }}
+            />
           )}
         </Stack>
       )}
@@ -343,8 +351,8 @@ export default function ScenarioSuite({ scenarios, jobId, editable, onChanged })
         </Stack>
       )}
 
-      <TableContainer>
-        <Table size="small" sx={{ minWidth: 1100 }}>
+      <TableContainer sx={{ width: "100%", maxWidth: "100%", overflowX: "auto" }}>
+        <Table size="small" sx={{ minWidth: 1000 }}>
           <TableHead>
             <TableRow>
               {COLUMNS.map((head, index) => {
@@ -402,6 +410,24 @@ export default function ScenarioSuite({ scenarios, jobId, editable, onChanged })
           </TableHead>
 
           <TableBody>
+            {!shown.length && (
+              <TableRow>
+                <TableCell colSpan={COLUMNS.length} sx={{ py: 4, textAlign: "center" }}>
+                  <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+                    No scenario matches that.
+                  </Typography>
+                  <Button
+                    size="small"
+                    onClick={() => {
+                      setQuery("");
+                      setChosen(new Set());
+                    }}
+                  >
+                    Clear the filters
+                  </Button>
+                </TableCell>
+              </TableRow>
+            )}
             {groups.map(({ useCase, rows }) => {
               const allOn = rows.length > 0 && rows.every((row) => selected.has(row.name));
               const someOn = !allOn && rows.some((row) => selected.has(row.name));
@@ -449,8 +475,7 @@ export default function ScenarioSuite({ scenarios, jobId, editable, onChanged })
                     const persona = scenario.persona || {};
                     const who = [persona.gender, persona.age_group].filter(Boolean).join(" \u00b7 ");
                     return (
-                      <React.Fragment key={scenario.name}>
-                      <TableRow hover>
+                      <TableRow hover key={scenario.name}>
                         <TableCell padding="checkbox" sx={{ pl: 1.5, verticalAlign: "top" }}>
                           <Checkbox
                             size="small"
@@ -522,19 +547,6 @@ export default function ScenarioSuite({ scenarios, jobId, editable, onChanged })
                             },
                           }}
                         >
-                          <Tooltip arrow title={opened.has(scenario.name) ? "Hide detail" : "Show detail"}>
-                            <IconButton size="small" onClick={() => toggleOpen(scenario.name)}>
-                              <Iconify
-                                icon={
-                                  opened.has(scenario.name)
-                                    ? "solar:alt-arrow-up-linear"
-                                    : "solar:alt-arrow-down-linear"
-                                }
-                                width={15}
-                                sx={{ color: "text.subtitle" }}
-                              />
-                            </IconButton>
-                          </Tooltip>
                           {editable && (
                             <>
                               <Tooltip arrow title="Edit scenario">
@@ -563,14 +575,6 @@ export default function ScenarioSuite({ scenarios, jobId, editable, onChanged })
                           )}
                         </TableCell>
                       </TableRow>
-                      {opened.has(scenario.name) && (
-                        <TableRow>
-                          <TableCell colSpan={COLUMNS.length} sx={{ bgcolor: "background.neutral" }}>
-                            <Detail scenario={scenario} />
-                          </TableCell>
-                        </TableRow>
-                      )}
-                      </React.Fragment>
                     );
                   })}
                 </React.Fragment>
@@ -581,14 +585,7 @@ export default function ScenarioSuite({ scenarios, jobId, editable, onChanged })
       </TableContainer>
 
       <Drawer anchor="right" open={Boolean(editing)} onClose={() => setEditing(null)}>
-        <Box sx={{ width: "100vw", maxWidth: 620, p: 2 }}>
-          <Typography variant="subtitle1" sx={{ mb: 1 }}>
-            {editing ? readable(editing.name) : ""}
-          </Typography>
-          <Typography variant="caption" color="text.secondary">
-            Saving re-checks this scenario. Where the change affects what the world holds or what a
-            correct agent does, its setup and checks are rewritten and proved again.
-          </Typography>
+        <Box sx={{ width: "100vw", maxWidth: 620, height: "100%" }}>
           {editing && (
             <ScenarioEditForm
               scenario={editing}
@@ -645,129 +642,6 @@ function SubGoals({ names }) {
 
 SubGoals.propTypes = { names: PropTypes.arrayOf(PropTypes.string) };
 
-// Everything the columns do not have room for. A scenario carries more than fits on one line, and
-// leaving the rest unreachable would mean the tab shows a summary of the suite rather than the
-// suite. Fields a given agent does not use stay out rather than showing as blank rows.
-function Detail({ scenario }) {
-  const persona = scenario.persona || {};
-  const caller = [
-    ["Personality", persona.personality],
-    ["Communication style", persona.communication_style],
-    ["Accent", persona.accent],
-    ["Profession", persona.occupation],
-    ["Location", persona.location],
-    ["Languages", (persona.languages || []).join(", ")],
-  ].filter(([, value]) => value);
-
-  const run = [
-    ["Background noise", scenario.background_noise ? "On" : "Off"],
-    ["Max turns", scenario.max_turns],
-    ["Call direction", scenario.call_direction],
-    ["Answered by", scenario.answered_by],
-  ].filter(([, value]) => value !== "" && value !== undefined && value !== null);
-
-  const seeded = Object.entries(scenario.fixture || {}).filter(([key]) => key !== "origin");
-
-  return (
-    <Stack spacing={2} sx={{ py: 1.5 }}>
-      {persona.initial_message && (
-        <Field label="Opens with">
-          <Typography sx={{ typography: "s3" }}>{persona.initial_message}</Typography>
-        </Field>
-      )}
-
-      {Boolean((persona.keywords || []).length) && (
-        <Field label="Keywords">
-          <Stack direction="row" gap={0.5} flexWrap="wrap">
-            {persona.keywords.map((word) => (
-              <Chip key={word} size="small" variant="outlined" label={word} />
-            ))}
-          </Stack>
-        </Field>
-      )}
-
-      {Boolean(caller.length) && (
-        <Field label="Caller">
-          <Stack direction="row" gap={2} flexWrap="wrap">
-            {caller.map(([label, value]) => (
-              <Pair key={label} label={label} value={value} />
-            ))}
-          </Stack>
-        </Field>
-      )}
-
-      {Boolean(run.length) && (
-        <Field label="Run conditions">
-          <Stack direction="row" gap={2} flexWrap="wrap">
-            {run.map(([label, value]) => (
-              <Pair key={label} label={label} value={String(value)} />
-            ))}
-          </Stack>
-        </Field>
-      )}
-
-      {Boolean(seeded.length) && (
-        <Field label="Seeded into the world">
-          <Stack direction="row" gap={2} flexWrap="wrap">
-            {seeded.map(([key, value]) => (
-              <Pair key={key} label={readable(key)} value={String(value)} />
-            ))}
-          </Stack>
-        </Field>
-      )}
-
-      {Boolean((scenario.solution || []).length) && (
-        <Field label="Known-good solution">
-          <Stack direction="row" gap={0.5} flexWrap="wrap" alignItems="center">
-            {scenario.solution.map((step, index) => (
-              <Chip
-                key={`${step.tool}-${index}`}
-                size="small"
-                variant="outlined"
-                label={`${index + 1}. ${step.tool}`}
-              />
-            ))}
-          </Stack>
-        </Field>
-      )}
-    </Stack>
-  );
-}
-
-Detail.propTypes = { scenario: PropTypes.object.isRequired };
-
-function Field({ label, children }) {
-  return (
-    <Stack spacing={0.5}>
-      <Typography
-        sx={{
-          typography: "s3",
-          fontWeight: 700,
-          textTransform: "uppercase",
-          letterSpacing: 0.4,
-          color: "text.subtitle",
-        }}
-      >
-        {label}
-      </Typography>
-      {children}
-    </Stack>
-  );
-}
-
-Field.propTypes = { label: PropTypes.string, children: PropTypes.node };
-
-function Pair({ label, value }) {
-  return (
-    <Stack spacing={0.25}>
-      <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{label}</Typography>
-      <Typography sx={{ typography: "s3" }}>{value}</Typography>
-    </Stack>
-  );
-}
-
-Pair.propTypes = { label: PropTypes.string, value: PropTypes.string };
-
 // Two lines, then ellipsis, with the whole value on hover. A situation can run to a paragraph and
 // a table that lets one row grow to five lines stops being scannable.
 function Clamped({ text }) {
@@ -797,7 +671,7 @@ Clamped.propTypes = { text: PropTypes.string };
 ScenarioSuite.propTypes = {
   scenarios: PropTypes.arrayOf(PropTypes.object),
   jobId: PropTypes.string,
-  // An agent that talks to nobody has no persona to edit, so the affordance is not shown at all.
+  // A read-only suite is one with no job behind it, so there is nothing to save an edit to.
   editable: PropTypes.bool,
   onChanged: PropTypes.func,
 };

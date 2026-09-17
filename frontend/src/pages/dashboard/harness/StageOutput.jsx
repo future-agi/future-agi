@@ -95,7 +95,7 @@ export default function StageOutput({ output, jobId, onChanged }) {
         </Box>
       </AccordionSummary>
 
-      <AccordionDetails>
+      <AccordionDetails sx={{ minWidth: 0, overflowX: "hidden" }}>
         {output.kind === "simulation" && (
           <Stack spacing={1.25} alignItems="flex-start">
             <Typography variant="body2" color="text.secondary">
@@ -180,9 +180,10 @@ export default function StageOutput({ output, jobId, onChanged }) {
           <ScenarioSuite
             scenarios={Array.isArray(data) ? data : []}
             jobId={jobId}
-            // Only a suite whose scenarios carry a persona has one to edit. An agent that talks to
-            // nobody never shows the affordance rather than showing one that cannot do anything.
-            editable={Boolean(jobId) && (Array.isArray(data) ? data : []).some((one) => one.persona)}
+            // The job id is the whole condition. Every scenario has something editable, and gating
+            // on the persona hid editing entirely for a suite whose scenarios carry none; the panel
+            // already leaves the caller section out when there is nobody on the other end.
+            editable={Boolean(jobId)}
             onChanged={onChanged}
           />
         )}

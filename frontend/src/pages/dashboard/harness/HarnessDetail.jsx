@@ -749,6 +749,9 @@ export default function HarnessDetail() {
               display: "flex",
               flexDirection: "column",
               minHeight: 0,
+              // Without this the pane is sized by its widest child rather than by the space it has,
+              // so a wide table pushes the whole page sideways instead of scrolling inside itself.
+              minWidth: 0,
               overflow: "hidden",
             }}
           >

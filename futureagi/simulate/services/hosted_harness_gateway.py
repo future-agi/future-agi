@@ -1367,6 +1367,12 @@ class DaytonaHostedGateway:
             "us-east5-aiplatform.googleapis.com",
             "us-central1-aiplatform.googleapis.com",
         ]
+        # A provider tier that restricts network access rejects any domain allow list outright, so
+        # the same switch the run path uses has to reach this launch too. Authoring runs first, so
+        # without it a job fails before it produces anything.
+        authoring_unrestricted = bool(
+            getattr(settings, "ALK_HOSTED_EGRESS_UNRESTRICTED", False)
+        )
         allowed_domains = list(
             dict.fromkeys(
                 getattr(
@@ -1416,8 +1422,14 @@ class DaytonaHostedGateway:
                     "futureagi.job": str(job.id),
                     "futureagi.authoring": "1",
                 },
-                "network_block_all": not allowed_domains,
-                "domain_allow_list": ",".join(sorted(allowed_domains)) or None,
+                "network_block_all": (
+                    False if authoring_unrestricted else (not allowed_domains)
+                ),
+                "domain_allow_list": (
+                    None
+                    if authoring_unrestricted
+                    else (",".join(sorted(allowed_domains)) or None)
+                ),
                 "ephemeral": True,
                 "ttl_minutes": ttl_minutes,
                 "auto_delete_interval": ttl_minutes,
@@ -1668,7 +1680,12 @@ class DaytonaHostedGateway:
         # private-host protection remain fail-closed; the resolved cap is checked
         # after wildcard minimization and provider/connector additions.
         _validate_egress_domains(payload["security"]["allowed_egress_domains"])
-        _validate_resolved_egress_domains(allowed_domains)
+        # The resolved cap is Daytona's limit on the allow list we send. With unrestricted egress
+        # no list is sent, so enforcing it here would fail a launch over a constraint that does not
+        # apply. Customer input stays validated above either way.
+        unrestricted = bool(getattr(settings, "ALK_HOSTED_EGRESS_UNRESTRICTED", False))
+        if not unrestricted:
+            _validate_resolved_egress_domains(allowed_domains)
         capability = register_attempt(
             job.id,
             endpoint_base_url=endpoint_base_url,
@@ -1714,7 +1731,6 @@ class DaytonaHostedGateway:
         # domain-allowlist cannot express when media and signaling resolve to different IPs. When
         # unrestricted egress is enabled the sandbox runs with open outbound so media can flow;
         # otherwise the domain allowlist (block-all + allowlist) applies.
-        unrestricted = bool(getattr(settings, "ALK_HOSTED_EGRESS_UNRESTRICTED", False))
         network_block_all = False if unrestricted else (not allowed_domains)
         domain_allow_list = (
             None if unrestricted else (",".join(sorted(allowed_domains)) or None)
@@ -3330,12 +3346,28 @@ def authoring_stage_outputs_from_archive(
                 scenario_documents.append(value)
             else:
                 documents[name] = value
-    scenarios = documents.get("scenarios.json")
-    if not isinstance(scenarios, list) and scenario_documents:
+    index = documents.get("scenarios.json")
+    # A scenario's own folder is the source of truth; the index is regenerated from it. Older
+    # archives carry an index that summarised each scenario and dropped the caller, the branch, the
+    # seeded data and the known-good solution, so prefer the folders and keep only the index's
+    # ordering, which is the suite's own.
+    if scenario_documents:
+        order = (
+            [str(one.get("name") or "") for one in index if isinstance(one, dict)]
+            if isinstance(index, list)
+            else []
+        )
         scenarios = sorted(
             scenario_documents,
-            key=lambda scenario: str(scenario.get("scenario_key") or ""),
+            key=lambda scenario: (
+                order.index(str(scenario.get("name") or ""))
+                if str(scenario.get("name") or "") in order
+                else len(order),
+                str(scenario.get("scenario_key") or ""),
+            ),
         )
+    else:
+        scenarios = index
     if isinstance(scenarios, list) and scenario_limit is not None:
         scenarios = scenarios[: max(0, scenario_limit)]
     return authoring_stage_outputs(

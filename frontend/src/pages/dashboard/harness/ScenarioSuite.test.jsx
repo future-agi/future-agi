@@ -86,7 +86,7 @@ describe("ScenarioSuite", () => {
     expect(screen.queryByText("two")).not.toBeInTheDocument();
   });
 
-  it("puts everything the columns cannot hold behind the row detail", async () => {
+  it("offers only what a person may change, and says nothing about the rest", async () => {
     const user = userEvent.setup();
     render(
       <ScenarioSuite
@@ -100,20 +100,39 @@ describe("ScenarioSuite", () => {
         editable
       />,
     );
-    // Hidden until asked for, so the table stays one line per scenario.
+    await user.click(screen.getByRole("button", { name: /edit scenario/i }));
+
+    expect(screen.getByRole("textbox", { name: /passes when/i })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: /branch/i })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: /personality/i })).toBeInTheDocument();
+    expect(screen.getByText("Background noise")).toBeInTheDocument();
+
+    // A field the proof pins is not a control, and it is not a row explaining that it is not a
+    // control either. It is simply absent.
     expect(screen.queryByText("Add one Big Mac please")).not.toBeInTheDocument();
+    expect(screen.queryByText(/find_applicant/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/not editable/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: /^name/i })).not.toBeInTheDocument();
+  });
 
-    await user.click(screen.getByRole("button", { name: /show detail/i }));
+  it("offers an edit even when the suite has no persona to edit", async () => {
+    const user = userEvent.setup();
+    const { persona, ...noCaller } = scenario("one");
+    render(<ScenarioSuite scenarios={[noCaller]} jobId="job-1" editable />);
 
-    expect(screen.getByText("Add one Big Mac please")).toBeInTheDocument();
-    expect(screen.getByText("Analytical")).toBeInTheDocument();
-    expect(screen.getByText("Technical")).toBeInTheDocument();
-    expect(screen.getByText("Neutral")).toBeInTheDocument();
-    expect(screen.getByText("Technician")).toBeInTheDocument();
-    expect(screen.getByText("1. find_applicant")).toBeInTheDocument();
-    expect(screen.getByText("2. quote_plan")).toBeInTheDocument();
-    // The seeded values are what make an identity edit consequential, so they are visible.
-    expect(screen.getByText("Seeded into the world")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /edit scenario/i }));
+
+    expect(screen.getByLabelText(/passes when/i)).toBeInTheDocument();
+    // Nobody is on the other end, so the caller section is left out rather than shown empty.
+    expect(screen.queryByLabelText(/personality/i)).not.toBeInTheDocument();
+  });
+
+  it("will not spend a re-check on a form nobody changed", async () => {
+    const user = userEvent.setup();
+    render(<ScenarioSuite scenarios={[scenario("one")]} jobId="job-1" editable />);
+    await user.click(screen.getByRole("button", { name: /edit scenario/i }));
+
+    expect(screen.getByRole("button", { name: /save scenario/i })).toBeDisabled();
   });
 
   it("never sends the fields the world is seeded around", async () => {
@@ -125,8 +144,9 @@ describe("ScenarioSuite", () => {
         editable
       />,
     );
-    await user.click(screen.getByRole("button", { name: /edit/i }));
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(screen.getByRole("button", { name: /edit scenario/i }));
+    await user.type(screen.getByLabelText(/passes when/i), " and stays polite");
+    await user.click(screen.getByRole("button", { name: /save scenario/i }));
 
     expect(amend).toHaveBeenCalledTimes(1);
     const [, changes] = amend.mock.calls[0];
