@@ -47,6 +47,7 @@ import { format } from "date-fns";
 import Iconify from "src/components/iconify";
 import {
   DATE_PRESETS,
+  DATE_FILTER_DEBOUNCE_MS,
   WIDTH_OPTIONS,
   MIN_WIDGET_HEIGHT,
   DEFAULT_WIDGET_HEIGHT,
@@ -645,11 +646,6 @@ function DraggableWidgetCard({
           {/* Chart */}
           <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
             <WidgetChart
-              key={`${widget.id}:${datePreset || "default"}${
-                globalDateRange
-                  ? `:${globalDateRange.start}:${globalDateRange.end}`
-                  : ""
-              }`}
               widget={widget}
               dashboardId={dashboardId}
               globalDateRange={globalDateRange}
@@ -754,11 +750,26 @@ export default function DashboardDetailView() {
     () => searchParams.get("timePreset") || null,
   );
   const [customDateRange, setCustomDateRange] = useState(null); // [start, end]
+  const [appliedDatePreset, setAppliedDatePreset] = useState(datePreset);
+  const [appliedCustomDateRange, setAppliedCustomDateRange] =
+    useState(customDateRange);
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const customDateAnchorRef = useRef(null);
+
+  // Keep chip selection responsive, but wait until the user settles before
+  // updating every widget's effective query range.
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      setAppliedDatePreset(datePreset);
+      setAppliedCustomDateRange(customDateRange);
+    }, DATE_FILTER_DEBOUNCE_MS);
+
+    return () => clearTimeout(timeoutId);
+  }, [datePreset, customDateRange]);
+
   const globalDateRange = useMemo(
-    () => resolveGlobalDateRange(datePreset, customDateRange),
-    [datePreset, customDateRange],
+    () => resolveGlobalDateRange(appliedDatePreset, appliedCustomDateRange),
+    [appliedDatePreset, appliedCustomDateRange],
   );
 
   // Widget context menu
