@@ -830,15 +830,16 @@ function Header({
               if (running || !setupDone) {
                 return (
                   <Stack
-                    direction="row" alignItems="center" spacing={1}
+                    direction="row" alignItems="center" spacing={0.75}
                     sx={{
-                      px: 1.25, py: 0.625, borderRadius: 999,
-                      border: "1px solid", borderColor: "divider",
+                      px: 1.125, py: 0.5, borderRadius: 999,
+                      border: "1px solid", borderColor: alpha("#CA8A04", 0.35),
+                      bgcolor: (t) => alpha("#CA8A04", t.palette.mode === "dark" ? 0.14 : 0.08),
                     }}
                   >
                     <Box
                       sx={{
-                        width: 6, height: 6, borderRadius: "50%", bgcolor: "#7857FC", flexShrink: 0,
+                        width: 6, height: 6, borderRadius: "50%", bgcolor: "#CA8A04", flexShrink: 0,
                         animation: "chip-pulse 1.4s ease-in-out infinite",
                         "@keyframes chip-pulse": {
                           "0%,100%": { opacity: 0.4, transform: "scale(1)" },
@@ -846,8 +847,8 @@ function Header({
                         },
                       }}
                     />
-                    <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                      {running ? running.label : "Setup being built"}
+                    <Typography sx={{ typography: "s2", fontWeight: 700, color: "#CA8A04" }}>
+                      Building
                     </Typography>
                   </Stack>
                 );
@@ -901,9 +902,9 @@ function Header({
                     bgcolor: (t) => alpha("#16A34A", t.palette.mode === "dark" ? 0.14 : 0.08),
                   }}
                 >
-                  <Iconify icon="solar:check-circle-bold" width={13} sx={{ color: "#16A34A" }} />
+                  <Box sx={{ width: 6, height: 6, borderRadius: "50%", bgcolor: "#16A34A" }} />
                   <Typography sx={{ typography: "s2", fontWeight: 700, color: "#16A34A" }}>
-                    Ready to run
+                    Live
                   </Typography>
                 </Stack>
               );
@@ -2026,7 +2027,15 @@ function Deriving({
       }}
     >
       <SectionCard sx={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <AssistantConsole turns={turns} running={running} chips={chips} onSend={onSend} onChip={onChip} />
+        <AssistantConsole
+          turns={turns}
+          running={running}
+          chips={chips}
+          onSend={onSend}
+          onChip={onChip}
+          frozen={env?.buildStatus === "building"}
+          frozenReason="Environment is still being built"
+        />
       </SectionCard>
 
       <SectionCard sx={{ minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden", px: 2.5 }}>

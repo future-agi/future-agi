@@ -240,7 +240,7 @@ function SetupBeingBuiltPill({ running }) {
       <Box
         sx={{
           width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
-          bgcolor: running ? "#7857FC" : "#16A34A",
+          bgcolor: running ? "#CA8A04" : "#16A34A",
           animation: running ? "chip-pulse 1.4s ease-in-out infinite" : "none",
           "@keyframes chip-pulse": {
             "0%,100%": { opacity: 0.4, transform: "scale(1)" },
@@ -249,7 +249,7 @@ function SetupBeingBuiltPill({ running }) {
         }}
       />
       <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-        {running ? "Setup being built" : "Setup ready"}
+        {running ? "Building" : "Live"}
       </Typography>
     </Stack>
   );

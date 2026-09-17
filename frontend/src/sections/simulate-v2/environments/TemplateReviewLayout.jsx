@@ -278,29 +278,40 @@ export default function TemplateReviewLayout({
             Review the template — tweak on the left, preview on the right, commit when ready
           </Typography>
         </Box>
-        {running && (
-          <Stack
-            direction="row"
-            alignItems="center"
-            spacing={0.75}
-            sx={{
-              px: 1.25, py: 0.5, borderRadius: 1,
-              border: "1px solid",
-              borderColor: (t) => t.palette.mode === "dark" ? "rgba(120, 87, 252, 0.5)" : "rgba(120, 87, 252, 0.35)",
-              bgcolor: (t) => t.palette.mode === "dark" ? "rgba(120, 87, 252, 0.14)" : "rgba(120, 87, 252, 0.08)",
-              color: "#7857FC",
-              flexShrink: 0,
-            }}
-          >
-            <Box sx={{
-              width: 7, height: 7, borderRadius: "50%",
-              bgcolor: "#7857FC",
-              animation: "pulse 1.4s ease-in-out infinite",
-              "@keyframes pulse": { "0%,100%": { opacity: 0.4 }, "50%": { opacity: 1 } },
-            }} />
-            <Typography sx={{ typography: "s2", fontWeight: 700 }}>Setup being built</Typography>
-          </Stack>
-        )}
+        {/*
+          Env status pill — parallel to the workspace header.
+          `Building` (amber, pulsing) while derivation streams;
+          `Live` (green, solid) once the world has landed. Same
+          semantics as the workspace so a reader sees one chip
+          everywhere, meaning the same thing.
+        */}
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={0.75}
+          sx={{
+            px: 1.25, py: 0.5, borderRadius: 1,
+            border: "1px solid",
+            borderColor: (t) => running
+              ? (t.palette.mode === "dark" ? "rgba(202, 138, 4, 0.5)" : "rgba(202, 138, 4, 0.35)")
+              : (t.palette.mode === "dark" ? "rgba(22, 163, 74, 0.5)" : "rgba(22, 163, 74, 0.35)"),
+            bgcolor: (t) => running
+              ? (t.palette.mode === "dark" ? "rgba(202, 138, 4, 0.14)" : "rgba(202, 138, 4, 0.08)")
+              : (t.palette.mode === "dark" ? "rgba(22, 163, 74, 0.14)" : "rgba(22, 163, 74, 0.08)"),
+            color: running ? "#CA8A04" : "#16A34A",
+            flexShrink: 0,
+          }}
+        >
+          <Box sx={{
+            width: 7, height: 7, borderRadius: "50%",
+            bgcolor: running ? "#CA8A04" : "#16A34A",
+            animation: running ? "pulse 1.4s ease-in-out infinite" : undefined,
+            "@keyframes pulse": { "0%,100%": { opacity: 0.4 }, "50%": { opacity: 1 } },
+          }} />
+          <Typography sx={{ typography: "s2", fontWeight: 700 }}>
+            {running ? "Building" : "Live"}
+          </Typography>
+        </Stack>
         {/*
           Setup is complete by the time we hit the review layout — the
           builder streamed every stage and the world is standing. The
@@ -372,6 +383,8 @@ export default function TemplateReviewLayout({
           <AssistantConsole
             turns={turns} running={running} chips={chips}
             onSend={send} onChip={(c) => send(c)}
+            frozen={env?.buildStatus === "building"}
+            frozenReason="Environment is still being built"
           />
         </SectionCard>
 
