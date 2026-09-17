@@ -219,7 +219,7 @@ const CompareSection = ({
                   fontSize: "12px",
                   fontWeight: "400",
                   lineHeight: "18px",
-                  heigth: "22px",
+                  height: "22px",
                   borderRadius: "8px",
                   padding: "6px 0px",
                 }}
@@ -250,7 +250,7 @@ const CompareSection = ({
                   fontWeight: "400",
                   lineHeight: "18px",
                   borderRadius: "8px",
-                  heigth: "22px",
+                  height: "22px",
                   padding: "6px 0px",
                 }}
               />
