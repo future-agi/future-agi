@@ -273,45 +273,48 @@ export default function TemplateReviewLayout({
           </IconButton>
         </Tooltip>
         <Box flex={1} minWidth={0}>
-          <Typography noWrap sx={{ typography: "s1_2", fontWeight: 700 }}>{env.name}</Typography>
+          <Stack direction="row" alignItems="center" spacing={1}>
+            <Typography noWrap sx={{ typography: "s1_2", fontWeight: 700 }}>{env.name}</Typography>
+            {/*
+              Env status pill sits inside the identity cluster —
+              parallel to the workspace header — so the reader sees
+              one grouping (name · status) that describes the same
+              thing everywhere. `Building` (amber, pulsing) while
+              derivation streams; `Live` (green, solid) once the
+              world has landed.
+            */}
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={0.75}
+              sx={{
+                px: 1.25, py: 0.5, borderRadius: 1,
+                border: "1px solid",
+                borderColor: (t) => running
+                  ? (t.palette.mode === "dark" ? "rgba(202, 138, 4, 0.5)" : "rgba(202, 138, 4, 0.35)")
+                  : (t.palette.mode === "dark" ? "rgba(22, 163, 74, 0.5)" : "rgba(22, 163, 74, 0.35)"),
+                bgcolor: (t) => running
+                  ? (t.palette.mode === "dark" ? "rgba(202, 138, 4, 0.14)" : "rgba(202, 138, 4, 0.08)")
+                  : (t.palette.mode === "dark" ? "rgba(22, 163, 74, 0.14)" : "rgba(22, 163, 74, 0.08)"),
+                color: running ? "#CA8A04" : "#16A34A",
+                flexShrink: 0,
+              }}
+            >
+              <Box sx={{
+                width: 7, height: 7, borderRadius: "50%",
+                bgcolor: running ? "#CA8A04" : "#16A34A",
+                animation: running ? "pulse 1.4s ease-in-out infinite" : undefined,
+                "@keyframes pulse": { "0%,100%": { opacity: 0.4 }, "50%": { opacity: 1 } },
+              }} />
+              <Typography sx={{ typography: "s2", fontWeight: 700 }}>
+                {running ? "Building" : "Live"}
+              </Typography>
+            </Stack>
+          </Stack>
           <Typography noWrap sx={{ typography: "s2", color: "text.subtitle" }}>
             Review the template — tweak on the left, preview on the right, commit when ready
           </Typography>
         </Box>
-        {/*
-          Env status pill — parallel to the workspace header.
-          `Building` (amber, pulsing) while derivation streams;
-          `Live` (green, solid) once the world has landed. Same
-          semantics as the workspace so a reader sees one chip
-          everywhere, meaning the same thing.
-        */}
-        <Stack
-          direction="row"
-          alignItems="center"
-          spacing={0.75}
-          sx={{
-            px: 1.25, py: 0.5, borderRadius: 1,
-            border: "1px solid",
-            borderColor: (t) => running
-              ? (t.palette.mode === "dark" ? "rgba(202, 138, 4, 0.5)" : "rgba(202, 138, 4, 0.35)")
-              : (t.palette.mode === "dark" ? "rgba(22, 163, 74, 0.5)" : "rgba(22, 163, 74, 0.35)"),
-            bgcolor: (t) => running
-              ? (t.palette.mode === "dark" ? "rgba(202, 138, 4, 0.14)" : "rgba(202, 138, 4, 0.08)")
-              : (t.palette.mode === "dark" ? "rgba(22, 163, 74, 0.14)" : "rgba(22, 163, 74, 0.08)"),
-            color: running ? "#CA8A04" : "#16A34A",
-            flexShrink: 0,
-          }}
-        >
-          <Box sx={{
-            width: 7, height: 7, borderRadius: "50%",
-            bgcolor: running ? "#CA8A04" : "#16A34A",
-            animation: running ? "pulse 1.4s ease-in-out infinite" : undefined,
-            "@keyframes pulse": { "0%,100%": { opacity: 0.4 }, "50%": { opacity: 1 } },
-          }} />
-          <Typography sx={{ typography: "s2", fontWeight: 700 }}>
-            {running ? "Building" : "Live"}
-          </Typography>
-        </Stack>
         {/*
           Setup is complete by the time we hit the review layout — the
           builder streamed every stage and the world is standing. The

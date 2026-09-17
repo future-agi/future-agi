@@ -782,23 +782,18 @@ function Header({
                 {setupDone && env && envState && patch && (
                   <EnvVersionPin env={env} envState={envState} patch={patch} />
                 )}
-              </>
-            )}
-          </Stack>
+                {/*
+                  Env status chip.
 
-          {/*
-            Header fingerprint.
-
-            The pipeline pill that used to live here duplicated the setup
-            timeline we now show on the loading screen. What's actually
-            informative in the header, once setup is done, is the shape of
-            what got built — tools, scenarios, evals, personas — plus any
-            gaps still waiting on the user. One at-a-glance snapshot, not a
-            real-time monitor.
-          */}
-          <Box sx={{ flex: 1, display: { xs: "none", md: "flex" }, justifyContent: "center" }}>
-            {(() => {
-              const running = pipeline.find((st) => st.status === "running");
+                  Sits inside the identity cluster (name · version · status)
+                  rather than in a separate center slot, so a reader sees one
+                  group of chips that all describe the same thing — this env's
+                  current state. Building/Live/gap/failed states are mutually
+                  exclusive; the IIFE picks whichever applies.
+                */}
+                <Box sx={{ display: { xs: "none", md: "block" } }}>
+                  {(() => {
+                    const running = pipeline.find((st) => st.status === "running");
               /*
                 "Ready to run" was only checking pipeline status —
                 it flipped green the moment derivation finished, even
@@ -908,8 +903,15 @@ function Header({
                   </Typography>
                 </Stack>
               );
-            })()}
-          </Box>
+                  })()}
+                </Box>
+              </>
+            )}
+          </Stack>
+
+          {/* Spacer pushes the Run-simulation button to the far right;
+              status chip now lives in the identity cluster on the left. */}
+          <Box sx={{ flex: 1 }} />
         </>
       )}
 
