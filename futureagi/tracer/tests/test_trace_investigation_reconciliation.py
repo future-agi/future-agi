@@ -66,6 +66,7 @@ class FakeRootReader:
 def _configure(project, *, engine=TraceScanEngine.OMEGA, enabled=True):
     return TraceScanConfig.no_workspace_objects.create(
         project=project,
+        sampling_rate=1.0,
         enabled=enabled,
         engine=engine,
         scan_version="omega-v1",

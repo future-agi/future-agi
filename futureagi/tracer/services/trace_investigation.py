@@ -31,6 +31,7 @@ from tracer.models.trace_scan import (
     TraceScanResult,
     TraceScanStatus,
 )
+from tracer.queries.trace_scanner import is_trace_sampled
 
 CONTRACT_VERSION = "omega-investigation/v1"
 _DEFAULT_LIMITS = {
@@ -213,18 +214,13 @@ def record_trace_notifications(
             # race the same trace generation.
             Project.no_workspace_objects.select_for_update().get(id=project.id)
             payload_digest = _digest(value)
+            # Event IDs survive broker/topic recreation; offsets do not. Keep
+            # broker coordinates as provenance, never as application identity.
             receipts = list(
                 TraceInvestigationDelivery.no_workspace_objects.filter(
-                    Q(
-                        topic=delivery["topic"],
-                        partition=delivery["partition"],
-                        offset=delivery["offset"],
-                    )
-                    | Q(
-                        organization_id=value["organization_id"],
-                        event_id=value["event_id"],
-                    )
-                )[:2]
+                    organization_id=value["organization_id"],
+                    event_id=value["event_id"],
+                )[:1]
             )
             if receipts:
                 if len(receipts) != 1 or receipts[0].payload_digest != payload_digest:
@@ -245,13 +241,24 @@ def record_trace_notifications(
                 )
                 accepted += 1
 
+            config = TraceScanConfig.no_workspace_objects.filter(
+                project=project, enabled=True, engine=TraceScanEngine.OMEGA
+            ).first()
+            if config is None:
+                continue
             for trace in value["traces"]:
+                if not is_trace_sampled(str(trace["trace_id"]), config.sampling_rate):
+                    continue
                 job = (
                     TraceInvestigationJob.no_workspace_objects.select_for_update()
                     .filter(project=project, trace_id=trace["trace_id"])
                     .first()
                 )
                 if job is None:
+                    if receipts:
+                        # An event sampled out on first delivery stays a no-op
+                        # on retry, even if the configured rate later increases.
+                        continue
                     job = TraceInvestigationJob.no_workspace_objects.create(
                         organization_id=value["organization_id"],
                         workspace_id=value["workspace_id"],
@@ -480,6 +487,7 @@ def claim_due_investigations(
         TraceScanConfig.no_workspace_objects.filter(
             enabled=True,
             engine=TraceScanEngine.OMEGA,
+            sampling_rate__gt=0,
             scan_version=engine_version,
             project__trace_type="observe",
         )
@@ -519,9 +527,18 @@ def claim_due_investigations(
                 job.state != TraceInvestigationJobState.WAITING
                 or job.not_before > now
                 or not config.enabled
+                or config.sampling_rate <= 0
                 or config.engine != TraceScanEngine.OMEGA
                 or config.scan_version != engine_version
             ):
+                continue
+            if not is_trace_sampled(str(job.trace_id), config.sampling_rate):
+                # A rate reduction must not leave an excluded head-of-queue job
+                # blocking eligible work. No inference or success result is made.
+                job.state = TraceInvestigationJobState.CANCELLED
+                job.save(update_fields=["state", "updated_at"])
+                config.omega_last_claimed_at = now
+                config.save(update_fields=["omega_last_claimed_at"])
                 continue
             active = TraceInvestigationAttempt.no_workspace_objects.filter(
                 job__project_id=project_id,

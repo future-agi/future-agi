@@ -27,6 +27,7 @@ def test_large_older_project_backlog_cannot_starve_another_project(observe_proje
     for index, project in enumerate([observe_project, other]):
         TraceScanConfig.no_workspace_objects.create(
             project=project,
+            sampling_rate=1.0,
             enabled=True,
             engine=TraceScanEngine.OMEGA,
             scan_version="omega-v1",
