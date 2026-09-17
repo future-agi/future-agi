@@ -27,6 +27,7 @@ import { useDatasetColumnConfig } from "src/api/develop/develop-detail";
 import { transformDynamicColumnConfig } from "../common";
 import DynamicColumnSkeleton from "../DynamicColumnSkeleton";
 import { ShowComponent } from "../../../../components/show";
+import useRerunDependentColumns from "../../DataTab/useRerunDependentColumns";
 
 const getDefaultValue = () => {
   return {
@@ -55,6 +56,7 @@ export const ClassificationChild = ({
 
   const { dataset } = useParams();
   const allColumns = useDatasetColumnConfig(dataset);
+  const promptToRerunDependents = useRerunDependentColumns(dataset);
 
   useEffect(() => {
     if (initialData) {
@@ -107,6 +109,7 @@ export const ClassificationChild = ({
       enqueueSnackbar("Classification column updated successfully", {
         variant: "success",
       });
+      promptToRerunDependents(editId);
       refreshGrid();
       onClose();
     },

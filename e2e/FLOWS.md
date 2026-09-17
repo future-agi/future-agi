@@ -52,6 +52,27 @@
 - POST /accounts/token/ returns 200 with a token pair
 - the UI login persists a new active AuthToken row in PG for the user
 
+## datasets
+
+### DATA-E2E-001 — editing a dynamic column reruns selected dependents in order
+
+**Goal:** A dataset editor keeps derived columns current after changing an upstream dynamic column  
+**Spec:** `flows/datasets/rerun-dependent-columns.spec.ts:55`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a dataset with a three-level classification dependency chain
+2. open the source classification column configuration
+3. update the source column
+4. review the direct and transitive dependents in the confirmation dialog
+5. rerun the selected dependent columns
+
+**Backend state verified:**
+
+- the browser posts dependent reruns in topological order with the stored operation type
+- the source and both selected dependent columns reach Completed
+
 ## evals
 
 ### EVAL-E2E-001 — eval task runs over ingested spans via the mock LLM

@@ -28,6 +28,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { useConditionalNodeStoreShallow } from "../../states";
 import { enqueueSnackbar } from "src/components/snackbar";
 import { useDevelopDetailContext } from "../../Context/DevelopDetailContext";
+import useRerunDependentColumns from "../../DataTab/useRerunDependentColumns";
 
 const COLUMN_TYPE_OPTIONS = [
   { label: "Run Prompt", value: "run_prompt" },
@@ -188,6 +189,7 @@ const ConditionalNodeMainForm = ({
     name: "config",
   });
   const { dataset } = useParams();
+  const promptToRerunDependents = useRerunDependentColumns(dataset);
 
   const { mutate: addColumn, isPending: isSubmitting } = useMutation({
     mutationFn: (data) =>
@@ -211,6 +213,7 @@ const ConditionalNodeMainForm = ({
       enqueueSnackbar("API Call column updated successfully", {
         variant: "success",
       });
+      promptToRerunDependents(editId);
       refreshGrid();
       onClose();
     },
