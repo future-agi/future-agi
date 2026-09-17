@@ -69,3 +69,40 @@ class HarnessEnvironmentRunResponseSerializer(serializers.Serializer):
     run_id = serializers.UUIDField()
     state = serializers.CharField()
     stage = serializers.CharField()
+
+
+class HarnessIntakeUploadSerializer(serializers.Serializer):
+    endpoint = serializers.CharField()
+    mode = serializers.CharField()
+    archive_formats = serializers.ListField(child=serializers.CharField())
+    max_compressed_bytes = serializers.IntegerField()
+
+
+class HarnessIntakeConnectorSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    label = serializers.CharField()
+    modality = serializers.ChoiceField(choices=(AGENT_TYPE_VOICE, AGENT_TYPE_CHAT))
+    target_field = serializers.CharField()
+    modes = serializers.ListField(child=serializers.CharField())
+    credentials = serializers.ListField(child=serializers.CharField())
+
+
+class HarnessIntakeSourceSerializer(serializers.Serializer):
+    kind = serializers.ChoiceField(choices=("github", "archive", "provider", "remote"))
+    label = serializers.CharField()
+    requires = serializers.ListField(child=serializers.CharField())
+    optional = serializers.ListField(child=serializers.CharField(), required=False)
+    hosts = serializers.ListField(child=serializers.CharField(), required=False)
+    unsupported_hosts = serializers.ListField(
+        child=serializers.CharField(), required=False
+    )
+    visibility = serializers.ListField(child=serializers.CharField(), required=False)
+    private_auth = serializers.CharField(required=False)
+    private_auth_configured = serializers.BooleanField(required=False)
+    upload = HarnessIntakeUploadSerializer(required=False)
+    connectors = HarnessIntakeConnectorSerializer(many=True, required=False)
+    accepts_secret_refs = serializers.BooleanField(required=False)
+
+
+class HarnessEnvironmentIntakeSerializer(serializers.Serializer):
+    sources = HarnessIntakeSourceSerializer(many=True)

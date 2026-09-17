@@ -7,11 +7,16 @@ from rest_framework.response import Response
 
 from simulate.models import HostedHarnessJob
 from simulate.serializers.harness_environment import (
+    HarnessEnvironmentIntakeSerializer,
     HarnessEnvironmentListQuerySerializer,
     HarnessEnvironmentListResponseSerializer,
     HarnessEnvironmentRunResponseSerializer,
 )
-from simulate.services.harness_environment import annotate_for_list, environment_row
+from simulate.services.harness_environment import (
+    annotate_for_list,
+    environment_row,
+    intake_options,
+)
 from simulate.services.harness_provider import (
     _organization,
     _scope_jobs,
@@ -51,6 +56,11 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
 
     def _job(self, request, pk):
         return self._queryset(request).filter(id=pk).first()
+
+    @validated_request(responses={200: HarnessEnvironmentIntakeSerializer})
+    @action(detail=False, methods=["get"])
+    def intake(self, request):
+        return Response(intake_options())
 
     @validated_request(
         query_serializer=HarnessEnvironmentListQuerySerializer,

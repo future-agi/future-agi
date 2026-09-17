@@ -14,7 +14,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from django.conf import settings
 from django.db.models import Count, F, Prefetch, Q, QuerySet
+from django.urls import reverse
 
 from simulate.models import HostedHarnessJob, HostedHarnessStageOutput
 
@@ -191,3 +193,77 @@ def _tools_count(contract: dict[str, Any]) -> int | None:
 
 def _isoformat(value) -> str | None:
     return value.isoformat() if value else None
+
+
+def intake_options() -> dict[str, Any]:
+    from simulate.serializers.harness_job import CONNECTOR_ALIASES
+
+    github_app_configured = bool(
+        getattr(settings, "GITHUB_APP_ID", "")
+        and getattr(settings, "GITHUB_APP_PRIVATE_KEY", "")
+    )
+    max_bytes = int(getattr(settings, "ALK_HOSTED_SOURCE_MAX_BYTES", 256 * 1024 * 1024))
+    hosted_modes = ["connect_only", "provider_import"]
+    return {
+        "sources": [
+            {
+                "kind": "github",
+                "label": "GitHub repository",
+                "requires": ["repository"],
+                "optional": ["ref", "commit_sha"],
+                "hosts": ["github.com"],
+                "unsupported_hosts": ["gitlab.com", "bitbucket.org"],
+                "visibility": ["public", "private"],
+                "private_auth": "github_app",
+                "private_auth_configured": github_app_configured,
+            },
+            {
+                "kind": "archive",
+                "label": "Code upload",
+                "requires": ["archive_artifact_id"],
+                "upload": {
+                    "endpoint": reverse("simulate:harness-job-source-upload"),
+                    "mode": "folder",
+                    "archive_formats": [],
+                    "max_compressed_bytes": max_bytes,
+                },
+            },
+            {
+                "kind": "provider",
+                "label": "Hosted platform",
+                "requires": ["agent.connector", "agent.mode"],
+                "connectors": [
+                    {
+                        "id": "vapi",
+                        "label": "Vapi",
+                        "modality": AGENT_TYPE_VOICE,
+                        "target_field": "assistant_id",
+                        "modes": hosted_modes,
+                        "credentials": list(CONNECTOR_ALIASES["vapi"]),
+                    },
+                    {
+                        "id": "retell",
+                        "label": "Retell",
+                        "modality": AGENT_TYPE_VOICE,
+                        "target_field": "agent_id",
+                        "modes": hosted_modes,
+                        "credentials": list(CONNECTOR_ALIASES["retell"]),
+                    },
+                    {
+                        "id": "retell_chat",
+                        "label": "Retell chat",
+                        "modality": AGENT_TYPE_CHAT,
+                        "target_field": "agent_id",
+                        "modes": hosted_modes,
+                        "credentials": list(CONNECTOR_ALIASES["retell_chat"]),
+                    },
+                ],
+            },
+            {
+                "kind": "remote",
+                "label": "Running agent",
+                "requires": ["endpoint"],
+                "accepts_secret_refs": False,
+            },
+        ]
+    }
