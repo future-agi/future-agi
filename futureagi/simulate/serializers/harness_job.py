@@ -448,6 +448,33 @@ class HarnessPreflightSerializer(HarnessJobCreateSerializer):
     )
 
 
+class HarnessPreflightCheckSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    label = serializers.CharField()
+    status = serializers.ChoiceField(choices=("passed", "failed", "skipped"))
+    detail = serializers.CharField(allow_blank=True)
+    missing = serializers.ListField(child=serializers.CharField())
+    fix = serializers.CharField(allow_null=True)
+
+
+class HarnessPreflightCredentialsSerializer(serializers.Serializer):
+    scanned_files = serializers.IntegerField()
+    detected_connectors = serializers.ListField(child=serializers.CharField())
+    requirements = serializers.ListField(child=serializers.JSONField())
+    credential_choices = serializers.ListField(child=serializers.JSONField())
+    probe = serializers.ListField(child=serializers.JSONField())
+
+
+class HarnessPreflightResponseSerializer(serializers.Serializer):
+    ready_to_submit = serializers.BooleanField()
+    state = serializers.ChoiceField(choices=("connected", "failed"))
+    checks = HarnessPreflightCheckSerializer(many=True)
+    payload = serializers.JSONField()
+    credentials = HarnessPreflightCredentialsSerializer()
+    effective_parallelism = serializers.IntegerField()
+    snapshot = serializers.JSONField()
+
+
 class HarnessJobAdjustmentSerializer(serializers.Serializer):
     instruction = serializers.CharField(
         min_length=1,
