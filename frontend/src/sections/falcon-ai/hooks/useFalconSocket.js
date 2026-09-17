@@ -178,12 +178,19 @@ export const useFalconSocket = () => {
             break;
           }
 
-          case "error":
+          case "error": {
+            const store = useFalconStore.getState();
+            const messageId = data?.message_id || store.streamingMessageId;
+
             setStreaming(false);
-            updateMessage(data.message_id, {
-              error: data.error || "An error occurred",
-            });
+
+            if (messageId) {
+              updateMessage(messageId, {
+                error: data?.error || "An error occurred",
+              });
+            }
             break;
+          }
 
           case "skill_activated":
             if (data.skill) {
