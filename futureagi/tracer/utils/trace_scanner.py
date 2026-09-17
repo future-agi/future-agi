@@ -7,8 +7,6 @@ Orchestrates:
 Queries live in tracer/queries/trace_scanner.py and tracer/queries/scan_clustering.py.
 """
 
-from collections.abc import Callable
-from contextlib import AbstractContextManager, nullcontext
 from typing import List
 
 import structlog
@@ -195,25 +193,14 @@ def _emit_scanner_billing(
         logger.exception("scanner_billing_emit_failed", project_id=project_id)
 
 
-def cluster_issues(
-    project_id: str,
-    *,
-    issue_ids: list[str] | None = None,
-    write_fence: Callable[[object], AbstractContextManager] | None = None,
-) -> ClusteringSummary:
+def cluster_issues(project_id: str) -> ClusteringSummary:
     """
     Cluster all unclustered scanner issues for a project.
 
     Online incremental: embed each issue → cosine match against centroids →
     assign to existing cluster or create new one.
     """
-    # Preserve the exact legacy call shape for existing callers/test doubles.
-    # The keyword is only introduced when a bounded publisher requests it.
-    issues = (
-        get_unclustered_issues(project_id)
-        if issue_ids is None
-        else get_unclustered_issues(project_id, issue_ids=issue_ids)
-    )
+    issues = get_unclustered_issues(project_id)
     if not issues:
         logger.info("no_unclustered_issues", project_id=project_id)
         return ClusteringSummary()
@@ -244,9 +231,7 @@ def cluster_issues(
             nonlocal joined
             joined = True
 
-        fence = write_fence(issue) if write_fence else nullcontext()
-        with fence:
-            create_cluster(project_id, issue, embedding, on_join=_on_join)
+        create_cluster(project_id, issue, embedding, on_join=_on_join)
         if joined:
             summary.assigned += 1
         else:
@@ -259,9 +244,7 @@ def cluster_issues(
             if match:
                 cluster_id, distance = match
                 try:
-                    fence = write_fence(issue) if write_fence else nullcontext()
-                    with fence:
-                        assign_to_cluster(cluster_id, project_id, issue, embedding)
+                    assign_to_cluster(cluster_id, project_id, issue, embedding)
                 except TraceErrorGroup.DoesNotExist:
                     # The centroid outlived its cluster. Nothing deletes
                     # centroids when a cluster goes away, so the store keeps
@@ -288,7 +271,6 @@ def cluster_issues(
             else:
                 _create_counting(issue, embedding)
         except Exception:
-            summary.failed += 1
             logger.exception(
                 "cluster_issue_failed",
                 issue_id=issue.issue_id,
@@ -302,7 +284,6 @@ def cluster_issues(
         clustered=summary.clustered,
         new_clusters=summary.new_clusters,
         assigned=summary.assigned,
-        failed=summary.failed,
     )
     return summary
 

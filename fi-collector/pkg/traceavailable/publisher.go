@@ -1,5 +1,5 @@
-// Package traceavailable announces stored, ended roots for scheduled Error Feed
-// investigations. Notifications are hints; canonical reconciliation covers gaps.
+// Package traceavailable announces stored, ended roots for Error Feed investigations.
+// Notifications are best effort; a failed enqueue or publish can leave a gap.
 package traceavailable
 
 import (
@@ -199,7 +199,7 @@ func (p *Publisher) EnqueueRoots(roots []Root) error {
 		select {
 		case p.queue <- event:
 		default:
-			return errors.New("trace notification queue full; remaining roots require reconciliation")
+			return errors.New("trace notification queue full; remaining roots were not announced")
 		}
 	}
 	return nil
@@ -218,7 +218,7 @@ func (p *Publisher) run(ctx context.Context) {
 		key := event.OrganizationID + "/" + workspace + "/" + event.ProjectID
 		err := p.client.ProduceSync(batchCtx, &kgo.Record{Topic: p.topic, Key: []byte(key), Value: raw}).FirstErr()
 		if err != nil {
-			p.log.Warn("error feed notification gap; reconciliation required", "event_id", event.EventID, "error", err)
+			p.log.Warn("error feed notification gap", "event_id", event.EventID, "error", err)
 		}
 		cancel()
 		if ctx.Err() != nil {

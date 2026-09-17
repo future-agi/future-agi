@@ -9,6 +9,7 @@ Activity 3: cluster_scan_issues_task — cluster unclustered issues + match succ
 import time
 from contextlib import contextmanager
 from datetime import timedelta
+from typing import List
 
 import structlog
 from django.conf import settings
@@ -26,9 +27,9 @@ from tracer.services.clickhouse.v2 import get_reader
 from tracer.services.clickhouse.v2.query_settings import ch_query_settings
 from tracer.utils.trace_scanner import (
     cluster_issues,
+    merge_duplicate_clusters,
     embed_trace_inputs,
     match_success_traces,
-    merge_duplicate_clusters,
     scan_and_write,
 )
 
@@ -66,7 +67,7 @@ def scan_ch_guardrails():
 
 
 @temporal_activity(time_limit=600, queue="agent_compass", max_retries=1)
-def scan_traces_task(trace_ids: list[str], project_id: str, from_sweep: bool = False):
+def scan_traces_task(trace_ids: List[str], project_id: str, from_sweep: bool = False):
     """
     Scan completed traces for issues.
 
@@ -109,7 +110,7 @@ def scan_traces_task(trace_ids: list[str], project_id: str, from_sweep: bool = F
 
 @temporal_activity(time_limit=300, queue="agent_compass", max_retries=1)
 def embed_trace_inputs_task(
-    trace_ids: list[str], project_id: str, trigger_clustering: bool
+    trace_ids: List[str], project_id: str, trigger_clustering: bool
 ):
     """
     Kevinify + embed root span inputs for all scanned traces.

@@ -329,7 +329,7 @@ func main() {
 	if traceNotifications != nil {
 		drainCtx, stopDrain := context.WithTimeout(context.Background(), 10*time.Second)
 		if err := traceNotifications.Shutdown(drainCtx); err != nil {
-			log.Warn("Error Feed notification shutdown requires reconciliation", "error", err)
+			log.Warn("Error Feed notification shutdown left a gap", "error", err)
 		}
 		stopDrain()
 	}
