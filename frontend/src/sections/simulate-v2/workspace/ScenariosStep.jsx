@@ -21,6 +21,7 @@ import SelectionBar from "./scenarios/SelectionBar";
 import GateRejects from "./scenarios/GateRejects";
 import { PickRouteIllustration } from "./scenarios/RouteThumbs";
 import { publishScenarioSelection, clearScenarioSelection } from "../_mock/scenarioSelectionBus";
+import { FilterPanel } from "src/components/filter-panel";
 
 
 /**
@@ -62,14 +63,32 @@ export default function ScenariosStep({ env, envState, patch, buildMode, onBuild
   const [focusBroken, setFocusBroken] = useState(false);
   /* Row-level facet filter — same shape the rest of the product uses
      (Runs list, Improvements list). Four dimensions, each a multi-select. */
-  const [filters, setFilters] = useState({ status: [], persona: [], kind: [], subgoal: [] });
+  const [filters, setFilters] = useState({});
   const [filterAnchor, setFilterAnchor] = useState(null);
-  const filterCount = Object.values(filters).reduce((sum, arr) => sum + arr.length, 0);
-  const toggleFilter = (dim, id) => setFilters((prev) => {
-    const has = prev[dim].includes(id);
-    return { ...prev, [dim]: has ? prev[dim].filter((v) => v !== id) : [...prev[dim], id] };
-  });
-  const clearFilters = () => setFilters({ status: [], persona: [], kind: [], subgoal: [] });
+  const filterCount = Object.values(filters).reduce(
+    (sum, arr) => sum + (Array.isArray(arr) ? arr.length : 0),
+    0,
+  );
+  /*
+    Filter output arrives from the shared FilterPanel as either
+    { field: [values] } (Basic tab) or [{field, operator, value}]
+    (Query tab). Flatten both to { field: [values] } to match the
+    predicate below.
+  */
+  const applyFilters = (result) => {
+    if (!result) { setFilters({}); return; }
+    if (Array.isArray(result)) {
+      const flat = {};
+      result.forEach((r) => {
+        const values = Array.isArray(r.value) ? r.value : (r.value != null ? [r.value] : []);
+        if (!values.length) return;
+        flat[r.field] = [...(flat[r.field] || []), ...values];
+      });
+      setFilters(flat);
+    } else {
+      setFilters(result);
+    }
+  };
   /* Grouping mode — matches the trace-table pattern from the run view.
      Users read the scenarios differently depending on what they're
      debugging: by goal for coverage, by persona to spot a caller type
@@ -91,19 +110,20 @@ export default function ScenariosStep({ env, envState, patch, buildMode, onBuild
      covers. */
   const statusFacets = (r) => {
     const ids = [];
-    if (r.provedBroke) ids.push("broken");
-    if (r.critical) ids.push("critical");
-    if (proofStatus(r, env, envState).edited) ids.push("edited");
+    if (r.provedBroke) ids.push("Broken");
+    if (r.critical) ids.push("Critical");
+    if (proofStatus(r, env, envState).edited) ids.push("Edited");
     return ids;
   };
   const personaFacet = (r) => r?.persona?.name || null;
+  const KIND_LABEL = { rule: "Rule test", trap: "Trap", adversarial: "Adversarial", edge: "Edge case", happy: "Happy path" };
   const kindFacet = (r) => {
     const id = String(r?.id || "");
-    if (id.includes("-rule-")) return "rule";
-    if (id.includes("-trap-")) return "trap";
-    if (id.includes("-adversarial-")) return "adversarial";
-    if (id.includes("-edge-")) return "edge";
-    return "happy";
+    if (id.includes("-rule-")) return KIND_LABEL.rule;
+    if (id.includes("-trap-")) return KIND_LABEL.trap;
+    if (id.includes("-adversarial-")) return KIND_LABEL.adversarial;
+    if (id.includes("-edge-")) return KIND_LABEL.edge;
+    return KIND_LABEL.happy;
   };
   const subgoalFacet = (r) => {
     const subs = subTasksFor(r, env);
@@ -111,15 +131,41 @@ export default function ScenariosStep({ env, envState, patch, buildMode, onBuild
   };
 
   const matchesFilters = (r) => {
-    if (filters.status.length) {
+    if (filters.status?.length) {
       const ids = statusFacets(r);
       if (!filters.status.some((s) => ids.includes(s))) return false;
     }
-    if (filters.persona.length && !filters.persona.includes(personaFacet(r))) return false;
-    if (filters.kind.length && !filters.kind.includes(kindFacet(r))) return false;
-    if (filters.subgoal.length && !filters.subgoal.includes(subgoalFacet(r))) return false;
+    if (filters.persona?.length && !filters.persona.includes(personaFacet(r))) return false;
+    if (filters.kind?.length && !filters.kind.includes(kindFacet(r))) return false;
+    if (filters.subgoal?.length && !filters.subgoal.includes(subgoalFacet(r))) return false;
     return true;
   };
+
+  /*
+    filterFields — the shape the shared FilterPanel wants. Every
+    dimension is an enum with a fixed choice list. Persona and
+    sub-goal come from the actual scenarios so a template's own
+    names show up rather than a hard-coded list.
+  */
+  const personaChoices = useMemo(
+    () => [...new Set((selected || []).map((r) => r?.persona?.name).filter(Boolean))].sort(),
+    [selected],
+  );
+  const subgoalChoices = useMemo(
+    () => {
+      const s = new Set();
+      (selected || []).forEach((r) => subTasksFor(r, env).forEach((sg) => s.add(sg.label)));
+      return [...s].sort();
+    },
+    [selected, env],
+  );
+  const filterFields = useMemo(() => [
+    { value: "status",  label: "Status",   type: "enum", choices: ["Broken", "Critical", "Edited"] },
+    { value: "persona", label: "Persona",  type: "enum", choices: personaChoices },
+    { value: "kind",    label: "Kind",     type: "enum", choices: Object.values(KIND_LABEL) },
+    { value: "subgoal", label: "Sub-goal", type: "enum", choices: subgoalChoices },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [personaChoices, subgoalChoices]);
 
   const shown = selected.filter((r) => {
     if (focusBroken && !r.provedBroke) return false;
@@ -458,17 +504,15 @@ export default function ScenariosStep({ env, envState, patch, buildMode, onBuild
             >
               Filter{filterCount ? ` (${filterCount})` : ""}
             </Button>
-            <ScenarioFilterMenu
+            <FilterPanel
               anchorEl={filterAnchor}
+              open={!!filterAnchor}
               onClose={() => setFilterAnchor(null)}
-              filters={filters}
-              onToggle={toggleFilter}
-              onClearAll={clearFilters}
-              scenarios={selected}
-              statusOf={statusFacets}
-              personaOf={personaFacet}
-              kindOf={kindFacet}
-              subgoalOf={subgoalFacet}
+              filterFields={filterFields}
+              currentFilters={filters}
+              onApply={applyFilters}
+              aiPlaceholder="Ask AI — e.g. 'show me critical scenarios with the impatient persona'"
+              placement="bottom-start"
             />
             {(q.length > 0 || hiddenCount > 0 || focusBroken || filterCount > 0) && (
               <>
@@ -479,7 +523,7 @@ export default function ScenariosStep({ env, envState, patch, buildMode, onBuild
                 </Typography>
                 <Button
                   size="small"
-                  onClick={() => { setQuery(""); setHiddenGroupIds([]); setFocusBroken(false); clearFilters(); }}
+                  onClick={() => { setQuery(""); setHiddenGroupIds([]); setFocusBroken(false); setFilters({}); }}
                   sx={{ typography: "s3", fontWeight: 600, color: "text.secondary" }}
                 >
                   {focusBroken || (hiddenCount > 0 && !q && !filterCount) ? "Show all" : "Clear"}
