@@ -249,9 +249,6 @@ class TraceInvestigationFinding(BaseModel):
                 fields=["report", "finding_id"], name="unique_inv_finding_id"
             )
         ]
-        indexes = [
-            models.Index(fields=["cluster"], name="trace_inv_finding_cluster_idx")
-        ]
 
 
 class TraceInvestigationEvidenceReceipt(BaseModel):

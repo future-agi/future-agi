@@ -289,10 +289,6 @@ class Migration(migrations.Migration):
             model_name='traceinvestigationrequirementcheck',
             constraint=models.UniqueConstraint(fields=('report', 'requirement_id'), name='unique_inv_requirement_id'),
         ),
-        migrations.AddIndex(
-            model_name='traceinvestigationfinding',
-            index=models.Index(fields=['cluster'], name='trace_inv_finding_cluster_idx'),
-        ),
         migrations.AddConstraint(
             model_name='traceinvestigationfinding',
             constraint=models.UniqueConstraint(fields=('report', 'finding_id'), name='unique_inv_finding_id'),
