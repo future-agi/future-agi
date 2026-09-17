@@ -29,7 +29,6 @@ from rest_framework import status
 from rest_framework.response import Response
 
 from simulate.models import (
-    MAX_SCENARIOS_PER_JOB,
     HostedHarnessJob,
     HostedHarnessReceipt,
     HostedHarnessScenario,
@@ -622,6 +621,75 @@ class DaytonaHarnessProvider:
             return Response(exc.as_dict(), status=exc.status_code)
         return Response(serialize_job(job))
 
+    def amend_scenarios(self, request, pk) -> Response:
+        """Edit a finished job's authored suite: personas, fields, deletions.
+
+        The reply is the receipts, not the job. A caller needs to know what happened to each change
+        it sent, and "reworked, and these files moved" is the part it cannot infer from a job that
+        merely looks saved.
+        """
+        from simulate.services.hosted_harness import HostedHarnessError
+        from simulate.services.hosted_harness_gateway import amend_job_scenarios
+
+        job = self._job(request, pk)
+        if job is None:
+            return Response(
+                {"detail": "Hosted harness job not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        payload = request.validated_data
+        changes = list(payload["changes"])
+        document = {"schema": "futureagi.scenario-changes.v1", "changes": changes}
+
+        # Applied here first, without a reworker. Everything that cannot affect what the world
+        # holds or what a correct agent does lands immediately: a delete, an accent, a use case.
+        # Whatever comes back refused for needing judgement is what actually costs a model, and
+        # only that is handed to the runner, which is the only place the harness can run.
+        try:
+            outcome = amend_job_scenarios(job, document, rework=False)
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
+        except ValueError as exc:
+            # The harness validates the document again before touching anything, and its refusal
+            # names the offending op or field. Passing it through beats a generic 400.
+            return Response(
+                {"code": "scenario_changes_invalid", "detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        receipts = list(outcome.get("receipts") or [])
+        if not bool(payload.get("rework", True)):
+            return Response({**outcome, "receipts": receipts})
+
+        deferred = {
+            one["scenario"] for one in receipts if one.get("outcome") == "refused"
+        }
+        pending = [one for one in changes if one.get("scenario") in deferred]
+        if not pending:
+            return Response({**outcome, "receipts": receipts})
+
+        from simulate.temporal.client import start_hosted_harness_amend
+
+        start_hosted_harness_amend(str(job.id), pending)
+        # The dispatched ones are reported as queued rather than as refused, because refused is
+        # final and this is not: the caller polls the job and sees the suite change.
+        queued = {
+            one["scenario"]: {
+                **one,
+                "outcome": "queued",
+                "why": "the harness is working out whether the world, the solution and the "
+                "checks still hold",
+            }
+            for one in receipts
+            if one["scenario"] in deferred
+        }
+        return Response(
+            {
+                **outcome,
+                "receipts": [queued.get(one["scenario"], one) for one in receipts],
+            }
+        )
+
     def rerun_saved(
         self,
         job_id: str,
@@ -842,10 +910,10 @@ class DaytonaHarnessProvider:
                     job=job
                 ).count()
                 new_count = (existing or job.scenario_count) + count
-                if new_count > MAX_SCENARIOS_PER_JOB:
+                if new_count > 200:
                     raise HostedHarnessError(
                         "scenario_limit_exceeded",
-                        f"a hosted run can contain at most {MAX_SCENARIOS_PER_JOB} scenarios",
+                        "a hosted run can contain at most 200 scenarios",
                         status_code=422,
                     )
                 payload = copy.deepcopy(job.payload)

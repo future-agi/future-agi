@@ -2812,6 +2812,15 @@ def _authoring_archive_for(job: HostedHarnessJob) -> bytes | None:
         "collections.json",
         "contract.json",
         "simulator_prompt.md",
+        # The world's own manifest. Without it the archive carries every part of a world and no
+        # way to restore it, so nothing downstream can re-prove a scenario against the world it
+        # was proved against. Not synthesised when missing: it records whether the handlers came
+        # from the submitted source, and inventing that would forge the provenance the check
+        # exists to protect.
+        "manifest.json",
+        # The sub-goal catalogue. Without it an edit reloads an empty one, so a rework cannot write
+        # the check body for a sub-goal it adds and the sub-goal ships ungradeable.
+        "sub_goals.json",
     ):
         path = bundle_dir / name
         if path.is_file() and not path.is_symlink():
@@ -2920,6 +2929,15 @@ def pack_authoring_archive(authoring_root: Path) -> bytes:
         "collections.json",
         "contract.json",
         "simulator_prompt.md",
+        # The world's own manifest. Without it the archive holds every part of a world and no way
+        # to restore one, so nothing downstream can re-prove a scenario against the world it was
+        # proved against. Never synthesised when absent: it records whether the handlers came from
+        # the submitted source, and inventing that forges the provenance the check exists to
+        # protect.
+        "manifest.json",
+        # The sub-goal catalogue. Without it an edit reloads an empty one, so a rework cannot write
+        # the check body for a sub-goal it adds and the sub-goal ships ungradeable.
+        "sub_goals.json",
     ):
         path = authoring_root / name
         if path.is_file() and not path.is_symlink():
@@ -3327,6 +3345,68 @@ def authoring_stage_outputs_from_archive(
     )
 
 
+def amend_authoring_archive(
+    body: bytes, document: dict, *, rework: bool = True
+) -> tuple[bytes, dict]:
+    """Apply a scenario change-set to a sealed authoring archive, returning the new archive.
+
+    The archive is the only source of truth for a suite: ``stage_outputs`` is derived from it and a
+    rerun reads it back, so an edit that does not reach it is an edit that disappears. Everything
+    needed is inside (the world, the contract and the scenarios), so this runs wherever the
+    harness package is importable and needs no sandbox.
+
+    Unpacked, amended and repacked as one step because a half-written archive is worse than an
+    unchanged one: the caller either gets bytes to store or an exception, never a partial suite.
+
+    The harness is **invoked, not imported**. Its own CLI is the contract every other stage is
+    launched through, and for a good reason: reworking a scenario needs the harness's model
+    dependencies, which live in the runner's own virtualenv and not in whichever interpreter is
+    serving this call. Importing it worked for nothing and failed in both real callers.
+    """
+    python = os.getenv("ALK_RUNNER_PYTHON", "python")
+
+    with tempfile.TemporaryDirectory() as scratch:
+        root = Path(scratch) / "authoring"
+        root.mkdir(parents=True)
+        with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
+            archive.extractall(root, filter="data")
+        command = [
+            python,
+            "-m",
+            "fi.alk.harness.cli",
+            "amend",
+            "--out",
+            str(root),
+            "--changes",
+            "-",
+        ]
+        if not rework:
+            command.append("--no-rework")
+        # The interpreter's own environment, so a deployment needs nothing set: a released wheel
+        # already carries the `amend` command. A checkout mounted for development puts itself on
+        # PYTHONPATH and wins over the installed copy, which is how an unreleased change is tested
+        # without rebuilding the image.
+        finished = subprocess.run(
+            command,
+            input=json.dumps(document),
+            capture_output=True,
+            text=True,
+            env={**os.environ},
+            # A rework is a model session and a proof for every scenario it touches.
+            timeout=int(getattr(settings, "ALK_AMEND_TIMEOUT_SECONDS", 1800)),
+        )
+        if finished.returncode != 0:
+            # Exit 2 is the harness refusing the change-set itself, and its message names the
+            # offending op or field, so it is worth surfacing rather than burying.
+            detail = (finished.stderr or finished.stdout or "").strip()[:600]
+            raise HostedHarnessError(
+                "scenario_changes_refused" if finished.returncode == 2 else "scenario_amend_failed",
+                detail or "the harness could not apply these changes",
+                status_code=400 if finished.returncode == 2 else 500,
+            )
+        return pack_authoring_archive(root), json.loads(finished.stdout or "{}")
+
+
 def store_authoring_archive(
     job: HostedHarnessJob, body: bytes, *, advance_lifecycle: bool = True
 ) -> str:
@@ -3360,6 +3440,31 @@ def store_authoring_archive(
         update_fields.extend(["stage_outputs", "current_stage", "state"])
     job.save(update_fields=update_fields)
     return object_key
+
+
+def amend_job_scenarios(
+    job: HostedHarnessJob, document: dict, *, rework: bool = True
+) -> dict:
+    """Edit a finished job's suite, and leave the archive and the read-model agreeing.
+
+    The whole operation is three existing pieces: read the archive this job was authored into,
+    apply the change-set to it, store it back under the same key. Storing already recomputes
+    ``stage_outputs``, so the tab shows the edit without a second path that could disagree with
+    the archive it came from.
+
+    Refused before anything is fetched when there is nothing to edit, because a job that never
+    authored has no suite and saying so is more useful than an empty change-set.
+    """
+    body = _authoring_archive_for(job)
+    if not body:
+        raise HostedHarnessError(
+            "authoring_artifacts_not_found",
+            "this run has no authored suite to edit",
+            status_code=409,
+        )
+    amended, receipts = amend_authoring_archive(body, document, rework=rework)
+    store_authoring_archive(job, amended)
+    return receipts
 
 
 def store_source_archive(organization, files, paths, name: str) -> dict[str, Any]:

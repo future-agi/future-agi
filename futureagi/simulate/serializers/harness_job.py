@@ -248,6 +248,32 @@ class HarnessArtifactSerializer(serializers.Serializer):
     max_artifact_bytes = serializers.IntegerField(default=1_073_741_824, min_value=0)
 
 
+class HarnessScenarioChangeSerializer(serializers.Serializer):
+    """One edit. The vocabulary is the harness's own, so a change-set built here is the same
+    document the harness validates again before it touches anything."""
+
+    op = serializers.ChoiceField(choices=("set_persona", "set_field", "drop"))
+    scenario = serializers.CharField(max_length=255)
+    persona = serializers.DictField(required=False)
+    field = serializers.CharField(required=False, max_length=64)
+    value = serializers.JSONField(required=False, allow_null=True)
+
+
+class HarnessScenarioAmendSerializer(serializers.Serializer):
+    """A batch of edits against one job's authored suite.
+
+    ``rework`` is what a caller sets when it is willing to pay for the harness to work out whether
+    a change moves the world, the reference solution or the checks. With it off, anything that
+    could matter is refused rather than applied, so a cheap edit stays cheap and an incoherent
+    suite is never the quiet outcome.
+    """
+
+    changes = serializers.ListField(
+        child=HarnessScenarioChangeSerializer(), allow_empty=False, max_length=200
+    )
+    rework = serializers.BooleanField(default=True)
+
+
 class HarnessJobCreateSerializer(serializers.Serializer):
     # Create refuses a job whose connector has no credentials; preflight reports them as
     # unmet requirements instead, so the readiness panel can tell the user what to add.
