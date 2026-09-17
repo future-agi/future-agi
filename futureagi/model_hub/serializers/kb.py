@@ -30,7 +30,7 @@ class KnowledgeBaseCreateSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        read_only_fields = ["id", "organization", "created_at", "updated_at"]
 
     def create(self, validated_data):
         request = self.context["request"]

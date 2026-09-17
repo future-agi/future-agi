@@ -14,6 +14,7 @@ If you just want to try it on your laptop, jump to [Quick start](#quick-start).
   - [Full OSS stack (default)](#mode-1-full-oss-stack)
   - [Development mode (hot reload)](#mode-2-development-mode)
   - [Frontend-only deploy](#mode-3-frontend-only)
+- [Optional feature extras](#optional-feature-extras)
 - [Configuration](#configuration)
   - [The `.env` file](#the-env-file)
   - [Secrets that must be changed](#secrets-that-must-be-changed)
@@ -77,7 +78,35 @@ docker exec -it futureagi-backend-1 python manage.py create_user \
   --password yourpassword
 ```
 
-> **Team invites and password resets require email (SMTP).** See the [Email configuration](#email-smtp) section below for setup. Mailgun offers a free tier (100 emails/day) that works well for small self-hosted deployments.
+### Reset a password
+
+Self-hosted installs without SMTP cannot deliver a reset email. Two ways round it.
+
+**From the host** — works on any deployment:
+
+```bash
+docker exec -it futureagi-backend-1 python manage.py reset_password --email you@example.com
+```
+
+You will be prompted for the new password, or pass `--password` to supply it
+non-interactively. Any sessions already signed in as that account are signed out.
+
+**In the browser** — set this in `.env` and restart the backend:
+
+```
+OSS_RETURN_PASSWORD_RESET_LINK=true
+```
+
+"Forgot password" then returns the reset link in its response and takes the user
+straight to the set-password screen, no mail required.
+
+> Only turn this on where reaching the instance already implies full trust — a
+> laptop install, or a host behind a VPN with no other tenants. The endpoint takes
+> no authentication, so anyone who can reach it can request a link for **any**
+> address and take over that account. Leave it off on anything internet-facing
+> and use the command above.
+
+> **Team invites require email (SMTP).** See the [Email configuration](#email-smtp) section below for setup. Mailgun offers a free tier (100 emails/day) that works well for small self-hosted deployments. Without it, the invite dialog returns a shareable link for each invitee instead of sending mail.
 
 To stop everything: `./bin/uninstall` (or `docker compose down`). Data persists in named volumes across restarts.
 
@@ -164,6 +193,35 @@ Or set `VITE_HOST_API` in `.env` and run without the inline variable. Restart th
 
 ---
 
+## Optional feature extras
+
+The published backend image is a **slim build**: heavy ML, audio, and voice dependencies are not installed, which keeps the image around 2 GB instead of 14 GB. Most features work out of the box. The ones below need an optional dependency group ("extra") baked into the image:
+
+| Feature                                                        | Extra        |
+| -------------------------------------------------------------- | ------------ |
+| Audio evals — TTS/STT via ElevenLabs, audio decoding (av, librosa) | `audio`      |
+| ML-based evals — torch models, HuggingFace datasets/transformers | `ml`         |
+| Voice simulation — LiveKit calls, Retell agents                | `voice`      |
+| PII detection/scrubbing (Presidio, spaCy)                       | `pii`        |
+| Prompt optimization (Optuna, GEPA)                              | `prompt-opt` |
+| Vector-DB dataset columns (Pinecone, Qdrant, Weaviate, Chroma)  | `vectordb`   |
+
+**What happens without the extra:** most optional features fail with an `ImportError` that names the missing extra and points here; some evaluation and clustering paths degrade gracefully and log that the capability is unavailable. Voice simulation is gated up front and returns a clear "not available in this build" API error. If PII redaction is enabled for a project, ingestion fails closed until the `pii` extra is installed so unredacted data is never stored silently.
+
+**To enable extras**, rebuild the backend image with the `EXTRAS` build argument (comma-separated):
+
+```bash
+docker build -f futureagi/Dockerfile.oss \
+  --build-arg EXTRAS=audio,pii \
+  -t future-agi-backend:with-extras ./futureagi
+```
+
+Then point your compose file at the new tag (or add a `build:` override for the `backend` and `worker` services). Extra versions install from `uv.lock`, so a rebuilt image gets the exact dependency resolution CI tests — not a fresh re-resolve.
+
+Installing all six extras reproduces the full "fat" image (~14 GB, GPU wheels included) — only do that if you need everything.
+
+---
+
 ## Configuration
 
 ### The `.env` file
@@ -231,7 +289,7 @@ To run two stacks side-by-side, copy `.env` to `.env.stackB`, change every port,
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `postgres`   | Primary transactional store (users, traces, datasets, evals, prompts, annotations).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `clickhouse` | Analytics store for traces, spans, dashboards, and evaluation queries.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `redis`      | Cache, rate limits, Celery/Django cache, WebSocket pub/sub.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `redis`      | Cache, rate limits, Celery/Django cache, WebSocket pub/sub. Also the invalidation bus between backend and fi-collector: the backend (`REDIS_URL`) and fi-collector (`FI_AUTH_REDIS_ADDR`) must point at the **same** Redis. A mismatch is a silent failure — key revocation and project-delete cache invalidation stop working and the collector's auth cache only expires via TTL.                                                                                                                                                                                          |
 | `minio`      | S3-compatible object storage (uploaded files, eval artifacts). In production, swap for real S3 by setting `S3_ENDPOINT_URL` to an AWS endpoint. **Note:** the backend uses `S3_ENDPOINT_URL` (internal Docker hostname) to talk to MinIO, but URLs returned to the browser use `MINIO_URL` (defaults to `http://localhost:9005`). If you access the UI from anywhere other than the host machine — e.g. another machine on your LAN, a remote VM, or a domain name — set `MINIO_URL` in `.env` to a URL the browser can reach (e.g. `http://your-host.example.com:9005`). |
 
 ### Workflow engine

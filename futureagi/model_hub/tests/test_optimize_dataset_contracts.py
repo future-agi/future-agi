@@ -285,7 +285,7 @@ def test_legacy_optimize_dataset_result_routes_scope_and_tolerate_empty_clickhou
     auth_client, organization, workspace, user, monkeypatch
 ):
     class EmptyClickHouseClient:
-        def execute(self, query):
+        def execute_read(self, query):
             if "COUNT(*)" in query:
                 return [(0,)]
             return []
@@ -347,7 +347,7 @@ def test_legacy_optimize_dataset_result_routes_tolerate_clickhouse_read_errors(
     auth_client, organization, workspace, monkeypatch
 ):
     class MissingEventsClickHouseClient:
-        def execute(self, query):
+        def execute_read(self, query):
             raise RuntimeError("ClickHouse events table is unavailable")
 
     monkeypatch.setattr(

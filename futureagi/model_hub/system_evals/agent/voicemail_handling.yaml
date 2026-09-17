@@ -1,0 +1,52 @@
+eval_id: 207
+name: voicemail_handling
+description: Evaluates whether the agent responded correctly upon reaching a voicemail - hangs up cleanly or leaves a brief
+  appropriate message per its prompt, and does not proceed as if speaking to a live customer.
+criteria: "You are evaluating whether the agent responded correctly upon reaching a voicemail.\n\n## Criteria\n1. Correct\
+  \ behavior: The agent either hangs up cleanly or leaves a brief, appropriate message - consistent with the agent prompt's\
+  \ instructions for voicemail handling.\n2. No live-call behavior: The agent does not proceed as if speaking to a live customer\
+  \ (e.g. asking questions, waiting for responses).\n\n## Anti-bias Rules\n- If the agent prompt instructs hang up only, leaving\
+  \ a message is a FAIL and vice versa.\n- A brief pause before hanging up is NOT incorrect behavior.\n- Evaluate against\
+  \ what the agent prompt defines as correct voicemail handling.\n\n## Scoring\n- Return PASS if call did not go to voicemail, or if it did\
+  \ and the agent handled the voicemail correctly per the agent prompt (hung up cleanly or left an appropriate message).\n\
+  - Return FAIL if the agent proceeded as if speaking to a live person, left a message when instructed to hang up, or hung\
+  \ up when instructed to leave a message.\n\n## Input\n<agent_prompt>{{agent_prompt}}</agent_prompt>\n<audio_url>{{conversation}}</audio_url>"
+eval_tags:
+- Agents
+- Audio
+- Conversation
+- Voice
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+choices:
+- Passed
+- Failed
+output_type_normalized: pass_fail
+pass_threshold: 0.5
+config:
+  required_keys:
+  - agent_prompt
+  - conversation
+  output: Pass/Fail
+  eval_type_id: AgentEvaluator
+  config: {}
+  config_params_desc:
+    agent_prompt: The agent's system prompt (voicemail handling instructions)
+    conversation: The call audio to be evaluated
+  param_modalities:
+    agent_prompt:
+    - TEXT
+    conversation:
+    - AUDIO
+  rule_prompt: "You are evaluating whether the agent responded correctly upon reaching a voicemail.\n\n## Criteria\n1. Correct\
+    \ behavior: The agent either hangs up cleanly or leaves a brief, appropriate message - consistent with the agent prompt's\
+    \ instructions for voicemail handling.\n2. No live-call behavior: The agent does not proceed as if speaking to a live\
+    \ customer (e.g. asking questions, waiting for responses).\n\n## Anti-bias Rules\n- If the agent prompt instructs hang\
+    \ up only, leaving a message is a FAIL and vice versa.\n- A brief pause before hanging up is NOT incorrect behavior.\n\
+    - Evaluate against what the agent prompt defines as correct voicemail handling.\n\n## Scoring\n- Return PASS if call did\
+    \ not go to voicemail, or if it did and the agent handled the voicemail correctly per the agent prompt (hung up cleanly or left\
+    \ an appropriate message).\n- Return FAIL if the agent proceeded as if speaking to a live person, left a message when\
+    \ instructed to hang up, or hung up when instructed to leave a message.\n\n## Input\n<agent_prompt>{{agent_prompt}}</agent_prompt>\n\
+    <audio_url>{{conversation}}</audio_url>"

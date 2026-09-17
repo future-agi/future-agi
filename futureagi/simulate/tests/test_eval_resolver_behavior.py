@@ -11,7 +11,7 @@ resolver produced the correct values) and the persisted
 """
 
 import uuid
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -1425,3 +1425,41 @@ class TestRecordingSlotAvailability:
             with pytest.raises(ValueError, match="combined-only"):
                 _run_xl(ec, call_execution, dict(self._COMBINED_ONLY))
             mock_run.assert_not_called()
+
+
+@pytest.mark.django_db
+class TestLegacyTranscriptRecordingResolution:
+    def test_reads_recordings_from_call_row_and_normalized_provider_data(
+        self, call_execution
+    ):
+        from simulate.temporal.activities.xl import _build_transcript_data
+
+        call_execution.provider_call_data = {
+            "vapi": {"usage": {"llm": {"total_tokens": 42}}},
+            "livekit": {
+                "engine": "livekit",
+                "recording": {
+                    "assistant": "s3://bucket/assistant.mp3",
+                    "customer": "s3://bucket/customer.mp3",
+                },
+            }
+        }
+        executor = TestExecutor()
+        executor.voice_service_manager = Mock()
+        executor.voice_service_manager.get_recording_urls.return_value = {}
+
+        transcript_data = executor._get_call_transcript_data(
+            call_execution, url_save_only=True
+        )
+
+        assert transcript_data["voice_recording"] == call_execution.recording_url
+        assert (
+            transcript_data["stereo_recording"]
+            == call_execution.stereo_recording_url
+        )
+        assert transcript_data["assistant_recording"] == "s3://bucket/assistant.mp3"
+        assert transcript_data["customer_recording"] == "s3://bucket/customer.mp3"
+
+        xl_transcript_data = _build_transcript_data(call_execution)
+        assert xl_transcript_data["assistant_recording"] == "s3://bucket/assistant.mp3"
+        assert xl_transcript_data["customer_recording"] == "s3://bucket/customer.mp3"

@@ -1,0 +1,245 @@
+# Manually-dispatched publisher for the three dependency base images:
+#   future-agi-base    <- Dockerfile.base (repo root context; installs futureagi/requirements.txt)
+#   serving-base       <- futureagi/model_serving/Dockerfile.base
+#   code-executor-base <- futureagi/code-executor/Dockerfile.base
+#
+# Each arch builds on its own native runner (no QEMU: an emulated arm64 leg of a
+# torch install runs for hours), pushes by digest, and a final job stitches the
+# digests into one multi-arch tag. Tags are immutable: publishing a version that
+# already exists fails in preflight instead of overwriting it.
+#
+# Dispatch from the branch whose Dockerfile.base / requirements you want baked in
+# — the ref picker in the "Run workflow" dropdown controls what gets checked out.
+name: Publish base image
+
+run-name: Publish ${{ inputs.image }}:${{ inputs.version }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: "Base image to publish"
+        required: true
+        type: choice
+        options:
+          - future-agi-base
+          - serving-base
+          - code-executor-base
+      version:
+        description: "New version tag (e.g. v1.1.0) — existing tags are never overwritten"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# Same image serializes (two runs can't race one tag); different images run in parallel.
+concurrency:
+  group: base-image-publish-${{ inputs.image }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      dockerfile: ${{ steps.map.outputs.dockerfile }}
+      context: ${{ steps.map.outputs.context }}
+    steps:
+      - name: Validate version format
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if ! printf '%s' "$VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$'; then
+            echo "::error::version must look like v1.2.3 or v1.2.3-rc1 (got: ${VERSION})"
+            exit 1
+          fi
+      - name: Map image to build source
+        id: map
+        env:
+          IMAGE: ${{ inputs.image }}
+        run: |
+          case "$IMAGE" in
+            future-agi-base)
+              dockerfile=Dockerfile.base
+              context=.
+              ;;
+            serving-base)
+              dockerfile=futureagi/model_serving/Dockerfile.base
+              context=futureagi/model_serving
+              ;;
+            code-executor-base)
+              dockerfile=futureagi/code-executor/Dockerfile.base
+              context=futureagi/code-executor
+              ;;
+            *)
+              echo "::error::unknown image ${IMAGE}"
+              exit 1
+              ;;
+          esac
+          {
+            echo "dockerfile=${dockerfile}"
+            echo "context=${context}"
+          } >> "$GITHUB_OUTPUT"
+      # Authenticated before the probe: an anonymous read burns the shared
+      # Docker Hub rate limit, and a 429 is exactly the failure the guard
+      # below must not misread as "tag is free".
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Refuse to overwrite a published tag
+        env:
+          DOCKER_CLI_EXPERIMENTAL: enabled
+          IMAGE: docker.io/futureagi/${{ inputs.image }}
+          TAG: ${{ inputs.version }}
+        run: |
+          # The probe has THREE outcomes and only one lets the build proceed:
+          #   rc=0                     -> tag already published; refuse, never republish
+          #   rc!=0 + missing-manifest -> tag genuinely free; build it
+          #   rc!=0 + anything else    -> 429/5xx/DNS/auth; stop, decide nothing
+          # Collapsing the third case into "free" is what would let a transient
+          # registry blip drive `imagetools create` over a live tag. The match is
+          # deliberately narrow -- registry-specific "manifest missing" wording
+          # only -- so a transport error that merely contains a phrase like
+          # "not found" cannot be mistaken for an unpublished tag.
+          set +e
+          out="$(docker manifest inspect "${IMAGE}:${TAG}" 2>&1)"
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::${IMAGE}:${TAG} is already published — tags are immutable, dispatch again with a new version"
+            exit 1
+          elif printf '%s' "$out" | grep -Eqi 'manifest unknown|no such manifest|MANIFEST_UNKNOWN'; then
+            echo "::notice::${IMAGE}:${TAG} is unpublished — building."
+          else
+            printf '%s\n' "$out"
+            echo "::error::registry probe failed (not a missing-manifest error) — refusing to continue, because publishing would overwrite ${IMAGE}:${TAG} if it does exist"
+            exit 1
+          fi
+
+  build:
+    needs: resolve
+    strategy:
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            arch: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    steps:
+      # future-agi-base and serving-base both carry torch, whose wheels blow
+      # past the ~14GB free on a stock runner; same reclaim set build-image.yml
+      # uses for its heavy legs. Written for x64: if it ever fails on the arm64
+      # leg (it clears paths that image may not have), gate it with
+      # `if: matrix.arch == 'amd64'`.
+      - name: Free up disk space
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # main as of 2026-07-23
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: false
+          swap-storage: false
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      # No type=gha layer cache on purpose: these layers are multi-GB and the
+      # repo-wide 10GB cache quota would evict backend-ci's hot caches for a
+      # workflow that runs a few times a month.
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ needs.resolve.outputs.context }}
+          file: ${{ needs.resolve.outputs.dockerfile }}
+          platforms: ${{ matrix.platform }}
+          provenance: false
+          outputs: type=image,name=docker.io/futureagi/${{ inputs.image }},push-by-digest=true,name-canonical=true,push=true
+      - name: Export digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p "${RUNNER_TEMP}/digests"
+          touch "${RUNNER_TEMP}/digests/${DIGEST#sha256:}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    needs: [resolve, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      # Re-probe just before the only step that can repoint a tag: the resolve
+      # preflight ran up to two hours ago, and an out-of-band push in between
+      # must abort the publish, not be overwritten.
+      - name: Re-check the tag is still unpublished
+        env:
+          DOCKER_CLI_EXPERIMENTAL: enabled
+          IMAGE: docker.io/futureagi/${{ inputs.image }}
+          TAG: ${{ inputs.version }}
+        run: |
+          set +e
+          out="$(docker manifest inspect "${IMAGE}:${TAG}" 2>&1)"
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::${IMAGE}:${TAG} appeared while the build was running — refusing to overwrite it"
+            exit 1
+          elif printf '%s' "$out" | grep -Eqi 'manifest unknown|no such manifest|MANIFEST_UNKNOWN'; then
+            echo "tag still free"
+          else
+            printf '%s\n' "$out"
+            echo "::error::registry probe failed — refusing to continue"
+            exit 1
+          fi
+      - name: Create multi-arch manifest
+        working-directory: ${{ runner.temp }}/digests
+        env:
+          IMAGE: docker.io/futureagi/${{ inputs.image }}
+          TAG: ${{ inputs.version }}
+        run: |
+          # Filenames in this directory are the layer-manifest digests exported
+          # by the build legs; if-no-files-found=error upstream guarantees the
+          # glob is never empty.
+          sources=()
+          for digest in *; do
+            sources+=("${IMAGE}@sha256:${digest}")
+          done
+          docker buildx imagetools create -t "${IMAGE}:${TAG}" "${sources[@]}"
+      - name: Verify both architectures are present
+        env:
+          IMAGE: docker.io/futureagi/${{ inputs.image }}
+          TAG: ${{ inputs.version }}
+        run: |
+          out="$(docker buildx imagetools inspect "${IMAGE}:${TAG}")"
+          printf '%s\n' "$out"
+          for p in linux/amd64 linux/arm64; do
+            if ! printf '%s' "$out" | grep -q "$p"; then
+              echo "::error::published manifest is missing ${p}"
+              exit 1
+            fi
+          done

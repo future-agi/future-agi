@@ -1,0 +1,60 @@
+# This is intentionally not renderable. Replace every REPLACE_* value with a
+# reviewed DEV value; render.py rejects this file until no placeholders remain.
+format: futureagi.property-catalog-dev-workload
+version: 1
+namespace: REPLACE_WITH_DEV_NAMESPACE
+images:
+  backend: REPLACE_WITH_BACKEND_IMAGE_AT_SHA256
+  collector: REPLACE_WITH_COLLECTOR_IMAGE_AT_SHA256
+  consumer: REPLACE_WITH_THE_EXACT_SAME_COLLECTOR_IMAGE_AT_SHA256
+workspaces:
+  - organization_id: REPLACE_WITH_ORGANIZATION_UUIDV4
+    workspace_id: REPLACE_WITH_WORKSPACE_UUIDV4
+    project_ids:
+      - REPLACE_WITH_SORTED_PROJECT_UUIDV4
+catalog:
+  epoch: 1
+  projection_version: 1
+  hot_producer_stream_id: REPLACE_WITH_STABLE_PRODUCER_STREAM_UUIDV4
+  source_database: futureagi
+  target_database: property_catalog_dev_REPLACE_WITH_SUFFIX
+  span_since: "2026-08-14T00:00:00Z"
+  span_until: "2026-08-15T00:00:00Z"
+  otlp_traffic_authorized: false
+  dev_identity: dev:property-catalog/REPLACE_WITH_OPERATOR_IDENTITY
+runtime:
+  directory: /var/lib/property-catalog-runtime
+  revision_fence_file: /var/lib/property-catalog-runtime/revision-fence-v2.json
+  drain_proof_file: /var/lib/property-catalog-runtime/producer-drain-proof-v2.json
+  producer_retirement_file: /var/lib/property-catalog-runtime/producer-state-retirements-v1.json
+infrastructure:
+  temporal_host: REPLACE_WITH_DEV_TEMPORAL_HOST:7233
+  temporal_namespace: REPLACE_WITH_DEV_TEMPORAL_NAMESPACE
+  source_clickhouse_host: REPLACE_WITH_DEV_SOURCE_CLICKHOUSE_HOST
+  source_clickhouse_native_port: 9000
+  source_clickhouse_http_url: http://REPLACE_WITH_DEV_SOURCE_CLICKHOUSE_HOST:8123
+  target_clickhouse_host: REPLACE_WITH_DEV_TARGET_CLICKHOUSE_HOST
+  target_clickhouse_native_port: 9000
+  target_clickhouse_http_url: http://REPLACE_WITH_DEV_TARGET_CLICKHOUSE_HOST:8123
+  kafka_brokers:
+    - REPLACE_WITH_DEV_KAFKA_BROKER:9092
+  kafka_topic: futureagi.dev.property-catalog.REPLACE_WITH_VERSION
+  kafka_consumer_group: futureagi.dev.property-catalog.REPLACE_WITH_GROUP
+provenance:
+  write_clickhouse_hostname: REPLACE_WITH_EXACT_DEV_WRITE_CLICKHOUSE_HOSTNAME_RESULT
+  source_clickhouse_hostname: REPLACE_WITH_EXACT_DEV_SOURCE_CLICKHOUSE_HOSTNAME_RESULT
+  postgres_database: REPLACE_WITH_EXACT_DEV_POSTGRES_DATABASE_RESULT
+  postgres_user: REPLACE_WITH_EXACT_DEV_POSTGRES_USER_RESULT
+  postgres_server_address: REPLACE_WITH_EXACT_DEV_POSTGRES_LITERAL_IP_RESULT
+  postgres_server_port: 5432
+storage:
+  storage_class: REPLACE_WITH_DEV_RWO_POSIX_STORAGE_CLASS
+  size: 10Gi
+secrets:
+  backend_env: REPLACE_WITH_DEV_BACKEND_ENV_SECRET
+  collector_env: REPLACE_WITH_DEV_COLLECTOR_ENV_SECRET
+  source_read_clickhouse: REPLACE_WITH_DEV_SOURCE_READ_CLICKHOUSE_SECRET
+  control_write_clickhouse: REPLACE_WITH_DEV_CONTROL_WRITE_CLICKHOUSE_SECRET
+  consumer_write_clickhouse: REPLACE_WITH_DEV_CONSUMER_WRITE_CLICKHOUSE_SECRET
+  consumer_ledger_clickhouse: REPLACE_WITH_DEV_CONSUMER_LEDGER_CLICKHOUSE_SECRET
+  image_pull: REPLACE_WITH_DEV_IMAGE_PULL_SECRET

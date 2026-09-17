@@ -1,17 +1,29 @@
 import json
+import re
+from datetime import UTC
 
 from django.db.models import Q
+from django.utils.dateparse import parse_datetime
+from django.utils.timezone import is_aware
 from rest_framework import serializers
 
+from tfc.utils.serializer_fields import JsonValueField
 from tracer.constants.provider_logos import PROVIDER_LOGOS
 from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.trace import Trace
+from tracer.serializers.cursor_pagination import (
+    CURSOR_HELP_TEXT,
+    validate_cursor_exclusivity,
+)
 from tracer.serializers.filters import (
+    BOUNDED_PAGE_NUMBER_HELP_TEXT,
     StrictInputSerializer,
+    bounded_filter_list_query_param_field,
     filter_list_query_param_field,
 )
+from tracer.services.clickhouse.attribute_reads import validate_attribute_key
 
 
 class ProjectScopeQueryParamField(serializers.CharField):
@@ -50,11 +62,32 @@ class ObservationAttributeListQuerySerializer(serializers.Serializer):
         required=False,
         default="spans",
     )
+    q = serializers.CharField(
+        required=False,
+        allow_blank=False,
+        max_length=512,
+    )
+
+    def validate_q(self, value):
+        try:
+            return validate_attribute_key(value)
+        except ValueError as exc:
+            raise serializers.ValidationError(str(exc)) from exc
 
 
 class ObservationAttributeListResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField(default=True)
     result = serializers.ListField(child=serializers.CharField())
+    query_complete = serializers.BooleanField(required=False)
+    query_status = serializers.ChoiceField(
+        choices=["complete", "sampled", "degraded"], required=False
+    )
+    query_error_code = serializers.ChoiceField(
+        choices=["sample_limit", "read_budget_exceeded", "query_failed"],
+        required=False,
+    )
+    query_window_start = serializers.DateTimeField(required=False)
+    query_window_end = serializers.DateTimeField(required=False)
 
 
 class RootSpansQuerySerializer(serializers.Serializer):
@@ -69,6 +102,107 @@ class RootSpansQuerySerializer(serializers.Serializer):
 class RootSpansResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField(default=True)
     result = serializers.DictField(child=serializers.CharField())
+
+
+class _SpanReferenceTimestampField(serializers.DateTimeField):
+    """Require an explicit timezone and never silently truncate microseconds."""
+
+    def __init__(self, **kwargs):
+        super().__init__(default_timezone=UTC, **kwargs)
+
+    def to_internal_value(self, data):
+        if not isinstance(data, str) or re.search(r"[.,]\d{7,}", data):
+            self.fail(
+                "invalid",
+                format="ISO-8601 with timezone and at most 6 fractional digits",
+            )
+        try:
+            parsed = parse_datetime(data)
+        except ValueError:
+            parsed = None
+        if parsed is None or not is_aware(parsed):
+            self.fail("invalid", format="ISO-8601 with explicit timezone")
+        return super().to_internal_value(data)
+
+
+class _SpanReferenceVersionField(serializers.CharField):
+    def to_internal_value(self, data):
+        if (
+            not isinstance(data, str)
+            or re.fullmatch(r"(?:0|[1-9][0-9]{0,19})", data) is None
+            or int(data) > 2**64 - 1
+        ):
+            raise serializers.ValidationError(
+                "Expected a canonical UInt64 decimal string."
+            )
+        return data
+
+
+class SpanReferenceQuerySerializer(StrictInputSerializer):
+    """An empty selector preserves bare GET; any selector requires every field."""
+
+    project_id = serializers.UUIDField(required=False)
+    trace_id = serializers.CharField(
+        required=False, allow_blank=False, trim_whitespace=False
+    )
+    start_hour = _SpanReferenceTimestampField(required=False)
+    observation_type = serializers.CharField(
+        required=False, allow_blank=True, trim_whitespace=False
+    )
+    service_name = serializers.CharField(
+        required=False, allow_blank=True, trim_whitespace=False
+    )
+    expected_start_time = _SpanReferenceTimestampField(required=False)
+    expected_version = _SpanReferenceVersionField(required=False, trim_whitespace=False)
+
+    def to_internal_value(self, data):
+        if hasattr(data, "getlist"):
+            repeated = [name for name in self.fields if len(data.getlist(name)) > 1]
+            if repeated:
+                raise serializers.ValidationError(
+                    dict.fromkeys(repeated, "Supply this selector once.")
+                )
+        return super().to_internal_value(data)
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        if not attrs:
+            return attrs
+        missing = self.fields.keys() - attrs.keys()
+        if missing:
+            raise serializers.ValidationError(
+                dict.fromkeys(
+                    sorted(missing), "The span reference selector is all-or-none."
+                )
+            )
+        hour = attrs["start_hour"]
+        if hour.minute or hour.second or hour.microsecond:
+            raise serializers.ValidationError(
+                {"start_hour": "Must be aligned to a UTC hour."}
+            )
+        if (
+            attrs["expected_start_time"].replace(minute=0, second=0, microsecond=0)
+            != hour
+        ):
+            raise serializers.ValidationError(
+                {"expected_start_time": "Must belong to start_hour."}
+            )
+        return attrs
+
+
+class ObservationSpanDetailResultSerializer(serializers.Serializer):
+    observation_span = serializers.DictField(child=JsonValueField(allow_null=True))
+    evals_metrics = serializers.DictField(
+        child=JsonValueField(allow_null=True), allow_null=True
+    )
+    enrichment = serializers.DictField(
+        child=JsonValueField(allow_null=True), required=False
+    )
+
+
+class ObservationSpanDetailResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = ObservationSpanDetailResultSerializer()
 
 
 class ObservationSpanSerializer(serializers.ModelSerializer):
@@ -141,7 +275,9 @@ class ObservationSpanSerializer(serializers.ModelSerializer):
             if getattr(workspace, "is_default", False):
                 project_workspace_scope = (
                     Q(workspace=workspace)
-                    | Q(workspace__is_default=True, workspace__organization=organization)
+                    | Q(
+                        workspace__is_default=True, workspace__organization=organization
+                    )
                     | Q(workspace__isnull=True)
                 )
                 related_workspace_scope = (
@@ -223,21 +359,138 @@ class SpanExportQuerySerializer(StrictInputSerializer):
 
 class SpanListQuerySerializer(StrictInputSerializer):
     project_version_id = serializers.UUIDField()
-    filters = filter_list_query_param_field(required=False, default=list)
-    page_number = serializers.IntegerField(required=False, default=0, min_value=0)
+    filters = bounded_filter_list_query_param_field(required=False, default=list)
+    page_number = serializers.IntegerField(
+        required=False,
+        default=0,
+        min_value=0,
+        help_text=BOUNDED_PAGE_NUMBER_HELP_TEXT,
+    )
     page_size = serializers.IntegerField(
         required=False, default=30, min_value=1, max_value=500
+    )
+    allow_sampled = serializers.BooleanField(
+        required=False,
+        help_text=(
+            "Omit for backward-compatible complete bounded pages, which may "
+            "label total_rows as a lower bound. Send false to require an exact "
+            "total, or true to opt in explicitly to lower-bound totals."
+        ),
     )
 
 
 class SpanObserveListQuerySerializer(StrictInputSerializer):
     project_id = serializers.UUIDField(required=False, allow_null=True)
     user_id = serializers.CharField(required=False, allow_blank=True)
-    filters = filter_list_query_param_field(required=False, default=list)
-    page_number = serializers.IntegerField(required=False, default=0, min_value=0)
+    filters = bounded_filter_list_query_param_field(required=False, default=list)
+    page_number = serializers.IntegerField(
+        required=False,
+        default=0,
+        min_value=0,
+        help_text=BOUNDED_PAGE_NUMBER_HELP_TEXT,
+    )
     page_size = serializers.IntegerField(
         required=False, default=30, min_value=1, max_value=500
     )
+    cursor = serializers.CharField(
+        required=False, allow_blank=False, max_length=4096, help_text=CURSOR_HELP_TEXT
+    )
+    cursor_mode = serializers.BooleanField(required=False, default=False)
+    allow_sampled = serializers.BooleanField(
+        required=False,
+        help_text=(
+            "Omit for backward-compatible complete bounded pages, which may "
+            "label total_rows as a lower bound. Send false to require an exact "
+            "total, or true to opt in explicitly to lower-bound totals."
+        ),
+    )
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        return validate_cursor_exclusivity(self, attrs, page_field="page_number")
+
+
+class SpanListMetadataSerializer(serializers.Serializer):
+    """Metadata shared by prototype and Observe span list responses."""
+
+    total_rows = serializers.IntegerField(min_value=0)
+    total_rows_exact = serializers.IntegerField(
+        required=False, min_value=0, allow_null=True
+    )
+    total_rows_is_lower_bound = serializers.BooleanField(required=False)
+    has_more = serializers.BooleanField(required=False)
+    next_cursor = serializers.CharField(required=False, allow_null=True)
+    next_cursor_fingerprint = serializers.RegexField(
+        r"^[0-9a-f]{64}$", required=False, allow_null=True
+    )
+    query_complete = serializers.BooleanField(required=False)
+    query_status = serializers.ChoiceField(
+        choices=("complete", "degraded"), required=False
+    )
+    query_error_code = serializers.CharField(required=False, allow_null=True)
+    query_elapsed_ms = serializers.FloatField(required=False, min_value=0)
+    query_count = serializers.IntegerField(required=False, min_value=0)
+    query_rows_returned = serializers.IntegerField(required=False, min_value=0)
+    query_result_payload_bytes = serializers.IntegerField(required=False, min_value=0)
+    query_applied_filter_version = serializers.ChoiceField(
+        choices=("canonical-json-sha256-v1",), required=False
+    )
+    query_applied_filter_sha256 = serializers.RegexField(
+        r"^[0-9a-f]{64}$", required=False
+    )
+    query_applied_filter_count = serializers.IntegerField(required=False, min_value=0)
+
+
+class SpanListColumnConfigSerializer(serializers.Serializer):
+    """Typed wire form of ``tracer.utils.helper.FieldConfig``."""
+
+    id = serializers.CharField()
+    name = serializers.CharField()
+    is_visible = serializers.BooleanField()
+    group_by = serializers.CharField(required=False, allow_null=True)
+    output_type = serializers.CharField(required=False, allow_null=True)
+    reverse_output = serializers.BooleanField(required=False, allow_null=True)
+    annotation_label_type = serializers.CharField(required=False, allow_null=True)
+    choices = serializers.ListField(
+        child=serializers.CharField(allow_null=True),
+        required=False,
+        allow_null=True,
+    )
+    settings = JsonValueField(required=False, allow_null=True)
+    choices_map = JsonValueField(required=False, allow_null=True)
+    eval_template_id = serializers.CharField(required=False, allow_null=True)
+    annotators = JsonValueField(required=False, allow_null=True)
+    source_field = serializers.CharField(required=False, allow_null=True)
+    parent_eval_id = serializers.CharField(required=False, allow_null=True)
+    property_id = serializers.CharField(required=False, allow_null=True)
+    property_kind = serializers.CharField(required=False, allow_null=True)
+    property_source = serializers.CharField(required=False, allow_null=True)
+
+
+class SpanPrototypeListResultSerializer(serializers.Serializer):
+    column_config = SpanListColumnConfigSerializer(many=True)
+    metadata = SpanListMetadataSerializer()
+    table = serializers.ListField(
+        child=serializers.DictField(child=JsonValueField(allow_null=True))
+    )
+
+
+class SpanPrototypeListResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = SpanPrototypeListResultSerializer()
+
+
+class SpanObserveListResultSerializer(serializers.Serializer):
+    metadata = SpanListMetadataSerializer()
+    table = serializers.ListField(
+        child=serializers.DictField(child=JsonValueField(allow_null=True))
+    )
+    config = SpanListColumnConfigSerializer(many=True)
+
+
+class SpanObserveListResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = SpanObserveListResultSerializer()
 
 
 class SpanIndexQuerySerializer(StrictInputSerializer):

@@ -11,7 +11,6 @@ import requests
 import structlog
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
-from datasets import load_dataset
 from django.core.cache import cache
 from huggingface_hub.errors import HfHubHTTPError
 from litellm.llms.custom_llm import CustomLLM, ModelResponse
@@ -206,7 +205,7 @@ def check_valid_metrics(metric_type, ai_model_id):
         LIMIT 10
 
     """
-    clickhouse_data = client.execute(filter_query)
+    clickhouse_data = client.execute_read(filter_query)
     node_ids = [d[0] for d in clickhouse_data]
     prompt_template = False
     context = False
@@ -251,7 +250,7 @@ def check_data_valid_for_model(model_type, ai_model_id, conversation):
         LIMIT 10
 
     """
-    clickhouse_data = client.execute(filter_query)
+    clickhouse_data = client.execute_read(filter_query)
     node_ids = [d[0] for d in clickhouse_data]
     if node_ids:
         variables = False
@@ -687,6 +686,9 @@ def load_hf_dataset_with_retries(
                 response.raise_for_status()
                 return response.json()
             else:
+                from tfc.utils.lazy_extras import load_extra
+
+                load_dataset = load_extra("datasets", "ml").load_dataset
                 hf_dataset = load_dataset(
                     dataset_name,
                     name=config_name,

@@ -435,11 +435,27 @@ class TestMiddlewareJsonForbidden:
         assert body["result"]["blocked"] is True
 
 
+@pytest.fixture
+def non_oss_mode():
+    """Pin non-OSS deployment so IP blocking paths are exercised.
+
+    The middleware short-circuits entirely when is_oss() is True (the
+    default in this repo's test environment), so blocking tests must
+    force non-OSS mode.
+    """
+    with patch("accounts.authentication.is_oss", return_value=False):
+        yield
+
+
 @pytest.mark.unit
 class TestMiddlewareIpBlockedRouting:
     """Middleware blocks /login/, /token/, /signup/ paths when IP is cached."""
 
     TEST_IP = "10.10.10.99"
+
+    @pytest.fixture(autouse=True)
+    def _non_oss(self, non_oss_mode):
+        yield
 
     def _middleware(self):
         from accounts.authentication import AuthMonitoringMiddleware
@@ -544,6 +560,10 @@ class TestMiddlewarePasswordResetRouting:
 
     TEST_IP = "10.10.20.50"
 
+    @pytest.fixture(autouse=True)
+    def _non_oss(self, non_oss_mode):
+        yield
+
     def _middleware(self):
         from accounts.authentication import AuthMonitoringMiddleware
 
@@ -626,6 +646,56 @@ class TestMiddlewarePasswordResetRouting:
         assert "result" in body
         assert "error" in body["result"]
         assert "error_code" in body["result"]
+
+
+@pytest.mark.unit
+class TestMiddlewareOssSkip:
+    """In OSS mode the middleware skips ALL IP-based blocking (TH-7179).
+
+    OSS/local deployments funnel every request through one IP (localhost or
+    the Docker gateway), so IP rate limiting blocks legitimate users.
+    """
+
+    TEST_IP = "10.10.30.77"
+
+    @pytest.fixture(autouse=True)
+    def _oss(self):
+        with patch("accounts.authentication.is_oss", return_value=True):
+            yield
+
+    def _middleware(self):
+        from accounts.authentication import AuthMonitoringMiddleware
+
+        return AuthMonitoringMiddleware(lambda r: HttpResponse("OK", status=200))
+
+    def _request(self, path: str):
+        factory = RequestFactory()
+        req = factory.post(path, content_type="application/json")
+        req.META["REMOTE_ADDR"] = self.TEST_IP
+        return req
+
+    def test_blocked_ip_passes_through_on_login_paths(self):
+        cache.set(f"blocked_ip_{self.TEST_IP}", True, 3600)
+        middleware = self._middleware()
+        for path in (
+            "/api/accounts/token/",
+            "/api/accounts/login/",
+            "/api/accounts/signup/",
+        ):
+            resp = middleware(self._request(path))
+            assert resp.status_code == 200
+
+    def test_rate_limited_ip_passes_through_on_password_reset(self):
+        cache.set(f"rate_limit_{self.TEST_IP}", True, 3600)
+        middleware = self._middleware()
+        resp = middleware(self._request("/api/accounts/password-reset-initiate/"))
+        assert resp.status_code == 200
+
+    def test_no_ip_request_tracking_in_oss(self):
+        """OSS mode must not even record request timestamps per IP."""
+        middleware = self._middleware()
+        middleware(self._request("/api/accounts/token/"))
+        assert cache.get(f"ip_requests_{self.TEST_IP}") is None
 
 
 # ---------------------------------------------------------------------------

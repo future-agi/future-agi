@@ -1,12 +1,9 @@
 import React from "react";
-import OSSUpgradeGate from "src/components/oss-upgrade-gate";
-import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import ErrorFeedView from "./ErrorFeedView";
 
+// License gating happens at the route level via CapabilityGate
+// ("error_feed") — driven by /api/capabilities/, which understands
+// deployment flavor, license state, and cloud plans.
 export default function ErrorFeed() {
-  const { isOSS } = useDeploymentMode();
-  if (isOSS) {
-    return <OSSUpgradeGate feature="errorFeed" />;
-  }
   return <ErrorFeedView />;
 }

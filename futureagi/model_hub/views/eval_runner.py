@@ -186,7 +186,12 @@ def _format_messages_to_prompt_chain(messages):
 
 @transaction.atomic
 def bulk_update_or_create_cells(
-    rows_list, column_id, dataset_id, new_values, user_eval_metric_id=None
+    rows_list,
+    column_id,
+    dataset_id,
+    new_values,
+    user_eval_metric_id=None,
+    skip_completed=False,
 ):
     """
     Bulk update or create cells matching the filter criteria
@@ -201,6 +206,11 @@ def bulk_update_or_create_cells(
             guard in EvaluationRunner._create_cell so that late Temporal
             workers can't overwrite the "User stopped evaluation" state
             set by StopUserEvalView.
+        skip_completed: When True, existing cells with status=PASS are left
+            untouched (missing cells are still created). Callers that reset
+            cells before a run or mark whole evals skipped/failed rely on
+            overwriting PASS cells, so this must stay opt-in — only error
+            paths that should never destroy a completed result set it.
     """
     # Stop guard: matches the _create_cell path in EvaluationRunner.
     if user_eval_metric_id:
@@ -236,8 +246,9 @@ def bulk_update_or_create_cells(
         key = (row_id, column_id, dataset_id)
 
         if key in existing_dict:
-            # Update existing cell
             cell = existing_dict[key]
+            if skip_completed and cell.status == CellStatus.PASS.value:
+                continue
             for field, value in new_values.items():
                 setattr(cell, field, value)
             cells_to_update.append(cell)
@@ -737,13 +748,9 @@ def process_mapping(
                     }
                     mapping.append(prompt_dict)
                     required_field.append(key)
-                except (Column.DoesNotExist, RunPrompter.DoesNotExist) as e:
-                    logger.error(
-                        "failed_to_resolve_prompt_instruction_adherence_prompt",
-                        column_id=str(data),
-                        error=str(e),
-                    )
-                continue  # Skip normal cell resolution for this key
+                    continue  # Skip normal cell resolution for this key
+                except (Column.DoesNotExist, RunPrompter.DoesNotExist):
+                    pass  # Fall through to normal cell resolution below
 
             try:
                 if data:
@@ -777,24 +784,27 @@ def process_mapping(
                 if key == "output" and not mappings.get("input"):
                     # Skip if value is a KnowledgeBaseFile UUID
                     if not _is_knowledge_base_uuid(value):
-                        output_column = Column.objects.get(id=value)
-                        prompt_column = RunPrompter.objects.get(
-                            id=output_column.source_id
-                        )
-                        # Get the user prompt from messages
-                        prompt = "\n".join(
-                            [
-                                runner._replace_dynamic_ids(
-                                    content["text"], row
-                                )  # Updated to handle new content structure
-                                for message in prompt_column.messages
-                                if message["role"] == "user"
-                                for content in message["content"]
-                                if content["type"] == "text"
-                            ]
-                        )
-                        mapping.insert(0, prompt)
-                        required_field.insert(0, "input")
+                        try:
+                            output_column = Column.objects.get(id=value)
+                            prompt_column = RunPrompter.objects.get(
+                                id=output_column.source_id
+                            )
+                            # Get the user prompt from messages
+                            prompt = "\n".join(
+                                [
+                                    runner._replace_dynamic_ids(
+                                        content["text"], row
+                                    )
+                                    for message in prompt_column.messages
+                                    if message["role"] == "user"
+                                    for content in message["content"]
+                                    if content["type"] == "text"
+                                ]
+                            )
+                            mapping.insert(0, prompt)
+                            required_field.insert(0, "input")
+                        except (Column.DoesNotExist, RunPrompter.DoesNotExist):
+                            pass
     return required_field, mapping
 
 
@@ -1620,11 +1630,20 @@ class EvaluationRunner:
         final_mapping = []
         final_required_field = []
 
+        can_infer_prompt = False
+        if run_prompt_column and col_ids:
+            try:
+                output_col = Column.objects.get(id=col_ids[0])
+                RunPrompter.objects.get(id=output_col.source_id)
+                can_infer_prompt = True
+            except (Column.DoesNotExist, RunPrompter.DoesNotExist):
+                pass
+
         for key, data in enumerate(mapping):
             if data:
                 final_mapping.append(data)
                 final_required_field.append(col_ids[key])
-            if run_prompt_column:
+            if can_infer_prompt:
                 break
         if effective_config.get("eval_type_id") == "DeterministicEvaluator":
             return final_required_field, final_mapping

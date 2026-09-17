@@ -214,6 +214,25 @@ class DeploymentInfoResponseSerializer(serializers.Serializer):
     result = DeploymentInfoResultSerializer()
 
 
+class SetupCheckSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    label = serializers.CharField()
+    status = serializers.ChoiceField(choices=("passed", "warning", "failed", "skipped"))
+    required = serializers.BooleanField()
+    detail = serializers.CharField(allow_blank=True)
+
+
+class SetupChecksResultSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=("ok", "issues"))
+    mode = serializers.ChoiceField(choices=("live", "experiment"))
+    checks = SetupCheckSerializer(many=True)
+
+
+class SetupChecksResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = SetupChecksResultSerializer()
+
+
 class LangfuseHealthResponseSerializer(serializers.Serializer):
     status = serializers.ChoiceField(choices=("OK",))
     version = serializers.CharField()

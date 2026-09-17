@@ -7,33 +7,48 @@ import {
 
 // ----------------------------------------------------------------------
 
+// date-fns throws RangeError on an Invalid Date, which escapes as a render crash.
+export function toValidDate(value) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) ? parsed : null;
+}
+
 export function fDate(date, newFormat) {
   const fm = newFormat || "dd MMM yyyy";
+  const parsed = toValidDate(date);
 
-  return date ? format(new Date(date), fm) : "";
+  return parsed ? format(parsed, fm) : "";
 }
 
 export function fDateTime(date, newFormat) {
   const fm = newFormat || "dd MMM yyyy p";
+  const parsed = toValidDate(date);
 
-  return date ? format(new Date(date), fm) : "";
+  return parsed ? format(parsed, fm) : "";
 }
 
 export function fTimestamp(date) {
-  return date ? getTime(new Date(date)) : "";
+  const parsed = toValidDate(date);
+
+  return parsed ? getTime(parsed) : "";
 }
 
 export function fToNow(date) {
-  return date
-    ? formatDistanceToNow(new Date(date), {
+  const parsed = toValidDate(date);
+
+  return parsed
+    ? formatDistanceToNow(parsed, {
         addSuffix: true,
       })
     : "";
 }
 
 export function fToNowStrict(date) {
-  return date
-    ? formatDistanceToNowStrict(new Date(date), {
+  const parsed = toValidDate(date);
+
+  return parsed
+    ? formatDistanceToNowStrict(parsed, {
         addSuffix: true,
       })
     : "";

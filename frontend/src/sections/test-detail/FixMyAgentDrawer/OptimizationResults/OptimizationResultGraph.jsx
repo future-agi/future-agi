@@ -185,7 +185,7 @@ const OptimizationResultGraph = ({ optimizationId }) => {
             multiple
           />
         </Box>
-    
+
         {seriesData.length === 0 ? (
           <Box sx={{ height: 260 }} />
         ) : (

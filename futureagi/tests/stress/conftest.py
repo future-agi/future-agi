@@ -191,7 +191,7 @@ def _stress_ch(request):
     if non_stress:
         pytest.exit(
             "stress suite rebuilds the ClickHouse `default` database — run it "
-            "standalone: uv run pytest tests/stress/ "
+            "standalone: uv run pytest -m stress tests/stress/ "
             f"(found non-stress tests in this session: {non_stress[0].nodeid})",
             returncode=4,
         )

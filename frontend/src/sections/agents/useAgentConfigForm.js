@@ -6,7 +6,12 @@ import axios, { endpoints } from "src/utils/axios";
 import { getAgentFormValues } from "./common";
 import { useMutation } from "@tanstack/react-query";
 import logger from "src/utils/logger";
-import { AGENT_TYPES, isLiveKitProvider } from "./constants";
+import {
+  AGENT_TYPES,
+  isLiveKitProvider,
+  supportsConcurrency,
+  VOICE_TRANSPORT,
+} from "./constants";
 
 export const useAgentConfigForm = (schema, agentDetails) => {
   const {
@@ -19,6 +24,7 @@ export const useAgentConfigForm = (schema, agentDetails) => {
     setValue,
     getValues,
     trigger,
+    clearErrors,
   } = useForm({
     mode: "onSubmit",
     resolver: zodResolver(schema, undefined, { mode: "async" }),
@@ -41,6 +47,7 @@ export const useAgentConfigForm = (schema, agentDetails) => {
     setValue,
     getValues,
     trigger,
+    clearErrors,
   };
 };
 
@@ -75,6 +82,7 @@ export const useAgentSubmit = ({
         knowledge_base: data.knowledgeBase || null,
         contact_number: data.contactNumber,
         inbound: data.inbound,
+        target_speaks_first: data.targetSpeaksFirst,
         commit_message: data.commitMessage,
         observability_enabled: data.observabilityEnabled,
         authentication_method: "api_key",
@@ -93,19 +101,24 @@ export const useAgentSubmit = ({
       };
 
       // Only process and include voice-specific fields for voice agents
+      let voiceContactNumber = null;
       if (data.agentType === "voice") {
         const fullContactNumber = data?.countryCode
           ? `+${data.countryCode}${data.contactNumber.trim()}`
           : data.contactNumber.trim();
-        payload.contact_number = fullContactNumber;
+        // A web (WebRTC) simulation carries no number — the backend reads an
+        // empty contact_number as the signal to run over WebRTC.
+        payload.contact_number =
+          data.voiceTransport === VOICE_TRANSPORT.TELEPHONY
+            ? fullContactNumber
+            : "";
         delete payload.model;
         delete payload.model_details;
 
-        // Parse LiveKit fields for backend
+        // Parse LiveKit fields for backend. LiveKit supports both web (WebRTC,
+        // no number) and telephony (SIP, with number); contact_number is set
+        // above from the transport toggle, so don't force it empty here.
         if (isLiveKitProvider(data.provider)) {
-          payload.contact_number = "";
-          payload.livekit_max_concurrency =
-            parseInt(data.livekitMaxConcurrency, 10) || 5;
           if (
             !payload.livekit_config_json ||
             (typeof payload.livekit_config_json === "string" &&
@@ -124,15 +137,27 @@ export const useAgentSubmit = ({
           }
         }
 
-        // Remove LiveKit fields for non-LiveKit providers
+        // Concurrency applies to every web provider (livekit / vapi / retell),
+        // so send it whenever the provider supports concurrent cases.
+        if (supportsConcurrency(data.provider)) {
+          payload.livekit_max_concurrency =
+            parseInt(data.livekitMaxConcurrency, 10) || 5;
+        }
+
+        // Remove LiveKit-only fields for non-LiveKit providers, keeping the
+        // shared concurrency value for vapi/retell.
         if (!isLiveKitProvider(data.provider)) {
           delete payload.livekit_url;
           delete payload.livekit_api_key;
           delete payload.livekit_api_secret;
           delete payload.livekit_agent_name;
           delete payload.livekit_config_json;
-          delete payload.livekit_max_concurrency;
+          if (!supportsConcurrency(data.provider)) {
+            delete payload.livekit_max_concurrency;
+          }
         }
+
+        voiceContactNumber = payload.contact_number;
       } else {
         // Remove voice-specific fields for non-voice agents
         delete payload.country_code;
@@ -187,6 +212,13 @@ export const useAgentSubmit = ({
       payload = Object.fromEntries(
         Object.entries(payload).filter(([, value]) => value !== ""),
       );
+
+      // contact_number has to survive that strip. An empty string is what tells
+      // the backend to run over WebRTC, and the version endpoint only writes
+      // fields present in the request — omitting it keeps the previous number.
+      if (voiceContactNumber !== null) {
+        payload.contact_number = voiceContactNumber;
+      }
 
       const { livekit_api_key, livekit_api_secret, ...safePayload } = payload;
       trackEvent(Events.updateAgentDefClicked, {

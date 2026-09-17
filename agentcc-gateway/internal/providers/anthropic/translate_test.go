@@ -2,6 +2,7 @@ package anthropic
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -294,7 +295,7 @@ func TestTranslateRequest_ToolsTranslation(t *testing.T) {
 	if len(ar.Tools) != 1 {
 		t.Fatalf("tools length = %d, want 1", len(ar.Tools))
 	}
-	tool := ar.Tools[0]
+	tool := decodeTool(t, ar.Tools[0])
 	if tool.Name != "get_weather" {
 		t.Errorf("tool name = %q, want %q", tool.Name, "get_weather")
 	}
@@ -306,7 +307,19 @@ func TestTranslateRequest_ToolsTranslation(t *testing.T) {
 	}
 }
 
-func TestTranslateRequest_ToolsSkipNonFunction(t *testing.T) {
+// decodeTool reads back one entry of the raw tools array.
+func decodeTool(t *testing.T, raw json.RawMessage) anthropicTool {
+	t.Helper()
+	var tool anthropicTool
+	if err := json.Unmarshal(raw, &tool); err != nil {
+		t.Fatalf("decoding tool %s: %v", raw, err)
+	}
+	return tool
+}
+
+// A non-function tool with no original bytes has nothing to forward — it can
+// only have been built in Go, never parsed off the wire.
+func TestTranslateRequest_ToolsSkipNonFunctionWithoutRawBytes(t *testing.T) {
 	req := &models.ChatCompletionRequest{
 		Model: "claude-3-sonnet-20240229",
 		Messages: []models.Message{
@@ -323,10 +336,82 @@ func TestTranslateRequest_ToolsSkipNonFunction(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(ar.Tools) != 1 {
-		t.Fatalf("tools length = %d, want 1 (non-function type should be skipped)", len(ar.Tools))
+		t.Fatalf("tools length = %d, want 1 (a non-function tool with no raw bytes has nothing to send)", len(ar.Tools))
 	}
-	if ar.Tools[0].Name != "keep_me" {
-		t.Errorf("tool name = %q, want %q", ar.Tools[0].Name, "keep_me")
+	if got := decodeTool(t, ar.Tools[0]).Name; got != "keep_me" {
+		t.Errorf("tool name = %q, want %q", got, "keep_me")
+	}
+}
+
+// The real case: a server tool arrives as JSON, so its bytes are kept and must
+// reach Anthropic unchanged. Dropping it is what made web search a silent no-op.
+func TestTranslateRequest_ForwardsServerToolsVerbatim(t *testing.T) {
+	const webSearch = `{"type":"web_search_20250305","name":"web_search","max_uses":5,` +
+		`"allowed_domains":["example.com"],` +
+		`"user_location":{"type":"approximate","city":"San Francisco","country":"US"}}`
+
+	body := []byte(`{"model":"claude-sonnet-4-20250514","messages":[{"role":"user","content":"hi"}],` +
+		`"tools":[` + webSearch + `,` +
+		`{"type":"function","function":{"name":"keep_me","parameters":{}}}]}`)
+
+	var req models.ChatCompletionRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		t.Fatalf("unmarshaling request: %v", err)
+	}
+
+	ar, err := translateRequest(&req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(ar.Tools) != 2 {
+		t.Fatalf("tools length = %d, want 2 (server tool + function tool)", len(ar.Tools))
+	}
+
+	// Byte-for-byte: max_uses, allowed_domains and user_location have nowhere
+	// to live on the canonical struct, so anything short of the original bytes
+	// loses them.
+	var got, want interface{}
+	if err := json.Unmarshal(ar.Tools[0], &got); err != nil {
+		t.Fatalf("decoding forwarded server tool: %v", err)
+	}
+	if err := json.Unmarshal([]byte(webSearch), &want); err != nil {
+		t.Fatalf("decoding expected server tool: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("server tool was not forwarded verbatim\n got %s\nwant %s", ar.Tools[0], webSearch)
+	}
+
+	if name := decodeTool(t, ar.Tools[1]).Name; name != "keep_me" {
+		t.Errorf("function tool name = %q, want %q", name, "keep_me")
+	}
+}
+
+// Version strings change — 20250305, 20260209, 20260318 and whatever follows.
+// The passthrough must key on "not a function", never on a known-version list.
+func TestTranslateRequest_ForwardsUnknownServerToolVersions(t *testing.T) {
+	for _, toolType := range []string{
+		"web_search_20250305",
+		"web_search_20260209",
+		"web_search_20260318",
+		"web_search_29991231",
+		"code_execution_20260120",
+	} {
+		t.Run(toolType, func(t *testing.T) {
+			body := []byte(`{"model":"claude-sonnet-4-20250514","messages":[{"role":"user","content":"hi"}],` +
+				`"tools":[{"type":"` + toolType + `","name":"t"}]}`)
+
+			var req models.ChatCompletionRequest
+			if err := json.Unmarshal(body, &req); err != nil {
+				t.Fatalf("unmarshaling request: %v", err)
+			}
+			ar, err := translateRequest(&req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(ar.Tools) != 1 {
+				t.Fatalf("tools length = %d, want 1 — %q was dropped", len(ar.Tools), toolType)
+			}
+		})
 	}
 }
 
@@ -823,7 +908,9 @@ func TestStreamParse_ContentBlockDelta_TextDelta(t *testing.T) {
 }
 
 func TestStreamParse_ContentBlockDelta_InputJSONDelta(t *testing.T) {
-	state := &streamState{messageID: "msg_2", model: "claude-3"}
+	// A real stream always opens the tool_use block first; blockIsToolUse is
+	// what that content_block_start sets.
+	state := &streamState{messageID: "msg_2", model: "claude-3", blockIsToolUse: true, toolCallIndex: 1}
 	data := `{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"loc"}}`
 
 	chunk, done, err := state.parseSSELine("content_block_delta", data)
@@ -1611,5 +1698,232 @@ func TestMapStopReason(t *testing.T) {
 				t.Errorf("mapStopReason(%q) = %q, want %q", tt.input, got, tt.want)
 			}
 		})
+	}
+}
+
+// Web search answers are useless without their sources, and Anthropic requires
+// citations be shown when its output is displayed to end users. They arrive on
+// the text block; OpenAI carries them as url_citation annotations.
+func TestTranslateResponse_CitationsBecomeURLCitationAnnotations(t *testing.T) {
+	resp := &anthropicResponse{
+		ID:    "msg_1",
+		Model: "claude-sonnet-4-20250514",
+		Content: []anthropicContentBlock{
+			{Type: "text", Text: "Based on the search results, "},
+			{
+				Type: "text",
+				Text: "Claude Shannon was born on April 30, 1916.",
+				Citations: json.RawMessage(`[{"type":"web_search_result_location",
+					"url":"https://en.wikipedia.org/wiki/Claude_Shannon",
+					"title":"Claude Shannon - Wikipedia",
+					"encrypted_index":"Eo8BCioIAhgBIiQyYjQ0OWJmZi1lNm..",
+					"cited_text":"Claude Elwood Shannon (April 30, 1916 - February 24, 2001)"}]`),
+			},
+		},
+		StopReason: "end_turn",
+	}
+
+	out := translateResponse(resp)
+	msg := out.Choices[0].Message
+
+	if len(msg.Annotations) == 0 {
+		t.Fatal("no annotations: the citations were dropped")
+	}
+	var got []urlCitation
+	if err := json.Unmarshal(msg.Annotations, &got); err != nil {
+		t.Fatalf("decoding annotations: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("annotations = %d, want 1", len(got))
+	}
+	c := got[0]
+	if c.Type != "url_citation" {
+		t.Errorf("type = %q, want %q", c.Type, "url_citation")
+	}
+	if c.URLCitation.URL != "https://en.wikipedia.org/wiki/Claude_Shannon" {
+		t.Errorf("url = %q", c.URLCitation.URL)
+	}
+	if c.URLCitation.Title != "Claude Shannon - Wikipedia" {
+		t.Errorf("title = %q", c.URLCitation.Title)
+	}
+
+	// The span must index into the joined text, not the single block, or a
+	// caller highlighting the citation underlines the wrong words.
+	const firstBlock = "Based on the search results, "
+	if c.URLCitation.StartIndex != len(firstBlock) {
+		t.Errorf("start_index = %d, want %d (offset of the cited block in the joined text)",
+			c.URLCitation.StartIndex, len(firstBlock))
+	}
+	wantEnd := len(firstBlock) + len("Claude Shannon was born on April 30, 1916.")
+	if c.URLCitation.EndIndex != wantEnd {
+		t.Errorf("end_index = %d, want %d", c.URLCitation.EndIndex, wantEnd)
+	}
+
+	var text string
+	if err := json.Unmarshal(msg.Content, &text); err != nil {
+		t.Fatalf("decoding content: %v", err)
+	}
+	if text[c.URLCitation.StartIndex:c.URLCitation.EndIndex] != "Claude Shannon was born on April 30, 1916." {
+		t.Errorf("the span does not select the cited sentence: %q",
+			text[c.URLCitation.StartIndex:c.URLCitation.EndIndex])
+	}
+}
+
+// A server_tool_use block is a call Anthropic already ran. Turning it into an
+// OpenAI tool_call would tell the client to execute a tool it does not have,
+// and the client would hang waiting to answer a call nobody is expecting.
+func TestTranslateResponse_ServerToolUseIsNotAClientToolCall(t *testing.T) {
+	resp := &anthropicResponse{
+		ID:    "msg_2",
+		Model: "claude-sonnet-4-20250514",
+		Content: []anthropicContentBlock{
+			{Type: "server_tool_use", ID: "srvtoolu_01", Name: "web_search",
+				Input: json.RawMessage(`{"query":"claude shannon birth date"}`)},
+			{Type: "web_search_tool_result", ToolUseID: "srvtoolu_01",
+				Content: json.RawMessage(`[{"type":"web_search_result","url":"https://example.com","title":"T"}]`)},
+			{Type: "text", Text: "He was born in 1916."},
+		},
+		StopReason: "end_turn",
+	}
+
+	out := translateResponse(resp)
+	if tc := out.Choices[0].Message.ToolCalls; len(tc) != 0 {
+		t.Fatalf("server-executed tool surfaced as %d client tool_calls: %+v", len(tc), tc)
+	}
+	if got := out.Choices[0].FinishReason; got != "stop" {
+		t.Errorf("finish_reason = %q, want %q", got, "stop")
+	}
+}
+
+// Searches are billed per call on top of tokens, so a response reporting tokens
+// alone understates the cost.
+func TestTranslateResponse_CarriesServerToolUsage(t *testing.T) {
+	resp := &anthropicResponse{
+		ID:         "msg_3",
+		Model:      "claude-sonnet-4-20250514",
+		Content:    []anthropicContentBlock{{Type: "text", Text: "ok"}},
+		StopReason: "end_turn",
+		Usage: anthropicUsage{
+			InputTokens:   6039,
+			OutputTokens:  931,
+			ServerToolUse: &anthropicServerTool{WebSearchRequests: 3},
+		},
+	}
+
+	out := translateResponse(resp)
+	if out.Usage.ServerToolUse == nil {
+		t.Fatal("server_tool_use missing: the billable search count was dropped")
+	}
+	if got := out.Usage.ServerToolUse.WebSearchRequests; got != 3 {
+		t.Errorf("web_search_requests = %d, want 3", got)
+	}
+}
+
+func TestTranslateResponse_NoServerToolUsageWhenAbsent(t *testing.T) {
+	resp := &anthropicResponse{
+		ID:         "msg_4",
+		Model:      "claude-sonnet-4-20250514",
+		Content:    []anthropicContentBlock{{Type: "text", Text: "ok"}},
+		StopReason: "end_turn",
+		Usage:      anthropicUsage{InputTokens: 10, OutputTokens: 5},
+	}
+	if out := translateResponse(resp); out.Usage.ServerToolUse != nil {
+		t.Errorf("server_tool_use = %+v, want nil for a request that ran no server tools", out.Usage.ServerToolUse)
+	}
+}
+
+// pause_turn means Anthropic stopped a long search mid-turn and expects the
+// message handed back. Reporting "stop" tells the caller the answer is complete
+// when it is not.
+func TestMapStopReason_PauseTurnIsNotStop(t *testing.T) {
+	if got := mapStopReason("pause_turn"); got == "stop" {
+		t.Error(`pause_turn maps to "stop" — an unfinished turn reads as a finished one`)
+	}
+	for reason, want := range map[string]string{
+		"end_turn":      "stop",
+		"max_tokens":    "length",
+		"stop_sequence": "stop",
+		"tool_use":      "tool_calls",
+	} {
+		if got := mapStopReason(reason); got != want {
+			t.Errorf("mapStopReason(%q) = %q, want %q", reason, got, want)
+		}
+	}
+}
+
+func TestTranslateResponse_NoAnnotationsWhenNoCitations(t *testing.T) {
+	resp := &anthropicResponse{
+		ID:         "msg_5",
+		Model:      "claude-sonnet-4-20250514",
+		Content:    []anthropicContentBlock{{Type: "text", Text: "plain answer"}},
+		StopReason: "end_turn",
+	}
+	if out := translateResponse(resp); len(out.Choices[0].Message.Annotations) != 0 {
+		t.Errorf("annotations = %s, want none", out.Choices[0].Message.Annotations)
+	}
+}
+
+// Anthropic streams a server tool's own input as input_json_delta, exactly like
+// a client tool's arguments. It has already run the call, so forwarding those
+// bytes as tool-call arguments invents a call the caller never saw start.
+func TestStreamParse_ServerToolUseInputIsNotForwardedAsToolCallArgs(t *testing.T) {
+	state := &streamState{messageID: "msg_ws", model: "claude-sonnet-4-20250514"}
+
+	start := `{"type":"content_block_start","index":1,"content_block":` +
+		`{"type":"server_tool_use","id":"srvtoolu_xyz789","name":"web_search"}}`
+	chunk, _, err := state.parseSSELine("content_block_start", start)
+	if err != nil {
+		t.Fatalf("unexpected error on content_block_start: %v", err)
+	}
+	if chunk != nil {
+		t.Fatalf("server_tool_use opened a client tool call: %+v", chunk.Choices[0].Delta.ToolCalls)
+	}
+
+	delta := `{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta",` +
+		`"partial_json":"{\"query\":\"latest quantum computing breakthroughs\"}"}}`
+	chunk, _, err = state.parseSSELine("content_block_delta", delta)
+	if err != nil {
+		t.Fatalf("unexpected error on content_block_delta: %v", err)
+	}
+	if chunk != nil {
+		t.Fatalf("the search query was forwarded as tool-call arguments: %+v", chunk.Choices[0].Delta.ToolCalls)
+	}
+}
+
+// The corrupting case: a real client tool call is streaming when a server tool
+// runs. Without the guard the search query is appended to that call's arguments
+// and the caller unmarshals invalid JSON.
+func TestStreamParse_ServerToolUseDoesNotCorruptAnInFlightToolCall(t *testing.T) {
+	state := &streamState{messageID: "msg_mix", model: "claude-sonnet-4-20250514"}
+
+	toolStart := `{"type":"content_block_start","index":0,"content_block":` +
+		`{"type":"tool_use","id":"toolu_1","name":"get_weather"}}`
+	if _, _, err := state.parseSSELine("content_block_start", toolStart); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	args := `{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"city\":"}}`
+	chunk, _, err := state.parseSSELine("content_block_delta", args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if chunk == nil || len(chunk.Choices[0].Delta.ToolCalls) != 1 {
+		t.Fatal("the client tool call's own arguments must still stream")
+	}
+
+	// Anthropic now opens a server tool block and streams its query.
+	srvStart := `{"type":"content_block_start","index":1,"content_block":` +
+		`{"type":"server_tool_use","id":"srvtoolu_1","name":"web_search"}}`
+	if _, _, err := state.parseSSELine("content_block_start", srvStart); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	srvDelta := `{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta",` +
+		`"partial_json":"{\"query\":\"weather\"}"}}`
+	chunk, _, err = state.parseSSELine("content_block_delta", srvDelta)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if chunk != nil {
+		t.Fatalf("the search query was appended to get_weather's arguments: %+v",
+			chunk.Choices[0].Delta.ToolCalls)
 	}
 }

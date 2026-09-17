@@ -1,4 +1,5 @@
 import { pinCodeOptions } from "src/components/agent-definitions/helper";
+import { transportFromContactNumber } from "./constants";
 
 export const getAgentFormValues = (agentDetails) => {
   const snapshot = agentDetails?.configuration_snapshot || {};
@@ -45,7 +46,14 @@ export const getAgentFormValues = (agentDetails) => {
     knowledgeBase: snapshot.knowledge_base || "",
     countryCode: matchedPin || "",
     contactNumber: localNumber,
+    voiceTransport: transportFromContactNumber(rawContactNumber),
     inbound: snapshot.inbound ?? true,
+    // Explicit toggle when set; for legacy agents (null) fall back to the
+    // direction the inbound/outbound heuristic implied (inbound -> simulator
+    // opens -> agent does NOT speak first) so editing an old agent doesn't flip
+    // its behaviour.
+    targetSpeaksFirst:
+      snapshot.target_speaks_first ?? !(snapshot.inbound ?? true),
     commitMessage: snapshot.commit_message || "",
 
     // LiveKit fields

@@ -3,6 +3,7 @@ from typing import Literal, Union
 
 import structlog
 
+from model_hub.utils.eval_mapping import non_path_mapping_keys
 from tfc.ee_stub import _ee_stub
 from tfc.utils.ssrf_guard import is_valid_url, safe_fetch
 
@@ -350,6 +351,16 @@ def fetch_required_keys_for_eval_template(eval_templates):
 
 
 def fetch_specific_mapping_for_specific_eval_template(mapping, eval_template):
+    bad = non_path_mapping_keys(mapping)
+    if bad:
+        # ValueError, not DRFValidationError: the apply-eval-group view maps
+        # ValueError to a 400 and everything else to a 500 whose body is the
+        # stringified exception. A DRF ValidationError is an APIException, so it
+        # would take the 500 branch and leak ErrorDetail(...) to the caller.
+        raise ValueError(
+            "Mapping values must be attribute path strings. "
+            f"Non-string values for: {', '.join(bad)}."
+        )
     required_keys = eval_template.config.get("required_keys", [])
     optional_keys = eval_template.config.get("optional_keys", [])
     parsed_mapping = {}

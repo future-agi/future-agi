@@ -326,9 +326,7 @@ class TestVoiceCallAnnotationThumbsFilters:
     def test_thumbs_in_with_display_labels(self):
         uid = str(uuid.uuid4())
         filters = [
-            _make_annotation_filter(
-                uid, "thumbs", "in", ["Thumbs Up", "Thumbs Down"]
-            )
+            _make_annotation_filter(uid, "thumbs", "in", ["Thumbs Up", "Thumbs Down"])
         ]
         result, _ = FilterEngine.get_filter_conditions_for_voice_call_annotations(
             filters
@@ -408,9 +406,7 @@ class TestVoiceCallAnnotationTextFilters:
         )
 
         exists_count = sum(
-            1
-            for node in result.flatten()
-            if node.__class__.__name__ == "Exists"
+            1 for node in result.flatten() if node.__class__.__name__ == "Exists"
         )
         assert exists_count >= 2
         assert extra == {}
@@ -441,9 +437,7 @@ class TestVoiceCallAnnotationTextFilters:
         )
 
         exists_count = sum(
-            1
-            for node in result.flatten()
-            if node.__class__.__name__ == "Exists"
+            1 for node in result.flatten() if node.__class__.__name__ == "Exists"
         )
         assert exists_count >= 2
         assert extra == {}
@@ -642,7 +636,7 @@ class TestVoiceCallAnnotationMyAnnotationsFilter:
         )
         assert result != Q()
 
-    def test_my_annotations_false_returns_empty_q(self):
+    def test_my_annotations_false_returns_not_exists_q(self):
         user_id = str(uuid.uuid4())
         filters = [
             {
@@ -657,9 +651,10 @@ class TestVoiceCallAnnotationMyAnnotationsFilter:
         result, _ = FilterEngine.get_filter_conditions_for_voice_call_annotations(
             filters, user_id=user_id
         )
-        assert result == Q()
+        assert result != Q()
+        assert "NOT" in str(result)
 
-    def test_my_annotations_without_user_id_returns_empty_q(self):
+    def test_my_annotations_without_user_id_fails_closed(self):
         filters = [
             {
                 "column_id": "my_annotations",
@@ -673,7 +668,7 @@ class TestVoiceCallAnnotationMyAnnotationsFilter:
         result, _ = FilterEngine.get_filter_conditions_for_voice_call_annotations(
             filters, user_id=None
         )
-        assert result == Q()
+        assert result == Q(pk__in=[])
 
 
 # ---------------------------------------------------------------------------

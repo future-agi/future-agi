@@ -34,6 +34,11 @@
 
 <div class="cp-container">
   <h2>Custom Pricing Manager</h2>
+  {% if read_only %}
+  <div class="cp-warning" id="read-only-banner">
+    <strong>Read only.</strong> You can view an organization's plan, entitlements and pricing tiers, but only superusers can change them.
+  </div>
+  {% endif %}
   <div id="message"></div>
   <div id="loading">Loading...</div>
 
@@ -67,11 +72,11 @@
     <div class="cp-grid">
       <div class="cp-field">
         <label>Annual Platform Fee ($)</label>
-        <input type="number" id="platform-fee" step="0.01" placeholder="18000.00" value="0">
+        <input type="number" id="platform-fee" step="0.01" placeholder="18000.00" value="0"{% if read_only %} disabled{% endif %}>
       </div>
       <div class="cp-field">
         <label>Billing Cycle</label>
-        <select id="platform-fee-billing-cycle">
+        <select id="platform-fee-billing-cycle"{% if read_only %} disabled{% endif %}>
           <option value="1">Monthly (12 payments/year)</option>
           <option value="3">Quarterly (4 payments/year)</option>
           <option value="6">Semi-Annual (2 payments/year)</option>
@@ -80,11 +85,11 @@
       </div>
       <div class="cp-field">
         <label>Contract End Date</label>
-        <input type="date" id="contract-end-date">
+        <input type="date" id="contract-end-date"{% if read_only %} disabled{% endif %}>
       </div>
       <div class="cp-field">
         <label>Subscription Start Date <span style="font-weight:400;color:var(--body-quiet-color,#666)">(only for backdated contracts)</span></label>
-        <input type="date" id="start-date">
+        <input type="date" id="start-date"{% if read_only %} disabled{% endif %}>
       </div>
     </div>
     <div style="margin-top:8px; font-size:0.8em; color:var(--body-quiet-color,#666); line-height:1.5">
@@ -105,6 +110,7 @@
       <thead><tr><th>Feature</th><th>Value</th><th></th></tr></thead>
       <tbody id="ent-body"></tbody>
     </table>
+    {% if not read_only %}
     <div class="cp-ent-row" style="margin-top:12px">
       <div class="cp-field" style="margin:0">
         <label>Feature Key</label>
@@ -118,6 +124,7 @@
       </div>
       <div><button class="cp-btn cp-btn-primary cp-btn-sm" onclick="addEntitlementLocal()">Add</button></div>
     </div>
+    {% endif %}
   </div>
 
   <!-- Pricing Tiers -->
@@ -131,6 +138,7 @@
       <thead><tr><th>Dimension</th><th>Range</th><th>$/Unit</th><th></th></tr></thead>
       <tbody id="pricing-body"></tbody>
     </table>
+    {% if not read_only %}
     <div style="margin-top:16px; border-top:1px solid var(--hairline-color,#ddd); padding-top:12px">
       <strong>Add Tier</strong>
       <div class="cp-tier-row" style="margin-top:8px">
@@ -166,8 +174,10 @@
         <div><button class="cp-btn cp-btn-primary cp-btn-sm" onclick="addTierLocal()">Add</button></div>
       </div>
     </div>
+    {% endif %}
   </div>
 
+  {% if not read_only %}
   <!-- Warning + Create/Update Button -->
   <div id="create-section" style="display:none">
     <div class="cp-warning" id="create-warning">
@@ -183,12 +193,15 @@
       Create Custom Plan &amp; Stripe Subscription
     </button>
   </div>
+  {% endif %}
 </div>
 
 <script>
 // Session auth only — no API key needed for admin pages
 const ORG_CHOICES = {{ org_choices_json|safe }};
 const FEATURE_KEYS = {{ feature_keys_json|safe }};
+// Staff view: editing controls are not rendered; the API rejects writes anyway.
+const READ_ONLY = {% if read_only %}true{% else %}false{% endif %};
 
 // Local state — collected before final submit
 let localEntitlements = {};
@@ -203,14 +216,17 @@ let localTiers = [];
     opt.textContent = o.label + " (" + o.id.substring(0, 8) + "...)";
     sel.appendChild(opt);
   });
+  // Not rendered on the read-only (staff) page.
   const fSel = document.getElementById("new-ent-feature");
-  // Hide free_* keys — they're auto-derived from leading $0 pricing tier.
-  FEATURE_KEYS.filter(f => !f.startsWith("free_")).forEach(f => {
-    const opt = document.createElement("option");
-    opt.value = f;
-    opt.textContent = f;
-    fSel.appendChild(opt);
-  });
+  if (fSel) {
+    // Hide free_* keys — they're auto-derived from leading $0 pricing tier.
+    FEATURE_KEYS.filter(f => !f.startsWith("free_")).forEach(f => {
+      const opt = document.createElement("option");
+      opt.value = f;
+      opt.textContent = f;
+      fSel.appendChild(opt);
+    });
+  }
 })();
 
 function getCookie(name) {
@@ -259,16 +275,18 @@ async function loadOrg() {
     updatePerChargePreview();
 
     // Show sections
-    ["status-section", "fee-section", "ent-section", "pricing-section", "create-section"].forEach(
-      s => document.getElementById(s).style.display = ""
-    );
+    const sections = ["status-section", "fee-section", "ent-section", "pricing-section"];
+    if (!READ_ONLY) sections.push("create-section");
+    sections.forEach(s => document.getElementById(s).style.display = "");
 
-    // Toggle button text and warning based on existing subscription
-    const isUpdate = r.has_stripe_subscription && r.is_custom;
-    const btn = document.getElementById("submit-btn");
-    btn.textContent = isUpdate ? "Update Custom Plan & Stripe Subscription" : "Create Custom Plan & Stripe Subscription";
-    document.getElementById("create-warning").style.display = isUpdate ? "none" : "";
-    document.getElementById("update-warning").style.display = isUpdate ? "" : "none";
+    if (!READ_ONLY) {
+      // Toggle button text and warning based on existing subscription
+      const isUpdate = r.has_stripe_subscription && r.is_custom;
+      const btn = document.getElementById("submit-btn");
+      btn.textContent = isUpdate ? "Update Custom Plan & Stripe Subscription" : "Create Custom Plan & Stripe Subscription";
+      document.getElementById("create-warning").style.display = isUpdate ? "none" : "";
+      document.getElementById("update-warning").style.display = isUpdate ? "" : "none";
+    }
 
     // Load existing entitlements into local state
     localEntitlements = {};
@@ -309,9 +327,10 @@ function renderEntitlements() {
     tbody.innerHTML = '<tr><td colspan="3" style="color:var(--body-quiet-color,#666)">No per-org overrides. Using plan defaults.</td></tr>';
     return;
   }
-  tbody.innerHTML = entries.map(([feature, val]) =>
-    `<tr><td>${feature}</td><td>${val}</td><td><button class="cp-x" onclick="removeEntitlement('${feature}')">&times;</button></td></tr>`
-  ).join("");
+  tbody.innerHTML = entries.map(([feature, val]) => {
+    const remove = READ_ONLY ? "" : `<button class="cp-x" onclick="removeEntitlement('${feature}')">&times;</button>`;
+    return `<tr><td>${feature}</td><td>${val}</td><td>${remove}</td></tr>`;
+  }).join("");
 }
 
 function renderTiers() {
@@ -322,7 +341,8 @@ function renderTiers() {
   }
   tbody.innerHTML = localTiers.map((t, idx) => {
     const end = t.tier_end != null ? parseFloat(t.tier_end).toLocaleString() : "+";
-    return `<tr><td>${t.dimension}</td><td>${parseFloat(t.tier_start).toLocaleString()} - ${end} ${t.display_unit}</td><td>$${t.price_per_unit}</td><td><button class="cp-x" onclick="removeTier(${idx})">&times;</button></td></tr>`;
+    const remove = READ_ONLY ? "" : `<button class="cp-x" onclick="removeTier(${idx})">&times;</button>`;
+    return `<tr><td>${t.dimension}</td><td>${parseFloat(t.tier_start).toLocaleString()} - ${end} ${t.display_unit}</td><td>$${t.price_per_unit}</td><td>${remove}</td></tr>`;
   }).join("");
 }
 

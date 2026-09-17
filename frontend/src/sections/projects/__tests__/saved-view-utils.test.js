@@ -41,4 +41,28 @@ describe("saved-view-utils", () => {
 
     expect(filtersContentEqual([filter()], [legacy])).toBe(false);
   });
+
+  it("detects identity-only changes for the same native column", () => {
+    const systemModel = filter({
+      column_id: "model",
+      property_id: "system_attribute:sessions:model",
+    });
+    const customModel = filter({
+      column_id: "model",
+      property_id: "custom_attribute:model",
+    });
+
+    expect(filtersContentEqual([systemModel], [customModel])).toBe(false);
+    expect(filtersContentEqual([systemModel], [{ ...systemModel }])).toBe(true);
+  });
+
+  it("keeps the explicit no-property-id legacy fallback", () => {
+    expect(filtersContentEqual([filter()], [filter()])).toBe(true);
+    expect(
+      filtersContentEqual(
+        [filter()],
+        [filter({ property_id: "system_attribute:traces:latency_ms" })],
+      ),
+    ).toBe(false);
+  });
 });

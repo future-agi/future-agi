@@ -21,6 +21,7 @@ import {
   Typography,
   useTheme,
 } from "@mui/material";
+import { LoadingScreen } from "src/components/loading-screen";
 import { useNavigate } from "react-router-dom";
 import { paths } from "src/routes/paths";
 import {
@@ -393,16 +394,7 @@ export default function DashboardsListView() {
 
   if (isLoading) {
     return (
-      <Box
-        sx={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          height: "60vh",
-        }}
-      >
-        <CircularProgress />
-      </Box>
+      <LoadingScreen sx={{ height: "60vh" }} />
     );
   }
 

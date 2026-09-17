@@ -165,3 +165,10 @@ changelog/
 **/*.bak
 **/*.backup
 **/celerybeat-schedule
+
+# Private EE artifacts: the cloud-private delta is a separate repo checked out
+# at futureagi/ee/cloud/, and is gitignored, so a fresh clone never has it.
+# Exclude it from local builds too so the image matches what an OSS user can
+# build. The CE base image must not carry cloud code — Dockerfile.ee in the
+# private repo overlays it at runtime.
+futureagi/ee/cloud/

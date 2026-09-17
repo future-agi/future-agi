@@ -7,6 +7,7 @@ import {
   canonicalKeys,
   stripAttributePathPrefix,
 } from "src/utils/utils";
+import { isMappingPath } from "./evalMappingPath";
 
 export const EAGER_DEPTH = 4;
 export const ARRAY_PEEK = 500;
@@ -146,7 +147,7 @@ export function expandPaths(root, prefixPath, { maxDepth = EAGER_DEPTH } = {}) {
 }
 
 export function resolvePath(root, path) {
-  if (!isObjectLike(root) || !path) return { status: "missing" };
+  if (!isObjectLike(root) || !isMappingPath(path)) return { status: "missing" };
   const result = descend(root, path);
   if (result.found) return { status: "resolved", value: result.value };
   return { status: result.unknown ? "unknown" : "missing" };

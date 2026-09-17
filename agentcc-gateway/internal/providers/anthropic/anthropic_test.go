@@ -752,8 +752,11 @@ func TestIntegration_NonStreamingToolUseRoundtrip(t *testing.T) {
 		if len(ar.Tools) != 1 {
 			t.Errorf("tools length = %d, want 1", len(ar.Tools))
 		}
-		if ar.Tools[0].Name != "get_weather" {
-			t.Errorf("tool name = %q, want %q", ar.Tools[0].Name, "get_weather")
+		var tool anthropicTool
+		if err := json.Unmarshal(ar.Tools[0], &tool); err != nil {
+			t.Errorf("decoding tool: %v", err)
+		} else if tool.Name != "get_weather" {
+			t.Errorf("tool name = %q, want %q", tool.Name, "get_weather")
 		}
 
 		// Return a tool_use response.

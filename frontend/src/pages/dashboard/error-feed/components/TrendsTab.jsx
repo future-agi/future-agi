@@ -272,7 +272,7 @@ function ScoreTrends({ scoreTrends }) {
               fontSize="26px"
               fontWeight={700}
               sx={{
-                color: "#fff",
+                color: "text.primary",
                 lineHeight: 1,
                 mb: 1.25,
                 fontFeatureSettings: "'tnum'",
@@ -529,7 +529,7 @@ function MetricCards({ metrics }) {
             <Typography
               fontSize="22px"
               fontWeight={700}
-              sx={{ color: "#fff", lineHeight: 1.1 }}
+              sx={{ color: "text.primary", lineHeight: 1.1 }}
             >
               {m.value}
             </Typography>

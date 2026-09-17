@@ -112,8 +112,17 @@ vi.mock("src/sections/evals/hooks/useCompositeChildrenKeys", () => ({
   useCompositeChildrenUnionKeys: () => [],
 }));
 
+vi.mock("src/hooks/useCapabilities", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    useFeatureAllowed: () => ({ allowed: true, isLoading: false }),
+    useFeatureLocked: () => ({ locked: false, isLoading: false }),
+    useCapabilities: () => ({ data: undefined, isLoading: false }),
+  };
+});
 vi.mock("src/hooks/useDeploymentMode", () => ({
-  useDeploymentMode: () => ({ isOSS: false }),
+  useDeploymentMode: () => ({ isOSS: false, isCloud: true }),
 }));
 
 vi.mock("notistack", async (importOriginal) => {
@@ -187,5 +196,19 @@ describe("EvalPickerCreateNew — task preview time window", () => {
       timeWindow.startDate,
       timeWindow.endDate,
     ]);
+  });
+
+  it("enables exact/freeSolo attribute mapping on the create-task route", () => {
+    renderWithSource("task", {
+      sourceId: "00000000-0000-4000-8000-000000000901",
+      sourceRowType: "spans",
+    });
+
+    expect(capturedProps.tracing).not.toBeNull();
+    expect(capturedProps.tracing.initialProjectId).toBe(
+      "00000000-0000-4000-8000-000000000901",
+    );
+    expect(capturedProps.tracing.initialRowType).toBe("spans");
+    expect(capturedProps.tracing.allowCustomFieldPath).toBe(true);
   });
 });

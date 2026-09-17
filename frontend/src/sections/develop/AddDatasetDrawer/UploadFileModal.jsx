@@ -285,13 +285,7 @@ const UploadFileModal = ({ open, onClose, refreshGrid }) => {
             loading={isPending}
             disabled={!isDirty}
           >
-            {/* <Typography
-              variant="s2"
-              width={"80px"}
-              fontWeight={"fontWeightSemiBold"}
-            > */}
-            Save
-            {/* </Typography> */}
+            Upload
           </LoadingButton>
         </DialogActions>
       </Box>

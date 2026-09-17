@@ -3,11 +3,10 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 import structlog
-from django.db import close_old_connections
-
 from accounts.models import workspace
 from accounts.models.workspace import Workspace
 from agentic_eval.core.utils.functions import detect_input_type
+from django.db import close_old_connections
 
 logger = structlog.get_logger(__name__)
 try:
@@ -44,6 +43,7 @@ from model_hub.views.develop_optimiser import DevelopOptimizer
 from model_hub.views.eval_runner import EvaluationRunner
 from model_hub.views.experiment_runner import ExperimentRunner
 from sdk.utils.helpers import _get_api_call_type
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 from tfc.temporal import temporal_activity
 from tfc.utils.distributed_locks import distributed_lock_manager
 
@@ -51,7 +51,6 @@ from tfc.utils.distributed_locks import distributed_lock_manager
 from tfc.utils.distributed_state import evaluation_tracker
 from tfc.utils.error_codes import get_error_for_api_status
 from tracer.models.observation_span import EvalLogger
-from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 
 if TYPE_CHECKING:
     from simulate.models.eval_config import SimulateEvalConfig
@@ -72,15 +71,21 @@ except ImportError:
 
 
 def _mark_cells_usage_limit_error(user_eval_metric, usage_check):
-    """Flip RUNNING cells for this eval to ERROR when a usage pre-check fails.
+    """Write ERROR cells for this eval when a pre-check fails.
 
-    Without this, non-composite eval cells stay in RUNNING forever (the worker
-    raised before writing any result), leaving the UI stuck on a loading
-    skeleton. The structured `value_infos` lets the frontend render a
-    credit-limit-specific message + upgrade CTA instead of a generic error.
+    Used for credit/usage denials and OSS agent-eval entitlement blocks.
+    Pre-checks often fail *before* EvaluationRunner creates RUNNING cells, so
+    we must upsert ERROR cells for every dataset row — not only flip RUNNING.
+    Otherwise the UI shows empty columns instead of the same error treatment
+    as other eval failures.
+
+    Structured `value_infos` lets the frontend render a credit/entitlement
+    message + upgrade CTA (see ErrorCellRenderer).
     """
     try:
         from django.db.models import Q
+
+        from model_hub.views.eval_runner import bulk_update_or_create_cells
 
         # Dataset evals: Column.source_id == uem.id, source = 'evaluation'.
         # Experiment evals: one column per (prompt_config, dataset snapshot,
@@ -109,6 +114,18 @@ def _mark_cells_usage_limit_error(user_eval_metric, usage_check):
             ).values_list("id", flat=True)
         )
 
+        dataset_id = user_eval_metric.dataset_id
+        if not dataset_id:
+            return
+
+        row_ids = list(
+            Row.objects.filter(dataset_id=dataset_id, deleted=False).values_list(
+                "id", flat=True
+            )
+        )
+        if not row_ids:
+            return
+
         upgrade_cta = None
         cta = getattr(usage_check, "upgrade_cta", None)
         if cta is not None:
@@ -123,20 +140,31 @@ def _mark_cells_usage_limit_error(user_eval_metric, usage_check):
             "upgrade_cta": upgrade_cta,
         }
         display = usage_check.reason or "Usage limit exceeded"
+        new_values = {
+            "status": CellStatus.ERROR.value,
+            "value": display,
+            "value_infos": value_infos,
+        }
 
-        updated = Cell.objects.filter(
-            column_id__in=eval_column_ids + reason_column_ids,
-            deleted=False,
-            status=CellStatus.RUNNING.value,
-        ).update(
-            status=CellStatus.ERROR.value,
-            value=display,
-            value_infos=value_infos,
-        )
+        updated = 0
+        created = 0
+        for column_id in eval_column_ids + reason_column_ids:
+            u, c = bulk_update_or_create_cells(
+                row_ids,
+                column_id,
+                dataset_id,
+                new_values,
+                user_eval_metric_id=str(user_eval_metric.id),
+                skip_completed=True,
+            )
+            updated += u
+            created += c
+
         logger.info(
             "usage_limit_error_marked_on_cells",
             eval_id=str(user_eval_metric.id),
             cells_updated=updated,
+            cells_created=created,
             error_code=usage_check.error_code,
         )
     except Exception as exc:
@@ -191,11 +219,31 @@ def process_single_evaluation(user_eval_metric):
     )
     track_mixpanel_event(MixpanelEvents.EVAL_RUN_STARTED.value, properties)
 
-    # Block agent-type evals when ee is absent.
+    # Agent-type evals need the ee/ AgentEvaluator. Gate via the capability
+    # service (self-hosted runs them on user-keyed models; deployment mode
+    # alone must not deny) — deny only on capability denial, or genuinely
+    # absent ee code before the service is configured.
     if getattr(user_eval_metric.template, "eval_type", "") == "agent":
-        from tfc.ee_gating import is_oss
+        try:
+            from tfc.capabilities import service as capability_service
 
-        if is_oss():
+            if capability_service.is_configured():
+                _decision = capability_service.check(
+                    "agentic_eval",
+                    org_id=str(user_eval_metric.organization.id),
+                )
+                _agent_denied = not _decision.allowed
+            else:
+                from tfc.ee_loader import has_ee
+
+                _agent_denied = not has_ee("ee.evals")
+        except Exception:
+            # Permission checks fail closed. Do not fall back to has_ee()
+            # (True on every build shipping ee/) — deny and log the trace.
+            logger.exception("agentic_eval_capability_check_failed")
+            _agent_denied = True
+
+        if _agent_denied:
             user_eval_metric.status = StatusType.FAILED.value
             user_eval_metric.save(update_fields=["status"])
             _err_msg = (
@@ -869,9 +917,7 @@ def trigger_error_localization_for_span(
         if task_exists:
             task = ErrorLocalizerTask.objects.get(source_id=eval_logger.id)
             metadata = task.metadata or {}
-            metadata.update(
-                {"log_id": str(log_id), "pass_threshold": pass_threshold}
-            )
+            metadata.update({"log_id": str(log_id), "pass_threshold": pass_threshold})
             task.eval_result = value
             task.eval_explanation = eval_explanation
             task.input_data = input_data_dict
@@ -1122,9 +1168,7 @@ def trigger_error_localization_for_simulate(
                     "log_id": log_id,
                     "call_execution_id": str(call_execution.id),
                     "eval_config_id": str(eval_config.id),
-                    "pass_threshold": resolve_pass_threshold(
-                        eval_template, config
-                    ),
+                    "pass_threshold": resolve_pass_threshold(eval_template, config),
                 },
                 "status": initial_status,
                 "error_message": error_message,
@@ -1245,8 +1289,7 @@ def process_single_error_localization(task_id):
 
         if not error_analysis:
             skip_reason = (
-                result.skip_reason
-                or "Error localization did not produce any results."
+                result.skip_reason or "Error localization did not produce any results."
             )
             logger.warning(
                 "error_localizer_empty_results",

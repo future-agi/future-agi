@@ -522,7 +522,7 @@ const getMainMenuItems =
       // use the underlying eval / eval_reason column ids, so the old
       // `column.id` key no longer matched what was stored and the
       // "Hide Reasoning" state was lost.
-      const key = column?.sourceId || column?.id;
+      const key = column?.source_id || column?.id;
       extraMenuItems.push({
         name: showSummary.includes(key) ? "Hide Reasoning" : "Show Reasoning",
         action: () => {

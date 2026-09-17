@@ -13,6 +13,8 @@ import WorkspaceRoleProtection from "../components/workspace-role-protection";
 import { GatewayProvider } from "src/sections/gateway/context/GatewayContext";
 import GatewayGuard from "src/sections/gateway/components/GatewayGuard";
 import lazyWithRetry from "src/utils/lazyWithRetry";
+import CapabilityGate from "src/components/capability-gate";
+import { CAPABILITY } from "src/hooks/useCapabilities";
 // Lazy load all route components (with retry for chunk errors after deploys)
 const DevKeysPage = lazyWithRetry(
   () => import("src/pages/dashboard/keys/dev-keys"),
@@ -91,8 +93,8 @@ const UserManagementV2 = lazyWithRetry(
 const BillingPageV2 = lazyWithRetry(
   () => import("src/sections/settings/BillingV2/BillingPage"),
 );
-const EELicensesPage = lazyWithRetry(
-  () => import("src/sections/settings/EELicenses/EELicensesPage"),
+const LicensePage = lazyWithRetry(
+  () => import("src/sections/settings/License/LicensePage"),
 );
 const ProfileSettings = lazyWithRetry(
   () => import("src/pages/dashboard/settings/ProfileSettings"),
@@ -319,6 +321,15 @@ const CreateNewAgentDefinition = lazyWithRetry(
 const RunTests = lazyWithRetry(
   () => import("src/pages/dashboard/run-tests/RunTests"),
 );
+const HarnessList = lazyWithRetry(
+  () => import("src/pages/dashboard/harness/HarnessList"),
+);
+const HarnessCreate = lazyWithRetry(
+  () => import("src/pages/dashboard/harness/HarnessCreate"),
+);
+const HarnessDetail = lazyWithRetry(
+  () => import("src/pages/dashboard/harness/HarnessDetail"),
+);
 const RunTestDetail = lazyWithRetry(
   () => import("src/pages/dashboard/run-tests/RunTestDetail"),
 );
@@ -488,7 +499,7 @@ const DashboardRoutes = () => {
 export const dashboardRoutes = (
   user,
   workspaceRole,
-  { isOSS = false } = {},
+  { isCloud = false } = {},
 ) => {
   const userOrgRole = user?.organization_role;
   const userDefaultWsRole = user?.default_workspace_role;
@@ -692,7 +703,7 @@ export const dashboardRoutes = (
   // - Role-gated in Cloud/EE mode
   const billingAllowedRoles = ["Owner", "Admin", "workspace_admin"];
   const hasBillingAccess =
-    !isOSS && (isOwner || billingAllowedRoles.includes(effectiveWsRole));
+    isCloud && (isOwner || billingAllowedRoles.includes(effectiveWsRole));
 
   if (hasBillingAccess) {
     settingsRoute.push(
@@ -709,7 +720,7 @@ export const dashboardRoutes = (
           path: "ee-licenses",
           element: (
             <RoleProtection allowedRoles={billingAllowedRoles}>
-              <EELicensesPage />
+              <LicensePage />
             </RoleProtection>
           ),
         },
@@ -723,6 +734,22 @@ export const dashboardRoutes = (
         },
       ],
     );
+  }
+
+  // License management is available on self-hosted (EE) deployments too. The
+  // nav shows Settings → License for org admins off-cloud, so the route must
+  // register there or it 404s. (billing/pricing above stay cloud-only.)
+  const hasLicenseAccess =
+    !isCloud && (isOwner || billingAllowedRoles.includes(effectiveWsRole));
+  if (hasLicenseAccess) {
+    settingsRoute.push({
+      path: "ee-licenses",
+      element: (
+        <RoleProtection allowedRoles={billingAllowedRoles}>
+          <LicensePage />
+        </RoleProtection>
+      ),
+    });
   }
 
   if (user === null || user?.ws_enabled) {
@@ -1111,18 +1138,26 @@ export const dashboardRoutes = (
           index: true,
           element: <Develop />,
         },
-        ...(!isOSS
-          ? [
-              {
-                path: "create-synthetic-dataset",
-                element: <CreateSyntheticData />,
-              },
-              {
-                path: "edit-synthetic-dataset/:dataset",
-                element: <EditSyntheticDataDrawer />,
-              },
-            ]
-          : []),
+        // Synthetic data ships open on self-hosted; cloud plans enforce via
+        // the backend capability check. Gate the routes too (not just the
+        // AddDatasetDrawer tile) so a deep-link on a deployment/plan without
+        // it shows the upgrade screen instead of a page that 402s on generate.
+        {
+          path: "create-synthetic-dataset",
+          element: (
+            <CapabilityGate feature={CAPABILITY.SYNTHETIC_DATA}>
+              <CreateSyntheticData />
+            </CapabilityGate>
+          ),
+        },
+        {
+          path: "edit-synthetic-dataset/:dataset",
+          element: (
+            <CapabilityGate feature={CAPABILITY.SYNTHETIC_DATA}>
+              <EditSyntheticDataDrawer />
+            </CapabilityGate>
+          ),
+        },
 
         {
           path: ":dataset",
@@ -1273,11 +1308,19 @@ export const dashboardRoutes = (
       children: [
         {
           index: true,
-          element: <ErrorFeed />,
+          element: (
+            <CapabilityGate feature={CAPABILITY.ERROR_FEED}>
+              <ErrorFeed />
+            </CapabilityGate>
+          ),
         },
         {
           path: ":id",
-          element: <ErrorFeedDetail />,
+          element: (
+            <CapabilityGate feature={CAPABILITY.ERROR_FEED}>
+              <ErrorFeedDetail />
+            </CapabilityGate>
+          ),
         },
       ],
     },
@@ -1292,6 +1335,18 @@ export const dashboardRoutes = (
     {
       path: "simulate",
       children: [
+        {
+          path: "harness",
+          element: <HarnessList />,
+        },
+        {
+          path: "harness/new",
+          element: <HarnessCreate />,
+        },
+        {
+          path: "harness/:jobId",
+          element: <HarnessDetail />,
+        },
         {
           path: "agent-definitions",
           element: <AgentDefinitions />,

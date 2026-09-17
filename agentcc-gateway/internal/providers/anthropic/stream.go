@@ -61,9 +61,9 @@ type messageDeltaData struct {
 }
 
 type contentBlockStartData struct {
-	Type  string `json:"type"`
-	ID    string `json:"id,omitempty"`
-	Name  string `json:"name,omitempty"`
+	Type string `json:"type"`
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name,omitempty"`
 }
 
 // parseSSELine parses a single SSE data line and returns a StreamChunk if one should be emitted.
@@ -211,6 +211,15 @@ func (s *streamState) handleContentBlockDelta(event streamEvent) (*models.Stream
 	// Try input_json_delta (tool use arguments streaming).
 	var ijd inputJSONDelta
 	if err := json.Unmarshal(event.Delta, &ijd); err == nil && ijd.Type == "input_json_delta" {
+		// Only a client tool_use block streams arguments the caller must act
+		// on. A server_tool_use block streams its own input the same way — the
+		// web search query — and Anthropic has already run it. Forwarding that
+		// as tool-call arguments either invents a nameless tool call the caller
+		// never saw start, or appends the query onto a real tool call still in
+		// flight and corrupts its arguments into invalid JSON.
+		if !s.blockIsToolUse {
+			return nil, false, nil
+		}
 		// Use the tracked tool call index (0-based among tool_use blocks),
 		// not the Anthropic content block index which counts all block types.
 		tcIdx := s.toolCallIndex - 1

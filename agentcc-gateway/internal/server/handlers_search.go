@@ -61,6 +61,7 @@ func (h *Handlers) Search(w http.ResponseWriter, r *http.Request) {
 	rc.SearchRequest = &req
 
 	setAuthMetadataFromRequest(rc, r)
+	applyCallerMetadata(rc, r, nil)
 
 	// Resolve timeout.
 	timeout := h.resolveTimeout(rc, r)

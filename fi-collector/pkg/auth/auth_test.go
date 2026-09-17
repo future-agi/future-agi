@@ -3,9 +3,11 @@ package auth
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -290,8 +292,9 @@ func TestResolveProjectsCached(t *testing.T) {
 	}
 
 	result := &ResolveResult{
-		OrgID:    "org-1",
-		Projects: map[string]string{"proj-a": "id-a", "proj-b": "id-b"},
+		OrgID:       "org-1",
+		WorkspaceID: "workspace-1",
+		Projects:    map[string]string{"proj-a": "id-a", "proj-b": "id-b"},
 	}
 
 	ck := CacheKey("api-key-1", "secret-1")
@@ -309,6 +312,104 @@ func TestResolveProjectsCached(t *testing.T) {
 	id, ok = result.GetProject("proj-b")
 	if !ok || id != "id-b" {
 		t.Errorf("proj-b: got (%q, %v), want (id-b, true)", id, ok)
+	}
+}
+
+type workspaceProjectResolver struct {
+	byWorkspace map[string]map[string]string
+	calls       []string
+}
+
+func (r *workspaceProjectResolver) ResolveProjects(
+	_ context.Context, orgID, workspaceID string, names []string,
+) (map[string]string, error) {
+	r.calls = append(r.calls, orgID+"/"+workspaceID)
+	result := make(map[string]string)
+	for _, name := range names {
+		if id, ok := r.byWorkspace[workspaceID][name]; ok {
+			result[name] = id
+		}
+	}
+	return result, nil
+}
+
+func (r *workspaceProjectResolver) GetOrCreateProject(
+	_ context.Context, orgID, workspaceID, name, _ string,
+) (string, error) {
+	r.calls = append(r.calls, "create:"+orgID+"/"+workspaceID)
+	if id, ok := r.byWorkspace[workspaceID][name]; ok {
+		return id, nil
+	}
+	return "", fmt.Errorf("unexpected create")
+}
+
+func TestResolveProjectsSameNameIsBoundToAuthenticatedWorkspaceAndCache(t *testing.T) {
+	resolver := &workspaceProjectResolver{byWorkspace: map[string]map[string]string{
+		"workspace-a": {"shared-name": "project-a"},
+		"workspace-b": {"shared-name": "project-b"},
+	}}
+	a := &Authenticator{
+		cache: newCache(5*time.Minute, time.Hour), projects: resolver, log: slog.Default(),
+	}
+	left := &ResolveResult{
+		OrgID: "same-org", WorkspaceID: "workspace-a", Projects: map[string]string{},
+	}
+	right := &ResolveResult{
+		OrgID: "same-org", WorkspaceID: "workspace-b", Projects: map[string]string{},
+	}
+	a.cache.putPositive("key-a", left)
+	a.cache.putPositive("key-b", right)
+	if err := a.ResolveProjectsForKey(context.Background(), "key-a", left, []string{"shared-name"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.ResolveProjectsForKey(context.Background(), "key-b", right, []string{"shared-name"}); err != nil {
+		t.Fatal(err)
+	}
+	leftID, leftOK := left.GetProjectInWorkspace("workspace-a", "shared-name")
+	rightID, rightOK := right.GetProjectInWorkspace("workspace-b", "shared-name")
+	if !leftOK || !rightOK || leftID != "project-a" || rightID != "project-b" ||
+		strings.Join(resolver.calls, ",") != "same-org/workspace-a,same-org/workspace-b" {
+		t.Fatalf("left=%q/%v right=%q/%v calls=%v", leftID, leftOK, rightID, rightOK, resolver.calls)
+	}
+	if _, ok := left.GetProjectInWorkspace("workspace-b", "shared-name"); ok {
+		t.Fatal("workspace-b read a workspace-a cached mapping")
+	}
+	if a.cache.addProjectsScoped("key-a", "same-org", "workspace-b", map[string]string{"poison": "foreign"}) {
+		t.Fatal("cross-workspace cache merge was accepted")
+	}
+	if _, ok := left.GetProject("poison"); ok {
+		t.Fatal("cross-workspace cache merge changed the authenticated result")
+	}
+}
+
+func TestResolveProjectSQLAndLegacyDefaultSelectionFailClosed(t *testing.T) {
+	if !strings.Contains(resolveProjectsQuery, "organization_id = $1") ||
+		!strings.Contains(resolveProjectsQuery, "workspace_id = $2") ||
+		!strings.Contains(resolveProjectsQuery, "name = ANY($3)") {
+		t.Fatalf("project resolution query is not tenant-bound: %s", resolveProjectsQuery)
+	}
+	if _, err := requireExactlyOneDefaultWorkspace("org", nil); err == nil {
+		t.Fatal("missing default workspace accepted")
+	}
+	if _, err := requireExactlyOneDefaultWorkspace("org", []string{"a", "b"}); err == nil {
+		t.Fatal("ambiguous default workspace accepted")
+	}
+	if got, err := requireExactlyOneDefaultWorkspace("org", []string{"workspace-default"}); err != nil || got != "workspace-default" {
+		t.Fatalf("single default workspace=%q err=%v", got, err)
+	}
+}
+
+func TestStampRejectsWorkspaceLessScopeEvenWithCachedProject(t *testing.T) {
+	a := &Authenticator{cache: newCache(time.Minute, time.Hour), log: slog.Default()}
+	result := &ResolveResult{OrgID: "org", Projects: map[string]string{"shared": "foreign-project"}}
+	a.cache.putPositive("key", result)
+	traces := ptrace.NewTraces()
+	rs := traces.ResourceSpans().AppendEmpty()
+	rs.Resource().Attributes().PutStr("project_name", "shared")
+	rs.ScopeSpans().AppendEmpty().Spans().AppendEmpty().SetName("span")
+	if _, err := StampResourceAttrs(context.Background(), a, "key", traces, result); err == nil ||
+		!strings.Contains(err.Error(), "workspace scope") {
+		t.Fatalf("workspace-less cached project error=%v", err)
 	}
 }
 
@@ -737,8 +838,9 @@ func TestStampResourceAttrsValidProjectName(t *testing.T) {
 	}
 
 	result := &ResolveResult{
-		OrgID:    "org-stamp",
-		Projects: map[string]string{"my-project": "proj-id-123"},
+		OrgID:       "org-stamp",
+		WorkspaceID: "workspace-stamp",
+		Projects:    map[string]string{"my-project": "proj-id-123"},
 	}
 	ck := "stamp-valid-key"
 	a.cache.putPositive(ck, result)
@@ -776,8 +878,9 @@ func TestStampResourceAttrsMixedSpans(t *testing.T) {
 	// Both projects are known to the auth result — "projB" has an empty ID
 	// which simulates a project that resolved to nothing (will be dropped).
 	result := &ResolveResult{
-		OrgID:    "org-mixed",
-		Projects: map[string]string{"projA": "id-A", "projB": ""},
+		OrgID:       "org-mixed",
+		WorkspaceID: "workspace-mixed",
+		Projects:    map[string]string{"projA": "id-A", "projB": ""},
 	}
 	ck := "stamp-mixed-key"
 	a.cache.putPositive(ck, result)
@@ -1250,6 +1353,113 @@ func TestWatchRevocationsIgnoresUnrelatedKeys(t *testing.T) {
 	// key-b must remain.
 	if _, status := a.cache.get(otherCK); status != "fresh" {
 		t.Error("key-b should still be fresh")
+	}
+}
+
+func TestResolveResultDeleteProjectByID(t *testing.T) {
+	r := &ResolveResult{
+		OrgID: "org-1",
+		Projects: map[string]string{
+			"alpha": "id-A",
+			"beta":  "id-B",
+			"alias": "id-A", // same id under a second name
+		},
+	}
+	if !r.DeleteProjectByID("id-A") {
+		t.Fatal("expected DeleteProjectByID to report a removal")
+	}
+	if _, ok := r.GetProject("alpha"); ok {
+		t.Error("alpha (id-A) should be evicted")
+	}
+	if _, ok := r.GetProject("alias"); ok {
+		t.Error("alias (id-A) should be evicted")
+	}
+	if id, ok := r.GetProject("beta"); !ok || id != "id-B" {
+		t.Errorf("beta (id-B) should survive, got (%q, %v)", id, ok)
+	}
+	if r.DeleteProjectByID("id-A") {
+		t.Error("second delete of id-A should report no removal")
+	}
+}
+
+func TestCacheEvictProjectID(t *testing.T) {
+	c := newCache(5*time.Minute, 1*time.Hour)
+	// Two keys in the same org both cached the deleted project; a third is unrelated.
+	c.putPositive("ck-1", &ResolveResult{OrgID: "org-1", Projects: map[string]string{"pokedex": "P1", "other": "P9"}})
+	c.putPositive("ck-2", &ResolveResult{OrgID: "org-1", Projects: map[string]string{"pokedex": "P1"}})
+	c.putPositive("ck-3", &ResolveResult{OrgID: "org-2", Projects: map[string]string{"unrelated": "P2"}})
+
+	if n := c.evictProjectID("P1"); n != 2 {
+		t.Fatalf("evictProjectID touched %d entries, want 2", n)
+	}
+	e1, _ := c.get("ck-1")
+	if _, ok := e1.result.GetProject("pokedex"); ok {
+		t.Error("pokedex should be evicted from ck-1")
+	}
+	if id, ok := e1.result.GetProject("other"); !ok || id != "P9" {
+		t.Error("unrelated mapping in ck-1 should survive")
+	}
+	e3, _ := c.get("ck-3")
+	if id, ok := e3.result.GetProject("unrelated"); !ok || id != "P2" {
+		t.Error("other org's mapping should be untouched")
+	}
+	if n := c.evictProjectID(""); n != 0 {
+		t.Errorf("empty projectID should touch 0 entries, got %d", n)
+	}
+}
+
+func TestWatchProjectInvalidationEvictsByID(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { rdb.Close() })
+
+	a := &Authenticator{
+		cache: newCache(5*time.Minute, 1*time.Hour),
+		rdb:   rdb,
+		log:   slog.Default(),
+	}
+	a.cache.putPositive("ck-1", &ResolveResult{OrgID: "org-1", Projects: map[string]string{"pokedex": "P1"}})
+	a.cache.putPositive("ck-2", &ResolveResult{OrgID: "org-1", Projects: map[string]string{"pokedex": "P1", "live": "P3"}})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go a.WatchRevocations(ctx)
+	time.Sleep(100 * time.Millisecond)
+
+	if err := rdb.Publish(ctx, projectInvalidateChannel, "P1").Err(); err != nil {
+		t.Fatalf("publish failed: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		e1, _ := a.cache.get("ck-1")
+		e2, _ := a.cache.get("ck-2")
+		_, ok1 := e1.result.GetProject("pokedex")
+		_, ok2 := e2.result.GetProject("pokedex")
+		if !ok1 && !ok2 {
+			// P1 gone from both; the unrelated "live" mapping must remain.
+			if id, ok := e2.result.GetProject("live"); !ok || id != "P3" {
+				t.Fatalf("unrelated mapping evicted: got (%q, %v)", id, ok)
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("project id P1 was not evicted after invalidation publish")
+}
+
+// TestInvalidationChannelWireContract pins the literal channel names shared
+// with the Django backend. The backend publishes to these exact strings
+// (futureagi/tracer/services/project_deletion.py and accounts/views/keys.py);
+// a rename on either side silently breaks invalidation, so assert the literals
+// rather than the constants.
+func TestInvalidationChannelWireContract(t *testing.T) {
+	if projectInvalidateChannel != "fi:project:invalidate" {
+		t.Errorf("projectInvalidateChannel drifted: got %q", projectInvalidateChannel)
+	}
+	if revocationChannel != "fi:auth:revoke" {
+		t.Errorf("revocationChannel drifted: got %q", revocationChannel)
 	}
 }
 

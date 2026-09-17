@@ -1,14 +1,15 @@
-import { Box, Grid, Skeleton, useTheme } from "@mui/material";
+import { Alert, Box, Button, Grid, Skeleton, useTheme } from "@mui/material";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import EvaluationDateTimeRangePicker from "../EvalsChartsView/EvaluationDateTimeRangePicker";
 import ReactApexChart from "react-apexcharts";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { endOfToday, sub } from "date-fns";
 import { useLocation, useParams } from "react-router";
 import { getRandomId } from "src/utils/utils";
 import PropTypes from "prop-types";
+import { readEvalMetrics } from "../utils/eval_metrics_read";
 
 const MetricsTabGraph = ({ setDateFilter }) => {
   const theme = useTheme();
@@ -62,15 +63,30 @@ const MetricsTabGraph = ({ setDateFilter }) => {
     return [currentFilter];
   }, [parentDateFilter, setDateFilter]);
 
-  const { data: graphData, isLoading } = useQuery({
+  const {
+    data: graphData,
+    isLoading,
+    isError,
+    error,
+    refetch,
+  } = useQuery({
     queryKey: ["get-graph-data", evalId, filters, selectedInterval],
-    queryFn: async () => {
-      const response = await axios.get(endpoints.develop.eval.getEvalMetrics, {
-        params: { eval_template_id: evalId, filters: JSON.stringify(filters) },
-      });
-      return response.data;
-    },
-    // enabled: Boolean(observeId) && filters.length > 0,
+    queryFn: ({ signal }) =>
+      readEvalMetrics(
+        ({ signal: requestSignal, timeout }) =>
+          axios.get(endpoints.develop.eval.getEvalMetrics, {
+            signal: requestSignal,
+            timeout,
+            params: {
+              eval_template_id: evalId,
+              filters: JSON.stringify(filters),
+            },
+          }),
+        signal,
+      ),
+    enabled: Boolean(evalId),
+    placeholderData: keepPreviousData,
+    retry: false,
   });
 
   const chartData = useMemo(() => {
@@ -189,6 +205,21 @@ const MetricsTabGraph = ({ setDateFilter }) => {
 
       {/* Chart Categories and Charts */}
       <Box sx={{ height: "90%", overflowY: "auto" }}>
+        {isError && (
+          <Alert
+            severity="error"
+            action={
+              <Button color="inherit" size="small" onClick={() => refetch()}>
+                Retry
+              </Button>
+            }
+            sx={{ mb: 1 }}
+          >
+            {graphData
+              ? "Could not refresh evaluation metrics. The previous graph is still shown."
+              : error?.message || "Could not load evaluation metrics."}
+          </Alert>
+        )}
         {isLoading ? (
           <>
             <Skeleton variant="text" width={150} height={40} />
@@ -198,7 +229,7 @@ const MetricsTabGraph = ({ setDateFilter }) => {
               </Grid>
             </Grid>
           </>
-        ) : (
+        ) : graphData ? (
           <>
             <ReactApexChart
               ref={chartRef}
@@ -208,7 +239,7 @@ const MetricsTabGraph = ({ setDateFilter }) => {
               height={150} // Adjust height as needed
             />
           </>
-        )}
+        ) : null}
       </Box>
     </Box>
   );

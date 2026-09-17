@@ -1,0 +1,103 @@
+name: property-catalog-dev
+
+# Development-only Kafka broker shared by the catalog qualification harnesses.
+# This file does NOT run either catalog producer or consumer. Its topic-init
+# service is the legacy FI_CATALOG_MODE span-attribute topic and is hidden
+# behind an explicit profile and acknowledgement. For the unified
+# FI_PROPERTY_CATALOG_MODE path, follow:
+#   deploy/dev/property-catalog-docker/README.md
+# This file is never referenced by production Compose or Helm values.
+services:
+  volume-init:
+    image: apache/kafka-native:4.1.0
+    user: "0:0"
+    restart: "no"
+    entrypoint: ["/bin/sh", "-ec"]
+    command: ["chown -R 1000:1000 /var/lib/kafka/data && chmod 700 /var/lib/kafka/data"]
+    volumes:
+      - catalog_kafka_data:/var/lib/kafka/data
+    labels: &dev-labels
+      futureagi.environment: development
+      futureagi.component: property-catalog
+      futureagi.production-use: forbidden
+
+  kafka:
+    image: apache/kafka-native:4.1.0
+    hostname: property-catalog-kafka-dev
+    restart: unless-stopped
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:29092:29092"
+    environment:
+      CLUSTER_ID: propertyCatalogDevV1
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: INTERNAL://:9092,EXTERNAL://:29092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://property-catalog-kafka-dev:9092,EXTERNAL://127.0.0.1:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@property-catalog-kafka-dev:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR: "1"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_MESSAGE_MAX_BYTES: "1048576"
+      KAFKA_REPLICA_FETCH_MAX_BYTES: "1048576"
+      KAFKA_LOG_RETENTION_HOURS: "72"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    volumes:
+      - catalog_kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 9092"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    labels: *dev-labels
+
+  topic-init:
+    image: apache/kafka:4.1.0
+    restart: "no"
+    profiles: ["legacy-span-attribute-catalog"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    network_mode: service:kafka
+    environment:
+      PROPERTY_CATALOG_LEGACY_SPAN_ATTRIBUTE_ACK: >-
+        ${PROPERTY_CATALOG_LEGACY_SPAN_ATTRIBUTE_ACK:-}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        if [ "$${PROPERTY_CATALOG_LEGACY_SPAN_ATTRIBUTE_ACK}" != \
+          "PROPERTY_CATALOG_ACK_LEGACY_SPAN_ATTRIBUTE_ONLY" ]; then
+          echo >&2 "Refusing to create the legacy span-attribute topic."
+          echo >&2 "Unified property catalog developers must follow deploy/dev/property-catalog-docker/README.md."
+          exit 64
+        fi
+        exec /opt/kafka/bin/kafka-topics.sh \
+          --bootstrap-server property-catalog-kafka-dev:9092 \
+          --create \
+          --if-not-exists \
+          --topic property-catalog.dev.span-attribute-catalog.v1 \
+          --partitions 6 \
+          --replication-factor 1 \
+          --config retention.ms=259200000 \
+          --config max.message.bytes=1048576
+    labels: *dev-labels
+
+volumes:
+  catalog_kafka_data:
+    name: property_catalog_kafka_dev_data
+    labels: *dev-labels
+
+networks:
+  default:
+    name: property-catalog-dev
+    labels: *dev-labels

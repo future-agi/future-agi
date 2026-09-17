@@ -3,6 +3,7 @@ import PropTypes from "prop-types";
 import React from "react";
 import { format } from "date-fns";
 import SvgColor from "src/components/svg-color";
+import CustomTooltip from "src/components/tooltip";
 import { convertKeysToSnakeCase } from "./common";
 import { useDatasetOptimizationStoreShallow } from "./states";
 
@@ -78,18 +79,26 @@ const DatasetOptimizationCancelled = ({ optimization }) => {
         >
           The run was stopped before completion. Click below to start it again.
         </Typography>
-        <Button
-          variant="outlined"
-          onClick={handleRerun}
-          startIcon={
-            <SvgColor
-              sx={{ width: 20, height: 20 }}
-              src="/assets/icons/ic_refresh.svg"
-            />
-          }
+        <CustomTooltip
+          show={Boolean(optimization?.modelDeprecated)}
+          title="Model is no longer available. Select a new model to rerun."
         >
-          Re-Run Optimization
-        </Button>
+          <span>
+            <Button
+              variant="outlined"
+              disabled={optimization?.modelDeprecated}
+              onClick={handleRerun}
+              startIcon={
+                <SvgColor
+                  sx={{ width: 20, height: 20 }}
+                  src="/assets/icons/ic_refresh.svg"
+                />
+              }
+            >
+              Re-Run Optimization
+            </Button>
+          </span>
+        </CustomTooltip>
       </Stack>
     </Box>
   );

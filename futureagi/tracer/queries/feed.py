@@ -1683,7 +1683,9 @@ def _get_trace_totals(
     return totals.get(str(trace_id), (None, None, None))
 
 
-def _get_trace_totals_batch(trace_ids: list[str], project_id: str | None = None) -> dict:
+def _get_trace_totals_batch(
+    trace_ids: list[str], project_id: str | None = None
+) -> dict:
     """Return {trace_id_str: (latency, prompt, completion)} aggregated from spans.
 
     Summed CH-side — three ints per trace come back, not the span payloads.
@@ -2545,14 +2547,17 @@ def _project_scope_total(project_id: str, source: str, start, end=None) -> int:
     """
     if source == ClusterSource.EVAL:
         # Denominator = distinct traces in the window. The PG ``Trace`` table is
-        # gone, so count distinct CH root traces over the same window. (CH uses an
-        # inclusive BETWEEN vs the scanner branch's exclusive ``created_at__lt``
-        # below — a boundary-microsecond difference on a rate denominator.)
+        # gone, so count distinct CH root traces over the same arrival-time window.
+        # This is an intentional ``created_at`` exception: the numerator is
+        # ErrorClusterTraces.created_at (when membership joined the cluster), so
+        # switching only this denominator to event time makes late/backfilled
+        # traces produce an invalid rate. Normal trace/list/graph product windows
+        # use indexed ``start_time`` instead.
         with get_reader() as reader:
             if end is not None:
                 return reader.count_with_filters(
                     project_id=str(project_id),
-                    created_at_range=(start, end),
+                    created_at_half_open_range=(start, end),
                     roots_only=True,
                 )
             return reader.count_with_filters(

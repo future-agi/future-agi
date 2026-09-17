@@ -57,7 +57,7 @@ def get_renderer():
         return structlog.dev.ConsoleRenderer(colors=True)
 
 
-def configure_structlog():
+def configure_structlog(cache_logger_on_first_use: bool = True):
     """Configure structlog with proper processors."""
     structlog.configure(
         processors=get_processors()
@@ -66,7 +66,7 @@ def configure_structlog():
         ],
         logger_factory=structlog.stdlib.LoggerFactory(),
         wrapper_class=structlog.stdlib.BoundLogger,
-        cache_logger_on_first_use=True,
+        cache_logger_on_first_use=cache_logger_on_first_use,
     )
 
 

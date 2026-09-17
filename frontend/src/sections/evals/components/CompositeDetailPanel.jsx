@@ -24,6 +24,7 @@ import EvalPickerDrawer from "src/sections/common/EvalPicker/EvalPickerDrawer";
 import { useCompositeChildrenSchemas } from "../hooks/useCompositeChildrenKeys";
 import { canonicalEntries } from "src/utils/utils";
 import CompositeAxisTabs, { axisToLockedFilters } from "./CompositeAxisTabs";
+import { buildCompositeChildRunConfig } from "../Helpers/compositeRuntimeConfig";
 
 const AGGREGATION_OPTIONS = [
   { value: "weighted_avg", label: "Weighted Average" },
@@ -128,10 +129,13 @@ const CompositeDetailPanel = ({
       evalMeta?.params ||
       evalMeta?.config?.params ||
       evalMeta?.config?.run_config?.params;
-    const childConfig =
-      params && typeof params === "object" && Object.keys(params).length > 0
+    const runConfig = buildCompositeChildRunConfig(evalMeta);
+    const childConfig = {
+      ...(params && typeof params === "object" && Object.keys(params).length > 0
         ? { params }
-        : {};
+        : {}),
+      ...(Object.keys(runConfig).length > 0 ? { run_config: runConfig } : {}),
+    };
     const next = [
       ...childrenList,
       {

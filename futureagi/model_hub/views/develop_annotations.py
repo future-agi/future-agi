@@ -6,6 +6,11 @@ import uuid
 import numpy as np
 import pandas as pd
 import structlog
+from accounts.models import User
+from accounts.utils import get_request_organization
+from agentic_eval.core.embeddings.embedding_manager import (
+    EmbeddingManager,
+)
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Case, CharField, Q, Value, When
@@ -14,17 +19,6 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
-from rest_framework import serializers, viewsets
-from rest_framework.decorators import action
-from rest_framework.exceptions import MethodNotAllowed, NotFound
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.views import APIView
-
-from accounts.models import User
-from accounts.utils import get_request_organization
-from agentic_eval.core.embeddings.embedding_manager import (
-    EmbeddingManager,
-)
 
 # from ee.agenthub.feedback_agent_updated.utils import RAG
 from model_hub.models import AnnotationTask
@@ -57,6 +51,11 @@ from model_hub.serializers.develop_annotations import (
 )
 from model_hub.utils.auto_annotate import generate_annotations_task
 from model_hub.utils.utils import corpus_builder
+from rest_framework import serializers, viewsets
+from rest_framework.decorators import action
+from rest_framework.exceptions import MethodNotAllowed, NotFound
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
 from tfc.constants.levels import Level
 from tfc.ee_gating import FeatureUnavailable
 from tfc.utils.api_contracts import validated_request
@@ -441,7 +440,7 @@ class AnnotationsLabelsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelV
             label = AnnotationsLabels.all_objects.get(
                 pk=pk,
                 deleted=True,
-                organization=request.user.organization,
+                organization=get_request_organization(request),
             )
         except AnnotationsLabels.DoesNotExist:
             return self._gm.not_found("Label not found or not archived.")
@@ -2080,11 +2079,12 @@ class AnnotationSummaryView(APIView):
                 except ImportError:
                     Entitlements = None
 
-                feat_check = Entitlements.check_feature(
-                    str(organization.id), "has_agreement_metrics"
-                )
-                if not feat_check.allowed:
-                    return self._gm.forbidden_response(feat_check.reason)
+                if Entitlements is not None:
+                    feat_check = Entitlements.check_feature(
+                        str(organization.id), "has_agreement_metrics"
+                    )
+                    if not feat_check.allowed:
+                        return self._gm.forbidden_response(feat_check.reason)
             except ImportError:
                 pass
 

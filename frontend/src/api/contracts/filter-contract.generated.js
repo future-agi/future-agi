@@ -4,6 +4,16 @@
 
 export const FILTER_CONTRACT = Object.freeze({
   version: 1,
+  limits: {
+    maxItems: 32,
+    maxValues: 64,
+    maxDepth: 8,
+    stringMaxUtf8Bytes: 4096,
+    typedStringMaxUtf8Bytes: 16384,
+    totalStringMaxUtf8Bytes: 229376,
+    serializedMaxUtf8Bytes: 1441792,
+    configMaxUtf8Bytes: 131072,
+  },
   operators: {
     noValue: ["is_null", "is_not_null"],
     list: ["in", "not_in"],
@@ -34,6 +44,17 @@ export const FILTER_CONTRACT = Object.freeze({
         "is_not_null",
       ],
       boolean: ["equals", "not_equals", "is_null", "is_not_null"],
+    },
+    structuredSpanAttributeAllowed: {
+      array: ["contains", "not_contains", "is_null", "is_not_null"],
+      map: [
+        "equals",
+        "not_equals",
+        "contains",
+        "not_contains",
+        "is_null",
+        "is_not_null",
+      ],
     },
     filterTypeAllowed: {
       text: [
@@ -128,6 +149,8 @@ export const FILTER_CONTRACT = Object.freeze({
       array: "array",
       list: "array",
       json: "array",
+      map: "map",
+      object: "map",
     },
   },
   columnTypes: {
@@ -162,6 +185,9 @@ export const LIST_FILTER_OPS = Object.freeze(FILTER_CONTRACT.operators.list);
 export const RANGE_FILTER_OPS = Object.freeze(FILTER_CONTRACT.operators.range);
 export const SPAN_ATTRIBUTE_ALLOWED_OPS = Object.freeze(
   FILTER_CONTRACT.operators.spanAttributeAllowed,
+);
+export const STRUCTURED_SPAN_ATTRIBUTE_ALLOWED_OPS = Object.freeze(
+  FILTER_CONTRACT.operators.structuredSpanAttributeAllowed,
 );
 export const FILTER_TYPE_ALLOWED_OPS = Object.freeze(
   FILTER_CONTRACT.operators.filterTypeAllowed,

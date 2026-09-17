@@ -477,8 +477,28 @@ const EvalsListView = () => {
 
   // Fetch 30-day charts separately (ClickHouse, async)
   const templateIds = useMemo(() => items.map((item) => item.id), [items]);
-  const { data: chartsData, isLoading: chartsLoading } =
-    useEvalsListCharts(templateIds);
+  const {
+    data: chartsRead,
+    isLoading: chartsLoading,
+    isFetching: chartsFetching,
+    isError: chartsTransportError,
+    refetch: refetchCharts,
+  } = useEvalsListCharts(templateIds);
+  const chartsData = useMemo(() => chartsRead?.charts || {}, [chartsRead]);
+  const chartsAreExact =
+    chartsRead?.query_complete === true &&
+    chartsRead?.query_status === "complete" &&
+    chartsRead?.query_sampled !== true &&
+    chartsRead?.data_stale !== true;
+  const chartsAreStale =
+    chartsRead?.query_complete === false &&
+    chartsRead?.query_status === "stale" &&
+    chartsRead?.query_sampled !== true &&
+    chartsRead?.data_stale === true;
+  const chartsRenderable = chartsAreExact || chartsAreStale;
+  const chartsUnavailable =
+    !chartsLoading &&
+    (chartsTransportError || (Boolean(chartsRead) && !chartsRenderable));
 
   // Selected rows
   const selectedItems = useMemo(() => {
@@ -500,13 +520,15 @@ const EvalsListView = () => {
         cell: ({ getValue }) => {
           const name = getValue();
           return (
-            <CustomTooltip size="small" type="black" show arrow title={name || ""} placement="top">
-              <Typography
-                variant="s1"
-
-                noWrap
-
-              >
+            <CustomTooltip
+              size="small"
+              type="black"
+              show
+              arrow
+              title={name || ""}
+              placement="top"
+            >
+              <Typography variant="s1" noWrap>
                 {name}
               </Typography>
             </CustomTooltip>
@@ -521,7 +543,7 @@ const EvalsListView = () => {
         enableSorting: false,
         cell: ({ row }) => {
           const chartInfo = chartsData?.[row.original.id];
-          if (chartsLoading)
+          if (chartsLoading || (chartsFetching && !chartsRead))
             return (
               <Box
                 sx={{
@@ -538,6 +560,13 @@ const EvalsListView = () => {
                 }}
               />
             );
+          if (!chartsRenderable || !chartInfo) {
+            return (
+              <Typography variant="caption" color="text.disabled">
+                Unavailable
+              </Typography>
+            );
+          }
           return (
             <Box sx={{ width: "100%", overflow: "hidden" }}>
               <VolumeBarChart
@@ -556,7 +585,7 @@ const EvalsListView = () => {
         enableSorting: false,
         cell: ({ row }) => {
           const chartInfo = chartsData?.[row.original.id];
-          if (chartsLoading)
+          if (chartsLoading || (chartsFetching && !chartsRead))
             return (
               <Box
                 sx={{
@@ -573,6 +602,13 @@ const EvalsListView = () => {
                 }}
               />
             );
+          if (!chartsRenderable || !chartInfo) {
+            return (
+              <Typography variant="caption" color="text.disabled">
+                Unavailable
+              </Typography>
+            );
+          }
           return (
             <Box sx={{ width: "100%", overflow: "hidden" }}>
               <ErrorRateSparkline
@@ -690,7 +726,7 @@ const EvalsListView = () => {
         cell: ({ getValue }) => <TypeBadge type={getValue()} />,
       },
     ],
-    [chartsData, chartsLoading],
+    [chartsData, chartsFetching, chartsLoading, chartsRead, chartsRenderable],
   );
 
   // Apply user-defined order to the columns array. The `name` column is
@@ -948,6 +984,64 @@ const EvalsListView = () => {
           />
         )}
       </Box>
+
+      {chartsAreStale && (
+        <Box
+          role="status"
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 1,
+            px: 1.25,
+            py: 0.5,
+            border: "1px solid",
+            borderColor: "warning.main",
+            borderRadius: 1,
+          }}
+        >
+          <Typography variant="caption" color="text.secondary">
+            Showing the last available 30-day chart data. The evaluation list is
+            current.
+          </Typography>
+          <Button
+            size="small"
+            disabled={chartsFetching}
+            onClick={() => refetchCharts()}
+          >
+            Retry charts
+          </Button>
+        </Box>
+      )}
+
+      {chartsUnavailable && (
+        <Box
+          role="alert"
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 1,
+            px: 1.25,
+            py: 0.5,
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: 1,
+          }}
+        >
+          <Typography variant="caption" color="text.secondary">
+            The 30-day charts could not be loaded. The evaluation list is still
+            available.
+          </Typography>
+          <Button
+            size="small"
+            disabled={chartsFetching}
+            onClick={() => refetchCharts()}
+          >
+            Retry charts
+          </Button>
+        </Box>
+      )}
 
       {/* Table */}
       <DataTable

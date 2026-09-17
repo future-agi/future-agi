@@ -15,7 +15,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
 	"github.com/futureagi/agentcc-gateway/internal/translation"
-	_ "github.com/futureagi/agentcc-gateway/internal/translation/anthropic" // register translator
+	anthropictrans "github.com/futureagi/agentcc-gateway/internal/translation/anthropic"
 )
 
 // MappingRestorer is satisfied by translators that can restore truncated tool
@@ -71,17 +71,11 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 
 	// Extract headers.
 	setAuthMetadataFromRequest(rc, r)
-	if meta := r.Header.Get("x-agentcc-metadata"); meta != "" {
-		var m map[string]string
-		if err := json.Unmarshal([]byte(meta), &m); err == nil {
-			for k, v := range m {
-				if isBlockedMetadataKey(k) {
-					continue
-				}
-				rc.Metadata[k] = v
-			}
-		}
-	}
+	// Caller dimensions, from the x-agentcc-metadata header and the body's own
+	// non-spec fields. Read from the raw bytes: the native pass-through below
+	// never unmarshals this body.
+	applyCallerMetadata(rc, r, nil)
+	applyCallerExtrasFromBody(rc, body, anthropictrans.KnownRequestFields())
 
 	// Resolve timeout and context.
 	timeout := h.resolveTimeout(rc, r)
@@ -168,6 +162,11 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 
 	// Fast path: provider natively speaks Anthropic.
 	if ap, ok := provider.(providers.AnthropicNativeProvider); ok {
+		// rc.Request is deliberately left nil, as it is on the genai path.
+		// A carrier with empty Messages would hash to the same cache key for
+		// every prompt (BuildCacheKey marshals Messages), and the response
+		// stored against it holds usage only — so a later request would be
+		// served a content-less 200. Request-shaped plugins skip on nil.
 		if isStream {
 			h.handleAnthropicStream(ctx, w, rc, ap, body, anthropicHeaders)
 		} else {
@@ -307,9 +306,28 @@ func (h *Handlers) AnthropicCountTokens(w http.ResponseWriter, r *http.Request) 
 // ─── Native pass-through helpers (unchanged from original) ───────────────────
 
 func (h *Handlers) handleAnthropicNonStream(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, ap providers.AnthropicNativeProvider, body []byte, headers map[string]string) {
-	respBody, statusCode, err := ap.CreateAnthropicMessage(ctx, body, headers)
+	var respBody []byte
+	var statusCode int
+
+	err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
+		var callErr error
+		respBody, statusCode, callErr = ap.CreateAnthropicMessage(ctx, body, headers)
+		if callErr != nil {
+			return callErr
+		}
+		if statusCode < 400 {
+			applyAnthropicUsage(rc, respBody)
+		}
+		return nil
+	})
 	if err != nil {
 		writeAnthropicErrorFromError(w, err)
+		return
+	}
+
+	// A plugin answered it — a cache hit. Its response is canonical.
+	if respBody == nil {
+		h.writeAnthropicShortCircuit(w, rc)
 		return
 	}
 
@@ -322,7 +340,16 @@ func (h *Handlers) handleAnthropicNonStream(ctx context.Context, w http.Response
 		return
 	}
 
-	// Extract usage for cost tracking.
+	h.setAgentccHeaders(w, rc)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write(respBody)
+}
+
+// applyAnthropicUsage lifts the usage block onto rc. rc.Response is populated
+// because that is what the cost plugin prices from; it carries usage only, not
+// a translation of the response.
+func applyAnthropicUsage(rc *models.RequestContext, respBody []byte) {
 	inputTokens, outputTokens := anthropicfmt.ExtractUsage(respBody)
 	if inputTokens > 0 {
 		rc.Metadata["input_tokens"] = strconv.Itoa(inputTokens)
@@ -330,33 +357,95 @@ func (h *Handlers) handleAnthropicNonStream(ctx context.Context, w http.Response
 	if outputTokens > 0 {
 		rc.Metadata["output_tokens"] = strconv.Itoa(outputTokens)
 	}
-
-	// Extract resolved model.
 	if resolvedModel := anthropicfmt.ExtractModel(respBody); resolvedModel != "" {
 		rc.ResolvedModel = resolvedModel
 	}
+	if inputTokens == 0 && outputTokens == 0 {
+		return
+	}
+	model := rc.ResolvedModel
+	if model == "" {
+		model = rc.Model
+	}
+	rc.Response = &models.ChatCompletionResponse{
+		Model: model,
+		Usage: &models.Usage{
+			PromptTokens:     inputTokens,
+			CompletionTokens: outputTokens,
+			TotalTokens:      inputTokens + outputTokens,
+		},
+	}
+}
 
+// writeAnthropicShortCircuit renders a plugin-produced response in Anthropic
+// wire format.
+func (h *Handlers) writeAnthropicShortCircuit(w http.ResponseWriter, rc *models.RequestContext) {
+	translator, ok := translation.InboundFor("anthropic")
+	if !ok || rc.Response == nil {
+		h.setAgentccHeaders(w, rc)
+		anthropicfmt.WriteError(w, http.StatusInternalServerError, "api_error",
+			"request was answered internally but the response could not be formatted")
+		return
+	}
+	out, err := translator.ResponseFromCanonical(rc.Response)
+	if err != nil {
+		h.setAgentccHeaders(w, rc)
+		anthropicfmt.WriteError(w, http.StatusInternalServerError, "api_error",
+			"failed to format response: "+err.Error())
+		return
+	}
 	h.setAgentccHeaders(w, rc)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	w.Write(respBody)
+	w.Write(out)
 }
 
 func (h *Handlers) handleAnthropicStream(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, ap providers.AnthropicNativeProvider, body []byte, headers map[string]string) {
-	stream, statusCode, err := ap.StreamAnthropicMessage(ctx, body, headers)
-	if err != nil {
+	var stream io.ReadCloser
+	var statusCode int
+
+	// Post-plugins wait for the close, when the counts are known.
+	if err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
+		var callErr error
+		stream, statusCode, callErr = ap.StreamAnthropicMessage(ctx, body, headers)
+		return callErr
+	}); err != nil {
 		writeAnthropicErrorFromError(w, err)
+		return
+	}
+
+	if rc.Flags.ShortCircuited && rc.Response != nil {
+		// JSON even though a stream was asked for, as the chat handler does.
+		h.writeAnthropicShortCircuit(w, rc)
+		return
+	}
+	if stream == nil {
+		writeAnthropicErrorFromError(w, models.ErrInternal("no stream from provider"))
 		return
 	}
 	defer stream.Close()
 
-	// If upstream returned an error status, read and forward.
+	// Without this the stream would be priced at zero and logged as such.
+	var usage anthropicfmt.StreamUsageScanner
+	finalize := func(detach bool) {
+		applyAnthropicStreamUsage(rc, &usage)
+		pluginCtx := ctx
+		if detach {
+			pluginCtx = context.Background()
+		}
+		h.engine.RunPostPlugins(pluginCtx, rc)
+	}
+
+	// If upstream returned an error status, read and forward. Still finalised:
+	// the non-streaming path records a 4xx through Process, and a streamed one
+	// that skipped it would be missing from the log and the trace.
 	if statusCode >= 400 {
 		errBody, _ := io.ReadAll(io.LimitReader(stream, 1024*1024))
 		h.setAgentccHeaders(w, rc)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(statusCode)
 		w.Write(errBody)
+		finalize(false)
 		return
 	}
 
@@ -369,6 +458,8 @@ func (h *Handlers) handleAnthropicStream(ctx context.Context, w http.ResponseWri
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		slog.Warn("streaming not supported", "request_id", rc.RequestID)
+		// Stream is open, so the request still has to be accounted for.
+		finalize(true)
 		return
 	}
 	flusher.Flush()
@@ -378,8 +469,11 @@ func (h *Handlers) handleAnthropicStream(ctx context.Context, w http.ResponseWri
 	for {
 		n, readErr := stream.Read(buf)
 		if n > 0 {
+			usage.Write(buf[:n])
 			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
 				slog.Warn("error writing anthropic stream", "request_id", rc.RequestID, "error", writeErr)
+				// Client gone, tokens still spent — detach from its context.
+				finalize(true)
 				return
 			}
 			flusher.Flush()
@@ -388,14 +482,47 @@ func (h *Handlers) handleAnthropicStream(ctx context.Context, w http.ResponseWri
 			if readErr != io.EOF {
 				slog.Warn("error reading anthropic stream", "request_id", rc.RequestID, "error", readErr)
 			}
+			finalize(false)
 			return
 		}
 
 		select {
 		case <-ctx.Done():
+			finalize(true)
 			return
 		default:
 		}
+	}
+}
+
+// applyAnthropicStreamUsage moves collected counts onto rc.
+func applyAnthropicStreamUsage(rc *models.RequestContext, usage *anthropicfmt.StreamUsageScanner) {
+	if model := usage.Model(); model != "" {
+		rc.ResolvedModel = model
+	}
+	inputTokens, outputTokens, ok := usage.Usage()
+	if !ok {
+		// Leave rc.Response nil so the cost plugin skips it — a gap is honest
+		// where a zero is not.
+		return
+	}
+	if inputTokens > 0 {
+		rc.Metadata["input_tokens"] = strconv.Itoa(inputTokens)
+	}
+	if outputTokens > 0 {
+		rc.Metadata["output_tokens"] = strconv.Itoa(outputTokens)
+	}
+	model := rc.ResolvedModel
+	if model == "" {
+		model = rc.Model
+	}
+	rc.Response = &models.ChatCompletionResponse{
+		Model: model,
+		Usage: &models.Usage{
+			PromptTokens:     inputTokens,
+			CompletionTokens: outputTokens,
+			TotalTokens:      inputTokens + outputTokens,
+		},
 	}
 }
 
@@ -411,7 +538,19 @@ func (h *Handlers) handleAnthropicNonStreamViaCanonical(
 	translator translation.InboundTranslator,
 	canonicalReq *models.ChatCompletionRequest,
 ) {
-	canonicalResp, err := provider.ChatCompletion(ctx, canonicalReq)
+	// Without this the pipeline sees a nil rc.Request.
+	rc.Request = canonicalReq
+
+	var canonicalResp *models.ChatCompletionResponse
+	err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
+		var callErr error
+		canonicalResp, callErr = provider.ChatCompletion(ctx, canonicalReq)
+		if callErr != nil {
+			return callErr
+		}
+		rc.Response = canonicalResp
+		return nil
+	})
 	if err != nil {
 		var apiErr *models.APIError
 		if errors.As(err, &apiErr) {
@@ -431,6 +570,23 @@ func (h *Handlers) handleAnthropicNonStreamViaCanonical(
 		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(status)
 		w.Write(body)
+		return
+	}
+
+	// A plugin answered instead of the provider — a cache hit.
+	if canonicalResp == nil {
+		canonicalResp = rc.Response
+	}
+	if canonicalResp == nil {
+		status, errBody, ct := translator.ErrorFromCanonical(&models.APIError{
+			Status:  http.StatusInternalServerError,
+			Type:    models.ErrTypeServer,
+			Message: "no response from provider",
+		})
+		h.setAgentccHeaders(w, rc)
+		w.Header().Set("Content-Type", ct)
+		w.WriteHeader(status)
+		w.Write(errBody)
 		return
 	}
 
@@ -492,7 +648,45 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 	translator translation.InboundTranslator,
 	canonicalReq *models.ChatCompletionRequest,
 ) {
-	chunkCh, errCh := provider.StreamChatCompletion(ctx, canonicalReq)
+	rc.Request = canonicalReq
+
+	var rawChunkCh <-chan models.StreamChunk
+	var errCh <-chan error
+
+	// Pre-plugins run before the upstream stream opens; post-plugins wait for
+	// the final chunk, which is where usage arrives.
+	if err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
+		rawChunkCh, errCh = provider.StreamChatCompletion(ctx, canonicalReq)
+		return nil
+	}); err != nil {
+		writeAnthropicErrorFromError(w, err)
+		return
+	}
+
+	if rc.Flags.ShortCircuited && rc.Response != nil {
+		// Answered by a plugin, returned as JSON — the canonical chat handler
+		// does the same for a cache hit on a streaming request.
+		h.writeAnthropicShortCircuit(w, rc)
+		return
+	}
+	if rawChunkCh == nil {
+		writeAnthropicErrorFromError(w, models.ErrInternal("no stream from provider"))
+		return
+	}
+
+	// Tee for usage: the counts are already structured here, unlike in the
+	// translated SSE bytes.
+	chunkCh, usageCh := teeStreamUsage(ctx, rawChunkCh)
+
+	// Must be reached from every exit below — the tokens were spent either way.
+	finalize := func(detach bool) {
+		applyCanonicalStreamUsage(rc, usageCh)
+		pluginCtx := ctx
+		if detach {
+			pluginCtx = context.Background()
+		}
+		h.engine.RunPostPlugins(pluginCtx, rc)
+	}
 
 	// Translate the OpenAI chunk stream into Anthropic SSE events. If the
 	// request came in with a tool_name_mapping (a tool was truncated to fit
@@ -523,6 +717,8 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		slog.Warn("streaming not supported", "request_id", rc.RequestID)
+		// Stream is open, so the request still has to be accounted for.
+		finalize(true)
 		return
 	}
 	flusher.Flush()
@@ -532,6 +728,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 	for {
 		select {
 		case <-ctx.Done():
+			finalize(true)
 			return
 
 		case event, ok := <-eventCh:
@@ -542,6 +739,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 			}
 			if _, writeErr := w.Write(event); writeErr != nil {
 				slog.Warn("error writing translated anthropic stream", "request_id", rc.RequestID, "error", writeErr)
+				finalize(true)
 				return
 			}
 			flusher.Flush()
@@ -559,6 +757,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 			if err != nil {
 				slog.Warn("translator stream error", "request_id", rc.RequestID, "error", err)
 				// Error event already emitted by the translator; just stop.
+				finalize(false)
 				return
 			}
 
@@ -569,12 +768,14 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 			}
 			if err != nil {
 				slog.Warn("provider stream error", "request_id", rc.RequestID, "error", err)
+				finalize(false)
 				return
 			}
 		}
 
 		// Once every channel is drained, we're done.
 		if eventCh == nil && errCh == nil && translatorErrCh == nil {
+			finalize(false)
 			return
 		}
 	}
@@ -607,4 +808,100 @@ func extractToolNameMapping(req *models.ChatCompletionRequest) map[string]string
 		return nil
 	}
 	return m
+}
+
+// streamUsage is what a finished stream reported about itself.
+type streamUsage struct {
+	usage *models.Usage
+	model string
+}
+
+// teeStreamUsage passes chunks through untouched, keeping the last usage and
+// model. The result travels on a channel so reading it after the drain loop is
+// ordered against the goroutine that wrote it.
+func teeStreamUsage(ctx context.Context, in <-chan models.StreamChunk) (<-chan models.StreamChunk, <-chan streamUsage) {
+	out := make(chan models.StreamChunk)
+	done := make(chan streamUsage, 1)
+
+	record := func(seen *streamUsage, chunk models.StreamChunk) {
+		if chunk.Usage != nil {
+			seen.usage = chunk.Usage
+		}
+		if chunk.Model != "" {
+			seen.model = chunk.Model
+		}
+	}
+
+	go func() {
+		var seen streamUsage
+		defer func() {
+			done <- seen
+			close(done)
+			close(out)
+		}()
+		for chunk := range in {
+			record(&seen, chunk)
+			select {
+			case out <- chunk:
+			case <-ctx.Done():
+				// The consumer is gone — the translator returns on ctx.Done
+				// without draining. Forwarding would park here forever while
+				// finalize waits on the usage channel, leaking both goroutines
+				// and the provider stream. Keep draining so the counts still
+				// arrive, just stop forwarding.
+				for c := range in {
+					record(&seen, c)
+				}
+				return
+			}
+		}
+	}()
+
+	return out, done
+}
+
+// applyCanonicalStreamUsage moves a finished stream's usage onto rc. Left nil
+// when the provider sent none, so the cost plugin skips rather than bills zero.
+func applyCanonicalStreamUsage(rc *models.RequestContext, usageCh <-chan streamUsage) {
+	seen := <-usageCh
+	if seen.model != "" {
+		rc.ResolvedModel = seen.model
+	}
+	if seen.usage == nil {
+		return
+	}
+	if seen.usage.PromptTokens > 0 {
+		rc.Metadata["input_tokens"] = strconv.Itoa(seen.usage.PromptTokens)
+	}
+	if seen.usage.CompletionTokens > 0 {
+		rc.Metadata["output_tokens"] = strconv.Itoa(seen.usage.CompletionTokens)
+	}
+	model := rc.ResolvedModel
+	if model == "" {
+		model = rc.Model
+	}
+	usage := *seen.usage
+	if usage.TotalTokens == 0 {
+		// Providers vary on whether they send it; the native paths always fill
+		// it, so do the same here rather than diverge.
+		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	}
+	rc.Response = &models.ChatCompletionResponse{Model: model, Usage: &usage}
+}
+
+// setUsageResponse gives the post-plugins the minimal canonical response they
+// price from. The dialect handlers forward native bytes and never build one.
+func setUsageResponse(rc *models.RequestContext, promptTokens, completionTokens int) {
+	model := rc.ResolvedModel
+	if model == "" {
+		model = rc.Model
+	}
+	rc.Response = &models.ChatCompletionResponse{
+		Model: model,
+		Usage: &models.Usage{
+			PromptTokens:     promptTokens,
+			CompletionTokens: completionTokens,
+			TotalTokens:      promptTokens + completionTokens,
+		},
+	}
 }

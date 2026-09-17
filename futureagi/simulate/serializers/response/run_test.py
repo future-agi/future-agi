@@ -100,6 +100,19 @@ class RunTestResponseSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class RunTestListPaginatedResponseSerializer(serializers.Serializer):
+    """Paginated envelope for GET /simulate/run-tests/ — matches
+    ExtendedPageNumberPagination shape (count/next/previous/results plus
+    total_pages/current_page)."""
+
+    count = serializers.IntegerField(read_only=True)
+    next = serializers.CharField(read_only=True, allow_null=True)
+    previous = serializers.CharField(read_only=True, allow_null=True)
+    results = RunTestResponseSerializer(many=True, read_only=True)
+    total_pages = serializers.IntegerField(read_only=True)
+    current_page = serializers.IntegerField(read_only=True)
+
+
 class AddEvalConfigResponseSerializer(serializers.Serializer):
     """
     Response for POST /run-tests/{run_test_id}/eval-configs/ — HTTP 201.

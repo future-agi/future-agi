@@ -299,6 +299,126 @@ def test_process_raw_logs_eleven_labs_normalizes_status_and_utc():
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    ("provider", "payload", "expected"),
+    [
+        (ProviderChoices.BLAND, {**BLAND_CALL, "status": "queued"}, "in-progress"),
+        (ProviderChoices.TWILIO, {**TWILIO_CALL, "status": "no-answer"}, "not-connected"),
+        (
+            ProviderChoices.ELEVEN_LABS,
+            {**ELEVEN_LABS_RAW, "status": "failed"},
+            "failed",
+        ),
+        (
+            ProviderChoices.ELEVEN_LABS,
+            {**ELEVEN_LABS_RAW, "status": "  ERROR  "},
+            "failed",
+        ),
+    ],
+)
+def test_process_raw_logs_canonicalizes_provider_status(provider, payload, expected):
+    assert ObservabilityService.process_raw_logs(payload, provider)["status"] == expected
+
+
+@pytest.mark.unit
+def test_process_raw_logs_status_always_stays_in_closed_vocabulary():
+    transitions = (
+        "initiated",
+        "processing",
+        "scheduled",
+        "created",
+        "dialing",
+        "connecting",
+        "future-provider-state",
+    )
+    for value in transitions:
+        payload = {**ELEVEN_LABS_RAW, "status": value}
+        assert (
+            ObservabilityService.process_raw_logs(
+                payload, ProviderChoices.ELEVEN_LABS
+            )["status"]
+            == "in-progress"
+        )
+
+    missing_cases = (
+        (ProviderChoices.VAPI, {"id": "v-1"}, "in-progress"),
+        (
+            ProviderChoices.VAPI,
+            {"id": "v-1", "status": "future-provider-state"},
+            "in-progress",
+        ),
+        (ProviderChoices.RETELL, {"call_id": "r-1"}, "in-progress"),
+        (
+            ProviderChoices.RETELL,
+            {"call_id": "r-1", "call_status": "future-provider-state"},
+            "in-progress",
+        ),
+        (ProviderChoices.ELEVEN_LABS, {"conversation_id": "e-1"}, None),
+        (ProviderChoices.BLAND, {"call_id": "b-1"}, None),
+        (ProviderChoices.TWILIO, {"sid": "t-1"}, None),
+    )
+    for provider, payload, expected in missing_cases:
+        assert ObservabilityService.process_raw_logs(payload, provider)["status"] == expected
+
+    for provider, payload in (
+        (ProviderChoices.BLAND, {**BLAND_CALL, "status": "future-provider-state"}),
+        (ProviderChoices.TWILIO, {**TWILIO_CALL, "status": "future-provider-state"}),
+    ):
+        assert ObservabilityService.process_raw_logs(payload, provider)["status"] == "in-progress"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("provider", "span_attributes", "payload", "expected_status", "expected_type"),
+    [
+        (
+            ProviderChoices.VAPI,
+            {"gen_ai.system": ProviderChoices.RETELL},
+            {"call_status": "ended", "direction": "inbound"},
+            "in-progress",
+            "outbound",
+        ),
+        (
+            "openai",
+            {"gen_ai.system": ProviderChoices.RETELL},
+            {
+                "call_status": "ended",
+                "direction": "outbound",
+                "status": "failed",
+                "type": "inboundPhoneCall",
+            },
+            "completed",
+            "outbound",
+        ),
+        (
+            "openai",
+            {"gen_ai.system": "unknown"},
+            {"call_status": "ended", "direction": "inbound"},
+            "in-progress",
+            "outbound",
+        ),
+    ],
+)
+def test_process_raw_logs_provider_precedence_ignores_conflicting_payload_shape(
+    provider,
+    span_attributes,
+    payload,
+    expected_status,
+    expected_type,
+):
+    """Known provider -> gen_ai.system -> Vapi default, independent of JSON keys."""
+
+    out = ObservabilityService.process_raw_logs(
+        payload,
+        provider,
+        span_attributes=span_attributes,
+    )
+
+    assert out["status"] == expected_status
+    assert out["call_type"] == expected_type
+
+
+@pytest.mark.unit
 def test_process_raw_logs_empty_synthesizes_from_call_attrs():
     """Collector spans carry no raw_log; derive the call-log shape from call.* attrs."""
     out = ObservabilityService.process_raw_logs(
@@ -307,10 +427,46 @@ def test_process_raw_logs_empty_synthesizes_from_call_attrs():
         span_attributes={
             "call.status": "error",
             "call.duration": 30,
+            "call_type": "inbound",
             "metadata": {"call_execution_id": "exec-1"},
         },
     )
-    assert out["status"] == "error"
+    assert out["status"] == "failed"
     assert out["duration_seconds"] == 30
     assert out["call_id"] == "exec-1"
+    assert out["call_type"] == "inbound"
+    assert out["cost_cents"] is None
     assert out["started_at"] is None  # the span's own start_time is authoritative
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("attrs", "expected"),
+    [
+        ({"call.status": "future-provider-state"}, "in-progress"),
+        ({}, "completed"),
+    ],
+)
+def test_process_raw_logs_empty_status_stays_in_closed_vocabulary(attrs, expected):
+    out = ObservabilityService.process_raw_logs(
+        {}, ProviderChoices.VAPI, span_attributes=attrs
+    )
+    assert out["status"] == expected
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("cost_attrs", "expected"),
+    [
+        ({"combined_cost": 5.7}, 5.7),
+        ({"cost_breakdown.total": 0.05}, 5.0),
+        ({"combined_cost": 0}, 0),
+    ],
+)
+def test_process_raw_logs_empty_normalizes_attribute_cost(cost_attrs, expected):
+    out = ObservabilityService.process_raw_logs(
+        {},
+        ProviderChoices.VAPI,
+        span_attributes=cost_attrs,
+    )
+    assert out["cost_cents"] == expected

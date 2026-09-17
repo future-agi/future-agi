@@ -90,6 +90,20 @@ def workspace_context(workspace, organization=None, user=None):
 
 class WorkspaceContextMiddleware(MiddlewareMixin):
 
+    def process_request(self, request):
+        """Start every request from an empty model-manager scope.
+
+        Authentication binds the authorized workspace later in the request.
+        Clearing here is intentionally redundant with ``process_response``:
+        ASGI workers may reuse a sync execution context after a cancelled or
+        otherwise incomplete request, and an inherited workspace would make
+        explicit request-scoped ORM queries silently return no rows.
+        """
+        clear_workspace_context()
+
     def process_response(self, request, response):
         clear_workspace_context()
         return response
+
+    def process_exception(self, request, exception):
+        clear_workspace_context()

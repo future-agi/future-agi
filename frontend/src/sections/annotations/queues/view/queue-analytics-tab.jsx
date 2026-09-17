@@ -4,7 +4,6 @@ import {
   Button,
   Card,
   CardContent,
-  CircularProgress,
   LinearProgress,
   Stack,
   Table,
@@ -15,6 +14,7 @@ import {
   TableRow,
   Typography,
 } from "@mui/material";
+import { LoadingScreen } from "src/components/loading-screen";
 import Iconify from "src/components/iconify";
 import {
   annotationQueueEndpoints,
@@ -230,9 +230,7 @@ export default function QueueAnalyticsTab({ queueId }) {
 
   if (isLoading) {
     return (
-      <Box sx={{ display: "flex", justifyContent: "center", py: 8 }}>
-        <CircularProgress />
-      </Box>
+      <LoadingScreen variant="orbit" sx={{ minHeight: "50vh" }} />
     );
   }
 

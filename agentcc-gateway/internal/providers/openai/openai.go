@@ -23,6 +23,7 @@ import (
 type Provider struct {
 	id         string
 	baseURL    string
+	pathPrefix string
 	apiKey     string
 	httpClient *http.Client
 	semaphore  chan struct{}
@@ -74,9 +75,10 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 	}
 
 	return &Provider{
-		id:      id,
-		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
-		apiKey:  cfg.APIKey,
+		id:         id,
+		baseURL:    strings.TrimRight(cfg.BaseURL, "/"),
+		pathPrefix: cfg.EffectiveAPIPathPrefix(),
+		apiKey:     cfg.APIKey,
 		httpClient: &http.Client{
 			Transport: transport,
 			Timeout:   timeout,
@@ -108,16 +110,10 @@ func (p *Provider) normalizeMaxTokens(req *models.ChatCompletionRequest) {
 	req.MaxTokens = nil
 }
 
-// endpoint builds a full upstream URL for a versioned path like "/v1/ocr".
-// If the configured baseURL already ends with "/v1" (as some presets do,
-// e.g. "https://api.cohere.ai/compatibility/v1"), the leading "/v1" of path
-// is stripped to avoid "/v1/v1/..." — keeps callers from having to reason
-// about whether each provider preset includes the version suffix.
+// endpoint builds a full upstream URL for a path like "/v1/ocr", swapping the
+// assumed "/v1" for whatever version segment this provider actually uses.
 func (p *Provider) endpoint(path string) string {
-	if strings.HasSuffix(p.baseURL, "/v1") && strings.HasPrefix(path, "/v1/") {
-		return p.baseURL + path[len("/v1"):]
-	}
-	return p.baseURL + path
+	return config.JoinEndpoint(p.baseURL, p.pathPrefix, path)
 }
 
 func (p *Provider) ID() string { return p.id }
@@ -256,7 +252,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 		return nil, models.ErrInternal(fmt.Sprintf("marshaling request: %v", err))
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/chat/completions", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/chat/completions"), bytes.NewReader(body))
 	if err != nil {
 		return nil, models.ErrInternal(fmt.Sprintf("creating request: %v", err))
 	}
@@ -319,7 +315,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 			return
 		}
 
-		httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/chat/completions", bytes.NewReader(body))
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/chat/completions"), bytes.NewReader(body))
 		if err != nil {
 			errs <- models.ErrInternal(fmt.Sprintf("creating request: %v", err))
 			return
@@ -402,7 +398,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 // ListModels returns available models from this provider.
 func (p *Provider) ListModels(ctx context.Context) ([]models.ModelObject, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", p.baseURL+"/v1/models", nil)
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", p.endpoint("/v1/models"), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -444,7 +440,7 @@ func (p *Provider) CreateImage(ctx context.Context, req *models.ImageRequest) (*
 		return nil, models.ErrInternal(fmt.Sprintf("marshaling image request: %v", err))
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/images/generations", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/images/generations"), bytes.NewReader(body))
 	if err != nil {
 		return nil, models.ErrInternal(fmt.Sprintf("creating image request: %v", err))
 	}
@@ -496,7 +492,7 @@ func (p *Provider) CreateSpeech(ctx context.Context, req *models.SpeechRequest) 
 		return nil, "", models.ErrInternal(fmt.Sprintf("marshaling speech request: %v", err))
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/audio/speech", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/audio/speech"), bytes.NewReader(body))
 	if err != nil {
 		p.releaseSemaphore()
 		return nil, "", models.ErrInternal(fmt.Sprintf("creating speech request: %v", err))
@@ -590,7 +586,7 @@ func (p *Provider) CreateTranscription(ctx context.Context, req *models.Transcri
 		return nil, models.ErrInternal(fmt.Sprintf("closing multipart writer: %v", err))
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/audio/transcriptions", &buf)
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/audio/transcriptions"), &buf)
 	if err != nil {
 		return nil, models.ErrInternal(fmt.Sprintf("creating transcription request: %v", err))
 	}
@@ -633,7 +629,7 @@ func (p *Provider) CreateResponse(ctx context.Context, reqBody []byte) ([]byte, 
 	}
 	defer p.releaseSemaphore()
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/responses", bytes.NewReader(reqBody))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/responses"), bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, 0, models.ErrInternal(fmt.Sprintf("creating responses request: %v", err))
 	}
@@ -671,7 +667,7 @@ func (p *Provider) StreamResponse(ctx context.Context, reqBody []byte) (io.ReadC
 	}
 	// NOTE: semaphore is released when the caller closes the returned ReadCloser.
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/responses", bytes.NewReader(reqBody))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/responses"), bytes.NewReader(reqBody))
 	if err != nil {
 		p.releaseSemaphore()
 		return nil, 0, models.ErrInternal(fmt.Sprintf("creating streaming responses request: %v", err))
@@ -748,7 +744,7 @@ func (p *Provider) CreateTranslation(ctx context.Context, req *models.Translatio
 		return nil, models.ErrInternal(fmt.Sprintf("closing multipart writer: %v", err))
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/audio/translations", &buf)
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/audio/translations"), &buf)
 	if err != nil {
 		return nil, models.ErrInternal(fmt.Sprintf("creating translation request: %v", err))
 	}
@@ -799,7 +795,7 @@ func (p *Provider) CreateEmbedding(ctx context.Context, req *models.EmbeddingReq
 		return nil, models.ErrInternal(fmt.Sprintf("marshaling embedding request: %v", err))
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/embeddings", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/embeddings"), bytes.NewReader(body))
 	if err != nil {
 		return nil, models.ErrInternal(fmt.Sprintf("creating embedding request: %v", err))
 	}
@@ -842,7 +838,7 @@ func (p *Provider) ProxyAssistantsRequest(ctx context.Context, method string, pa
 	}
 	defer p.releaseSemaphore()
 
-	upstreamURL := p.baseURL + path
+	upstreamURL := p.endpoint(path)
 	if len(queryParams) > 0 {
 		upstreamURL += "?" + queryParams.Encode()
 	}
@@ -899,7 +895,7 @@ func (p *Provider) StreamAssistantsRequest(ctx context.Context, method string, p
 	}
 	// NOTE: semaphore is released when the caller closes the returned ReadCloser.
 
-	upstreamURL := p.baseURL + path
+	upstreamURL := p.endpoint(path)
 	if len(queryParams) > 0 {
 		upstreamURL += "?" + queryParams.Encode()
 	}
@@ -960,7 +956,7 @@ func (p *Provider) ProxyVectorStoresRequest(ctx context.Context, method string, 
 	}
 	defer p.releaseSemaphore()
 
-	upstreamURL := p.baseURL + path
+	upstreamURL := p.endpoint(path)
 	if len(queryParams) > 0 {
 		upstreamURL += "?" + queryParams.Encode()
 	}

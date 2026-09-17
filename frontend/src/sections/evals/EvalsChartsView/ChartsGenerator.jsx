@@ -83,7 +83,7 @@ const EvalsChartsGenerator = ({ id, series, subLabel, label, onZoom }) => {
         left: 0,
         blur: 8,
         opacity: 0.5,
-        color: "text.primary",
+        color: theme.palette.text.primary,
       },
     },
     colors: [color],
@@ -104,7 +104,7 @@ const EvalsChartsGenerator = ({ id, series, subLabel, label, onZoom }) => {
           w.config.series[seriesIndex]?.name || "Label: Not Available";
 
         return `
-        <div style="padding: 8px; border-radius: 8px; border-left: 4px solid #007bff; color: black; font-size: 14px; minWidth: 180px;">
+        <div style="padding: 8px; border-radius: 8px; border-left: 4px solid #007bff; font-size: 14px; min-width: 180px;">
         <div style="margin-bottom: 6px;">
           ${formattedDate}
         </div>

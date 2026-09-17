@@ -20,7 +20,10 @@ from tracer.serializers.feed import (
 )
 from tracer.types.feed_types import FeedUpdatePayload
 from tracer.utils import feed as feed_service
-from tracer.views.feed._permissions import resolve_requested_project_ids
+from tracer.views.feed._permissions import (
+    ErrorFeedLicenseRequired,
+    resolve_requested_project_ids,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -32,7 +35,7 @@ ERROR_RESPONSES = {
 }
 
 
-class FeedDetailView(APIView):
+class FeedDetailView(ErrorFeedLicenseRequired, APIView):
     """GET + PATCH /tracer/feed/issues/{cluster_id}/"""
 
     permission_classes = [IsAuthenticated]

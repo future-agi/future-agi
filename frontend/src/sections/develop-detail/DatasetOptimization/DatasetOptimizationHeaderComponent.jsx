@@ -129,6 +129,7 @@ const DatasetOptimizationHeaderComponent = ({ optimization, isLoading }) => {
     status,
     optimiserName,
     providerLogo,
+    modelDeprecated,
     parameters,
     startTime,
     configuration,
@@ -231,15 +232,20 @@ const DatasetOptimizationHeaderComponent = ({ optimization, isLoading }) => {
 
           <Chip
             sx={{
-              backgroundColor: "blue.o10",
-              color: "blue.500",
+              backgroundColor: modelDeprecated ? "warning.lighter" : "blue.o10",
+              color: modelDeprecated ? "warning.dark" : "blue.500",
               ":hover": {
-                backgroundColor: "blue.o10",
+                backgroundColor: modelDeprecated ? "warning.lighter" : "blue.o10",
               },
-              "& .MuiChip-icon": { color: "blue.500" },
+              "& .MuiChip-icon": { color: modelDeprecated ? "warning.dark" : "blue.500" },
             }}
             icon={
-              providerLogo ? (
+              modelDeprecated ? (
+                <SvgColor
+                  src="/assets/icons/ic_warning.svg"
+                  sx={{ width: 16, height: 16 }}
+                />
+              ) : providerLogo ? (
                 <Image
                   ratio="1/1"
                   src={providerLogo}
@@ -248,7 +254,11 @@ const DatasetOptimizationHeaderComponent = ({ optimization, isLoading }) => {
                 />
               ) : undefined
             }
-            label={`Model Used - ${model || "N/A"}`}
+            label={
+              modelDeprecated
+                ? `${model || "Unknown"} (Deprecated)`
+                : `Model Used - ${model || "N/A"}`
+            }
           />
 
           <ShowComponent condition={parameters?.length > 0}>
@@ -284,17 +294,25 @@ const DatasetOptimizationHeaderComponent = ({ optimization, isLoading }) => {
         {/* Rerun Optimization Button - shows when completed or failed */}
         <ShowComponent condition={RERUN_ALLOWED_STATUSES.includes(status)}>
           <Box sx={{ display: "flex", gap: 1 }}>
-            <Button
-              variant="outlined"
-              size="small"
-              sx={{ borderColor: "divider" }}
-              startIcon={
-                <SvgColor src="/assets/icons/navbar/ic_optimize.svg" />
-              }
-              onClick={handleRerunOptimization}
+            <CustomTooltip
+              show={Boolean(modelDeprecated)}
+              title="Model is no longer available. Select a new model to rerun."
             >
-              Rerun Optimization
-            </Button>
+              <span>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  disabled={modelDeprecated}
+                  sx={{ borderColor: "divider" }}
+                  startIcon={
+                    <SvgColor src="/assets/icons/navbar/ic_optimize.svg" />
+                  }
+                  onClick={handleRerunOptimization}
+                >
+                  Rerun Optimization
+                </Button>
+              </span>
+            </CustomTooltip>
           </Box>
         </ShowComponent>
       </Box>

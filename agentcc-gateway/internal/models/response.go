@@ -52,18 +52,27 @@ type Usage struct {
 	TotalTokens             int              `json:"total_tokens"`
 	PromptTokensDetails     *json.RawMessage `json:"prompt_tokens_details,omitempty"`
 	CompletionTokensDetails *json.RawMessage `json:"completion_tokens_details,omitempty"`
+	// ServerToolUse counts provider-executed tool calls, which are billed per
+	// call on top of tokens.  A response that reports tokens alone understates
+	// what the request cost.
+	ServerToolUse *ServerToolUsage `json:"server_tool_use,omitempty"`
+}
+
+// ServerToolUsage mirrors Anthropic's usage.server_tool_use block.
+type ServerToolUsage struct {
+	WebSearchRequests int `json:"web_search_requests,omitempty"`
 }
 
 // StreamChunk represents a single SSE chunk in a streaming response.
 type StreamChunk struct {
-	ID                string               `json:"id"`
-	Object            string               `json:"object"`
-	Created           int64                `json:"created"`
-	Model             string               `json:"model"`
-	Choices           []StreamChoice       `json:"choices"`
-	Usage             *Usage               `json:"usage,omitempty"`
-	AgentccMetadata     *AgentccStreamMetadata `json:"agentcc_metadata,omitempty"`
-	SystemFingerprint string               `json:"system_fingerprint,omitempty"`
+	ID                string                 `json:"id"`
+	Object            string                 `json:"object"`
+	Created           int64                  `json:"created"`
+	Model             string                 `json:"model"`
+	Choices           []StreamChoice         `json:"choices"`
+	Usage             *Usage                 `json:"usage,omitempty"`
+	AgentccMetadata   *AgentccStreamMetadata `json:"agentcc_metadata,omitempty"`
+	SystemFingerprint string                 `json:"system_fingerprint,omitempty"`
 }
 
 type AgentccStreamMetadata struct {

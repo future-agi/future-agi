@@ -79,6 +79,7 @@ const CreateKeyDialog = ({ open, onClose, gatewayId }) => {
             </Alert>
             <TextField
               fullWidth
+              size="small"
               value={createdKey}
               InputProps={{
                 readOnly: true,
@@ -111,7 +112,7 @@ const CreateKeyDialog = ({ open, onClose, gatewayId }) => {
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button variant="contained" onClick={handleClose}>
+          <Button size="small" variant="contained" onClick={handleClose}>
             Done
           </Button>
         </DialogActions>
@@ -128,6 +129,7 @@ const CreateKeyDialog = ({ open, onClose, gatewayId }) => {
             label="Name"
             fullWidth
             required
+            size="small"
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g., production-key"
@@ -135,6 +137,7 @@ const CreateKeyDialog = ({ open, onClose, gatewayId }) => {
           <TextField
             label="Owner"
             fullWidth
+            size="small"
             value={owner}
             onChange={(e) => setOwner(e.target.value)}
             placeholder="e.g., team-backend"
@@ -142,6 +145,7 @@ const CreateKeyDialog = ({ open, onClose, gatewayId }) => {
           <Autocomplete
             multiple
             freeSolo
+            size="small"
             options={[]}
             value={allowedModels}
             onChange={(_, val) => setAllowedModels(val)}
@@ -167,6 +171,7 @@ const CreateKeyDialog = ({ open, onClose, gatewayId }) => {
           <Autocomplete
             multiple
             freeSolo
+            size="small"
             options={[]}
             value={allowedProviders}
             onChange={(_, val) => setAllowedProviders(val)}

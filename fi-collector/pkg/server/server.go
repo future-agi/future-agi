@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,18 +29,21 @@ import (
 	"github.com/future-agi/future-agi/fi-collector/pkg/auth"
 	"github.com/future-agi/future-agi/fi-collector/pkg/chwriter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/curatedwriter"
+	"github.com/future-agi/future-agi/fi-collector/pkg/propertycatalog"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/stats"
 	"google.golang.org/grpc/status"
 )
 
 // Config is what main() passes us. Public fields = YAML wire format.
 type Config struct {
-	GRPCAddr     string        `yaml:"grpc_addr"`      // :4317 default
-	HTTPAddr     string        `yaml:"http_addr"`      // :4318 default; empty disables
-	BatchMaxRows int           `yaml:"batch_max_rows"` // flush after N rows
-	BatchMaxAge  time.Duration `yaml:"batch_max_age"`  // flush after X time
+	GRPCAddr       string        `yaml:"grpc_addr"`         // :4317 default
+	HTTPAddr       string        `yaml:"http_addr"`         // :4318 default; empty disables
+	BatchMaxRows   int           `yaml:"batch_max_rows"`    // flush after N rows
+	BatchMaxAge    time.Duration `yaml:"batch_max_age"`     // flush after X time
+	GRPCMaxRecvMiB int           `yaml:"grpc_max_recv_mib"` // max gRPC message size in MiB; default + rationale in New()
 }
 
 // Server owns the gRPC + HTTP OTLP listeners and the batch flusher goroutine.
@@ -49,16 +53,18 @@ type Config struct {
 // the only difference: gRPC uses the generated stub; HTTP accepts
 // `application/x-protobuf` and `application/json` per the OTLP/HTTP spec.
 type Server struct {
-	cfg      Config
-	writer   *chwriter.Writer
-	curated  *curatedwriter.Writer // CH-derived dimensions dual-write (P3b step2 HALF 2)
-	auth     *auth.Authenticator
-	usage    UsageEmitter
-	metering Metering
-	log      *slog.Logger
-	pricer   chexp.Pricer
-	grpc    *grpc.Server
-	httpd   *http.Server
+	cfg             Config
+	writer          *chwriter.Writer
+	curated         *curatedwriter.Writer  // CH-derived dimensions dual-write (P3b step2 HALF 2)
+	catalog         AttributeCatalogWriter // obsolete pre-release path; default nil
+	propertyCatalog PropertyCatalogWriter  // unified value producer; default nil
+	auth            *auth.Authenticator
+	usage           UsageEmitter
+	metering        Metering
+	log             *slog.Logger
+	pricer          chexp.Pricer
+	grpc            *grpc.Server
+	httpd           *http.Server
 
 	// Batching: the receiver handler pushes converted rows onto `pending` and
 	// signals via `pendCh`. A single flusher goroutine drains it on either
@@ -71,10 +77,11 @@ type Server struct {
 	// trace_sessions best-effort insert — bounding the curated latency and
 	// avoiding many tiny RMT parts. It rides the same lock + flush cycle as
 	// `pend` so the curated dual-write flushes with the span batch.
-	pendMu      sync.Mutex
-	pend        []map[string]any
-	pendCurated *curatedwriter.Batch
-	pendCh      chan struct{}
+	pendMu       sync.Mutex
+	pend         []map[string]any
+	pendCurated  *curatedwriter.Batch
+	pendProperty []propertycatalog.ScopedSpan
+	pendCh       chan struct{}
 
 	stopCh chan struct{}
 	wg     sync.WaitGroup
@@ -82,8 +89,10 @@ type Server struct {
 
 // Option configures optional Server dependencies.
 type Option struct {
-	log    *slog.Logger
-	pricer chexp.Pricer
+	log             *slog.Logger
+	pricer          chexp.Pricer
+	catalog         AttributeCatalogWriter
+	propertyCatalog PropertyCatalogWriter
 }
 
 // WithLogger sets the server's logger.
@@ -92,6 +101,19 @@ func WithLogger(l *slog.Logger) Option { return Option{log: l} }
 // WithPricer sets the server's token-cost pricer. Nil (the zero value)
 // disables token-based cost (see chexp.Pricer).
 func WithPricer(p chexp.Pricer) Option { return Option{pricer: p} }
+
+// WithAttributeCatalogWriter installs the disabled-by-default catalog staging
+// seam. main does not supply this option yet; activation, bounded async
+// admission, fsync-latency qualification, and worker lifecycle belong to a
+// later, separately qualified change.
+func WithAttributeCatalogWriter(w AttributeCatalogWriter) Option {
+	return Option{catalog: w}
+}
+
+// WithPropertyCatalogWriter installs the default-off unified value producer.
+func WithPropertyCatalogWriter(w PropertyCatalogWriter) Option {
+	return Option{propertyCatalog: w}
+}
 
 // New wires up the server but does NOT start serving. Call Run().
 //
@@ -116,9 +138,20 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 	if cfg.BatchMaxAge <= 0 {
 		cfg.BatchMaxAge = 5 * time.Second
 	}
+	if cfg.GRPCMaxRecvMiB <= 0 {
+		// Go gRPC's default 4 MiB rejects large single-span exports (e.g. an
+		// ended voice call with full transcript) with RESOURCE_EXHAUSTED.
+		// Match the OTLP/HTTP body cap so both transports accept the same spans.
+		cfg.GRPCMaxRecvMiB = maxOTLPHTTPBodyBytes >> 20
+	}
+	if cfg.GRPCMaxRecvMiB > 1024 {
+		cfg.GRPCMaxRecvMiB = 1024 // keep the <<20 shift well under proto's 2 GiB ceiling
+	}
 
 	log := slog.Default()
 	var pricer chexp.Pricer
+	var catalog AttributeCatalogWriter
+	var propertyCatalogWriter PropertyCatalogWriter
 	for _, o := range opts {
 		if o.log != nil {
 			log = o.log
@@ -126,16 +159,24 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 		if o.pricer != nil {
 			pricer = o.pricer
 		}
+		if o.catalog != nil {
+			catalog = o.catalog
+		}
+		if o.propertyCatalog != nil {
+			propertyCatalogWriter = o.propertyCatalog
+		}
 	}
 
 	s := &Server{
-		cfg:      cfg,
-		writer:   writer,
-		auth:     authenticator,
-		usage:    usage,
-		metering: metering,
-		log:      log,
-		pricer:   pricer,
+		cfg:             cfg,
+		writer:          writer,
+		auth:            authenticator,
+		usage:           usage,
+		metering:        metering,
+		log:             log,
+		pricer:          pricer,
+		catalog:         catalog,
+		propertyCatalog: propertyCatalogWriter,
 		// Share the span writer's HTTP client (keep-alive) for the curated RMTs,
 		// but the curated path writes BEST-EFFORT (chwriter.InsertBestEffort:
 		// single POST, no retry, no dead-letter) so it can't stall the span flush
@@ -166,7 +207,11 @@ func (s *Server) Run(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("listen grpc %s: %w", s.cfg.GRPCAddr, err)
 		}
-		var grpcOpts []grpc.ServerOption
+		s.log.Info("grpc listener", "addr", s.cfg.GRPCAddr, "max_recv_mib", s.cfg.GRPCMaxRecvMiB)
+		grpcOpts := []grpc.ServerOption{
+			grpc.MaxRecvMsgSize(s.cfg.GRPCMaxRecvMiB << 20),
+			grpc.StatsHandler(&grpcErrLogger{log: s.log}),
+		}
 		if s.auth != nil {
 			grpcOpts = append(grpcOpts, grpc.UnaryInterceptor(s.auth.GRPCInterceptor()))
 		}
@@ -238,6 +283,59 @@ func (s *Server) shutdown() {
 	s.drainNow(context.Background())
 }
 
+// grpcErrLogger surfaces transport-level message-size rejections. A message
+// larger than MaxRecvMsgSize is rejected with RESOURCE_EXHAUSTED before the
+// handler or interceptor runs, so a stats.Handler is the only server-side
+// hook that sees it — without this, the client's span is dropped with no
+// trace in the collector's own logs. Deliberately narrow: auth failures are
+// logged by the interceptor, quota rejections are silent by design (same
+// code, would be indistinguishable spam), and client cancels are benign.
+type grpcErrLogger struct {
+	log *slog.Logger
+}
+
+type grpcMethodKey struct{}
+
+// grpc-go's MaxRecvMsgSize rejection message. Both recv variants
+// ("received message larger than max" and the gzip "received message after
+// decompression larger than max") share these two substrings; matching both
+// excludes the send-side "trying to send message larger than max", which
+// carries the same ResourceExhausted code but is the wrong story for a
+// "request rejected" log.
+const (
+	grpcMsgRecv     = "received message"
+	grpcMsgTooLarge = "larger than max"
+)
+
+func (h *grpcErrLogger) TagRPC(ctx context.Context, info *stats.RPCTagInfo) context.Context {
+	return context.WithValue(ctx, grpcMethodKey{}, info.FullMethodName)
+}
+
+func (h *grpcErrLogger) HandleRPC(ctx context.Context, s stats.RPCStats) {
+	end, ok := s.(*stats.End)
+	if !ok || end.Error == nil {
+		return
+	}
+	st, _ := status.FromError(end.Error)
+	if st.Code() != codes.ResourceExhausted ||
+		!strings.Contains(st.Message(), grpcMsgRecv) ||
+		!strings.Contains(st.Message(), grpcMsgTooLarge) {
+		return
+	}
+	method, _ := ctx.Value(grpcMethodKey{}).(string)
+	h.log.Error("grpc message over size cap, request rejected",
+		"method", method,
+		"code", st.Code().String(),
+		"err", st.Message(),
+	)
+}
+
+func (h *grpcErrLogger) TagConn(ctx context.Context, _ *stats.ConnTagInfo) context.Context {
+	return ctx
+}
+
+func (h *grpcErrLogger) HandleConn(context.Context, stats.ConnStats) {}
+
 // otlpHandler implements ptraceotlp.GRPCServer. Stateless per call.
 type otlpHandler struct {
 	ptraceotlp.UnimplementedGRPCServer
@@ -249,8 +347,13 @@ func (h *otlpHandler) Export(ctx context.Context, req ptraceotlp.ExportRequest) 
 		return ptraceotlp.NewExportResponse(), status.Errorf(codes.ResourceExhausted, "quota exceeded: %s", check.Reason)
 	}
 
-	// Stamp auth-resolved org/project IDs onto resource attributes.
+	// Keep the authenticated workspace out-of-band. StampResourceAttrs retains
+	// the existing org/project behavior but deliberately does not add a
+	// workspace attribute to the canonical span payload.
+	var propertyOrganizationID, propertyWorkspaceID string
+	var propertyProjectIDs map[string]struct{}
 	if result := auth.FromContext(ctx); result != nil {
+		propertyOrganizationID, propertyWorkspaceID = result.OrgID, result.WorkspaceID
 		ck := auth.CacheKeyFromContext(ctx)
 		dropped, err := auth.StampResourceAttrs(ctx, h.s.auth, ck, req.Traces(), result)
 		if err != nil {
@@ -259,13 +362,18 @@ func (h *otlpHandler) Export(ctx context.Context, req ptraceotlp.ExportRequest) 
 		if dropped > 0 {
 			h.s.log.Warn("dropped ResourceSpans with unresolvable project", "dropped", dropped)
 		}
+		var scoped bool
+		propertyProjectIDs, scoped = result.ProjectIDsInWorkspace(propertyWorkspaceID)
+		if !scoped {
+			return ptraceotlp.NewExportResponse(), status.Error(codes.InvalidArgument, "auth project/workspace scope mismatch")
+		}
 	}
 
 	rows, ids, err := chexp.ConvertWithIdentities(ctx, req.Traces(), h.s.pricer)
 	if err != nil {
 		return ptraceotlp.NewExportResponse(), err
 	}
-	h.s.enqueue(rows, ids)
+	h.s.enqueueScoped(rows, ids, propertyOrganizationID, propertyWorkspaceID, propertyProjectIDs)
 
 	payloadBytes, _ := req.MarshalProto()
 	h.s.emitUsage(ctx, req.Traces(), int64(len(payloadBytes)))
@@ -311,6 +419,10 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(body) > maxOTLPHTTPBodyBytes {
+		// Mirror the gRPC-side over-cap log so an HTTP exporter's drop is
+		// equally visible server-side.
+		s.log.Error("http body over size cap, request rejected",
+			"path", r.URL.Path, "max_bytes", maxOTLPHTTPBodyBytes)
 		http.Error(w, "payload too large", http.StatusRequestEntityTooLarge)
 		return
 	}
@@ -339,8 +451,11 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Stamp auth-resolved org/project IDs onto resource attributes.
+	// Keep the authenticated workspace out-of-band; see the gRPC path above.
+	var propertyOrganizationID, propertyWorkspaceID string
+	var propertyProjectIDs map[string]struct{}
 	if result := auth.FromContext(r.Context()); result != nil {
+		propertyOrganizationID, propertyWorkspaceID = result.OrgID, result.WorkspaceID
 		ck := auth.CacheKeyFromContext(r.Context())
 		dropped, err := auth.StampResourceAttrs(r.Context(), s.auth, ck, req.Traces(), result)
 		if err != nil {
@@ -350,6 +465,12 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		if dropped > 0 {
 			s.log.Warn("dropped ResourceSpans with unresolvable project", "dropped", dropped)
 		}
+		var scoped bool
+		propertyProjectIDs, scoped = result.ProjectIDsInWorkspace(propertyWorkspaceID)
+		if !scoped {
+			http.Error(w, "auth project/workspace scope mismatch", http.StatusBadRequest)
+			return
+		}
 	}
 
 	rows, ids, err := chexp.ConvertWithIdentities(r.Context(), req.Traces(), s.pricer)
@@ -358,7 +479,7 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "convert: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	s.enqueue(rows, ids)
+	s.enqueueScoped(rows, ids, propertyOrganizationID, propertyWorkspaceID, propertyProjectIDs)
 
 	s.emitUsage(r.Context(), req.Traces(), int64(len(body)))
 
@@ -412,11 +533,41 @@ func trimSpace(s string) string {
 // they ride alongside `rows` so the curated dual-write flushes with the span
 // batch. A nil / empty Batch is skipped (the common no-user/no-session case).
 func (s *Server) enqueue(rows []map[string]any, ids *curatedwriter.Batch) {
+	s.enqueueScoped(rows, ids, "", "", nil)
+}
+
+// enqueueScoped keeps the authenticated workspace in a drain-local sidecar.
+// The sidecar is only allocated when the default-off unified writer is
+// installed, and no field is added to the canonical span row.
+func (s *Server) enqueueScoped(
+	rows []map[string]any,
+	ids *curatedwriter.Batch,
+	organizationID string,
+	workspaceID string,
+	workspaceProjectIDs map[string]struct{},
+) {
 	if len(rows) == 0 {
 		return
 	}
 	s.pendMu.Lock()
 	s.pend = append(s.pend, rows...)
+	if s.propertyCatalog != nil && organizationID != "" && workspaceID != "" {
+		for _, row := range rows {
+			projectID, _ := row["project_id"].(string)
+			scopeError := ""
+			if workspaceProjectIDs == nil {
+				scopeError = "missing_project_workspace_proof"
+			} else if _, allowed := workspaceProjectIDs[projectID]; !allowed {
+				scopeError = "project_workspace_mismatch"
+			}
+			s.pendProperty = append(s.pendProperty, propertycatalog.ScopedSpan{
+				OrganizationID: organizationID,
+				WorkspaceID:    workspaceID,
+				ScopeError:     scopeError,
+				Row:            row,
+			})
+		}
+	}
 	if ids != nil && !ids.Empty() {
 		if s.pendCurated == nil {
 			s.pendCurated = curatedwriter.NewBatch()
@@ -457,17 +608,55 @@ func (s *Server) drainNow(ctx context.Context) {
 	s.pendMu.Lock()
 	batch := s.pend
 	curated := s.pendCurated
+	property := s.pendProperty
 	s.pend = nil
 	s.pendCurated = nil
+	s.pendProperty = nil
 	s.pendMu.Unlock()
 	if len(batch) == 0 {
 		return
 	}
-	_ = s.writer.Insert(ctx, batch)
+	spanErr := s.writer.Insert(ctx, batch)
 	// Insert returns an error on dead-letter; the writer already persisted
 	// the rows + bumped stats. We swallow here because the flusher's job
 	// is to make progress, not propagate per-batch failures. /healthz
 	// surfaces the writer's failure counter.
+
+	// Stage the independent attribute catalog only after the canonical spans
+	// received an unambiguous ClickHouse HTTP 200. A dead-lettered span batch
+	// returns a non-nil error and is intentionally skipped here; its later
+	// canonical replay/backfill owns reconciliation. Catalog staging and its
+	// catalog-only spool are isolated from span health: any gap is logged, never
+	// returned, and never changes span writer stats. Project-scoped jobs preserve
+	// the version-3 stream invariant; invalid/unscoped input remains an explicit
+	// gap job instead of being attached to another tenant.
+	if spanErr == nil && s.catalog != nil {
+		for _, staged := range s.catalog.StageCanonicalSpansByProject(batch) {
+			report := staged.Report
+			if report.RejectedSpans > 0 || report.IncompleteSpans > 0 || report.GlobalTruncated {
+				s.log.Warn(
+					"attribute catalog staging incomplete",
+					"rejected_spans", report.RejectedSpans,
+					"incomplete_spans", report.IncompleteSpans,
+					"rows_omitted", report.RowsOmitted,
+					"gap_reasons", report.BuildGapReasons,
+				)
+			}
+			if err := s.catalog.Enqueue(staged.Job); err != nil {
+				s.log.Warn("attribute catalog enqueue failed", "err", err)
+			}
+		}
+	}
+
+	// The unified hot path is value-only and best-effort relative to canonical
+	// ingestion. It receives authenticated workspace scope through the sidecar
+	// above only after ClickHouse acknowledged the span batch. Admission or
+	// Kafka/spool failures are observable gaps, never span-write failures.
+	if spanErr == nil && s.propertyCatalog != nil && len(property) > 0 {
+		if err := s.propertyCatalog.EnqueueCanonicalSpans(property); err != nil {
+			s.log.Warn("property catalog enqueue failed", "err", err)
+		}
+	}
 
 	// CH-derived dimensions (P3b step2 HALF 2): BEST-EFFORT mirror the
 	// drain-scoped curated end_users / trace_sessions identities AFTER the span

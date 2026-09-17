@@ -976,7 +976,7 @@ class TestStoreChatMessages:
         assert assistant_message.latency_ms == 250
 
     @patch("tfc.temporal.drop_in.decorator.close_old_connections")
-    @patch("simulate.utils.chat_simulation._run_simulate_evaluations_task.apply_async")
+    @patch("simulate.tasks.chat_sim._run_simulate_evaluations_task.apply_async")
     def test_store_messages_handles_dict_input(
         self,
         mock_eval_task,
@@ -1154,6 +1154,42 @@ class TestMonitorTestExecutionForChat:
         # EVALUATING should only be set when completed calls have evals in progress.
         test_execution = TestExecution.objects.get(id=test_execution.id)
         assert test_execution.status == TestExecution.ExecutionStatus.PENDING
+
+    @patch("tfc.temporal.drop_in.decorator.close_old_connections")
+    def test_monitor_stays_running_while_a_call_still_runs(
+        self,
+        mock_close_connections,
+        test_execution,
+        scenario,
+        organization,
+        workspace,
+    ):
+        """EVALUATING must not fire while any call is still running, even if a
+        completed call already has evals in progress (matches the native rollup:
+        all calls must leave the voice leg first)."""
+        test_execution.status = TestExecution.ExecutionStatus.RUNNING
+        test_execution.save(update_fields=["status"])
+
+        CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario,
+            phone_number="+1234567890",
+            status=CallExecution.CallStatus.COMPLETED,
+            simulation_call_type=CallExecution.SimulationCallType.TEXT,
+            call_metadata={"eval_started": True, "eval_completed": False},
+        )
+        CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario,
+            phone_number="+1234567891",
+            status=CallExecution.CallStatus.ONGOING,
+            simulation_call_type=CallExecution.SimulationCallType.TEXT,
+        )
+
+        monitor_test_execution_for_chat(str(test_execution.id))
+
+        test_execution = TestExecution.objects.get(id=test_execution.id)
+        assert test_execution.status == TestExecution.ExecutionStatus.RUNNING
 
     @patch("tfc.temporal.drop_in.decorator.close_old_connections")
     def test_monitor_handles_mixed_call_statuses(
@@ -1810,9 +1846,7 @@ class TestSendMessageToChatEmptyGate:
             },
         ]
 
-        with patch.object(
-            FutureAGIChatService, "_call_llm", side_effect=responses
-        ):
+        with patch.object(FutureAGIChatService, "_call_llm", side_effect=responses):
             result = send_message_to_chat(
                 wired_call_execution,
                 organization,

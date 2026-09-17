@@ -36,6 +36,31 @@ from tracer.services.clickhouse.query_service import AnalyticsQueryService
 
 logger = structlog.get_logger(__name__)
 
+_READ_TIMEOUT_MS = 9_500
+_READ_MAX_BYTES = 36 * 1024 * 1024 * 1024
+_READ_MAX_RESULT_BYTES = 64 * 1024 * 1024
+_READ_MAX_RESULT_ROWS = 100_000
+_READ_SETTINGS = {
+    "max_threads": 1,
+    "read_overflow_mode": "throw",
+    "max_bytes_to_read": _READ_MAX_BYTES,
+    "max_memory_usage": _READ_MAX_BYTES,
+    "max_result_bytes": _READ_MAX_RESULT_BYTES,
+    "result_overflow_mode": "throw",
+    "timeout_overflow_mode": "throw",
+}
+
+
+def _read_settings(*, max_result_rows: int) -> dict[str, int | str]:
+    """Return the finite result envelope for one attribute lookup read."""
+
+    if max_result_rows <= 0:
+        raise ValueError("max_result_rows must be positive")
+    return {
+        **_READ_SETTINGS,
+        "max_result_rows": min(int(max_result_rows), _READ_MAX_RESULT_ROWS),
+    }
+
 
 @dataclass(frozen=True)
 class AttributeKey:
@@ -167,7 +192,12 @@ def list_attributes_for_trace(trace_id: str) -> list[TraceAttribute]:
 
     try:
         client = ClickHouseClient()
-        rows, _column_types, query_time_ms = client.execute_read(query, params)
+        rows, _column_types, query_time_ms = client.execute_read(
+            query,
+            params,
+            timeout_ms=_READ_TIMEOUT_MS,
+            settings=_read_settings(max_result_rows=_READ_MAX_RESULT_ROWS),
+        )
     except Exception as e:
         logger.warning(
             "ch_trace_attributes_lookup_failed",
@@ -237,7 +267,12 @@ def list_attribute_keys_for_traces(
 
     try:
         client = ClickHouseClient()
-        rows, _types, query_time_ms = client.execute_read(query, params)
+        rows, _types, query_time_ms = client.execute_read(
+            query,
+            params,
+            timeout_ms=_READ_TIMEOUT_MS,
+            settings=_read_settings(max_result_rows=_READ_MAX_RESULT_ROWS),
+        )
     except Exception as e:
         logger.warning(
             "ch_batch_attribute_keys_failed",
@@ -318,7 +353,12 @@ def scoped_trace_ids(
     )
     try:
         client = ClickHouseClient()
-        rows, _types, query_time_ms = client.execute_read(query, params)
+        rows, _types, query_time_ms = client.execute_read(
+            query,
+            params,
+            timeout_ms=_READ_TIMEOUT_MS,
+            settings=_read_settings(max_result_rows=max(1, len(ids))),
+        )
     except Exception as e:
         logger.warning(
             "ch_scoped_trace_ids_failed",
@@ -401,7 +441,12 @@ def aggregate_attribute_over_traces(
 
     try:
         client = ClickHouseClient()
-        rows, _column_types, query_time_ms = client.execute_read(query, params)
+        rows, _column_types, query_time_ms = client.execute_read(
+            query,
+            params,
+            timeout_ms=_READ_TIMEOUT_MS,
+            settings=_read_settings(max_result_rows=_READ_MAX_RESULT_ROWS),
+        )
     except Exception as e:
         logger.warning(
             "ch_attribute_aggregation_failed",
@@ -461,7 +506,12 @@ def trace_ids_with_simulator_call_execution_id(
     """
     try:
         client = get_clickhouse_client()
-        rows = client.execute(query, params={"trace_ids": trace_id_list})
+        rows, _column_types, _query_time_ms = client.execute_read(
+            query,
+            {"trace_ids": trace_id_list},
+            timeout_ms=_READ_TIMEOUT_MS,
+            settings=_read_settings(max_result_rows=max(1, len(trace_id_list))),
+        )
         return {row[0] for row in rows}
     except Exception as e:
         logger.warning(
@@ -510,7 +560,12 @@ def spans_by_eval_attribute_call_execution_ids(
     out: dict[str, list[dict]] = {}
     try:
         client = get_clickhouse_client()
-        rows = client.execute(query, params={"ids": ids})
+        rows, _column_types, _query_time_ms = client.execute_read(
+            query,
+            {"ids": ids},
+            timeout_ms=_READ_TIMEOUT_MS,
+            settings=_read_settings(max_result_rows=_READ_MAX_RESULT_ROWS),
+        )
         for span_id, trace_id, call_exec_id, eval_attrs in rows:
             out.setdefault(call_exec_id, []).append(
                 {
@@ -571,13 +626,15 @@ def span_id_by_provider_log_id(
     """
     try:
         client = get_clickhouse_client()
-        rows = client.execute(
+        rows, _column_types, _query_time_ms = client.execute_read(
             query,
-            params={
+            {
                 "project_id": str(project_id),
                 "provider": provider,
                 "pid": provider_log_id,
             },
+            timeout_ms=_READ_TIMEOUT_MS,
+            settings=_read_settings(max_result_rows=1),
         )
         return rows[0][0] if rows else None
     except Exception as e:

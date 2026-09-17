@@ -1,24 +1,35 @@
 import traceback
 
 import structlog
+from django.db import DatabaseError
 from django.http import Http404
 from drf_yasg.utils import swagger_auto_schema
+from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
-from model_hub.schema.prompt.prompt_metrics import FetchPromptMetricsRequest
+from model_hub.schema.prompt.prompt_metrics import (
+    FetchPromptMetricsRequest,
+    FetchPromptSpanMetricsRequest,
+)
 from model_hub.serializers.contracts import (
     MODEL_HUB_ERROR_RESPONSES,
+    ModelHubErrorResponseSerializer,
+    PromptAggregateMetricsQuerySerializer,
     PromptMetricsEmptyScreenResponseSerializer,
-    PromptMetricsQuerySerializer,
     PromptMetricsResponseSerializer,
+    PromptSpanMetricsQuerySerializer,
 )
 from model_hub.services.prompt_metrics import (
+    PROMPT_METRICS_REQUEST_WALL_MS,
+    PromptMetricsReadLimitExceeded,
+    bounded_prompt_metrics_read,
     fetch_prompt_metrics,
     fetch_prompt_metrics_span_view,
 )
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
+from tracer.services.clickhouse.read_budget import ReadDeadline, ReadDeadlineExceeded
 
 logger = structlog.get_logger(__name__)
 
@@ -28,11 +39,17 @@ class FetchPromptObserveMetricsView(APIView):
     permission_classes = [IsAuthenticated]
 
     @validated_request(
-        query_serializer=PromptMetricsQuerySerializer,
-        responses={200: PromptMetricsResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        query_serializer=PromptAggregateMetricsQuerySerializer,
+        responses={
+            200: PromptMetricsResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+            422: ModelHubErrorResponseSerializer,
+            503: ModelHubErrorResponseSerializer,
+        },
         reject_unknown_fields=True,
     )
     def get(self, request):
+        deadline = ReadDeadline.start(PROMPT_METRICS_REQUEST_WALL_MS)
         try:
             query = request.validated_query_data
 
@@ -49,12 +66,25 @@ class FetchPromptObserveMetricsView(APIView):
                 page_size=query["page_size"],
             )
 
-            response = fetch_prompt_metrics(request_data)
+            with bounded_prompt_metrics_read(deadline):
+                response = fetch_prompt_metrics(request_data, deadline=deadline)
 
             return self._gm.success_response(response)
 
         except Http404:
             return self._gm.not_found("Prompt template not found")
+        except PromptMetricsReadLimitExceeded as exc:
+            return self._gm.custom_error_response(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                str(exc),
+                code="prompt_metrics_scope_too_wide",
+            )
+        except (ReadDeadlineExceeded, DatabaseError):
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Prompt metrics are temporarily unavailable. Please retry.",
+                code="prompt_metrics_read_unavailable",
+            )
         except Exception as e:
             logger.error(f"Error while fetching the prompt-observe metrics: {str(e)}")
             return self._gm.bad_request("Failed to fetch the prompt-observe metrics.")
@@ -65,15 +95,21 @@ class FetchPromptMetricsSpanView(APIView):
     permission_classes = [IsAuthenticated]
 
     @validated_request(
-        query_serializer=PromptMetricsQuerySerializer,
-        responses={200: PromptMetricsResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        query_serializer=PromptSpanMetricsQuerySerializer,
+        responses={
+            200: PromptMetricsResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+            422: ModelHubErrorResponseSerializer,
+            503: ModelHubErrorResponseSerializer,
+        },
         reject_unknown_fields=True,
     )
     def get(self, request):
+        deadline = ReadDeadline.start(PROMPT_METRICS_REQUEST_WALL_MS)
         try:
             query = request.validated_query_data
 
-            request_data = FetchPromptMetricsRequest(
+            request_data = FetchPromptSpanMetricsRequest(
                 prompt_template_id=str(query["prompt_template_id"]),
                 organization_id=str(
                     (
@@ -87,12 +123,27 @@ class FetchPromptMetricsSpanView(APIView):
                 page_size=query["page_size"],
             )
 
-            response = fetch_prompt_metrics_span_view(request_data)
+            with bounded_prompt_metrics_read(deadline):
+                response = fetch_prompt_metrics_span_view(
+                    request_data, deadline=deadline
+                )
 
             return self._gm.success_response(response)
 
         except Http404:
             return self._gm.not_found("Prompt template not found")
+        except PromptMetricsReadLimitExceeded as exc:
+            return self._gm.custom_error_response(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                str(exc),
+                code="prompt_metrics_scope_too_wide",
+            )
+        except (ReadDeadlineExceeded, DatabaseError):
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Prompt metrics are temporarily unavailable. Please retry.",
+                code="prompt_metrics_read_unavailable",
+            )
         except Exception as e:
             traceback.print_exc()
             logger.error(f"Error while fetching the prompt-observe metrics: {str(e)}")

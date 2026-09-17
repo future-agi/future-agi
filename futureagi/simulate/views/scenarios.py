@@ -3,18 +3,17 @@ import re
 import traceback
 import uuid
 
-from django.utils import timezone
+from accounts.models.user import User
 from django.db import close_old_connections, models, transaction
 from django.db.models import Count, Max, OuterRef, Q, Subquery
 from django.http import Http404
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import NotFound
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-
-from accounts.models.user import User
 from tfc.ee_stub import _ee_stub
 
 try:
@@ -45,7 +44,6 @@ try:
 except ImportError:
     get_personas_by_language = None
 from drf_yasg.utils import swagger_auto_schema
-
 from simulate.models import AgentDefinition, AgentVersion, Persona, Scenarios
 from simulate.models.scenario_graph import ScenarioGraph
 from simulate.models.simulator_agent import SimulatorAgent
@@ -580,10 +578,10 @@ class CreateScenarioView(APIView):
             raise Exception(f"Failed to create simulator agent: {str(e)}")  # noqa: B904
 
 
-
 import logging
 
 logger = logging.getLogger(__name__)
+
 
 def get_dataset_column_config(dataset) -> dict[str, dict[str, str]] | None:
     if dataset is None:
@@ -606,7 +604,7 @@ def get_dataset_column_config(dataset) -> dict[str, dict[str, str]] | None:
                 extra={
                     "dataset_id": str(dataset.id),
                     "column_id": cid,
-                }
+                },
             )
             continue
 
@@ -615,6 +613,7 @@ def get_dataset_column_config(dataset) -> dict[str, dict[str, str]] | None:
             "type": columns_by_id[cid].data_type,
         }
     return config
+
 
 class ScenarioDetailView(APIView):
     """
@@ -697,7 +696,9 @@ class ScenarioDetailView(APIView):
                 response_data["dataset_rows"] = 0
 
             # Add dataset column config so frontend can show actual column names in eval mapping
-            response_data["dataset_column_config"] = get_dataset_column_config(scenario.dataset)
+            response_data["dataset_column_config"] = get_dataset_column_config(
+                scenario.dataset
+            )
 
             # Return the response — pass through serializer to whitelist permitted fields
             return Response(

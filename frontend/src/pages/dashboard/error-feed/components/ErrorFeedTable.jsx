@@ -49,19 +49,30 @@ const humanizeTime = (iso) => {
 function ErrorTypeTag({ type, isDark }) {
   const shortType = type
     .replace(/Error$/, "")
-    .replace(/([A-Z])/g, " $1")
+    // Only split camelCase boundaries (lowercase→uppercase). The old
+    // `/([A-Z])/g` inserted a space before every capital, which is a no-op
+    // on already-spaced strings like "Tool Selection Errors" (HTML collapses
+    // the doubled space) but visibly breaks acronyms with no existing space,
+    // e.g. "KB Groundedness" -> "K B Groundedness".
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
     .trim();
   return (
     <Chip
-      label={shortType}
       size="small"
+      icon={
+        <Iconify icon="mdi:bug-outline" width={11} sx={{ ml: "4px", mr: 0 }} />
+      }
+      label={shortType}
       sx={{
         height: 18,
         borderRadius: "3px",
         fontSize: "10px",
-        fontWeight: 500,
+        fontWeight: "fontWeightMedium",
         bgcolor: isDark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.06)",
         color: isDark ? "#a1a1aa" : "#605C70",
+        "& .MuiChip-icon": {
+          color: isDark ? "#a1a1aa" : "#605C70",
+        },
         "& .MuiChip-label": { px: "5px" },
         maxWidth: 140,
         overflow: "hidden",
@@ -72,6 +83,42 @@ function ErrorTypeTag({ type, isDark }) {
 
 ErrorTypeTag.propTypes = {
   type: PropTypes.string,
+  isDark: PropTypes.bool,
+};
+
+// Tells the row apart at a glance: a cluster is either Future AGI's built-in
+// scanner or one of the customer's own eval tasks. One icon for both states
+// — the label carries the difference. Mirrors the backend's own source
+// values (ClusterSource.SCANNER / .EVAL) rather than a separate display name.
+function SourceTag({ source, isDark }) {
+  const label = source === "eval" ? "Eval" : "Scanner";
+  return (
+    <Chip
+      size="small"
+      icon={
+        <Iconify icon="mdi:tag-outline" width={11} sx={{ ml: "4px", mr: 0 }} />
+      }
+      label={label}
+      sx={{
+        height: 18,
+        borderRadius: "3px",
+        fontSize: "10px",
+        fontWeight: "fontWeightMedium",
+        bgcolor: isDark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.06)",
+        color: isDark ? "#a1a1aa" : "#605C70",
+        "& .MuiChip-icon": {
+          color: isDark ? "#a1a1aa" : "#605C70",
+        },
+        "& .MuiChip-label": { px: "5px" },
+        maxWidth: 140,
+        overflow: "hidden",
+      }}
+    />
+  );
+}
+
+SourceTag.propTypes = {
+  source: PropTypes.string,
   isDark: PropTypes.bool,
 };
 
@@ -446,6 +493,7 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
                           </Typography>
                         </Tooltip>
                         <Stack direction="row" alignItems="center" gap={0.75}>
+                          <SourceTag source={row.source} isDark={isDark} />
                           <ErrorTypeTag type={row.error.type} isDark={isDark} />
                           {row.eval_score != null && (
                             <Typography

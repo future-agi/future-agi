@@ -116,9 +116,16 @@ export const useTraceGridStore = create((set) => ({
   toggledNodes: [],
   selectAll: false,
   totalRowCount: 0,
+  totalRowCountLowerBound: null,
+  totalRowCountIsLowerBound: false,
   setToggledNodes: (value) => set(() => ({ toggledNodes: value })),
   setSelectAll: (value) => set(() => ({ selectAll: value })),
-  setTotalRowCount: (value) => set(() => ({ totalRowCount: value })),
+  setTotalRowCount: (value) =>
+    set({
+      totalRowCount: value,
+      totalRowCountLowerBound: null,
+      totalRowCountIsLowerBound: false,
+    }),
 }));
 
 export const resetTraceGridStore = () => {
@@ -126,6 +133,8 @@ export const resetTraceGridStore = () => {
     toggledNodes: [],
     selectAll: false,
     totalRowCount: 0,
+    totalRowCountLowerBound: null,
+    totalRowCountIsLowerBound: false,
   });
 };
 export const useTraceGridStoreShallow = (fun) =>
@@ -135,9 +144,16 @@ export const useSpanGridStore = create((set, get, store) => ({
   toggledNodes: [],
   selectAll: false,
   totalRowCount: 0,
+  totalRowCountLowerBound: null,
+  totalRowCountIsLowerBound: false,
   setToggledNodes: (value) => set(() => ({ toggledNodes: value })),
   setSelectAll: (value) => set(() => ({ selectAll: value })),
-  setTotalRowCount: (value) => set(() => ({ totalRowCount: value })),
+  setTotalRowCount: (value) =>
+    set({
+      totalRowCount: value,
+      totalRowCountLowerBound: null,
+      totalRowCountIsLowerBound: false,
+    }),
   reset: () => {
     set(store.getInitialState());
   },

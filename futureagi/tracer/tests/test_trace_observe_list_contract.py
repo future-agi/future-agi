@@ -10,7 +10,10 @@ Guards the two failure modes this contract has already been through:
 import json
 from pathlib import Path
 
-from tracer.serializers.trace import TraceObserveListResponseSerializer
+from tracer.serializers.trace import (
+    TraceObserveListResponseSerializer,
+    TraceSessionListResponseSerializer,
+)
 from tracer.utils.helper import get_default_trace_config
 
 
@@ -71,6 +74,98 @@ class TestTraceObserveListResponseContract:
         serializer = TraceObserveListResponseSerializer(data=self._payload([]))
         assert serializer.is_valid(), serializer.errors
 
+    def test_accepts_additive_bounded_page_metadata(self):
+        payload = self._payload([])
+        payload["result"]["metadata"].update(
+            {
+                "total_rows_is_lower_bound": True,
+                "has_more": False,
+                "query_complete": False,
+                "query_status": "degraded",
+                "query_error_code": "read_budget_exceeded",
+                "query_elapsed_ms": 749.25,
+                "query_count": 2,
+                "query_rows_returned": 125,
+                "query_result_payload_bytes": 8192,
+            }
+        )
+
+        serializer = TraceObserveListResponseSerializer(data=payload)
+
+        assert serializer.is_valid(), serializer.errors
+
+    def test_session_list_accepts_candidate_order_provenance(self):
+        payload = self._payload([])
+        payload["result"]["metadata"].update(
+            {
+                "query_exact": False,
+                "query_provenance": "spans_per_session_candidate",
+                "ordering_exact": False,
+            }
+        )
+
+        serializer = TraceSessionListResponseSerializer(data=payload)
+
+        assert serializer.is_valid(), serializer.errors
+
+    def test_session_list_allows_nullable_core_cells_and_dynamic_only_rows(self):
+        payload = self._payload(
+            [
+                {
+                    "session_id": None,
+                    "session_name": None,
+                    "duration": None,
+                    "dynamic.flag": True,
+                },
+                {"dynamic.only": {"nested": [1, None, "ok"]}},
+            ]
+        )
+
+        serializer = TraceSessionListResponseSerializer(data=payload)
+
+        assert serializer.is_valid(), serializer.errors
+        assert serializer.validated_data["result"]["table"][0]["dynamic.flag"]
+        assert serializer.validated_data["result"]["table"][1]["dynamic.only"] == {
+            "nested": [1, None, "ok"]
+        }
+
+    def test_session_list_types_stable_cells_and_allows_dynamic_cells(self):
+        payload = self._payload(
+            [
+                {
+                    "session_id": "session-1",
+                    "session_name": "checkout",
+                    "project_id": "a2f1c9d0-0000-4000-8000-000000000003",
+                    "start_time": "2026-08-29T12:00:00Z",
+                    "end_time": "2026-08-29T12:01:00Z",
+                    "duration": 60.0,
+                    "total_cost": 0.012,
+                    "total_tokens": 42,
+                    "total_traces_count": 2,
+                    "first_message": {"role": "user", "content": "hello"},
+                    "custom.plan": "pro",
+                    "a2f1c9d0-0000-4000-8000-000000000004": 0.9,
+                }
+            ]
+        )
+
+        serializer = TraceSessionListResponseSerializer(data=payload)
+
+        assert serializer.is_valid(), serializer.errors
+        row = serializer.validated_data["result"]["table"][0]
+        assert row["custom.plan"] == "pro"
+        assert row["a2f1c9d0-0000-4000-8000-000000000004"] == 0.9
+
+    def test_session_list_rejects_malformed_stable_cell(self):
+        payload = self._payload(
+            [{"session_id": "session-1", "total_tokens": {"wrong": "shape"}}]
+        )
+
+        serializer = TraceSessionListResponseSerializer(data=payload)
+
+        assert not serializer.is_valid()
+        assert "total_tokens" in serializer.errors["result"]["table"][0]
+
     def test_rejects_missing_metadata(self):
         payload = {
             "status": True,
@@ -90,6 +185,36 @@ class TestTraceObserveListResponseContract:
         operation = _swagger()["paths"]["/tracer/trace/list_traces_of_session/"]["get"]
         ref = operation["responses"]["200"]["schema"]["$ref"]
         assert ref.rsplit("/", 1)[-1] == "TraceObserveListResponse"
+
+    def test_swagger_scopes_candidate_order_provenance_to_session_list(self):
+        swagger = _swagger()
+        operation = swagger["paths"]["/tracer/trace-session/list_sessions/"]["get"]
+        ref = operation["responses"]["200"]["schema"]["$ref"]
+        assert ref.rsplit("/", 1)[-1] == "TraceSessionListResponse"
+
+        definitions = swagger["definitions"]
+        session_metadata = definitions["TraceSessionListMetadata"]["properties"]
+        trace_metadata = definitions["TraceObserveListMetadata"]["properties"]
+        assert {
+            "query_exact",
+            "query_provenance",
+            "ordering_exact",
+        } <= session_metadata.keys()
+        assert session_metadata["query_provenance"]["enum"] == [
+            "spans_per_session_candidate"
+        ]
+        assert "query_provenance" not in trace_metadata
+        assert "ordering_exact" not in trace_metadata
+
+        session_table = definitions["TraceSessionListResult"]["properties"]["table"]
+        assert session_table["items"]["$ref"].rsplit("/", 1)[-1] == (
+            "TraceSessionTableRow"
+        )
+        session_row = definitions["TraceSessionTableRow"]
+        assert "session_id" not in session_row.get("required", [])
+        assert session_row["properties"]["session_id"]["x-nullable"] is True
+        assert session_row["additionalProperties"]["x-json-value"] is True
+        assert session_row["additionalProperties"]["x-nullable"] is True
 
     def test_swagger_table_cells_are_json_values(self):
         """The cell schema must carry x-json-value (and nullability). drf-yasg
@@ -114,3 +239,25 @@ class TestTraceObserveListResponseContract:
         ].rsplit("/", 1)[-1]
         config_items = definitions[result_ref]["properties"]["config"]["items"]
         assert config_items == {"$ref": "#/definitions/TraceObserveColumnConfig"}
+
+    def test_swagger_exposes_additive_bounded_page_metadata(self):
+        definitions = _swagger()["definitions"]
+        result_ref = definitions["TraceObserveListResponse"]["properties"]["result"][
+            "$ref"
+        ].rsplit("/", 1)[-1]
+        metadata_ref = definitions[result_ref]["properties"]["metadata"]["$ref"].rsplit(
+            "/", 1
+        )[-1]
+        metadata = definitions[metadata_ref]["properties"]
+
+        assert {
+            "total_rows_is_lower_bound",
+            "has_more",
+            "query_complete",
+            "query_status",
+            "query_error_code",
+            "query_elapsed_ms",
+            "query_count",
+            "query_rows_returned",
+            "query_result_payload_bytes",
+        } <= metadata.keys()

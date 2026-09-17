@@ -400,6 +400,7 @@ EXPECTED_RETRIEVE_KEYS = {
     "optimiser_name",
     "optimiser_type",
     "model",
+    "model_deprecated",
     "provider_logo",
     "configuration",
     "status",
@@ -743,3 +744,117 @@ def test_stop_endpoint_transitions_running_run_via_scoped_lock(
     assert body["result"]["success"] is True
     run.refresh_from_db()
     assert run.status == OptimizeDataset.StatusType.CANCELLED
+
+
+# ==================== create: deprecated model guard ====================
+#
+# Regression: the guard used to read ``optimizer_config.model_name``, but the
+# endpoint receives the model as top-level ``optimizer_model_id`` (the FE
+# drawer strips ``model_name`` from ``optimizer_config``), so it never fired.
+# ``text-embedding-3-large`` is in AVAILABLE_MODELS but stripped by the
+# runtime deny-list, so it must be rejected.
+
+
+@pytest.mark.django_db
+class TestCreateDeprecatedModelGuard:
+    def _payload(self, column, **overrides):
+        payload = {
+            "name": "Deprecated model optimization",
+            "column_id": str(column.id),
+            "optimizer_algorithm": OptimizeDataset.OptimizerAlgorithm.RANDOM_SEARCH,
+            "optimizer_config": {"num_variations": 1},
+            "user_eval_template_ids": [],
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_create_rejects_deprecated_top_level_optimizer_model_id(
+        self, auth_client, output_column
+    ):
+        response = auth_client.post(
+            "/model-hub/dataset-optimization/",
+            self._payload(output_column, optimizer_model_id="text-embedding-3-large"),
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "no longer available" in str(response.json())
+        assert not OptimizeDataset.objects.filter(
+            name="Deprecated model optimization"
+        ).exists()
+
+    def test_create_rejects_deprecated_model_in_optimizer_config(
+        self, auth_client, output_column
+    ):
+        response = auth_client.post(
+            "/model-hub/dataset-optimization/",
+            self._payload(
+                output_column,
+                optimizer_config={
+                    "num_variations": 1,
+                    "model_name": "text-embedding-3-large",
+                },
+            ),
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "no longer available" in str(response.json())
+
+    def test_create_allows_available_model(
+        self, auth_client, output_column, ai_model, user_eval_metric
+    ):
+        with patch(
+            "tfc.temporal.dataset_optimization.client.start_dataset_optimization_workflow",
+            return_value=None,
+        ):
+            response = auth_client.post(
+                "/model-hub/dataset-optimization/",
+                self._payload(
+                    output_column,
+                    optimizer_model_id="gpt-4o-mini",
+                    user_eval_template_ids=[str(user_eval_metric.id)],
+                ),
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_201_CREATED, response.json()
+        assert OptimizeDataset.objects.filter(
+            name="Deprecated model optimization"
+        ).exists()
+
+
+@pytest.mark.django_db
+def test_list_serializer_marks_deprecated_model(output_column):
+    run = create_optimization_run(
+        output_column,
+        optimizer_config={
+            "num_variations": 1,
+            "model_name": "text-embedding-3-large",
+        },
+    )
+
+    data = DatasetOptimizationListSerializer(run).data
+
+    assert data["model_deprecated"] is True
+
+
+@pytest.mark.django_db
+def test_list_serializer_marks_available_model(output_column, ai_model):
+    run = create_optimization_run(output_column, optimizer_model=ai_model)
+
+    data = DatasetOptimizationListSerializer(run).data
+
+    assert data["model_deprecated"] is False
+
+
+def test_list_pagination_caps_limit_param():
+    from rest_framework.request import Request
+    from rest_framework.test import APIRequestFactory
+
+    from model_hub.views.dataset_optimization import DatasetOptimizationPagination
+
+    paginator = DatasetOptimizationPagination()
+    request = Request(APIRequestFactory().get("/", {"limit": "100000"}))
+
+    assert paginator.get_page_size(request) == 100

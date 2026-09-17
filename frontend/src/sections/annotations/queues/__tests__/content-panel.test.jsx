@@ -4,6 +4,10 @@ import { render, screen, waitFor, userEvent } from "src/utils/test-utils";
 import axios from "src/utils/axios";
 import ContentPanel from "../annotate/content-panel";
 
+const { mockUseGetTraceDetail } = vi.hoisted(() => ({
+  mockUseGetTraceDetail: vi.fn(() => ({ data: null, isLoading: false })),
+}));
+
 vi.mock("src/components/iconify", () => ({
   default: ({ icon, ...props }) => (
     <span data-testid="iconify" data-icon={icon} {...props} />
@@ -115,16 +119,41 @@ vi.mock("src/components/traceDetail/TraceLeftPanel", () => ({
 }));
 
 vi.mock("src/components/traceDetail/DrawerToolbar", () => ({
-  default: () => <div data-testid="drawer-toolbar" />,
+  default: ({ rightSlot }) => (
+    <div data-testid="drawer-toolbar">{rightSlot}</div>
+  ),
+  // eslint-disable-next-line react/prop-types -- test stub
+  ToolbarPill: ({ icon, label, onClick }) => (
+    <button
+      type="button"
+      data-testid="toolbar-pill"
+      data-icon={icon}
+      onClick={onClick}
+    >
+      {label}
+    </button>
+  ),
 }));
 
 vi.mock("src/components/traceDetail/TraceDisplayPanel", () => ({
   default: () => <div data-testid="trace-display-panel" />,
-  DEFAULT_VIEW_CONFIG: {},
+  DEFAULT_VIEW_CONFIG: {
+    viewMode: "tree",
+    spanTypeFilter: null,
+    visibleMetrics: {
+      latency: true,
+      tokens: true,
+      cost: false,
+      evals: false,
+      annotations: false,
+      events: false,
+    },
+    showAgentGraph: true,
+  },
 }));
 
 vi.mock("src/api/project/trace-detail", () => ({
-  useGetTraceDetail: () => ({ data: null, isLoading: false }),
+  useGetTraceDetail: (...args) => mockUseGetTraceDetail(...args),
 }));
 
 vi.mock("src/api/project/saved-views", () => ({
@@ -144,11 +173,28 @@ vi.mock("src/components/imagine/useImagineStore", () => ({
   },
 }));
 
+vi.mock("src/components/custom-dialog/confirm-dialog", () => ({
+  default: () => null,
+}));
+
+function renderWithQuery(ui) {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+    },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
+  );
+}
+
 describe("Annotation queue ContentPanel", () => {
   const clipboardWriteText = vi.fn(() => Promise.resolve());
 
   beforeEach(() => {
     clipboardWriteText.mockClear();
+    mockUseGetTraceDetail.mockReset();
+    mockUseGetTraceDetail.mockReturnValue({ data: null, isLoading: false });
     Object.defineProperty(navigator, "clipboard", {
       value: { writeText: clipboardWriteText },
       configurable: true,
@@ -168,21 +214,13 @@ describe("Annotation queue ContentPanel", () => {
   });
 
   it("uses the voice drawer for voice call execution queue items", async () => {
-    const queryClient = new QueryClient({
-      defaultOptions: {
-        queries: { retry: false },
-      },
-    });
-
-    render(
-      <QueryClientProvider client={queryClient}>
-        <ContentPanel
-          item={{
-            source_type: "call_execution",
-            source_content: { call_id: "call-1" },
-          }}
-        />
-      </QueryClientProvider>,
+    renderWithQuery(
+      <ContentPanel
+        item={{
+          source_type: "call_execution",
+          source_content: { call_id: "call-1" },
+        }}
+      />,
     );
 
     await waitFor(() => {
@@ -204,6 +242,9 @@ describe("Annotation queue ContentPanel", () => {
       "queue,tags",
     );
     expect(screen.queryByTestId("new-scenario-view")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "View session" }),
+    ).not.toBeInTheDocument();
   });
 
   it("renders ChatDetailDrawerV2 (embedded) for chat call execution queue items", async () => {
@@ -218,21 +259,13 @@ describe("Annotation queue ContentPanel", () => {
       },
     });
 
-    const queryClient = new QueryClient({
-      defaultOptions: {
-        queries: { retry: false },
-      },
-    });
-
-    render(
-      <QueryClientProvider client={queryClient}>
-        <ContentPanel
-          item={{
-            source_type: "call_execution",
-            source_content: { call_id: "chat-call-1" },
-          }}
-        />
-      </QueryClientProvider>,
+    renderWithQuery(
+      <ContentPanel
+        item={{
+          source_type: "call_execution",
+          source_content: { call_id: "chat-call-1" },
+        }}
+      />,
     );
 
     await waitFor(() => {
@@ -249,6 +282,60 @@ describe("Annotation queue ContentPanel", () => {
     // Chat sims no longer use the voice drawer or the legacy ScenarioView path.
     expect(screen.queryByTestId("voice-drawer")).not.toBeInTheDocument();
     expect(screen.queryByTestId("new-scenario-view")).not.toBeInTheDocument();
+  });
+
+  it("uses the voice drawer for conversation traces outside simulator projects", async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        result: {
+          status: "ended",
+          scenario_name: "Vapi inbound call",
+          transcript: [],
+          eval_outputs: {},
+        },
+      },
+    });
+
+    renderWithQuery(
+      <ContentPanel
+        item={{
+          source_type: "trace",
+          source_content: {
+            trace_id: "trace-voice-1",
+            observation_type: "conversation",
+            project_source: "prototype",
+          },
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
+        "data-scenario",
+        "Vapi inbound call",
+      );
+    });
+    expect(screen.queryByTestId("trace-display-panel")).not.toBeInTheDocument();
+  });
+
+  it("falls back to the inline trace view when voice call detail is empty", async () => {
+    axios.get.mockResolvedValue({ data: {} });
+
+    renderWithQuery(
+      <ContentPanel
+        item={{
+          source_type: "trace",
+          source_content: {
+            trace_id: "trace-voice-2",
+            observation_type: "conversation",
+            project_source: "prototype",
+          },
+        }}
+      />,
+    );
+
+    await screen.findByTestId("trace-display-panel");
+    expect(screen.queryByTestId("voice-drawer")).not.toBeInTheDocument();
   });
 
   it("copies every dataset field including JSON objects and booleans", async () => {
@@ -293,6 +380,9 @@ describe("Annotation queue ContentPanel", () => {
         ),
       );
     });
+    expect(
+      screen.queryByRole("button", { name: "View session" }),
+    ).not.toBeInTheDocument();
   });
 
   it("renders session traces without the legacy trace detail drawer", async () => {
@@ -313,21 +403,14 @@ describe("Annotation queue ContentPanel", () => {
         },
       },
     });
-    const queryClient = new QueryClient({
-      defaultOptions: {
-        queries: { retry: false },
-      },
-    });
 
-    render(
-      <QueryClientProvider client={queryClient}>
-        <ContentPanel
-          item={{
-            source_type: "trace_session",
-            source_content: { session_id: "session-123" },
-          }}
-        />
-      </QueryClientProvider>,
+    renderWithQuery(
+      <ContentPanel
+        item={{
+          source_type: "trace_session",
+          source_content: { session_id: "session-123" },
+        }}
+      />,
     );
 
     // Session traces render, and the legacy trace-detail-drawer is gone — the
@@ -336,5 +419,140 @@ describe("Annotation queue ContentPanel", () => {
       await screen.findByText("customer asks for help"),
     ).toBeInTheDocument();
     expect(screen.queryByTestId("trace-detail-drawer")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "View session" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders prototype run content without a View session action", () => {
+    render(
+      <ContentPanel
+        item={{
+          source_type: "prototype_run",
+          source_content: {
+            name: "My prototype",
+            prompt: "hello",
+            response: "world",
+          },
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Prototype")).toBeInTheDocument();
+    expect(screen.getByText("My prototype")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "View session" }),
+    ).not.toBeInTheDocument();
+  });
+
+  describe("View session for trace / span items", () => {
+    it("shows View session when the loaded trace has a parent session", () => {
+      mockUseGetTraceDetail.mockReturnValue({
+        data: {
+          trace: {
+            project: "proj-1",
+            session: "session-abc",
+            tags: [],
+          },
+          observation_spans: [],
+        },
+        isLoading: false,
+      });
+
+      renderWithQuery(
+        <ContentPanel
+          item={{
+            source_type: "trace",
+            source_content: { trace_id: "trace-1" },
+          }}
+        />,
+      );
+
+      expect(
+        screen.getByRole("button", { name: "View session" }),
+      ).toBeInTheDocument();
+      expect(screen.getByTestId("drawer-toolbar")).toBeInTheDocument();
+    });
+
+    it("hides View session when the loaded trace has no parent session", () => {
+      mockUseGetTraceDetail.mockReturnValue({
+        data: {
+          trace: {
+            project: "proj-1",
+            session: null,
+            tags: [],
+          },
+          observation_spans: [],
+        },
+        isLoading: false,
+      });
+
+      renderWithQuery(
+        <ContentPanel
+          item={{
+            source_type: "observation_span",
+            source_content: { trace_id: "trace-1", span_id: "span-1" },
+          }}
+        />,
+      );
+
+      expect(screen.getByTestId("drawer-toolbar")).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "View session" }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("opens session detail when View session is clicked", async () => {
+      const user = userEvent.setup();
+      mockUseGetTraceDetail.mockReturnValue({
+        data: {
+          trace: {
+            project: "proj-1",
+            session: "session-abc",
+            tags: [],
+          },
+          observation_spans: [],
+        },
+        isLoading: false,
+      });
+      axios.get.mockResolvedValueOnce({
+        data: {
+          result: {
+            session_metadata: { total_traces: 1 },
+            response: [
+              {
+                trace_id: "trace-in-session",
+                input: "session conversation turn",
+                output: "assistant reply",
+                system_metrics: {},
+                evals_metrics: {},
+              },
+            ],
+            next: null,
+          },
+        },
+      });
+
+      renderWithQuery(
+        <ContentPanel
+          item={{
+            source_type: "trace",
+            source_content: { trace_id: "trace-1" },
+          }}
+        />,
+      );
+
+      await user.click(screen.getByRole("button", { name: "View session" }));
+
+      expect(
+        await screen.findByRole("button", { name: "Back to trace" }),
+      ).toBeInTheDocument();
+      expect(
+        await screen.findByText("session conversation turn"),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "View session" }),
+      ).not.toBeInTheDocument();
+    });
   });
 });

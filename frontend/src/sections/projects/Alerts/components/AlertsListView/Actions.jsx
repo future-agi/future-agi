@@ -1,5 +1,5 @@
 import { Badge, Box, Button, IconButton, Stack } from "@mui/material";
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
@@ -7,8 +7,13 @@ import RowActions from "./RowActions";
 import ColumnDropdown from "src/components/ColumnDropdown/ColumnDropdown";
 import { camelCase } from "lodash";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
+import FilterPanel from "src/components/filter-panel/FilterPanel";
 import { useAlertStore } from "../../store/useAlertStore";
-import { useAlertFilterShallow } from "../../store/useAlertFilterStore";
+import {
+  useAlertFilterFields,
+  useAlertFilterShallow,
+} from "../../store/useAlertFilterStore";
+import { useProjectList } from "../../../LLMTracing/common";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 
@@ -27,10 +32,27 @@ export default function Actions() {
     handleOpenProjectModal,
     mainPage,
   } = useAlertStore();
-  const { hasValidFilters, toggleFilter } = useAlertFilterShallow();
+  const {
+    activeFilters,
+    hasValidFilters,
+    setActiveFilters,
+    setProjectOptions,
+  } = useAlertFilterShallow();
+  const filterFields = useAlertFilterFields(mainPage);
 
   const columnConfigureRef = useRef();
+  const filterRef = useRef();
   const [openColumnConfigure, setOpenColumnConfigure] = useState(false);
+  const [openFilter, setOpenFilter] = useState(false);
+
+  // Project is only a filterable field on the cross-project alerts page.
+  const { data: projectList } = useProjectList("", mainPage);
+
+  useEffect(() => {
+    if (Array.isArray(projectList)) {
+      setProjectOptions(projectList);
+    }
+  }, [projectList, setProjectOptions]);
 
   const onColumnVisibilityChange = (columnId) => {
     const newColumnData = columns.map((col) =>
@@ -76,7 +98,8 @@ export default function Actions() {
         ) : (
           <Stack direction={"row"} gap={2.5}>
             <IconButton
-              onClick={() => toggleFilter(mainPage)}
+              ref={filterRef}
+              onClick={() => setOpenFilter(true)}
               size="small"
               sx={{
                 color: "text.primary",
@@ -173,6 +196,16 @@ export default function Actions() {
           </Stack>
         )}
       </Stack>
+      <FilterPanel
+        anchorEl={filterRef?.current}
+        open={openFilter}
+        onClose={() => setOpenFilter(false)}
+        filterFields={filterFields}
+        currentFilters={activeFilters}
+        onApply={setActiveFilters}
+        basicOnly
+        placement="bottom-end"
+      />
       <ColumnDropdown
         open={openColumnConfigure}
         onClose={() => setOpenColumnConfigure(false)}

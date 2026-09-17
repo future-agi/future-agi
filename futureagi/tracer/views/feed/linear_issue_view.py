@@ -19,8 +19,11 @@ from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.trace_error_analysis import TraceErrorGroup
-from tracer.queries.feed import trace_judge, priority_to_severity
-from tracer.views.feed._permissions import resolve_requested_project_ids
+from tracer.queries.feed import priority_to_severity, trace_judge
+from tracer.views.feed._permissions import (
+    ErrorFeedLicenseRequired,
+    resolve_requested_project_ids,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -144,7 +147,7 @@ def _build_issue_description(cluster: TraceErrorGroup, trace_id: str | None) -> 
     return "\n\n".join(parts)
 
 
-class CreateLinearIssueView(APIView):
+class CreateLinearIssueView(ErrorFeedLicenseRequired, APIView):
     """POST /tracer/feed/issues/{cluster_id}/create-linear-issue/"""
 
     permission_classes = [IsAuthenticated]
@@ -250,7 +253,7 @@ class CreateLinearIssueView(APIView):
         )
 
 
-class LinearTeamsView(APIView):
+class LinearTeamsView(ErrorFeedLicenseRequired, APIView):
     """GET /tracer/feed/integrations/linear/teams/
 
     Returns the list of Linear teams for the team picker dropdown.

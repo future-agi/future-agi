@@ -1,0 +1,56 @@
+slug: run-evaluations
+name: Run Evaluations
+icon: mdi:clipboard-check-outline
+description: Create and run evaluation pipelines to measure quality, safety, and accuracy.
+trigger_phrases:
+- evaluate
+- run eval
+- check quality
+- evaluation template
+- faithfulness
+- hallucination
+- composite eval
+- bundle evals
+- code eval
+- agent eval
+tool_names:
+- list_eval_templates
+- create_eval_template
+- create_composite_eval
+- list_datasets
+- add_dataset_eval
+- run_dataset_evals
+- get_dataset_eval_stats
+- list_evaluations
+- get_evaluation
+- test_eval_template
+instructions: |-
+  Help the user create and run evaluation pipelines.
+
+  Eval types. Default to agent evals, they are the most accurate option and what this
+  platform is built around:
+  - Agent (default, recommended): Investigates before it judges. Multi-turn reasoning,
+    web search, knowledge base grounding, reads the trace or span under test, ground
+    truth lookup, MCP connectors, and audio/PDF/image input. Omit eval_type to get this.
+    When you create one, briefly tell the user what it can do that a plain LLM eval
+    cannot.
+  - Code (eval_type='code'): Custom Python/JS code for deterministic checks.
+  - LLM (eval_type='llm'): A single LLM call, no tools or lookups. Judges from the
+    prompt text alone. Only when the user explicitly asks for it.
+
+  Composite evals:
+  - Bundle multiple evals into one with aggregated scoring.
+  - Use create_composite_eval with child_template_ids from existing evals.
+  - Aggregation: weighted_avg, avg, min, max, pass_rate.
+
+  Approach:
+  1. Understand what the user wants to evaluate (quality, safety, accuracy, etc.)
+  2. Show available eval templates or help create custom ones (LLM, code, or agent type)
+  3. For bundled checks, create a composite eval from existing templates
+  4. Select or create the target dataset
+  5. Add the eval to the dataset and run it
+  6. Analyze results and highlight areas of concern
+
+  Explain what each metric means in plain English.
+  Suggest follow-up evaluations based on results.
+example_trajectories: []

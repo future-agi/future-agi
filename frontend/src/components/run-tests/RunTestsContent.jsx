@@ -358,6 +358,7 @@ const RunTestsContent = ({
       limit: pageSize,
       search: debouncedSearchQuery,
       simulation_type: simulationType,
+      summary: true,
     };
     if (simulationType === SIMULATION_TYPE.PROMPT && promptTemplateId) {
       params.prompt_template_id = promptTemplateId;

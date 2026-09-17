@@ -1,0 +1,82 @@
+[
+    {
+        "id": "BG_01",
+        "file_name": "birdsong_and_wind_through_trees_in_park.wav",
+        "path": "final/birdsong_and_wind_through_trees_in_park.wav",
+        "title": "Gentle Park Sounds",
+        "intensity": "quiet",
+        "environment": "outdoors",
+        "description": "This audio features calming sounds of birdsong and wind rustling through trees. The overall atmosphere is peaceful and relaxing, creating a serene backdrop. It's a pleasant soundscape perfect for unwinding.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/b726a674-6405-4ea8-9876-98c15a3a986b"
+    },
+    {
+        "id": "BG_02",
+        "file_name": "car_driving_ambience.wav",
+        "path": "final/car_driving_ambience.wav",
+        "title": "Car Driving Ambiance",
+        "intensity": "moderate",
+        "environment": "vehicle",
+        "description": "This audio features the consistent sound of a car driving on a road. You can hear the engine hum and the low rumble of the tires on the asphalt. It's a continuous sound, creating a calming and slightly hypnotic atmosphere.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/681f501a-4ecc-48c8-9ecf-709a4dc9c8e0"
+    },
+    {
+        "id": "BG_04",
+        "file_name": "grocery_store_ambience_new.wav",
+        "path": "final/grocery_store_ambience_new.wav",
+        "title": "Grocery Store Ambience",
+        "intensity": "moderate",
+        "environment": "retail",
+        "description": "This audio captures a typical grocery store environment with a mix of sounds: hushed conversations, the gentle hum of refrigerators, and the soft clatter of shopping carts. It's a moderately busy atmosphere, not overly loud, creating a relaxed and familiar soundscape. The sounds are fairly continuous, making it suitable for background ambiance.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/dcf2c713-622e-404e-81b1-aa1d954d752f"
+    },
+    {
+        "id": "BG_05",
+        "file_name": "office_ambience_mix.wav",
+        "path": "final/office_ambience_mix.wav",
+        "title": "Office Ambience",
+        "intensity": "moderate",
+        "environment": "office",
+        "description": "This audio features a mix of typical office sounds: keyboard clicks, faint conversations, and the hum of office equipment. It's a generally quiet and unobtrusive soundscape, creating a comfortable and focused atmosphere. The sounds are continuous and provide a subtle background.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/212d2f8c-7049-415d-98e5-861864b9a9ab"
+    },
+    {
+        "id": "BG_06",
+        "file_name": "people_at_airport_room.wav",
+        "path": "final/people_at_airport_room.wav",
+        "title": "Airport Terminal Activity",
+        "intensity": "moderate",
+        "environment": "transit",
+        "description": "This audio captures the sounds of a busy airport terminal, with overlapping conversations, rolling suitcases, and the hum of machinery. It's a moderately loud and continuous soundscape, reflecting the constant activity of travelers. The overall mood is bustling and somewhat impersonal.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/e3d58a42-79bb-472f-ae1b-8cf0c3fac65f"
+    },
+    {
+        "id": "BG_07",
+        "file_name": "shopping_mall.wav",
+        "path": "final/shopping_mall.wav",
+        "title": "Shopping Mall Ambience",
+        "intensity": "moderate",
+        "environment": "retail",
+        "description": "This audio captures the typical sounds of a bustling shopping mall. You can hear a mix of muted chatter, distant music, and the faint hum of air conditioning, creating a somewhat busy and lively atmosphere. The overall soundscape feels moderately intrusive.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/124c01ee-6d86-4ee4-85cb-4fba4d5a14a6"
+    },
+    {
+        "id": "BG_08",
+        "file_name": "traffic_jam.wav",
+        "path": "final/traffic_jam.wav",
+        "title": "Heavy Manila Traffic",
+        "intensity": "loud",
+        "environment": "street",
+        "description": "This audio captures the sounds of a significant traffic jam. You can hear a constant low rumble of engines, intermittent honking, and the occasional squealing of brakes. It's a very busy and potentially stressful soundscape.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/db8b4e97-705e-47d3-8a67-61cb400ca447"
+    },
+    {
+        "id": "BG_9",
+        "file_name": "train_station_ambience.wav",
+        "path": "final/train_station_ambience.wav",
+        "title": "Train Station Ambience",
+        "intensity": "moderate",
+        "environment": "transit",
+        "description": "This audio captures the typical sounds of a busy train station, including the rumble of trains, announcements, and general chatter. It's a moderately loud soundscape, creating a bustling yet functional atmosphere. The sounds are mostly continuous, contributing to a sense of transit.",
+        "url": "https://fi-content.s3.ap-south-1.amazonaws.com/audio/9c14b350-f7d4-4d96-b16d-ed2513d6bec1/a392cead-41c7-4db2-b286-38b48f29f78b"
+    }
+]

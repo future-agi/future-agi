@@ -174,24 +174,28 @@ const STATUS_OPTIONS = [
     label: "Escalating",
     icon: "mdi:trending-up",
     color: "#DB2F2D",
+    darkColor: "#E87878",
   },
   {
     value: "acknowledged",
     label: "Acknowledged",
     icon: "mdi:check-circle-outline",
     color: "#938FA3",
+    darkColor: "#938FA3",
   },
   {
     value: "for_review",
     label: "For review",
     icon: "mdi:eye-outline",
     color: "#F5A623",
+    darkColor: "#F5A623",
   },
   {
     value: "resolved",
     label: "Resolved",
     icon: "mdi:check-circle",
     color: "#5ACE6D",
+    darkColor: "#5ACE6D",
   },
 ];
 
@@ -200,8 +204,12 @@ function StatusDropdown({ clusterId, current }) {
   const updateIssue = useUpdateErrorFeedIssue();
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
-  const cur =
+  const statusBase =
     STATUS_OPTIONS.find((s) => s.value === current) || STATUS_OPTIONS[0];
+  const cur = {
+    ...statusBase,
+    color: isDark ? statusBase.darkColor : statusBase.color,
+  };
 
   return (
     <>
@@ -264,21 +272,30 @@ function StatusDropdown({ clusterId, current }) {
           </Typography>
         </Box>
         <Divider sx={{ borderColor: "divider" }} />
-        {STATUS_OPTIONS.filter((s) => s.value !== current).map((s) => (
-          <MenuItem
-            key={s.value}
-            onClick={() => {
-              updateIssue.mutate({ clusterId, status: s.value });
-              setAnchorEl(null);
-            }}
-            sx={{ gap: 1, fontSize: "13px", py: 0.75 }}
-          >
-            <Iconify icon={s.icon} width={15} sx={{ color: s.color }} />
-            <Typography fontSize="12px" sx={{ color: s.color }}>
-              {s.label}
-            </Typography>
-          </MenuItem>
-        ))}
+        {STATUS_OPTIONS.filter((option) => option.value !== current).map(
+          (option) => {
+            const statusColor = isDark ? option.darkColor : option.color;
+            return (
+              <MenuItem
+                key={option.value}
+                onClick={() => {
+                  updateIssue.mutate({ clusterId, status: option.value });
+                  setAnchorEl(null);
+                }}
+                sx={{ gap: 1, fontSize: "13px", py: 0.75 }}
+              >
+                <Iconify
+                  icon={option.icon}
+                  width={15}
+                  sx={{ color: statusColor }}
+                />
+                <Typography fontSize="12px" sx={{ color: statusColor }}>
+                  {option.label}
+                </Typography>
+              </MenuItem>
+            );
+          },
+        )}
       </Menu>
     </>
   );
@@ -491,7 +508,7 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
               <Typography
                 fontSize="8px"
                 fontWeight={700}
-                sx={{ color: "#7857FC" }}
+                sx={{ color: isDark ? "#A792FD" : "#7857FC" }}
               >
                 {getInitials(member.name, member.email)}
               </Typography>
@@ -596,7 +613,7 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
                 <Typography
                   fontSize="9px"
                   fontWeight={700}
-                  sx={{ color: "#7857FC" }}
+                  sx={{ color: isDark ? "#A792FD" : "#7857FC" }}
                 >
                   {getInitials(m.name, m.email)}
                 </Typography>

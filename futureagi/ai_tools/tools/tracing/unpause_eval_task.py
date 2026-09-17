@@ -28,43 +28,47 @@ class UnpauseEvalTaskTool(BaseTool):
 
     def execute(self, params: UnpauseEvalTaskInput, context: ToolContext) -> ToolResult:
 
-        from django.utils import timezone
+        from django.db import transaction
 
+        from tfc.temporal.eval_tasks.client import start_eval_task_workflow_sync
         from tracer.models.eval_task import EvalTask, EvalTaskLogger, EvalTaskStatus
 
-        try:
-            eval_task = EvalTask.objects.get(
-                id=params.eval_task_id,
-                project__organization=context.organization,
-            )
-        except EvalTask.DoesNotExist:
-            return ToolResult.not_found("EvalTask", str(params.eval_task_id))
+        with transaction.atomic():
+            try:
+                eval_task = EvalTask.objects.select_for_update().get(
+                    id=params.eval_task_id,
+                    project__organization=context.organization,
+                )
+            except EvalTask.DoesNotExist:
+                return ToolResult.not_found("EvalTask", str(params.eval_task_id))
 
-        if eval_task.status != EvalTaskStatus.PAUSED:
-            return ToolResult.error(
-                f"Cannot resume eval task with status '{eval_task.status}'. "
-                "Only paused tasks can be resumed.",
-                error_code="VALIDATION_ERROR",
-            )
+            if eval_task.status != EvalTaskStatus.PAUSED:
+                return ToolResult.error(
+                    f"Cannot resume eval task with status '{eval_task.status}'. "
+                    "Only paused tasks can be resumed.",
+                    error_code="VALIDATION_ERROR",
+                )
 
-        eval_task.status = EvalTaskStatus.PENDING
-        filters = eval_task.filters.copy() if eval_task.filters else {}
-        filters["created_at"] = timezone.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-        eval_task.filters = filters
-        eval_task.save()
+            # Resume the original selection/cursor. Mutating filters here would
+            # silently change which historical rows remain eligible.
+            eval_task.status = EvalTaskStatus.PENDING
+            eval_task.save(update_fields=["status"])
 
-        try:
-            eval_task_logger = EvalTaskLogger.objects.get(
-                eval_task_id=params.eval_task_id
+            try:
+                eval_task_logger = EvalTaskLogger.objects.get(
+                    eval_task_id=params.eval_task_id
+                )
+            except EvalTaskLogger.DoesNotExist:
+                eval_task_logger = EvalTaskLogger.objects.create(
+                    eval_task_id=params.eval_task_id,
+                    offset=0,
+                    status=EvalTaskStatus.PENDING,
+                )
+            eval_task_logger.offset = 0
+            eval_task_logger.save()
+            transaction.on_commit(
+                lambda: start_eval_task_workflow_sync(eval_task, replace_existing=True)
             )
-        except EvalTaskLogger.DoesNotExist:
-            eval_task_logger = EvalTaskLogger.objects.create(
-                eval_task_id=params.eval_task_id,
-                offset=0,
-                status=EvalTaskStatus.PENDING,
-            )
-        eval_task_logger.offset = 0
-        eval_task_logger.save()
 
         info = key_value_block(
             [

@@ -4,6 +4,7 @@ import Link from "@mui/material/Link";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import LoadingButton from "@mui/lab/LoadingButton";
+import { useNavigate } from "react-router-dom";
 import { paths } from "src/routes/paths";
 import { RouterLink } from "src/routes/components";
 import { Events, trackEvent, PropertyName } from "src/utils/Mixpanel";
@@ -19,8 +20,18 @@ import RightSectionAuth from "./RightSectionAuth";
 
 // ----------------------------------------------------------------------
 
+// Take the path off the link rather than following it: it is built from the
+// backend's APP_URL, which need not match the origin serving the app.
+const RESET_ROUTE = `${paths.auth.jwt.verify}/`;
+
+const toResetPath = (resetLink) => {
+  const start = resetLink?.indexOf(RESET_ROUTE) ?? -1;
+  return start === -1 ? null : resetLink.slice(start);
+};
+
 export default function ForgotPasswordView() {
   const { enqueueSnackbar } = useSnackbar();
+  const navigate = useNavigate();
   const defaultValues = { email: "" };
   const [errorMsg, setErrorMsg] = useState("");
 
@@ -33,14 +44,24 @@ export default function ForgotPasswordView() {
     useMutation({
       mutationFn: (body) =>
         axios.post(`${endpoints.auth.passwordResetInitiate}`, body),
-      onSuccess: (_data, variable) => {
-        enqueueSnackbar("Password reset link is sent to your email", {
-          variant: "success",
-        });
+      onSuccess: (data, variable) => {
+        const result = data?.data?.result;
         trackEvent(Events.sendPasswordClicked, {
           [PropertyName.email]: variable?.email,
         });
         reset();
+
+        // Never log or track the link: it sets the password on that account.
+        const resetPath = toResetPath(result?.reset_link);
+        if (resetPath) {
+          navigate(resetPath);
+          return;
+        }
+
+        enqueueSnackbar(
+          result?.message || "Password reset link is sent to your email",
+          { variant: "success" },
+        );
       },
       meta: { errorHandled: true },
       onError: (error) => {

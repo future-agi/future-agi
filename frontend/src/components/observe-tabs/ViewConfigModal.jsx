@@ -21,8 +21,13 @@ import { LoadingButton } from "@mui/lab";
 import {
   useCreateSavedView,
   useUpdateSavedView,
+  useGetSavedViews,
+  getOwnViewNames,
 } from "src/api/project/saved-views";
 import { useObserveHeader } from "src/sections/project/context/ObserveHeaderContext";
+import { useAuthContext } from "src/auth/hooks";
+import { enqueueSnackbar } from "notistack";
+import { getRequestErrorMessage } from "src/utils/errorUtils";
 
 const TAB_TYPES = [
   { value: "traces", label: "Traces" },
@@ -47,8 +52,22 @@ const ViewConfigModal = ({
   const { mutate: updateView, isPending: isUpdating } =
     useUpdateSavedView(projectId);
   const { getViewConfig } = useObserveHeader();
+  const { data: savedViewsData } = useGetSavedViews(projectId);
 
   const isPending = isCreating || isUpdating;
+
+  // Duplicate guard mirroring the backend constraint exactly: per-user,
+  // case-sensitive, across all tab types; edit mode excludes the view itself.
+  const { user } = useAuthContext();
+  const trimmedName = name.trim();
+  const ownViewNames = getOwnViewNames(
+    (savedViewsData?.custom_views ?? []).filter(
+      (v) => v.id !== initialValues?.id,
+    ),
+    user?.id,
+  );
+  const isDuplicateName =
+    trimmedName.length > 0 && ownViewNames.includes(trimmedName);
 
   useEffect(() => {
     if (open) {
@@ -60,7 +79,7 @@ const ViewConfigModal = ({
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!name.trim()) return;
+    if (!trimmedName || isDuplicateName) return;
 
     const snapshot = getViewConfig?.() ?? null;
     const config =
@@ -69,7 +88,7 @@ const ViewConfigModal = ({
         : snapshot ?? {};
 
     const basePayload = {
-      name: name.trim(),
+      name: trimmedName,
       visibility,
       config,
     };
@@ -82,6 +101,11 @@ const ViewConfigModal = ({
             onClose();
             onSuccess?.(res.data?.result);
           },
+          onError: (err) => {
+            enqueueSnackbar(getRequestErrorMessage(err, "Failed to update view"), {
+              variant: "error",
+            });
+          },
         },
       );
     } else {
@@ -91,6 +115,11 @@ const ViewConfigModal = ({
           onSuccess: (res) => {
             onClose();
             onSuccess?.(res.data?.result);
+          },
+          onError: (err) => {
+            enqueueSnackbar(getRequestErrorMessage(err, "Failed to create view"), {
+              variant: "error",
+            });
           },
         },
       );
@@ -120,6 +149,10 @@ const ViewConfigModal = ({
             size="small"
             fullWidth
             inputProps={{ maxLength: 255 }}
+            error={isDuplicateName}
+            helperText={
+              isDuplicateName ? "A view with this name already exists." : ""
+            }
           />
 
           <FormControl size="small" fullWidth disabled={mode === "edit"}>
@@ -170,7 +203,7 @@ const ViewConfigModal = ({
           variant="contained"
           size="small"
           loading={isPending}
-          disabled={!name.trim()}
+          disabled={!trimmedName || isDuplicateName}
         >
           {mode === "edit" ? "Save" : "Create"}
         </LoadingButton>

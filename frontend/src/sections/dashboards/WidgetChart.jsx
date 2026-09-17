@@ -1,5 +1,5 @@
-/* eslint-disable react/prop-types */
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import PropTypes from "prop-types";
 import { Alert, Box, CircularProgress, Stack, Typography } from "@mui/material";
 import ChartLegend from "./ChartLegend";
 import ReactApexChart from "react-apexcharts";
@@ -7,22 +7,37 @@ import { useTheme } from "@mui/material/styles";
 import { useDashboardQuery } from "src/hooks/useDashboards";
 import { format } from "date-fns";
 import {
-  DEFAULT_DECIMALS,
   escapeHtml,
   formatValueWithConfig,
   fromAxisConfigPayload,
   getAutoDecimals,
-  getSeriesAverage,
+  getExactDashboardResult,
+  getDashboardMetricSeriesState,
+  getPlottedChartSeries,
+  getSeriesScalar,
   getSuggestedUnitConfig,
   getUnitRendering,
   getYAxisRangeWarning,
+  groupPieSeries,
+  resolveSavedSelection,
   seriesHasDataPoints,
+  shouldConnectAcrossMissingBuckets,
 } from "./widgetUtils";
+import WidgetPieCharts from "./WidgetPieCharts";
 import { toTimeRangePayload } from "./dashboardDateRange";
+import {
+  AGGREGATION_POLLING_PAUSED_MESSAGE,
+  AGGREGATION_REQUEST_TIMEOUT_MS,
+  AGGREGATION_PREPARING_MESSAGE,
+  QUERY_FAILED_RETRY_MESSAGE,
+  createAggregationPollController,
+  getAggregationRefreshState,
+  getExactAggregationReadState,
+  getQueryCompletedAt,
+} from "src/utils/queryReadState";
+import { NO_DATA_FOR_RANGE_MESSAGE } from "./constants";
 
 const CHART_HEIGHT_FALLBACK = 280;
-const NO_DATA_FOR_RANGE_MESSAGE =
-  "No data available for this time period. Try a broader range.";
 const COLORS = [
   "#7B56DB", // purple (primary)
   "#1ABCFE", // cyan
@@ -81,9 +96,61 @@ function getApexType(chartType) {
   return map[chartType] || "line";
 }
 
-export default function WidgetChart({ widget, globalDateRange }) {
+function QueryReadStatus({
+  unavailable,
+  hasSnapshot,
+  retryUnavailable,
+  pollingPaused,
+}) {
+  if (!unavailable || (hasSnapshot && !retryUnavailable && !pollingPaused)) {
+    return null;
+  }
+
+  return (
+    <Typography
+      role="status"
+      variant="caption"
+      color="text.secondary"
+      sx={{ width: "100%", px: 1, pt: 0.5, textAlign: "center" }}
+    >
+      {retryUnavailable
+        ? QUERY_FAILED_RETRY_MESSAGE
+        : pollingPaused
+          ? AGGREGATION_POLLING_PAUSED_MESSAGE
+          : AGGREGATION_PREPARING_MESSAGE}
+    </Typography>
+  );
+}
+
+QueryReadStatus.propTypes = {
+  unavailable: PropTypes.bool,
+  hasSnapshot: PropTypes.bool,
+  retryUnavailable: PropTypes.bool,
+  pollingPaused: PropTypes.bool,
+};
+
+const getDashboardSnapshot = (response, signature) => {
+  const result = getExactDashboardResult(response);
+  if (!result) return null;
+
+  return {
+    signature,
+    result,
+    exact: result.query_exact !== false,
+    updatedAt: getQueryCompletedAt(response),
+  };
+};
+
+export default function WidgetChart({
+  widget,
+  dashboardId,
+  globalDateRange,
+  refreshRequestId = 0,
+  onQuerySettled,
+}) {
   const theme = useTheme();
   const queryMutation = useDashboardQuery();
+  const mutateDashboardQuery = queryMutation.mutate;
   const rawQueryConfig = widget.query_config;
   // If globalDateRange is provided, override the widget's time range
   const queryConfig = useMemo(() => {
@@ -108,10 +175,41 @@ export default function WidgetChart({ widget, globalDateRange }) {
   const isTable = chartType === "table";
   const isMetricCard = chartType === "metric";
   const isLineChart = apexType === "line";
+  const connectsAcrossMissingBuckets =
+    shouldConnectAcrossMissingBuckets(apexType);
 
   // Measure container height so charts fill available space
   const containerRef = useRef(null);
   const [chartHeight, setChartHeight] = useState(CHART_HEIGHT_FALLBACK);
+
+  // ApexCharts places the tooltip entirely above the cursor — `cursorY - gridTop -
+  // tooltipHeight` — and never clamps that at 0; it clamps x three ways and clamps y
+  // only against the grid's bottom. Any point in the top `tooltipHeight` px of the
+  // plot therefore gets a negative top and is drawn above the canvas, where the
+  // widget card's `overflow: hidden` slices it. On these cards that is most of the
+  // plot: 134px of tooltip against a 230px grid. The card cannot drop the overflow
+  // (the chart's ResizeObserver then loses its height constraint and the canvas
+  // grows unbounded), `tooltip.fixed` is ignored on the intersect path these charts
+  // use, and a chart-level `mouseMove` hook loses the race — Apex rewrites the style
+  // after it, even a frame later. Watching the attribute is what reliably catches
+  // the write, whenever Apex makes it.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const clampTooltips = () => {
+      el.querySelectorAll(".apexcharts-tooltip").forEach((tip) => {
+        const top = Number.parseFloat(tip.style.top);
+        if (Number.isFinite(top) && top < 0) tip.style.top = "0px";
+      });
+    };
+    const mo = new MutationObserver(clampTooltips);
+    mo.observe(el, {
+      attributes: true,
+      subtree: true,
+      attributeFilter: ["style"],
+    });
+    return () => mo.disconnect();
+  }, []);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -126,55 +224,292 @@ export default function WidgetChart({ widget, globalDateRange }) {
     return () => ro.disconnect();
   }, []);
 
-  const pieChartRef = useRef(null);
-  const [pieConnectors, setPieConnectors] = useState([]);
-
   // Re-query whenever the effective query config changes (including
   // metric aggregation/value type), or when global date override changes.
   const querySignature = useMemo(
     () => JSON.stringify(queryConfig || {}),
     [queryConfig],
   );
-  useEffect(() => {
-    if (queryConfig?.metrics?.length > 0) {
-      queryMutation.mutate(queryConfig);
-    }
-  }, [querySignature, queryConfig]);
+  // Mutation data can be pre-seeded by a caller/query cache on first mount.
+  // Subsequent responses are accepted only through the exactness gate below.
+  const initialSnapshot = getDashboardSnapshot(
+    queryMutation.data,
+    querySignature,
+  );
+  const [lastRenderableSnapshot, setLastRenderableSnapshot] =
+    useState(initialSnapshot);
+  const [latestOutcome, setLatestOutcome] = useState(() => ({
+    signature: querySignature,
+    unavailable: Boolean(queryMutation.data && !initialSnapshot),
+    retryUnavailable: false,
+    pollingPaused: false,
+  }));
+  const [acknowledgedRequest, setAcknowledgedRequest] = useState(() =>
+    queryMutation.data ? { signature: querySignature, refreshRequestId } : null,
+  );
+  const previousSignatureRef = useRef(null);
+  const previousRefreshRequestRef = useRef(refreshRequestId);
+  const onQuerySettledRef = useRef(onQuerySettled);
+  onQuerySettledRef.current = onQuerySettled;
 
-  const result = queryMutation.data?.data?.result;
-  const series = useMemo(() => {
-    const s = [];
-    if (result?.metrics) {
-      for (const metric of result.metrics) {
-        for (const ms of metric.series || []) {
-          const isSingleMetric = result.metrics.length === 1;
-          let label;
-          if (ms.name === "total") {
-            label = `${metric.name} (${metric.aggregation})`;
-          } else if (isSingleMetric) {
-            label = ms.name;
-          } else {
-            label = `${metric.name} / ${ms.name} (${metric.aggregation})`;
-          }
-          s.push({
-            name: label,
-            unit: metric.unit ?? "",
-            data: (ms.data || []).map((point) => ({
-              x: new Date(point.timestamp).getTime(),
-              y: point.value != null ? Number(point.value) : null,
-            })),
-          });
-        }
+  useEffect(() => {
+    if (!queryConfig?.metrics?.length) return undefined;
+
+    const signatureChanged = previousSignatureRef.current !== querySignature;
+    const isManualRefresh =
+      !signatureChanged && refreshRequestId > previousRefreshRequestRef.current;
+    previousSignatureRef.current = querySignature;
+    previousRefreshRequestRef.current = refreshRequestId;
+    let active = true;
+    let pollTimer = null;
+    let requestTimer = null;
+    let requestController = null;
+    let requestGeneration = 0;
+    const pollingController = createAggregationPollController();
+    let refreshWasQueued = false;
+    let settled = false;
+
+    const settle = (snapshot, exact, pollingPaused = false) => {
+      if (!active || settled) return;
+      settled = true;
+      if (pollTimer !== null) {
+        window.clearTimeout(pollTimer);
+        pollTimer = null;
       }
-    }
-    return s;
-  }, [result]);
+      if (requestTimer !== null) {
+        window.clearTimeout(requestTimer);
+        requestTimer = null;
+      }
+      requestController?.abort();
+      requestController = null;
+      onQuerySettledRef.current?.({
+        dashboardId,
+        widgetId: widget.id,
+        refreshRequestId,
+        manualRefresh: isManualRefresh,
+        exact,
+        pollingPaused,
+        updatedAt: exact ? snapshot?.updatedAt || null : null,
+      });
+    };
+
+    const schedulePoll = () => {
+      if (!active || pollTimer !== null) return;
+      pollingController.start();
+      const delay = pollingController.nextDelay();
+      if (delay === false) {
+        const pollingPaused =
+          pollingController.getTerminationReason() === "poll_budget";
+        setLatestOutcome({
+          signature: querySignature,
+          unavailable: true,
+          retryUnavailable: !pollingPaused,
+          pollingPaused,
+        });
+        settle(null, false, pollingPaused);
+        return;
+      }
+      pollTimer = window.setTimeout(() => {
+        pollTimer = null;
+        pollingController.recordAttempt();
+        executeQuery(false);
+      }, delay);
+    };
+
+    const executeQuery = (refresh) => {
+      const generation = requestGeneration + 1;
+      requestGeneration = generation;
+      requestController?.abort();
+      const controller = new AbortController();
+      requestController = controller;
+      if (requestTimer !== null) window.clearTimeout(requestTimer);
+
+      const handleQueuedTransportFailure = () => {
+        const exhausted = !pollingController.recordFailure();
+        setLatestOutcome({
+          signature: querySignature,
+          unavailable: true,
+          retryUnavailable: exhausted,
+          pollingPaused: false,
+        });
+        if (exhausted) settle(null, false);
+        else schedulePoll();
+      };
+
+      requestTimer = window.setTimeout(() => {
+        if (!active || settled || generation !== requestGeneration) return;
+        requestGeneration += 1;
+        requestTimer = null;
+        controller.abort();
+        if (refreshWasQueued) {
+          handleQueuedTransportFailure();
+          return;
+        }
+        setLatestOutcome({
+          signature: querySignature,
+          unavailable: true,
+          retryUnavailable: true,
+          pollingPaused: false,
+        });
+        settle(null, false);
+      }, AGGREGATION_REQUEST_TIMEOUT_MS);
+
+      const acceptResponse = () => {
+        if (!active || settled || generation !== requestGeneration)
+          return false;
+        if (requestTimer !== null) {
+          window.clearTimeout(requestTimer);
+          requestTimer = null;
+        }
+        if (requestController === controller) requestController = null;
+        return true;
+      };
+
+      mutateDashboardQuery(
+        { queryConfig, refresh, signal: controller.signal },
+        {
+          onSuccess: (response) => {
+            if (!acceptResponse()) return;
+            setAcknowledgedRequest({
+              signature: querySignature,
+              refreshRequestId,
+            });
+            const snapshot = getDashboardSnapshot(response, querySignature);
+            const { isRefreshing, refreshFailed } =
+              getAggregationRefreshState(response);
+            const readState = getExactAggregationReadState(response);
+            pollingController.recordSuccess();
+            if (snapshot) setLastRenderableSnapshot(snapshot);
+
+            if (
+              isRefreshing &&
+              !refreshFailed &&
+              (snapshot || readState === "pending")
+            ) {
+              setLatestOutcome({
+                signature: querySignature,
+                unavailable: !snapshot,
+                retryUnavailable: false,
+                pollingPaused: false,
+              });
+              refreshWasQueued = true;
+              schedulePoll();
+              return;
+            }
+            if (refreshFailed) {
+              setLatestOutcome({
+                signature: querySignature,
+                unavailable: true,
+                retryUnavailable: true,
+                pollingPaused: false,
+              });
+              settle(snapshot, false);
+              return;
+            }
+            if (snapshot) {
+              setLatestOutcome({
+                signature: querySignature,
+                unavailable: false,
+                retryUnavailable: false,
+                pollingPaused: false,
+              });
+              settle(snapshot, snapshot.exact);
+              return;
+            }
+            // Sampled, degraded, unmarked and otherwise malformed terminal
+            // bodies are failures, not long-running exact work. Keep any
+            // prior exact snapshot visible and offer one finite retry state.
+            setLatestOutcome({
+              signature: querySignature,
+              unavailable: true,
+              retryUnavailable: true,
+              pollingPaused: false,
+            });
+            settle(null, false);
+          },
+          onError: () => {
+            if (!acceptResponse()) return;
+            if (refreshWasQueued) {
+              handleQueuedTransportFailure();
+              return;
+            }
+            setLatestOutcome({
+              signature: querySignature,
+              unavailable: true,
+              retryUnavailable: true,
+              pollingPaused: false,
+            });
+            settle(null, false);
+          },
+        },
+      );
+    };
+
+    executeQuery(isManualRefresh);
+
+    return () => {
+      active = false;
+      requestGeneration += 1;
+      if (pollTimer !== null) window.clearTimeout(pollTimer);
+      if (requestTimer !== null) window.clearTimeout(requestTimer);
+      requestController?.abort();
+    };
+  }, [
+    mutateDashboardQuery,
+    dashboardId,
+    queryConfig,
+    querySignature,
+    refreshRequestId,
+    widget.id,
+  ]);
+
+  const renderableSnapshot =
+    lastRenderableSnapshot?.signature === querySignature
+      ? lastRenderableSnapshot
+      : null;
+  const result = renderableSnapshot?.result;
+  const { renderableMetrics, series } = useMemo(
+    () => getDashboardMetricSeriesState(result?.metrics),
+    [result?.metrics],
+  );
+  const hasRunnableQuery = Boolean(queryConfig?.metrics?.length);
+  // Until a complete renderable snapshot exists, the query is unresolved—not empty. This
+  // also covers the first paint before the mutation effect starts and the
+  // render between changing a widget query and receiving its new response.
+  const awaitingFirstResult = hasRunnableQuery && !renderableSnapshot;
+  const readUnavailable =
+    awaitingFirstResult ||
+    (latestOutcome.signature === querySignature && latestOutcome.unavailable) ||
+    (queryMutation.isError && !queryMutation.isPending);
+  const retryUnavailable =
+    latestOutcome.signature === querySignature &&
+    latestOutcome.retryUnavailable === true;
+  const pollingPaused =
+    latestOutcome.signature === querySignature &&
+    latestOutcome.pollingPaused === true;
+  const hasAcknowledgedCurrentRequest =
+    acknowledgedRequest?.signature === querySignature &&
+    acknowledgedRequest?.refreshRequestId === refreshRequestId;
 
   // Auto-select top 10 series by total value when there are many breakdown series
   const MAX_CHART_SERIES = 10;
   const [visibleSeries, setVisibleSeries] = useState(null); // null = all visible
 
+  // JSON-keyed so a re-created widget object doesn't needlessly re-run the effect.
+  const savedVisibleSeries = chartConfig.visible_series;
+  const savedVisibleKey = JSON.stringify(savedVisibleSeries ?? "__default__");
+
   useEffect(() => {
+    if (series.length === 0) return;
+
+    // Honor the editor's saved selection. Nothing saved, or a stale selection
+    // (saved keys that match no current series), falls through to the default.
+    const decision = resolveSavedSelection(savedVisibleSeries, series);
+    if (decision !== undefined) {
+      setVisibleSeries(decision);
+      return;
+    }
+
     if (series.length <= MAX_CHART_SERIES) {
       if (visibleSeries !== null) setVisibleSeries(null);
       return;
@@ -189,12 +524,18 @@ export default function WidgetChart({ widget, globalDateRange }) {
       ranked.slice(0, MAX_CHART_SERIES).map((r) => r.i),
     );
     setVisibleSeries(topIndices);
-  }, [series]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [series, savedVisibleKey]);
 
   const chartSeries = useMemo(() => {
     if (visibleSeries === null) return series;
     return series.filter((_, i) => visibleSeries.has(i));
   }, [series, visibleSeries]);
+
+  const plottedChartSeries = useMemo(
+    () => getPlottedChartSeries(chartSeries, connectsAcrossMissingBuckets),
+    [chartSeries, connectsAcrossMissingBuckets],
+  );
 
   // Build from the full `series` list (not filtered chartSeries) so a
   // hidden series keeps its slot and its color stays put when unhidden.
@@ -203,6 +544,15 @@ export default function WidgetChart({ widget, globalDateRange }) {
     [series],
   );
   const colorFor = (name) => getSeriesColorFromMap(seriesColorMap, name);
+
+  // Pie slices are breakdown values, which repeat across metrics. Key their
+  // colours by the raw breakdown name so a given project is the same colour in
+  // every pie — the composite series label differs per metric.
+  const pieColorMap = useMemo(
+    () => buildSeriesColorMap([...new Set(series.map((s) => s.breakdownName))]),
+    [series],
+  );
+  const pieColorFor = (name) => getSeriesColorFromMap(pieColorMap, name);
 
   const outOfRangeWarning = useMemo(
     () => getYAxisRangeWarning(chartSeries, axisConfig),
@@ -214,9 +564,23 @@ export default function WidgetChart({ widget, globalDateRange }) {
     [chartSeries],
   );
 
-  const pieValues = useMemo(
-    () => (isPie ? chartSeries.map((s) => getSeriesAverage(s.data) ?? 0) : []),
-    [isPie, chartSeries],
+  // A pie needs a category to slice by. Detect that from the response rather
+  // than query_config: legacy widgets may omit `breakdowns`, and a declared
+  // breakdown that returns a single "total" series would still be a 100% circle.
+  const pieHasBreakdown = useMemo(
+    () => series.some((s) => s.breakdownName !== "total"),
+    [series],
+  );
+
+  // Built from the full `series` list, not the filtered `chartSeries`: a
+  // global cap can starve one metric of every slice, and groupPieSeries
+  // already caps per metric. `chartSeries` is filtered by either the automatic
+  // top-10 cap or a saved `visible_series`, and neither can be a pie user's
+  // choice — the editor gates that toggle UI on `!isPie`, so a pie only ever
+  // inherits a selection made under some other chart type.
+  const pieGroups = useMemo(
+    () => (isPie && pieHasBreakdown ? groupPieSeries(series) : []),
+    [isPie, pieHasBreakdown, series],
   );
 
   // Compute Y-axis precision once from the data range so all ticks use the
@@ -226,14 +590,12 @@ export default function WidgetChart({ widget, globalDateRange }) {
     [chartSeries],
   );
   const leftAxisFormatConfig = useMemo(() => {
-    const suggested = getSuggestedUnitConfig(result?.metrics || []);
+    const metrics = renderableMetrics.map(({ metric }) => metric);
+    const suggested = getSuggestedUnitConfig(metrics);
     const leftAxis = axisConfig?.leftY || {};
-    const metricUnits = (result?.metrics || [])
-      .map((m) => m?.unit ?? "");
+    const metricUnits = metrics.map((m) => m?.unit ?? "");
     const isMixedUnits = new Set(metricUnits).size > 1;
-    const effectiveUnit = isMixedUnits
-      ? ""
-      : leftAxis.unit || suggested.unit;
+    const effectiveUnit = isMixedUnits ? "" : leftAxis.unit || suggested.unit;
     return {
       ...leftAxis,
       unit: effectiveUnit,
@@ -241,61 +603,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
         ? leftAxis.prefixSuffix || suggested.prefixSuffix || "prefix"
         : suggested.prefixSuffix,
     };
-  }, [axisConfig?.leftY, result?.metrics]);
-
-  useEffect(() => {
-    if (!isPie || !pieValues.length) {
-      setPieConnectors([]);
-      return;
-    }
-    const timer = setTimeout(() => {
-      const container = pieChartRef.current;
-      if (!container) return;
-      const w = container.offsetWidth;
-      const h = chartHeight;
-      const cx = w / 2;
-      const cy = h * 0.48 + 12;
-      const outerR = Math.min(w, h - 35) * 0.32;
-      const total = pieValues.reduce((a, b) => a + b, 0);
-      if (total === 0) return;
-      const items = [];
-      let cumAngle = -90;
-      pieValues.forEach((val, i) => {
-        const sliceAngle = (val / total) * 360;
-        const midAngle = cumAngle + sliceAngle / 2;
-        const midRad = (midAngle * Math.PI) / 180;
-        cumAngle += sliceAngle;
-        if (sliceAngle < 3) return;
-        const letter = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[i] || "";
-        const name = chartSeries[i]?.name || "";
-        const fv =
-          val >= 1000
-            ? val.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ",")
-            : val.toLocaleString(undefined, { maximumFractionDigits: 2 });
-        const edgeX = cx + outerR * Math.cos(midRad);
-        const edgeY = cy + outerR * Math.sin(midRad);
-        const elbowDist = outerR + 18;
-        const elbowX = cx + elbowDist * Math.cos(midRad);
-        const elbowY = cy + elbowDist * Math.sin(midRad);
-        const isRight = Math.cos(midRad) >= 0;
-        const endX = isRight ? elbowX + 18 : elbowX - 18;
-        const textX = isRight ? endX + 4 : endX - 4;
-        items.push({
-          edgeX,
-          edgeY,
-          elbowX,
-          elbowY,
-          endX,
-          textX,
-          isRight,
-          line1: `${letter}. ${name}`,
-          line2: fv,
-        });
-      });
-      setPieConnectors(items);
-    }, 400);
-    return () => clearTimeout(timer);
-  }, [isPie, pieValues, chartSeries]);
+  }, [axisConfig?.leftY, renderableMetrics]);
 
   const isDark = theme.palette.mode === "dark";
   const makeFormatter =
@@ -304,7 +612,17 @@ export default function WidgetChart({ widget, globalDateRange }) {
       formatValueWithConfig(val, cfg, { fallbackDecimals, includeUnit });
   const formatVal = makeFormatter(leftAxisFormatConfig);
 
-  if (queryMutation.isPending) {
+  // Some mutation adapters/interceptors can leave `isPending` true even after
+  // this component's independently bounded request has timed out. Once the
+  // current query scope is terminal, render the retry state instead of letting
+  // the adapter's stale pending flag mask it forever.
+  if (
+    queryMutation.isPending &&
+    !renderableSnapshot &&
+    !hasAcknowledgedCurrentRequest &&
+    !retryUnavailable &&
+    !pollingPaused
+  ) {
     return (
       <Box
         ref={containerRef}
@@ -322,32 +640,13 @@ export default function WidgetChart({ widget, globalDateRange }) {
     );
   }
 
-  if (queryMutation.isError) {
-    return (
-      <Box
-        ref={containerRef}
-        sx={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          width: "100%",
-          height: "100%",
-          minHeight: 0,
-        }}
-      >
-        <Typography variant="body2" color="error">
-          Failed to load chart data
-        </Typography>
-      </Box>
-    );
-  }
-
   if (!series.length) {
     return (
       <Box
         ref={containerRef}
         sx={{
           display: "flex",
+          flexDirection: "column",
           justifyContent: "center",
           alignItems: "center",
           width: "100%",
@@ -355,9 +654,17 @@ export default function WidgetChart({ widget, globalDateRange }) {
           minHeight: 0,
         }}
       >
-        <Typography variant="body2" color="text.disabled">
-          No output for the selected inputs.
-        </Typography>
+        <QueryReadStatus
+          unavailable={readUnavailable}
+          hasSnapshot={Boolean(renderableSnapshot)}
+          retryUnavailable={retryUnavailable}
+          pollingPaused={pollingPaused}
+        />
+        {!readUnavailable && (
+          <Typography variant="body2" color="text.disabled">
+            No output for the selected inputs.
+          </Typography>
+        )}
       </Box>
     );
   }
@@ -368,6 +675,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
         ref={containerRef}
         sx={{
           display: "flex",
+          flexDirection: "column",
           justifyContent: "center",
           alignItems: "center",
           width: "100%",
@@ -376,6 +684,12 @@ export default function WidgetChart({ widget, globalDateRange }) {
           px: 2,
         }}
       >
+        <QueryReadStatus
+          unavailable={readUnavailable}
+          hasSnapshot={Boolean(renderableSnapshot)}
+          retryUnavailable={retryUnavailable}
+          pollingPaused={pollingPaused}
+        />
         <Typography variant="body2" color="text.disabled">
           {NO_DATA_FOR_RANGE_MESSAGE}
         </Typography>
@@ -383,34 +697,55 @@ export default function WidgetChart({ widget, globalDateRange }) {
     );
   }
 
-  // Metric card
-  if (isMetricCard) {
+  // Metric card — also the fallback for a pie with nothing to slice by, where
+  // each metric would otherwise render as a meaningless 100%-full circle.
+  if (isMetricCard || (isPie && !pieHasBreakdown)) {
     return (
-      <Stack
+      <Box
         ref={containerRef}
-        direction="row"
-        gap={3}
-        justifyContent="center"
-        alignItems="center"
-        sx={{ width: "100%", height: "100%", minHeight: 0 }}
+        sx={{
+          width: "100%",
+          height: "100%",
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+        }}
       >
-        {series.map((s, i) => {
-          const avg = getSeriesAverage(s.data);
-          return (
-            <Box key={i} sx={{ textAlign: "center" }}>
-              <Typography
-                variant="h3"
-                sx={{ color: colorFor(s.name) }}
-              >
-                {avg == null ? "—" : formatVal(avg)}
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                {s.name}
-              </Typography>
-            </Box>
-          );
-        })}
-      </Stack>
+        <QueryReadStatus
+          unavailable={readUnavailable}
+          hasSnapshot={Boolean(renderableSnapshot)}
+          retryUnavailable={retryUnavailable}
+          pollingPaused={pollingPaused}
+        />
+        <Stack
+          direction="row"
+          gap={3}
+          justifyContent="center"
+          alignItems="center"
+          sx={{ flex: 1, minHeight: 0 }}
+        >
+          {series.map((s, i) => {
+            const value = getSeriesScalar(s.data, s.aggregation);
+            const cellConfig = s.unit
+              ? { ...leftAxisFormatConfig, ...getUnitRendering(s.unit) }
+              : leftAxisFormatConfig;
+            return (
+              <Box key={i} sx={{ textAlign: "center" }}>
+                <Typography variant="h3" sx={{ color: colorFor(s.name) }}>
+                  {value == null
+                    ? "—"
+                    : formatValueWithConfig(value, cellConfig, {
+                        fallbackDecimals: autoDecimals,
+                      })}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {s.name}
+                </Typography>
+              </Box>
+            );
+          })}
+        </Stack>
+      </Box>
     );
   }
 
@@ -440,6 +775,12 @@ export default function WidgetChart({ widget, globalDateRange }) {
           minHeight: 0,
         }}
       >
+        <QueryReadStatus
+          unavailable={readUnavailable}
+          hasSnapshot={Boolean(renderableSnapshot)}
+          retryUnavailable={retryUnavailable}
+          pollingPaused={pollingPaused}
+        />
         <table
           style={{
             width: "100%",
@@ -583,154 +924,37 @@ export default function WidgetChart({ widget, globalDateRange }) {
   }
 
   if (isPie) {
-    const isDarkPie = theme.palette.mode === "dark";
-    const txtColor = isDarkPie ? "#fff" : "#1a1a2e";
-    const pieTotal = pieValues.reduce((a, b) => a + b, 0);
-    const fmtTotal = formatValueWithConfig(pieTotal, leftAxisFormatConfig, {
-      fallbackDecimals: autoDecimals,
-    });
-    const pieOptions = {
-      chart: {
-        type: "donut",
-        toolbar: { show: false },
-        animations: { enabled: true, easing: "easeinout", speed: 400 },
-      },
-      labels: chartSeries.map((s) => s.name),
-      colors: chartSeries.map((s) => colorFor(s.name)),
-      plotOptions: {
-        pie: {
-          expandOnClick: false,
-          donut: {
-            size: "58%",
-            labels: {
-              show: true,
-              name: { show: false },
-              value: {
-                show: true,
-                fontSize: "28px",
-                fontWeight: 700,
-                color: txtColor,
-                offsetY: 10,
-                formatter: () => fmtTotal,
-              },
-              total: {
-                show: true,
-                showAlways: true,
-                fontSize: "28px",
-                fontWeight: 700,
-                color: txtColor,
-                label: "",
-                formatter: () => fmtTotal,
-              },
-            },
-          },
-        },
-      },
-      dataLabels: { enabled: false },
-      legend: { show: false, height: 0 },
-      stroke: { width: 4, colors: [isDarkPie ? "#1e1e2e" : "#fff"] },
-      states: {
-        hover: { filter: { type: "darken", value: 0.92 } },
-        active: { filter: { type: "none" } },
-      },
-      tooltip: {
-        theme: theme.palette.mode,
-        style: { fontSize: "12px" },
-        y: {
-          formatter: (val) =>
-            val >= 1000
-              ? val.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ",")
-              : val.toLocaleString(undefined, { maximumFractionDigits: 2 }),
-        },
-      },
-    };
-    const pieLegendNames = chartSeries.map((s) => s.name);
-    const pieLegendH = pieLegendNames.length > 1 ? 28 : 0;
+    // The all-null case is answered inside WidgetPieCharts so the editor
+    // preview and the saved widget cannot drift apart.
     return (
       <Box
-        sx={{
-          width: "100%",
-          height: "100%",
-          minHeight: 0,
-          display: "flex",
-          flexDirection: "column",
-        }}
+        ref={containerRef}
+        sx={{ width: "100%", height: "100%", minHeight: 0 }}
       >
-        {pieLegendNames.length > 1 && (
-          <ChartLegend items={pieLegendNames} colors={COLORS} />
-        )}
-        <Box
-          ref={(el) => {
-            pieChartRef.current = el;
-            containerRef.current = el;
-          }}
-          sx={{
-            position: "relative",
-            flex: 1,
-            minHeight: 0,
-          }}
-        >
-          <ReactApexChart
-            key={`pie-${axisConfig?.leftY?.unit}-${axisConfig?.leftY?.prefixSuffix}-${axisConfig?.leftY?.abbreviation}-${axisConfig?.leftY?.decimals}`}
-            options={pieOptions}
-            series={pieValues}
-            type="donut"
-            height={chartHeight - pieLegendH}
-          />
-          {pieConnectors.length > 0 && (
-            <svg
-              style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                width: "100%",
-                height: "100%",
-                pointerEvents: "none",
-                overflow: "visible",
-              }}
-            >
-              {pieConnectors.map((c, i) => (
-                <g key={i}>
-                  <polyline
-                    points={`${c.edgeX},${c.edgeY} ${c.elbowX},${c.elbowY} ${c.endX},${c.elbowY}`}
-                    fill="none"
-                    stroke={
-                      isDarkPie ? "rgba(255,255,255,0.35)" : "rgba(0,0,0,0.25)"
-                    }
-                    strokeWidth="1"
-                  />
-                  <text
-                    x={c.textX}
-                    y={c.elbowY - 5}
-                    textAnchor={c.isRight ? "start" : "end"}
-                    fill={txtColor}
-                    fontSize="11"
-                    fontWeight="500"
-                    fontFamily="inherit"
-                  >
-                    <tspan x={c.textX} dy="0">
-                      {c.line1}
-                    </tspan>
-                    <tspan x={c.textX} dy="14">
-                      {c.line2}
-                    </tspan>
-                  </text>
-                </g>
-              ))}
-            </svg>
-          )}
-        </Box>
+        <QueryReadStatus
+          unavailable={readUnavailable}
+          hasSnapshot={Boolean(renderableSnapshot)}
+          retryUnavailable={retryUnavailable}
+          pollingPaused={pollingPaused}
+        />
+        <WidgetPieCharts
+          groups={pieGroups}
+          colorFor={pieColorFor}
+          baseFormatConfig={leftAxisFormatConfig}
+          fallbackDecimals={autoDecimals}
+        />
       </Box>
     );
   }
-
   // Bar chart — horizontal bar table
   if (isHorizontal) {
     const barRows = chartSeries.map((s) => {
-      const avg = getSeriesAverage(s.data);
+      // Same aggregation-aware value the metric card, table and pie use, so
+      // one widget cannot read differently per chart type.
+      const value = getSeriesScalar(s.data, s.aggregation);
       return {
-        value: avg,
-        numericValue: avg == null ? 0 : avg,
+        value,
+        numericValue: value == null ? 0 : value,
       };
     });
     const maxVal = Math.max(
@@ -749,6 +973,12 @@ export default function WidgetChart({ widget, globalDateRange }) {
           overflow: "hidden",
         }}
       >
+        <QueryReadStatus
+          unavailable={readUnavailable}
+          hasSnapshot={Boolean(renderableSnapshot)}
+          retryUnavailable={retryUnavailable}
+          pollingPaused={pollingPaused}
+        />
         {/* Legend */}
         <Stack
           direction="row"
@@ -912,6 +1142,8 @@ export default function WidgetChart({ widget, globalDateRange }) {
         ref={containerRef}
         sx={{
           display: "flex",
+          flexDirection: "column",
+          gap: 1,
           justifyContent: "center",
           alignItems: "center",
           width: "100%",
@@ -920,6 +1152,12 @@ export default function WidgetChart({ widget, globalDateRange }) {
           px: 2,
         }}
       >
+        <QueryReadStatus
+          unavailable={readUnavailable}
+          hasSnapshot={Boolean(renderableSnapshot)}
+          retryUnavailable={retryUnavailable}
+          pollingPaused={pollingPaused}
+        />
         <Alert severity="warning" sx={{ width: "100%" }}>
           {outOfRangeWarning}
         </Alert>
@@ -1273,10 +1511,16 @@ export default function WidgetChart({ widget, globalDateRange }) {
         flexDirection: "column",
       }}
     >
+      <QueryReadStatus
+        unavailable={readUnavailable}
+        hasSnapshot={Boolean(renderableSnapshot)}
+        retryUnavailable={retryUnavailable}
+        pollingPaused={pollingPaused}
+      />
       {legendNames.length > 1 && (
         <ChartLegend
           items={legendNames}
-          colors={COLORS}
+          colors={chartSeries.map((s) => colorFor(s.name))}
           onHoverSeries={handleLegendHover}
           onLeaveSeries={handleLegendLeave}
         />
@@ -1285,7 +1529,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
         <ReactApexChart
           key={`${axisConfig?.leftY?.unit}-${axisConfig?.leftY?.prefixSuffix}-${axisConfig?.leftY?.abbreviation}-${axisConfig?.leftY?.decimals}-${axisConfig?.leftY?.outOfBounds}`}
           options={options}
-          series={chartSeries}
+          series={plottedChartSeries}
           type={apexType}
           height={chartHeight - legendHeight}
         />
@@ -1293,3 +1537,26 @@ export default function WidgetChart({ widget, globalDateRange }) {
     </Box>
   );
 }
+
+WidgetChart.propTypes = {
+  widget: PropTypes.shape({
+    id: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
+    query_config: PropTypes.object,
+    chart_config: PropTypes.object,
+  }).isRequired,
+  dashboardId: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+  globalDateRange: PropTypes.shape({
+    start: PropTypes.oneOfType([
+      PropTypes.string,
+      PropTypes.number,
+      PropTypes.instanceOf(Date),
+    ]),
+    end: PropTypes.oneOfType([
+      PropTypes.string,
+      PropTypes.number,
+      PropTypes.instanceOf(Date),
+    ]),
+  }),
+  refreshRequestId: PropTypes.number,
+  onQuerySettled: PropTypes.func,
+};

@@ -73,9 +73,21 @@ export function textField(theme) {
         },
         input: {
           ...font.value,
+          colorScheme: theme.palette.mode,
           "&::placeholder": {
             opacity: 0.5,
             color: color.placeholder,
+          },
+          "&:-webkit-autofill, &:-webkit-autofill:hover, &:-webkit-autofill:focus, &:-webkit-autofill:active":
+            {
+              WebkitBoxShadow: `0 0 0 1000px var(--input-surface, ${theme.palette.background.paper}) inset !important`,
+              WebkitTextFillColor: `${theme.palette.text.primary} !important`,
+              caretColor: theme.palette.text.primary,
+            },
+          "&:autofill, &:autofill:hover, &:autofill:focus, &:autofill:active": {
+            boxShadow: `0 0 0 1000px var(--input-surface, ${theme.palette.background.paper}) inset`,
+            WebkitTextFillColor: `${theme.palette.text.primary} !important`,
+            caretColor: theme.palette.text.primary,
           },
         },
       },

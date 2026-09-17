@@ -1,5 +1,7 @@
 """Tests for LLM gateway-first routing."""
 
+import sys
+import types
 from unittest.mock import MagicMock, patch
 
 
@@ -154,3 +156,43 @@ class TestLLMGatewayFirstRouting:
                 messages=[{"role": "user", "content": "hello"}]
             )
             assert result == "litellm only"
+
+    @patch("agentic_eval.core.llm.llm.log_to_clickhouse")
+    def test_futureagi_managed_model_uses_managed_ai_service(self, mock_ch, monkeypatch):
+        managed = types.ModuleType("ee.licensing.managed_ai")
+
+        def is_managed_model(model):
+            return str(model).startswith("turing_")
+
+        calls = []
+
+        def chat_completion(payload):
+            calls.append(payload)
+            return {
+                "choices": [{"message": {"content": "managed ai response"}}],
+                "usage": {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
+            }
+
+        managed.is_managed_model = is_managed_model
+        managed.chat_completion = chat_completion
+
+        ee_module = types.ModuleType("ee")
+        licensing_module = types.ModuleType("ee.licensing")
+        monkeypatch.setitem(sys.modules, "ee", ee_module)
+        monkeypatch.setitem(sys.modules, "ee.licensing", licensing_module)
+        monkeypatch.setitem(sys.modules, "ee.licensing.managed_ai", managed)
+
+        mock_gateway = self._mock_gateway_response("old gateway")
+        llm = self._make_llm(org_id="org-123", gateway_client=mock_gateway)
+        llm.model_name = "turing_small"
+
+        with patch("agentic_eval.core.llm.llm.litellm") as mock_litellm:
+            result = llm._get_completion_content(
+                messages=[{"role": "user", "content": "hello"}]
+            )
+
+        assert result == "managed ai response"
+        assert calls[0]["model"] == "turing_small"
+        mock_gateway.chat.completions.create.assert_not_called()
+        mock_litellm.completion.assert_not_called()
+        assert llm.token_usage["total_tokens"] == 5

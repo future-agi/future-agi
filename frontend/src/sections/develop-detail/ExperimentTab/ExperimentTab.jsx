@@ -159,7 +159,7 @@ const ExperimentActions = ({ experimentId, status, onRefresh }) => {
               width: 32,
               height: 32,
               border: "1px solid",
-              borderColor: isReRunningExperiment ? "grey.400" : "grey.200",
+              borderColor: isReRunningExperiment ? "text.disabled" : "divider",
               borderRadius: "4px",
               backgroundColor: "transparent",
               p: 0,

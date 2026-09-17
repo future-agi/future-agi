@@ -11,8 +11,10 @@ from tracer.utils.constants import (
 from tracer.utils.filter_operators import (
     FILTER_COLUMN_TYPES,
     FILTER_TYPE_ALLOWED_OPS,
-    normalize_filter_type,
+    SESSION_NUMERIC_MEMBERSHIP_COLUMNS,
+    filter_op_is_allowed,
     load_filter_contract,
+    normalize_filter_type,
 )
 from tracer.utils.helper import validate_filters_helper
 
@@ -66,6 +68,59 @@ class TestFilterContract:
         assert "not_between" in SPAN_ATTR_ALLOWED_OPS["number"]
         assert "not_in_between" not in SPAN_ATTR_ALLOWED_OPS["number"]
         assert FILTER_TYPE_ALLOWED_OPS["number"] == SPAN_ATTR_ALLOWED_OPS["number"]
+
+    @pytest.mark.parametrize("filter_op", ["in", "not_in"])
+    @pytest.mark.parametrize("column_id", sorted(SESSION_NUMERIC_MEMBERSHIP_COLUMNS))
+    def test_numeric_membership_requires_explicit_session_scope(
+        self,
+        filter_op,
+        column_id,
+    ):
+        assert filter_op not in FILTER_TYPE_ALLOWED_OPS["number"]
+        assert not filter_op_is_allowed(
+            "number",
+            filter_op,
+            column_id=column_id,
+            column_type="SYSTEM_METRIC",
+        )
+        assert filter_op_is_allowed(
+            "number",
+            filter_op,
+            column_id=column_id,
+            column_type="SYSTEM_METRIC",
+            allow_session_numeric_membership=True,
+        )
+
+    @pytest.mark.parametrize("filter_op", ["in", "not_in"])
+    @pytest.mark.parametrize(
+        "column_type",
+        ["SPAN_ATTRIBUTE", "EVAL_METRIC", "NORMAL", None],
+    )
+    def test_session_numeric_membership_opt_in_requires_system_metric(
+        self,
+        filter_op,
+        column_type,
+    ):
+        assert not filter_op_is_allowed(
+            "number",
+            filter_op,
+            column_id="duration",
+            column_type=column_type,
+            allow_session_numeric_membership=True,
+        )
+
+    @pytest.mark.parametrize("filter_op", ["in", "not_in"])
+    def test_session_numeric_membership_opt_in_rejects_other_columns(
+        self,
+        filter_op,
+    ):
+        assert not filter_op_is_allowed(
+            "number",
+            filter_op,
+            column_id="latency_ms",
+            column_type="SYSTEM_METRIC",
+            allow_session_numeric_membership=True,
+        )
 
     def test_contract_does_not_publish_operator_aliases(self):
         assert "aliases" not in load_filter_contract()["operators"]
@@ -127,9 +182,7 @@ class TestFilterContract:
             query_mode=ClickHouseFilterBuilder.QUERY_MODE_SPAN
         )
 
-        where, params = builder.translate(
-            [_span_filter(filter_type, filter_op, value)]
-        )
+        where, params = builder.translate([_span_filter(filter_type, filter_op, value)])
 
         assert where
         assert "span_attr_" in where
@@ -200,6 +253,4 @@ class TestFilterContract:
         )
 
         with pytest.raises(ValueError):
-            builder.translate(
-                [_span_filter("number", "not_in_between", ["1", "2"])]
-            )
+            builder.translate([_span_filter("number", "not_in_between", ["1", "2"])])

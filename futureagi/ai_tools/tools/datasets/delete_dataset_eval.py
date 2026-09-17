@@ -61,7 +61,12 @@ class DeleteDatasetEvalTool(BaseTool):
 
         if params.delete_column:
             # Stop any in-flight eval runner before deleting columns
+            from django.utils import timezone
+
             from model_hub.models.choices import StatusType
+            from model_hub.services.lifecycle import bulk_soft_delete
+
+            now = timezone.now()
 
             if user_eval.status in (
                 StatusType.RUNNING.value,
@@ -98,9 +103,10 @@ class DeleteDatasetEvalTool(BaseTool):
 
             if col_ids:
                 # Bulk delete cells
-                cells_deleted = Cell.objects.filter(
-                    column_id__in=col_ids, deleted=False
-                ).update(deleted=True)
+                cells_deleted = bulk_soft_delete(
+                    Cell.objects.filter(column_id__in=col_ids, deleted=False),
+                    now=now,
+                )
 
                 # Update dependent metrics BEFORE deleting columns —
                 # get_metrics_using_column scopes by dataset via the
@@ -119,9 +125,10 @@ class DeleteDatasetEvalTool(BaseTool):
                         ).update(column_deleted=True)
 
                 # Now safe to delete columns
-                columns_deleted = Column.objects.filter(
-                    id__in=col_ids
-                ).update(deleted=True)
+                columns_deleted = bulk_soft_delete(
+                    Column.objects.filter(id__in=col_ids),
+                    now=now,
+                )
 
                 # Update column_order and column_config
                 new_order = [
@@ -137,8 +144,10 @@ class DeleteDatasetEvalTool(BaseTool):
                     column_order=new_order, column_config=new_config
                 )
 
-            user_eval.deleted = True
-            user_eval.save(update_fields=["deleted"])
+            bulk_soft_delete(
+                UserEvalMetric.objects.filter(id=user_eval.id),
+                now=now,
+            )
         else:
             user_eval.show_in_sidebar = False
             user_eval.save(update_fields=["show_in_sidebar"])

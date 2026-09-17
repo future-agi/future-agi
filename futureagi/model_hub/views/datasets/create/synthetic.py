@@ -4,9 +4,6 @@ import uuid
 import structlog
 from django.db.models import Q
 from drf_yasg.utils import swagger_auto_schema
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.views import APIView
-
 from model_hub.models.choices import CellStatus, SourceChoices, StatusType
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.serializers.contracts import (
@@ -29,11 +26,14 @@ from model_hub.tasks.develop_dataset import (
 )
 from model_hub.utils.synthetic_task_manager import SyntheticTaskManager
 from model_hub.views.utils.synthetic_data import determine_data_type_syn_data
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.parse_errors import parse_serialized_errors
-from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+
 try:
     from ee.usage.utils.usage_entries import (
         ROW_LIMIT_REACHED_MESSAGE,
@@ -117,7 +117,9 @@ class CreateSyntheticDataset(APIView):
 
             # SyntheticDataAgent requires the ee module.
             try:
-                from ee.agenthub.synthetic_data_agent.synthetic_data_agent import SyntheticDataAgent  # noqa: F401
+                from ee.agenthub.synthetic_data_agent.synthetic_data_agent import (  # noqa: F401
+                    SyntheticDataAgent,
+                )
             except ImportError:
                 return self._gm.forbidden_response(
                     "Synthetic data generation is not available on your plan."

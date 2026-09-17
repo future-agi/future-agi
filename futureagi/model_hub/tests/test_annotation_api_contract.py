@@ -303,7 +303,7 @@ class TestAnnotationApiContract:
                 "/model-hub/annotation-queues/{queue_id}/items/add-items/",
                 "post",
                 "400",
-            ): "#/definitions/ApiSelectionTooLargeError",
+            ): "#/definitions/ApiTextErrorResponse",
             (
                 "/model-hub/annotation-queues/{queue_id}/items/add-items/",
                 "post",

@@ -11,26 +11,60 @@ the ``ch_rehearsal`` suite — here the builder + CH client are faked so the
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+from types import SimpleNamespace
+from unittest import mock
+
 import pytest
 from structlog.testing import capture_logs
 
 from model_hub.models.ai_model import AIModel
 from model_hub.services.bulk_selection import (
+    BulkSelectionAmbiguousIdentity,
+    BulkSelectionReadIncomplete,
     ResolveResult,
-    _resolve_span_ids_clickhouse,
     _all_history_time_filter,
+    _resolve_span_ids_clickhouse,
     resolve_filtered_span_ids,
 )
 from tracer.models.project import Project
 
 
-class _FakeResult:
-    def __init__(self, rows):
-        self.data = rows
+def _patched_empty_eval_metadata():
+    empty_configs = mock.MagicMock()
+    empty_configs.exists.return_value = False
+    empty_configs.filter.return_value = empty_configs
+    empty_configs.values_list.return_value = []
+    config_manager = mock.MagicMock()
+    config_manager.filter.return_value = empty_configs
+
+    empty_templates = mock.MagicMock()
+    empty_templates.values.return_value.first.return_value = None
+    template_manager = mock.MagicMock()
+    template_manager.filter.return_value = empty_templates
+    return (
+        mock.patch(
+            "tracer.models.custom_eval_config.CustomEvalConfig.objects",
+            config_manager,
+        ),
+        mock.patch(
+            "model_hub.models.evals_metric.EvalTemplate.no_workspace_objects",
+            template_manager,
+        ),
+    )
 
 
-def _install_fake_builder(monkeypatch, *, rows, capture):
-    """Patch SPAN_LIST dispatch + AnalyticsQueryService so
+def _install_fake_builder(
+    monkeypatch,
+    *,
+    rows,
+    capture,
+    complete=True,
+    has_more=False,
+    error_code=None,
+    supports=True,
+):
+    """Patch the explicit V2 span builder/service so
     ``_resolve_span_ids_clickhouse`` runs against a fake CH returning ``rows``.
     ``capture`` records the filters / limit the builder saw."""
 
@@ -39,20 +73,39 @@ def _install_fake_builder(monkeypatch, *, rows, capture):
             capture["filters"] = filters
             capture["kwargs"] = kwargs
 
+        def supports_bounded_filter_scan(self):
+            return supports
+
+        def bounded_filter_degraded_error_code(self):
+            return None
+
         def build_id_query(self, *, limit=None):
             capture["limit"] = limit
             return "SELECT id FROM spans", {}
 
     class _FakeAnalytics:
         def execute_ch_query(self, query, params, timeout_ms=None):
-            return _FakeResult(rows)
+            return SimpleNamespace(data=rows)
+
+    def _fake_bounded_read(**kwargs):
+        capture["bounded_read"] = kwargs
+        return SimpleNamespace(
+            rows=rows,
+            has_more=has_more,
+            complete=complete,
+            error_code=error_code,
+        )
 
     monkeypatch.setattr(
-        "tracer.services.clickhouse.v2.dispatch.get_query_builder_class",
-        lambda name: _FakeBuilder,
+        "tracer.services.clickhouse.v2.query_builders.span_list.SpanListQueryBuilderV2",
+        _FakeBuilder,
     )
     monkeypatch.setattr(
-        "tracer.services.clickhouse.query_service.AnalyticsQueryService",
+        "tracer.selectors.trace_filter_reads.read_bounded_filter_page",
+        _fake_bounded_read,
+    )
+    monkeypatch.setattr(
+        "tracer.services.clickhouse.v2.query_service.V2AnalyticsQueryService",
         _FakeAnalytics,
     )
 
@@ -67,7 +120,8 @@ def test_all_history_filter_uses_1971_not_1970():
     lo, hi = f["filter_config"]["filter_value"]
     # 1970-01-01 - INTERVAL 1 DAY underflows the CH DateTime epoch; 1971 is safe.
     assert lo.startswith("1971-01-01")
-    assert hi.startswith("2099-")
+    upper_bound = datetime.fromisoformat(hi)
+    assert datetime.utcnow() - timedelta(seconds=2) <= upper_bound <= datetime.utcnow()
 
 
 # ---------------------------------------------------------------------------
@@ -78,14 +132,21 @@ def test_injects_all_history_when_no_time_filter(monkeypatch):
     _install_fake_builder(monkeypatch, rows=[{"id": "s1"}], capture=capture)
 
     _resolve_span_ids_clickhouse(
-        project_id="p1", filters=[], exclude_ids=set(), cap=10,
+        project_id="p1",
+        filters=[],
+        exclude_ids=set(),
+        cap=10,
         annotation_label_ids=[],
     )
 
     injected = [f for f in capture["filters"] if f.get("column_id") == "start_time"]
     assert len(injected) == 1
     assert injected[0]["filter_config"]["filter_value"][0].startswith("1971")
-    assert capture["limit"] == 11  # cap + 1 sentinel
+    assert capture["kwargs"]["bounded_identity_only"] is True
+    assert capture["kwargs"]["bounded_internal_scan"] is True
+    assert capture["bounded_read"]["page_number"] == 0
+    assert capture["bounded_read"]["page_size"] == 11
+    assert capture["bounded_read"]["classify_batch_size"] == 200
 
 
 def test_does_not_inject_when_explicit_time_filter(monkeypatch):
@@ -101,13 +162,14 @@ def test_does_not_inject_when_explicit_time_filter(monkeypatch):
     }
 
     _resolve_span_ids_clickhouse(
-        project_id="p1", filters=[explicit], exclude_ids=set(), cap=10,
+        project_id="p1",
+        filters=[explicit],
+        exclude_ids=set(),
+        cap=10,
         annotation_label_ids=[],
     )
 
-    time_filters = [
-        f for f in capture["filters"] if f.get("column_id") == "start_time"
-    ]
+    time_filters = [f for f in capture["filters"] if f.get("column_id") == "start_time"]
     assert time_filters == [explicit]  # passed through, no 1971 injection
 
 
@@ -119,7 +181,10 @@ def test_excludes_ids(monkeypatch):
         monkeypatch, rows=[{"id": "a"}, {"id": "b"}, {"id": "c"}], capture={}
     )
     res = _resolve_span_ids_clickhouse(
-        project_id="p1", filters=[], exclude_ids={"b"}, cap=10,
+        project_id="p1",
+        filters=[],
+        exclude_ids={"b"},
+        cap=10,
         annotation_label_ids=[],
     )
     assert res.ids == ["a", "c"]
@@ -132,7 +197,10 @@ def test_cap_plus_one_truncation(monkeypatch):
         monkeypatch, rows=[{"id": "a"}, {"id": "b"}, {"id": "c"}], capture={}
     )
     res = _resolve_span_ids_clickhouse(
-        project_id="p1", filters=[], exclude_ids=set(), cap=2,
+        project_id="p1",
+        filters=[],
+        exclude_ids=set(),
+        cap=2,
         annotation_label_ids=[],
     )
     assert res.ids == ["a", "b"]
@@ -140,24 +208,135 @@ def test_cap_plus_one_truncation(monkeypatch):
     assert res.total_matching == 3
 
 
+def test_excluded_raw_sentinel_does_not_false_truncate(monkeypatch):
+    capture: dict = {}
+    _install_fake_builder(
+        monkeypatch,
+        rows=[{"id": "a"}, {"id": "b"}, {"id": "c"}],
+        capture=capture,
+    )
+
+    res = _resolve_span_ids_clickhouse(
+        project_id="p1",
+        filters=[],
+        exclude_ids={"a"},
+        cap=2,
+        annotation_label_ids=[],
+    )
+
+    assert capture["bounded_read"]["page_size"] == 4
+    assert res.ids == ["b", "c"]
+    assert res.total_matching == 2
+    assert res.truncated is False
+
+
+def test_more_than_950_exclusions_stay_on_bounded_path(monkeypatch):
+    capture: dict = {}
+    _install_fake_builder(
+        monkeypatch,
+        rows=[{"id": "s1"}],
+        capture=capture,
+    )
+
+    result = _resolve_span_ids_clickhouse(
+        project_id="p1",
+        filters=[],
+        exclude_ids={f"excluded-{i}" for i in range(951)},
+        cap=10_000,
+        annotation_label_ids=[],
+    )
+
+    assert result.ids == ["s1"]
+    assert capture["bounded_read"]["page_size"] == 10_952
+    assert "limit" not in capture
+
+
+def test_over_budget_exclusions_fail_closed_without_legacy_build(monkeypatch):
+    capture: dict = {}
+    _install_fake_builder(monkeypatch, rows=[], capture=capture)
+
+    with pytest.raises(BulkSelectionReadIncomplete, match="selection_prefix_too_large"):
+        _resolve_span_ids_clickhouse(
+            project_id="p1",
+            filters=[],
+            exclude_ids={f"excluded-{i}" for i in range(2_799)},
+            cap=10_000,
+            annotation_label_ids=[],
+        )
+
+    assert "limit" not in capture
+    assert "bounded_read" not in capture
+
+
+def test_cap_over_10000_fails_closed_without_legacy_build(monkeypatch):
+    capture: dict = {}
+    _install_fake_builder(monkeypatch, rows=[], capture=capture)
+
+    with pytest.raises(BulkSelectionReadIncomplete, match="selection_prefix_too_large"):
+        _resolve_span_ids_clickhouse(
+            project_id="p1",
+            filters=[],
+            exclude_ids=set(),
+            cap=10_001,
+            annotation_label_ids=[],
+        )
+
+    assert "limit" not in capture
+    assert "bounded_read" not in capture
+
+
+def test_same_span_id_under_two_matching_traces_fails_closed(monkeypatch):
+    _install_fake_builder(
+        monkeypatch,
+        rows=[
+            {"id": "shared-span", "trace_id": "trace-a"},
+            {"id": "shared-span", "trace_id": "trace-b"},
+        ],
+        capture={},
+    )
+
+    with pytest.raises(BulkSelectionAmbiguousIdentity, match="ambiguous_span_identity"):
+        _resolve_span_ids_clickhouse(
+            project_id="p1",
+            filters=[],
+            exclude_ids=set(),
+            cap=10,
+            annotation_label_ids=[],
+        )
+
+
 def test_ch_query_failure_propagates(monkeypatch):
     # CH is the sole backend — a failure must propagate, not silently resolve to
     # empty (there is no PG fallback).
-    class _Boom:
+    class _Builder:
         def __init__(self, **kwargs):
             pass
 
-        def build_id_query(self, *, limit=None):
-            raise RuntimeError("CH down")
+        def supports_bounded_filter_scan(self):
+            return True
+
+        def bounded_filter_degraded_error_code(self):
+            return None
 
     monkeypatch.setattr(
-        "tracer.services.clickhouse.v2.dispatch.get_query_builder_class",
-        lambda name: _Boom,
+        "tracer.services.clickhouse.v2.query_builders.span_list.SpanListQueryBuilderV2",
+        _Builder,
+    )
+    monkeypatch.setattr(
+        "tracer.services.clickhouse.v2.query_service.V2AnalyticsQueryService",
+        lambda: object(),
+    )
+    monkeypatch.setattr(
+        "tracer.selectors.trace_filter_reads.read_bounded_filter_page",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("CH down")),
     )
     with capture_logs() as logs:
         with pytest.raises(RuntimeError, match="CH down"):
             _resolve_span_ids_clickhouse(
-                project_id="p1", filters=[], exclude_ids=set(), cap=10,
+                project_id="p1",
+                filters=[],
+                exclude_ids=set(),
+                cap=10,
                 annotation_label_ids=[],
             )
     # The failure must leave a breadcrumb for log-based alerting before it raises.
@@ -166,6 +345,184 @@ def test_ch_query_failure_propagates(monkeypatch):
         and e["log_level"] == "warning"
         for e in logs
     )
+
+
+def test_span_incomplete_nonempty_prefix_fails_closed(monkeypatch):
+    _install_fake_builder(
+        monkeypatch,
+        rows=[{"id": "partial-must-not-escape"}],
+        capture={},
+        complete=False,
+        error_code="deadline_exceeded",
+    )
+    with pytest.raises(RuntimeError, match="deadline_exceeded"):
+        _resolve_span_ids_clickhouse(
+            project_id="p1",
+            filters=[],
+            exclude_ids=set(),
+            cap=10,
+            annotation_label_ids=[],
+        )
+
+
+def test_span_complete_empty_prefix_is_authoritative(monkeypatch):
+    _install_fake_builder(monkeypatch, rows=[], capture={})
+    result = _resolve_span_ids_clickhouse(
+        project_id="p1",
+        filters=[],
+        exclude_ids=set(),
+        cap=10,
+        annotation_label_ids=[],
+    )
+    assert result == ResolveResult(ids=[], total_matching=0, truncated=False)
+
+
+def test_span_multi_filter_payload_reaches_same_bounded_builder(monkeypatch):
+    filters = [
+        {
+            "column_id": "created_at",
+            "filter_config": {
+                "filter_type": "datetime",
+                "filter_op": "between",
+                "filter_value": ["2026-01-01", "2026-07-01"],
+            },
+        },
+        {
+            "column_id": "final_status",
+            "filter_config": {
+                "col_type": "SPAN_ATTRIBUTE",
+                "filter_type": "text",
+                "filter_op": "equals",
+                "filter_value": "Rejected",
+            },
+        },
+    ]
+    capture: dict = {}
+    _install_fake_builder(monkeypatch, rows=[{"id": "s1"}], capture=capture)
+    _resolve_span_ids_clickhouse(
+        project_id="p1",
+        filters=filters,
+        exclude_ids=set(),
+        cap=25,
+        annotation_label_ids=[],
+    )
+    assert capture["filters"] == filters
+    assert capture["bounded_read"]["filters"] == filters
+
+
+def test_span_time_only_filter_uses_bounded_internal_scan(monkeypatch):
+    capture: dict = {}
+    _install_fake_builder(
+        monkeypatch,
+        rows=[{"id": "s1"}],
+        capture=capture,
+    )
+    result = _resolve_span_ids_clickhouse(
+        project_id="p1",
+        filters=[],
+        exclude_ids=set(),
+        cap=25,
+        annotation_label_ids=[],
+    )
+    assert result.ids == ["s1"]
+    assert capture["kwargs"]["bounded_internal_scan"] is True
+    assert "bounded_read" in capture
+    assert "limit" not in capture
+
+
+def test_span_unsupported_bounded_shape_fails_closed_without_legacy_build(monkeypatch):
+    capture: dict = {}
+    _install_fake_builder(
+        monkeypatch,
+        rows=[{"id": "must-not-escape"}],
+        capture=capture,
+        supports=False,
+    )
+
+    with pytest.raises(BulkSelectionReadIncomplete, match="unsupported_bounded_filter"):
+        _resolve_span_ids_clickhouse(
+            project_id="p1",
+            filters=[{"column_id": "unsupported"}],
+            exclude_ids=set(),
+            cap=25,
+            annotation_label_ids=[],
+        )
+
+    assert "limit" not in capture
+    assert "bounded_read" not in capture
+
+
+@pytest.mark.parametrize(
+    ("residual_filter", "expected_fragment"),
+    [
+        (
+            {
+                "column_id": "00000000-0000-4000-8000-000000000091",
+                "filter_config": {
+                    "col_type": "EVAL_METRIC",
+                    "filter_type": "number",
+                    "filter_op": "greater_than",
+                    "filter_value": 0.5,
+                },
+            },
+            "SELECT toUUID('00000000-0000-0000-0000-000000000000')",
+        ),
+        (
+            {
+                "column_id": "00000000-0000-4000-8000-000000000092",
+                "filter_config": {
+                    "col_type": "ANNOTATION",
+                    "filter_type": "text",
+                    "filter_op": "equals",
+                    "filter_value": "approved",
+                },
+            },
+            "model_hub_score",
+        ),
+        (
+            {
+                "column_id": "user_id",
+                "filter_config": {
+                    "col_type": "SYSTEM_METRIC",
+                    "filter_type": "text",
+                    "filter_op": "contains",
+                    "filter_value": "customer",
+                },
+            },
+            "tracer_enduser",
+        ),
+    ],
+)
+def test_real_span_builder_keeps_candidate_scoped_residual_filters(
+    residual_filter, expected_fragment
+):
+    from tracer.services.clickhouse.query_builders.span_list import (
+        SpanListQueryBuilder,
+    )
+
+    time_filter = {
+        "column_id": "start_time",
+        "filter_config": {
+            "filter_type": "datetime",
+            "filter_op": "between",
+            "filter_value": ["2026-01-01", "2026-07-01"],
+        },
+    }
+    builder = SpanListQueryBuilder(
+        project_id="00000000-0000-4000-8000-000000000001",
+        filters=[time_filter, residual_filter],
+        annotation_label_ids=["00000000-0000-4000-8000-000000000092"],
+        bounded_identity_only=True,
+        bounded_internal_scan=False,
+    )
+
+    config_patch, template_patch = _patched_empty_eval_metadata()
+    with config_patch, template_patch:
+        assert builder.supports_bounded_filter_scan() is True
+        query, params = builder.build_filter_match_query(["span-candidate"])
+    assert expected_fragment in query
+    assert "candidate_span_ids" in query
+    assert params["candidate_span_ids"] == ("span-candidate",)
 
 
 # ---------------------------------------------------------------------------
@@ -250,9 +607,7 @@ class TestDispatch:
         assert res.ids == []
         assert res.total_matching == 0
 
-    def test_cross_org_project_raises_before_ch(
-        self, monkeypatch, organization
-    ):
+    def test_cross_org_project_raises_before_ch(self, monkeypatch, organization):
         # Cross-tenant: a project in another org must not resolve — guarded at
         # the PG project lookup, before any CH read.
         def _boom(**kwargs):

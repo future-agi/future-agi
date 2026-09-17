@@ -57,6 +57,7 @@ func (h *Handlers) Rerank(w http.ResponseWriter, r *http.Request) {
 	rc.RerankRequest = &req
 
 	setAuthMetadataFromRequest(rc, r)
+	applyCallerMetadata(rc, r, nil)
 
 	// Resolve timeout and apply.
 	timeout := h.resolveTimeout(rc, r)

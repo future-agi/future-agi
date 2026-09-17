@@ -663,6 +663,7 @@ const WorkspaceSwitcher = ({ collapsed }) => {
         openActionForm={inviteUser ? { action: "invite-user" } : null}
         onClose={() => setInviteUser(false)}
         requiredKeys={{ email: true, role: true }}
+        showInviteLinks
       />
       <CreateOrganizationModal />
     </Box>

@@ -3,7 +3,7 @@ import PropTypes from "prop-types";
 import React, { useMemo } from "react";
 import { useWatch } from "react-hook-form";
 import { languageOptions } from "src/components/agent-definitions/helper";
-import { AGENT_TYPES } from "../../constants";
+import { AGENT_TYPES, supportsConcurrency } from "../../constants";
 
 const fields = [
   "agentType",
@@ -52,11 +52,12 @@ const labels = {
 };
 
 // Fields specific to LiveKit-backed voice agents (LiveKit server + agent config).
+// ``livekitMaxConcurrency`` is intentionally NOT here — concurrency applies to
+// vapi/retell too, so it's gated by ``supportsConcurrency`` below instead.
 const LIVEKIT_FIELDS = [
   "livekitUrl",
   "livekitApiKey",
   "livekitAgentName",
-  "livekitMaxConcurrency",
   "livekitConfigJson",
 ];
 
@@ -72,9 +73,13 @@ const LIVEKIT_BYPASS_FIELDS = [
 const API_KEY_AUTH_FIELDS = ["apiKey", "assistantId", "observabilityEnabled"];
 
 // Fields irrelevant to chat agents (which don't expose provider/auth/LiveKit config).
+// livekitMaxConcurrency is listed explicitly (no longer in LIVEKIT_FIELDS): a chat
+// agent can retain a stale voice provider in form state, which would otherwise let
+// supportsConcurrency() surface the concurrency row on the chat review summary.
 const CHAT_AGENT_EXCLUDED_FIELDS = [
   "provider",
   "authenticationMethod",
+  "livekitMaxConcurrency",
   ...LIVEKIT_FIELDS,
 ];
 
@@ -119,6 +124,12 @@ const AgentBehaviourStepRightSection = ({ control }) => {
       // Providers that route through LiveKit don't use the generic
       // api_key / assistant_id / auth method / observability path.
       LIVEKIT_BYPASS_FIELDS.forEach((f) => excludeFields.add(f));
+    }
+
+    // Max Concurrent Sessions is shown for every provider that runs cases in
+    // parallel (livekit / vapi / retell); hide it for the rest (chat, others).
+    if (!supportsConcurrency(valuesObj?.provider)) {
+      excludeFields.add("livekitMaxConcurrency");
     }
 
     // API-key-only fields drop out for non-api_key auth flows.

@@ -21,6 +21,7 @@ import {
   handleAuthFailClose,
   normalizeConfigurationForLoad,
   normalizeConfigurationForSave,
+  normalizeMessagesForLoad,
   runPromptOverSocket,
 } from "./common";
 import logger from "src/utils/logger";
@@ -599,9 +600,11 @@ const WorkbenchProvider = ({ children }) => {
     const isVersionSwitch = loadedVersion !== data?.version;
     if (
       data?.prompt_config?.[0]?.messages &&
-      (!prompts?.[0]?.prompts.length || isVersionSwitch)
+      (!prompts?.[0]?.prompts?.length || isVersionSwitch)
     ) {
-      const newPrompts = data?.prompt_config?.[0]?.messages?.map((prompt) => ({
+      const newPrompts = normalizeMessagesForLoad(
+        data?.prompt_config?.[0]?.messages,
+      ).map((prompt) => ({
         ...prompt,
         id: getRandomId(),
       }));
@@ -760,7 +763,9 @@ const WorkbenchProvider = ({ children }) => {
       });
 
       newPrompts.push({
-        prompts: version?.prompt_config_snapshot?.messages,
+        prompts: normalizeMessagesForLoad(
+          version?.prompt_config_snapshot?.messages,
+        ),
         id: getRandomId(),
       });
 
@@ -1304,11 +1309,12 @@ const WorkbenchProvider = ({ children }) => {
       };
     });
 
-    const newPrompts =
-      version?.prompt_config_snapshot?.messages?.map((rest) => ({
-        ...rest,
-        id: getRandomId(),
-      })) || [];
+    const newPrompts = normalizeMessagesForLoad(
+      version?.prompt_config_snapshot?.messages,
+    ).map((rest) => ({
+      ...rest,
+      id: getRandomId(),
+    }));
 
     setPrompts([{ prompts: newPrompts, id: getRandomId() }]);
 
@@ -1463,7 +1469,9 @@ const WorkbenchProvider = ({ children }) => {
       });
 
       newPrompts.push({
-        prompts: eachCompareVersions.prompt_config_snapshot.messages,
+        prompts: normalizeMessagesForLoad(
+          eachCompareVersions.prompt_config_snapshot.messages,
+        ),
         id: getRandomId(),
       });
 

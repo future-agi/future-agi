@@ -43,6 +43,65 @@ class BackfillResult:
     hashed: int = 0
 
 
+# A blank-status row qualifies as completed only when it verifiably succeeded:
+# no error, no skip reason, and a real result in at least one output column.
+# ``output_str = 'ERROR'`` is the legacy error sentinel — excluded even though
+# such rows should also carry ``error = true``.
+_BLANK_COMPLETED_WHERE = (
+    "status = '' AND deleted = false AND error = false "
+    "AND (skipped_reason IS NULL OR skipped_reason = '') "
+    "AND (output_bool IS NOT NULL OR output_float IS NOT NULL "
+    "     OR (output_str IS NOT NULL AND output_str NOT IN ('', 'ERROR')) "
+    "     OR (output_str_list IS NOT NULL "
+    "         AND output_str_list::text NOT IN ('null', '[]')))"
+)
+
+
+def backfill_blank_completed_status(
+    *, batch_size: int = _BATCH, dry_run: bool = False
+) -> int:
+    """Stamp ``completed`` on blank-status rows that hold a successful result.
+
+    The legacy writer (`tracer.utils.eval`) persisted results without ever
+    setting ``status``, so rows it created between the 0084 schema migration
+    and the eval-task engine rollout carry ``status = ''`` despite having a
+    real output. Those rows were billed and are shown as completed by the
+    query builders; this stamps the label so counts derived from ``status``
+    stop under-reporting.
+
+    Same keyset-paginated batched-UPDATE shape as ``_backfill_status``;
+    idempotent (a stamped row no longer matches). ``dry_run`` returns the
+    number of rows that would change without writing.
+    """
+    if dry_run:
+        with connection.cursor() as cur:
+            cur.execute(
+                f"SELECT count(*) FROM {_TABLE} WHERE {_BLANK_COMPLETED_WHERE}"  # noqa: S608
+            )
+            return cur.fetchone()[0]
+
+    completed = EvalEntryStatus.COMPLETED.value
+    sql = (
+        f"UPDATE {_TABLE} SET status = %s "
+        f"WHERE id IN ("
+        f"  SELECT id FROM {_TABLE} "
+        f"  WHERE id > %s AND {_BLANK_COMPLETED_WHERE} "
+        f"  ORDER BY id LIMIT %s"
+        f") RETURNING id"
+    )  # noqa: S608 — table name is a trusted model attribute; values are bound
+    last_id = uuid.UUID(int=0)
+    total = 0
+    with connection.cursor() as cur:
+        while True:
+            cur.execute(sql, [completed, last_id, batch_size])
+            ids = [row[0] for row in cur.fetchall()]
+            if not ids:
+                break
+            total += len(ids)
+            last_id = max(ids)
+    return total
+
+
 def backfill_config_hash_and_status(*, batch_size: int = _BATCH) -> BackfillResult:
     """Run the baseline backfill over all live entries. Returns rows changed."""
     return BackfillResult(

@@ -7,7 +7,10 @@ import PropTypes from "prop-types";
 import { useController } from "react-hook-form";
 import SvgColor from "src/components/svg-color";
 import { ShowComponent } from "src/components/show";
-import { createScenarioFileDropHandler } from "./common";
+import {
+  createScenarioFileDropHandler,
+  MAX_SCENARIO_FILE_SIZE,
+} from "./common";
 
 const UploadScriptOption = ({ control }) => {
   const fieldName = "config.scriptUrl";
@@ -100,6 +103,8 @@ const UploadScriptOption = ({ control }) => {
             "text/plain": [".txt"],
             "application/pdf": [".pdf"],
           }}
+          maxSize={MAX_SCENARIO_FILE_SIZE}
+          minSize={1}
           sx={{ paddingY: (theme) => theme.spacing(3) }}
           onDrop={handleFileChange}
         />

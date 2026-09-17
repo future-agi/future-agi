@@ -3,7 +3,6 @@ import {
   Box,
   Card,
   CardContent,
-  CircularProgress,
   Table,
   TableBody,
   TableCell,
@@ -12,6 +11,7 @@ import {
   TableRow,
   Typography,
 } from "@mui/material";
+import { LoadingScreen } from "src/components/loading-screen";
 import { useQueueAgreement } from "src/api/annotation-queues/annotation-queues";
 
 function getAgreementColor(pct) {
@@ -31,9 +31,7 @@ export default function QueueAgreementTab({ queueId }) {
 
   if (isLoading) {
     return (
-      <Box sx={{ display: "flex", justifyContent: "center", py: 8 }}>
-        <CircularProgress />
-      </Box>
+      <LoadingScreen variant="orbit" sx={{ minHeight: "50vh" }} />
     );
   }
 

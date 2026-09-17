@@ -436,10 +436,11 @@ def _extract_common_call_fields(log: dict, eval_attributes: dict):
     # fall back to createdAt (always present) if startedAt is missing
     # (e.g. queued/scheduled calls).
     try:
-        start_key = "startedAt" if "startedAt" in log else "createdAt"
-        if start_key in log and "endedAt" in log:
-            start = datetime.fromisoformat(log[start_key].replace("Z", "+00:00"))
-            end = datetime.fromisoformat(log["endedAt"].replace("Z", "+00:00"))
+        start_value = log.get("startedAt") or log.get("createdAt")
+        end_value = log.get("endedAt")
+        if start_value and end_value:
+            start = datetime.fromisoformat(start_value.replace("Z", "+00:00"))
+            end = datetime.fromisoformat(end_value.replace("Z", "+00:00"))
             eval_attributes[CallAttributes.DURATION] = int(
                 (end - start).total_seconds()
             )

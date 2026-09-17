@@ -11,6 +11,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { enqueueSnackbar } from "notistack";
 import logger from "src/utils/logger";
 import { useGetJsonColumnSchema } from "src/api/develop/develop-detail";
+import { isMappingPath } from "src/sections/evals/utils/evalMappingPath";
 const RunEvaluationChild = ({
   onClose,
   allColumns,
@@ -71,7 +72,11 @@ const RunEvaluationChild = ({
     // Handle JSON paths: "uuid.path" -> "HeaderName.path"
     data.config.mapping = Object.fromEntries(
       Object.entries(data.config.mapping).map(([key, value]) => {
-        if (!value) return [key, value];
+        // A non-string mapping value has no field id to rewrite, and .match()
+        // on one throws inside this save handler — no error boundary catches an
+        // event handler, so the save button would just stop working. Forward it
+        // untouched and let the API reject it with a message.
+        if (!isMappingPath(value)) return [key, value];
 
         // Check if value contains a JSON path (UUID format followed by dot)
         const uuidPattern =

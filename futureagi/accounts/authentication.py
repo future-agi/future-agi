@@ -29,6 +29,7 @@ from accounts.models.organization import Organization
 from accounts.models.workspace import Workspace, WorkspaceMembership
 from accounts.services.workspace_membership import create_workspace_membership
 from tfc.constants.roles import OrganizationRoles
+from tfc.ee_gating import is_oss
 from tfc.utils.api_errors import (
     build_error_envelope,
     error_details,
@@ -99,13 +100,30 @@ def _resolve_view_class(request):
 
 
 def _is_workspace_write_exempt_view(request):
-    """True when the resolved view is marked ``@workspace_read_only``.
+    """Honor legacy read-only views or the exact resolved read-POST handler.
 
     Fail-closed: if the view cannot be resolved, returns ``False`` so the
     write check still runs — a resolution failure can never grant write
     access.
     """
-    return bool(getattr(_resolve_view_class(request), "workspace_write_exempt", False))
+    view_cls = _resolve_view_class(request)
+    if getattr(view_cls, "workspace_write_exempt", False):
+        return True
+    if view_cls is None or getattr(request, "method", None) != "POST":
+        return False
+    callback = request.resolver_match.func
+    if hasattr(callback, "actions"):
+        if not isinstance(callback.actions, dict):
+            return False
+        handler_name = callback.actions.get("post")
+    else:
+        handler_name = "post"
+    if not isinstance(handler_name, str):
+        return False
+    return (
+        getattr(getattr(view_cls, handler_name, None), "_read_query_post", False)
+        is True
+    )
 
 
 class APIKeyAuthentication(BaseAuthentication):
@@ -685,6 +703,9 @@ class AuthMonitoringMiddleware:
         return JsonResponse(body, status=403)
 
     def __call__(self, request):
+        if is_oss():
+            return self.get_response(request)
+
         client_ip, _ = get_client_ip(request)
 
         if request.path.endswith("password-reset-initiate/"):

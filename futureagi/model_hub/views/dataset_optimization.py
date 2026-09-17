@@ -32,6 +32,7 @@ from model_hub.serializers.dataset_optimization import (
     DatasetOptimizationSerializer,
     DatasetOptimizationTrialSerializer,
 )
+from model_hub.utils.llm_providers import is_model_in_catalog
 from model_hub.utils.dataset_optimization import (
     OPTIMIZATION_RUN_TABLE_CONFIG,
     TRIAL_TABLE_BASE_COLUMNS,
@@ -47,8 +48,15 @@ from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.errors import format_validation_error
 from tfc.utils.general_methods import GeneralMethods
+from tfc.utils.pagination import ExtendedPageNumberPagination
 
 logger = structlog.get_logger(__name__)
+
+
+class DatasetOptimizationPagination(ExtendedPageNumberPagination):
+    """Caps the `limit` query param; the shared default has no maximum."""
+
+    max_page_size = 100
 
 
 def _request_workspace_filter(request, field_name="column__dataset__workspace"):
@@ -85,6 +93,7 @@ class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
 
     queryset = OptimizeDataset.objects.all()
     permission_classes = [IsAuthenticated]
+    pagination_class = DatasetOptimizationPagination
     _gm = GeneralMethods()
     serializer_class = DatasetOptimizationSerializer
 
@@ -105,7 +114,11 @@ class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
         # Note: We don't call super().get_queryset() because BaseModelViewSetMixin
         # adds a deleted=False filter, but OptimizeDataset doesn't have that field
         queryset = (
-            self.queryset.filter(
+            self.queryset.select_related(
+                "column__dataset__organization",
+                "optimizer_model",
+            )
+            .filter(
                 column__dataset__organization=user_organization,
                 column__dataset__deleted=False,
                 column__deleted=False,
@@ -197,6 +210,21 @@ class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
     @transaction.atomic
     def create(self, request, *args, **kwargs):
         try:
+            # The API receives the model as top-level `optimizer_model_id`;
+            # fall back to optimizer_config.model_name for direct API callers.
+            model_name = request.data.get("optimizer_model_id") or (
+                request.data.get("optimizer_config") or {}
+            ).get("model_name")
+            org = getattr(request, "organization", None) or request.user.organization
+            org_id = org.id if org else None
+            if model_name and not is_model_in_catalog(
+                model_name, organization_id=org_id
+            ):
+                return self._gm.bad_request(
+                    f"Model '{model_name}' is no longer available. "
+                    "Please select a supported model to run optimization."
+                )
+
             serializer = self.get_serializer(data=request.data)
             if not serializer.is_valid():
                 return self._gm.bad_request(format_validation_error(serializer.errors))

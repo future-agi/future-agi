@@ -1,14 +1,187 @@
 import uuid
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from rest_framework import status
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.test import APIClient
 
 from accounts.authentication import (
+    APIKeyAuthentication,
     _is_workspace_write_exempt_view,
     workspace_read_only,
 )
 from tfc.constants.levels import Level
+
+READ_POST_PATHS = (
+    "/tracer/trace/list_traces_of_session/",
+    "/tracer/observation-span/list_spans_observe/",
+    "/tracer/trace-session/list_sessions/",
+    "/tracer/users/",
+    "/tracer/trace/list_traces/",
+    "/tracer/observation-span/list_spans/",
+    "/tracer/trace/list_voice_calls/",
+    "/tracer/trace/get_trace_id_by_index/",
+    "/tracer/trace/get_trace_id_by_index_observe/",
+    "/tracer/observation-span/get_trace_id_by_index_spans_as_base/",
+    "/tracer/observation-span/get_trace_id_by_index_spans_as_observe/",
+    "/tracer/trace/agent_graph/",
+)
+
+
+@pytest.fixture
+def reader_auth(monkeypatch):
+    from accounts.models.organization import Organization
+    from accounts.models.user import User
+    from accounts.models.workspace import Workspace
+    from tfc.constants.roles import OrganizationRoles
+    from tfc.middleware.workspace_context import clear_workspace_context
+
+    organization = Organization(id=uuid.UUID(int=701))
+    workspace = Workspace(id=uuid.UUID(int=702), organization=organization)
+    user = User(id=uuid.UUID(int=703), organization=organization, is_active=True)
+    access = Mock(return_value=True)
+    monkeypatch.setattr(user, "can_access_workspace", access)
+    monkeypatch.setattr(
+        user, "get_workspace_role", lambda _: OrganizationRoles.WORKSPACE_VIEWER
+    )
+    auth = APIKeyAuthentication()
+    monkeypatch.setattr(auth, "_resolve_organization", lambda *_: organization)
+    monkeypatch.setattr(auth, "_get_requested_workspace", lambda *_: workspace)
+    monkeypatch.setattr(
+        "accounts.authentication.decode_token", lambda _: (user, "fixture-token")
+    )
+    clear_workspace_context()
+    yield auth, user, workspace, access
+    clear_workspace_context()
+
+
+def _read_auth_request(path, method):
+    from django.urls import resolve
+    from rest_framework.request import Request
+    from rest_framework.test import APIRequestFactory
+
+    raw = APIRequestFactory().generic(
+        method, path, HTTP_AUTHORIZATION="Bearer offline-fixture"
+    )
+    raw.resolver_match = resolve(path.removeprefix("/tracer"), urlconf="tracer.urls")
+    return Request(raw)
+
+
+@pytest.mark.parametrize("path", READ_POST_PATHS)
+def test_reader_real_authentication_get_post_parity(reader_auth, path):
+    from tfc.middleware.workspace_context import get_current_workspace
+
+    auth, user, workspace, access = reader_auth
+    assert user.can_write_to_workspace(workspace) is False
+    for method in ("GET", "POST"):
+        request = _read_auth_request(path, method)
+        assert auth.authenticate(request) == (user, "fixture-token")
+        assert request.workspace is workspace
+        assert request.organization is workspace.organization
+        assert get_current_workspace() is workspace
+    access.assert_called_with(workspace)
+
+
+@pytest.mark.parametrize(
+    "method,path",
+    [
+        ("POST", "/tracer/trace/"),
+        ("PUT", "/tracer/trace/fixture/"),
+        ("PATCH", "/tracer/trace/fixture/"),
+        ("DELETE", "/tracer/trace/fixture/"),
+    ],
+)
+def test_reader_mutating_routes_still_denied(reader_auth, method, path):
+    from tfc.middleware.workspace_context import get_current_workspace
+
+    auth, _, _, _ = reader_auth
+    request = _read_auth_request(path, method)
+    request.action = "list_traces_of_session"
+    request._read_query_post = True
+    request._full_data = {"action": "list_traces_of_session", "_read_query_post": True}
+    request._request.GET = {
+        "action": "list_traces_of_session",
+        "_read_query_post": True,
+    }
+    with pytest.raises(PermissionDenied, match="Write access denied"):
+        auth.authenticate(request)
+    assert get_current_workspace() is None
+
+
+@pytest.mark.parametrize("path", READ_POST_PATHS)
+def test_read_post_does_not_bypass_tenant_membership(reader_auth, path):
+    from tfc.middleware.workspace_context import get_current_workspace
+
+    auth, _, _, access = reader_auth
+    access.return_value = False
+    with pytest.raises(PermissionDenied, match="Access denied to this workspace"):
+        auth.authenticate(_read_auth_request(path, "POST"))
+    assert get_current_workspace() is None
+
+
+@pytest.mark.parametrize(
+    "case,expected",
+    [
+        ("api_view", True),
+        ("action", True),
+        ("none_map", False),
+        ("list_map", False),
+        ("empty_map", False),
+        ("missing_action", False),
+        ("nonstring_action", False),
+        ("get_only", False),
+        ("create", False),
+        ("false_marker", False),
+        ("truthy_marker", False),
+        ("unresolved", False),
+        ("PUT", False),
+        ("PATCH", False),
+        ("DELETE", False),
+    ],
+)
+def test_read_post_exemption_is_exact_action_and_method(reader_auth, case, expected):
+    auth, user, workspace, _ = reader_auth
+    request = _read_auth_request("/tracer/users/", "POST")
+    read = request.resolver_match.func.cls.post
+
+    def mutate(*args, **kwargs):
+        pass
+
+    mutate._read_query_post = 1 if case == "truthy_marker" else False
+    view = type(
+        "ScopedReadView",
+        (),
+        {"get": read, "post": read, "read": read, "create": mutate},
+    )
+    callback = SimpleNamespace(cls=view)
+    maps = {
+        "action": {"post": "read"},
+        "none_map": None,
+        "list_map": [],
+        "empty_map": {},
+        "missing_action": {"post": "missing"},
+        "nonstring_action": {"post": 1},
+        "get_only": {"get": "read"},
+        "create": {"get": "read", "post": "create"},
+    }
+    if case in maps:
+        callback.actions = maps[case]
+    if case in ("false_marker", "truthy_marker"):
+        view.post = mutate  # A marked GET sibling must not supply POST's marker.
+    request._request.resolver_match = (
+        None if case == "unresolved" else SimpleNamespace(func=callback)
+    )
+    if case in ("PUT", "PATCH", "DELETE"):
+        request._request.method = case
+    assert _is_workspace_write_exempt_view(request) is expected
+    if expected:
+        assert auth.authenticate(request) == (user, "fixture-token")
+        assert request.workspace is workspace
+    else:
+        with pytest.raises(PermissionDenied, match="Write access denied"):
+            auth.authenticate(request)
 
 
 def test_owner_level_maps_to_workspace_admin_label():

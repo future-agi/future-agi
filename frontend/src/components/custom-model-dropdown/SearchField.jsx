@@ -3,6 +3,7 @@ import PropTypes from "prop-types";
 import React, { forwardRef, useCallback, useRef } from "react";
 import Iconify from "../iconify";
 import { useCombinedRefs } from "src/hooks/use-combined-refs";
+import { isBlackBackgroundLogo } from "./common";
 
 const SearchField = forwardRef(
   (
@@ -160,7 +161,7 @@ const SearchField = forwardRef(
                     width: theme.spacing(2.5),
                     objectFit: "cover",
                     ...(theme.palette.mode === "dark" &&
-                      logoUrl?.includes("provider-logos") && {
+                      isBlackBackgroundLogo(logoUrl) && {
                         filter: "invert(1) brightness(2)",
                       }),
                   })}

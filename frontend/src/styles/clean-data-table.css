@@ -30,6 +30,17 @@
   border: none !important;
 }
 
+/*
+ * A bounded exact read deliberately pauses on an AG Grid failed block so a
+ * user action can resume its retained cursor. The status banner owns that
+ * state; suppress AG Grid's generic per-cell "ERR" copy until the retry starts.
+ */
+.clean-data-table.ag-grid-cursor-paused .ag-loading-icon,
+.clean-data-table.ag-grid-cursor-paused .ag-loading-text,
+.clean-data-table.ag-grid-cursor-paused .ag-skeleton-container {
+  visibility: hidden;
+}
+
 .ipop-cell,
 .session-cell-text > div {
   width: 100%;

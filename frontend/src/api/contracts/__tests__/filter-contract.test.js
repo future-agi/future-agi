@@ -3,18 +3,131 @@ import { describe, expect, it } from "vitest";
 import {
   buildApiFilterFromPanelRow,
   coerceFilterValue,
+  FILTER_STRING_MAX_UTF8_BYTES,
   hydrateStoredFilterList,
   isAllowedFilterOperator,
   normalizeFilterOperator,
   normalizeFilterType,
   serializeFilterForApi,
+  truncateUtf8String,
   serializeFilterListForApi,
+  TYPED_ATTRIBUTE_STRING_FILTER_MAX_UTF8_BYTES,
 } from "../filter-contract";
+
+describe("truncateUtf8String", () => {
+  it("preserves text at the byte boundary", () => {
+    expect(truncateUtf8String("abcd", 4)).toBe("abcd");
+  });
+
+  it("truncates without splitting a multibyte character", () => {
+    expect(truncateUtf8String("abéz", 4)).toBe("abé");
+    expect(truncateUtf8String("🙂🙂", 5)).toBe("🙂");
+  });
+});
 import {
+  FILTER_CONTRACT,
   FILTER_CONTRACT_VERSION,
   FILTER_TYPE_ALLOWED_OPS,
   SPAN_ATTRIBUTE_ALLOWED_OPS,
+  STRUCTURED_SPAN_ATTRIBUTE_ALLOWED_OPS,
 } from "../filter-contract.generated";
+
+describe("finite long filter-list budget", () => {
+  const leaf = (value, index = 0) => ({
+    column_id: `typed.attribute.${index}`,
+    filter_config: {
+      col_type: "SPAN_ATTRIBUTE",
+      filter_type: "text",
+      filter_op: "equals",
+      filter_value: value,
+    },
+  });
+  it.each(
+    [false, true].flatMap((mixed) =>
+      ["x", "🙂", '"', "\\", "\x01"].map((character) => [mixed, character]),
+    ),
+  )(
+    "preserves ten full retained values and typed JSON through read-body escaping (mixed=%s, character=%s)",
+    (mixed, character) => {
+      const ops = [
+        "equals",
+        "not_equals",
+        "contains",
+        "not_contains",
+        "starts_with",
+        "ends_with",
+      ];
+      const payload = Array.from({ length: 10 }, (_, index) => {
+        const bytes = new TextEncoder().encode(character).length;
+        const remaining = TYPED_ATTRIBUTE_STRING_FILTER_MAX_UTF8_BYTES - 2;
+        const value =
+          String(index).padStart(2, "0") +
+          character.repeat(Math.floor(remaining / bytes)) +
+          "x".repeat(remaining % bytes);
+        const filter = leaf(value, index);
+        filter.filter_config.filter_op = ops[index % ops.length];
+        if (mixed && index >= 6)
+          Object.assign(filter.filter_config, {
+            filter_op: index % 2 ? "in" : "not_in",
+            filter_value: [value, 0, false],
+            attribute_value_types: ["string", "number", "boolean"],
+          });
+        return filter;
+      });
+      const serialized = serializeFilterListForApi(payload);
+      expect(serialized).toEqual(payload);
+      const body = JSON.stringify({ filters: JSON.stringify(serialized) });
+      expect(JSON.parse(JSON.parse(body).filters)).toEqual(payload);
+    },
+  );
+  it("retains the exact decoded-string aggregate boundary", () => {
+    const payload = Array.from(
+      { length: FILTER_CONTRACT.limits.maxItems },
+      (_, index) => leaf("", index),
+    );
+    const bytes = (value) => new TextEncoder().encode(value).length;
+    const overhead = payload.reduce(
+      (sum, item) =>
+        sum +
+        bytes(item.column_id) +
+        ["col_type", "filter_type", "filter_op"].reduce(
+          (n, key) => n + bytes(item.filter_config[key]),
+          0,
+        ),
+      0,
+    );
+    const available = FILTER_CONTRACT.limits.totalStringMaxUtf8Bytes - overhead;
+    payload.forEach((item, index) => {
+      item.filter_config.filter_value = "x".repeat(
+        Math.floor(available / payload.length) +
+          (index < available % payload.length),
+      );
+    });
+    expect(serializeFilterListForApi(payload)).toEqual(payload);
+    payload.at(-1).filter_config.filter_value += "x";
+    expect(() => serializeFilterListForApi(payload)).toThrow(
+      `${FILTER_CONTRACT.limits.totalStringMaxUtf8Bytes} UTF-8 byte request limit`,
+    );
+  });
+  it("retains the 32-leaf limit", () => {
+    expect(() =>
+      serializeFilterListForApi(Array.from({ length: 33 }, () => leaf("x"))),
+    ).toThrow("At most 32 filters");
+  });
+  it("rejects oversized JSON framing even without string values", () => {
+    const payload = [
+      leaf({
+        values: Array.from({ length: 64 }, () =>
+          Array.from({ length: 64 }, () => Array(64).fill(123456)),
+        ),
+      }),
+    ];
+    payload[0].filter_config.filter_type = "map";
+    expect(() => serializeFilterListForApi(payload)).toThrow(
+      "Serialized filters exceed",
+    );
+  });
+});
 
 const valueFor = (filterType, operator) => {
   if (operator === "is_null" || operator === "is_not_null") return "ignored";
@@ -85,6 +198,7 @@ describe("filter contract", () => {
   it("builds canonical API filters from observe panel rows", () => {
     const apiFilter = buildApiFilterFromPanelRow({
       field: "latency_ms",
+      registryId: "system_attribute:traces:latency_ms",
       fieldName: "Latency",
       fieldCategory: "system",
       fieldType: "number",
@@ -94,6 +208,7 @@ describe("filter contract", () => {
 
     expect(apiFilter).toEqual({
       column_id: "latency_ms",
+      property_id: "system_attribute:traces:latency_ms",
       display_name: "Latency",
       filter_config: {
         filter_type: "number",
@@ -105,6 +220,156 @@ describe("filter contract", () => {
     expect(apiFilter).not.toHaveProperty("columnId");
     expect(apiFilter).not.toHaveProperty("filterConfig");
     expect(apiFilter.filter_config).not.toHaveProperty("filterOp");
+  });
+
+  it("preserves typed custom-attribute option provenance", () => {
+    const apiFilter = buildApiFilterFromPanelRow({
+      field: "attempt",
+      fieldCategory: "attribute",
+      fieldType: "string",
+      operator: "in",
+      value: ["1", 1, true],
+      valueTypes: ["string", "number", "boolean"],
+    });
+
+    expect(apiFilter.filter_config).toEqual({
+      filter_type: "text",
+      filter_op: "in",
+      filter_value: ["1", 1, true],
+      col_type: "SPAN_ATTRIBUTE",
+      attribute_value_types: ["string", "number", "boolean"],
+    });
+    expect(serializeFilterForApi(apiFilter)).toEqual(apiFilter);
+  });
+
+  it.each([
+    ["normal", "ordinary exact value"],
+    [
+      "above the generic scalar limit",
+      "x".repeat(FILTER_STRING_MAX_UTF8_BYTES + 1),
+    ],
+    [
+      "at the typed string limit",
+      "é".repeat(TYPED_ATTRIBUTE_STRING_FILTER_MAX_UTF8_BYTES / 2),
+    ],
+  ])("keeps %s typed exact attribute values filterable", (_case, value) => {
+    const apiFilter = buildApiFilterFromPanelRow({
+      field: "long.attribute",
+      fieldCategory: "attribute",
+      fieldType: "string",
+      operator: "in",
+      value: [value],
+      valueTypes: ["string"],
+    });
+
+    expect(apiFilter.filter_config).toMatchObject({
+      filter_value: [value],
+      attribute_value_types: ["string"],
+    });
+    expect(serializeFilterForApi(apiFilter)).toEqual(apiFilter);
+  });
+
+  it("rejects a typed exact attribute value above the 16 KiB bound", () => {
+    const value = `${"é".repeat(
+      TYPED_ATTRIBUTE_STRING_FILTER_MAX_UTF8_BYTES / 2,
+    )}x`;
+
+    expect(() =>
+      buildApiFilterFromPanelRow({
+        field: "long.attribute",
+        fieldCategory: "attribute",
+        fieldType: "string",
+        operator: "in",
+        value: [value],
+        valueTypes: ["string"],
+      }),
+    ).toThrow(`${TYPED_ATTRIBUTE_STRING_FILTER_MAX_UTF8_BYTES} UTF-8 bytes`);
+  });
+
+  it.each(
+    [
+      "equals",
+      "not_equals",
+      "contains",
+      "not_contains",
+      "starts_with",
+      "ends_with",
+    ].flatMap((operator) =>
+      [
+        ["text", "x"],
+        ["string", "é"],
+        ["STRING", "🙂"],
+      ].map(([alias, character]) => [operator, alias, character]),
+    ),
+  )(
+    "bounds scalar SPAN text %s/%s losslessly in both callers",
+    (operator, alias, character) => {
+      const limit = TYPED_ATTRIBUTE_STRING_FILTER_MAX_UTF8_BYTES;
+      const bytes = new TextEncoder().encode(character).length;
+      const value = ` ${character.repeat(Math.floor((limit - 2) / bytes))}${" ".repeat(((limit - 2) % bytes) + 1)}`;
+      const row = {
+        field: "long.attribute",
+        fieldCategory: "attribute",
+        fieldType: alias,
+        operator,
+        value,
+      };
+      const raw = {
+        column_id: row.field,
+        filter_config: {
+          col_type: "SPAN_ATTRIBUTE",
+          filter_type: alias,
+          filter_op: operator,
+          filter_value: value,
+        },
+      };
+      const expected = {
+        ...raw,
+        filter_config: { ...raw.filter_config, filter_type: "text" },
+      };
+      expect(new TextEncoder().encode(value).length).toBe(limit);
+      expect(buildApiFilterFromPanelRow(row)).toEqual(expected);
+      expect(serializeFilterForApi(raw)).toEqual(expected);
+      expect(() =>
+        buildApiFilterFromPanelRow({ ...row, value: `${value}x` }),
+      ).toThrow(`${limit} UTF-8 bytes`);
+      expect(() =>
+        serializeFilterForApi({
+          ...raw,
+          filter_config: { ...raw.filter_config, filter_value: `${value}x` },
+        }),
+      ).toThrow(`${limit} UTF-8 bytes`);
+    },
+  );
+
+  it("does not manufacture scalar picker provenance", () => {
+    expect(() =>
+      serializeFilterForApi({
+        column_id: "long.attribute",
+        filter_config: {
+          col_type: "SPAN_ATTRIBUTE",
+          filter_type: "text",
+          filter_op: "equals",
+          filter_value: "x".repeat(4097),
+          attribute_value_types: ["string"],
+        },
+      }),
+    ).toThrow(/align/);
+  });
+
+  it("rejects misaligned typed custom-attribute provenance", () => {
+    expect(() =>
+      serializeFilterForApi({
+        column_id: "attempt",
+        filter_config: {
+          filter_type: "text",
+          filter_op: "in",
+          filter_value: ["1", 1],
+          col_type: "SPAN_ATTRIBUTE",
+          attribute_value_types: ["string"],
+        },
+      }),
+    ).toThrow(/align/);
   });
 
   it("keeps direct id filters out of metric col_type routing", () => {
@@ -285,6 +550,44 @@ describe("filter contract", () => {
     expect(normalizeFilterType("string")).toBe("text");
     expect(isAllowedFilterOperator("number", "contains")).toBe(false);
     expect(isAllowedFilterOperator("number", "not_between")).toBe(true);
+    expect(STRUCTURED_SPAN_ATTRIBUTE_ALLOWED_OPS.map).toEqual([
+      "equals",
+      "not_equals",
+      "contains",
+      "not_contains",
+      "is_null",
+      "is_not_null",
+    ]);
+    expect(isAllowedFilterOperator("map", "contains")).toBe(true);
+    expect(isAllowedFilterOperator("map", "between")).toBe(false);
+  });
+
+  it("keeps json lists as arrays and canonicalizes json objects to maps", () => {
+    expect(normalizeFilterType("json", ["vip"])).toBe("array");
+    expect(normalizeFilterType("list", ["vip"])).toBe("array");
+    expect(normalizeFilterType("json", { tier: "vip" })).toBe("map");
+    expect(normalizeFilterType("map", { tier: "vip" })).toBe("map");
+    expect(normalizeFilterType("object", { tier: "vip" })).toBe("map");
+
+    expect(
+      serializeFilterForApi({
+        column_id: "customer.context",
+        filter_config: {
+          col_type: "SPAN_ATTRIBUTE",
+          filter_type: "json",
+          filter_op: "contains",
+          filter_value: { tier: "vip", attempt: 2 },
+        },
+      }),
+    ).toEqual({
+      column_id: "customer.context",
+      filter_config: {
+        col_type: "SPAN_ATTRIBUTE",
+        filter_type: "map",
+        filter_op: "contains",
+        filter_value: { tier: "vip", attempt: 2 },
+      },
+    });
   });
 
   it("fails before sending a non-canonical operator to the API", () => {

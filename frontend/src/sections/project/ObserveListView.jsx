@@ -1,4 +1,4 @@
-import { Box, Chip, Typography, useTheme } from "@mui/material";
+import { Alert, Box, Button, Chip, Typography, useTheme } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import { formatDistanceToNow, differenceInHours } from "date-fns";
 import React, {
@@ -9,16 +9,21 @@ import React, {
   useState,
 } from "react";
 import { useNavigate } from "react-router";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useDebounce } from "src/hooks/use-debounce";
-import axios, { endpoints } from "src/utils/axios";
 import PropTypes from "prop-types";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import VolumeBarChart from "./VolumeBarChart";
 import TagEditor from "./TagEditor";
 import { buildProjectListApiFilters } from "./common";
+import { toValidDate } from "src/utils/format-time";
+import { getRequestErrorMessage } from "src/utils/errorUtils";
+import { readObserveProjectPage } from "src/api/project/observe-project-list";
 
 // ── Helpers ──
+
+const LOAD_ERROR_MESSAGE = "Could not load projects";
+const EMPTY_MESSAGE = "No projects found";
 
 const SORT_FIELD_MAP = {
   name: "name",
@@ -27,21 +32,15 @@ const SORT_FIELD_MAP = {
 };
 
 function getHealthColor(lastActive, theme) {
-  if (!lastActive) return theme.palette.text.disabled;
-  const hours = differenceInHours(new Date(), new Date(lastActive));
+  const parsed = toValidDate(lastActive);
+  if (!parsed) return theme.palette.text.disabled;
+  const hours = differenceInHours(new Date(), parsed);
   if (hours < 1) return theme.palette.success.main;
   if (hours < 24) return theme.palette.warning.main;
   return theme.palette.text.disabled;
 }
 
 // ── API ──
-
-const fetchObserveProjects = async (params) => {
-  const { data } = await axios.get(endpoints.project.projectObserveList, {
-    params,
-  });
-  return data;
-};
 
 // ── Component ──
 
@@ -79,7 +78,13 @@ const ObserveListView = forwardRef(
       [filters],
     );
 
-    const { data: apiData, isLoading } = useQuery({
+    const {
+      data: apiData,
+      isLoading,
+      isError,
+      error,
+      refetch,
+    } = useQuery({
       queryKey: [
         "observe-projects",
         {
@@ -91,22 +96,25 @@ const ObserveListView = forwardRef(
           apiFilters,
         },
       ],
-      queryFn: () =>
-        fetchObserveProjects({
-          name: debouncedSearch || null,
-          page_number: page,
-          page_size: pageSize,
-          sort_by: sortBy,
-          sort_direction: sortOrder,
-          project_type: "observe",
-          ...(apiFilters && { filters: apiFilters }),
+      queryFn: ({ signal }) =>
+        readObserveProjectPage({
+          signal,
+          params: {
+            name: debouncedSearch || null,
+            page_number: page,
+            page_size: pageSize,
+            sort_by: sortBy,
+            sort_direction: sortOrder,
+            ...(apiFilters && { filters: apiFilters }),
+          },
         }),
-      keepPreviousData: true,
+      retry: false,
+      placeholderData: keepPreviousData,
       staleTime: 30_000,
     });
 
-    const items = apiData?.result?.table || [];
-    const total = apiData?.result?.metadata?.total_rows || 0;
+    const items = apiData?.rows || [];
+    const total = apiData?.totalRows ?? 0;
 
     const handleRowSelectionChange = useCallback(
       (sel) => {
@@ -182,14 +190,19 @@ const ObserveListView = forwardRef(
           header: "Volume (30d)",
           size: 200,
           enableSorting: false,
-          cell: ({ row }) => (
-            <Box sx={{ width: "100%", overflow: "hidden" }}>
-              <VolumeBarChart
-                dailyVolume={row.original.daily_volume || []}
-                height={22}
-              />
-            </Box>
-          ),
+          cell: ({ row }) =>
+            row.original.activity_query_complete === false ? (
+              <Typography variant="body2" color="text.disabled">
+                Unavailable
+              </Typography>
+            ) : (
+              <Box sx={{ width: "100%", overflow: "hidden" }}>
+                <VolumeBarChart
+                  dailyVolume={row.original.daily_volume || []}
+                  height={22}
+                />
+              </Box>
+            ),
         },
         {
           id: "tags",
@@ -208,9 +221,18 @@ const ObserveListView = forwardRef(
           size: 160,
           enableSorting: false,
           cell: ({ getValue, row }) => {
-            const val = getValue() || row.original?.updated_at;
-            const color = getHealthColor(val, theme);
-            if (!val) return null;
+            if (row.original.activity_query_complete === false) {
+              return (
+                <Typography variant="body2" color="text.disabled">
+                  Unavailable
+                </Typography>
+              );
+            }
+            // Validity-aware fallback: an unparseable last_active must not win over a valid updated_at.
+            const parsed =
+              toValidDate(getValue()) ?? toValidDate(row.original?.updated_at);
+            const color = getHealthColor(parsed, theme);
+            if (!parsed) return null;
             return (
               <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
                 <Box
@@ -223,7 +245,7 @@ const ObserveListView = forwardRef(
                   }}
                 />
                 <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>
-                  {formatDistanceToNow(new Date(val), { addSuffix: true })}
+                  {formatDistanceToNow(parsed, { addSuffix: true })}
                 </Typography>
               </Box>
             );
@@ -244,6 +266,18 @@ const ObserveListView = forwardRef(
           minHeight: 0,
         }}
       >
+        {isError && (
+          <Alert
+            severity="error"
+            action={
+              <Button color="inherit" size="small" onClick={() => refetch()}>
+                Retry
+              </Button>
+            }
+          >
+            {getRequestErrorMessage(error, LOAD_ERROR_MESSAGE)}
+          </Alert>
+        )}
         <DataTable
           columns={columns}
           data={items}
@@ -259,7 +293,7 @@ const ObserveListView = forwardRef(
           getRowId={(row) => row.id}
           enableSelection
           rowHeight={44}
-          emptyMessage="No projects found"
+          emptyMessage={isError ? "" : EMPTY_MESSAGE}
         />
         <DataTablePagination
           page={page}

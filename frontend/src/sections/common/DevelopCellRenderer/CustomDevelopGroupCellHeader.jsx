@@ -1,11 +1,12 @@
-import { Box, Typography } from "@mui/material";
+import { alpha, Box, Typography, useTheme } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
 import Iconify from "src/components/iconify";
 
 const CustomDevelopGroupCellHeader = (props) => {
   const { displayName, col } = props;
-  // #FFE2FE
+  const theme = useTheme();
+
   const renderIcon = () => {
     if (col.originType === "run_prompt") {
       return <Iconify icon="token:rune" sx={{ color: "info.main" }} />;
@@ -50,12 +51,15 @@ const CustomDevelopGroupCellHeader = (props) => {
   };
 
   const getBackgroundColor = () => {
+    const isDark = theme.palette.mode === "dark";
     if (col.originType === "run_prompt") {
-      return "info.lighter";
+      return isDark ? alpha(theme.palette.info.main, 0.18) : "info.lighter";
     } else if (col.originType === "evaluation") {
       return "var(--surface-highlight)";
     } else if (col.originType === "optimisation") {
-      return "primary.lighter";
+      return isDark
+        ? alpha(theme.palette.primary.main, 0.16)
+        : "primary.lighter";
     }
 
     return "background.default";

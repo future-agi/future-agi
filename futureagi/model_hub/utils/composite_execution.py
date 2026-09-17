@@ -28,6 +28,8 @@ from model_hub.utils.scoring import determine_pass_fail, score_eval_output
 
 logger = logging.getLogger(__name__)
 
+PER_CHILD_ERROR_LOCALIZER_ENABLED = False
+
 
 @dataclass
 class CompositeRunOutcome:
@@ -113,7 +115,26 @@ def _execute_child(
                     **link_params,
                 }
 
-        effective_model = model or child_template.model or None
+        link_run_config = link_config.get("run_config") or {}
+        if not isinstance(link_run_config, dict):
+            link_run_config = {}
+
+        pinned_model = link.pinned_version.model if link.pinned_version else None
+        effective_model = (
+            link_run_config.get("model")
+            or link_config.get("model")
+            or pinned_model
+            or child_template.model
+            or model
+            or None
+        )
+        effective_error_localizer = bool(
+            error_localizer
+            or (
+                PER_CHILD_ERROR_LOCALIZER_ENABLED
+                and link_run_config.get("error_localizer_enabled")
+            )
+        )
 
         result = run_eval_func(
             runtime_config,
@@ -121,7 +142,7 @@ def _execute_child(
             child_template,
             org,
             model=effective_model,
-            error_localizer=error_localizer,
+            error_localizer=effective_error_localizer,
             source=source,
             workspace=workspace,
             input_data_types=input_data_types or {},
@@ -310,6 +331,14 @@ def execute_composite_children_sync(
     Responsibilities:
     - Execute children in `order` (`child_links` is assumed pre-sorted).
     - Apply per-binding weight overrides if provided.
+    - Resolve each child's model as link `run_config` → link config → pinned
+      version → child template → `model`. A composite has no model of its
+      own, so `model` is a fallback for model-less children (system evals),
+      not an override.
+    - Enable the error localizer for a child from the composite-level
+      `error_localizer` only. The child's own
+      `run_config.error_localizer_enabled` is captured on the link but not
+      honoured — see `PER_CHILD_ERROR_LOCALIZER_ENABLED`.
     - Aggregate only when `parent.aggregation_enabled`; otherwise return
       raw child results with a null aggregate.
     - Defer pass/fail until a numeric aggregate is actually available.

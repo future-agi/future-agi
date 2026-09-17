@@ -425,7 +425,8 @@ const TraceDisplayPanel = ({
             sx={{
               fontSize: 14,
               fontFamily: "'IBM Plex Sans', sans-serif",
-              color: "#573FCC",
+              color: (t) =>
+                t.palette.mode === "dark" ? "text.primary" : "#573FCC",
               py: 0.5,
             }}
           >

@@ -1,0 +1,39 @@
+# Enterprise License Auth Configuration
+#
+# Add this section to your agentcc-gateway config.yaml to enable
+# managed AI service token verification.
+
+license_auth:
+  enabled: true
+
+  # RS256 public key used to verify activation service tokens.
+  # Must match the private key configured in ACTIVATION_PRIVATE_KEY on the
+  # cloud activation service.
+  public_key: |
+    -----BEGIN PUBLIC KEY-----
+    <your-activation-public-key-here>
+    -----END PUBLIC KEY-----
+
+  # Optional: multiple keys for rotation. Each entry needs a kid matching
+  # the kid in the JWT header issued by the activation service.
+  # public_keys:
+  #   - kid: "key-2025-06"
+  #     public_key: |
+  #       -----BEGIN PUBLIC KEY-----
+  #       ...
+  #       -----END PUBLIC KEY-----
+
+  issuer: "https://licenses.futureagi.com"
+  audience: "futureagi-agentcc-gateway"
+  token_type: "futureagi-managed-service-token"
+  clock_skew_seconds: 300
+
+  # Managed authorization always checks grant, session, and instance state.
+  # Redis failures deny the request.
+  runtime_state_required: true
+
+  # Per-license rate limit (requests per minute). 0 = unlimited.
+  rate_limit_rpm: 0
+
+  # Per-license monthly usage cap. 0 = unlimited.
+  monthly_usage_limit: 0

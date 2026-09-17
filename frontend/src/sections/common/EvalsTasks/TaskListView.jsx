@@ -8,7 +8,7 @@ import {
   Typography,
 } from "@mui/material";
 import { formatDistanceToNow } from "date-fns";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import PropTypes from "prop-types";
 import _ from "lodash";
@@ -21,6 +21,8 @@ import { enqueueSnackbar } from "src/components/snackbar";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import DeleteConfirmation from "./DeleteConfirmation";
+import { QUERY_FAILED_RETRY_MESSAGE } from "src/utils/queryReadState";
+import { readEvalTaskListPage } from "./task_list_read";
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -304,6 +306,8 @@ const TaskListView = ({
   const [rowSelection, setRowSelection] = useState({});
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const pageScopeRef = useRef(observeId);
+  const queryPage = pageScopeRef.current === observeId ? page : 0;
 
   const debouncedSearch = useDebounce(searchQuery.trim(), 500);
   const queryClient = useQueryClient();
@@ -313,19 +317,19 @@ const TaskListView = ({
     ? endpoints.project.getEvalTaskList
     : endpoints.project.getEvalTasksWithProjectName;
 
-  const { data, isLoading, refetch } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: [
       "eval-tasks",
       observeId,
-      page,
+      queryPage,
       pageSize,
       debouncedSearch,
       sorting,
       refreshKey,
     ],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const params = {
-        page_number: page,
+        page_number: queryPage,
         page_size: pageSize,
       };
       if (observeId) params.project_id = observeId;
@@ -349,10 +353,24 @@ const TaskListView = ({
         { column_id: sortField, direction: sortDir },
       ]);
 
-      const { data: resp } = await axios.get(apiEndpoint(), { params });
-      return resp?.result;
+      return readEvalTaskListPage(
+        ({ signal: requestSignal, timeout }) =>
+          axios.get(apiEndpoint(), {
+            params,
+            signal: requestSignal,
+            timeout,
+          }),
+        signal,
+      );
     },
-    keepPreviousData: true,
+    // Keep a prior page visible only while paginating inside the same
+    // project/workspace scope. A scope switch must never expose rows or totals
+    // from the previous project while the new request is in flight.
+    placeholderData: (previousData, previousQuery) =>
+      previousQuery?.queryKey?.[0] === "eval-tasks" &&
+      previousQuery.queryKey[1] === observeId
+        ? previousData
+        : undefined,
     structuralSharing: false,
     refetchInterval: (query) =>
       (query?.state?.data?.table || []).some(shouldPollRow)
@@ -377,6 +395,21 @@ const TaskListView = ({
     data?.total ??
     data?.total_count ??
     items.length;
+
+  useEffect(() => {
+    pageScopeRef.current = observeId;
+    setPage(0);
+  }, [observeId]);
+
+  const lastPage = Math.max(0, Math.ceil(total / pageSize) - 1);
+  useEffect(() => {
+    if (page > lastPage) setPage(lastPage);
+  }, [lastPage, page]);
+
+  const handleSortingChange = useCallback((nextSorting) => {
+    setSorting(nextSorting);
+    setPage(0);
+  }, []);
 
   // Optimistically flip the row's status across every cached eval-tasks page
   // (the exact key carries page/sort/search) so the badge reacts on click.
@@ -694,24 +727,43 @@ const TaskListView = ({
       </Box>
 
       {/* Table */}
+      {isError && (
+        <Box
+          role="alert"
+          sx={{
+            px: 1.5,
+            py: 0.75,
+            color: "warning.main",
+            bgcolor: "warning.lighter",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          {QUERY_FAILED_RETRY_MESSAGE}
+          <Button size="small" onClick={() => refetch()}>
+            Retry
+          </Button>
+        </Box>
+      )}
       <DataTable
         columns={columns}
         data={items}
         isLoading={isLoading}
         rowCount={total}
         sorting={sorting}
-        onSortingChange={setSorting}
+        onSortingChange={handleSortingChange}
         rowSelection={rowSelection}
         onRowSelectionChange={setRowSelection}
         onRowClick={(row) => onRowClick?.(row)}
         getRowId={(row) => row.id}
         enableSelection
-        emptyMessage="No tasks found"
+        emptyMessage={isError ? QUERY_FAILED_RETRY_MESSAGE : "No tasks found"}
       />
 
       {/* Pagination */}
       <DataTablePagination
-        page={page}
+        page={queryPage}
         pageSize={pageSize}
         total={total}
         onPageChange={setPage}

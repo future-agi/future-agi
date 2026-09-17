@@ -6,23 +6,25 @@ import Iconify from "src/components/iconify";
 import Markdown from "react-markdown";
 import { ToolCallCard } from "src/components/tool-call/ToolCallCard";
 
-// Role badge colors — accent colors work in both themes; bg/border use alpha for transparency
+// Role badge colors — keyed into palette.accent so each mode gets its own hue;
+// bg/border derive from the resolved accent via alpha for transparency
 const ROLE_STYLES = {
-  system: { color: "#6B7280", icon: "mdi:cog-outline" },
-  user: { color: "#2563EB", icon: "mdi:account-outline" },
-  assistant: { color: "#7C3AED", icon: "mdi:robot-outline" },
-  model: { color: "#7C3AED", icon: "mdi:robot-outline" }, // Gemini uses "model" for assistant
-  tool: { color: "#EA580C", icon: "mdi:wrench-outline" },
-  developer: { color: "#16A34A", icon: "mdi:code-braces" },
-  function: { color: "#EA580C", icon: "mdi:function-variant" },
+  system: { accent: "neutral", icon: "mdi:cog-outline" },
+  user: { accent: "info", icon: "mdi:account-outline" },
+  assistant: { accent: "agent", icon: "mdi:robot-outline" },
+  model: { accent: "agent", icon: "mdi:robot-outline" }, // Gemini uses "model" for assistant
+  tool: { accent: "tool", icon: "mdi:wrench-outline" },
+  developer: { accent: "pass", icon: "mdi:code-braces" },
+  function: { accent: "tool", icon: "mdi:function-variant" },
 };
 
 const getRoleStyle = (role) => {
   const base = ROLE_STYLES[(role || "").toLowerCase()] || ROLE_STYLES.user;
   return {
     ...base,
-    bg: alpha(base.color, 0.08),
-    border: alpha(base.color, 0.2),
+    color: `accent.${base.accent}`,
+    bg: (t) => alpha(t.palette.accent[base.accent], 0.08),
+    border: (t) => alpha(t.palette.accent[base.accent], 0.2),
   };
 };
 
@@ -146,7 +148,8 @@ const MessageCard = ({ message }) => {
   return (
     <Box
       sx={{
-        border: `1px solid ${style.border}`,
+        border: "1px solid",
+        borderColor: style.border,
         borderRadius: "6px",
         overflow: "hidden",
       }}
