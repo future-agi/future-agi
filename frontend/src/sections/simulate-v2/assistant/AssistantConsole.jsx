@@ -6,6 +6,7 @@ import Iconify from "src/components/iconify";
 import VoiceInput from "./VoiceInput";
 import AskUserQuestionCard from "./AskUserQuestionCard";
 import { BUILDER_MODES, getBuilderMode, subscribeBuilderMode, setBuilderMode } from "../_mock/builderModeBus";
+import { subscribeComposerScaffold } from "../_mock/composerScaffoldBus";
 
 /**
  * The console, as a chat.
@@ -23,7 +24,21 @@ import { BUILDER_MODES, getBuilderMode, subscribeBuilderMode, setBuilderMode } f
 export default function StudioConsole({ turns, running, chips, onSend, onChip, preComposer, frozen = false, frozenReason }) {
   const [draft, setDraft] = useState("");
   const [attachments, setAttachments] = useState([]);
+  /*
+    Scaffolds — suggestion chips pinned above the text field.
+    Populated by callers that publish through composerScaffoldBus
+    (e.g. the scenarios SelectionBar). Each chip's text gets
+    prepended to the message on send; × removes just that chip.
+  */
+  const [scaffolds, setScaffolds] = useState([]);
   const endRef = useRef(null);
+
+  useEffect(
+    () => subscribeComposerScaffold((text) => {
+      setScaffolds((prev) => (prev.includes(text) ? prev : [...prev, text]));
+    }),
+    [],
+  );
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -37,11 +52,16 @@ export default function StudioConsole({ turns, running, chips, onSend, onChip, p
 
   const send = () => {
     const text = draft.trim();
-    if ((!text && attachments.length === 0) || blocked) return;
+    const scaffoldText = scaffolds.join(". ");
+    const combined = [scaffoldText, text].filter(Boolean).join(scaffoldText && text ? ". " : "");
+    if ((!combined && attachments.length === 0) || blocked) return;
     setDraft("");
     setAttachments([]);
-    onSend(text, attachments);
+    setScaffolds([]);
+    onSend(combined, attachments);
   };
+  const removeScaffold = (i) =>
+    setScaffolds((prev) => prev.filter((_, idx) => idx !== i));
 
   const removeAttachment = (i) =>
     setAttachments((prev) => prev.filter((_, idx) => idx !== i));
@@ -168,6 +188,42 @@ export default function StudioConsole({ turns, running, chips, onSend, onChip, p
           }}
         >
           {/*
+            Scaffold chips — pinned suggestions injected from elsewhere
+            (e.g. the scenario SelectionBar). Each chip becomes part
+            of the outgoing message on send; × removes it in place,
+            same shape Falcon's ChatInput uses for detected skills.
+          */}
+          {scaffolds.length > 0 && (
+            <Stack direction="row" spacing={0.75} sx={{ flexWrap: "wrap", rowGap: 0.75, mb: 1 }}>
+              {scaffolds.map((s, i) => (
+                <Stack
+                  key={`${s}-${i}`}
+                  direction="row" alignItems="center" spacing={0.5}
+                  sx={{
+                    pl: 1, pr: 0.5, py: 0.375, borderRadius: 999,
+                    bgcolor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.14 : 0.08),
+                    border: "1px solid", borderColor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.35 : 0.24),
+                    maxWidth: "100%",
+                  }}
+                >
+                  <Iconify icon="solar:magic-stick-3-linear" width={12} sx={{ color: "#7857FC", flexShrink: 0 }} />
+                  <Typography
+                    sx={{
+                      typography: "s3", fontWeight: 600, color: "#7857FC",
+                      maxWidth: 260, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                    }}
+                  >
+                    {s}
+                  </Typography>
+                  <IconButton size="small" onClick={() => removeScaffold(i)} sx={{ p: 0, ml: 0.25 }}>
+                    <Iconify icon="solar:close-circle-linear" width={13} sx={{ color: (t) => alpha("#7857FC", 0.6) }} />
+                  </IconButton>
+                </Stack>
+              ))}
+            </Stack>
+          )}
+
+          {/*
             Attached-file chips row — shown inside the composer above
             the text field so the user sees what's about to be sent.
           */}
@@ -243,13 +299,13 @@ export default function StudioConsole({ turns, running, chips, onSend, onChip, p
             <Box flex={1} />
 
             <IconButton
-              disabled={(!draft.trim() && attachments.length === 0) || blocked}
+              disabled={(!draft.trim() && attachments.length === 0 && scaffolds.length === 0) || blocked}
               onClick={send}
               sx={{
                 width: 30, height: 30, borderRadius: 1,
-                bgcolor: (draft.trim() || attachments.length > 0) && !blocked ? "#7857FC" : undefined,
-                color: (draft.trim() || attachments.length > 0) && !blocked ? "#fff" : undefined,
-                "&:hover": { bgcolor: (draft.trim() || attachments.length > 0) && !blocked ? "#6B4EE6" : undefined },
+                bgcolor: (draft.trim() || attachments.length > 0 || scaffolds.length > 0) && !blocked ? "#7857FC" : undefined,
+                color: (draft.trim() || attachments.length > 0 || scaffolds.length > 0) && !blocked ? "#fff" : undefined,
+                "&:hover": { bgcolor: (draft.trim() || attachments.length > 0 || scaffolds.length > 0) && !blocked ? "#6B4EE6" : undefined },
                 "&.Mui-disabled": {
                   bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.06),
                   color: "text.disabled",
