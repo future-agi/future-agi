@@ -10,7 +10,6 @@ import json
 import re
 
 import structlog
-from django.conf import settings
 
 from tracer.models.trace_scan import TraceScanConfig, TraceScanEngine, TraceScanResult
 from tracer.types.scan_types import ScanConfig, SpanData, TraceData
@@ -38,8 +37,6 @@ def get_scan_config(project_id: str) -> ScanConfig | None:
     visible in the project's tracing settings UI instead of being a hidden
     code fallback.
     """
-    if not settings.ERROR_FEED_LEGACY_SCANNER_ENABLED:
-        return None
     config, _ = TraceScanConfig.objects.get_or_create(
         project_id=project_id,
         defaults={"sampling_rate": 0, "enabled": True},

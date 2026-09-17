@@ -1,8 +1,6 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from django.test import override_settings
-
 from tracer.models.trace_scan import TraceScanEngine
 from tracer.queries.trace_scanner import get_scan_config
 from tracer.serializers.trace_investigation import PublishInvestigationRequestSerializer
@@ -18,33 +16,20 @@ def test_legacy_scanner_rejects_omega_project_config():
         assert get_scan_config("project-id") is None
 
 
-@override_settings(ERROR_FEED_LEGACY_SCANNER_ENABLED=False)
-def test_legacy_scanner_does_not_create_config_when_disabled():
-    with patch("tracer.queries.trace_scanner.TraceScanConfig.objects") as configs:
-        assert get_scan_config("project-id") is None
-    configs.get_or_create.assert_not_called()
+def test_queued_legacy_task_skips_omega_project_before_embedding():
+    from tracer.tasks.trace_scanner import scan_traces_task
 
-
-@override_settings(ERROR_FEED_LEGACY_SCANNER_ENABLED=False)
-def test_disabled_legacy_ingestion_does_not_dispatch():
-    from tracer.utils.trace_ingestion import _trigger_trace_scanner
-
-    with patch("tracer.utils.trace_ingestion.scan_traces_task") as task:
-        _trigger_trace_scanner([SimpleNamespace(project_id="p", trace_id="t")])
-    task.apply_async.assert_not_called()
-
-
-@override_settings(ERROR_FEED_LEGACY_SCANNER_ENABLED=False)
-def test_queued_legacy_task_and_sweep_stop_when_disabled():
-    from tracer.tasks.trace_scanner import scan_traces_task, sweep_scannable_traces
-
-    with patch("tracer.tasks.trace_scanner.scan_and_write") as scan:
+    with (
+        patch("tracer.tasks.trace_scanner.get_scan_config", return_value=None),
+        patch("tracer.tasks.trace_scanner.scan_and_write") as scan,
+        patch("tracer.tasks.trace_scanner.embed_trace_inputs_task") as embed,
+    ):
         scan_traces_task._original_func(["t"], "p")
-        sweep_scannable_traces._original_func()
     scan.assert_not_called()
+    embed.apply_async.assert_not_called()
 
 
-def test_v2_adds_no_scheduler_and_preserves_legacy_sweep():
+def test_opt_in_v2_adds_no_scheduler_and_preserves_legacy_sweep():
     from tfc.temporal.schedules import tracer as schedules
 
     assert "sweep-scannable-traces" in {
