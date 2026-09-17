@@ -62,7 +62,7 @@ export default function useBaseNodeStyles({
               ? theme.palette.red[500]
               : theme.palette.blue[500],
           },
-          "&:hover .node-delete-btn": {
+          "&:hover .node-delete-btn, &:focus-within .node-delete-btn": {
             opacity: 1,
             pointerEvents: "auto",
           },
