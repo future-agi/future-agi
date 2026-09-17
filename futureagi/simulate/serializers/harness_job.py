@@ -69,14 +69,37 @@ class HarnessSourceSerializer(serializers.Serializer):
         return attrs
 
 
+# Connectors whose transport carries audio. ``auto`` is unresolved at admission
+# time, so it is permitted here and settled during authoring.
+VOICE_CONNECTORS = ("livekit", "vapi", "retell")
+
+
 class HarnessAgentSerializer(serializers.Serializer):
     connector = serializers.ChoiceField(
-        choices=("livekit", "vapi", "retell", "retell_chat", "auto")
+        choices=("livekit", "vapi", "retell", "retell_chat", "auto"),
+        error_messages={
+            "invalid_choice": (
+                "{input} is not a supported connector; choose one of livekit, "
+                "vapi, retell, retell_chat, auto"
+            )
+        },
     )
     mode = serializers.ChoiceField(
         choices=("connect_only", "environment_backed", "provider_import"),
         required=False,
         allow_null=True,
+    )
+    # Who places the call. Declared on the agent rather than left to an
+    # ``config`` scalar so an unsupported value is refused at admission instead
+    # of riding to the guest and being ignored there.
+    call_direction = serializers.ChoiceField(
+        choices=("inbound", "outbound"),
+        required=False,
+        allow_null=True,
+        help_text=(
+            "inbound: the simulated caller dials the agent. outbound: the agent "
+            "dials the simulated caller. Voice connectors only."
+        ),
     )
     config = serializers.DictField(default=dict)
     secret_refs = serializers.DictField(
@@ -132,6 +155,21 @@ class HarnessAgentSerializer(serializers.Serializer):
         mode = attrs.get("mode")
         config = attrs.get("config") or {}
         provider_connector = "retell" if connector == "retell_chat" else connector
+        # A chat target has no call to place in either direction, so a direction
+        # here means the caller has the wrong connector rather than a preference
+        # worth silently dropping.
+        if attrs.get("call_direction") and connector not in (
+            *VOICE_CONNECTORS,
+            "auto",
+        ):
+            raise serializers.ValidationError(
+                {
+                    "call_direction": (
+                        "call_direction applies to voice connectors "
+                        f"({', '.join(VOICE_CONNECTORS)}); {connector} is chat"
+                    )
+                }
+            )
         if mode and provider_connector not in {"vapi", "retell"}:
             raise serializers.ValidationError(
                 {"mode": "provider mode is supported only for Vapi and Retell"}
