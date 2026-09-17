@@ -77,15 +77,13 @@ export default function SelectionBar({ count, onDelete, onClear }) {
 
       <Button
         size="small"
-        variant="contained"
-        disableElevation
         onClick={onDelete}
         startIcon={<Iconify icon="solar:trash-bin-trash-linear" width={13} />}
         sx={{
-          typography: "s2", fontWeight: 700,
-          bgcolor: "#DC2626", color: "common.white",
-          px: 1.5,
-          "&:hover": { bgcolor: "#B91C1C" },
+          typography: "s2", fontWeight: 600,
+          color: "#DC2626",
+          px: 1, minWidth: 0,
+          "&:hover": { bgcolor: (t) => alpha("#DC2626", t.palette.mode === "dark" ? 0.12 : 0.06) },
         }}
       >
         Delete
