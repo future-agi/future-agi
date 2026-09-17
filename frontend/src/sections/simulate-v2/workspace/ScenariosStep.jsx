@@ -504,13 +504,11 @@ export default function ScenariosStep({ env, envState, patch, buildMode, onBuild
           ) : view === "table" ? (
             <>
               {selectedIds.length > 0 && (
-                <Box sx={{ px: 2, pt: 2 }}>
-                  <SelectionBar
-                    count={selectedIds.length}
-                    onDelete={bulkDelete}
-                    onClear={clearSelection}
-                  />
-                </Box>
+                <SelectionBar
+                  count={selectedIds.length}
+                  onDelete={bulkDelete}
+                  onClear={clearSelection}
+                />
               )}
               <ScenarioTable
                 rows={shown}
