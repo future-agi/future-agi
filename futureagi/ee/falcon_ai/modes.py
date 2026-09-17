@@ -34,7 +34,7 @@ COMMON_TOOLS = [
     "delete_memory",
 ]
 
-# All categories for auto/general mode
+# Categories for auto/general mode; "visualization" draws on the Imagine canvas only
 ALL_CATEGORIES = [
     "context",
     "datasets",
@@ -49,7 +49,6 @@ ALL_CATEGORIES = [
     "users",
     "usage",
     "docs",
-    "visualization",
 ]
 
 MODES = {
