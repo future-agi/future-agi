@@ -1,102 +1,77 @@
 import PropTypes from "prop-types";
 import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, Button, Tooltip } from "@mui/material";
+import { Box, Stack, Typography, IconButton, Tooltip } from "@mui/material";
 import Iconify from "src/components/iconify";
 
-const BUILDER = "#7857FC";
-
 /**
- * Bulk-action bar for the scenario table.
+ * Selection strip for the scenario table.
  *
- * Appears when one or more rows are checked. Two actions — Delete and
- * Clear — and a hint pointing at the builder chat, because bulk-editing
- * scenario copy is easier as a natural-language instruction than as a
- * mass form. The bar takes the builder-purple accent so the "these
- * belong together" visual link between the checkboxes and the chat is
- * immediate.
+ * Reads as one continuous strip: a monochrome "N selected" pill on
+ * the left, an icon-button toolbar on the right, and the whole thing
+ * sits on the neutral surface so it distinguishes from the table
+ * (background.paper) without shouting. No accent fill, no separate
+ * hint sentence — the pen icon carries the edit affordance and the
+ * builder chip on the composer says the rest.
  */
 export default function SelectionBar({ count, onDelete, onClear }) {
   return (
     <Stack
       direction="row"
       alignItems="center"
-      spacing={2}
+      spacing={0}
       sx={{
-        px: 2, py: 1.25,
-        borderRadius: 1.5,
+        pl: 1, pr: 0.5, py: 0.5,
+        borderRadius: 999,
         border: "1px solid",
-        borderColor: (t) => alpha(BUILDER, t.palette.mode === "dark" ? 0.4 : 0.28),
-        bgcolor: (t) => alpha(BUILDER, t.palette.mode === "dark" ? 0.14 : 0.08),
+        borderColor: "divider",
+        bgcolor: "background.neutral",
+        width: "fit-content",
         mb: 1.5,
       }}
     >
-      {/* count + label */}
-      <Stack direction="row" alignItems="center" spacing={1}>
+      {/* count pill — plain, monochrome */}
+      <Stack direction="row" alignItems="center" spacing={0.75} sx={{ pr: 1, pl: 0.5 }}>
         <Box
           sx={{
-            width: 22, height: 22, borderRadius: "50%",
-            display: "grid", placeItems: "center", flexShrink: 0,
-            bgcolor: BUILDER, color: "common.white",
+            width: 6, height: 6, borderRadius: "50%",
+            bgcolor: "text.primary",
           }}
-        >
-          <Iconify icon="solar:check-read-linear" width={13} />
-        </Box>
-        <Typography sx={{ typography: "s2", color: "text.primary" }}>
-          <Box component="span" sx={{ fontWeight: 700 }}>{count}</Box>
-          {" "}
-          <Box component="span" sx={{ color: "text.secondary" }}>
-            {count === 1 ? "scenario selected" : "scenarios selected"}
-          </Box>
+        />
+        <Typography sx={{ typography: "s2", fontWeight: 700 }}>
+          {count} <Box component="span" sx={{ fontWeight: 500, color: "text.secondary" }}>selected</Box>
         </Typography>
       </Stack>
 
-      {/* hint pointing at the builder */}
-      <Stack
-        direction="row" alignItems="center" spacing={0.75}
-        sx={{
-          pl: 2, ml: 0.5,
-          borderLeft: "1px solid",
-          borderColor: (t) => alpha(BUILDER, t.palette.mode === "dark" ? 0.35 : 0.24),
+      {/* action toolbar — icon buttons, tooltip labels */}
+      <Box sx={{ width: 1, height: 20, bgcolor: "divider", mx: 0.5 }} />
+
+      <ActionButton
+        icon="solar:pen-new-square-linear"
+        label="Edit with the builder"
+        hint="Type an instruction in the chat on the left"
+        onClick={() => {
+          const el = document.querySelector('input[placeholder="Reply to the builder…"], textarea[placeholder="Reply to the builder…"]');
+          if (el && typeof el.focus === "function") el.focus();
         }}
-      >
-        <Iconify icon="solar:chat-round-line-linear" width={14} sx={{ color: BUILDER }} />
-        <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-          Type an instruction in the builder to edit them together
-        </Typography>
-      </Stack>
+      />
+      <ActionButton
+        icon="solar:trash-bin-trash-linear"
+        label="Delete selected"
+        tint="#DC2626"
+        onClick={onDelete}
+      />
 
-      <Box flex={1} />
+      <Box sx={{ width: 1, height: 20, bgcolor: "divider", mx: 0.5 }} />
 
-      {/* actions */}
-      <Tooltip arrow title="Deselect all">
-        <Button
+      <Tooltip arrow title="Clear selection">
+        <IconButton
           size="small"
           onClick={onClear}
-          sx={{
-            typography: "s2", fontWeight: 600,
-            color: "text.secondary", minWidth: 0, px: 1,
-            "&:hover": { color: "text.primary", bgcolor: "transparent" },
-          }}
+          sx={{ p: 0.5, color: "text.subtitle", "&:hover": { color: "text.primary" } }}
         >
-          Clear
-        </Button>
+          <Iconify icon="solar:close-circle-linear" width={15} />
+        </IconButton>
       </Tooltip>
-
-      <Button
-        size="small"
-        variant="contained"
-        disableElevation
-        onClick={onDelete}
-        startIcon={<Iconify icon="solar:trash-bin-trash-linear" width={13} />}
-        sx={{
-          typography: "s2", fontWeight: 700,
-          bgcolor: "#DC2626", color: "common.white",
-          px: 1.5,
-          "&:hover": { bgcolor: "#B91C1C" },
-        }}
-      >
-        Delete
-      </Button>
     </Stack>
   );
 }
@@ -105,3 +80,44 @@ SelectionBar.propTypes = {
   onDelete: PropTypes.func.isRequired,
   onClear: PropTypes.func.isRequired,
 };
+
+function ActionButton({ icon, label, hint, tint, onClick }) {
+  return (
+    <Tooltip
+      arrow
+      title={
+        <Box>
+          <Typography sx={{ typography: "s3", fontWeight: 700 }}>{label}</Typography>
+          {hint && (
+            <Typography sx={{ typography: "s3", opacity: 0.75 }}>{hint}</Typography>
+          )}
+        </Box>
+      }
+    >
+      <IconButton
+        size="small"
+        onClick={onClick}
+        sx={{
+          p: 0.5,
+          color: tint || "text.secondary",
+          "&:hover": {
+            color: tint || "text.primary",
+            bgcolor: (t) => tint
+              ? alpha(tint, t.palette.mode === "dark" ? 0.12 : 0.06)
+              : "action.hover",
+          },
+        }}
+      >
+        <Iconify icon={icon} width={15} />
+      </IconButton>
+    </Tooltip>
+  );
+}
+ActionButton.propTypes = {
+  icon: PropTypes.string.isRequired,
+  label: PropTypes.string.isRequired,
+  hint: PropTypes.string,
+  tint: PropTypes.string,
+  onClick: PropTypes.func,
+};
+
