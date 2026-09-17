@@ -26,6 +26,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from simulate.models import (
+    MAX_SCENARIOS_PER_JOB,
     HostedHarnessAttempt,
     HostedHarnessJob,
     HostedHarnessSecret,
@@ -2171,10 +2172,10 @@ class DaytonaHostedGateway:
                     return locked
 
             delta = _scenario_delta(instruction)
-            if delta and locked.scenario_count + delta > 200:
+            if delta and locked.scenario_count + delta > MAX_SCENARIOS_PER_JOB:
                 raise HostedHarnessError(
                     "scenario_limit_exceeded",
-                    "a hosted run can contain at most 200 scenarios",
+                    f"a hosted run can contain at most {MAX_SCENARIOS_PER_JOB} scenarios",
                     status_code=422,
                 )
             record = {

@@ -119122,7 +119122,7 @@
                     "title": "Scenario count",
                     "type": "integer",
                     "default": 10,
-                    "maximum": 200,
+                    "maximum": 1000,
                     "minimum": 1
                 },
                 "seed": {
@@ -119190,7 +119190,7 @@
                     "title": "Scenario count",
                     "type": "integer",
                     "default": 10,
-                    "maximum": 200,
+                    "maximum": 1000,
                     "minimum": 1
                 },
                 "seed": {

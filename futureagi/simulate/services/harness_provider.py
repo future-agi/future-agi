@@ -29,6 +29,7 @@ from rest_framework import status
 from rest_framework.response import Response
 
 from simulate.models import (
+    MAX_SCENARIOS_PER_JOB,
     HostedHarnessJob,
     HostedHarnessReceipt,
     HostedHarnessScenario,
@@ -841,10 +842,10 @@ class DaytonaHarnessProvider:
                     job=job
                 ).count()
                 new_count = (existing or job.scenario_count) + count
-                if new_count > 200:
+                if new_count > MAX_SCENARIOS_PER_JOB:
                     raise HostedHarnessError(
                         "scenario_limit_exceeded",
-                        "a hosted run can contain at most 200 scenarios",
+                        f"a hosted run can contain at most {MAX_SCENARIOS_PER_JOB} scenarios",
                         status_code=422,
                     )
                 payload = copy.deepcopy(job.payload)

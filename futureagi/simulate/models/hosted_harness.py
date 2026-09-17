@@ -8,6 +8,11 @@ from accounts.models import Organization
 from accounts.models.workspace import Workspace
 from tfc.utils.base_model import BaseModel
 
+# The ceiling on one hosted run, enforced by the DB constraint below and reused wherever a
+# request is validated so the three surfaces cannot drift apart. A migration carries its own
+# literal because migrations are frozen.
+MAX_SCENARIOS_PER_JOB = 1000
+
 
 class HostedHarnessJob(BaseModel):
     class State(models.TextChoices):
@@ -84,8 +89,8 @@ class HostedHarnessJob(BaseModel):
                 name="uniq_harness_job_org_idempotency",
             ),
             models.CheckConstraint(
-                condition=models.Q(scenario_count__gte=1, scenario_count__lte=200),
-                name="harness_job_scenario_count_1_200",
+                condition=models.Q(scenario_count__gte=1, scenario_count__lte=MAX_SCENARIOS_PER_JOB),
+                name="harness_job_scenario_count_1_1000",
             ),
         ]
         indexes = [

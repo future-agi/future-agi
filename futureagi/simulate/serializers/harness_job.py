@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
+from simulate.models import MAX_SCENARIOS_PER_JOB
+
 RUNNER_RESERVED_ENVIRONMENT = {
     "DOCKER_HOST",
     "FI_API_KEY",
@@ -257,7 +259,9 @@ class HarnessJobCreateSerializer(serializers.Serializer):
     run_id = serializers.UUIDField(required=False)
     source = HarnessSourceSerializer(required=False)
     agent = HarnessAgentSerializer()
-    scenario_count = serializers.IntegerField(default=10, min_value=1, max_value=200)
+    scenario_count = serializers.IntegerField(
+        default=10, min_value=1, max_value=MAX_SCENARIOS_PER_JOB
+    )
     seed = serializers.IntegerField(required=False, allow_null=True)
     runtime = HarnessRuntimeSerializer(default=dict)
     security = HarnessSecuritySerializer(default=dict)

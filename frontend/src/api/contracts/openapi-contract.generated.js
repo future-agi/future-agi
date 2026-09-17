@@ -59291,7 +59291,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Scenario count",
           type: "integer",
           default: 10,
-          maximum: 200,
+          maximum: 1000,
           minimum: 1,
         },
         seed: {
@@ -59481,7 +59481,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Scenario count",
           type: "integer",
           default: 10,
-          maximum: 200,
+          maximum: 1000,
           minimum: 1,
         },
         seed: {

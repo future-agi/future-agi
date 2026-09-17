@@ -17174,7 +17174,7 @@ export interface HarnessJobCreateApi {
   agent: HarnessAgentApi;
   /**
    * @minimum 1
-   * @maximum 200
+   * @maximum 1000
    */
   scenario_count?: number;
   seed?: number;
@@ -17211,7 +17211,7 @@ export interface HarnessPreflightApi {
   agent: HarnessAgentApi;
   /**
    * @minimum 1
-   * @maximum 200
+   * @maximum 1000
    */
   scenario_count?: number;
   seed?: number;

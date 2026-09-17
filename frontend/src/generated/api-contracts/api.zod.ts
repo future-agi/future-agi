@@ -35028,7 +35028,7 @@ export const simulateApiHarnessJobsCreateBodyAgentSecretRefsVersionMax = 255;
 
 export const simulateApiHarnessJobsCreateBodyAgentSecretRefsDefault = {};
 export const simulateApiHarnessJobsCreateBodyScenarioCountDefault = 10;
-export const simulateApiHarnessJobsCreateBodyScenarioCountMax = 200;
+export const simulateApiHarnessJobsCreateBodyScenarioCountMax = 1000;
 
 export const simulateApiHarnessJobsCreateBodyRuntimeIsolationDefault = `dedicated_vm`;
 export const simulateApiHarnessJobsCreateBodyRuntimeCpuUnitsDefault = 4;
@@ -35335,7 +35335,7 @@ export const simulateApiHarnessJobsPreflightBodyAgentSecretRefsVersionMax = 255;
 
 export const simulateApiHarnessJobsPreflightBodyAgentSecretRefsDefault = {};
 export const simulateApiHarnessJobsPreflightBodyScenarioCountDefault = 10;
-export const simulateApiHarnessJobsPreflightBodyScenarioCountMax = 200;
+export const simulateApiHarnessJobsPreflightBodyScenarioCountMax = 1000;
 
 export const simulateApiHarnessJobsPreflightBodyRuntimeIsolationDefault = `dedicated_vm`;
 export const simulateApiHarnessJobsPreflightBodyRuntimeCpuUnitsDefault = 4;
