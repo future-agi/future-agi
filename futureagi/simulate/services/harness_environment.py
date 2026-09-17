@@ -30,6 +30,16 @@ _TERMINAL_FAILED = frozenset(
     {HostedHarnessJob.State.FAILED, HostedHarnessJob.State.CANCELED}
 )
 
+# A run that is winding down, or being cancelled, is still a run from the
+# outside; reporting it as "building" would say the environment is not ready.
+_RUN_STATES = frozenset(
+    {
+        HostedHarnessJob.State.RUNNING,
+        HostedHarnessJob.State.FINALIZING,
+        HostedHarnessJob.State.CLEANING_UP,
+    }
+)
+
 # Transports that carry audio. A source that serves both voice and HTTP lists
 # both connectors, and voice wins: the recording is the thing that would be lost
 # if the environment were rendered as chat.
@@ -120,7 +130,7 @@ def status_for(job: HostedHarnessJob) -> str:
         return STATUS_COMPLETED
     if job.state in _TERMINAL_FAILED:
         return STATUS_FAILED
-    if job.state == HostedHarnessJob.State.RUNNING:
+    if job.state in _RUN_STATES:
         return STATUS_RUNNING
     return STATUS_BUILDING
 

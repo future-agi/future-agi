@@ -36,7 +36,6 @@ from simulate.models import (
     TestExecution,
 )
 
-
 _SOURCE_ARCHIVE_SUFFIXES = (".zip", ".tar", ".tar.gz", ".tgz", ".rar", ".7z")
 _SOURCE_ARCHIVE_DETAIL = (
     "upload the expanded project folder; archives are not supported"
@@ -761,26 +760,27 @@ class DaytonaHarnessProvider:
             probe,
         )
         failed = any(check["status"] == "failed" for check in checks)
-        return Response(
-            {
-                "ready_to_submit": not failed,
-                "state": "failed" if failed else "connected",
-                "checks": checks,
-                "payload": {
-                    key: value
-                    for key, value in payload.items()
-                    if key != "credential_values"
-                },
-                "credentials": credentials["report"],
-                "effective_parallelism": runtime["parallelism"],
-                "snapshot": {
-                    "name": getattr(settings, "ALK_DAYTONA_SNAPSHOT", None),
-                    "digest": getattr(settings, "ALK_DAYTONA_SNAPSHOT_DIGEST", None),
-                    "engines": HOSTED_ENGINE_CATALOG,
-                    "runtimes": HOSTED_RUNTIME_CATALOG,
-                },
-            }
-        )
+        body = {
+            "ready_to_submit": not failed,
+            "state": "failed" if failed else "connected",
+            "checks": checks,
+            "credentials": credentials["report"],
+            "effective_parallelism": runtime["parallelism"],
+            "snapshot": {
+                "name": getattr(settings, "ALK_DAYTONA_SNAPSHOT", None),
+                "digest": getattr(settings, "ALK_DAYTONA_SNAPSHOT_DIGEST", None),
+                "engines": HOSTED_ENGINE_CATALOG,
+                "runtimes": HOSTED_RUNTIME_CATALOG,
+            },
+        }
+        # A source that cannot be read keeps its error status: callers that key on
+        # the HTTP status still see the message, and the checks ride along for
+        # callers that render them.
+        if source_error is not None:
+            return Response(
+                {**source_error.as_dict(), **body}, status=source_error.status_code
+            )
+        return Response(body)
 
     def retrieve(self, request, pk) -> Response:
         job = self._job(request, pk)

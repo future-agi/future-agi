@@ -469,7 +469,6 @@ class HarnessPreflightResponseSerializer(serializers.Serializer):
     ready_to_submit = serializers.BooleanField()
     state = serializers.ChoiceField(choices=("connected", "failed"))
     checks = HarnessPreflightCheckSerializer(many=True)
-    payload = serializers.JSONField()
     credentials = HarnessPreflightCredentialsSerializer()
     effective_parallelism = serializers.IntegerField()
     snapshot = serializers.JSONField()
