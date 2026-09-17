@@ -100,6 +100,7 @@ from .views.agent_version import (
     RestoreAgentVersionView,
 )
 from .views.alk_simulate_ingestion import ALKSimulateIngestionViewSet
+from .views.harness_environment import HarnessEnvironmentViewSet
 from .views.harness_job import HarnessJobViewSet
 from .views.hosted_harness import HostedHarnessAttemptViewSet
 from .views.livekit_api import (
@@ -130,6 +131,11 @@ router.register(
     r"alk-simulate", ALKSimulateIngestionViewSet, basename="alk-simulate-ingestion"
 )
 router.register(r"harness-jobs", HarnessJobViewSet, basename="harness-job")
+router.register(
+    r"harness-environments",
+    HarnessEnvironmentViewSet,
+    basename="harness-environment",
+)
 router.register(
     r"harness/attempts",
     HostedHarnessAttemptViewSet,

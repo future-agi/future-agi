@@ -513,7 +513,10 @@ def _store_event(
     )
     if rejection is None and event["type"] == "stage_changed":
         attempt.job.current_stage = event["payload"]["to"]
-        attempt.job.save(update_fields=["current_stage", "updated_at"])
+        attempt.job.content_updated_at = timezone.now()
+        attempt.job.save(
+            update_fields=["current_stage", "content_updated_at", "updated_at"]
+        )
     if rejection is None and event["type"] == "scenario_started":
         # Registrations and their CallExecution rows are allocated before the guest starts.
         # Project the guest's lifecycle event into the existing platform row so the simulation

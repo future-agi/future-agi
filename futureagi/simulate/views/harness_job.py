@@ -17,6 +17,7 @@ from simulate.serializers.harness_job import (
     HarnessJobCreateSerializer,
     HarnessJobExtendSerializer,
     HarnessJobReadSerializer,
+    HarnessPreflightResponseSerializer,
     HarnessPreflightSerializer,
     HarnessSecretFileUploadResponseSerializer,
     HarnessSecretValuesResponseSerializer,
@@ -248,6 +249,7 @@ class HarnessJobViewSet(viewsets.ViewSet):
 
     @validated_request(
         request_serializer=HarnessPreflightSerializer,
+        responses={200: HarnessPreflightResponseSerializer},
         reject_unknown_fields=True,
     )
     @action(detail=False, methods=["post"])

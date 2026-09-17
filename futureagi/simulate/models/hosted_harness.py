@@ -55,6 +55,7 @@ class HostedHarnessJob(BaseModel):
     cancel_requested_at = models.DateTimeField(null=True, blank=True)
     cancel_reason = models.CharField(max_length=32, null=True, blank=True)
     terminal_at = models.DateTimeField(null=True, blank=True)
+    content_updated_at = models.DateTimeField(null=True, blank=True)
     failure = models.JSONField(null=True, blank=True)
     # Secret-safe presentation snapshots produced as each ALK authoring stage
     # completes.  Keep these separate from the submitted payload: the payload is

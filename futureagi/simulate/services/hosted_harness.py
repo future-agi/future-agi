@@ -144,6 +144,7 @@ def create_hosted_job(
             artifact_level=normalized["artifacts"]["level"],
             max_artifact_bytes=normalized["artifacts"]["max_artifact_bytes"],
             deadline_at=now + timedelta(seconds=duration),
+            content_updated_at=now,
         )
         normalized["job_id"] = str(job.id)
         job.payload = normalized
@@ -438,7 +439,8 @@ def provision_scenarios(
                 status_code=409,
             )
         locked.run_test = run_test
-        locked.save(update_fields=["run_test", "updated_at"])
+        locked.content_updated_at = timezone.now()
+        locked.save(update_fields=["run_test", "content_updated_at", "updated_at"])
         registrations = [
             HostedHarnessScenario.no_workspace_objects.create(
                 job=locked,
@@ -664,7 +666,15 @@ def begin_scenarios(
             )
         locked.test_execution = test_execution
         locked.state = HostedHarnessJob.State.RUNNING
-        locked.save(update_fields=["test_execution", "state", "updated_at"])
+        locked.content_updated_at = timezone.now()
+        locked.save(
+            update_fields=[
+                "test_execution",
+                "state",
+                "content_updated_at",
+                "updated_at",
+            ]
+        )
         for registration, call in zip(registrations, mapped_calls, strict=True):
             registration.call_execution = call
             registration.save(update_fields=["call_execution", "updated_at"])
@@ -734,12 +744,14 @@ def record_cleanup(
         # status.failure and status.stage are authoritative in the read DTO.
         job.current_stage = attempt.terminal_stage or job.current_stage
         job.failure = attempt.terminal_failure
+        job.content_updated_at = now
         job.save(
             update_fields=[
                 "state",
                 "terminal_at",
                 "current_stage",
                 "failure",
+                "content_updated_at",
                 "updated_at",
             ]
         )
@@ -798,9 +810,15 @@ def update_execution_counts(job: HostedHarnessJob) -> None:
         completed_calls=calls_completed,
         failed_calls=calls_failed,
     )
-    HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
+    # A queryset update bypasses ``auto_now``, so the content timestamp is set
+    # explicitly here: scenarios finishing is exactly the kind of progress the
+    # environments list means by "last updated".
+    HostedHarnessJob.no_workspace_objects.filter(id=job.id).exclude(
+        completed_count=scenario_completed, failed_count=scenario_failed
+    ).update(
         completed_count=scenario_completed,
         failed_count=scenario_failed,
+        content_updated_at=timezone.now(),
     )
 
 
