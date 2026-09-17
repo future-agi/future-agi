@@ -47,13 +47,9 @@ OPERATOR_STARTUP_MUTATION_COMMANDS = frozenset(
         "backfill_score_tracer_project",
         "createcachetable",
         "drop_legacy_observation_span",
-        "emit_omega_investigation_usage",
         "migrate",
-        "publish_omega_investigation_groups",
-        "reconcile_omega_investigations",
         "register_temporal_schedules",
         "seed_system_evals",
-        "verify_omega_current_stack",
     }
 )
 OPERATOR_STARTUP_MUTATION_MODE = "operator"
