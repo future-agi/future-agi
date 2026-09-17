@@ -40,32 +40,6 @@ describe("ScenarioSuite", () => {
     amend.mockResolvedValue({ receipts: [{ outcome: "applied", why: "", scenario: "one" }] });
   });
 
-  it("keeps a use case with no scenarios visible so the gap is not hidden", () => {
-    render(
-      <ScenarioSuite
-        scenarios={[scenario("one")]}
-        jobId="job-1"
-        editable
-        useCases={["add an item to the cart", "apply a discount coupon"]}
-      />,
-    );
-    expect(screen.getByText("apply a discount coupon")).toBeInTheDocument();
-    expect(screen.getByText("not covered")).toBeInTheDocument();
-    expect(screen.getByText("No scenarios were written for this use case.")).toBeInTheDocument();
-  });
-
-  it("marks a group whose use case matches none the contract declared", () => {
-    render(
-      <ScenarioSuite
-        scenarios={[scenario("one", { use_case: "a paraphrase nobody declared" })]}
-        jobId="job-1"
-        editable
-        useCases={["add an item to the cart"]}
-      />,
-    );
-    expect(screen.getByText("unmatched")).toBeInTheDocument();
-  });
-
   it("filters the suite by keyword", async () => {
     const user = userEvent.setup();
     render(
@@ -76,13 +50,29 @@ describe("ScenarioSuite", () => {
         ]}
         jobId="job-1"
         editable
-        useCases={["add an item to the cart"]}
       />,
     );
     expect(screen.getByText("two")).toBeInTheDocument();
     await user.click(screen.getByText("big mac 1"));
     expect(screen.queryByText("two")).not.toBeInTheDocument();
     expect(screen.getByText("one")).toBeInTheDocument();
+  });
+
+  it("searches the situation, not just the name", async () => {
+    const user = userEvent.setup();
+    render(
+      <ScenarioSuite
+        scenarios={[
+          scenario("one", { instruction: "ask for a refund on a late delivery" }),
+          scenario("two", { instruction: "book a table for four" }),
+        ]}
+        jobId="job-1"
+        editable
+      />,
+    );
+    await user.type(screen.getByPlaceholderText(/search scenarios/i), "refund");
+    expect(screen.getByText("one")).toBeInTheDocument();
+    expect(screen.queryByText("two")).not.toBeInTheDocument();
   });
 
   it("puts everything the columns cannot hold behind the row detail", async () => {
@@ -97,7 +87,6 @@ describe("ScenarioSuite", () => {
         ]}
         jobId="job-1"
         editable
-        useCases={["add an item to the cart"]}
       />,
     );
     // Hidden until asked for, so the table stays one line per scenario.
@@ -123,7 +112,6 @@ describe("ScenarioSuite", () => {
         scenarios={[scenario("one")]}
         jobId="job-1"
         editable
-        useCases={["add an item to the cart"]}
       />,
     );
     await user.click(screen.getByRole("button", { name: /edit/i }));

@@ -7,6 +7,7 @@ import {
   IconButton,
   Stack,
   Table,
+  TextField,
   TableBody,
   TableCell,
   TableContainer,
@@ -49,33 +50,40 @@ const COLUMNS = [
   "",
 ];
 
-// Grouped on the contract's use cases rather than only on what the scenarios claim, so a use case
-// nobody wrote a scenario for still appears. Hiding it would hide a coverage gap. A scenario whose
-// use case matches none of them is kept in its own group and marked, because a paraphrase should be
-// visible rather than quietly sitting beside the real ones.
-const byUseCase = (scenarios, useCases = []) => {
+// Grouped on the use case each scenario claims, which is how a suite is read. Nothing else is
+// listed: a contract carries use cases the generator never wrote a scenario for, often because they
+// describe how the agent talks rather than a task worth testing, and showing those as empty rows
+// buried the scenarios under things that were never missing.
+const byUseCase = (scenarios) => {
   const groups = new Map();
-  useCases.forEach((one) => {
-    const key = String(one || "").trim();
-    if (key) groups.set(key, []);
-  });
   scenarios.forEach((scenario) => {
     const key = scenario.use_case?.trim() || UNGROUPED;
     groups.set(key, [...(groups.get(key) || []), scenario]);
   });
-  const known = new Set(useCases.map((one) => String(one || "").trim()).filter(Boolean));
   return [...groups.entries()]
-    .map(([useCase, rows]) => ({
-      useCase,
-      rows,
-      covered: rows.length > 0,
-      matched: known.size === 0 || known.has(useCase) || useCase === UNGROUPED,
-    }))
+    .map(([useCase, rows]) => ({ useCase, rows }))
     .sort((a, b) => a.useCase.localeCompare(b.useCase));
 };
 
 const matches = (scenario, chosen) =>
   !chosen.size || (scenario.persona?.keywords || []).some((word) => chosen.has(word));
+
+// Searched over what is on screen plus the situation, because a person looking for "refund" is as
+// likely to remember the wording of the task as the name it was filed under.
+const found = (scenario, query) => {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return true;
+  return [
+    scenario.name,
+    scenario.use_case,
+    scenario.branch,
+    scenario.tests,
+    scenario.instruction,
+    scenario.persona?.name,
+  ]
+    .filter(Boolean)
+    .some((value) => String(value).toLowerCase().includes(needle));
+};
 
 const readable = (name) => String(name || "").replace(/[_-]+/g, " ").trim();
 
@@ -94,7 +102,7 @@ const summarise = (receipts) => {
   return parts.join(", ") || "nothing changed";
 };
 
-export default function ScenarioSuite({ scenarios, jobId, editable, useCases, onChanged }) {
+export default function ScenarioSuite({ scenarios, jobId, editable, onChanged }) {
   const { enqueueSnackbar } = useSnackbar();
   const [selected, setSelected] = useState(() => new Set());
   const [editing, setEditing] = useState(null);
@@ -103,6 +111,7 @@ export default function ScenarioSuite({ scenarios, jobId, editable, useCases, on
 
   const [chosen, setChosen] = useState(() => new Set());
   const [opened, setOpened] = useState(() => new Set());
+  const [query, setQuery] = useState("");
   const toggleOpen = (name) =>
     setOpened((prev) => {
       const next = new Set(prev);
@@ -121,8 +130,8 @@ export default function ScenarioSuite({ scenarios, jobId, editable, useCases, on
   }, [scenarios]);
 
   const shown = useMemo(
-    () => scenarios.filter((one) => matches(one, chosen)),
-    [scenarios, chosen],
+    () => scenarios.filter((one) => matches(one, chosen) && found(one, query)),
+    [scenarios, chosen, query],
   );
   const allSelected = shown.length > 0 && shown.every((one) => selected.has(one.name));
   const someSelected = !allSelected && shown.some((one) => selected.has(one.name));
@@ -132,7 +141,7 @@ export default function ScenarioSuite({ scenarios, jobId, editable, useCases, on
       shown.forEach((one) => (allSelected ? next.delete(one.name) : next.add(one.name)));
       return next;
     });
-  const groups = useMemo(() => byUseCase(shown, useCases), [shown, useCases]);
+  const groups = useMemo(() => byUseCase(shown), [shown]);
 
   // While the harness is re-checking, ask the job again on a slow interval. A rework is a model
   // session and a proof, so seconds are the right unit; stop as soon as the suite we were handed
@@ -258,6 +267,34 @@ export default function ScenarioSuite({ scenarios, jobId, editable, useCases, on
         </Typography>
       )}
 
+      <Stack direction="row" alignItems="center" spacing={1}>
+        <TextField
+          size="small"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search scenarios by name, task or use case"
+          InputProps={{
+            sx: { typography: "s2" },
+            startAdornment: (
+              <Box sx={{ pr: 0.75, pl: 0.25, display: "flex", color: "text.subtitle" }}>
+                <Iconify icon="solar:magnifer-linear" width={14} />
+              </Box>
+            ),
+          }}
+          sx={{ maxWidth: 380, flex: 1 }}
+        />
+        <Typography
+          sx={{
+            typography: "s3",
+            color: "text.subtitle",
+            fontVariantNumeric: "tabular-nums",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {shown.length} of {scenarios.length}
+        </Typography>
+      </Stack>
+
       {keywords.length > 0 && (
         <Stack direction="row" gap={0.75} flexWrap="wrap" alignItems="center">
           {keywords.map(([word, count]) => (
@@ -363,7 +400,7 @@ export default function ScenarioSuite({ scenarios, jobId, editable, useCases, on
           </TableHead>
 
           <TableBody>
-            {groups.map(({ useCase, rows, covered, matched }) => {
+            {groups.map(({ useCase, rows }) => {
               const allOn = rows.length > 0 && rows.every((row) => selected.has(row.name));
               const someOn = !allOn && rows.some((row) => selected.has(row.name));
               return (
@@ -401,25 +438,9 @@ export default function ScenarioSuite({ scenarios, jobId, editable, useCases, on
                         >
                           {rows.length} {rows.length === 1 ? "scenario" : "scenarios"}
                         </Typography>
-                        {!covered && (
-                          <Chip size="small" color="error" variant="outlined" label="not covered" />
-                        )}
-                        {!matched && (
-                          <Chip size="small" color="warning" variant="outlined" label="unmatched" />
-                        )}
                       </Stack>
                     </TableCell>
                   </TableRow>
-
-                  {!covered && (
-                    <TableRow>
-                      <TableCell colSpan={COLUMNS.length}>
-                        <Typography variant="caption" color="text.secondary">
-                          No scenarios were written for this use case.
-                        </Typography>
-                      </TableCell>
-                    </TableRow>
-                  )}
 
                   {rows.map((scenario) => {
                     counter += 1;
@@ -527,7 +548,7 @@ export default function ScenarioSuite({ scenarios, jobId, editable, useCases, on
       </TableContainer>
 
       <Drawer anchor="right" open={Boolean(editing)} onClose={() => setEditing(null)}>
-        <Box sx={{ width: "96vw", maxWidth: 720, p: 2 }}>
+        <Box sx={{ width: "100vw", maxWidth: 620, p: 2 }}>
           <Typography variant="subtitle1" sx={{ mb: 1 }}>
             {editing ? readable(editing.name) : ""}
           </Typography>
@@ -700,7 +721,5 @@ ScenarioSuite.propTypes = {
   jobId: PropTypes.string,
   // An agent that talks to nobody has no persona to edit, so the affordance is not shown at all.
   editable: PropTypes.bool,
-  // The contract's own use cases, so one nobody wrote a scenario for still shows as a gap.
-  useCases: PropTypes.arrayOf(PropTypes.string),
   onChanged: PropTypes.func,
 };

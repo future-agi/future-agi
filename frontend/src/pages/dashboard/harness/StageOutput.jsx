@@ -65,7 +65,7 @@ RawDetails.propTypes = {
 // One artifact the runner produced during a stage. `kind` is a closed set from ALK —
 // contract, environment, scenarios, simulation — and anything else falls back to raw JSON
 // rather than rendering nothing, so a new kind is visible rather than silently dropped.
-export default function StageOutput({ output, jobId, useCases, onChanged }) {
+export default function StageOutput({ output, jobId, onChanged }) {
   const data = output.data || {};
   return (
     <Accordion
@@ -183,7 +183,6 @@ export default function StageOutput({ output, jobId, useCases, onChanged }) {
             // Only a suite whose scenarios carry a persona has one to edit. An agent that talks to
             // nobody never shows the affordance rather than showing one that cannot do anything.
             editable={Boolean(jobId) && (Array.isArray(data) ? data : []).some((one) => one.persona)}
-            useCases={useCases}
             onChanged={onChanged}
           />
         )}
@@ -200,8 +199,6 @@ StageOutput.propTypes = {
   // Editing a suite happens against a job, so the id is what turns a read-only list editable.
   jobId: PropTypes.string,
   onChanged: PropTypes.func,
-  // Read off the contract stage so the scenarios list can show a use case nobody covered.
-  useCases: PropTypes.arrayOf(PropTypes.string),
   output: PropTypes.shape({
     data: PropTypes.oneOfType([PropTypes.object, PropTypes.array]),
     kind: PropTypes.string.isRequired,

@@ -30,6 +30,8 @@ import {
 // These lists carry a lowercase value and a display label. A scenario's persona is written with
 // the label casing, so matching on the label is what makes an existing accent or language select
 // itself instead of coming up blank.
+const readable = (name) => String(name || "").replace(/[_-]+/g, " ").trim();
+
 const pick = (options) =>
   (options || []).map((one) => (typeof one === "string" ? one : one.label ?? one.value));
 
@@ -190,24 +192,26 @@ export default function ScenarioEditForm({ scenario, busy, onCancel, onSave }) {
       )}
 
       <Stack spacing={1}>
-        <Stack direction="row" spacing={1} alignItems="flex-start">
-          <Iconify icon="eva:lock-outline" width={15} sx={{ mt: 0.3, color: "text.disabled" }} />
-          <Typography variant="caption" color="text.secondary">
-            The caller&apos;s name, age and opening line are fixed. The world is set up around them,
-            so changing one here would leave the two disagreeing.
-          </Typography>
-        </Stack>
-        <Stack direction="row" spacing={1} alignItems="flex-start">
-          <Iconify
-            icon="eva:message-square-outline"
-            width={15}
-            sx={{ mt: 0.3, color: "text.disabled" }}
-          />
-          <Typography variant="caption" color="text.secondary">
-            To change what the caller wants or what is measured, use the chat. Those need the
-            scenario checked against the world again.
-          </Typography>
-        </Stack>
+        <LockedRow
+          label="Caller"
+          value={[persona.name, persona.age_group].filter(Boolean).join(", ")}
+          prompt={`change the caller in ${scenario.name} to a different person`}
+        />
+        <LockedRow
+          label="Opens with"
+          value={persona.initial_message}
+          prompt={`reword the opening line in ${scenario.name}`}
+        />
+        <LockedRow
+          label="What the caller wants"
+          value={scenario.instruction}
+          prompt={`change what the caller wants in ${scenario.name}`}
+        />
+        <LockedRow
+          label="What is measured"
+          value={(scenario.sub_goals || []).map(readable).join(", ")}
+          prompt={`change what is measured in ${scenario.name}`}
+        />
       </Stack>
 
       <Stack direction="row" spacing={1} justifyContent="flex-end">
@@ -227,4 +231,78 @@ ScenarioEditForm.propTypes = {
   busy: PropTypes.bool,
   onCancel: PropTypes.func.isRequired,
   onSave: PropTypes.func.isRequired,
+};
+
+// A field the scenario is proved around, shown rather than hidden. Seeing the value and being told
+// how to change it is more use than an empty space where a control might have been, and the prompt
+// is the exact thing to say once the chat is wired.
+function LockedRow({ label, value, prompt }) {
+  return (
+    <Box
+      sx={{
+        p: 1.5,
+        borderRadius: 1.25,
+        border: "1px solid",
+        borderColor: "divider",
+        bgcolor: "background.neutral",
+      }}
+    >
+      <Stack direction="row" alignItems="flex-start" spacing={1}>
+        <Iconify
+          icon="solar:lock-keyhole-minimalistic-linear"
+          width={13}
+          sx={{ color: "text.subtitle", mt: "3px", flexShrink: 0 }}
+        />
+        <Box flex={1} minWidth={0}>
+          <Typography
+            sx={{
+              typography: "s3",
+              fontWeight: 700,
+              color: "text.secondary",
+              mb: 0.375,
+              textTransform: "uppercase",
+              letterSpacing: 0.4,
+            }}
+          >
+            {label}
+          </Typography>
+          <Typography
+            sx={{
+              typography: "s2",
+              display: "-webkit-box",
+              WebkitLineClamp: 3,
+              WebkitBoxOrient: "vertical",
+              overflow: "hidden",
+            }}
+          >
+            {value || "\u2014"}
+          </Typography>
+          <Stack direction="row" alignItems="center" spacing={0.75} sx={{ mt: 1 }}>
+            <Iconify
+              icon="solar:chat-round-line-linear"
+              width={13}
+              sx={{ color: "text.subtitle" }}
+            />
+            <Typography
+              noWrap
+              sx={{
+                typography: "s3",
+                fontFamily: "ui-monospace, Menlo, monospace",
+                color: "text.subtitle",
+                minWidth: 0,
+              }}
+            >
+              {prompt}
+            </Typography>
+          </Stack>
+        </Box>
+      </Stack>
+    </Box>
+  );
+}
+
+LockedRow.propTypes = {
+  label: PropTypes.string,
+  value: PropTypes.string,
+  prompt: PropTypes.string,
 };
