@@ -487,4 +487,33 @@ describe("AddProviderDialog validation", () => {
     const save = await screen.findByRole("button", { name: "Save Changes" });
     expect(save.disabled).toBe(false);
   });
+
+  it("does not select a merely-hovered option when the field loses focus", async () => {
+    // `autoSelect` resolves blur against whichever option the mouse last
+    // passed over, not what was checked — so scrolling/hovering past a third
+    // row before tabbing away silently added it as a pick nobody clicked.
+    fetchMutate.mockImplementation(
+      deferred((_vars, opts) =>
+        opts?.onSuccess?.({
+          models: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
+        }),
+      ),
+    );
+    renderCreateDialog();
+    await userEvent.type(screen.getByLabelText(/API Key/i), "sk-good");
+
+    const input = await screen.findByPlaceholderText(/Select models/i);
+    await userEvent.click(input);
+    await userEvent.click(screen.getByRole("option", { name: "gpt-4o" }));
+    await userEvent.click(screen.getByRole("option", { name: "gpt-4o-mini" }));
+
+    // Hover the third, unclicked option, then move focus elsewhere without
+    // clicking it.
+    await userEvent.hover(screen.getByRole("option", { name: "gpt-4-turbo" }));
+    await userEvent.click(screen.getByLabelText(/Timeout/));
+
+    expect(screen.getAllByText("gpt-4o").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("gpt-4o-mini").length).toBeGreaterThan(0);
+    expect(screen.queryByText("gpt-4-turbo")).toBeNull();
+  });
 });
