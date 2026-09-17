@@ -16,6 +16,7 @@ import ScenariosStep from "../workspace/ScenariosStep";
 import PersonasPanel from "../workspace/PersonasPanel";
 import ActorsPanel from "../workspace/ActorsPanel";
 import EvalsStep from "../workspace/EvalsStep";
+import SettingsPanel from "../workspace/SettingsPanel";
 
 /**
  * The environment, brought forward to the build screen.
@@ -54,6 +55,7 @@ const TABS = [
   { id: "contract",  label: "Contract",         needs: "understand" },
   { id: "scenarios", label: "Scenarios",        needs: "scenarios", badge: "scenarios" },
   { id: "evals",     label: "Evaluations",      needs: null,        badge: "evals" },
+  { id: "settings",  label: "Settings",         needs: null },
 ];
 
 /*
@@ -323,6 +325,7 @@ function renderPanel(id, ctx) {
     case "contract":  return <RlContractPanel env={env} envState={envState} patch={patch} onGo={onGo} buildMode />;
     case "scenarios": return <ScenariosStep env={env} envState={envState} patch={patch} onGo={onGo} buildMode />;
     case "evals":     return <EvalsStep env={env} envState={envState} patch={patch} onGo={onGo} buildMode />;
+    case "settings":  return <SettingsPanel env={env} envState={envState} patch={patch} />;
     default:          return <OverviewPanel env={env} envState={envState} patch={patch} onGo={onGo} agentConnected={!!envState?.agent} source={source} buildMode />;
   }
 }
