@@ -9,6 +9,7 @@ Two authentication modes:
 
 from __future__ import annotations
 
+import hmac
 import inspect
 import re
 import uuid
@@ -211,7 +212,7 @@ class InternalAPIView(AsyncAPIView):
             raise _forbidden("INTERNAL_API_SECRET not configured")
 
         token = auth_header[7:]
-        if token != secret:
+        if not hmac.compare_digest(token, secret):
             raise _forbidden("Invalid token")
 
 
