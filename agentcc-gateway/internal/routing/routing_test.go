@@ -2065,11 +2065,125 @@ func TestCircuitBreaker_StateChangeCallback(t *testing.T) {
 	}
 }
 
+// 12. TestCircuitBreaker_HalfOpenMaxProbes — gates concurrent probes in half-open state
+func TestCircuitBreaker_HalfOpenMaxProbes(t *testing.T) {
+	cfg := newTestCBConfig()
+	cfg.HalfOpenMaxProbes = 2 // Only 2 concurrent probes allowed
+	cb := NewCircuitBreaker("provider-1", cfg, nil)
+
+	// Trip the breaker.
+	for i := 0; i < cfg.FailureThreshold; i++ {
+		cb.RecordFailure(serverErr())
+	}
+	if cb.State() != StateOpen {
+		t.Fatalf("circuit not open after %d failures", cfg.FailureThreshold)
+	}
+
+	// Wait for cooldown to elapse.
+	time.Sleep(cfg.Cooldown + 5*time.Millisecond)
+
+	// Fire concurrent requests to Allow() and count how many get through.
+	numGoroutines := 10
+	allowedCount := 0
+	var mu sync.Mutex
+
+	var wg sync.WaitGroup
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if cb.Allow() {
+				mu.Lock()
+				allowedCount++
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+
+	// Only HalfOpenMaxProbes (2) should have been allowed through.
+	if allowedCount != cfg.HalfOpenMaxProbes {
+		t.Errorf("got %d probes allowed, want %d (HalfOpenMaxProbes)", allowedCount, cfg.HalfOpenMaxProbes)
+	}
+
+	// Verify circuit is in half-open state.
+	if cb.State() != StateHalfOpen {
+		t.Errorf("circuit state = %v, want %v", cb.State(), StateHalfOpen)
+	}
+}
+
+// 13. TestCircuitBreaker_ProbeCounterReset — counter resets when circuit closes
+func TestCircuitBreaker_ProbeCounterReset(t *testing.T) {
+	cfg := newTestCBConfig()
+	cfg.HalfOpenMaxProbes = 1
+	cb := NewCircuitBreaker("provider-1", cfg, nil)
+
+	// Open → half-open → closed cycle.
+	for i := 0; i < cfg.FailureThreshold; i++ {
+		cb.RecordFailure(serverErr())
+	}
+
+	time.Sleep(cfg.Cooldown + 5*time.Millisecond)
+
+	// First Allow() should succeed (counter increments).
+	if !cb.Allow() {
+		t.Fatal("first Allow() after cooldown should return true")
+	}
+
+	// Second Allow() should fail (counter at max).
+	if cb.Allow() {
+		t.Fatal("second Allow() should return false (counter at max)")
+	}
+
+	// Record success to close the circuit.
+	cb.RecordSuccess()
+
+	// After closing, the probe counter should be reset.
+	// Try Allow() again—it should succeed because circuit is closed.
+	if !cb.Allow() {
+		t.Fatal("Allow() should return true for closed circuit")
+	}
+}
+
+// 14. TestCircuitBreaker_ProbeCounterDecrementOnSuccess — probe slot frees up
+func TestCircuitBreaker_ProbeCounterDecrementOnSuccess(t *testing.T) {
+	cfg := newTestCBConfig()
+	cfg.HalfOpenMaxProbes = 2
+	cb := NewCircuitBreaker("provider-1", cfg, nil)
+
+	// Open the circuit.
+	for i := 0; i < cfg.FailureThreshold; i++ {
+		cb.RecordFailure(serverErr())
+	}
+
+	time.Sleep(cfg.Cooldown + 5*time.Millisecond)
+
+	// Allow 2 probes through.
+	allowed1 := cb.Allow()
+	allowed2 := cb.Allow()
+	if !allowed1 || !allowed2 {
+		t.Fatal("first two Allow() calls should succeed")
+	}
+
+	// Third should fail (at limit).
+	if cb.Allow() {
+		t.Fatal("third Allow() should fail (at limit)")
+	}
+
+	// Record success on one probe, freeing a slot.
+	cb.RecordSuccess()
+
+	// Now Allow() should succeed (slot freed up).
+	if !cb.Allow() {
+		t.Fatal("Allow() should succeed after probe succeeded and freed a slot")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // CircuitBreakerRegistry Tests
 // ---------------------------------------------------------------------------
 
-// 12. TestCBRegistry_GetCreatesNew — Get() creates breaker on first call
+// 15. TestCBRegistry_GetCreatesNew — Get() creates breaker on first call
 func TestCBRegistry_GetCreatesNew(t *testing.T) {
 	cfg := newTestCBConfig()
 	registry := NewCircuitBreakerRegistry(cfg, nil)
@@ -2086,7 +2200,7 @@ func TestCBRegistry_GetCreatesNew(t *testing.T) {
 	}
 }
 
-// 13. TestCBRegistry_GetReturnsSame — Get() returns same breaker for same provider
+// 16. TestCBRegistry_GetReturnsSame — Get() returns same breaker for same provider
 func TestCBRegistry_GetReturnsSame(t *testing.T) {
 	cfg := newTestCBConfig()
 	registry := NewCircuitBreakerRegistry(cfg, nil)
@@ -2104,7 +2218,7 @@ func TestCBRegistry_GetReturnsSame(t *testing.T) {
 	}
 }
 
-// 14. TestCBRegistry_IsEnabled — enabled/disabled/nil returns correct value
+// 17. TestCBRegistry_IsEnabled — enabled/disabled/nil returns correct value
 func TestCBRegistry_IsEnabled(t *testing.T) {
 	// Enabled registry.
 	enabledCfg := newTestCBConfig()

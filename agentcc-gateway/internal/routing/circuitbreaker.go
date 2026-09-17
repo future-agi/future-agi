@@ -37,15 +37,16 @@ func (s CircuitState) String() string {
 
 // CircuitBreaker implements the circuit breaker pattern for a single provider.
 type CircuitBreaker struct {
-	mu            sync.Mutex
-	providerID    string
-	state         CircuitState
-	failures      int
-	successes     int
-	lastFailure   time.Time
-	cfg           config.CircuitBreakerConfig
-	codes         map[int]bool
-	onStateChange func(string, bool) // providerID, healthy
+	mu              sync.Mutex
+	providerID      string
+	state           CircuitState
+	failures        int
+	successes       int
+	halfOpenProbes  int
+	lastFailure     time.Time
+	cfg             config.CircuitBreakerConfig
+	codes           map[int]bool
+	onStateChange   func(string, bool) // providerID, healthy
 }
 
 // NewCircuitBreaker creates a circuit breaker for a provider.
@@ -58,6 +59,9 @@ func NewCircuitBreaker(providerID string, cfg config.CircuitBreakerConfig, onSta
 	}
 	if cfg.Cooldown <= 0 {
 		cfg.Cooldown = 30 * time.Second
+	}
+	if cfg.HalfOpenMaxProbes <= 0 {
+		cfg.HalfOpenMaxProbes = 1
 	}
 	if len(cfg.OnStatusCodes) == 0 {
 		cfg.OnStatusCodes = DefaultCBStatusCodes
@@ -90,14 +94,25 @@ func (cb *CircuitBreaker) Allow() bool {
 		if time.Since(cb.lastFailure) >= cb.cfg.Cooldown {
 			cb.state = StateHalfOpen
 			cb.successes = 0
+			cb.halfOpenProbes = 0
 			slog.Debug("circuit breaker half-open",
 				"provider", cb.providerID,
 			)
-			return true
+			// Gate the first probe on HalfOpenMaxProbes.
+			if cb.halfOpenProbes < cb.cfg.HalfOpenMaxProbes {
+				cb.halfOpenProbes++
+				return true
+			}
+			return false
 		}
 		return false
 	case StateHalfOpen:
-		return true
+		// Gate probes: only allow if we haven't exhausted the limit.
+		if cb.halfOpenProbes < cb.cfg.HalfOpenMaxProbes {
+			cb.halfOpenProbes++
+			return true
+		}
+		return false
 	default:
 		return true
 	}
@@ -113,10 +128,15 @@ func (cb *CircuitBreaker) RecordSuccess() {
 		cb.failures = 0
 	case StateHalfOpen:
 		cb.successes++
+		cb.halfOpenProbes--
+		if cb.halfOpenProbes < 0 {
+			cb.halfOpenProbes = 0
+		}
 		if cb.successes >= cb.cfg.SuccessThreshold {
 			cb.state = StateClosed
 			cb.failures = 0
 			cb.successes = 0
+			cb.halfOpenProbes = 0
 			slog.Info("circuit breaker closed (recovered)",
 				"provider", cb.providerID,
 			)
@@ -155,6 +175,10 @@ func (cb *CircuitBreaker) RecordFailure(err error) {
 		// Any failure in half-open → re-open.
 		cb.state = StateOpen
 		cb.successes = 0
+		cb.halfOpenProbes--
+		if cb.halfOpenProbes < 0 {
+			cb.halfOpenProbes = 0
+		}
 		slog.Warn("circuit breaker re-opened",
 			"provider", cb.providerID,
 		)

@@ -686,11 +686,12 @@ type RetryConfig struct {
 
 // CircuitBreakerConfig controls per-provider circuit breaking.
 type CircuitBreakerConfig struct {
-	Enabled          bool          `yaml:"enabled" json:"enabled"`
-	FailureThreshold int           `yaml:"failure_threshold" json:"failure_threshold"`
-	SuccessThreshold int           `yaml:"success_threshold" json:"success_threshold"`
-	Cooldown         time.Duration `yaml:"cooldown" json:"cooldown"`
-	OnStatusCodes    []int         `yaml:"on_status_codes" json:"on_status_codes"`
+	Enabled            bool          `yaml:"enabled" json:"enabled"`
+	FailureThreshold   int           `yaml:"failure_threshold" json:"failure_threshold"`
+	SuccessThreshold   int           `yaml:"success_threshold" json:"success_threshold"`
+	Cooldown           time.Duration `yaml:"cooldown" json:"cooldown"`
+	OnStatusCodes      []int         `yaml:"on_status_codes" json:"on_status_codes"`
+	HalfOpenMaxProbes  int           `yaml:"half_open_max_probes" json:"half_open_max_probes"`
 }
 
 // RoutingTargetConfig defines a single routing target for a model.
