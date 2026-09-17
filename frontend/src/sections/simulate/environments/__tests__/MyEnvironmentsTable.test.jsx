@@ -4,22 +4,33 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { render } from "src/utils/test-utils";
-import { RUN_SIMULATION_COPY } from "../environmentOptions";
 
-const enqueueSnackbar = vi.fn();
 const navigate = vi.fn();
-
-vi.mock("notistack", () => ({ enqueueSnackbar: (...a) => enqueueSnackbar(...a) }));
 
 vi.mock("react-router-dom", async () => {
   const actual = await vi.importActual("react-router-dom");
   return { ...actual, useNavigate: () => navigate };
 });
 
-vi.mock("src/api/harness/harness", () => ({ listHarnessJobs: vi.fn() }));
+vi.mock("src/api/harness/harness", () => ({
+  listHarnessJobs: vi.fn(),
+  getHarnessJob: vi.fn(),
+}));
 
-const { listHarnessJobs } = await import("src/api/harness/harness");
+const { listHarnessJobs, getHarnessJob } = await import(
+  "src/api/harness/harness"
+);
 const { default: MyEnvironmentsTab } = await import("../MyEnvironmentsTab");
+
+// The job detail the run action fetches: platform ids sit at the top level, so
+// runSimulationTarget routes to the product's execution detail.
+const JOB_DETAIL = {
+  job: { job_id: "job-support", metadata: { name: "Customer Support Line" } },
+  status: { stage: "completed", created_at: "2026-09-15T09:00:00Z" },
+  credentials: { detected_connectors: ["livekit"] },
+  platform: { run_test_id: "rt-support", test_execution_id: "ex-support" },
+  stage_outputs: [],
+};
 
 // A small harness-jobs payload: two stages beyond the terminal ones, a voice
 // connector (livekit/vapi) and a plain chat connector (http).
@@ -69,10 +80,11 @@ describe("MyEnvironmentsTable", () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-09-15T12:00:00Z"));
-    enqueueSnackbar.mockReset();
     navigate.mockReset();
     listHarnessJobs.mockReset();
     listHarnessJobs.mockResolvedValue(HARNESS_JOBS);
+    getHarnessJob.mockReset();
+    getHarnessJob.mockResolvedValue(JOB_DETAIL);
   });
 
   afterEach(() => {
@@ -159,7 +171,30 @@ describe("MyEnvironmentsTable", () => {
     );
   });
 
-  it("queues a run and snackbars when Run simulation is chosen", async () => {
+  it("fetches the job then routes to the run target on Run simulation", async () => {
+    const user = userEvent.setup();
+    renderTab();
+    await screen.findByText("Customer Support Line");
+
+    await openMenu(user, "Customer Support Line");
+    await user.click(
+      within(screen.getByRole("menu")).getByText("Run simulation"),
+    );
+
+    // The list payload has no platform, so the row action fetches the detail
+    // first, then navigates to the product's execution target.
+    await waitFor(() =>
+      expect(getHarnessJob).toHaveBeenCalledWith("job-support"),
+    );
+    await waitFor(() =>
+      expect(navigate).toHaveBeenCalledWith(
+        "/dashboard/simulate/test/rt-support/ex-support/call-details",
+      ),
+    );
+  });
+
+  it("falls back to the product run entry when the job fetch fails", async () => {
+    getHarnessJob.mockRejectedValue(new Error("boom"));
     const user = userEvent.setup();
     renderTab();
     await screen.findByText("Customer Support Line");
@@ -170,7 +205,7 @@ describe("MyEnvironmentsTable", () => {
     );
 
     await waitFor(() =>
-      expect(enqueueSnackbar).toHaveBeenCalledWith(RUN_SIMULATION_COPY),
+      expect(navigate).toHaveBeenCalledWith("/dashboard/simulate/test"),
     );
   });
 

@@ -101,6 +101,10 @@ export const paths = {
           `${ROOTS.DASHBOARD}/simulate/environments/templates/${templateId}`,
         build: `${ROOTS.DASHBOARD}/simulate/environments/build`,
         detail: (envId) => `${ROOTS.DASHBOARD}/simulate/environments/${envId}`,
+        workspaceTab: (envId, tab) =>
+          `${ROOTS.DASHBOARD}/simulate/environments/${envId}?tab=${tab}`,
+        execution: (envId, testId, executionId) =>
+          `${ROOTS.DASHBOARD}/simulate/environments/${envId}/runs/${testId}/${executionId}`,
       },
     },
     feed: `${ROOTS.DASHBOARD}/error-feed`,

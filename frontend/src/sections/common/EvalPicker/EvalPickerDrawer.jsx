@@ -26,7 +26,13 @@ const STEP_TITLES = {
   create: "Create New Evaluation",
 };
 
-const EvalPickerContent = ({ onStepChange }) => {
+const EvalPickerContent = ({
+  onStepChange,
+  headerAction,
+  progress,
+  primaryLabel,
+  showClose,
+}) => {
   const theme = useTheme();
   const {
     step,
@@ -38,6 +44,7 @@ const EvalPickerContent = ({ onStepChange }) => {
     skipConfig,
     isEditMode,
     keepOpenAfterSave,
+    keepOpenAfterEditSave,
   } = useEvalPickerContext();
 
   const queryClient = useQueryClient();
@@ -129,8 +136,9 @@ const EvalPickerContent = ({ onStepChange }) => {
       try {
         await onEvalAdded?.(evalConfig);
         if (isEditMode) {
-          // Edit mode: just close, no list to return to
-          onClose?.();
+          // Edit mode closes on save unless the host is walking a queue of
+          // pre-selected evals (keepOpenAfterEditSave) and owns the close.
+          if (!keepOpenAfterEditSave) onClose?.();
         } else {
           setSelectedEval(null);
           setStep("list");
@@ -153,6 +161,7 @@ const EvalPickerContent = ({ onStepChange }) => {
       setSelectedEval,
       setStep,
       keepOpenAfterSave,
+      keepOpenAfterEditSave,
     ],
   );
 
@@ -180,6 +189,7 @@ const EvalPickerContent = ({ onStepChange }) => {
             {STEP_TITLES[step]}
           </Typography>
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+            {headerAction}
             <Button
               variant="outlined"
               size="small"
@@ -252,6 +262,9 @@ const EvalPickerContent = ({ onStepChange }) => {
               onBack={handleBackToList}
               onSave={handleSaveEval}
               isSaving={isSaving}
+              progress={progress}
+              primaryLabel={primaryLabel}
+              showClose={showClose}
             />
           )}
           {step === "create" && (
@@ -314,6 +327,24 @@ const EvalPickerDrawer = ({
   // can queue more evals back-to-back. Used by dataset adds where the
   // picker doubles as a multi-eval entry surface.
   keepOpenAfterSave = false,
+  // Edit-mode counterpart to keepOpenAfterSave. Defaults false so every
+  // existing edit caller keeps closing on save.
+  keepOpenAfterEditSave = false,
+  // Multi-select batch mode (all optional, all default to the current
+  // single-add behavior). `multiSelect` renders a checkbox per list row
+  // driven by `selectedIds`/`onToggleSelect`; `headerAction` sits in the
+  // list header; `progress`/`primaryLabel` decorate the config step's
+  // action bar/primary button; `showClose` adds a close control to the
+  // config header for hosts that walk a queue.
+  multiSelect = false,
+  selectedIds = null,
+  onToggleSelect = null,
+  headerAction = null,
+  progress = null,
+  primaryLabel = null,
+  showClose = false,
+  // Extra styles merged onto the drawer paper.
+  paperSx = null,
   sourceFilters = null,
   onFiltersChange = null,
   // { startDate, endDate } the source's preview rows are scoped to. Without
@@ -344,6 +375,7 @@ const EvalPickerDrawer = ({
           boxShadow: theme.customShadows?.drawer || theme.shadows[16],
           borderRadius: "0px !important",
           backgroundColor: "background.paper",
+          ...paperSx,
         }),
       }}
       ModalProps={{
@@ -372,11 +404,21 @@ const EvalPickerDrawer = ({
         lockedFilters={lockedFilters}
         requiredColumnId={requiredColumnId}
         keepOpenAfterSave={keepOpenAfterSave}
+        keepOpenAfterEditSave={keepOpenAfterEditSave}
+        multiSelect={multiSelect}
+        selectedIds={selectedIds}
+        onToggleSelect={onToggleSelect}
         sourceFilters={sourceFilters}
         onFiltersChange={onFiltersChange}
         sourceTimeWindow={sourceTimeWindow}
       >
-        <EvalPickerContent onStepChange={setCurrentStep} />
+        <EvalPickerContent
+          onStepChange={setCurrentStep}
+          headerAction={headerAction}
+          progress={progress}
+          primaryLabel={primaryLabel}
+          showClose={showClose}
+        />
       </EvalPickerProvider>
     </Drawer>
   );
@@ -402,6 +444,15 @@ EvalPickerDrawer.propTypes = {
   sourcePreviewData: PropTypes.object,
   requiredColumnId: PropTypes.string,
   keepOpenAfterSave: PropTypes.bool,
+  keepOpenAfterEditSave: PropTypes.bool,
+  multiSelect: PropTypes.bool,
+  selectedIds: PropTypes.object,
+  onToggleSelect: PropTypes.func,
+  headerAction: PropTypes.node,
+  progress: PropTypes.node,
+  primaryLabel: PropTypes.string,
+  showClose: PropTypes.bool,
+  paperSx: PropTypes.object,
   sourceFilters: PropTypes.array,
   onFiltersChange: PropTypes.func,
   sourceTimeWindow: PropTypes.shape({

@@ -342,8 +342,14 @@ const SimulateUseTemplate = lazyWithRetry(
 const SimulateBuildEnvironment = lazyWithRetry(
   () => import("src/pages/dashboard/simulate/environments/BuildEnvironment"),
 );
-const SimulateEnvironmentDetail = lazyWithRetry(
-  () => import("src/pages/dashboard/simulate/environments/EnvironmentDetail"),
+const SimulateEnvironmentWorkspace = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate/environments/EnvironmentWorkspace"),
+);
+const WorkspaceExecutionDetail = lazyWithRetry(
+  () =>
+    import(
+      "src/sections/simulate/environments/workspace/runs/WorkspaceExecutionDetail"
+    ),
 );
 const RunTestDetail = lazyWithRetry(
   () => import("src/pages/dashboard/run-tests/RunTestDetail"),
@@ -1368,7 +1374,35 @@ export const dashboardRoutes = (
         },
         {
           path: "environments/:envId",
-          element: <SimulateEnvironmentDetail />,
+          element: <SimulateEnvironmentWorkspace />,
+          children: [
+            {
+              path: "runs/:testId/:executionId",
+              element: <WorkspaceExecutionDetail />,
+              children: [
+                {
+                  index: true,
+                  element: <Navigate to="call-details" replace />,
+                },
+                {
+                  path: "call-details",
+                  element: <TestExecutionCallDetail />,
+                },
+                {
+                  path: "performance",
+                  element: <TestExecutionPerformanceDetail />,
+                },
+                {
+                  path: "analytics",
+                  element: <TestExecutionAnalyticsDetail />,
+                },
+                {
+                  path: "optimization_runs",
+                  element: <TestExecutionOptimizationRunsDetail />,
+                },
+              ],
+            },
+          ],
         },
         {
           path: "harness",

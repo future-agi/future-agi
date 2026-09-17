@@ -14,6 +14,7 @@ import TestDetailContextProvider from "./TestDetailContextProvider";
 import TestExecutionDetailTabs from "./TestExecutionDetailTabs";
 import { Outlet, useLocation, useNavigate, useParams } from "react-router";
 import { getTabsBasedOnAgentType } from "./common";
+import useExecutionLinkBase from "./useExecutionLinkBase";
 import useTestRunDetails from "src/hooks/useTestRunDetails";
 import { AGENT_TYPES } from "../agents/constants";
 import { SourceType } from "../scenarios/common";
@@ -29,6 +30,7 @@ const TestRunDetailView = () => {
   const navigate = useNavigate();
   const { executionId, testId } = useParams();
   const { pathname } = useLocation();
+  const basePath = useExecutionLinkBase();
   const [newExecutionId, setNewExecutionId] = useState(null);
 
   const { data: latestExecutionId, refetch: refetchLatestExecution } = useQuery(
@@ -90,8 +92,9 @@ const TestRunDetailView = () => {
           sourceType === SourceType.PROMPT ? AGENT_TYPES.CHAT : agentType,
         testId,
         executionId,
+        basePath,
       }),
-    [agentType, sourceType, testId, executionId],
+    [agentType, sourceType, testId, executionId, basePath],
   );
 
   // Get current tab from URL - memoized for performance
@@ -151,7 +154,7 @@ const TestRunDetailView = () => {
                 size="small"
                 onClick={() =>
                   navigate(
-                    `/dashboard/simulate/test/${testId}/${newExecutionId}/call-details`,
+                    `${basePath.slice(0, -(executionId.length + 1))}/${newExecutionId}/call-details`,
                   )
                 }
               >

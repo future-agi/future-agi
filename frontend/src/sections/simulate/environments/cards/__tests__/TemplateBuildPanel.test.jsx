@@ -5,14 +5,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { render } from "src/utils/test-utils";
 import { packStats } from "../../helpers/packStats";
-import { TEMPLATE_ADOPT_COPY } from "../../useTemplate.constants";
 
-const enqueueSnackbar = vi.fn();
+const navigate = vi.fn();
 const adoptMutate = vi.fn((id, opts) => opts?.onSuccess?.({ envId: "env-x" }));
 
-vi.mock("notistack", () => ({
-  enqueueSnackbar: (...a) => enqueueSnackbar(...a),
-}));
+vi.mock("react-router-dom", async () => {
+  const actual = await vi.importActual("react-router-dom");
+  return { ...actual, useNavigate: () => navigate };
+});
 
 vi.mock("src/api/simulate-environments/environments", async () => {
   const actual = await vi.importActual(
@@ -22,6 +22,9 @@ vi.mock("src/api/simulate-environments/environments", async () => {
 });
 
 const { default: TemplateBuildPanel } = await import("../TemplateBuildPanel");
+const { useEnvironmentsStore, resetEnvironmentsStore } = await import(
+  "../../store/useEnvironmentsStore"
+);
 
 const TEMPLATE = {
   id: "env-voice-support",
@@ -59,7 +62,8 @@ const renderPanel = (props = {}) => {
 
 describe("TemplateBuildPanel", () => {
   beforeEach(() => {
-    enqueueSnackbar.mockReset();
+    resetEnvironmentsStore();
+    navigate.mockReset();
     adoptMutate.mockClear();
   });
 
@@ -108,7 +112,7 @@ describe("TemplateBuildPanel", () => {
     expect(screen.getByText(/Nothing touches production/i)).toBeInTheDocument();
   });
 
-  it("calls the adopt hook and shows the snackbar on Build environment", async () => {
+  it("seeds the workspace and navigates to it on Build environment", async () => {
     const user = userEvent.setup();
     renderPanel();
 
@@ -118,9 +122,20 @@ describe("TemplateBuildPanel", () => {
       "env-voice-support",
       expect.objectContaining({ onSuccess: expect.any(Function) }),
     );
-    expect(enqueueSnackbar).toHaveBeenCalledWith(TEMPLATE_ADOPT_COPY, {
-      variant: "info",
+
+    // The env record is registered and its per-env state seeded from the
+    // template — locked until forked.
+    const { workspaceEnvs, byEnv } = useEnvironmentsStore.getState();
+    expect(workspaceEnvs["env-x"]).toMatchObject({
+      id: "env-x",
+      templateId: "env-voice-support",
     });
+    expect(byEnv["env-x"].seededFromTemplate).toBe(true);
+    expect(byEnv["env-x"].scenarios.length).toBeGreaterThan(0);
+
+    expect(navigate).toHaveBeenCalledWith(
+      "/dashboard/simulate/environments/env-x",
+    );
   });
 
   it("shows the three CLI steps on the Build-locally tab", async () => {

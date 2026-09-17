@@ -22,15 +22,20 @@ vi.mock("react-router-dom", async () => {
   return { ...actual, useNavigate: () => navigate };
 });
 
-// notistack — the Run CTA fires enqueueSnackbar on success.
+// notistack — keep the real module (the workspace tree pulls the snackbar
+// provider, which needs MaterialDesignContent) and only spy enqueueSnackbar.
 const enqueueSnackbar = vi.fn();
-vi.mock("notistack", () => ({ enqueueSnackbar: (...a) => enqueueSnackbar(...a) }));
+vi.mock("notistack", async () => {
+  const actual = await vi.importActual("notistack");
+  return { ...actual, enqueueSnackbar: (...a) => enqueueSnackbar(...a) };
+});
 
 // The single real POST the preflight makes; listHarnessJobs is imported at
 // module scope by environments.js (useBuildEnvironment / useRunSimulation).
 vi.mock("src/api/harness/harness", () => ({
   preflightHarnessJob: vi.fn(),
   listHarnessJobs: vi.fn(),
+  getHarnessJob: vi.fn(),
 }));
 
 // A controllable useBuildProgress: record the args, return whatever the current
@@ -62,7 +67,14 @@ const { BUILD_HEADER_COPY, DERIVING_LABEL, BUILDING_TABS } = await import(
   "../build.constants"
 );
 const { READ_AUDIT_COPY } = await import("../readAudit.constants");
-const { RUN_SIMULATION_COPY } = await import("../../environmentOptions");
+const { generatedPool } = await import(
+  "src/api/simulate-environments/_fixtures/scenarioPool"
+);
+const { MOCK_WORLD } = await import("src/api/simulate-environments/_fixtures/world");
+
+// The full scenario pool the build seeds from MOCK_WORLD — the count the
+// Scenarios tab renders once the workspace swaps in at 7/7.
+const POOL_SIZE = generatedPool(MOCK_WORLD).length;
 
 const theme = createTheme({
   palette: palette("light"),
@@ -118,7 +130,7 @@ function renderPage(route = "/dashboard/simulate/environments/build") {
 async function drivePreflightToBuild(user) {
   useEnvironmentsStore.setState({ draft: repoDraft });
   preflightHarnessJob.mockResolvedValue(HAPPY);
-  renderPage();
+  const utils = renderPage();
 
   await screen.findByText(READ_AUDIT_COPY.title);
   await user.click(screen.getByRole("button", { name: /Read-only/ }));
@@ -128,6 +140,33 @@ async function drivePreflightToBuild(user) {
   await waitFor(() =>
     expect(useEnvironmentsStore.getState().buildStage).toBe("building"),
   );
+  return utils;
+}
+
+const ALL_DONE = ["understand", "build", "scenarios"];
+
+// Drive the build to 7/7 with both progress sources set: the store's
+// buildProgress (which BuildEnvironment reads for the header + adoption) and the
+// mocked useBuildProgress return (which BuildingPane reads for its swap). In
+// production useBuildProgress writes the store, so the two are always in step.
+async function driveToWorkspace(user) {
+  progressReturn = {
+    ...emptyProgress(),
+    done: [...ALL_DONE],
+  };
+  const utils = await drivePreflightToBuild(user);
+  act(() =>
+    useEnvironmentsStore.getState().setBuildProgress({
+      done: [...ALL_DONE],
+      running: false,
+      failure: null,
+    }),
+  );
+  // The hero is gone the moment the workspace panels take over the body.
+  await waitFor(() =>
+    expect(screen.queryByTestId("deriving")).not.toBeInTheDocument(),
+  );
+  return utils;
 }
 
 beforeAll(() => {
@@ -206,26 +245,83 @@ describe("BuildEnvironment", () => {
     );
   });
 
-  it("drives the pipeline to all-done → Run simulation fires the snackbar", async () => {
+  it("swaps the body in place at 7/7: interactive rail, Summary renders the env", async () => {
     const user = userEvent.setup();
-    await drivePreflightToBuild(user);
+    await driveToWorkspace(user);
 
-    act(() =>
-      useEnvironmentsStore.getState().setBuildProgress({
-        done: ["understand", "build", "scenarios"],
-        running: false,
-        failure: null,
-      }),
-    );
+    // The muted, pointer-dead loading rail is gone; the live workspace rail and
+    // the Summary body are in its place, rendering the environment's world.
+    expect(await screen.findByRole("tab", { name: /^Summary/ })).toBeInTheDocument();
+    expect(
+      screen.getByText(/returns-and-orders phone line/i),
+    ).toBeInTheDocument();
+    // The env name still lives in the build header (also echoed in the console).
+    expect(screen.getAllByText("support-bot").length).toBeGreaterThan(0);
+  });
+
+  it("adopts the environment into the store once at 7/7", async () => {
+    const user = userEvent.setup();
+    await driveToWorkspace(user);
+
+    const state = useEnvironmentsStore.getState();
+    const envId = state.envId;
+    expect(state.workspaceEnvs[envId]).toMatchObject({
+      id: envId,
+      buildStatus: "ready",
+      name: "support-bot",
+    });
+    expect(state.byEnv[envId].agentVersions[0].label).toBe("v1");
+    expect(state.byEnv[envId].scenarios).toHaveLength(POOL_SIZE);
+  });
+
+  it("opens the Scenarios tab from the live rail and lists the seeded pool", async () => {
+    const user = userEvent.setup();
+    await driveToWorkspace(user);
+
+    await user.click(screen.getByRole("tab", { name: /^Scenarios/ }));
+
+    expect(screen.getByText(`(${POOL_SIZE})`)).toBeInTheDocument();
+    expect(screen.getByRole("table")).toBeInTheDocument();
+  });
+
+  it("Run simulation navigates to the product run-tests entry", async () => {
+    const user = userEvent.setup();
+    await driveToWorkspace(user);
 
     expect(await screen.findByText(BUILD_HEADER_COPY.ready)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: BUILD_HEADER_COPY.run }));
 
-    await waitFor(() =>
-      expect(enqueueSnackbar).toHaveBeenCalledWith(RUN_SIMULATION_COPY, {
-        variant: "info",
-      }),
+    expect(navigate).toHaveBeenCalledWith(paths.dashboard.simulate.test);
+    expect(navigate).not.toHaveBeenCalledWith(
+      expect.stringContaining("simulate/environments"),
     );
+  });
+
+  it("does not re-seed the env state on a stale remount", async () => {
+    const user = userEvent.setup();
+    const { unmount } = await driveToWorkspace(user);
+    const envId = useEnvironmentsStore.getState().envId;
+
+    // The reader edits the seeded scenarios down to nothing.
+    act(() =>
+      useEnvironmentsStore.getState().patchEnvState(envId, { scenarios: [] }),
+    );
+    expect(useEnvironmentsStore.getState().byEnv[envId].scenarios).toHaveLength(0);
+
+    // A remount reads the stale building slice (envId + all-done progress) on
+    // its first render; startPreflight resets the build slice, but the adoption
+    // effect closure still points at envId. The already-adopted guard must stop
+    // it from re-seeding over the reader's edit.
+    unmount();
+    renderPage();
+    await waitFor(() =>
+      expect(useEnvironmentsStore.getState().buildStage).toBe("preflight"),
+    );
+
+    expect(useEnvironmentsStore.getState().byEnv[envId].scenarios).toHaveLength(0);
+    expect(Object.keys(useEnvironmentsStore.getState().workspaceEnvs)).toEqual([
+      envId,
+    ]);
   });
 
   it("back navigates to the Build tab and never resets the draft on unmount", async () => {

@@ -19,4 +19,16 @@ describe("simulate.environments path constants", () => {
   it("declares the build path", () => {
     expect(env.build).toBe("/dashboard/simulate/environments/build");
   });
+
+  it("builds a workspace-tab path with the ?tab= query", () => {
+    expect(env.workspaceTab("e1", "runs")).toBe(
+      "/dashboard/simulate/environments/e1?tab=runs",
+    );
+  });
+
+  it("builds a nested execution path from env, test and execution ids", () => {
+    expect(env.execution("e1", "t1", "x1")).toBe(
+      "/dashboard/simulate/environments/e1/runs/t1/x1",
+    );
+  });
 });

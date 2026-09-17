@@ -13,6 +13,19 @@ export const BUILD_TONES = {
   teal: "#0891B2",
   blue: "#2563EB",
   sky: "#0EA5E9",
+  grey: "#6B7280",
+  orange: "#EA580C",
+  violet: "#6D28D9",
+  purple: "#9333EA",
+  pink: "#DB2777",
+  slate: "#525252",
+  lilac: "#8B5CF6",
+  rose: "#F43F5E",
+  tealDeep: "#0D9488",
+  fuchsia: "#C026D3",
+  zinc: "#71717A",
+  amberBright: "#D97706",
+  ash: "#9AA0A6",
 };
 
 // DerivingAnimation file-header traffic dots (red / amber / green).

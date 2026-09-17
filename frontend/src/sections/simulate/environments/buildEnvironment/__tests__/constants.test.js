@@ -111,8 +111,14 @@ describe("read-audit constants", () => {
 });
 
 describe("build stage constants", () => {
-  it("labels the four building tabs", () => {
-    expect(BUILDING_TABS.map((t) => t.label)).toEqual(["Overview", "Contract", "Scenarios", "Evaluations"]);
+  it("labels the five building tabs (Runs added in Phase-3)", () => {
+    expect(BUILDING_TABS.map((t) => t.label)).toEqual([
+      "Contract",
+      "Scenarios",
+      "Evaluations",
+      "Summary",
+      "Runs",
+    ]);
   });
 
   it("uses the designer deriving copy", () => {

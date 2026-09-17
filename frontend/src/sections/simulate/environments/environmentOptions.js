@@ -147,7 +147,3 @@ export const ENVIRONMENTS_HEADER = {
   connectHeading: "Or connect your own agent",
   connectSub: "We work with what you already have — no rewrite, no adapter.",
 };
-
-// Phase-1 handoff snackbar — the run screen lands in a later phase.
-export const RUN_SIMULATION_COPY =
-  "Run queued — the run screen lands in Phase-3.";

@@ -39,6 +39,18 @@ const EvalPickerProvider = ({
   // close the drawer — used by dataset adds where the picker is also a
   // multi-eval entry surface.
   keepOpenAfterSave = false,
+  // Edit-mode counterpart to keepOpenAfterSave. Edit mode (initialEval set)
+  // has always closed on save regardless of keepOpenAfterSave; this opt-in
+  // flag keeps the drawer open so a host can walk a queue of pre-selected
+  // evals through their config screens. Defaults false so every existing
+  // edit caller is unchanged.
+  keepOpenAfterEditSave = false,
+  // Multi-select list mode. When true the list renders a checkbox per row
+  // driven by selectedIds/onToggleSelect. Defaults off so the single-add
+  // list is byte-identical.
+  multiSelect = false,
+  selectedIds = null,
+  onToggleSelect = null,
   sourceFilters = null,
   onFiltersChange = null,
   sourceTimeWindow = null,
@@ -102,6 +114,10 @@ const EvalPickerProvider = ({
         isEditMode,
         requiredColumnId,
         keepOpenAfterSave,
+        keepOpenAfterEditSave,
+        multiSelect,
+        selectedIds,
+        onToggleSelect,
         sourceFilters,
         onFiltersChange,
         sourceTimeWindow,
@@ -131,6 +147,10 @@ EvalPickerProvider.propTypes = {
   sourcePreviewData: PropTypes.object,
   requiredColumnId: PropTypes.string,
   keepOpenAfterSave: PropTypes.bool,
+  keepOpenAfterEditSave: PropTypes.bool,
+  multiSelect: PropTypes.bool,
+  selectedIds: PropTypes.object,
+  onToggleSelect: PropTypes.func,
   sourceFilters: PropTypes.array,
   onFiltersChange: PropTypes.func,
   sourceTimeWindow: PropTypes.shape({

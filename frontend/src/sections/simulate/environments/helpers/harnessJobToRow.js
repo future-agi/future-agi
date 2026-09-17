@@ -5,13 +5,19 @@ import { ENV_STATUS } from "../myEnvironments.constants";
 // ALK reports the transports it detected in the source under
 // credentials.detected_connectors (see `agentTypeIcon` in harnessShared). A
 // voice agent that also serves HTTP lists both, so a voice transport wins.
-const VOICE_CONNECTORS = ["livekit", "vapi", "retell", "twilio", "pipecat"];
+export const VOICE_CONNECTORS = [
+  "livekit",
+  "vapi",
+  "retell",
+  "twilio",
+  "pipecat",
+];
 
 // The harness pipeline reports fine-grained stages; the table only needs the
 // four run-states its status pill knows. "failed" and "canceled" are both
 // outcomes the pill draws in red, and every stage before the terminal ones is
 // still assembling the environment.
-const stageToStatus = (stage) => {
+export const stageToStatus = (stage) => {
   if (stage === "completed") return ENV_STATUS.COMPLETED;
   if (stage === "failed" || stage === "canceled") return ENV_STATUS.FAILED;
   if (stage === "running") return ENV_STATUS.RUNNING;

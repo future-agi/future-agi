@@ -1,0 +1,170 @@
+import PropTypes from "prop-types";
+import { Box, Stack, Tab } from "@mui/material";
+import { useNavigate } from "react-router-dom";
+import { CustomTabs } from "src/components/tabs/tabs";
+import { paths } from "src/routes/paths";
+import { useEnvironmentRuns, runSimulationTarget } from "src/api/simulate-environments/runs";
+import { ENV_TABS_SX } from "../environmentOptions";
+import OverviewPanel from "./overview/OverviewPanel";
+import RlContractPanel from "./contract/RlContractPanel";
+import ScenariosStep from "./scenarios/ScenariosStep";
+import EvalsStep from "./evals/EvalsStep";
+import RunsPanel from "./runs/RunsPanel";
+import WorkspaceTabLabel from "./WorkspaceTabLabel";
+import { WORKSPACE_TABS } from "./workspace.constants";
+
+// The shared rail + body switch. One instance serves the route workspace and
+// the build page's in-place swap at 7/7, so it stays presentational: the active
+// tab is controlled (`tab`/`onTabChange`), the setup gaps and item counts are
+// passed in, and the only data it reads for itself is the Runs history (the live
+// executions for a completed harness job — envState.runs is empty for those).
+//
+// The rail reuses the product tab treatment Phase-1 established (ENV_TABS_SX)
+// rather than the designer's CustomTabs px:1. Numeric counts are hidden while
+// the builder streams — the parent passes `counts={null}` then. When an
+// execution is open in the URL the parent passes `executionOutlet`, which
+// replaces the Runs body with the nested product run detail.
+export default function WorkspacePanels({
+  env,
+  envState,
+  patch,
+  tab,
+  onTabChange,
+  locked = false,
+  onFork,
+  buildMode = false,
+  gapsByTab,
+  counts,
+  executionOutlet,
+}) {
+  const navigate = useNavigate();
+  const { runs } = useEnvironmentRuns(env, envState);
+
+  // Default landing is the summary, not the first tab in the rail — the rail
+  // order is Contract-first but the env opens on its summary.
+  const current =
+    WORKSPACE_TABS.find((t) => t.id === tab) ||
+    WORKSPACE_TABS.find((t) => t.id === "summary");
+
+  const go = (tabId) => {
+    if (!WORKSPACE_TABS.some((t) => t.id === tabId)) return;
+    onTabChange(tabId);
+  };
+
+  const openRun = (run) => {
+    const runTestId = env?.platform?.runTestId;
+    if (!runTestId || !run?.executionId) return;
+    navigate(paths.dashboard.simulate.environments.execution(env.id, runTestId, run.executionId));
+  };
+
+  // Runs is badged from the live executions (envState.runs is empty for a
+  // harness env); the rest come from the injected client-state counts. A null
+  // `counts` (builder still streaming) hides every numeric badge.
+  const badgeCount = (badge) => {
+    if (!counts) return null;
+    if (badge === "runs") return runs.length;
+    return counts[badge] ?? 0;
+  };
+
+  const renderBody = () => {
+    if (executionOutlet && current.id === "runs") return executionOutlet;
+    switch (current.id) {
+      case "contract":
+        return <RlContractPanel env={env} envState={envState} onGo={go} buildMode={buildMode} />;
+      case "scenarios":
+        return <ScenariosStep env={env} envState={envState} patch={patch} />;
+      case "evals":
+        return <EvalsStep env={env} envState={envState} patch={patch} onGo={go} />;
+      case "runs":
+        return (
+          <RunsPanel
+            env={env}
+            envState={envState}
+            runs={runs}
+            onStart={() => navigate(runSimulationTarget(env))}
+            onOpenRun={openRun}
+            onGo={go}
+          />
+        );
+      default:
+        return (
+          <OverviewPanel
+            env={env}
+            envState={envState}
+            patch={patch}
+            onGo={go}
+            agentConnected={!!envState?.agent}
+            locked={locked}
+            onFork={onFork}
+            buildMode={buildMode}
+          />
+        );
+    }
+  };
+
+  return (
+    <Stack sx={{ height: "100%", minHeight: 0 }}>
+      <Box sx={{ flexShrink: 0, borderBottom: "1px solid", borderColor: "divider" }}>
+        <CustomTabs
+          value={current.id}
+          onChange={(_, v) => onTabChange(v)}
+          variant="scrollable"
+          scrollButtons={false}
+          sx={ENV_TABS_SX}
+        >
+          {WORKSPACE_TABS.map((t) => (
+            <Tab
+              key={t.id}
+              value={t.id}
+              label={
+                <WorkspaceTabLabel
+                  label={t.label}
+                  count={t.badge ? badgeCount(t.badge) : null}
+                  gaps={gapsByTab?.[t.id]}
+                />
+              }
+            />
+          ))}
+        </CustomTabs>
+      </Box>
+
+      <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "auto" }}>{renderBody()}</Box>
+    </Stack>
+  );
+}
+
+const GAP_SHAPE = PropTypes.arrayOf(
+  PropTypes.shape({ id: PropTypes.string, title: PropTypes.string }),
+);
+
+WorkspacePanels.propTypes = {
+  env: PropTypes.shape({
+    id: PropTypes.string,
+    name: PropTypes.string,
+    surface: PropTypes.string,
+    platform: PropTypes.shape({
+      runTestId: PropTypes.string,
+      testExecutionId: PropTypes.string,
+    }),
+  }).isRequired,
+  envState: PropTypes.shape({
+    agent: PropTypes.shape({ name: PropTypes.string }),
+    scenarios: PropTypes.arrayOf(PropTypes.shape({ id: PropTypes.string })),
+    evals: PropTypes.arrayOf(
+      PropTypes.oneOfType([PropTypes.string, PropTypes.shape({ id: PropTypes.string })]),
+    ),
+    runs: PropTypes.arrayOf(PropTypes.shape({ id: PropTypes.string })),
+  }).isRequired,
+  patch: PropTypes.func.isRequired,
+  tab: PropTypes.string,
+  onTabChange: PropTypes.func.isRequired,
+  locked: PropTypes.bool,
+  onFork: PropTypes.func,
+  buildMode: PropTypes.bool,
+  gapsByTab: PropTypes.objectOf(GAP_SHAPE),
+  counts: PropTypes.shape({
+    scenarios: PropTypes.number,
+    evals: PropTypes.number,
+  }),
+  executionOutlet: PropTypes.node,
+};

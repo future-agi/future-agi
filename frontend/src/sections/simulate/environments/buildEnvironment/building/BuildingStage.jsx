@@ -1,6 +1,7 @@
 import PropTypes from "prop-types";
 import { Box } from "@mui/material";
 
+import { ENV_SHAPE, ENV_STATE_SHAPE } from "../../workspace/overview/overview.constants";
 import SectionCard from "../../components/SectionCard";
 import BuilderConsole from "../console/BuilderConsole";
 import PanelBoundary from "./PanelBoundary";
@@ -18,7 +19,7 @@ import BuildingPane from "./BuildingPane";
  * `progress` is the `useBuildProgress` return; it may be null mid-init, so we
  * null-guard it and let the panes fall through to their own defaults.
  */
-export default function BuildingStage({ progress }) {
+export default function BuildingStage({ progress, env, envState, patch, primed }) {
   const p = progress || {};
   return (
     <Box
@@ -39,7 +40,15 @@ export default function BuildingStage({ progress }) {
 
       <SectionCard sx={{ minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden", px: 2.5 }}>
         <PanelBoundary>
-          <BuildingPane done={p.done} running={p.running} failure={p.failure} />
+          <BuildingPane
+            done={p.done}
+            running={p.running}
+            failure={p.failure}
+            env={env}
+            envState={envState}
+            patch={patch}
+            primed={primed}
+          />
         </PanelBoundary>
       </SectionCard>
     </Box>
@@ -61,4 +70,8 @@ BuildingStage.propTypes = {
     send: PropTypes.func,
     onChip: PropTypes.func,
   }),
+  env: ENV_SHAPE,
+  envState: ENV_STATE_SHAPE,
+  patch: PropTypes.func,
+  primed: PropTypes.bool,
 };

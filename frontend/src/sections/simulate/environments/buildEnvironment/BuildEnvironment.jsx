@@ -1,24 +1,26 @@
-import { useEffect, useReducer } from "react";
+import { useEffect, useReducer, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { enqueueSnackbar } from "notistack";
 import { Box } from "@mui/material";
 
 import { paths } from "src/routes/paths";
 import { usePreflight } from "src/api/simulate-environments/preflight";
 import { useBuildProgress } from "src/api/simulate-environments/buildProgress";
-import {
-  useBuildEnvironment,
-  useRunSimulation,
-} from "src/api/simulate-environments/environments";
+import { useBuildEnvironment } from "src/api/simulate-environments/environments";
+import { runSimulationTarget } from "src/api/simulate-environments/runs";
 import { environmentNameFor } from "src/api/simulate-environments/preflightPayload";
 
-import { useEnvironmentsStoreShallow } from "../store/useEnvironmentsStore";
-import { RUN_SIMULATION_COPY } from "../environmentOptions";
+import {
+  useEnvironmentsStore,
+  useEnvironmentsStoreShallow,
+} from "../store/useEnvironmentsStore";
+import { useEnvState } from "../store/envState";
+import { envFromDraft, seedAgentBuilt } from "../workspace/helpers/seedEnvState";
 import { agentRefLabel } from "./helpers/agentRefLabel";
 import { BUILD_STAGE, BUILD_HEADER_COPY, DERIVING_LABEL } from "./build.constants";
 import {
   PIPELINE_PHASE,
   STEP_STATUS,
+  STAGE_ORDER,
   pipelineStatus,
   pipelineSummary,
 } from "./buildPipeline.constants";
@@ -43,7 +45,7 @@ export default function BuildEnvironment() {
   const navigate = useNavigate();
   const {
     draft, buildStage, envId, buildProgress, retriedSections,
-    startPreflight, acceptAudit,
+    startPreflight, acceptAudit, adoptEnvironment,
   } = useEnvironmentsStoreShallow((s) => ({
     draft: s.draft,
     buildStage: s.buildStage,
@@ -52,7 +54,17 @@ export default function BuildEnvironment() {
     retriedSections: s.retriedSections,
     startPreflight: s.startPreflight,
     acceptAudit: s.acceptAudit,
+    adoptEnvironment: s.adoptEnvironment,
   }));
+
+  // The adopted env record, once the build hits 7/7. Selecting the single record
+  // (not the whole map) keeps the build page from re-rendering on unrelated env
+  // changes. Undefined until adoption, which is exactly the `primed` signal the
+  // building pane keys its in-place swap off.
+  const env = useEnvironmentsStore((s) =>
+    s.envId ? s.workspaceEnvs[s.envId] : undefined,
+  );
+  const { envState, patch } = useEnvState(envId);
 
   // The derived name, corrected in place from the header rather than a form.
   const [name, renameEnvironment] = useReducer(
@@ -75,7 +87,6 @@ export default function BuildEnvironment() {
 
   const { audit, refetch } = usePreflight(draft, { retriedSections });
   const build = useBuildEnvironment();
-  const run = useRunSimulation();
   const agentRef = agentRefLabel(draft);
   const progress = useBuildProgress({
     envId,
@@ -99,11 +110,29 @@ export default function BuildEnvironment() {
     ? BUILD_HEADER_COPY.runBlocked
     : "Name this environment first";
 
-  const onRun = () =>
-    run.mutate(envId, {
-      onSuccess: () =>
-        enqueueSnackbar(RUN_SIMULATION_COPY, { variant: "info" }),
-    });
+  // Adopt the environment into the store the moment the derivation completes, so
+  // the in-place workspace can render off the client slices and a later refresh
+  // or My-Env open resolves the env by id. Ref-guarded against a same-mount
+  // re-fire; the `env` guard stops a stale remount (whose first render still
+  // sees the building slice) from re-seeding over the reader's edits.
+  const primed = !!env;
+  const buildDone = STAGE_ORDER.every((stage) => buildProgress.done.includes(stage));
+  const adoptedRef = useRef(false);
+  useEffect(() => {
+    if (!buildDone || !envId || adoptedRef.current) return;
+    adoptedRef.current = true;
+    if (env) return;
+    // ISO string (not Date.now()) so agent/version timestamps match the
+    // template path and the `connectedAt: string` shape the cards expect.
+    const now = new Date().toISOString();
+    adoptEnvironment(
+      { ...envFromDraft(draft, name, audit), id: envId, buildStatus: "ready" },
+      now,
+    );
+    patch(seedAgentBuilt(draft, audit, now));
+  }, [buildDone, envId, env, draft, name, audit, adoptEnvironment, patch]);
+
+  const onRun = () => navigate(runSimulationTarget(env));
 
   const onBack = () => navigate(BUILD_TAB);
 
@@ -144,7 +173,13 @@ export default function BuildEnvironment() {
           ))}
 
         {buildStage === BUILD_STAGE.BUILDING && (
-          <BuildingStage progress={progress} />
+          <BuildingStage
+            progress={progress}
+            env={env}
+            envState={envState}
+            patch={patch}
+            primed={primed}
+          />
         )}
       </Box>
     </Box>
