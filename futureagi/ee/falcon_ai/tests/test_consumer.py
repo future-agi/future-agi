@@ -389,3 +389,53 @@ class TestFalconAIConsumer:
         assert event.properties["total_tokens"] == 165
         assert event.properties["gateway_cost_usd"] == "0.07"
         assert event.properties["pricing_source"] == "gateway"
+
+    # --- Rate limiting ---
+
+    @patch.object(FalconAIConsumer, "_handle_stop", new_callable=AsyncMock)
+    async def test_stop_not_blocked_when_rate_limit_exceeded(
+        self, mock_handle_stop
+    ):
+        """Stop messages must bypass the rate limiter so active runs can be cancelled."""
+        import time
+
+        consumer = _make_consumer()
+        consumer.user = _make_user()
+        consumer.organization = _make_org()
+
+        now = time.time()
+        consumer._message_timestamps = [now] * consumer._rate_limit
+
+        await consumer.receive_json({"type": "stop"})
+
+        mock_handle_stop.assert_awaited_once()
+        for call in consumer.send_json.call_args_list:
+            args = call[0][0]
+            if args.get("type") == "error":
+                assert "Rate limit exceeded" not in args.get("data", {}).get(
+                    "error", ""
+                )
+
+    async def test_chat_blocked_when_rate_limit_exceeded(self):
+        """Chat messages must remain rate-limited when the limit is exceeded."""
+        import time
+
+        consumer = _make_consumer()
+        consumer.user = _make_user()
+        consumer.organization = _make_org()
+
+        now = time.time()
+        consumer._message_timestamps = [now] * consumer._rate_limit
+
+        await consumer.receive_json(
+            {
+                "type": "chat",
+                "conversation_id": str(uuid.uuid4()),
+                "message": "hello",
+            }
+        )
+
+        call_args = consumer.send_json.call_args[0][0]
+        assert call_args["type"] == "error"
+        assert "Rate limit exceeded" in call_args["data"]["error"]
+
