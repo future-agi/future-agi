@@ -1,7 +1,11 @@
+import { useState } from "react";
 import PropTypes from "prop-types";
 import { Box, Stack, Tab } from "@mui/material";
 import { CustomTabs } from "src/components/tabs/tabs";
 
+import { ENV_SHAPE, ENV_STATE_SHAPE } from "../../workspace/overview/overview.constants";
+import WorkspacePanels from "../../workspace/WorkspacePanels";
+import { gapsByTab, counts as countsFor } from "../../workspace/helpers/workspaceGaps";
 import { DERIVING_LABEL, BUILDING_TABS } from "../build.constants";
 import { pipelineStatus } from "../buildPipeline.constants";
 import DerivingAnimation from "./DerivingAnimation";
@@ -19,14 +23,47 @@ const derivingLabel = (done = []) => {
 };
 
 /**
- * The right pane while the environment is building.
+ * The right pane while the environment is building, and the workspace once it is
+ * built.
  *
- * A muted tab rail sits on top so you can see what's coming — the same tabs the
- * finished environment will carry — with the hero illustration and the setup
- * timeline filling the body underneath. The rail is visible but inert: dimmed
- * and pointer-dead, exactly the designer's loading state.
+ * Until the derivation completes and the store is primed, a muted tab rail sits
+ * on top so you can see what's coming — the same tabs the finished environment
+ * will carry — with the hero illustration and the setup timeline filling the
+ * body underneath. The rail is visible but inert: dimmed and pointer-dead.
+ *
+ * At 7/7, once the environment has been adopted into the store (`primed`), the
+ * body swaps in place for the live workspace: the muted rail becomes the
+ * interactive rail and the hero gives way to the tab bodies. This is the
+ * designer's DerivedPanels isLoading → panels swap, on the same build page.
  */
-export default function BuildingPane({ done = [], running = false, failure = null }) {
+export default function BuildingPane({
+  done = [],
+  running = false,
+  failure = null,
+  env,
+  envState,
+  patch,
+  primed = false,
+}) {
+  const [tab, setTab] = useState("summary");
+
+  const isLoading = !done.includes("scenarios") || !primed;
+
+  if (!isLoading) {
+    return (
+      <WorkspacePanels
+        env={env}
+        envState={envState}
+        patch={patch}
+        tab={tab}
+        onTabChange={setTab}
+        buildMode
+        gapsByTab={gapsByTab(env, envState)}
+        counts={running ? null : countsFor(envState)}
+      />
+    );
+  }
+
   return (
     <Stack sx={{ height: "100%", minHeight: 0 }}>
       {/* muted rail — visible so you know what's coming, not competing for attention */}
@@ -50,7 +87,6 @@ export default function BuildingPane({ done = [], running = false, failure = nul
       </Box>
 
       {/* body */}
-      {/* TODO: Phase-3 replaces the body with the tab panels once the store is primed. */}
       <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "auto" }}>
         <DerivingAnimation label={derivingLabel(done)} />
         <PipelineChecks pipeline={pipelineStatus(done, running, "setup", failure)} />
@@ -68,4 +104,8 @@ BuildingPane.propTypes = {
     detail: PropTypes.string,
     retryable: PropTypes.bool,
   }),
+  env: ENV_SHAPE,
+  envState: ENV_STATE_SHAPE,
+  patch: PropTypes.func,
+  primed: PropTypes.bool,
 };

@@ -1,14 +1,17 @@
 import { Box, Stack, Typography, Button } from "@mui/material";
-import { enqueueSnackbar } from "notistack";
 import { useNavigate } from "react-router-dom";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
+import { getHarnessJob } from "src/api/harness/harness";
 import {
   useMyEnvironments,
   useDeleteEnvironment,
-  useRunSimulation,
 } from "src/api/simulate-environments/environments";
-import { RUN_SIMULATION_COPY, ENTRY_TAB } from "./environmentOptions";
+import {
+  harnessJobToEnvironment,
+} from "src/api/simulate-environments/environment";
+import { runSimulationTarget } from "src/api/simulate-environments/runs";
+import { ENTRY_TAB } from "./environmentOptions";
 import { EMPTY_MESSAGE } from "./myEnvironments.constants";
 import useEnvironmentsTab from "./hooks/useEnvironmentsTab";
 import MyEnvironmentsTable from "./MyEnvironmentsTable";
@@ -26,14 +29,18 @@ export default function MyEnvironmentsTab() {
   const loading = isLoading || isPending;
 
   const deleteEnvironment = useDeleteEnvironment();
-  const runSimulation = useRunSimulation();
 
   const onOpen = (env) =>
     navigate(paths.dashboard.simulate.environments.detail(env.id));
+  // The list payload has no `platform`, so fetch the job detail (which carries
+  // the run-test bridge ids) and route to the product's execution target. A
+  // fetch failure falls back to the product's Run Simulation entry.
   const onRun = (env) =>
-    runSimulation.mutate(env.id, {
-      onSuccess: () => enqueueSnackbar(RUN_SIMULATION_COPY),
-    });
+    getHarnessJob(env.id)
+      .then((item) =>
+        navigate(runSimulationTarget(harnessJobToEnvironment(item).env)),
+      )
+      .catch(() => navigate(paths.dashboard.simulate.test));
   const onDelete = (env) => deleteEnvironment.mutate(env.id);
 
   return (
