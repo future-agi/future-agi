@@ -14,6 +14,7 @@ import { useSimStore, useEnvState } from "../store";
 import { setupGaps } from "../_mock/setupGaps";
 import { subscribeBuilderPrompt } from "../_mock/builderPromptBus";
 import { subscribeScenarioSelection, clearScenarioSelection } from "../_mock/scenarioSelectionBus";
+import { subscribeBuilderMode } from "../_mock/builderModeBus";
 import { environmentVersions } from "../_mock/versions";
 import { getAgentType } from "../_mock/agentTypes";
 import { SurfaceIcon, EmptyState, SectionCard } from "../components/primitives";
@@ -145,6 +146,15 @@ export default function EnvironmentWorkspace() {
   */
   const [scenarioSelection, setScenarioSelection] = useState({ ids: [], rows: [] });
   useEffect(() => subscribeScenarioSelection(setScenarioSelection), []);
+  /*
+    Builder mode — Auto (default) or Guided. In Guided, the builder
+    pauses at decisions and asks Claude-style AskUserQuestion cards
+    in the chat instead of quietly applying a default. Subscribed
+    from the module bus so the composer's picker and the reply
+    logic stay in sync.
+  */
+  const [builderMode, setBuilderModeLocal] = useState("auto");
+  useEffect(() => subscribeBuilderMode(setBuilderModeLocal), []);
 
   // Adopt on direct navigation so a deep link works from a cold start.
   useEffect(() => {
@@ -400,6 +410,50 @@ export default function EnvironmentWorkspace() {
     setTurns((prev) => [...prev, { id: `u-${Date.now()}`, role: "user", text: trimmed }]);
     setChatRunning(true);
     if (hasSelection) clearScenarioSelection();
+
+    /*
+      Guided mode: the builder pauses at a real decision and asks the
+      user to settle it before applying. Renders as a Claude-style
+      AskUserQuestion card inline in the chat. In Auto (the default),
+      the builder just applies its own guess and moves on.
+    */
+    if (builderMode === "guided" && !hasSelection) {
+      setTimeout(() => {
+        setChatRunning(false);
+        const q = mockGuidedQuestion(trimmed);
+        const questionId = `q-${Date.now()}`;
+        setTurns((prev) => [...prev, {
+          id: `a-${Date.now()}`,
+          role: "assistant",
+          steps: [
+            { kind: "note", text: "Before I apply that, one decision:" },
+            {
+              kind: "ask",
+              question: q,
+              onSubmit: (answer) => {
+                const chosen = answer.other?.trim()
+                  ? answer.other.trim()
+                  : q.options[answer.pick]?.label || "";
+                setTurns((cur) => [...cur, {
+                  id: `${questionId}-r`,
+                  role: "assistant",
+                  steps: [{ kind: "note", text: `Applied — went with "${chosen}". The panels on the right reflect the change.` }],
+                }]);
+              },
+              onSkip: () => {
+                setTurns((cur) => [...cur, {
+                  id: `${questionId}-s`,
+                  role: "assistant",
+                  steps: [{ kind: "note", text: "Skipped — I used the default and moved on." }],
+                }]);
+              },
+            },
+          ],
+        }]);
+      }, 900);
+      return;
+    }
+
     setTimeout(() => {
       setChatRunning(false);
       const reply = hasSelection
@@ -846,6 +900,72 @@ function SelectionContextChip({ count, rows, onClear }) {
 SelectionContextChip.propTypes = {
   count: PropTypes.number, rows: PropTypes.array, onClear: PropTypes.func,
 };
+
+/**
+ * Guided-mode question generator.
+ *
+ * Picks a decision that plausibly matches the user's message so the
+ * demo feels responsive: rule-adjacent → policy question, eval → grader
+ * question, scenario → coverage question, otherwise a generic default.
+ */
+function mockGuidedQuestion(userText) {
+  const t = (userText || "").toLowerCase();
+
+  if (/rule|refund|policy|escalat/.test(t)) {
+    return {
+      step: 1, total: 1,
+      prompt: "How strict should the refund rule be?",
+      multiSelect: false,
+      options: [
+        { label: "Require supervisor approval above $200",
+          description: "Matches the current policy. Escalations still allowed." },
+        { label: "Auto-approve up to $500",
+          description: "Faster resolution, higher exposure. Above $500 still escalates." },
+        { label: "Escalate every refund",
+          description: "Slowest, safest. Every refund goes through a supervisor." },
+      ],
+    };
+  }
+
+  if (/eval|grader|grade|score/.test(t)) {
+    return {
+      step: 1, total: 1,
+      prompt: "Which graders should the new evaluation include?",
+      multiSelect: true,
+      options: [
+        { label: "task_success", description: "Was the caller's goal met?" },
+        { label: "policy_adherence", description: "Did the agent follow the hard rules?" },
+        { label: "tone", description: "LLM-graded against the tone rubric." },
+        { label: "latency", description: "Any turn slower than the budget fails." },
+      ],
+    };
+  }
+
+  if (/scenario|persona|caller|customer/.test(t)) {
+    return {
+      step: 1, total: 1,
+      prompt: "What kind of scenarios should I generate?",
+      multiSelect: true,
+      options: [
+        { label: "Happy path", description: "Standard requests, no edge cases." },
+        { label: "Adversarial", description: "Rushed callers, off-topic tangents, skepticism." },
+        { label: "Tool-fault cases", description: "The tool returns unexpected results — does the agent handle it?" },
+      ],
+    };
+  }
+
+  return {
+    step: 1, total: 1,
+    prompt: "How would you like this applied?",
+    multiSelect: false,
+    options: [
+      { label: "Apply to this environment version only",
+        description: "The change lands on the current version; older versions keep their behavior." },
+      { label: "Fork a new version",
+        description: "Mint v(N+1) with the change and pin it active." },
+    ],
+  };
+}
 
 function mockBulkEditReply(userText, rows) {
   const count = (rows || []).length;

@@ -1,9 +1,11 @@
 import PropTypes from "prop-types";
 import { useEffect, useRef, useState } from "react";
 import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, Button, TextField, IconButton, Collapse } from "@mui/material";
+import { Box, Stack, Typography, Button, TextField, IconButton, Collapse, Menu, MenuItem, Tooltip } from "@mui/material";
 import Iconify from "src/components/iconify";
 import VoiceInput from "./VoiceInput";
+import AskUserQuestionCard from "./AskUserQuestionCard";
+import { BUILDER_MODES, getBuilderMode, subscribeBuilderMode, setBuilderMode } from "../_mock/builderModeBus";
 
 /**
  * The console, as a chat.
@@ -156,24 +158,18 @@ export default function StudioConsole({ turns, running, chips, onSend, onChip, p
       <Box sx={{ px: 2.5, pb: 2.5, pt: 1 }}>
         <Box
           sx={{
-            p: 1.5, borderRadius: 2, border: "1.5px solid",
-            borderColor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.16 : 0.14),
+            p: 1.25, borderRadius: 2, border: "1px solid",
+            borderColor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.14 : 0.12),
             bgcolor: "background.paper",
-            boxShadow: (t) => (t.palette.mode === "dark"
-              ? "0 4px 20px rgba(0,0,0,0.25)"
-              : "0 2px 10px rgba(16,24,40,0.05)"),
-            transition: "border-color 0.15s ease, box-shadow 0.15s ease",
+            transition: "border-color 0.15s ease",
             "&:focus-within": {
-              borderColor: "#7857FC",
-              boxShadow: (t) => `0 0 0 3px ${alpha("#7857FC", t.palette.mode === "dark" ? 0.18 : 0.12)}`,
+              borderColor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.32 : 0.28),
             },
           }}
         >
           {/*
             Attached-file chips row — shown inside the composer above
             the text field so the user sees what's about to be sent.
-            Chips are removable; icon + name + size, mono for the
-            filename so it reads as a file object.
           */}
           {attachments.length > 0 && (
             <Stack direction="row" spacing={0.75} sx={{ flexWrap: "wrap", rowGap: 0.75, mb: 1 }}>
@@ -203,7 +199,9 @@ export default function StudioConsole({ turns, running, chips, onSend, onChip, p
             </Stack>
           )}
 
-          <Stack direction="row" alignItems="flex-end" spacing={1}>
+          {/* Row 1: the text field on its own so long placeholders / long
+              drafts get the full width. The Claude / ChatGPT / Lovable
+              composer shape. */}
           <TextField
             fullWidth
             multiline
@@ -216,48 +214,50 @@ export default function StudioConsole({ turns, running, chips, onSend, onChip, p
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
             }}
-            InputProps={{ disableUnderline: true, sx: { typography: "s2", lineHeight: 1.55, px: 1, py: 0.5 } }}
+            InputProps={{ disableUnderline: true, sx: { typography: "s2", lineHeight: 1.55, px: 0.75, py: 0.5 } }}
           />
-          {/*
-            Attach button — lets users pin a dataset / CSV / file into
-            the conversation before sending. Prototype hook: opens a
-            hidden file input; builder receives the file names in the
-            next send.
-          */}
-          <IconButton
-            component="label"
-            disabled={blocked}
-            title="Attach a dataset, CSV or file"
-            sx={{
-              width: 34, height: 34, borderRadius: 1.25,
-              color: "text.subtitle",
-              "&:hover": { bgcolor: "action.hover", color: "text.primary" },
-            }}
-          >
-            <Iconify icon="solar:paperclip-linear" width={17} />
-            <input
-              hidden multiple type="file"
-              accept=".csv,.tsv,.json,.jsonl,.xlsx,.txt,.md,.pdf"
-              onChange={(e) => setAttachments((prev) => [...prev, ...Array.from(e.target.files || [])])}
-            />
-          </IconButton>
-          <VoiceInput onTranscript={setDraft} disabled={blocked} />
-          <IconButton
-            disabled={(!draft.trim() && attachments.length === 0) || blocked}
-            onClick={send}
-            sx={{
-              width: 34, height: 34, borderRadius: 1.25,
-              bgcolor: (draft.trim() || attachments.length > 0) && !blocked ? "#7857FC" : undefined,
-              color: (draft.trim() || attachments.length > 0) && !blocked ? "#fff" : undefined,
-              "&:hover": { bgcolor: (draft.trim() || attachments.length > 0) && !blocked ? "#6B4EE6" : undefined },
-              "&.Mui-disabled": {
-                bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.06),
-                color: "text.disabled",
-              },
-            }}
-          >
-            <Iconify icon="solar:arrow-up-bold" width={17} />
-          </IconButton>
+
+          {/* Row 2: toolbar — utility icons on the left, mode picker in
+              the middle, send button on the right. */}
+          <Stack direction="row" alignItems="center" spacing={0.25} sx={{ mt: 0.5, pl: 0.25 }}>
+            <IconButton
+              component="label"
+              disabled={blocked}
+              title="Attach a dataset, CSV or file"
+              sx={{
+                width: 30, height: 30, borderRadius: 1,
+                color: "text.subtitle",
+                "&:hover": { bgcolor: "action.hover", color: "text.primary" },
+              }}
+            >
+              <Iconify icon="solar:paperclip-linear" width={15} />
+              <input
+                hidden multiple type="file"
+                accept=".csv,.tsv,.json,.jsonl,.xlsx,.txt,.md,.pdf"
+                onChange={(e) => setAttachments((prev) => [...prev, ...Array.from(e.target.files || [])])}
+              />
+            </IconButton>
+            <VoiceInput onTranscript={setDraft} disabled={blocked} />
+            <ModePicker disabled={blocked} />
+
+            <Box flex={1} />
+
+            <IconButton
+              disabled={(!draft.trim() && attachments.length === 0) || blocked}
+              onClick={send}
+              sx={{
+                width: 30, height: 30, borderRadius: 1,
+                bgcolor: (draft.trim() || attachments.length > 0) && !blocked ? "#7857FC" : undefined,
+                color: (draft.trim() || attachments.length > 0) && !blocked ? "#fff" : undefined,
+                "&:hover": { bgcolor: (draft.trim() || attachments.length > 0) && !blocked ? "#6B4EE6" : undefined },
+                "&.Mui-disabled": {
+                  bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.06),
+                  color: "text.disabled",
+                },
+              }}
+            >
+              <Iconify icon="solar:arrow-up-bold" width={15} />
+            </IconButton>
           </Stack>
         </Box>
       </Box>
@@ -271,6 +271,78 @@ StudioConsole.propTypes = {
   preComposer: PropTypes.node,
   frozen: PropTypes.bool, frozenReason: PropTypes.string,
 };
+
+/**
+ * Mode picker — Auto vs Guided.
+ *
+ * Compact icon+label chip in the composer row that opens a two-item
+ * menu. Shape matches Claude Code's own mode selector: current mode
+ * name + caret, click surfaces a list of modes each with a hint line.
+ * Selection stores in a module-level bus so the derivation stream on
+ * the other side of the tree can read it without prop-threading.
+ */
+function ModePicker({ disabled }) {
+  const [mode, setMode] = useState(() => getBuilderMode());
+  const [anchor, setAnchor] = useState(null);
+  useEffect(() => subscribeBuilderMode(setMode), []);
+  const current = BUILDER_MODES.find((m) => m.id === mode) || BUILDER_MODES[0];
+
+  return (
+    <>
+      <Tooltip arrow title="Builder mode — Auto or Guided">
+        <Button
+          size="small"
+          disabled={disabled}
+          onClick={(e) => setAnchor(e.currentTarget)}
+          startIcon={<Iconify icon={current.icon} width={12} />}
+          endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={10} />}
+          sx={{
+            height: 30, borderRadius: 1, px: 0.75, minWidth: 0,
+            typography: "s3", fontWeight: 600,
+            color: "text.subtitle",
+            "& .MuiButton-startIcon": { mr: 0.5 },
+            "& .MuiButton-endIcon": { ml: 0.25 },
+            "&:hover": { bgcolor: "action.hover", color: "text.primary" },
+          }}
+        >
+          {current.label}
+        </Button>
+      </Tooltip>
+      <Menu
+        anchorEl={anchor}
+        open={!!anchor}
+        onClose={() => setAnchor(null)}
+        anchorOrigin={{ vertical: "top", horizontal: "right" }}
+        transformOrigin={{ vertical: "bottom", horizontal: "right" }}
+        slotProps={{ paper: { sx: { minWidth: 280, mb: 0.5 } } }}
+      >
+        {BUILDER_MODES.map((m) => {
+          const active = m.id === mode;
+          return (
+            <MenuItem
+              key={m.id}
+              onClick={() => { setBuilderMode(m.id); setAnchor(null); }}
+              sx={{ alignItems: "flex-start", gap: 1.25, py: 1 }}
+            >
+              <Iconify
+                icon={active ? "solar:check-circle-bold" : m.icon}
+                width={16}
+                sx={{ color: active ? "primary.main" : "text.subtitle", mt: "2px", flexShrink: 0 }}
+              />
+              <Box minWidth={0}>
+                <Typography sx={{ typography: "s2", fontWeight: 600 }}>{m.label}</Typography>
+                <Typography sx={{ typography: "s3", color: "text.subtitle", whiteSpace: "normal" }}>
+                  {m.hint}
+                </Typography>
+              </Box>
+            </MenuItem>
+          );
+        })}
+      </Menu>
+    </>
+  );
+}
+ModePicker.propTypes = { disabled: PropTypes.bool };
 
 /* ── one turn ────────────────────────────────────────────────────────────── */
 
@@ -340,6 +412,16 @@ function Step({ step }) {
       >
         {step.text}
       </Typography>
+    );
+  }
+
+  if (step.kind === "ask") {
+    return (
+      <AskUserQuestionCard
+        question={step.question}
+        onSubmit={step.onSubmit}
+        onSkip={step.onSkip}
+      />
     );
   }
 
