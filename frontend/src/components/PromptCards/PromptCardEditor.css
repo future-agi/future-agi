@@ -29,6 +29,14 @@
   position: absolute;
 }
 
+.prompt-editor-card [data-image-data],
+.prompt-editor-card [data-audio-data],
+.prompt-editor-card [data-pdf-data],
+.prompt-editor-card .ql-editor > div[contenteditable="false"] {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 .prompt-editor-card .edit-variable-button {
   border: 1px solid var(--border-default);
   display: flex;
