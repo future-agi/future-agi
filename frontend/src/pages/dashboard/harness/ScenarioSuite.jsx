@@ -210,6 +210,8 @@ export default function ScenarioSuite({ scenarios, jobId, editable, onChanged })
     }
   };
 
+  const dropOne = (name) => send([{ op: "drop", scenario: name }], { rework: false });
+
   const deleteSelected = () =>
     send(
       [...selected].map((name) => ({ op: "drop", scenario: name })),
@@ -449,7 +451,7 @@ export default function ScenarioSuite({ scenarios, jobId, editable, onChanged })
                     return (
                       <React.Fragment key={scenario.name}>
                       <TableRow hover>
-                        <TableCell padding="checkbox">
+                        <TableCell padding="checkbox" sx={{ pl: 1.5, verticalAlign: "top" }}>
                           <Checkbox
                             size="small"
                             checked={selected.has(scenario.name)}
@@ -467,7 +469,7 @@ export default function ScenarioSuite({ scenarios, jobId, editable, onChanged })
                         >
                           {counter}
                         </TableCell>
-                        <TableCell sx={{ maxWidth: 260, verticalAlign: "top" }}>
+                        <TableCell sx={{ maxWidth: 280, verticalAlign: "top" }}>
                           <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>
                             {readable(scenario.name)}
                           </Typography>
@@ -477,7 +479,7 @@ export default function ScenarioSuite({ scenarios, jobId, editable, onChanged })
                             </Typography>
                           </Tooltip>
                         </TableCell>
-                        <TableCell sx={{ maxWidth: 170, verticalAlign: "top" }}>
+                        <TableCell sx={{ maxWidth: 200, verticalAlign: "top" }}>
                           <Typography noWrap sx={{ typography: "s2" }}>
                             {persona.name}
                           </Typography>
@@ -485,49 +487,80 @@ export default function ScenarioSuite({ scenarios, jobId, editable, onChanged })
                             {who}
                           </Typography>
                         </TableCell>
-                        <TableCell sx={{ maxWidth: 300, verticalAlign: "top" }}>
+                        <TableCell sx={{ maxWidth: 320, verticalAlign: "top" }}>
                           <Clamped text={scenario.instruction} />
                         </TableCell>
-                        <TableCell sx={{ maxWidth: 220, verticalAlign: "top" }}>
-                          <Stack direction="row" gap={0.5} flexWrap="wrap">
-                            {(scenario.sub_goals || []).map((goal) => (
-                              <Chip key={goal} size="small" variant="outlined" label={readable(goal)} />
-                            ))}
-                          </Stack>
+                        <TableCell sx={{ maxWidth: 260, verticalAlign: "top" }}>
+                          <SubGoals names={scenario.sub_goals} />
                         </TableCell>
-                        <TableCell sx={{ maxWidth: 280, verticalAlign: "top" }}>
+                        <TableCell sx={{ maxWidth: 320, verticalAlign: "top" }}>
                           <Clamped text={scenario.tests} />
                         </TableCell>
                         <TableCell
                           align="right"
                           sx={{
+                            whiteSpace: "nowrap",
+                            verticalAlign: "top",
                             position: "sticky",
                             right: 0,
-                            bgcolor: "background.default",
-                            verticalAlign: "top",
+                            zIndex: 1,
+                            width: 96,
+                            minWidth: 96,
+                            // A sticky cell needs its own opaque ground to hide the columns sliding
+                            // under it, which loses the row hover tint. Painting the same overlay
+                            // back on keeps the pinned column part of the row rather than a patch.
+                            bgcolor: "background.paper",
+                            boxShadow: (theme) =>
+                              `-8px 0 12px -6px ${alpha(
+                                theme.palette.common.black,
+                                theme.palette.mode === "dark" ? 0.45 : 0.08,
+                              )}`,
+                            transition: "background-image 120ms ease",
+                            ".MuiTableRow-hover:hover &": {
+                              backgroundImage: (theme) =>
+                                `linear-gradient(${theme.palette.action.hover}, ${theme.palette.action.hover})`,
+                            },
                           }}
                         >
-                          <Stack direction="row" spacing={0.25} justifyContent="flex-end">
-                            {editable && (
-                              <Tooltip title="Edit">
+                          <Tooltip arrow title={opened.has(scenario.name) ? "Hide detail" : "Show detail"}>
+                            <IconButton size="small" onClick={() => toggleOpen(scenario.name)}>
+                              <Iconify
+                                icon={
+                                  opened.has(scenario.name)
+                                    ? "solar:alt-arrow-up-linear"
+                                    : "solar:alt-arrow-down-linear"
+                                }
+                                width={15}
+                                sx={{ color: "text.subtitle" }}
+                              />
+                            </IconButton>
+                          </Tooltip>
+                          {editable && (
+                            <>
+                              <Tooltip arrow title="Edit scenario">
                                 <IconButton size="small" onClick={() => setEditing(scenario)}>
-                                  <Iconify icon="solar:pen-new-square-linear" width={16} />
+                                  <Iconify
+                                    icon="solar:pen-new-square-linear"
+                                    width={15}
+                                    sx={{ color: "text.subtitle" }}
+                                  />
                                 </IconButton>
                               </Tooltip>
-                            )}
-                            <Tooltip title={opened.has(scenario.name) ? "Hide detail" : "Show detail"}>
-                              <IconButton size="small" onClick={() => toggleOpen(scenario.name)}>
-                                <Iconify
-                                  icon={
-                                    opened.has(scenario.name)
-                                      ? "solar:alt-arrow-up-linear"
-                                      : "solar:alt-arrow-down-linear"
-                                  }
-                                  width={16}
-                                />
-                              </IconButton>
-                            </Tooltip>
-                          </Stack>
+                              <Tooltip arrow title="Remove from this suite">
+                                <IconButton
+                                  size="small"
+                                  disabled={busy}
+                                  onClick={() => dropOne(scenario.name)}
+                                >
+                                  <Iconify
+                                    icon="solar:trash-bin-trash-linear"
+                                    width={15}
+                                    sx={{ color: "text.subtitle" }}
+                                  />
+                                </IconButton>
+                              </Tooltip>
+                            </>
+                          )}
                         </TableCell>
                       </TableRow>
                       {opened.has(scenario.name) && (
@@ -569,6 +602,48 @@ export default function ScenarioSuite({ scenarios, jobId, editable, onChanged })
     </Stack>
   );
 }
+
+// Numbered rather than chipped, because sub-goals are an ordered set of things the agent has to
+// reach and a row of chips throws that order away. Three, then a count, so one scenario with nine
+// of them cannot make every other row tall.
+function SubGoals({ names }) {
+  const list = names || [];
+  if (!list.length) {
+    return <Typography sx={{ typography: "s3", color: "text.subtitle" }}>&mdash;</Typography>;
+  }
+  const all = list.map((name, index) => `${index + 1}. ${readable(name)}`).join("\n");
+  return (
+    <Tooltip title={all}>
+      <Stack spacing={0.375}>
+        {list.slice(0, 3).map((name, index) => (
+          <Stack key={name} direction="row" spacing={0.75} alignItems="flex-start">
+            <Typography
+              sx={{
+                typography: "s3",
+                color: "text.subtitle",
+                fontVariantNumeric: "tabular-nums",
+                flexShrink: 0,
+                mt: "1px",
+              }}
+            >
+              {index + 1}.
+            </Typography>
+            <Typography noWrap sx={{ typography: "s3", color: "text.secondary", minWidth: 0 }}>
+              {readable(name)}
+            </Typography>
+          </Stack>
+        ))}
+        {list.length > 3 && (
+          <Typography sx={{ typography: "s3", color: "text.subtitle", pl: 1.75 }}>
+            + {list.length - 3} more
+          </Typography>
+        )}
+      </Stack>
+    </Tooltip>
+  );
+}
+
+SubGoals.propTypes = { names: PropTypes.arrayOf(PropTypes.string) };
 
 // Everything the columns do not have room for. A scenario carries more than fits on one line, and
 // leaving the rest unreachable would mean the tab shows a summary of the suite rather than the
@@ -701,14 +776,17 @@ function Clamped({ text }) {
     <Tooltip title={value}>
       <Typography
         sx={{
-          typography: "s3",
+          typography: "s2",
+          color: "text.secondary",
+          lineHeight: 1.45,
           display: "-webkit-box",
-          WebkitLineClamp: 2,
+          WebkitLineClamp: 3,
           WebkitBoxOrient: "vertical",
           overflow: "hidden",
+          wordBreak: "break-word",
         }}
       >
-        {value}
+        {value || "\u2014"}
       </Typography>
     </Tooltip>
   );

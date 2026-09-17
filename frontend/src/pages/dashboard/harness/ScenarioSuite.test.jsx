@@ -58,6 +58,17 @@ describe("ScenarioSuite", () => {
     expect(screen.getByText("one")).toBeInTheDocument();
   });
 
+  it("removes a single scenario from its own row", async () => {
+    const user = userEvent.setup();
+    render(<ScenarioSuite scenarios={[scenario("one")]} jobId="job-1" editable />);
+    await user.click(screen.getByRole("button", { name: /remove from this suite/i }));
+    expect(amend).toHaveBeenCalledTimes(1);
+    const [, changes, options] = amend.mock.calls[0];
+    expect(changes).toEqual([{ op: "drop", scenario: "one" }]);
+    // Nothing is left to prove once a scenario is gone, so this never costs a rework.
+    expect(options).toEqual({ rework: false });
+  });
+
   it("searches the situation, not just the name", async () => {
     const user = userEvent.setup();
     render(
