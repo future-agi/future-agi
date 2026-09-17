@@ -18,10 +18,13 @@ CH25 close-out (2026-05-28): cut over from the legacy ``span_metrics_hourly``
 the legacy CDC-based aggregate.
 """
 
+import re
 from datetime import datetime, timedelta
 from typing import Any
 
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
+
+_SAFE_CLUSTER_NAME_RE = re.compile(r"\A[A-Za-z0-9_-]+\Z")
 
 
 class TimeSeriesQueryBuilder(BaseQueryBuilder):
@@ -69,6 +72,11 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         start_date: datetime | None = None,
         end_date: datetime | None = None,
         annotation_label_ids: list[str] | tuple[str, ...] | None = None,
+        resolve_span_versions: bool = True,
+        raw_replica_shard_cluster: str = "",
+        raw_replica_shard_count: int = 1,
+        raw_trace_candidate_predicate: str = "",
+        raw_trace_candidate_params: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(project_id, **kwargs)
@@ -84,6 +92,20 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         self.annotation_label_ids = (
             None if annotation_label_ids is None else tuple(annotation_label_ids)
         )
+        self.resolve_span_versions = bool(resolve_span_versions)
+        self.raw_replica_shard_cluster = str(raw_replica_shard_cluster or "").strip()
+        self.raw_replica_shard_count = int(raw_replica_shard_count)
+        self.raw_trace_candidate_predicate = str(
+            raw_trace_candidate_predicate or ""
+        ).strip()
+        self.raw_trace_candidate_params = dict(raw_trace_candidate_params or {})
+        if (
+            self.raw_replica_shard_cluster
+            and _SAFE_CLUSTER_NAME_RE.fullmatch(self.raw_replica_shard_cluster) is None
+        ):
+            raise ValueError("invalid graph replica-shard cluster")
+        if not 1 <= self.raw_replica_shard_count <= 16:
+            raise ValueError("invalid graph replica-shard count")
 
     # ------------------------------------------------------------------
     # Public API
@@ -370,6 +392,41 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         """
         return query, self.params
 
+    def _exact_span_candidate_plan(self) -> Any | None:
+        """One necessary typed-Map leaf; never replace graph membership truth."""
+        if not (
+            self.exact_snapshot and self.observe_type == "span"
+            and self.resolve_span_versions
+        ):
+            return None
+        from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
+            partition_span_filter_plans,
+        )
+
+        try:
+            attributes = []
+            for item in self.filters:
+                config = item.get("filter_config") or item.get("filterConfig") or {}
+                if str(config.get("col_type") or config.get("colType") or "").upper() == "SPAN_ATTRIBUTE":
+                    attributes.append(item)
+            plans, _ = partition_span_filter_plans(attributes)
+        except (TypeError, ValueError):
+            return None  # A graph-only shape retains its existing exact route.
+        candidates = [
+            plan for plan in plans
+            if plan.raw_graph_value_witness_predicate
+            and plan.scope == "span" and not plan.exclude_group_matches
+            and plan.aggregates and all(
+                any(column in aggregate for column in ("span_attr_num", "span_attr_str", "span_attr_bool"))
+                for aggregate in plan.aggregates
+            )
+        ]
+        # Cost order only: numeric value proofs before wider string maps.
+        return min(candidates, key=lambda plan: (
+            "span_attr_num[" not in plan.raw_graph_value_witness_predicate,
+            plan.raw_witness_rank if plan.raw_witness_rank is not None else 100,
+        ), default=None)
+
     def _exact_latest_scalar_source(
         self,
         *,
@@ -378,6 +435,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         scan_start_param: str,
         scan_end_param: str,
         candidate_trace_ids_param: str | None = None,
+        candidate_span_predicate: str = "",
     ) -> str:
         """Collapse physical versions to one narrow current-row tuple.
 
@@ -431,6 +489,20 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             if candidate_trace_ids_param
             else ""
         )
+        candidate_span_fragment = ""
+        if candidate_span_predicate:
+            # Only the immutable full key crosses this boundary. Replay every
+            # version, including clears/tombstones, before exact graph truth.
+            identity = "project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id"
+            candidate_span_fragment = f"""
+                  AND ({identity}) IN (
+                      SELECT {identity}
+                      FROM {self.RAW_TABLE}
+                      PREWHERE {self.project_filter_sql()}
+                        AND start_time >= %({scan_start_param})s
+                        AND start_time < %({scan_end_param})s
+                      WHERE ({candidate_span_predicate})
+                  )"""
         return f"""(
             SELECT
                 trace_id,
@@ -447,7 +519,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                 FROM {self.RAW_TABLE}
                 PREWHERE {self.project_filter_sql()}
                   AND start_time >= %({scan_start_param})s
-                  AND start_time < %({scan_end_param})s{candidate_trace_fragment}
+                  AND start_time < %({scan_end_param})s{candidate_trace_fragment}{candidate_span_fragment}
                 GROUP BY
                     project_id,
                     observation_type,
@@ -458,6 +530,116 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             ) AS graph_physical_versions
             WHERE tupleElement(graph_latest_row, {tombstone_index}) = 0
         ) AS graph_latest_spans"""
+
+    def _raw_scalar_source(
+        self,
+        *,
+        row_predicates: tuple[str, ...],
+        contribution_predicates: tuple[str, ...],
+        scan_start_param: str,
+        scan_end_param: str,
+    ) -> str:
+        """Project append-only physical span rows to the graph scalars.
+
+        An optional compiler-proven positive witness may first restrict the
+        outer read to candidate trace IDs. The outer read still evaluates every
+        graph predicate and aggregates every span of each candidate trace, so
+        the witness affects pruning only, never result semantics.
+        """
+
+        scalar_columns = [
+            "trace_id",
+            "start_time",
+            "toInt64(latency_ms) AS latency_ms",
+            "toInt64(total_tokens) AS total_tokens",
+            "cost",
+            "toInt64(prompt_tokens) AS prompt_tokens",
+            "toInt64(completion_tokens) AS completion_tokens",
+            "status",
+        ]
+        scalar_columns.extend(
+            f"toUInt8(ifNull(({predicate}), 0)) AS graph_row_match_{index}"
+            for index, predicate in enumerate(row_predicates)
+        )
+        scalar_columns.extend(
+            f"toUInt8(ifNull(({predicate}), 0)) AS graph_contribution_match_{index}"
+            for index, predicate in enumerate(contribution_predicates)
+        )
+        projected_columns = ",\n                ".join(scalar_columns)
+
+        source = self.RAW_TABLE
+        candidate_source = f"{self.RAW_TABLE} AS graph_seed_spans"
+        replica_predicate = ""
+        if self.raw_replica_shard_cluster:
+            source = (
+                f"cluster('{self.raw_replica_shard_cluster}', "
+                f"currentDatabase(), {self.RAW_TABLE}) AS spans"
+            )
+            candidate_source = (
+                f"cluster('{self.raw_replica_shard_cluster}', "
+                f"currentDatabase(), {self.RAW_TABLE}) AS graph_seed_spans"
+            )
+            self.params["graph_replica_shard_count"] = self.raw_replica_shard_count
+            replica_predicate = (
+                "\n              AND modulo(toRelativeDayNum(start_time), "
+                "%(graph_replica_shard_count)s) = shardNum() - 1"
+            )
+
+        candidate_trace_fragment = ""
+        if self.raw_trace_candidate_predicate:
+            if self.observe_type != "trace":
+                raise ValueError("raw trace candidates require trace graph mode")
+            duplicate_params = set(self.params).intersection(
+                self.raw_trace_candidate_params
+            )
+            if duplicate_params:
+                raise ValueError(
+                    f"duplicate raw trace candidate params: {duplicate_params}"
+                )
+            self.params.update(self.raw_trace_candidate_params)
+            candidate_trace_fragment = f"""
+              AND trace_id GLOBAL IN (
+                  SELECT trace_id
+                  FROM {candidate_source}
+                  PREWHERE project_id = toUUID(%(project_id)s)
+                    AND start_time >= %({scan_start_param})s
+                    AND start_time < %({scan_end_param})s{replica_predicate}
+                  WHERE is_deleted = 0
+                    AND ({self.raw_trace_candidate_predicate})
+                  GROUP BY trace_id
+              )"""
+
+        return f"""(
+            SELECT
+                {projected_columns}
+            FROM {source}
+            PREWHERE {self.project_filter_sql()}
+              AND start_time >= %({scan_start_param})s
+              AND start_time < %({scan_end_param})s{replica_predicate}{candidate_trace_fragment}
+            WHERE is_deleted = 0
+        ) AS graph_raw_spans"""
+
+    def _graph_scalar_source(
+        self,
+        *,
+        row_predicates: tuple[str, ...],
+        contribution_predicates: tuple[str, ...],
+        scan_start_param: str,
+        scan_end_param: str,
+    ) -> str:
+        if self.resolve_span_versions:
+            return self._exact_latest_scalar_source(
+                row_predicates=row_predicates,
+                contribution_predicates=contribution_predicates,
+                scan_start_param=scan_start_param,
+                scan_end_param=scan_end_param,
+            )
+        return self._raw_scalar_source(
+            row_predicates=row_predicates,
+            contribution_predicates=contribution_predicates,
+            scan_start_param=scan_start_param,
+            scan_end_param=scan_end_param,
+        )
 
     def build_exact_trace_contribution_batch(
         self,
@@ -661,11 +843,27 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             filters.append(row_filter)
         exact_row_filter = " AND ".join(f"({item})" for item in filters)
 
+        candidate_predicate = ""
+        candidate_plan = self._exact_span_candidate_plan()
+        if candidate_plan is not None:
+            from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
+                _namespace_params,
+            )
+            from tracer.services.clickhouse.v2.query_builders.filters import (
+                rewrite_v1_sql_to_v2,
+            )
+
+            candidate_predicate, candidate_params = _namespace_params(
+                rewrite_v1_sql_to_v2(candidate_plan.raw_graph_value_witness_predicate),
+                candidate_plan.params, filter_index="span_seed",
+            )
+            self.params.update(candidate_params)
         latest_source = self._exact_latest_scalar_source(
             row_predicates=exact_filter_plan.predicates,
             contribution_predicates=exact_filter_plan.contribution_predicates,
             scan_start_param="graph_partition_start",
             scan_end_param="graph_partition_end",
+            candidate_span_predicate=candidate_predicate,
         )
         bucket_fn = self.time_bucket_expr(self.interval)
         query = f"""
@@ -696,14 +894,14 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         match_condition_groups: tuple[tuple[tuple[int, bool], ...], ...],
         contribution_predicates: tuple[str, ...],
     ) -> tuple[str, dict[str, Any]]:
-        """Aggregate the complete latest-live raw row set.
+        """Aggregate the configured scalar source over the bounded window.
 
-        One ClickHouse statement contains exactly one physical ``spans``
-        reference. ClickHouse 25.3 expands a CTE independently at each use, so
-        a named latest-state CTE plus membership subqueries is *not* a shared
-        scan and can observe different parts snapshots. The source collapses
-        physical versions with an in-order ``argMax`` scalar tuple; it does not
-        use ``FINAL``, ceilings, or a second source read.
+        The ordinary statement contains exactly one physical ``spans``
+        reference. A caller may provide one separately cost-gated exhaustive
+        raw witness, adding a candidate-ID scan before the unchanged outer
+        aggregation. ClickHouse 25.3 expands a CTE independently at each use,
+        so this is emitted as an explicit pruning subquery rather than a named
+        shared-scan claim. Neither route uses ``FINAL`` or sampling.
 
         For a filtered trace graph the raw scan immediately collapses rows to
         ``(trace_id, output bucket)``. Attribute/Map/JSON columns are consumed
@@ -781,7 +979,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                 days=1
             )
             self.params["graph_witness_end_date"] = self.end_date + timedelta(days=1)
-            latest_source = self._exact_latest_scalar_source(
+            latest_source = self._graph_scalar_source(
                 row_predicates=row_predicates,
                 contribution_predicates=contribution_predicates,
                 scan_start_param="graph_witness_start_date",
@@ -879,7 +1077,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         if row_filter:
             filters.append(row_filter)
         exact_row_filter = " AND ".join(f"({item})" for item in filters)
-        latest_source = self._exact_latest_scalar_source(
+        latest_source = self._graph_scalar_source(
             row_predicates=row_predicates,
             contribution_predicates=contribution_predicates,
             scan_start_param="start_date",

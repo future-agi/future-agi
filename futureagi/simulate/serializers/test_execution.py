@@ -506,6 +506,26 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         if shortcut.get("assistant"):
             recordings["assistant"] = shortcut["assistant"]
 
+        # Hosted harness artifacts are re-hosted by the platform rather than
+        # nested in provider_call_data.  Surface all available tracks through
+        # the same recording shape consumed by the existing drawer.
+        call_metadata = (
+            obj.call_metadata
+            if hasattr(obj, "call_metadata") and isinstance(obj.call_metadata, dict)
+            else {}
+        )
+        hosted = call_metadata.get("hosted_harness_artifacts") or {}
+        hosted_track_kinds = {
+            "combined": "recording_combined",
+            "stereo": "recording_stereo",
+            "customer": "recording_customer",
+            "assistant": "recording_assistant",
+        }
+        for track, artifact_kind in hosted_track_kinds.items():
+            artifact = hosted.get(artifact_kind)
+            if track not in recordings and isinstance(artifact, dict) and artifact.get("url"):
+                recordings[track] = artifact["url"]
+
         # Fall back to the VoiceServiceManager resolution when no URLs are present.
         if not recordings:
             if VoiceServiceManager is None:
@@ -610,6 +630,13 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
 
     def _is_chat_simulation(self, obj):
         """Check if this call execution is a chat/text simulation (agent-based or prompt-based)."""
+        # The executed call is authoritative. Hosted harness runs may reuse an
+        # AgentDefinition whose legacy/default type is text while projecting a
+        # real voice call. Falling through to that stale definition hides voice
+        # duration and recordings from the call-details response.
+        simulation_call_type = getattr(obj, "simulation_call_type", None)
+        if simulation_call_type is not None:
+            return simulation_call_type == CallExecution.SimulationCallType.TEXT
         if not hasattr(obj, "test_execution") or not obj.test_execution:
             return False
         run_test = obj.test_execution.run_test

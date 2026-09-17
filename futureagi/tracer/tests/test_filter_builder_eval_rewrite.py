@@ -462,29 +462,32 @@ class TestEvalChoiceCompilation:
         assert "latest_eval._peerdb_is_deleted = 0" in where
         assert "(latest_eval.deleted = 0 OR latest_eval.deleted IS NULL)" in where
 
-    def test_choice_contains_uses_ilike(self, monkeypatch):
+    def test_choice_contains_uses_literal_case_insensitive_search(self, monkeypatch):
         eval_id, _ = _patch_eval(monkeypatch, "CHOICE")
         where, params = _translate(
             ClickHouseFilterBuilder, _eval_filter(eval_id, "contains", "part")
         )
-        assert "ILIKE" in where
-        assert "%part%" in params.values()
+        assert "positionUTF8(lowerUTF8(toString(output_str))" in where
+        assert "ILIKE" not in where
+        assert "part" in params.values()
 
     def test_choice_starts_with(self, monkeypatch):
         eval_id, _ = _patch_eval(monkeypatch, "CHOICE")
         where, params = _translate(
             ClickHouseFilterBuilder, _eval_filter(eval_id, "starts_with", "pre")
         )
-        assert "ILIKE" in where
-        assert "pre%" in params.values()
+        assert "startsWith(lowerUTF8(toString(output_str))" in where
+        assert "ILIKE" not in where
+        assert "pre" in params.values()
 
     def test_choice_ends_with(self, monkeypatch):
         eval_id, _ = _patch_eval(monkeypatch, "CHOICE")
         where, params = _translate(
             ClickHouseFilterBuilder, _eval_filter(eval_id, "ends_with", "suf")
         )
-        assert "ILIKE" in where
-        assert "%suf" in params.values()
+        assert "endsWith(lowerUTF8(toString(output_str))" in where
+        assert "ILIKE" not in where
+        assert "suf" in params.values()
 
     def test_choice_not_in_uses_not_wrapped_group(self, monkeypatch):
         eval_id, _ = _patch_eval(monkeypatch, "CHOICE")

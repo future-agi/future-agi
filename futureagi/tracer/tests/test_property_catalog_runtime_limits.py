@@ -7,6 +7,22 @@ from tracer.services.clickhouse.v2.property_catalog.runtime_limits import (
 )
 
 
+def test_interactive_reader_defaults_leave_headroom_for_complete_catalog_pages():
+    limits = load_property_catalog_runtime_limits(SimpleNamespace())
+
+    assert limits.query_wall_ms == 10_000
+    assert limits.read_transport_timeout_seconds == 10.0
+
+
+def test_legacy_project_count_setting_no_longer_limits_catalog_scope():
+    limits = load_property_catalog_runtime_limits(
+        SimpleNamespace(PROPERTY_CATALOG_MAX_PROJECTS=64)
+    )
+    assert not hasattr(limits, "max_projects")
+    assert limits.max_page_size == 50
+    assert limits.query_wall_ms == 10_000
+
+
 def test_runtime_limits_accept_bounded_operator_overrides():
     limits = load_property_catalog_runtime_limits(
         SimpleNamespace(
@@ -53,7 +69,6 @@ def test_runtime_limits_accept_bounded_operator_overrides():
 @pytest.mark.parametrize(
     ("name", "value"),
     (
-        ("PROPERTY_CATALOG_MAX_PROJECTS", 0),
         ("PROPERTY_CATALOG_MAX_PAGE_SIZE", 201),
         ("PROPERTY_CATALOG_QUERY_WALL_MS", 30_001),
         ("PROPERTY_CATALOG_READ_TRANSPORT_TIMEOUT_SECONDS", 31.0),

@@ -29,8 +29,13 @@ import { useSearchParams } from "react-router-dom";
 import FixedTab from "./FixedTab";
 import CustomViewTab from "./CustomViewTab";
 import SaveViewPopover from "src/components/traceDetail/SaveViewDialog";
-import { useCreateSavedView } from "src/api/project/saved-views";
+import {
+  useCreateSavedView,
+  getOwnViewNames,
+} from "src/api/project/saved-views";
 import { enqueueSnackbar } from "notistack";
+import { getRequestErrorMessage } from "src/utils/errorUtils";
+import { useAuthContext } from "src/auth/hooks";
 
 // Fixed default tabs — matches backend DEFAULT_TABS
 const FIXED_TABS = [
@@ -99,10 +104,13 @@ const ObserveTabBar = ({
     return FIXED_TABS;
   }, [projectSource]);
   const { data: savedViewsData } = useGetSavedViews(projectId);
+  const { user } = useAuthContext();
   // Only show trace-list views (traces/spans/voice) — exclude "imagine" tabs (those belong to trace detail)
   const customViews = (savedViewsData?.custom_views ?? []).filter(
     (v) => v.tab_type !== "imagine",
   );
+  // Guard against the unfiltered list — project uniqueness includes imagine views.
+  const ownViewNames = getOwnViewNames(savedViewsData?.custom_views, user?.id);
 
   // Mutations
   const { mutate: updateView } = useUpdateSavedView(projectId);
@@ -165,8 +173,10 @@ const ObserveTabBar = ({
             setSaveViewAnchor(null);
             setIsSavingView(false);
           },
-          onError: () => {
-            enqueueSnackbar("Failed to create view", { variant: "error" });
+          onError: (err) => {
+            enqueueSnackbar(getRequestErrorMessage(err, "Failed to create view"), {
+              variant: "error",
+            });
             setIsSavingView(false);
           },
         },
@@ -267,7 +277,16 @@ const ObserveTabBar = ({
 
   const handleRenameSubmit = useCallback(
     (viewId, newName) => {
-      updateView({ id: viewId, name: newName });
+      updateView(
+        { id: viewId, name: newName },
+        {
+          onError: (err) =>
+            enqueueSnackbar(getRequestErrorMessage(err, "Failed to rename view"), {
+              variant: "error",
+            }),
+        },
+      );
+      // Always exit edit mode — a lingering rename state would re-submit on blur.
       stopRenaming();
     },
     [updateView, stopRenaming],
@@ -433,6 +452,7 @@ const ObserveTabBar = ({
         onClose={() => setSaveViewAnchor(null)}
         onSave={handleSaveViewConfirm}
         isLoading={isSavingView}
+        existingNames={ownViewNames}
       />
     </Box>
   );

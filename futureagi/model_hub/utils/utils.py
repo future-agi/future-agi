@@ -11,7 +11,6 @@ import requests
 import structlog
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
-from datasets import load_dataset
 from django.core.cache import cache
 from huggingface_hub.errors import HfHubHTTPError
 from litellm.llms.custom_llm import CustomLLM, ModelResponse
@@ -687,6 +686,9 @@ def load_hf_dataset_with_retries(
                 response.raise_for_status()
                 return response.json()
             else:
+                from tfc.utils.lazy_extras import load_extra
+
+                load_dataset = load_extra("datasets", "ml").load_dataset
                 hf_dataset = load_dataset(
                     dataset_name,
                     name=config_name,

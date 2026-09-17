@@ -243,6 +243,61 @@ def _runtime() -> CheckedInPropertyCatalogDevRuntime:
     return object.__new__(CheckedInPropertyCatalogDevRuntime)
 
 
+@pytest.mark.parametrize(
+    "variant", ["valid", "missing", "projects_changed", "tenant_changed", "poisoned"]
+)
+def test_control_target_requires_current_tenancy_and_durable_completed_evidence(
+    monkeypatch: pytest.MonkeyPatch, variant: str
+) -> None:
+    runtime = _runtime()
+    runtime.bound_request = SimpleNamespace(organization_id=ORG, workspace_id=WORKSPACE)
+    runtime.config = SimpleNamespace(
+        catalog_epoch=1, projection_version=1, project_ids=(PROJECT,)
+    )
+    plan = SimpleNamespace(
+        organization_id=ORG,
+        workspace_id=WORKSPACE,
+        catalog_epoch=1,
+        projection_version=1,
+        source_scope=SimpleNamespace(project_ids=(PROJECT,)),
+    )
+    active = SimpleNamespace(
+        build_plan=plan,
+        catalog_revision=7,
+        build_token=BUILD,
+        activation_sha256="a" * 64,
+    )
+    checks = []
+    monkeypatch.setattr(
+        CheckedInPropertyCatalogDevRuntime,
+        "_refresh_project_tenant_authorization",
+        lambda self: checks.append("authorization"),
+    )
+
+    def load(scope):
+        checks.append("durable_proof")
+        assert scope.organization_id == ORG and scope.project_ids == (PROJECT,)
+        if variant == "poisoned":
+            raise PropertyCatalogDevRuntimeError("checkpoint is poisoned")
+        return None if variant == "missing" else active
+
+    runtime.lifecycle_state = SimpleNamespace(load_latest_active=load)
+    if variant == "projects_changed":
+        plan.source_scope.project_ids = (PROJECT, OTHER_WORKSPACE)
+    elif variant == "tenant_changed":
+        plan.workspace_id = OTHER_WORKSPACE
+    if variant in {"poisoned", "tenant_changed"}:
+        with pytest.raises(PropertyCatalogDevRuntimeError):
+            runtime.verified_active_control_target()
+    else:
+        target = runtime.verified_active_control_target()
+        if variant == "valid":
+            assert target.catalog_revision == 7 and target.activation_sha256 == "a" * 64
+            assert checks == ["authorization", "durable_proof", "authorization"]
+        else:
+            assert target is None
+
+
 def test_span_definition_request_drops_prior_revision_watermark_but_keeps_resume() -> (
     None
 ):

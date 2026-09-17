@@ -197,9 +197,10 @@ def test_mutable_map_and_json_filter_statements_keep_final_skip_indexes_off():
         assert storage_column in sql
         assert "use_skip_indexes_if_final = 0" in sql
         assert "use_skip_indexes_if_final = 1" not in sql
-        # The bounded candidate classifier performs explicit latest-state
-        # replay; it does not need table-level FINAL on the spans scan.
-        assert "FROM spans FINAL" not in sql
+        # CH25 resolves one coherent physical winner before the compiler's
+        # aggregates. Immutable coordinates, never mutable Maps, enter FINAL.
+        assert "FROM spans FINAL" in sql
+        assert "optimize_move_to_prewhere_if_final = 0" in sql
 
 
 # ---------------------------------------------------------------------------

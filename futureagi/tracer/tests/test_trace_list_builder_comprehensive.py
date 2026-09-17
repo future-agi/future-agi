@@ -25,6 +25,7 @@ from tracer.services.clickhouse.query_builders.trace_list import TraceListQueryB
 from tracer.services.clickhouse.v2.query_builders.trace_list import (
     TraceListQueryBuilderV2,
 )
+from tracer.tests.test_trace_root_physical_replay import root_row
 
 
 @pytest.fixture
@@ -138,24 +139,39 @@ class TestBuildContentQuery:
 
 @pytest.mark.unit
 class TestBuildContentQueryV2TraceTags:
+    @staticmethod
+    def _roots(project_ids, trace_ids):
+        rows = [
+            root_row(project_id=project, trace_id=trace, root_span_id=f"root-{trace}")
+            for project in project_ids
+            for trace in trace_ids
+        ]
+        return TraceListQueryBuilderV2(
+            project_ids=project_ids
+        ).content_root_identities_for_rows(rows)
+
     def test_reads_bounded_latest_trace_tags_without_dictionary(
         self, project_id, trace_ids
     ):
         query, params = TraceListQueryBuilderV2(
             project_id=project_id
-        ).build_content_query(trace_ids)
+        ).build_content_query(
+            trace_ids, root_identities=self._roots([project_id], trace_ids)
+        )
 
         assert "dictGet" not in query
         assert "trace_dict" not in query
         assert "FROM traces" in query
         assert "AND id IN %(content_trace_ids)s" in query
         assert params["content_trace_ids"] == tuple(trace_ids)
+        assert len(params["content_root_identities"]) == len(trace_ids)
+        assert all(len(identity) == 8 for identity in params["content_root_identities"])
 
     def test_collapses_latest_trace_version_and_discards_latest_tombstone(
         self, project_id, trace_ids
     ):
         query, _ = TraceListQueryBuilderV2(project_id=project_id).build_content_query(
-            trace_ids
+            trace_ids, root_identities=self._roots([project_id], trace_ids)
         )
 
         assert "argMax(tags, _version) AS latest_trace_tags" in query
@@ -166,7 +182,7 @@ class TestBuildContentQueryV2TraceTags:
 
     def test_joins_tags_on_project_and_trace_identity(self, project_id, trace_ids):
         query, _ = TraceListQueryBuilderV2(project_id=project_id).build_content_query(
-            trace_ids
+            trace_ids, root_identities=self._roots([project_id], trace_ids)
         )
 
         assert "PREWHERE project_id = %(project_id)s" in query
@@ -177,10 +193,15 @@ class TestBuildContentQueryV2TraceTags:
         project_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
         query, params = TraceListQueryBuilderV2(
             project_ids=project_ids
-        ).build_content_query(trace_ids)
+        ).build_content_query(
+            trace_ids, root_identities=self._roots(project_ids, trace_ids)
+        )
 
         assert query.count("project_id IN %(project_ids)s") == 2
         assert params["project_ids"] == tuple(project_ids)
+        assert {(root[0], root[1]) for root in params["content_root_identities"]} == {
+            (project, trace) for project in project_ids for trace in trace_ids
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -672,6 +693,21 @@ class TestEvalQueryDeletionPredicate:
         assert "start_date" not in params
         assert params["trace_ids"] == ("t1",)
         assert params["eval_config_ids"] == ("ec1",)
+
+    def test_v2_packed_eval_replay_keeps_independent_source_sql(
+        self, project_id, settings
+    ):
+        settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger"
+        legacy = TraceListQueryBuilder(project_id=project_id, eval_config_ids=["ec1"])
+        v2 = TraceListQueryBuilderV2(project_id=project_id, eval_config_ids=["ec1"])
+        # Packing embeds the complete eval query. Span-schema rewriting here
+        # would alter the eval deletion columns and append settings into the
+        # outer GROUP BY after the inner query already received a SETTINGS.
+        query, params = v2.build_eval_replay_query(["trace-1"])
+        assert (query, params) == legacy.build_eval_replay_query(["trace-1"])
+        assert "SETTINGS" not in query
+        assert "_peerdb_is_deleted AS latest_state_0" in query
+        assert query.rstrip().endswith("GROUP BY trace_id")
 
     def test_page_500_by_11_eval_replay_is_packed_below_result_row_cap(
         self, project_id

@@ -13,6 +13,8 @@ from collections.abc import Iterator
 from types import SimpleNamespace
 from typing import Any
 
+from tracer.services.clickhouse.application_read_policy import application_read_context
+
 _ASSIGNMENT_AFTER_SETTINGS = re.compile(r"\s+[A-Za-z_][A-Za-z0-9_]*\s*=")
 _BLOCKED_HTTP_METHODS = frozenset(
     {
@@ -240,6 +242,8 @@ class ServerEnforcedReadOnlyNativeClient:
     clickhouse-connect adds HTTP query parameters even when callers pass
     ``settings=None``.  A server profile locked at ``readonly=1`` can reject
     those parameters, so this lane deliberately avoids the HTTP transport.
+    Direct use stays bounded; the v2 readers explicitly opt into application mode.
+    Neither mode can remove limits imposed by a locked server profile.
     """
 
     def __init__(
@@ -250,11 +254,13 @@ class ServerEnforcedReadOnlyNativeClient:
         username: str,
         password: str,
         database: str,
+        application_read: bool = False,
     ):
         # Lazy import avoids a module cycle: ClickHouseClient imports this
         # module for its final SQL guard.
         from tracer.services.clickhouse.client import ClickHouseClient
 
+        self._application_read = application_read
         self._client = ClickHouseClient(
             host=host,
             port=port,
@@ -275,11 +281,12 @@ class ServerEnforcedReadOnlyNativeClient:
         del settings
         query = without_query_settings(query)
         ensure_read_statement(query)
-        rows, _, _ = self._client.execute_read(
-            query,
-            parameters or {},
-            settings=None,
-        )
+        with application_read_context(self._application_read):
+            rows, _, _ = self._client.execute_read(
+                query,
+                parameters or {},
+                settings=None,
+            )
         return SimpleNamespace(result_rows=rows)
 
     def query_row_block_stream(
@@ -291,7 +298,9 @@ class ServerEnforcedReadOnlyNativeClient:
         **_kwargs: Any,
     ) -> _NativeBlockStream:
         del settings
-        return _NativeBlockStream(self._client, query, parameters or {})
+        with application_read_context(self._application_read):
+            # The managed stream captures mode here, not during later iteration.
+            return _NativeBlockStream(self._client, query, parameters or {})
 
     def close(self) -> None:
         self._client.close()

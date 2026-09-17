@@ -56,7 +56,11 @@ def test_exact_observe_lane_owns_fresh_background_client(monkeypatch):
         with exact_aggregation._exact_observe_analytics() as analytics:
             services.append(analytics)
             analytics.execute_ch_query("SELECT 1", {}, timeout_ms=12_345)
-            analytics.execute_ch_query("SELECT 2", {}, timeout_ms=120_000)
+            analytics.execute_ch_query(
+                "SELECT 2",
+                {},
+                timeout_ms=settings.GRAPH_BACKGROUND_WALL_MS,
+            )
             assert not analytics.ch_client.closed
 
     first, second = _DedicatedClient.instances
@@ -72,14 +76,9 @@ def test_exact_observe_lane_owns_fresh_background_client(monkeypatch):
         "server_enforced_readonly": config["server_enforced_readonly"],
         "read_timeout_ceiling_ms": settings.GRAPH_BACKGROUND_WALL_MS,
     }
-    assert [call[2] for call in first.calls] == [
-        12_345,
-        settings.GRAPH_BACKGROUND_WALL_MS,
-    ]
-    assert [call[2] for call in second.calls] == [
-        12_345,
-        settings.GRAPH_BACKGROUND_WALL_MS,
-    ]
+    assert [call[2] for call in first.calls] == [None, None]
+    assert [call[2] for call in second.calls] == [None, None]
+    assert all(call[3]["max_execution_time"] == 0 for call in first.calls)
     assert first.closed is True
     assert second.closed is True
 

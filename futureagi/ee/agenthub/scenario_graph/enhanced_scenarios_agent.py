@@ -136,7 +136,7 @@ class EnhancedScenariosAgent:
         self.configuration_snapshot: Optional[Dict] = None
         # Store LLM config for creating thread-local instances
         self._llm_config = {
-            "model_name": "vertex_ai/gemini-2.5-pro",
+            "model_name": "vertex_ai/gemini-3.7-flash",
             "temperature": 0.3,
             "max_tokens": 400,
             "provider": "vertex_ai",

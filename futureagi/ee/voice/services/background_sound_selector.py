@@ -122,7 +122,7 @@ def select_background_sound(situation: str) -> Dict[str, Any]:
     logger.info(f"[BG] Built background sound prompt: {prompt}")
 
     llm = LLM(
-        model_name="gemini-2.5-flash",
+        model_name="gemini-3.5-flash-lite",
         temperature=0.2,
         provider="vertex_ai",
         api_key=None,

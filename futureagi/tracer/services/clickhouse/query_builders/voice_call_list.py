@@ -151,6 +151,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         *,
         candidate_full_state: bool = False,
         public_candidate_witness: bool = False,
+        trace_builder_cls: type[TraceListQueryBuilder] = TraceListQueryBuilder,
     ) -> TraceListQueryBuilder:
         """Build the trace selector used by every voice-list page.
 
@@ -186,7 +187,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
                     },
                 }
             )
-        delegate = TraceListQueryBuilder(
+        delegate = trace_builder_cls(
             project_id=self.project_id,
             project_ids=self.project_ids,
             page_number=self.page_number,
@@ -279,7 +280,9 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
 
         if self.supports_filter_candidate_seed_page():
             request_start, request_end = self._bounded_request_window
-            return request_end - request_start
+            width = request_end - request_start
+            # Sub-five-minute requests use the selector's clipped default.
+            return width if width >= timedelta(minutes=5) else None
         if not self.prefer_filter_candidate_witness_probe_first():
             return None
         return (

@@ -13,11 +13,9 @@ import (
 )
 
 const (
-	revisionFenceFormat     = "futureagi.property-catalog-revision-fence"
-	revisionFenceVersion    = uint16(2)
-	maxRevisionFenceBytes   = 1 << 20
-	maxRevisionFenceEntries = 256
-	maxRevisionProjects     = 256
+	revisionFenceFormat   = "futureagi.property-catalog-revision-fence"
+	revisionFenceVersion  = uint16(2)
+	maxRevisionFenceBytes = 64 << 20
 	// Keep this hard safety bound aligned with
 	// PROPERTY_CATALOG_MAX_REVISION_LEASE_SECONDS. Extended initial backfills
 	// may use up to the setting's supported 60-minute maximum while preserving
@@ -70,9 +68,12 @@ type FileRevisionProvider struct {
 
 // ErrRevisionNotAssigned is the typed, non-corruption result for a valid
 // revision-fence inventory that simply has no current entry for a tenant. It
-// must remain distinguishable from an unreadable, malformed, or expired fence
-// file, all of which are operational failures and must fail closed.
+// must remain distinguishable from an unreadable or malformed fence file.
+// A structurally valid expired assignment grants no authority, but must not
+// prevent unrelated workspaces from using their current assignments.
 var ErrRevisionNotAssigned = errors.New("propertycatalog: no revision assignment for tenant scope")
+
+var errRevisionFenceExpired = errors.New("propertycatalog: revision assignment is expired")
 
 func NewFileRevisionProvider(path string) (*FileRevisionProvider, error) {
 	if path == "" || !filepath.IsAbs(path) {
@@ -129,6 +130,17 @@ func (p *FileRevisionProvider) CurrentRevision(
 }
 
 func (p *FileRevisionProvider) CurrentRevisions(ctx context.Context) ([]RevisionFence, error) {
+	return p.readRevisions(ctx, false)
+}
+
+// retainedRevisionFences includes valid expired assignments solely to preserve
+// durable drain-safety evidence. It grants no admission, publication, terminal
+// issuance, or producer-retirement authority.
+func (p *FileRevisionProvider) retainedRevisionFences(ctx context.Context) ([]RevisionFence, error) {
+	return p.readRevisions(ctx, true)
+}
+
+func (p *FileRevisionProvider) readRevisions(ctx context.Context, includeExpired bool) ([]RevisionFence, error) {
 	if p == nil || p.now == nil || ctx == nil {
 		return nil, errors.New("propertycatalog: revision provider requires context")
 	}
@@ -170,7 +182,7 @@ func (p *FileRevisionProvider) CurrentRevisions(ctx context.Context) ([]Revision
 		return nil, errors.New("propertycatalog: revision fence is not canonical JSON")
 	}
 	if document.Format != revisionFenceFormat || document.Version != revisionFenceVersion ||
-		len(document.Fences) == 0 || len(document.Fences) > maxRevisionFenceEntries {
+		len(document.Fences) == 0 {
 		return nil, errors.New("propertycatalog: revision fence format/version/count is invalid")
 	}
 	if !sort.SliceIsSorted(document.Fences, func(i, j int) bool {
@@ -181,18 +193,22 @@ func (p *FileRevisionProvider) CurrentRevisions(ctx context.Context) ([]Revision
 	}) {
 		return nil, errors.New("propertycatalog: revision fences must be tenant-sorted")
 	}
+	result := make([]RevisionFence, 0, len(document.Fences))
+	now := p.now().UTC()
 	for index, fence := range document.Fences {
 		if index > 0 && fence.OrganizationID == document.Fences[index-1].OrganizationID &&
 			fence.WorkspaceID == document.Fences[index-1].WorkspaceID {
 			return nil, errors.New("propertycatalog: revision fence contains duplicate tenant scope")
 		}
-		if err := validateRevisionFence(fence, p.now().UTC()); err != nil {
-			return nil, fmt.Errorf("propertycatalog: revision fence %d: %w", index, err)
+		if err := validateRevisionFence(fence, now); err != nil {
+			if !errors.Is(err, errRevisionFenceExpired) {
+				return nil, fmt.Errorf("propertycatalog: revision fence %d: %w", index, err)
+			}
+			if !includeExpired {
+				continue
+			}
 		}
-	}
-	result := make([]RevisionFence, len(document.Fences))
-	for index, fence := range document.Fences {
-		result[index] = cloneRevisionFence(fence)
+		result = append(result, cloneRevisionFence(fence))
 	}
 	return result, nil
 }
@@ -225,21 +241,21 @@ func validateRevisionFence(fence RevisionFence, now time.Time) error {
 		expiresAt.Format(dateTime64Layout) != fence.ExpiresAt || !expiresAt.After(issuedAt) {
 		return errors.New("fence lease timestamps are non-canonical or unordered")
 	}
+	expired := false
 	switch fence.Status {
 	case "building":
-		if !expiresAt.After(now) {
-			return errors.New("building fence lease is expired")
-		}
+		expired = !expiresAt.After(now)
 		if fence.DrainDeadline != "" || fence.FencedSequence != 0 {
 			return errors.New("building fence cannot assign a drain boundary")
 		}
 	case "draining":
 		drainDeadline, err := time.Parse(dateTime64Layout, fence.DrainDeadline)
 		if err != nil || drainDeadline.Format(dateTime64Layout) != fence.DrainDeadline ||
-			!drainDeadline.After(now) || !drainDeadline.After(issuedAt) ||
+			!drainDeadline.After(issuedAt) ||
 			drainDeadline.Sub(issuedAt) > maxRevisionLease {
-			return errors.New("draining fence deadline is invalid, expired, or too wide")
+			return errors.New("draining fence deadline is invalid or too wide")
 		}
+		expired = !drainDeadline.After(now)
 	case "fenced":
 		if fence.DrainDeadline != "" {
 			drainDeadline, err := time.Parse(dateTime64Layout, fence.DrainDeadline)
@@ -254,13 +270,18 @@ func validateRevisionFence(fence RevisionFence, now time.Time) error {
 	if !isLowerSHA256(fence.FenceSHA256) || fence.FenceSHA256 != RevisionFenceSHA256(fence) {
 		return errors.New("fence digest does not match its assignment")
 	}
+	// Check expiration only after integrity validation: an expired timestamp
+	// must never hide a malformed or tampered assignment.
+	if expired {
+		return errRevisionFenceExpired
+	}
 	return nil
 }
 
 // EncodeRevisionFenceFile is intentionally pure and used by the control plane
 // handoff/tests to produce the exact atomic-file payload expected above.
 func EncodeRevisionFenceFile(fences []RevisionFence) ([]byte, error) {
-	if len(fences) == 0 || len(fences) > maxRevisionFenceEntries {
+	if len(fences) == 0 {
 		return nil, errors.New("propertycatalog: revision fence count is invalid")
 	}
 	cloned := make([]RevisionFence, len(fences))
@@ -288,8 +309,10 @@ func EncodeRevisionFenceFile(fences []RevisionFence) ([]byte, error) {
 }
 
 func validateRevisionSourceScope(projectIDs []string, spanSinceUS, spanUntilUS uint64) error {
-	if len(projectIDs) == 0 || len(projectIDs) > maxRevisionProjects {
-		return errors.New("project inventory must contain 1..256 projects")
+	// Cardinality is not an authorization boundary. Serialized fence and build
+	// plan byte limits remain enforced by their readers; never truncate scope.
+	if len(projectIDs) == 0 {
+		return errors.New("project inventory must contain at least one project")
 	}
 	if !sort.StringsAreSorted(projectIDs) {
 		return errors.New("project inventory must be canonical-sorted")

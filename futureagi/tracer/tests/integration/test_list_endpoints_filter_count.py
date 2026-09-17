@@ -35,20 +35,19 @@ def _expected_count(case, seeded: list[SeededRow]) -> int:
         and case.filter_op in {"is_null", "is_not_null"}
         and case.target_type != "spans"
     ):
-        # Attribute nullness is row-level only for spans. Entity surfaces first
-        # classify each trace: is_null means no live span contains the key,
-        # while is_not_null means at least one does. Sessions then roll up the
-        # matching trace IDs, preserving the backend's trace-grain contract.
-        rows_by_trace: dict[str, list[SeededRow]] = {}
+        # Nullness applies to the displayed entity: a missing sibling trace
+        # does not prove that the whole session is missing the attribute.
+        rows_by_entity: dict[str, list[SeededRow]] = {}
         for row in seeded:
-            rows_by_trace.setdefault(row.trace_id, []).append(row)
-        trace_matches = {
-            trace_id
-            for trace_id, trace_rows in rows_by_trace.items()
+            entity_id = row.session_id if case.target_type == "sessions" else row.trace_id
+            rows_by_entity.setdefault(entity_id, []).append(row)
+        entity_matches = {
+            entity_id
+            for entity_id, entity_rows in rows_by_entity.items()
             if (
-                all(case.expected_predicate(row) for row in trace_rows)
+                all(case.expected_predicate(row) for row in entity_rows)
                 if case.filter_op == "is_null"
-                else any(case.expected_predicate(row) for row in trace_rows)
+                else any(case.expected_predicate(row) for row in entity_rows)
             )
         }
         if case.target_type == "voiceCalls":
@@ -57,13 +56,11 @@ def _expected_count(case, seeded: list[SeededRow]) -> int:
                 for row in seeded
                 if row.parent_span_id is None and row.observation_type == "conversation"
             }
-            return len(trace_matches & voice_trace_ids)
+            return len(entity_matches & voice_trace_ids)
         if case.target_type == "traces":
-            return len(trace_matches)
+            return len(entity_matches)
         if case.target_type == "sessions":
-            return len(
-                {row.session_id for row in seeded if row.trace_id in trace_matches}
-            )
+            return len(entity_matches)
     if case.target_type in ("spans", "voiceCalls"):
         return sum(1 for r in seeded if case.expected_predicate(r))
     if case.target_type == "traces":

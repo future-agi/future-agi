@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import stat
+import uuid
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -42,13 +43,17 @@ SHA_B = "b" * 64
 AT = datetime(2026, 8, 14, 12, tzinfo=UTC)
 
 
-def _active() -> PriorActiveEvidence:
+def _active(
+    *,
+    workspace_id: str = WORKSPACE,
+    project_id: str = PROJECT,
+) -> PriorActiveEvidence:
     scope = WorkspaceCatalogScope(
         organization_id=ORG,
-        workspace_id=WORKSPACE,
+        workspace_id=workspace_id,
         catalog_epoch=3,
         projection_version=1,
-        project_ids=(PROJECT,),
+        project_ids=(project_id,),
     )
     cutoffs = FrozenLifecycleCutoffs(
         snapshot_upper=datetime(2026, 8, 14, 12, tzinfo=UTC),
@@ -60,13 +65,13 @@ def _active() -> PriorActiveEvidence:
     )
     plan = RevisionBuildPlan(
         organization_id=ORG,
-        workspace_id=WORKSPACE,
+        workspace_id=workspace_id,
         catalog_epoch=3,
         catalog_revision=17,
         build_token=BUILD,
         projection_version=1,
         source_scope=BuildPlanSourceScope(
-            project_ids=(PROJECT,),
+            project_ids=(project_id,),
             span_since_us=1_786_705_200_000_000,
             span_until_us=1_786_708_800_000_000,
         ),
@@ -113,11 +118,16 @@ def _active() -> PriorActiveEvidence:
     )
 
 
-def _retirement(*, emitted_at: datetime = AT) -> ProducerStateRetirement:
+def _retirement(
+    *,
+    emitted_at: datetime = AT,
+    workspace_id: str = WORKSPACE,
+    project_id: str = PROJECT,
+) -> ProducerStateRetirement:
     return ProducerStateRetirement.from_active(
-        _active(),
+        _active(workspace_id=workspace_id, project_id=project_id),
         organization_id=ORG,
-        workspace_id=WORKSPACE,
+        workspace_id=workspace_id,
         catalog_epoch=3,
         emitted_at=emitted_at,
     )
@@ -140,6 +150,20 @@ def test_python_retirement_contract_round_trips_canonical_activation() -> None:
         value.build_lease_sha256
         == hashlib.sha256(value.build_plan_json.encode("utf-8")).hexdigest()
     )
+
+
+def test_retirement_registry_has_no_fixed_tenant_count_cap() -> None:
+    values = tuple(
+        _retirement(
+            workspace_id=str(uuid.UUID(int=index, version=4)),
+            project_id=str(uuid.UUID(int=10_000 + index, version=4)),
+        )
+        for index in range(1, 301)
+    )
+
+    raw = encode_producer_retirements(values)
+
+    assert len(decode_producer_retirements(raw)) == 300
 
 
 def test_atomic_retirement_is_private_idempotent_and_crash_safe(

@@ -7,6 +7,11 @@ cloud before a release pipeline builds an image that fails on migrate.
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 from django.apps import apps
 from django.conf import settings
@@ -25,18 +30,27 @@ def test_default_installed_apps_migrate_cleanly():
 
 # makemigrations --check verifies migration-history consistency against every
 # alias the router's allow_migrate accepts — default_direct included.
-@pytest.mark.django_db(databases=["default", "default_direct"])
 def test_makemigrations_reports_no_pending_changes():
-    from io import StringIO
-
-    stdout = StringIO()
-    call_command(
-        "makemigrations",
-        "--check",
-        "--dry-run",
-        verbosity=0,
-        stdout=stdout,
+    # Migration detection must run with a fresh app registry. Other tests in a
+    # shard can temporarily mutate model metadata, which must not turn this
+    # repository consistency check into an order-dependent failure.
+    script = """
+import os
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tfc.settings.test")
+import django
+django.setup()
+from django.core.management import call_command
+call_command("makemigrations", "--check", "--dry-run", verbosity=0)
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=Path(__file__).resolve().parents[2],
+        env={**os.environ, "DJANGO_SETTINGS_MODULE": "tfc.settings.test"},
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
 @pytest.mark.django_db

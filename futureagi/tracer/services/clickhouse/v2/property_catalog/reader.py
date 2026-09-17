@@ -45,7 +45,6 @@ from tracer.utils.property_registry import (
     parse_property_registry_id,
 )
 
-PROPERTY_CATALOG_MAX_PROJECTS = RUNTIME_LIMITS.max_projects
 PROPERTY_CATALOG_MAX_PAGE_SIZE = RUNTIME_LIMITS.max_page_size
 PROPERTY_CATALOG_MAX_SEARCH_BYTES = RUNTIME_LIMITS.max_search_bytes
 PROPERTY_CATALOG_MAX_DEFINITION_JSON_BYTES = MAX_DEFINITION_JSON_BYTES
@@ -1682,13 +1681,6 @@ class PropertyCatalogReader:
         projects = tuple(
             _uuid(item, "project_id") for item in normalized["project_ids"]
         )
-        if len(projects) > PROPERTY_CATALOG_MAX_PROJECTS:
-            if normalized.get("workspace_scope") is True:
-                raise PropertyCatalogUnavailable("activation_scope_incomplete")
-            raise ValueError(
-                "at most "
-                f"{PROPERTY_CATALOG_MAX_PROJECTS} projects may be searched at once"
-            )
         normalized["project_ids"] = projects
         normalized["agent_definition_id"] = _uuid(
             normalized["agent_definition_id"],

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import axios, { endpoints } from "src/utils/axios";
+import { readQuery, endpoints } from "src/utils/axios";
 import {
   AGGREGATION_REQUEST_TIMEOUT_MS,
   awaitAggregationRequestWithDeadline,
@@ -87,7 +87,7 @@ export const useAgentGraph = (
       try {
         response = await awaitAggregationRequestWithDeadline(
           (requestSignal) =>
-            axios.get(endpoints.project.getAgentGraph(), {
+            readQuery(endpoints.project.getAgentGraph(), {
               params: {
                 project_id: projectId,
                 filters: JSON.stringify(filters || []),

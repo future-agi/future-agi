@@ -3,7 +3,9 @@ package propertycatalog
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,6 +36,159 @@ func writePythonRetirementFixture(t *testing.T, directory string) {
 		0o600,
 	); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func physicalSnapshotRetirementFixture(t *testing.T) (ProducerStateRetirement, buildPlanDocumentJSON) {
+	t.Helper()
+	var document producerRetirementDocument
+	if err := json.Unmarshal(pythonRetirementFixture(t), &document); err != nil {
+		t.Fatal(err)
+	}
+	value := document.Retirements[0]
+	var plan buildPlanDocumentJSON
+	if err := json.Unmarshal([]byte(value.BuildPlanJSON), &plan); err != nil {
+		t.Fatal(err)
+	}
+	for index := range plan.Streams {
+		plan.Streams[index].SourceCutoff.Label = fmt.Sprintf("physical_snapshot_r%d", value.CatalogRevision)
+		plan.Streams[index].SourceCutoff.Value = 123456789
+	}
+	setPhysicalRetirementPlan(t, &value, plan)
+	return value, plan
+}
+
+func setPhysicalRetirementPlan(t *testing.T, value *ProducerStateRetirement, plan buildPlanDocumentJSON) {
+	t.Helper()
+	raw, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value.BuildPlanJSON = string(raw)
+	value.BuildLeaseSHA256 = testDigest(value.BuildPlanJSON)
+	value.RetirementSHA256 = producerRetirementSHA256(*value)
+}
+
+func TestProducerRetirementPhysicalSnapshotCompatibility(t *testing.T) {
+	for _, revision := range []uint64{3, 41} {
+		t.Run(fmt.Sprintf("revision_%d", revision), func(t *testing.T) {
+			value, plan := physicalSnapshotRetirementFixture(t)
+			value.CatalogEpoch, value.ProjectionVersion = 7, 9
+			value.CatalogRevision, value.LineageAnchorRevision = revision, revision
+			plan.CatalogEpoch, plan.ProjectionVersion = value.CatalogEpoch, value.ProjectionVersion
+			plan.CatalogRevision = revision
+			for index := range plan.Streams {
+				plan.Streams[index].SourceCutoff.Label = fmt.Sprintf("physical_snapshot_r%d", revision)
+			}
+			setPhysicalRetirementPlan(t, &value, plan)
+			if err := validateProducerRetirement(value); err != nil {
+				t.Fatalf("valid physical snapshot retirement rejected: %v", err)
+			}
+			raw, err := json.Marshal(producerRetirementDocument{
+				Format: producerRetirementFormat, Version: producerRetirementVersion,
+				Retirements: []ProducerStateRetirement{value},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw = append(raw, '\n')
+			directory := t.TempDir()
+			path := filepath.Join(directory, producerRetirementFileName)
+			if err := os.WriteFile(path, raw, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			loaded, err := loadProducerRetirements(directory)
+			if err != nil || loaded[producerRetirementTenant{value.OrganizationID, value.WorkspaceID}] != value {
+				t.Fatalf("loading did not preserve the exact retirement: %v", err)
+			}
+			after, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(raw, after) {
+				t.Fatalf("loading changed persisted proof bytes: %v", err)
+			}
+		})
+	}
+}
+
+func TestProducerRetirementPhysicalSnapshotRejectsInvalidProofs(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*ProducerStateRetirement, *buildPlanDocumentJSON)
+		want   string
+	}{
+		{"wrong revision label", func(_ *ProducerStateRetirement, p *buildPlanDocumentJSON) {
+			p.Streams[0].SourceCutoff.Label = "physical_snapshot_r999"
+		}, "lifecycle mode differs"},
+		{"mixed labels", func(_ *ProducerStateRetirement, p *buildPlanDocumentJSON) {
+			p.Streams[0].SourceCutoff.Label = "initial_backfill_source_cutoff"
+		}, "lifecycle mode differs"},
+		{"mixed generations", func(_ *ProducerStateRetirement, p *buildPlanDocumentJSON) { p.Streams[0].SourceCutoff.Value++ }, "lifecycle mode differs"},
+		{"zero generation", func(_ *ProducerStateRetirement, p *buildPlanDocumentJSON) {
+			for i := range p.Streams {
+				p.Streams[i].SourceCutoff.Value = 0
+			}
+		}, "stream 0 is invalid"},
+		{"full repair", func(v *ProducerStateRetirement, _ *buildPlanDocumentJSON) { v.LifecycleMode = "full_repair" }, "lifecycle mode differs"},
+		{"incremental", func(v *ProducerStateRetirement, _ *buildPlanDocumentJSON) {
+			v.LifecycleMode = "incremental"
+			v.LineageAnchorRevision--
+			v.ActivationSequence++
+			v.ActiveRevisionsSinceAnchor = 1
+		}, "lifecycle mode differs"},
+		{"empty inventory", func(_ *ProducerStateRetirement, p *buildPlanDocumentJSON) { p.Streams = nil }, "exact revision lease"},
+		{"missing stream", func(_ *ProducerStateRetirement, p *buildPlanDocumentJSON) { p.Streams = p.Streams[1:] }, "exact revision lease"},
+		{"wrong role", func(_ *ProducerStateRetirement, p *buildPlanDocumentJSON) { p.Streams[0].Role = "hot_values" }, "only span_attribute"},
+		{"wrong tenant", func(_ *ProducerStateRetirement, p *buildPlanDocumentJSON) { p.WorkspaceID = testStream }, "exact revision lease"},
+		{"wrong hot stream", func(v *ProducerStateRetirement, _ *buildPlanDocumentJSON) { v.HotProducerStreamID = testStream }, "current source stream is absent"},
+		{"wrong lineage", func(v *ProducerStateRetirement, _ *buildPlanDocumentJSON) { v.LineageAnchorRevision-- }, "not its own lineage anchor"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			value, plan := physicalSnapshotRetirementFixture(t)
+			test.mutate(&value, &plan)
+			// Re-sign mutations so structural failures are not masked by checksums.
+			setPhysicalRetirementPlan(t, &value, plan)
+			if err := validateProducerRetirement(value); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("want %q, got %v", test.want, err)
+			}
+		})
+	}
+	for _, digest := range []string{"lease", "retirement"} {
+		t.Run(digest+" digest", func(t *testing.T) {
+			value, _ := physicalSnapshotRetirementFixture(t)
+			want := "retirement digest does not match"
+			if digest == "lease" {
+				value.BuildLeaseSHA256 = testDigest("corrupt lease")
+				value.RetirementSHA256 = producerRetirementSHA256(value)
+				want = "build plan digest does not match"
+			} else {
+				value.RetirementSHA256 = testDigest("corrupt retirement")
+			}
+			if err := validateProducerRetirement(value); err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("want %q, got %v", want, err)
+			}
+		})
+	}
+}
+
+func TestProducerRetirementPreservesNormalLifecycleCutoffs(t *testing.T) {
+	for _, mode := range []string{"initial_backfill", "full_repair", "incremental"} {
+		t.Run(mode, func(t *testing.T) {
+			value, plan := physicalSnapshotRetirementFixture(t)
+			value.LifecycleMode = mode
+			if mode == "incremental" {
+				value.LineageAnchorRevision--
+				value.ActivationSequence++
+				value.ActiveRevisionsSinceAnchor = 1
+			}
+			for index := range plan.Streams {
+				plan.Streams[index].SourceCutoff.Label = mode + "_source_cutoff"
+				plan.Streams[index].SourceCutoff.Value += uint64(index)
+			}
+			setPhysicalRetirementPlan(t, &value, plan)
+			if err := validateProducerRetirement(value); err != nil {
+				t.Fatalf("normal lifecycle retirement rejected: %v", err)
+			}
+		})
 	}
 }
 

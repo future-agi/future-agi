@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -45,6 +45,11 @@ from tracer.services.clickhouse.v2.query_builders.trace_list import (
 )
 from tracer.services.clickhouse.v2.query_builders.voice_call_list import (
     VoiceCallListQueryBuilderV2,
+)
+from tracer.tests.test_trace_root_physical_replay import (
+    assert_coherent_classifier,
+    complete_root_row,
+    mock_content_rows,
 )
 
 PROJECT_ID = "00000000-0000-4000-8000-000000000001"
@@ -349,6 +354,14 @@ def test_dispatched_v2_query_service_uses_split_host_without_legacy_singleton() 
         assert service.ch_client.user == "direct-write-user"
         assert service.ch_client.password == ""
         assert service.ch_client.database == "direct-write-db"
+        assert (
+            service.ch_client.read_timeout_ceiling_ms
+            == settings.CLICKHOUSE_REVIEWED_READ_TIMEOUT_CEILING_MS
+        )
+        assert (
+            service.read_timeout_ceiling_ms
+            == settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
+        )
         assert V2AnalyticsQueryService().ch_client is service.ch_client
         legacy_client.assert_not_called()
     finally:
@@ -376,10 +389,11 @@ def test_customer_final_status_trace_query_uses_indexed_any_span_anchor() -> Non
     assert "has(span_attr_str.keys, %(latest_filter_key_0)s)" in seed_sql
     assert "indexHint(has(mapKeys(span_attr_str), %(latest_filter_key_0)s))" in seed_sql
     assert "arrayMap(x -> lowerUTF8(x), mapValues(span_attr_str))" in seed_sql
-    assert "arrayMap(x -> lower(x), mapValues(span_attr_str))" not in seed_sql
+    assert "arrayMap(x -> lower(x), mapValues(span_attr_str))" in seed_sql
     assert seed_params["latest_filter_key_0"] == "final_status"
     assert seed_params["latest_filter_param_0"] == ("rejected",)
     assert seed_params["latest_filter_index_0_0"] == "rejected"
+    assert seed_params["latest_filter_legacy_index_0_0"] == "rejected"
     assert "parent_span_id IS NULL" not in seed_sql
     assert "id AS matched_span_id" in seed_sql
     assert " FINAL" not in seed_sql
@@ -498,7 +512,7 @@ def test_exact_graph_trace_seed_deduplicates_siblings_before_outer_keyset() -> N
     assert "latest_filter_key_1" not in seed_params
     assert match_params["latest_filter_key_0"] == "final_status"
     assert match_params["latest_filter_key_1"] == "channel"
-    assert "argMax(is_deleted, _version)" in match_sql
+    assert_coherent_classifier(match_sql)
     assert "latest_is_deleted = 0" in match_sql
     assert "latest_attr_exists_0" in match_sql
     assert "latest_attr_exists_1" in match_sql
@@ -565,7 +579,7 @@ def test_exact_graph_root_seed_keeps_root_window_and_classifies_children_globall
     assert "latest_start_time <" in canonical_root
     assert "countIf(latest_attr_exists_0" in match_sql
     assert "latest_is_deleted = 0" in match_sql
-    assert "argMax(is_deleted, _version)" in match_sql
+    assert_coherent_classifier(match_sql)
 
 
 @pytest.mark.parametrize(
@@ -689,9 +703,9 @@ def test_exact_graph_global_classifier_collapses_mutations_before_tombstone_filt
 
     physical_scan = sql.split("FROM spans", 1)[1].split("GROUP BY", 1)[0]
     assert "is_deleted = 0" not in physical_scan
-    assert "argMax(is_deleted, _version) AS latest_is_deleted" in sql
+    assert_coherent_classifier(sql)
     assert "WHERE latest_is_deleted = 0" in sql
-    assert "argMax(mapContains(attrs_string" in sql
+    assert "mapContains(attrs_string" in sql.split("AS _physical_winner", 1)[0]
     assert "candidate_witness_start_date_us" not in sql
 
 
@@ -864,7 +878,7 @@ def test_external_user_trace_candidate_seed_is_user_first_and_root_ordered(
                     "col_type": col_type,
                     "filter_type": "text",
                     "filter_op": "equals",
-                    "filter_value": "45293328",
+                    "filter_value": "10000003",
                 },
             },
         ],
@@ -889,7 +903,7 @@ def test_external_user_trace_candidate_seed_is_user_first_and_root_ordered(
     ) in compact_sql
     assert "ORDER BY start_time DESC, trace_id DESC" in compact_sql
     assert "LIMIT 1 BY trace_id LIMIT %(filter_seed_limit)s" in compact_sql
-    assert params["col_1"] == "45293328"
+    assert params["col_1"] == "10000003"
     assert params["filter_seed_limit"] == 26
     assert "user_candidate_start_us" not in params
     assert "user_candidate_end_us" not in params
@@ -1195,6 +1209,7 @@ def test_positive_has_eval_candidate_seed_is_project_safe_and_reclassified() -> 
     assert builder.recommended_filter_initial_slice_width() == END - START
     assert builder.recommended_filter_max_slice_width() == END - START
     assert config_manager.filter.call_count == 0
+    assert not builder.supports_filter_root_time_discovery()
 
     # Candidate discovery uses the complete latest/live relation with the
     # endpoint's already-resolved project config set. There is no relation
@@ -1765,7 +1780,9 @@ def test_graph_numeric_equality_retains_value_indexed_witness() -> None:
     assert probe_params["latest_filter_param_0"] == 7
 
 
-def test_long_window_scalar_trace_uses_exact_classifier_without_witness() -> None:
+def test_long_window_scalar_trace_prefilters_finite_roots_before_exact_classifier() -> (
+    None
+):
     builder = TraceListQueryBuilder(
         project_id=PROJECT_ID,
         filters=[
@@ -1781,9 +1798,10 @@ def test_long_window_scalar_trace_uses_exact_classifier_without_witness() -> Non
     assert builder.recommended_filter_anchor_probe_timeout_ms() is None
     assert builder.recommended_filter_anchor_probe_strata() is None
     assert builder.recommended_filter_anchor_probe_max_bytes_to_read() is None
-    assert builder.prefer_filter_candidate_witness_probe_first() is False
-    assert builder.recommended_filter_candidate_witness_probe_strata() is None
-    assert builder.recommended_filter_max_query_count() is None
+    assert builder.prefer_filter_candidate_witness_probe_first() is True
+    assert builder.recommended_filter_cursor_seed_batch_size() == 200
+    assert builder.recommended_filter_candidate_witness_probe_strata() == 1
+    assert builder.recommended_filter_max_query_count() == 128
     assert (
         builder.recommended_filter_candidate_witness_fallback_classify_batch_size()
         == 10
@@ -1995,7 +2013,7 @@ def test_trace_candidate_witness_probe_resolves_finite_typed_map_latest_state(
     builder = TraceListQueryBuilder(
         project_id=PROJECT_ID,
         filters=[
-            _time_filter(),
+            _time_filter(END - timedelta(hours=1), END),
             _attribute_filter(
                 "final_status",
                 value,
@@ -2028,9 +2046,8 @@ def test_trace_candidate_witness_probe_resolves_finite_typed_map_latest_state(
     assert "filter_candidate_start_us" not in params
     assert "filter_candidate_end_us" not in params
     assert params["latest_filter_key_0"] == "final_status"
-    # A plain typed-Map scalar classifier is faster than a year-window witness
-    # on large tenants, so the query remains available for internal callers but
-    # is not selected speculatively for the interactive list.
+    # Short windows retain their existing exact probe and selector policy.
+    # Long public scalar windows have a separate raw-superset optimization.
     assert builder.prefer_filter_candidate_witness_probe_first() is False
     assert builder.recommended_filter_candidate_witness_probe_strata() is None
     assert builder.recommended_filter_candidate_witness_probe_timeout_ms() is None
@@ -2100,7 +2117,7 @@ def test_long_exact_text_attribute_uses_finite_candidate_witness(
     builder_cls,
 ) -> None:
     recording_url = (
-        "https://storage.vapi.ai/019db06c-d54a-7003-9810-cf01cc4aa9d1-1776781471202"
+        "https://recordings.example.test/synthetic-recording-0000000000000000000000"
     )
     builder = builder_cls(
         project_id=PROJECT_ID,
@@ -2115,10 +2132,19 @@ def test_long_exact_text_attribute_uses_finite_candidate_witness(
         ],
     )
 
-    assert builder.prefer_filter_candidate_witness_probe_first() is True
+    # V2 project-scoped scalar reads resolve immutable primary-index
+    # coordinates before exact classification; the raw witness is retained
+    # as a fallback and must still preserve this long string verbatim.
+    assert builder.prefer_filter_candidate_witness_probe_first() is (
+        builder_cls is not TraceListQueryBuilderV2
+    )
     assert builder.recommended_filter_seed_batch_size() == 512
-    assert builder.recommended_filter_max_query_count() == 128
-    assert builder.recommended_filter_candidate_witness_probe_strata() == 1
+    assert builder.recommended_filter_max_query_count() == (
+        None if builder_cls is TraceListQueryBuilderV2 else 128
+    )
+    assert builder.recommended_filter_candidate_witness_probe_strata() == (
+        None if builder_cls is TraceListQueryBuilderV2 else 1
+    )
     if isinstance(builder, VoiceCallListQueryBuilder):
         assert builder.recommended_filter_cursor_seed_batch_size() == 512
 
@@ -2131,16 +2157,17 @@ def test_long_exact_text_attribute_uses_finite_candidate_witness(
 
 
 @pytest.mark.parametrize(
-    "value,operation",
+    "value,operation,uses_witness",
     [
-        (["Rejected"], "in"),
-        (["x" * 64], "not_in"),
-        (["x" * 64, "short"], "in"),
+        (["Rejected"], "in", True),
+        (["x" * 64], "not_in", False),
+        (["x" * 64, "short"], "in", True),
     ],
 )
-def test_scalar_text_candidate_witness_keeps_nonselective_shapes_on_exact_path(
+def test_scalar_text_candidate_witness_does_not_use_value_length_as_selectivity(
     value: object,
     operation: str,
+    uses_witness: bool,
 ) -> None:
     builder = TraceListQueryBuilder(
         project_id=PROJECT_ID,
@@ -2154,7 +2181,7 @@ def test_scalar_text_candidate_witness_keeps_nonselective_shapes_on_exact_path(
         ],
     )
 
-    assert builder.prefer_filter_candidate_witness_probe_first() is False
+    assert builder.prefer_filter_candidate_witness_probe_first() is uses_witness
 
 
 def test_scalar_first_multi_filter_witness_selects_nested_leaf() -> None:
@@ -2178,7 +2205,7 @@ def test_scalar_first_multi_filter_witness_selects_nested_leaf() -> None:
     assert "latest_filter_key_0" not in sql
 
 
-def test_negative_nested_leaf_does_not_enable_scalar_interactive_witness() -> None:
+def test_positive_scalar_witness_keeps_negative_sibling_for_exact_classifier() -> None:
     builder = TraceListQueryBuilder(
         project_id=PROJECT_ID,
         filters=[
@@ -2192,8 +2219,13 @@ def test_negative_nested_leaf_does_not_enable_scalar_interactive_witness() -> No
         ],
     )
 
-    assert builder.prefer_filter_candidate_witness_probe_first() is False
-    assert builder.recommended_filter_candidate_witness_probe_strata() is None
+    assert builder.prefer_filter_candidate_witness_probe_first() is True
+    assert builder.recommended_filter_candidate_witness_probe_strata() == 1
+    probe_sql, _ = builder.build_filter_candidate_witness_probe([{"trace_id": "a"}])
+    classifier_sql, _ = builder.build_filter_match_query(["a"])
+    assert "latest_filter_key_0" in probe_sql
+    assert "latest_filter_key_1" not in probe_sql
+    assert "latest_filter_key_1" in classifier_sql
 
 
 def test_org_trace_candidate_witness_probe_keeps_composite_identity() -> None:
@@ -2242,8 +2274,10 @@ def test_trace_candidate_witness_probe_supports_exact_structured_map_state() -> 
         [{"trace_id": "trace-a"}]
     )
 
-    assert builder.prefer_filter_candidate_witness_probe_first() is True
-    assert builder.recommended_filter_candidate_witness_probe_strata() == 1
+    # The explicit probe remains valid; public attribute cursors now prefer
+    # the complete immutable-prefix classifier without a redundant probe.
+    assert builder.prefer_filter_candidate_witness_probe_first() is False
+    assert builder.recommended_filter_candidate_witness_probe_strata() is None
     assert "trace_id IN %(filter_candidate_trace_ids)s" in sql
     assert "JSONHas(attributes_extra, %(latest_filter_key_0)s)" in sql
     assert "latest_json_map_value_0" in sql
@@ -2329,7 +2363,7 @@ def test_trace_candidate_latest_anchor_prefilters_multi_filter_and() -> None:
         [{"trace_id": "trace-a"}]
     )
 
-    assert builder.prefer_filter_candidate_witness_probe_first() is False
+    assert builder.prefer_filter_candidate_witness_probe_first() is True
     assert "latest_filter_key_0" in probe_sql
     # Only one necessary leaf is allowed in each temporal stratum. The exact
     # classifier below retains both leaves, including when sibling spans in
@@ -2337,7 +2371,7 @@ def test_trace_candidate_latest_anchor_prefilters_multi_filter_and() -> None:
     assert "latest_filter_key_1" not in probe_sql
     assert probe_sql.count("FROM spans") == 1
     assert "UNION ALL" not in probe_sql
-    assert probe_sql.count("max(toUInt8(latest_is_deleted = 0") == 1
+    assert "is_deleted" not in probe_sql
     assert "latest_filter_key_0" in classifier_sql
     assert "latest_filter_key_1" in classifier_sql
 
@@ -2648,7 +2682,9 @@ def test_time_only_span_cursor_exposes_tightly_bounded_sparse_probe() -> None:
 
     sql, params = builder.build_filter_anchor_probe(limit=26)
     normalized_sql = " ".join(sql.split())
-    assert "WHERE 1 = 1" in normalized_sql
+    # V2 resolves complete boundary hours before its outer time-only probe.
+    assert "FROM spans FINAL" in normalized_sql
+    assert "AND 1 = 1" in normalized_sql
     assert "ORDER BY" not in normalized_sql
     assert "LIMIT 1 BY" not in normalized_sql
     limit_clause = "LIMIT %(filter_anchor_limit)s"
@@ -2818,10 +2854,11 @@ def test_long_window_voice_error_status_forwards_global_indexed_anchor() -> None
     assert params["filter_anchor_limit"] == 64
 
 
-def test_long_window_trace_exact_text_uses_complete_indexed_anchor() -> None:
+def test_long_window_trace_exact_text_prefers_indexed_candidate_to_child_anchor() -> (
+    None
+):
     recording_url = (
-        "https://storage.vapi.ai/019db06c-d54a-7003-9810-cf01cc4aa9d1-"
-        "1776781471202"
+        "https://recordings.example.test/synthetic-recording-0000000000000000000000"
     )
     builder = TraceListQueryBuilderV2(
         project_id=PROJECT_ID,
@@ -2836,8 +2873,20 @@ def test_long_window_trace_exact_text_uses_complete_indexed_anchor() -> None:
         page_size=25,
     )
 
-    assert builder.allow_filter_anchor_probe_for_initial_continuation() is True
-    assert builder.supports_filter_anchor_probe() is True
+    assert builder.allow_filter_anchor_probe_for_initial_continuation() is False
+    # The necessary long-text candidate already acquires ordered roots. Do not
+    # advertise the older child anchor as a second acquisition strategy, which
+    # would make the selector discard that candidate-first route.
+    assert builder.supports_filter_candidate_seed_page() is True
+    assert builder.supports_filter_anchor_probe() is False
+    candidate_sql, candidate_params = builder.build_filter_candidate_seed_page(
+        slice_start=START, slice_end=END, limit=50
+    )
+    assert "matching_scalar_trace_identities" in candidate_sql
+    assert "indexHint(arrayStringConcat" in candidate_sql
+    assert candidate_params["latest_filter_param_0"] == (recording_url,)
+    # The old explicit probe's SQL remains independently valid for callers
+    # that request it; it is simply not selected ahead of candidate acquisition.
     assert builder.filter_anchor_probe_proves_complete_population() is True
     assert builder.recommended_filter_anchor_probe_limit() == 64
     assert builder.recommended_filter_anchor_probe_timeout_ms() is None
@@ -2852,17 +2901,14 @@ def test_long_window_trace_exact_text_uses_complete_indexed_anchor() -> None:
     assert "start_time >=" not in normalized_sql
     assert "filter_anchor_start" not in params
     assert "LIMIT 1 BY trace_id" in normalized_sql
-    assert params["latest_filter_key_0"] == (
-        "conversation.recording.mono.assistant"
-    )
+    assert params["latest_filter_key_0"] == ("conversation.recording.mono.assistant")
     assert params["latest_filter_param_0"] == (recording_url,)
     assert params["filter_anchor_limit"] == 64
 
 
-def test_long_window_voice_exact_text_forwards_complete_indexed_anchor() -> None:
+def test_long_window_voice_exact_text_prefers_required_indexed_candidate() -> None:
     recording_url = (
-        "https://storage.vapi.ai/019db06c-d54a-7003-9810-cf01cc4aa9d1-"
-        "1776781471202"
+        "https://recordings.example.test/synthetic-recording-0000000000000000000000"
     )
     builder = VoiceCallListQueryBuilderV2(
         project_id=PROJECT_ID,
@@ -2878,7 +2924,15 @@ def test_long_window_voice_exact_text_forwards_complete_indexed_anchor() -> None
     )
 
     assert builder.allow_filter_anchor_probe_for_initial_continuation() is True
-    assert builder.supports_filter_anchor_probe() is True
+    assert builder.supports_filter_anchor_probe() is False
+    assert builder.supports_filter_candidate_seed_page() is True
+    candidate_sql, candidate_params = builder.build_filter_candidate_seed_page(
+        slice_start=START, slice_end=END, limit=50
+    )
+    assert "matching_scalar_trace_identities" in candidate_sql
+    assert "indexHint(arrayStringConcat" in candidate_sql
+    assert candidate_params["latest_filter_param_0"] == (recording_url,)
+    # Explicit legacy probes remain valid, but do not replace required seeds.
     assert builder.filter_anchor_probe_proves_complete_population() is True
     assert builder.recommended_filter_anchor_probe_limit() == 64
     assert builder.recommended_filter_anchor_probe_timeout_ms() is None
@@ -2893,9 +2947,7 @@ def test_long_window_voice_exact_text_forwards_complete_indexed_anchor() -> None
     assert "start_time >=" not in normalized_sql
     assert "filter_anchor_start" not in params
     assert "LIMIT 1 BY trace_id" in normalized_sql
-    assert params["latest_filter_key_0"] == (
-        "conversation.recording.mono.assistant"
-    )
+    assert params["latest_filter_key_0"] == ("conversation.recording.mono.assistant")
     assert params["latest_filter_param_0"] == (recording_url,)
     assert params["filter_anchor_limit"] == 64
 
@@ -2930,7 +2982,7 @@ def test_complete_exact_text_anchor_stays_out_of_excluded_read_modes(
             _time_filter(window_start, END),
             _attribute_filter(
                 "conversation.recording.mono.assistant",
-                ["https://storage.vapi.ai/" + "a" * 64],
+                ["https://recordings.example.test/" + "a" * 56],
                 operation="in",
             ),
         ],
@@ -2943,7 +2995,7 @@ def test_complete_exact_text_anchor_stays_out_of_excluded_read_modes(
 
 
 def test_complete_exact_text_anchor_selects_long_leaf_among_siblings() -> None:
-    recording_url = "https://storage.vapi.ai/" + "b" * 64
+    recording_url = "https://recordings.example.test/" + "b" * 56
     builder = TraceListQueryBuilderV2(
         project_id=PROJECT_ID,
         filters=[
@@ -2961,9 +3013,7 @@ def test_complete_exact_text_anchor_selects_long_leaf_among_siblings() -> None:
     sql, params = builder.build_filter_anchor_probe(limit=64)
 
     assert "attrs_string" in sql
-    assert params["latest_filter_key_0"] == (
-        "conversation.recording.mono.assistant"
-    )
+    assert params["latest_filter_key_0"] == ("conversation.recording.mono.assistant")
     assert params["latest_filter_param_0"] == (recording_url,)
     assert "latest_filter_key_1" not in params
 
@@ -3252,7 +3302,9 @@ def test_ch25_rewrites_identity_classifier_and_exact_root_hydration() -> None:
     ]
 
     identity_sql, _ = builder.build_filter_identity_match_query_from_seed_rows(rows)
-    hydration_sql, _ = builder.build_filter_page_hydration_query(rows)
+    hydration_sql, _ = builder.build_filter_page_hydration_query(
+        [complete_root_row(row) for row in rows]
+    )
 
     for sql in (identity_sql, hydration_sql):
         assert "_peerdb_version" not in sql
@@ -3260,7 +3312,12 @@ def test_ch25_rewrites_identity_classifier_and_exact_root_hydration() -> None:
         assert "_version" in sql
         assert "SETTINGS" in sql
     assert "canonical_root_identity.1 AS root_span_id" in identity_sql
-    assert "toUnixTimestamp64Micro(start_time)" in hydration_sql
+    assert "page_hydration_physical_keys" in hydration_sql
+    assert (
+        "GROUP BY project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id"
+        in hydration_sql
+    )
+    assert "toUnixTimestamp64Micro(start_time)" not in hydration_sql
 
 
 def test_org_trace_builder_keeps_project_in_seed_classifier_and_page_keys() -> None:
@@ -3554,10 +3611,11 @@ def test_v2_span_seed_uses_typed_value_witness_before_exact_replay() -> None:
     assert "has(attrs_string.keys, %(latest_filter_key_0)s)" in sql
     assert "indexHint(has(mapKeys(attrs_string), %(latest_filter_key_0)s))" in sql
     assert "arrayMap(x -> lowerUTF8(x), mapValues(attrs_string))" in sql
-    assert "arrayMap(x -> lower(x), mapValues(attrs_string))" not in sql
+    assert "arrayMap(x -> lower(x), mapValues(attrs_string))" in sql
     assert params["latest_filter_key_0"] == "final_status"
     assert params["latest_filter_param_0"] == ("rejected",)
     assert params["latest_filter_index_0_0"] == "rejected"
+    assert params["latest_filter_legacy_index_0_0"] == "rejected"
 
     prompt_builder = SpanListQueryBuilderV2(
         project_id=PROJECT_ID,
@@ -3576,9 +3634,12 @@ def test_v2_span_seed_uses_typed_value_witness_before_exact_replay() -> None:
         "indexHint(has(mapKeys(attrs_string), %(latest_filter_key_0)s))" in prompt_sql
     )
     assert "arrayMap(x -> lowerUTF8(x), mapValues(attrs_string))" in prompt_sql
-    assert "arrayMap(x -> lower(x), mapValues(attrs_string))" not in prompt_sql
+    assert "arrayMap(x -> lower(x), mapValues(attrs_string))" in prompt_sql
     assert prompt_params["latest_filter_param_0"] == "agent_2_identity_disclosure"
     assert prompt_params["latest_filter_key_0"] == "prompt_slug"
+    assert prompt_params["latest_filter_legacy_index_0_0"] == (
+        "agent_2_identity_disclosure"
+    )
 
 
 @pytest.mark.parametrize(
@@ -4282,7 +4343,7 @@ def test_has_eval_false_span_residual_is_exact_pair_scoped_on_page_n(
         slice_end=END,
         limit=50,
         before_start_time=started,
-        before_id=("span-z", "trace-z", PROJECT_ID),
+        before_id=("span-z", "trace-z", PROJECT_ID, "span", "test-service"),
     )
     sql, params = builder.build_filter_match_query_from_seed_rows(
         [
@@ -4291,6 +4352,8 @@ def test_has_eval_false_span_residual_is_exact_pair_scoped_on_page_n(
                 "trace_id": "trace-a",
                 "id": "span-a",
                 "start_time": started - timedelta(seconds=1),
+                "observation_type": "span",
+                "service_name": "test-service",
             }
         ]
     )
@@ -4306,7 +4369,8 @@ def test_has_eval_false_span_residual_is_exact_pair_scoped_on_page_n(
         "toString(eval_scan.observation_span_id)) "
         "IN %(candidate_span_entities)s" in sql
     )
-    assert "eval_scan.created_at >= %(start_date)s - INTERVAL 7 DAY" in sql
+    assert "eval_scan.created_at >=" not in sql
+    assert "candidate_start_date_us" in params
     assert "LIMIT 1 BY eval_scan.id" in sql
     assert "latest_eval.is_deleted = 0" in sql
     assert params["candidate_span_ids"] == ("span-a",)
@@ -4964,6 +5028,7 @@ def test_trace_list_nonempty_page_enrichments_share_wall_budget(
         }
         for index in range(row_count)
     ]
+    rows = [complete_root_row(row, project_id=PROJECT_ID) for row in rows]
     bounded = BoundedFilterPage(
         rows=rows,
         has_more=False,
@@ -4999,6 +5064,7 @@ def test_trace_list_nonempty_page_enrichments_share_wall_budget(
                     }
                     for trace_id in params["content_trace_ids"]
                 ]
+                data = mock_content_rows(data, params)
             else:
                 data = []
             return QueryResult(data, len(data), "clickhouse", 0.0)
@@ -5150,6 +5216,7 @@ def test_page_500_slow_candidate_admits_every_exact_enrichment_wave():
         }
         for index in range(500)
     ]
+    rows = [complete_root_row(row, project_id=PROJECT_ID) for row in rows]
     bounded = BoundedFilterPage(
         rows=rows,
         has_more=False,
@@ -5236,6 +5303,7 @@ def test_page_500_slow_candidate_admits_every_exact_enrichment_wave():
                     }
                     for trace_id in params["content_trace_ids"]
                 ]
+                data = mock_content_rows(data, params)
             elif "user_trace_identities" in params:
                 data = [
                     {
@@ -5443,6 +5511,8 @@ def test_org_trace_content_same_trace_id_is_merged_by_project_identity() -> None
         attempts=(),
     )
 
+    bounded = replace(bounded, rows=[complete_root_row(row) for row in bounded.rows])
+
     class OrgAnalytics:
         def execute_ch_query(self, query, params, *, timeout_ms, settings):
             if "content_trace_ids" in params:
@@ -5458,6 +5528,7 @@ def test_org_trace_content_same_trace_id_is_merged_by_project_identity() -> None
                         "input": "tenant-b-input",
                     },
                 ]
+                rows = mock_content_rows(rows, params)
             elif "eval_config_ids" in params:
                 rows = [
                     {
@@ -5565,7 +5636,7 @@ def test_org_trace_content_same_trace_id_is_merged_by_project_identity() -> None
         payload["metadata"]["next_cursor"],
         resource="observe_traces",
         scope=cursor_scope_for_request(request, project_ids=[PROJECT_ID, project_b]),
-        query=validated_data,
+        query={**validated_data, "trace_root_contract": "physical-root-winner-v1"},
         page_size=25,
     )
     assert cursor.order == (
@@ -5915,6 +5986,8 @@ def test_eval_task_project_version_enrichments_share_deadline_and_caps() -> None
         attempts=(),
     )
 
+    bounded = replace(bounded, rows=[complete_root_row(row) for row in bounded.rows])
+
     class CapturingAnalytics:
         def __init__(self) -> None:
             self.calls: list[dict[str, Any]] = []
@@ -5959,6 +6032,7 @@ def test_eval_task_project_version_enrichments_share_deadline_and_caps() -> None
                         "attributes_extra": {},
                     }
                 ]
+                rows = mock_content_rows(rows, params)
             return QueryResult(
                 data=rows,
                 row_count=len(rows),
@@ -6334,6 +6408,8 @@ def test_span_list_nonempty_page_content_shares_wall_budget() -> None:
         "created_at": started,
         "name": "span-a",
         "observation_type": "llm",
+        "service_name": "test-service",
+        "_version": 1,
         "status": "OK",
         "cost": 0.001,
     }
@@ -6363,6 +6439,9 @@ def test_span_list_nonempty_page_content_shares_wall_budget() -> None:
                     "trace_id": "trace-a",
                     "id": "span-a",
                     "start_time": started,
+                    "observation_type": "llm",
+                    "service_name": "test-service",
+                    "_version": 1,
                     "input": "in",
                     "output": "out",
                     "attributes_extra": "{}",
@@ -6416,6 +6495,9 @@ def test_span_list_nonempty_page_content_shares_wall_budget() -> None:
 
     assert status_name == "ok"
     assert payload["table"][0]["span_id"] == "span-a"
+    assert payload["table"][0]["_version"] == "1"
+    assert payload["table"][0]["observation_type"] == "llm"
+    assert payload["table"][0]["service_name"] == "test-service"
     assert payload["metadata"]["query_count"] == 2
     assert 0 <= payload["metadata"]["query_elapsed_ms"] < SPAN_LIST_WALL_DEADLINE_MS
     assert (
@@ -8115,6 +8197,12 @@ def _call_observe_trace_list_with_bounded_page(
         custom_error_response=lambda *args, **kwargs: ("error", args, kwargs),
     )
     analytics = analytics or mock.MagicMock()
+    bounded_page = replace(
+        bounded_page,
+        rows=[
+            complete_root_row(row, project_id=PROJECT_ID) for row in bounded_page.rows
+        ],
+    )
 
     with (
         mock.patch("tracer.views.trace.CustomEvalConfig") as eval_config,
@@ -8574,7 +8662,10 @@ def test_observe_span_cursor_publishes_safe_checkpoint_after_failed_attempt() ->
     analytics.execute_ch_query.assert_not_called()
 
 
-def test_org_user_trace_endpoint_proves_six_month_empty_page_in_one_seed() -> None:
+@pytest.mark.parametrize("with_company", [False, True])
+def test_org_user_trace_endpoint_proves_six_month_empty_page_in_one_seed(
+    with_company,
+) -> None:
     """A sparse/no-match user page must not walk ninety two-day slices."""
 
     from tracer.views.trace import TraceView
@@ -8582,6 +8673,10 @@ def test_org_user_trace_endpoint_proves_six_month_empty_page_in_one_seed() -> No
     project_b = "00000000-0000-4000-8000-000000000002"
     start = END - timedelta(days=180)
     filters = [_time_filter(start, END), _end_user_filter("guest-e3dce503")]
+    if with_company:
+        company = _attribute_filter("company_id", ["10000001"], operation="in")
+        company["filter_config"]["attribute_value_types"] = ["string"]
+        filters.append(company)
     analytics = mock.MagicMock()
     analytics.execute_ch_query.return_value = QueryResult(
         data=[],
@@ -8720,7 +8815,7 @@ def test_observe_trace_terminal_cursor_uses_global_seen_total() -> None:
             resumed_request,
             project_ids=[PROJECT_ID],
         ),
-        query=cursor_data,
+        query={**cursor_data, "trace_root_contract": "physical-root-winner-v1"},
         page_size=25,
         window_start=START.replace(tzinfo=UTC),
         window_end=END.replace(tzinfo=UTC),
@@ -8820,6 +8915,7 @@ def test_observe_trace_exact_cursor_chunk_is_enriched_ordered_and_continuable(
                     }
                     for trace_id in ("trace-newer", "trace-older")
                 ]
+                data = mock_content_rows(data, params)
             else:
                 data = []
             return QueryResult(data, len(data), "clickhouse", 0.0)
@@ -9009,7 +9105,7 @@ def test_observe_trace_cursor_continuation_without_safe_checkpoint_fails_closed(
     cursor = encode_list_cursor(
         resource="observe_traces",
         scope=cursor_scope_for_request(request, project_ids=[PROJECT_ID]),
-        query=validated_data,
+        query={**validated_data, "trace_root_contract": "physical-root-winner-v1"},
         page_size=25,
         window_start=START.replace(tzinfo=UTC),
         window_end=END.replace(tzinfo=UTC),
@@ -9254,14 +9350,16 @@ def test_voice_cursor_freezes_snapshot_and_continues_by_root_order(
     second_started = END - timedelta(minutes=2)
     first_page = BoundedFilterPage(
         rows=[
-            {
-                "project_id": PROJECT_ID,
-                "trace_id": "trace-b",
-                "root_span_id": "root-b",
-                "span_id": "root-b",
-                "start_time": first_started,
-                "end_time": first_started + timedelta(seconds=5),
-            }
+            _voice_root_row(
+                {
+                    "project_id": PROJECT_ID,
+                    "trace_id": "trace-b",
+                    "root_span_id": "root-b",
+                    "span_id": "root-b",
+                    "start_time": first_started,
+                    "end_time": first_started + timedelta(seconds=5),
+                }
+            )
         ],
         has_more=True,
         complete=True,
@@ -9276,14 +9374,16 @@ def test_voice_cursor_freezes_snapshot_and_continues_by_root_order(
     )
     terminal_page = BoundedFilterPage(
         rows=[
-            {
-                "project_id": PROJECT_ID,
-                "trace_id": "trace-a",
-                "root_span_id": "root-a",
-                "span_id": "root-a",
-                "start_time": second_started,
-                "end_time": second_started + timedelta(seconds=5),
-            }
+            _voice_root_row(
+                {
+                    "project_id": PROJECT_ID,
+                    "trace_id": "trace-a",
+                    "root_span_id": "root-a",
+                    "span_id": "root-a",
+                    "start_time": second_started,
+                    "end_time": second_started + timedelta(seconds=5),
+                }
+            )
         ],
         has_more=False,
         complete=True,
@@ -9304,20 +9404,22 @@ def test_voice_cursor_freezes_snapshot_and_continues_by_root_order(
 
     def hydrate_cursor_page(_query, params, **_kwargs):
         hydrated = []
-        for span_id in params["content_span_ids"]:
+        for span_id in [identity[2] for identity in params["content_root_identities"]]:
             selected = cursor_rows_by_span_id[span_id]
             hydrated.append(
-                {
-                    "project_id": selected["project_id"],
-                    "trace_id": selected["trace_id"],
-                    "span_id": span_id,
-                    "start_time": selected["start_time"],
-                    "span_attributes": "{}",
-                    "attrs_string": {},
-                    "attrs_number": {},
-                    "attrs_bool": {},
-                    "provider": "vapi",
-                }
+                _voice_root_row(
+                    {
+                        "project_id": selected["project_id"],
+                        "trace_id": selected["trace_id"],
+                        "span_id": span_id,
+                        "start_time": selected["start_time"],
+                        "span_attributes": "{}",
+                        "attrs_string": {},
+                        "attrs_number": {},
+                        "attrs_bool": {},
+                        "provider": "vapi",
+                    }
+                )
             )
         return QueryResult(
             data=hydrated,
@@ -9370,7 +9472,7 @@ def test_voice_cursor_freezes_snapshot_and_continues_by_root_order(
             cursor,
             resource="voice_calls",
             scope=cursor_scope_for_request(request, project_ids=[PROJECT_ID]),
-            query=initial_data,
+            query={**initial_data, "voice_root_contract": "physical-root-winner-v1"},
             page_size=1,
         )
         continuation_data = {
@@ -9408,21 +9510,72 @@ def test_voice_cursor_freezes_snapshot_and_continues_by_root_order(
     assert "additional_table_filters" not in continuation_call["read_settings"]
 
 
+def test_voice_cursor_rejects_legacy_root_contract_before_reads() -> None:
+    from tracer.services.clickhouse.list_cursor import (
+        ListCursorError,
+        cursor_scope_for_request,
+        encode_list_cursor,
+    )
+    from tracer.views.trace import TraceView
+
+    request = _observe_trace_request({"cursor_mode": "true"})
+    data = {
+        "filters": [_time_filter()],
+        "page": 1,
+        "page_size": 25,
+        "cursor_mode": True,
+    }
+    old_cursor = encode_list_cursor(
+        resource="voice_calls",
+        scope=cursor_scope_for_request(request, project_ids=[PROJECT_ID]),
+        query=data,
+        page_size=25,
+        window_start=START.replace(tzinfo=UTC),
+        window_end=END.replace(tzinfo=UTC),
+        order=(END.replace(tzinfo=UTC), "trace-z"),
+        seen_rows=25,
+    )
+    analytics = mock.MagicMock()
+    view = TraceView.__new__(TraceView)
+
+    with (
+        mock.patch("tracer.views.trace.get_project_eval_configs") as eval_configs,
+        mock.patch(
+            "tracer.selectors.trace_filter_reads.read_bounded_filter_page"
+        ) as reader,
+        pytest.raises(ListCursorError) as error,
+    ):
+        view._list_voice_calls_clickhouse(
+            request,
+            project_id=PROJECT_ID,
+            validated_data={**data, "cursor": old_cursor},
+            remove_simulation_calls=False,
+            analytics=analytics,
+        )
+
+    assert error.value.code == "cursor_mismatch"
+    eval_configs.assert_not_called()
+    reader.assert_not_called()
+    analytics.execute_ch_query.assert_not_called()
+
+
 def test_voice_page_size_500_cursor_publishes_safe_exact_partial_chunk() -> None:
     from tracer.views.trace import TraceView
 
     started = END - timedelta(minutes=1)
     bounded_page = BoundedFilterPage(
         rows=[
-            {
-                "project_id": PROJECT_ID,
-                "trace_id": "trace-a",
-                "root_span_id": "root-a",
-                "span_id": "root-a",
-                "start_time": started,
-                "end_time": started + timedelta(seconds=12),
-                "provider": "vapi",
-            }
+            _voice_root_row(
+                {
+                    "project_id": PROJECT_ID,
+                    "trace_id": "trace-a",
+                    "root_span_id": "root-a",
+                    "span_id": "root-a",
+                    "start_time": started,
+                    "end_time": started + timedelta(seconds=12),
+                    "provider": "vapi",
+                }
+            )
         ],
         has_more=False,
         complete=False,
@@ -9441,17 +9594,19 @@ def test_voice_page_size_500_cursor_publishes_safe_exact_partial_chunk() -> None
     )
     content_result = QueryResult(
         data=[
-            {
-                "project_id": PROJECT_ID,
-                "trace_id": "trace-a",
-                "span_id": "root-a",
-                "start_time": started,
-                "span_attributes": "{}",
-                "attrs_string": {},
-                "attrs_number": {},
-                "attrs_bool": {},
-                "provider": "vapi",
-            }
+            _voice_root_row(
+                {
+                    "project_id": PROJECT_ID,
+                    "trace_id": "trace-a",
+                    "span_id": "root-a",
+                    "start_time": started,
+                    "span_attributes": "{}",
+                    "attrs_string": {},
+                    "attrs_number": {},
+                    "attrs_bool": {},
+                    "provider": "vapi",
+                }
+            )
         ],
         row_count=1,
         backend_used="clickhouse",
@@ -9649,15 +9804,17 @@ def test_voice_first_page_explicit_sample_hydrates_only_proven_rows() -> None:
     started = END - timedelta(minutes=1)
     bounded_page = BoundedFilterPage(
         rows=[
-            {
-                "project_id": PROJECT_ID,
-                "trace_id": "trace-a",
-                "root_span_id": "root-a",
-                "span_id": "root-a",
-                "start_time": started,
-                "end_time": started + timedelta(seconds=12),
-                "provider": "vapi",
-            }
+            _voice_root_row(
+                {
+                    "project_id": PROJECT_ID,
+                    "trace_id": "trace-a",
+                    "root_span_id": "root-a",
+                    "span_id": "root-a",
+                    "start_time": started,
+                    "end_time": started + timedelta(seconds=12),
+                    "provider": "vapi",
+                }
+            )
         ],
         has_more=False,
         complete=False,
@@ -9672,17 +9829,19 @@ def test_voice_first_page_explicit_sample_hydrates_only_proven_rows() -> None:
     )
     content_result = QueryResult(
         data=[
-            {
-                "project_id": PROJECT_ID,
-                "trace_id": "trace-a",
-                "span_id": "root-a",
-                "start_time": started,
-                "span_attributes": '{"final_status":"Rejected"}',
-                "attrs_string": {},
-                "attrs_number": {},
-                "attrs_bool": {},
-                "provider": "vapi",
-            }
+            _voice_root_row(
+                {
+                    "project_id": PROJECT_ID,
+                    "trace_id": "trace-a",
+                    "span_id": "root-a",
+                    "start_time": started,
+                    "span_attributes": '{"final_status":"Rejected"}',
+                    "attrs_string": {},
+                    "attrs_number": {},
+                    "attrs_bool": {},
+                    "provider": "vapi",
+                }
+            )
         ],
         row_count=1,
         backend_used="clickhouse",
@@ -9742,15 +9901,17 @@ def test_voice_page_size_500_hydrates_content_in_bounded_batches() -> None:
     from tracer.views.trace import TraceView
 
     page_rows = [
-        {
-            "project_id": PROJECT_ID,
-            "trace_id": f"trace-{index:03d}",
-            "root_span_id": f"root-{index:03d}",
-            "span_id": f"root-{index:03d}",
-            "start_time": END - timedelta(microseconds=index + 1),
-            "end_time": END - timedelta(microseconds=index + 1),
-            "provider": "vapi",
-        }
+        _voice_root_row(
+            {
+                "project_id": PROJECT_ID,
+                "trace_id": f"trace-{index:03d}",
+                "root_span_id": f"root-{index:03d}",
+                "span_id": f"root-{index:03d}",
+                "start_time": END - timedelta(microseconds=index + 1),
+                "end_time": END - timedelta(microseconds=index + 1),
+                "provider": "vapi",
+            }
+        )
         for index in range(500)
     ]
     row_by_span_id = {row["span_id"]: row for row in page_rows}
@@ -9770,20 +9931,22 @@ def test_voice_page_size_500_hydrates_content_in_bounded_batches() -> None:
 
     def hydrate_batch(_query, params, **_kwargs):
         rows = []
-        for span_id in params["content_span_ids"]:
+        for span_id in [identity[2] for identity in params["content_root_identities"]]:
             selected = row_by_span_id[span_id]
             rows.append(
-                {
-                    "project_id": PROJECT_ID,
-                    "trace_id": selected["trace_id"],
-                    "span_id": span_id,
-                    "start_time": selected["start_time"],
-                    "span_attributes": "{}",
-                    "attrs_string": {},
-                    "attrs_number": {},
-                    "attrs_bool": {},
-                    "provider": "vapi",
-                }
+                _voice_root_row(
+                    {
+                        "project_id": PROJECT_ID,
+                        "trace_id": selected["trace_id"],
+                        "span_id": span_id,
+                        "start_time": selected["start_time"],
+                        "span_attributes": "{}",
+                        "attrs_string": {},
+                        "attrs_number": {},
+                        "attrs_bool": {},
+                        "provider": "vapi",
+                    }
+                )
             )
         return QueryResult(
             data=rows,
@@ -9842,17 +10005,31 @@ def test_voice_page_size_500_hydrates_content_in_bounded_batches() -> None:
     ] == [200, 200, 100]
 
 
+def _voice_root_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Synthetic voice wire row with the complete CH25 replay metadata."""
+    return complete_root_row(
+        {
+            "root_span_id": row.get("root_span_id") or row.get("span_id"),
+            "_root_observation_type": "conversation",
+            **row,
+        },
+        project_id=PROJECT_ID,
+    )
+
+
 def _voice_hydration_rows(count: int) -> list[dict[str, Any]]:
     return [
-        {
-            "project_id": PROJECT_ID,
-            "trace_id": f"trace-{index:03d}",
-            "root_span_id": f"root-{index:03d}",
-            "span_id": f"root-{index:03d}",
-            "start_time": END - timedelta(microseconds=index + 1),
-            "end_time": END - timedelta(microseconds=index),
-            "provider": "vapi",
-        }
+        _voice_root_row(
+            {
+                "project_id": PROJECT_ID,
+                "trace_id": f"trace-{index:03d}",
+                "root_span_id": f"root-{index:03d}",
+                "span_id": f"root-{index:03d}",
+                "start_time": END - timedelta(microseconds=index + 1),
+                "end_time": END - timedelta(microseconds=index),
+                "provider": "vapi",
+            }
+        )
         for index in range(count)
     ]
 
@@ -9933,13 +10110,130 @@ def test_voice_content_hydration_rejects_mixed_missing_root_identity() -> None:
     process_raw_logs.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    "missing_field",
+    [
+        "_root_observation_type",
+        "_root_service_name",
+        "_root_start_hour",
+        "_root_version",
+    ],
+)
+def test_voice_content_hydration_requires_selected_physical_metadata(
+    missing_field: str,
+) -> None:
+    page_rows = _voice_hydration_rows(2)
+    page_rows[1].pop(missing_field)
+
+    response, analytics, process_raw_logs = _run_voice_hydration_case(
+        page_rows,
+        AssertionError("hydration must not run with incomplete physical metadata"),
+    )
+
+    assert response[0] == "error"
+    assert response[1][0] == 503
+    analytics.execute_ch_query.assert_not_called()
+    process_raw_logs.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    [
+        ("_root_observation_type", "SPAN"),
+        ("_root_service_name", "other-service"),
+        ("_root_start_hour", END),
+        ("_root_version", 2),
+        ("_root_version", None),
+        ("_root_service_name", None),
+    ],
+)
+def test_voice_content_hydration_rejects_physical_or_version_drift(
+    field: str, replacement: Any
+) -> None:
+    page_rows = _voice_hydration_rows(2)
+
+    def hydrate(_query, params, **_kwargs):
+        assert all(len(identity) == 8 for identity in params["content_root_identities"])
+        returned = [{**row, "span_attributes": "{}"} for row in reversed(page_rows)]
+        returned[0][field] = replacement
+        return QueryResult(
+            data=returned,
+            row_count=len(returned),
+            backend_used="clickhouse",
+            query_time_ms=1.0,
+        )
+
+    response, analytics, process_raw_logs = _run_voice_hydration_case(
+        page_rows, hydrate
+    )
+
+    assert response[0] == "error"
+    assert response[1][0] == 503
+    analytics.execute_ch_query.assert_called_once()
+    process_raw_logs.assert_not_called()
+
+
+def test_voice_content_hydration_keeps_attribute_association_after_reordering() -> None:
+    page_rows = _voice_hydration_rows(2)
+    page_rows[0]["_root_service_name"] = "service-a"
+    page_rows[0]["_root_version"] = 5
+    page_rows[1]["_root_service_name"] = "service-b"
+    page_rows[1]["_root_version"] = 9
+
+    def hydrate(_query, params, **_kwargs):
+        assert [identity[5:] for identity in params["content_root_identities"]] == [
+            (
+                row["_root_service_name"],
+                int(row["_root_start_hour"].timestamp()) * 1_000_000,
+                row["_root_version"],
+            )
+            for row in page_rows
+        ]
+        returned = [
+            {
+                **row,
+                "span_attributes": "{}",
+                "attrs_string": {"marker": row["_root_service_name"]},
+                "attrs_number": {"fixture_version": row["_root_version"]},
+                "attrs_bool": {"fixture_enabled": True},
+            }
+            for row in reversed(page_rows)
+        ]
+        return QueryResult(
+            data=returned,
+            row_count=len(returned),
+            backend_used="clickhouse",
+            query_time_ms=1.0,
+        )
+
+    response, analytics, process_raw_logs = _run_voice_hydration_case(
+        page_rows, hydrate
+    )
+
+    assert response.status_code == 200
+    assert [row["trace_id"] for row in response.data["results"]] == [
+        row["trace_id"] for row in page_rows
+    ]
+    assert [row["marker"] for row in response.data["results"]] == [
+        "service-a",
+        "service-b",
+    ]
+    assert [row["fixture_version"] for row in response.data["results"]] == [5, 9]
+    assert all(row["fixture_enabled"] is True for row in response.data["results"])
+    assert not any(
+        key.startswith("_root_") for row in response.data["results"] for key in row
+    )
+    analytics.execute_ch_query.assert_called_once()
+    assert process_raw_logs.call_count == 2
+
+
 def test_voice_content_hydration_recursively_splits_only_code241_exactly() -> None:
     page_rows = _voice_hydration_rows(6)
     row_by_span_id = {row["span_id"]: row for row in page_rows}
     attempted_batch_sizes = []
 
     def hydrate(_query, params, **kwargs):
-        span_ids = list(params["content_span_ids"])
+        span_ids = [identity[2] for identity in params["content_root_identities"]]
         attempted_batch_sizes.append(len(span_ids))
         assert kwargs["settings"]["max_block_size"] == 8_192
         assert "preferred_max_column_in_block_size_bytes" not in kwargs["settings"]
@@ -9948,17 +10242,19 @@ def test_voice_content_hydration_recursively_splits_only_code241_exactly() -> No
         selected = row_by_span_id[span_ids[0]]
         return QueryResult(
             data=[
-                {
-                    "project_id": PROJECT_ID,
-                    "trace_id": selected["trace_id"],
-                    "span_id": selected["span_id"],
-                    "start_time": selected["start_time"],
-                    "span_attributes": f'{{"marker":"{selected["span_id"]}"}}',
-                    "attrs_string": {},
-                    "attrs_number": {},
-                    "attrs_bool": {},
-                    "provider": "vapi",
-                }
+                _voice_root_row(
+                    {
+                        "project_id": PROJECT_ID,
+                        "trace_id": selected["trace_id"],
+                        "span_id": selected["span_id"],
+                        "start_time": selected["start_time"],
+                        "span_attributes": f'{{"marker":"{selected["span_id"]}"}}',
+                        "attrs_string": {},
+                        "attrs_number": {},
+                        "attrs_bool": {},
+                        "provider": "vapi",
+                    }
+                )
             ],
             row_count=1,
             backend_used="clickhouse",
@@ -10004,17 +10300,19 @@ def test_voice_content_hydration_rejects_equal_count_identity_mismatch(
             ]
         return QueryResult(
             data=[
-                {
-                    "project_id": row["project_id"],
-                    "trace_id": row["trace_id"],
-                    "span_id": row["span_id"],
-                    "start_time": row["start_time"],
-                    "span_attributes": "{}",
-                    "attrs_string": {},
-                    "attrs_number": {},
-                    "attrs_bool": {},
-                    "provider": "vapi",
-                }
+                _voice_root_row(
+                    {
+                        "project_id": row["project_id"],
+                        "trace_id": row["trace_id"],
+                        "span_id": row["span_id"],
+                        "start_time": row["start_time"],
+                        "span_attributes": "{}",
+                        "attrs_string": {},
+                        "attrs_number": {},
+                        "attrs_bool": {},
+                        "provider": "vapi",
+                    }
+                )
                 for row in returned
             ],
             row_count=2,
@@ -10037,7 +10335,9 @@ def test_voice_content_hydration_does_not_split_a_later_timeout() -> None:
     attempted_batch_sizes = []
 
     def hydrate(_query, params, **_kwargs):
-        attempted_batch_sizes.append(len(params["content_span_ids"]))
+        attempted_batch_sizes.append(
+            len([identity[2] for identity in params["content_root_identities"]])
+        )
         if len(attempted_batch_sizes) == 1:
             raise ReadDeadlineExceeded("Code: 241. Memory limit exceeded")
         raise ReadDeadlineExceeded("read deadline exceeded")
@@ -10058,23 +10358,25 @@ def test_voice_content_hydration_attempt_cap_is_atomic() -> None:
     row_by_span_id = {row["span_id"]: row for row in page_rows}
 
     def hydrate(_query, params, **_kwargs):
-        span_ids = list(params["content_span_ids"])
+        span_ids = [identity[2] for identity in params["content_root_identities"]]
         if len(span_ids) > 1:
             raise ReadDeadlineExceeded("Code: 241. Memory limit exceeded")
         selected = row_by_span_id[span_ids[0]]
         return QueryResult(
             data=[
-                {
-                    "project_id": PROJECT_ID,
-                    "trace_id": selected["trace_id"],
-                    "span_id": selected["span_id"],
-                    "start_time": selected["start_time"],
-                    "span_attributes": "{}",
-                    "attrs_string": {},
-                    "attrs_number": {},
-                    "attrs_bool": {},
-                    "provider": "vapi",
-                }
+                _voice_root_row(
+                    {
+                        "project_id": PROJECT_ID,
+                        "trace_id": selected["trace_id"],
+                        "span_id": selected["span_id"],
+                        "start_time": selected["start_time"],
+                        "span_attributes": "{}",
+                        "attrs_string": {},
+                        "attrs_number": {},
+                        "attrs_bool": {},
+                        "provider": "vapi",
+                    }
+                )
             ],
             row_count=1,
             backend_used="clickhouse",
@@ -10092,14 +10394,19 @@ def test_voice_content_hydration_attempt_cap_is_atomic() -> None:
 
 
 def test_voice_content_identity_normalizes_naive_and_aware_utc() -> None:
-    from tracer.views.trace import _voice_content_identity
+    naive = _voice_hydration_rows(1)[0]
+    naive["_root_start_hour"] = naive["_root_start_hour"].replace(tzinfo=None)
+    aware = {
+        **naive,
+        "start_time": naive["start_time"].replace(tzinfo=UTC),
+        "_root_start_hour": naive["_root_start_hour"].replace(tzinfo=UTC),
+    }
+    builder = VoiceCallListQueryBuilderV2(project_id=PROJECT_ID)
+    identity = builder.bounded_filter_page_hydration_identity(naive)
 
-    naive = datetime(2026, 6, 7, 12, 34, 56, 789012)
-    aware = naive.replace(tzinfo=UTC)
-
-    assert _voice_content_identity(PROJECT_ID, "trace", "span", naive) == (
-        _voice_content_identity(PROJECT_ID, "trace", "span", aware)
-    )
+    assert identity is not None
+    assert len(identity) == 8
+    assert identity == builder.bounded_filter_page_hydration_identity(aware)
 
 
 def test_voice_content_hydration_budget_failure_is_atomic_and_sanitized() -> None:
@@ -10108,15 +10415,17 @@ def test_voice_content_hydration_budget_failure_is_atomic_and_sanitized() -> Non
     started = END - timedelta(minutes=1)
     bounded_page = BoundedFilterPage(
         rows=[
-            {
-                "project_id": PROJECT_ID,
-                "trace_id": "trace-a",
-                "root_span_id": "root-a",
-                "span_id": "root-a",
-                "start_time": started,
-                "end_time": started + timedelta(seconds=12),
-                "provider": "vapi",
-            }
+            _voice_root_row(
+                {
+                    "project_id": PROJECT_ID,
+                    "trace_id": "trace-a",
+                    "root_span_id": "root-a",
+                    "span_id": "root-a",
+                    "start_time": started,
+                    "end_time": started + timedelta(seconds=12),
+                    "provider": "vapi",
+                }
+            )
         ],
         has_more=True,
         complete=True,
@@ -13207,7 +13516,10 @@ def test_unindexed_micro_seed_finds_old_candidate_before_ordered_proof() -> None
     assert page.complete is True
 
 
-def test_unindexed_micro_seed_skips_when_statement_caps_cannot_be_enforced() -> None:
+@pytest.mark.parametrize("uncapped_application", [False, True])
+def test_unindexed_micro_seed_skips_when_statement_caps_cannot_be_enforced(
+    uncapped_application,
+) -> None:
     window_start = END - timedelta(days=120)
     builder = _DistributedMicroSeedFakeBuilder(
         [],
@@ -13216,7 +13528,8 @@ def test_unindexed_micro_seed_skips_when_statement_caps_cannot_be_enforced() -> 
         seed_proves_order=False,
     )
     executor = _FakeExecutor(builder)
-    executor.supports_per_query_read_settings = False
+    executor.supports_per_query_read_settings = uncapped_application
+    executor.supports_bounded_speculative_reads = False
 
     page = read_bounded_filter_page(
         builder=builder,
@@ -13236,7 +13549,10 @@ def test_unindexed_micro_seed_skips_when_statement_caps_cannot_be_enforced() -> 
     assert page.rows == []
 
 
-def test_recommended_anchor_skips_when_statement_caps_cannot_be_enforced() -> None:
+@pytest.mark.parametrize("uncapped_application", [False, True])
+def test_recommended_anchor_skips_when_statement_caps_cannot_be_enforced(
+    uncapped_application,
+) -> None:
     window_start = END - timedelta(days=120)
     builder = _SmallAnchorFakeBuilder(
         [],
@@ -13245,7 +13561,8 @@ def test_recommended_anchor_skips_when_statement_caps_cannot_be_enforced() -> No
         seed_proves_order=False,
     )
     executor = _TimedAnchorFakeExecutor(builder)
-    executor.supports_per_query_read_settings = False
+    executor.supports_per_query_read_settings = uncapped_application
+    executor.supports_bounded_speculative_reads = False
 
     page = read_bounded_filter_page(
         builder=builder,
@@ -13265,7 +13582,10 @@ def test_recommended_anchor_skips_when_statement_caps_cannot_be_enforced() -> No
     assert page.rows == []
 
 
-def test_graph_key_witness_probe_rejects_locked_read_settings_before_query() -> None:
+@pytest.mark.parametrize("uncapped_application", [False, True])
+def test_graph_key_witness_probe_rejects_locked_read_settings_before_query(
+    uncapped_application,
+) -> None:
     row = {"id": "trace-a", "start_time": END - timedelta(days=30)}
     builder = _GraphKeyWitnessFakeBuilder(
         [row],
@@ -13274,7 +13594,8 @@ def test_graph_key_witness_probe_rejects_locked_read_settings_before_query() -> 
         seed_proves_order=False,
     )
     executor = _AnchorFakeExecutor(builder)
-    executor.supports_per_query_read_settings = False
+    executor.supports_per_query_read_settings = uncapped_application
+    executor.supports_bounded_speculative_reads = False
 
     with pytest.raises(
         ValueError,

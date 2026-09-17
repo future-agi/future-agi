@@ -36,6 +36,10 @@ from rest_framework.utils.urls import replace_query_param
 from rest_framework.viewsets import ModelViewSet
 
 from model_hub.models.evals_metric import EvalTemplate
+from model_hub.utils.eval_input_validation import (
+    PARTIAL_INPUT_MESSAGE,
+    PARTIAL_INPUT_WARNING_TYPE,
+)
 from tfc.temporal.eval_tasks.client import (
     signal_pause_eval_task_workflow,
     start_eval_task_workflow_sync,
@@ -73,6 +77,11 @@ from tracer.services.eval_tasks.entries import soft_delete_live
 from tracer.services.filter_principal_context import (
     FilterPrincipalContextError,
     bind_request_my_annotations_principal,
+)
+from tracer.services.postgres_read_policy import application_postgres_reads
+from tracer.utils.eval import (
+    GROUND_TRUTH_NOT_APPLIED_MESSAGE,
+    GROUND_TRUTH_NOT_APPLIED_WARNING_TYPE,
 )
 from tracer.utils.filters import FilterEngine
 from tracer.utils.helper import get_default_eval_task_config
@@ -307,44 +316,15 @@ def _bounded_eval_task_compatibility_rows(queryset):
     return rows
 
 
-def _execute_eval_task_query_with_deadline(
-    deadline, execute, sql, params, many, context
-):
-    """Execute one query after shrinking its PostgreSQL statement timeout."""
-
-    remaining_ms = deadline.remaining_ms(floor_ms=1)
-    context["cursor"].cursor.execute(
-        "SELECT set_config('statement_timeout', %s, true)",
-        (f"{remaining_ms}ms",),
-    )
-    result = execute(sql, params, many, context)
-    deadline.remaining_ms(floor_ms=1)
-    return result
-
-
 @contextmanager
 def _bounded_eval_task_read_transaction(deadline):
-    """Apply the one request deadline to every PostgreSQL statement.
-
-    Django's ``statement_timeout`` is per statement.  Updating it from an
-    execute wrapper before each query makes the timeout shrink with the one
-    monotonic request wall instead of granting every count/prefetch/page query
-    a fresh 8.5 seconds.  The raw driver cursor deliberately bypasses the
-    wrapper for the ``SET LOCAL`` itself.
-    """
-
-    def execute_with_remaining_timeout(execute, sql, params, many, context):
-        return _execute_eval_task_query_with_deadline(
-            deadline, execute, sql, params, many, context
-        )
-
-    with transaction.atomic():
-        if connection.vendor != "postgresql":
-            yield
-            deadline.remaining_ms(floor_ms=1)
-            return
-        with connection.execute_wrapper(execute_with_remaining_timeout):
-            yield
+    """Keep request checks separate from uncapped PostgreSQL statements."""
+    with application_postgres_reads(
+        connection=connection,
+        atomic=transaction.atomic,
+        check_request=lambda: deadline.remaining_ms(floor_ms=1),
+    ):
+        yield
 
 
 def _bounded_eval_task_read(view_method):
@@ -355,9 +335,7 @@ def _bounded_eval_task_read(view_method):
         deadline = ReadDeadline.start(_EVAL_TASK_LIST_WALL_MS)
         try:
             with _bounded_eval_task_read_transaction(deadline):
-                response = view_method(view, request, *args, **kwargs)
-                deadline.remaining_ms(floor_ms=1)
-                return response
+                return view_method(view, request, *args, **kwargs)
         except (ReadDeadlineExceeded, DatabaseError) as exc:
             logger.warning(
                 "eval_task.read_unavailable",
@@ -380,7 +358,16 @@ def _bounded_usage_text(value):
     return f"{text[:_USAGE_DETAIL_TEXT_MAX_CHARS]} [truncated]"
 
 
-def _extract_partial_input_warnings(output_metadata):
+# Warnings persist as a bare type on the row; the copy lives here so a
+# 300-char string is not written to every EvalLogger and APICallLog.
+_WARNING_FALLBACK_MESSAGES = {
+    PARTIAL_INPUT_WARNING_TYPE: PARTIAL_INPUT_MESSAGE,
+    GROUND_TRUTH_NOT_APPLIED_WARNING_TYPE: GROUND_TRUTH_NOT_APPLIED_MESSAGE,
+}
+
+
+def _extract_run_warnings(output_metadata):
+    """Every typed warning on one EvalLogger row, whatever its type."""
     if not isinstance(output_metadata, dict):
         return []
     warnings = output_metadata.get("warnings") or []
@@ -390,7 +377,7 @@ def _extract_partial_input_warnings(output_metadata):
         return []
     result = []
     for warning in warnings:
-        if not isinstance(warning, dict) or warning.get("type") != "partial_input":
+        if not isinstance(warning, dict) or not warning.get("type"):
             continue
 
         def bounded_keys(value):
@@ -408,7 +395,7 @@ def _extract_partial_input_warnings(output_metadata):
             message = ""
         result.append(
             {
-                "type": "partial_input",
+                "type": str(warning["type"])[:_EVAL_TASK_WARNING_KEY_MAX_CHARS],
                 "empty_keys": bounded_keys(warning.get("empty_keys")),
                 "filled_keys": bounded_keys(warning.get("filled_keys")),
                 "message": message[:_EVAL_TASK_WARNING_MESSAGE_MAX_CHARS],
@@ -798,21 +785,18 @@ def _build_eval_task_warning_groups(rows, *, group_limit):
             warning_text_truncated = True
             continue
         warnings = _parse_usage_json_preview(preview, original_length)
-        for warning in _extract_partial_input_warnings({"warnings": warnings}):
+        for warning in _extract_run_warnings({"warnings": warnings}):
+            warning_type = warning["type"]
             empty_keys = warning["empty_keys"]
             filled_keys = warning["filled_keys"]
-            key = tuple(empty_keys)
+            key = (warning_type, tuple(empty_keys))
             if key not in warning_groups_by_key:
                 warning_groups_by_key[key] = {
-                    "type": "partial_input",
+                    "type": warning_type,
                     "empty_keys": empty_keys,
                     "filled_keys": filled_keys,
                     "message": warning["message"]
-                    or (
-                        "Eval ran with some inputs empty. "
-                        "Result may be less reliable. "
-                        "Ignore if this is intentional."
-                    ),
+                    or _WARNING_FALLBACK_MESSAGES.get(warning_type, ""),
                     "count": 0,
                 }
             warning_groups_by_key[key]["count"] += 1
@@ -2108,10 +2092,9 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 # was absent). Counted separately so it stays out of the
                 # success and failure tallies.
                 skipped_count=Count("id", filter=Q(status=EvalEntryStatus.SKIPPED)),
-                # Partial-input warnings live in
-                # output_metadata.warnings as a JSON array. has_key on
-                # the JSONField gives us a cheap "any warnings?" filter
-                # without scanning the contents.
+                # Rows carrying at least one warning. A row can carry more
+                # than one, so this is not the sum of the group counts; the
+                # UI labels it "runs with warnings" for that reason.
                 warnings_count=Count(
                     "id",
                     filter=Q(
@@ -2581,8 +2564,11 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                             if log.trace_id
                             else None
                         ),
+                        # Off the row's own FK column: the target FKs are
+                        # unconstrained, so a run can reference a session with
+                        # no PG row and must still report what it evaluated.
                         "session_id": (
-                            str(trace_session.id) if trace_session else None
+                            str(log.trace_session_id) if log.trace_session_id else None
                         ),
                         "eval_id": str(config.id) if config else None,
                         "eval_name": config.name if config else None,
@@ -2618,7 +2604,9 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                                 else None
                             ),
                             "session_id": (
-                                str(trace_session.id) if trace_session else None
+                                str(log.trace_session_id)
+                                if log.trace_session_id
+                                else None
                             ),
                             "session_name": (
                                 trace_session.name if trace_session else None

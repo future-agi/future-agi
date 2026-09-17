@@ -750,7 +750,7 @@ describe("useExactTraceAttributeProperties", () => {
     const { result } = renderHook(
       () =>
         useExactTraceAttributeProperties({
-          projectId: "project-whatfix",
+          projectId: "project-tertiary-fixture",
           search: "prompt",
           source: "spans",
         }),
@@ -898,7 +898,7 @@ describe("useExactTraceAttributeProperties", () => {
     const { result, rerender } = renderHook(
       ({ search }) =>
         useExactTraceAttributeProperties({
-          projectId: "project-coletia",
+          projectId: "project-observe",
           search,
           source: "traces",
         }),
@@ -977,7 +977,7 @@ describe("useExactTraceAttributeProperties", () => {
     const { result } = renderHook(
       () =>
         useExactTraceAttributeProperties({
-          projectId: "project-coletia",
+          projectId: "project-observe",
           search: "prompt_slug",
           source: "traces",
         }),
@@ -1021,7 +1021,7 @@ describe("useExactTraceAttributeProperties", () => {
       "/api/traces/span-attribute-keys/",
       expect.objectContaining({
         params: {
-          project_id: "project-coletia",
+          project_id: "project-observe",
           page_size: 10,
           q: "prompt_slug",
           cursor: "exact-13",

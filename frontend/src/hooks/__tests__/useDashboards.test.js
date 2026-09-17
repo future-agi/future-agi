@@ -1847,7 +1847,7 @@ describe("useDashboardFilterValues bounded-read state", () => {
         useDashboardFilterValues({
           metricName,
           metricType: "custom_attribute",
-          projectIds: ["project-coletia"],
+          projectIds: ["project-observe"],
           source: "traces",
           search: "",
           pageSize: 10,

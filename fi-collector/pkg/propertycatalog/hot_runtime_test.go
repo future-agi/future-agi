@@ -315,7 +315,7 @@ func TestRevisionFenceWorkspaceScopeRejectsMalformedAndExpiredFences(t *testing.
 		},
 		{
 			name: "expired lease", mutateRaw: func(raw []byte) []byte { return raw },
-			now: "2026-08-14 12:03:00.000000", want: "expired",
+			now: "2026-08-14 12:03:00.000000", want: "no revision assignment",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {

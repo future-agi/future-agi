@@ -10,6 +10,8 @@ from typing import Any, List, Optional
 from unittest import mock
 
 import pytest
+from django.core import mail
+from django.test import override_settings
 from django.utils import timezone
 
 from tracer.models.monitor import UserAlertMonitorLog
@@ -20,6 +22,7 @@ from tracer.utils.monitor import (
     MonitorConfigError,
     _get_metric_value,
     _process_monitor,
+    _send_alert_email,
     build_monitor_ch_builder,
     get_interval_kind,
     process_monitor_task,
@@ -259,6 +262,24 @@ def test_notification_helpers_receive_alert_args(user_alert_monitor) -> None:
     assert args[0] == user_alert_monitor
     assert "breached the critical threshold" in args[1]
     assert args[2] == "critical"
+
+
+@override_settings(APP_BASE_URL="https://app.eu.futureagi.com")
+def test_alert_email_button_links_to_this_deployment(user_alert_monitor) -> None:
+    user_alert_monitor.notification_emails = ["alerts@example.com"]
+    user_alert_monitor.save(update_fields=["notification_emails"])
+    mail.outbox.clear()
+
+    _send_alert_email(user_alert_monitor, "breached the critical threshold", "critical")
+
+    assert len(mail.outbox) == 1
+    alternative = mail.outbox[0].alternatives[0]
+    html_body = (
+        alternative.content if hasattr(alternative, "content") else alternative[0]
+    )
+    assert 'href="https://app.eu.futureagi.com/dashboard/alerts"' in html_body
+    assert 'href="/dashboard/alerts"' not in html_body
+    assert "app.futureagi.com" not in html_body.replace("app.eu.futureagi.com", "")
 
 
 @pytest.mark.parametrize(

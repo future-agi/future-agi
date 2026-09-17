@@ -18,8 +18,7 @@ const (
 	producerRetirementVersion   = uint16(1)
 	producerRetirementFileName  = "producer-state-retirements-v1.json"
 	producerRetirementSHADomain = "futureagi.property-catalog.producer-state-retirement.v1"
-	maxProducerRetirements      = 256
-	maxProducerRetirementBytes  = 8 << 20
+	maxProducerRetirementBytes  = 64 << 20
 )
 
 type producerRetirementDocument struct {
@@ -120,7 +119,7 @@ func loadProducerRetirements(directory string) (map[producerRetirementTenant]Pro
 		return nil, errors.New("propertycatalog: producer retirement proof is not canonical JSON")
 	}
 	if document.Format != producerRetirementFormat || document.Version != producerRetirementVersion ||
-		len(document.Retirements) == 0 || len(document.Retirements) > maxProducerRetirements {
+		len(document.Retirements) == 0 {
 		return nil, errors.New("propertycatalog: producer retirement proof format/version/count is invalid")
 	}
 	if !sort.SliceIsSorted(document.Retirements, func(i, j int) bool {
@@ -219,15 +218,37 @@ func validateProducerRetirement(value ProducerStateRetirement) error {
 		return err
 	}
 	prefix := value.LifecycleMode + "_"
+	lifecycleMatches := true
 	for _, stream := range plan.Streams {
 		if !strings.HasPrefix(stream.SourceCutoff.Label, prefix) {
-			return errors.New("retirement lifecycle mode differs from its build plan")
+			lifecycleMatches = false
+			break
 		}
+	}
+	if !lifecycleMatches && !isPhysicalSnapshotRetirement(value, plan) {
+		return errors.New("retirement lifecycle mode differs from its build plan")
 	}
 	if value.RetirementSHA256 != producerRetirementSHA256(value) {
 		return errors.New("retirement digest does not match its fields")
 	}
 	return nil
+}
+
+func isPhysicalSnapshotRetirement(value ProducerStateRetirement, validatedPlan buildPlanDocumentJSON) bool {
+	// validateBuildPlan already checked the exact lease, digest, and role/adapter
+	// inventory. This exception only recognizes an initial physical snapshot's
+	// revision-scoped label and shared nonzero opaque generation.
+	if value.LifecycleMode != "initial_backfill" || len(validatedPlan.Streams) == 0 {
+		return false
+	}
+	label := fmt.Sprintf("physical_snapshot_r%d", value.CatalogRevision)
+	generation := validatedPlan.Streams[0].SourceCutoff.Value
+	for _, stream := range validatedPlan.Streams {
+		if stream.SourceCutoff.Label != label || stream.SourceCutoff.Value != generation {
+			return false
+		}
+	}
+	return generation != 0
 }
 
 func (r *HotRuntime) compactProducerState(ctx context.Context, fences []RevisionFence) error {

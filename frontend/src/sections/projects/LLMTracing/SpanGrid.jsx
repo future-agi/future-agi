@@ -12,7 +12,7 @@ import React, {
 } from "react";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { getRandomId, safeParse } from "src/utils/utils";
-import axios, { endpoints } from "src/utils/axios";
+import { readQuery, endpoints } from "src/utils/axios";
 import { useParams } from "src/routes/hooks";
 import NumberQuickFilterPopover from "src/components/ComplexFilter/QuickFilterComponents/NumberQuickFilterPopover/NumberQuickFilterPopover";
 
@@ -86,11 +86,12 @@ import {
 } from "../observeEvents";
 
 const loadSpanObservePage = (params, signal) =>
-  axios
-    .get(endpoints.project.getSpansForObserveProject(), { params, signal })
-    .then((response) =>
-      parseAxiosResult(response, parseSpanObserveListResponse),
-    );
+  readQuery(endpoints.project.getSpansForObserveProject(), {
+    params,
+    signal,
+  }).then((response) =>
+    parseAxiosResult(response, parseSpanObserveListResponse),
+  );
 
 const getSpanListColumnDefs = (col) => {
   const colId = col?.id;
@@ -261,7 +262,7 @@ const SpanGrid = React.forwardRef(
         headerTextColor: theme.palette.text.primary,
         rowHoverColor: "rgba(120,87,252,0.04)",
       }),
-      [theme],
+      [theme.palette.text.primary, theme.typography.fontWeightMedium],
     );
     const agTheme = useAgThemeWith(gridThemeParams);
     const { observeId } = useParams();

@@ -46,7 +46,7 @@ import pandas as pd
 from agentic_eval.core.utils.model_config import ModelConfigs
 
 # Default model configuration using ModelConfigs
-DEFAULT_SDA_MODEL_CONFIG = ModelConfigs.VERTEX_GEMINI_2_5_PRO
+DEFAULT_SDA_MODEL_CONFIG = ModelConfigs.VERTEX_GEMINI_3_7_FLASH
 import json
 import os
 import copy
@@ -477,7 +477,7 @@ class SyntheticDataAgent:
                 "generation_type" in payload and payload["generation_type"] == "prompt"
             )
             if prompt_type:
-                _cfg = ModelConfigs.VERTEX_GEMINI_2_5_FLASH_LITE
+                _cfg = ModelConfigs.VERTEX_GEMINI_3_1_FLASH_LITE
                 self.llm = LLM(
                     model_name=_cfg.model_name,
                     temperature=_cfg.temperature,

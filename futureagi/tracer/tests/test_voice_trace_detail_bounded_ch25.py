@@ -358,17 +358,34 @@ def test_voice_page_n_and_content_use_physical_latest_identity(
     assert page.complete is True
     assert [row["trace_id"] for row in page.rows] == ["trace-a"]
     selected = page.rows[0]
+    expected_rows = [
+        selected,
+        {
+            "project_id": project,
+            "trace_id": "trace-b",
+            "root_span_id": "shared-root",
+            "start_time": b_time,
+            "_root_observation_type": "conversation",
+            "_root_service_name": "svc",
+            "_root_start_hour": start,
+            "_root_version": 1,
+        },
+    ]
+    root_identities = builder.content_root_identities_for_rows(expected_rows)
+    epoch = datetime(1970, 1, 1)
+    assert root_identities[0] == (
+        project,
+        "trace-a",
+        "shared-root",
+        (a_time - epoch) // timedelta(microseconds=1),
+        "conversation",
+        "svc",
+        (start - epoch) // timedelta(microseconds=1),
+        2,
+    )
     query, params = builder.build_content_query(
-        [selected["root_span_id"]],
-        root_identities=[
-            (
-                project,
-                selected["trace_id"],
-                selected["root_span_id"],
-                selected["start_time"],
-            ),
-            (project, "trace-b", "shared-root", b_time),
-        ],
+        [identity[2] for identity in root_identities],
+        root_identities=root_identities,
     )
     content = (
         _Analytics(ch_client)
@@ -381,6 +398,7 @@ def test_voice_page_n_and_content_use_physical_latest_identity(
         .data
     )
     assert len(content) == 2
+    assert builder.content_root_rows_match(expected_rows, content)
     assert {
         (row["trace_id"], row["span_id"], row["attrs_string"]["raw_log"])
         for row in content
