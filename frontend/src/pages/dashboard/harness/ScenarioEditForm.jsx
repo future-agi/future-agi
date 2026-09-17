@@ -28,15 +28,11 @@ import {
 
 // Edit one scenario.
 //
-// Every scenario is proved before it is kept: the world is set up, a known-good run has to pass, and
-// the checks have to fail when nothing is done. That proof pins the caller's identity, the task, the
-// setup and the checks, so none of them is offered here. The drawer holds what a person may change
-// and nothing else: a control that cannot be used is worse than no control, and a row explaining
-// what you may not do is worse still.
-//
-//   Every agent      passes when, branch, keywords
-//   Conversational   personality, communication style, accent, language, profession, location
-//   Voice            max turns, background noise
+// The same fields the studio design shows, in the same sections and the same order. What differs is
+// which of them accept a change: a scenario is proved before it is kept, the world is set up, a
+// known-good run has to pass and the checks have to fail when nothing is done, and that proof pins
+// the caller's identity, the task and the checks. Those fields are shown read-only rather than left
+// out, because seeing what a scenario holds is most of why anyone opens it.
 const readable = (name) => String(name || "").replace(/[_-]+/g, " ").trim();
 
 // These lists carry a lowercase value and a display label. A scenario's persona is written with the
@@ -46,7 +42,7 @@ const pick = (options) =>
   (options || []).map((one) => (typeof one === "string" ? one : one.label ?? one.value));
 
 // Where the call is made from. The voice runtime maps each of these to a real ambience clip, so
-// these are the settings that actually reach a run; anything else would be a label over silence.
+// these are the settings that actually reach a run.
 const NOISE = ["off", "home", "office", "retail", "street", "vehicle", "transit", "outdoors"];
 
 const noiseOf = (value) => {
@@ -72,6 +68,7 @@ const draftOf = (scenario) => {
 };
 
 export default function ScenarioEditForm({ scenario, busy, onCancel, onSave }) {
+  const persona = scenario.persona || {};
   const initial = useMemo(() => draftOf(scenario), [scenario]);
   const [form, setForm] = useState(initial);
   const set = (key) => (value) => setForm((prev) => ({ ...prev, [key]: value }));
@@ -89,11 +86,9 @@ export default function ScenarioEditForm({ scenario, busy, onCancel, onSave }) {
         sx={{ px: 2.5, py: 2, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
       >
         <Box flex={1} minWidth={0}>
-          <Typography noWrap sx={{ typography: "m2", fontWeight: 600 }}>
-            {readable(scenario.name)}
-          </Typography>
+          <Typography sx={{ typography: "m2", fontWeight: 600 }}>Edit scenario</Typography>
           <Typography noWrap sx={{ typography: "s2", color: "text.subtitle" }}>
-            {scenario.use_case}
+            {readable(scenario.name)}
           </Typography>
         </Box>
         <IconButton size="small" onClick={onCancel}>
@@ -103,27 +98,35 @@ export default function ScenarioEditForm({ scenario, busy, onCancel, onSave }) {
 
       <Stack spacing={2.5} sx={{ flex: 1, overflow: "auto", p: 2.5 }}>
         <SectionHeader
-          title="Scenario"
-          hint="None of this is part of what the scenario was proved against, so it saves straight to the suite."
+          title="Directly editable"
+          hint="These parts do not touch the proof, so they save straight to the suite."
         />
 
-        <TextField
-          size="small"
-          label="Passes when"
-          multiline
-          minRows={2}
-          value={form.tests}
-          onChange={(event) => set("tests")(event.target.value)}
-          helperText="What a pass looks like. Shown in results."
-          InputProps={{ sx: { typography: "s2" } }}
+        <Field
+          label="Name"
+          value={scenario.name}
+          readOnly
+          mono
+          help="Read-only. It is the folder this scenario lives in and how results refer to it."
         />
-        <TextField
-          size="small"
+        <Field
+          label="Use case"
+          value={scenario.use_case}
+          readOnly
+          help="Read-only. It comes from the agent's contract and groups this row with its siblings."
+        />
+        <Field
           label="Branch"
           value={form.branch}
-          onChange={(event) => set("branch")(event.target.value)}
-          helperText="What makes this one different from its siblings in the same use case."
-          InputProps={{ sx: { typography: "s2" } }}
+          onChange={set("branch")}
+          help="What makes this one different from its siblings in the same use case."
+        />
+        <Field
+          label="Passes when"
+          value={form.tests}
+          onChange={set("tests")}
+          rows={2}
+          help="What a pass looks like. Shown in results."
         />
         <Autocomplete
           multiple
@@ -141,7 +144,7 @@ export default function ScenarioEditForm({ scenario, busy, onCancel, onSave }) {
             <TextField
               {...params}
               label="Keywords"
-              helperText="Filters the suite. Never reaches a run."
+              helperText="How you find this scenario in a large suite. Not part of the call."
             />
           )}
         />
@@ -149,49 +152,59 @@ export default function ScenarioEditForm({ scenario, busy, onCancel, onSave }) {
         {conversational && (
           <>
             <SectionHeader
+              title="Persona"
+              hint="Who is on the other end of the run. The world is seeded around this person, so changing it here alone would leave the two disagreeing."
+            />
+
+            <Field
+              label="Name"
+              value={persona.name}
+              readOnly
+              help="Read-only. This name is written into the world the scenario was proved against."
+            />
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+              <Field label="Age group" value={persona.age_group} readOnly fullWidth />
+              <Field label="Gender" value={persona.gender} readOnly fullWidth />
+            </Stack>
+            <Field
+              label="Opens with"
+              value={persona.initial_message}
+              readOnly
+              rows={2}
+              help="Read-only. On an adversarial scenario the opening line is the test."
+            />
+            <Field
+              label="What the caller wants"
+              value={scenario.instruction}
+              readOnly
+              rows={3}
+              help="Read-only. The checks were written against this."
+            />
+            <Field
+              label="What is measured"
+              value={(scenario.sub_goals || []).map(readable).join(", ")}
+              readOnly
+              help="Read-only. Named entries of a catalogue shared across the suite, so results roll up."
+            />
+
+            <SectionHeader
               title="Caller"
               hint="How the caller comes across. An agent decides nothing from how somebody sounds, so none of this reaches the world or the checks."
             />
 
             <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
-              <TextField
-                select
-                fullWidth
-                size="small"
+              <Choice
                 label="Personality"
                 value={form.personality}
-                onChange={(event) => set("personality")(event.target.value)}
-                InputProps={{ sx: { typography: "s2" } }}
-              >
-                {PersonalityOptions.map((one) => (
-                  <MenuItem
-                    key={one.value ?? one}
-                    value={one.value ?? one}
-                    sx={{ typography: "s2" }}
-                  >
-                    {one.label ?? one}
-                  </MenuItem>
-                ))}
-              </TextField>
-              <TextField
-                select
-                fullWidth
-                size="small"
+                onChange={set("personality")}
+                options={PersonalityOptions}
+              />
+              <Choice
                 label="Communication style"
                 value={form.communication_style}
-                onChange={(event) => set("communication_style")(event.target.value)}
-                InputProps={{ sx: { typography: "s2" } }}
-              >
-                {CommunicationStyleOptions.map((one) => (
-                  <MenuItem
-                    key={one.value ?? one}
-                    value={one.value ?? one}
-                    sx={{ typography: "s2" }}
-                  >
-                    {one.label ?? one}
-                  </MenuItem>
-                ))}
-              </TextField>
+                onChange={set("communication_style")}
+                options={CommunicationStyleOptions}
+              />
             </Stack>
 
             <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
@@ -322,9 +335,9 @@ export default function ScenarioEditForm({ scenario, busy, onCancel, onSave }) {
             sx={{ color: "primary.main", flexShrink: 0, mt: "1px" }}
           />
           <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-            This scenario was proved before it was kept: the world was set up, a known-good run had
-            to pass, and the checks had to fail when nothing was done. Saving re-checks it against
-            that same proof.
+            A read-only field is one this scenario was proved against: the world was set up, a
+            known-good run had to pass, and the checks had to fail when nothing was done. Saving
+            re-checks the scenario against that same proof.
           </Typography>
         </Stack>
       </Stack>
@@ -384,3 +397,70 @@ function SectionHeader({ title, hint }) {
 }
 
 SectionHeader.propTypes = { title: PropTypes.string, hint: PropTypes.string };
+
+// One text field, whether or not it accepts a change. A read-only field is the same control as the
+// one above it rather than a different kind of thing, which is what keeps the panel one form.
+function Field({ label, value, onChange, readOnly, rows, mono, help, fullWidth = true }) {
+  return (
+    <TextField
+      size="small"
+      label={label}
+      value={value || ""}
+      disabled={readOnly}
+      fullWidth={fullWidth}
+      multiline={Boolean(rows)}
+      minRows={rows}
+      helperText={help}
+      onChange={onChange ? (event) => onChange(event.target.value) : undefined}
+      InputProps={{
+        sx: {
+          typography: "s2",
+          ...(mono && { fontFamily: "ui-monospace, Menlo, monospace" }),
+        },
+      }}
+      sx={{
+        "& .MuiInputBase-input.Mui-disabled, & .MuiInputBase-inputMultiline.Mui-disabled": {
+          WebkitTextFillColor: (theme) => theme.palette.text.secondary,
+        },
+      }}
+    />
+  );
+}
+
+Field.propTypes = {
+  label: PropTypes.string,
+  value: PropTypes.string,
+  onChange: PropTypes.func,
+  readOnly: PropTypes.bool,
+  rows: PropTypes.number,
+  mono: PropTypes.bool,
+  help: PropTypes.string,
+  fullWidth: PropTypes.bool,
+};
+
+function Choice({ label, value, onChange, options }) {
+  return (
+    <TextField
+      select
+      fullWidth
+      size="small"
+      label={label}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      InputProps={{ sx: { typography: "s2" } }}
+    >
+      {options.map((one) => (
+        <MenuItem key={one.value ?? one} value={one.value ?? one} sx={{ typography: "s2" }}>
+          {one.label ?? one}
+        </MenuItem>
+      ))}
+    </TextField>
+  );
+}
+
+Choice.propTypes = {
+  label: PropTypes.string,
+  value: PropTypes.string,
+  onChange: PropTypes.func,
+  options: PropTypes.array,
+};

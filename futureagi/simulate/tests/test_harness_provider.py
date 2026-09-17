@@ -11,6 +11,7 @@ from rest_framework.response import Response
 from rest_framework.test import APIClient
 
 from simulate.models import RunTest, TestExecution
+from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
 from simulate.serializers.harness_job import (
     HarnessJobCreateSerializer,
     HarnessPreflightSerializer,
@@ -100,12 +101,20 @@ def test_default_provider_is_daytona():
     assert isinstance(get_harness_provider(), DaytonaHarnessProvider)
 
 
-def test_hosted_job_scenario_count_is_bounded_at_two_hundred():
-    accepted = HarnessJobCreateSerializer(data=_v1_payload(scenario_count=200))
+def test_hosted_job_scenario_count_is_bounded_at_the_shared_ceiling():
+    """The bound is whatever MAX_SCENARIOS_PER_JOB says, not a literal repeated in a test."""
+    accepted = HarnessJobCreateSerializer(
+        data=_v1_payload(scenario_count=MAX_SCENARIOS_PER_JOB)
+    )
     assert accepted.is_valid(), accepted.errors
-    assert accepted.validated_data["runtime"]["max_duration_seconds"] == 72_000
+    assert (
+        accepted.validated_data["runtime"]["max_duration_seconds"]
+        == MAX_SCENARIOS_PER_JOB * 360
+    )
 
-    rejected = HarnessJobCreateSerializer(data=_v1_payload(scenario_count=201))
+    rejected = HarnessJobCreateSerializer(
+        data=_v1_payload(scenario_count=MAX_SCENARIOS_PER_JOB + 1)
+    )
     assert not rejected.is_valid()
     assert "scenario_count" in rejected.errors
 

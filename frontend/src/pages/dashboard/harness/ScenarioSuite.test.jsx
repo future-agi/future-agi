@@ -86,33 +86,23 @@ describe("ScenarioSuite", () => {
     expect(screen.queryByText("two")).not.toBeInTheDocument();
   });
 
-  it("offers only what a person may change, and says nothing about the rest", async () => {
+  it("shows every field the design shows, and lets a person change only some", async () => {
     const user = userEvent.setup();
-    render(
-      <ScenarioSuite
-        scenarios={[
-          scenario("one", {
-            fixture: { name: "Ada", age: 26, origin: "mixed" },
-            solution: [{ tool: "find_applicant" }, { tool: "quote_plan" }],
-          }),
-        ]}
-        jobId="job-1"
-        editable
-      />,
-    );
+    render(<ScenarioSuite scenarios={[scenario("one")]} jobId="job-1" editable />);
     await user.click(screen.getByRole("button", { name: /edit scenario/i }));
 
-    expect(screen.getByRole("textbox", { name: /passes when/i })).toBeInTheDocument();
-    expect(screen.getByRole("textbox", { name: /branch/i })).toBeInTheDocument();
+    // Changeable.
+    expect(screen.getByRole("textbox", { name: /passes when/i })).toBeEnabled();
+    expect(screen.getByRole("textbox", { name: /branch/i })).toBeEnabled();
     expect(screen.getByRole("combobox", { name: /personality/i })).toBeInTheDocument();
-    expect(screen.getByText("Background noise")).toBeInTheDocument();
 
-    // A field the proof pins is not a control, and it is not a row explaining that it is not a
-    // control either. It is simply absent.
-    expect(screen.queryByText("Add one Big Mac please")).not.toBeInTheDocument();
-    expect(screen.queryByText(/find_applicant/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/not editable/i)).not.toBeInTheDocument();
-    expect(screen.queryByRole("textbox", { name: /^name/i })).not.toBeInTheDocument();
+    // Shown, and not changeable: the world is seeded around these, so an edit here alone would
+    // leave the persona and the world disagreeing.
+    expect(screen.getByDisplayValue("Devon Reed")).toBeDisabled();
+    expect(screen.getByDisplayValue("25-32")).toBeDisabled();
+    expect(screen.getByDisplayValue("male")).toBeDisabled();
+    expect(screen.getByDisplayValue("Add one Big Mac please")).toBeDisabled();
+    expect(screen.getByDisplayValue("add an item to the cart")).toBeDisabled();
   });
 
   it("offers an edit even when the suite has no persona to edit", async () => {
