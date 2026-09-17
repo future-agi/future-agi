@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import base64
 import json
+import sys
+import types
 
 from unittest.mock import patch
 
@@ -22,9 +24,16 @@ import pytest
 
 from evaluations.engine.preprocessing import (
     PREPROCESSORS,
+    _DEFAULT_FID_BATCH_SIZE,
+    _FID_METRICS,
+    _fid_device,
+    _fid_batch_size,
+    _get_fid_metric,
+    _preprocess_fid,
     _resolve_fid_input,
     _resolve_image_input,
     _resolve_image_input_as_data_uri,
+    _update_fid_in_batches,
     preprocess_inputs,
 )
 
@@ -278,3 +287,265 @@ def test_fid_resolver_preserves_non_url_items():
     items = ["data:image/png;base64,YYY", "/tmp/local.png"]
     out = _resolve_fid_input(items)
     assert out == items
+
+
+# ---------------------------------------------------------------------------
+# FID batching
+# ---------------------------------------------------------------------------
+
+
+class _FakeBatch:
+    def __init__(self, count):
+        self.count = count
+
+    def to(self, device):
+        return self
+
+
+class _FakeTorch:
+    @staticmethod
+    def cat(tensors, dim):
+        return _FakeBatch(sum(tensor.count for tensor in tensors))
+
+
+class _FakeMetric:
+    def __init__(self):
+        self.updates = []
+
+    def update(self, batch, real):
+        self.updates.append((batch.count, real))
+
+
+@pytest.mark.parametrize(
+    "image_count,batch_size,expected_counts",
+    [
+        (0, 4, []),
+        (1, 4, [1]),
+        (3, 4, [3]),
+        (4, 4, [4]),
+        (9, 4, [4, 4, 1]),
+    ],
+)
+def test_fid_updates_images_in_batches(image_count, batch_size, expected_counts):
+    metric = _FakeMetric()
+    images = list(range(image_count))
+
+    update_count = _update_fid_in_batches(
+        metric,
+        images,
+        real=True,
+        batch_size=batch_size,
+        device="cpu",
+        torch=_FakeTorch(),
+        image_to_tensor=lambda image: _FakeBatch(1),
+    )
+
+    assert update_count == len(expected_counts)
+    assert [count for count, real in metric.updates] == expected_counts
+    assert all(real is True for count, real in metric.updates)
+
+
+def test_fid_batch_size_is_configurable(monkeypatch):
+    monkeypatch.setenv("FID_BATCH_SIZE", "7")
+    assert _fid_batch_size() == 7
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "not-a-number"])
+def test_invalid_fid_batch_size_uses_default(monkeypatch, value):
+    monkeypatch.setenv("FID_BATCH_SIZE", value)
+    assert _fid_batch_size() == _DEFAULT_FID_BATCH_SIZE
+
+
+def test_fid_metric_is_reused_per_device():
+    class FakeMetric:
+        instances = 0
+
+        def __init__(self, feature):
+            FakeMetric.instances += 1
+
+        def to(self, device):
+            return self
+
+    device = "test-device"
+    _FID_METRICS.pop(device, None)
+
+    first = _get_fid_metric(FakeMetric, device)
+    second = _get_fid_metric(FakeMetric, device)
+
+    assert first is second
+    assert FakeMetric.instances == 1
+
+
+def test_fid_device_cache_distinguishes_cuda_devices():
+    class FakeMetric:
+        instances = []
+
+        def __init__(self, feature):
+            self.feature = feature
+            self.placed_on = None
+            FakeMetric.instances.append(self)
+
+        def to(self, device):
+            self.placed_on = device
+            return self
+
+    _FID_METRICS.clear()
+    try:
+        first = _get_fid_metric(FakeMetric, "cuda:0")
+        same_device = _get_fid_metric(FakeMetric, "cuda:0")
+        second = _get_fid_metric(FakeMetric, "cuda:1")
+
+        assert first is same_device
+        assert second is not first
+        assert [metric.placed_on for metric in FakeMetric.instances] == [
+            "cuda:0",
+            "cuda:1",
+        ]
+    finally:
+        _FID_METRICS.clear()
+
+
+def test_fid_device_uses_active_cuda_index():
+    fake_torch = types.SimpleNamespace(
+        cuda=types.SimpleNamespace(
+            is_available=lambda: True,
+            current_device=lambda: 1,
+        )
+    )
+
+    assert _fid_device(fake_torch) == "cuda:1"
+
+
+def test_fid_device_uses_real_cuda_index_when_available():
+    torch = pytest.importorskip("torch")
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is not available")
+
+    assert _fid_device(torch) == f"cuda:{torch.cuda.current_device()}"
+
+
+class _FakeInferenceMode:
+    entered = 0
+
+    def __enter__(self):
+        _FakeInferenceMode.entered += 1
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        return False
+
+
+class _ProductionBatch:
+    def __init__(self, size):
+        self.shape = (size, 3, 299, 299)
+
+    def to(self, device):
+        return self
+
+
+class _ProductionTorch(types.ModuleType):
+    def __init__(self):
+        super().__init__("torch")
+        self.cuda = types.SimpleNamespace(
+            is_available=lambda: False,
+            current_device=lambda: 0,
+        )
+
+    @staticmethod
+    def cat(tensors, dim):
+        assert dim == 0
+        return _ProductionBatch(len(tensors))
+
+    @staticmethod
+    def inference_mode():
+        return _FakeInferenceMode()
+
+
+class _FakeScore:
+    def detach(self):
+        return self
+
+    def cpu(self):
+        return self
+
+    def __float__(self):
+        return 12.5
+
+
+def test_fid_preprocessor_batches_reuses_and_resets_metric(monkeypatch):
+    class FakeFID:
+        instances = []
+
+        def __init__(self, feature):
+            self.feature = feature
+            self.reset_count = 0
+            self.updates = []
+            FakeFID.instances.append(self)
+
+        def to(self, device):
+            self.device = device
+            return self
+
+        def reset(self):
+            self.reset_count += 1
+
+        def update(self, batch, real):
+            self.updates.append((batch.shape, real))
+
+        def compute(self):
+            return _FakeScore()
+
+    torchmetrics_module = types.ModuleType("torchmetrics")
+    torchmetrics_image_module = types.ModuleType("torchmetrics.image")
+    torchmetrics_fid_module = types.ModuleType("torchmetrics.image.fid")
+    torchmetrics_fid_module.FrechetInceptionDistance = FakeFID
+    functions_module = types.ModuleType(
+        "agentic_eval.core_evals.fi_evals.function.functions"
+    )
+    functions_module._parse_image_list = lambda images: list(images)
+    functions_module._pil_to_uint8_tensor = lambda image: object()
+
+    fake_torch = _ProductionTorch()
+    monkeypatch.setenv("FID_BATCH_SIZE", "2")
+    _FID_METRICS.clear()
+    _FakeInferenceMode.entered = 0
+    try:
+        with patch.dict(
+            sys.modules,
+            {
+                "torch": fake_torch,
+                "torchmetrics": torchmetrics_module,
+                "torchmetrics.image": torchmetrics_image_module,
+                "torchmetrics.image.fid": torchmetrics_fid_module,
+                "agentic_eval.core_evals.fi_evals.function.functions": functions_module,
+            },
+        ), patch(
+            "evaluations.engine.preprocessing._resolve_fid_input",
+            side_effect=lambda images: images,
+        ):
+            first = _preprocess_fid(
+                {
+                    "real_images": ["real-1", "real-2", "real-3"],
+                    "fake_images": ["fake-1", "fake-2", "fake-3"],
+                }
+            )
+            second = _preprocess_fid(
+                {
+                    "real_images": ["real-1", "real-2", "real-3"],
+                    "fake_images": ["fake-1", "fake-2", "fake-3"],
+                }
+            )
+
+        assert first["_fid_precomputed_score"] == 12.5
+        assert second["_fid_precomputed_score"] == 12.5
+        assert len(FakeFID.instances) == 1
+        metric = FakeFID.instances[0]
+        assert metric.updates == [
+            ((2, 3, 299, 299), True),
+            ((1, 3, 299, 299), True),
+            ((2, 3, 299, 299), False),
+            ((1, 3, 299, 299), False),
+        ] * 2
+        assert metric.reset_count == 4
+        assert _FakeInferenceMode.entered == 2
+    finally:
+        _FID_METRICS.clear()
