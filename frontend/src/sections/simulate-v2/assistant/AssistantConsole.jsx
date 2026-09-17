@@ -18,7 +18,7 @@ import VoiceInput from "./VoiceInput";
  * convey.
  */
 
-export default function StudioConsole({ turns, running, chips, onSend, onChip, preComposer }) {
+export default function StudioConsole({ turns, running, chips, onSend, onChip, preComposer, frozen = false, frozenReason }) {
   const [draft, setDraft] = useState("");
   const [attachments, setAttachments] = useState([]);
   const endRef = useRef(null);
@@ -27,9 +27,15 @@ export default function StudioConsole({ turns, running, chips, onSend, onChip, p
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [turns, running]);
 
+  /* Frozen === env is not Live yet (still building / re-deriving), so
+     the builder can't accept edits. Blocks input the same way `running`
+     does, but stays blocked until the env becomes Live rather than
+     until the last message finishes. */
+  const blocked = running || frozen;
+
   const send = () => {
     const text = draft.trim();
-    if ((!text && attachments.length === 0) || running) return;
+    if ((!text && attachments.length === 0) || blocked) return;
     setDraft("");
     setAttachments([]);
     onSend(text, attachments);
@@ -65,7 +71,11 @@ export default function StudioConsole({ turns, running, chips, onSend, onChip, p
         </Box>
         <Box flex={1} minWidth={0}>
           <Typography sx={{ typography: "s3", color: "text.subtitle", lineHeight: 1.2 }}>
-            {running ? "Working on your last message…" : "Ask, correct, or steer what it builds"}
+            {frozen
+              ? (frozenReason || "Environment is not live yet")
+              : running
+                ? "Working on your last message…"
+                : "Ask, correct, or steer what it builds"}
           </Typography>
         </Box>
         {/*
@@ -106,7 +116,7 @@ export default function StudioConsole({ turns, running, chips, onSend, onChip, p
         </Stack>
       </Box>
 
-      {chips.length > 0 && !running && (
+      {chips.length > 0 && !blocked && (
         <Stack direction="row" spacing={1} sx={{ px: 2.5, pb: 1.5, flexWrap: "wrap", rowGap: 1 }}>
           {chips.map((c) => (
             <Button
@@ -199,9 +209,9 @@ export default function StudioConsole({ turns, running, chips, onSend, onChip, p
             multiline
             maxRows={8}
             variant="standard"
-            placeholder="Reply to the builder…"
+            placeholder={frozen ? (frozenReason || "Environment is not live yet") : "Reply to the builder…"}
             value={draft}
-            disabled={running}
+            disabled={blocked}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
@@ -216,7 +226,7 @@ export default function StudioConsole({ turns, running, chips, onSend, onChip, p
           */}
           <IconButton
             component="label"
-            disabled={running}
+            disabled={blocked}
             title="Attach a dataset, CSV or file"
             sx={{
               width: 34, height: 34, borderRadius: 1.25,
@@ -231,15 +241,15 @@ export default function StudioConsole({ turns, running, chips, onSend, onChip, p
               onChange={(e) => setAttachments((prev) => [...prev, ...Array.from(e.target.files || [])])}
             />
           </IconButton>
-          <VoiceInput onTranscript={setDraft} disabled={running} />
+          <VoiceInput onTranscript={setDraft} disabled={blocked} />
           <IconButton
-            disabled={(!draft.trim() && attachments.length === 0) || running}
+            disabled={(!draft.trim() && attachments.length === 0) || blocked}
             onClick={send}
             sx={{
               width: 34, height: 34, borderRadius: 1.25,
-              bgcolor: (draft.trim() || attachments.length > 0) && !running ? "#7857FC" : undefined,
-              color: (draft.trim() || attachments.length > 0) && !running ? "#fff" : undefined,
-              "&:hover": { bgcolor: (draft.trim() || attachments.length > 0) && !running ? "#6B4EE6" : undefined },
+              bgcolor: (draft.trim() || attachments.length > 0) && !blocked ? "#7857FC" : undefined,
+              color: (draft.trim() || attachments.length > 0) && !blocked ? "#fff" : undefined,
+              "&:hover": { bgcolor: (draft.trim() || attachments.length > 0) && !blocked ? "#6B4EE6" : undefined },
               "&.Mui-disabled": {
                 bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.06),
                 color: "text.disabled",
@@ -259,6 +269,7 @@ StudioConsole.propTypes = {
   turns: PropTypes.array, running: PropTypes.bool,
   chips: PropTypes.array, onSend: PropTypes.func, onChip: PropTypes.func,
   preComposer: PropTypes.node,
+  frozen: PropTypes.bool, frozenReason: PropTypes.string,
 };
 
 /* ── one turn ────────────────────────────────────────────────────────────── */

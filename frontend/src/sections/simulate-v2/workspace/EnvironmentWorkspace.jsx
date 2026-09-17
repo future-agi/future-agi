@@ -216,6 +216,14 @@ export default function EnvironmentWorkspace() {
   }
 
   const surface = getSurface(env.surface);
+  /*
+    Env is Live when its build has settled. While derivation is in
+    flight (initial build, or a re-derivation triggered by a version
+    bump), the builder input is locked because you can't correct a
+    world that isn't done being built. Seeded envs default to not
+    building, so this is Live by default in the prototype.
+  */
+  const envLive = env.buildStatus !== "building";
 
   // Booting the environment is a real thing we do, so we show it happening.
   if (booting) {
@@ -407,18 +415,43 @@ export default function EnvironmentWorkspace() {
         <Box minWidth={0} flex={1}>
           <Stack direction="row" alignItems="center" spacing={1}>
             <Typography noWrap sx={{ typography: "s1_2", fontWeight: 700 }}>{env.name}</Typography>
-            <Stack
-              direction="row" alignItems="center" spacing={0.5}
-              sx={{
-                px: 0.75, height: 22, borderRadius: 0.75,
-                color: "#16A34A",
-                bgcolor: (t) => alpha("#16A34A", t.palette.mode === "dark" ? 0.16 : 0.1),
-                border: () => `1px solid ${alpha("#16A34A", 0.24)}`,
-              }}
+            {/*
+              Env status pill. `Live` = fully booted and accepting
+              edits from the builder console + inline. When the env is
+              still being derived (or re-derived on a version bump),
+              flips to an amber `Building` pill and the builder input
+              locks — you can't correct a world that isn't done being
+              built.
+            */}
+            <Tooltip
+              arrow
+              title={envLive
+                ? "Environment is live. You can edit via the builder or inline."
+                : "Environment is still being built. Editing resumes when it's live."}
             >
-              <Box sx={{ width: 6, height: 6, borderRadius: "50%", bgcolor: "#16A34A" }} />
-              <Typography sx={{ typography: "s3", fontWeight: 600 }}>Live</Typography>
-            </Stack>
+              <Stack
+                direction="row" alignItems="center" spacing={0.5}
+                sx={{
+                  px: 0.75, height: 22, borderRadius: 0.75, cursor: "default",
+                  color: envLive ? "#16A34A" : "#CA8A04",
+                  bgcolor: (t) => alpha(envLive ? "#16A34A" : "#CA8A04", t.palette.mode === "dark" ? 0.16 : 0.1),
+                  border: () => `1px solid ${alpha(envLive ? "#16A34A" : "#CA8A04", 0.24)}`,
+                }}
+              >
+                <Box
+                  sx={{
+                    width: 6, height: 6, borderRadius: "50%",
+                    bgcolor: envLive ? "#16A34A" : "#CA8A04",
+                    animation: envLive ? undefined : "env-pulse 1.4s ease-in-out infinite",
+                    "@keyframes env-pulse": {
+                      "0%,100%": { opacity: 0.4 },
+                      "50%": { opacity: 1 },
+                    },
+                  }}
+                />
+                <Typography sx={{ typography: "s3", fontWeight: 600 }}>{envLive ? "Live" : "Building"}</Typography>
+              </Stack>
+            </Tooltip>
             {/*
               The env-version pin. Clicks open a menu of every version
               with its note + change summary; selecting one switches the
@@ -614,6 +647,8 @@ export default function EnvironmentWorkspace() {
             chips={chips}
             onSend={sendChat}
             onChip={sendChat}
+            frozen={!envLive}
+            frozenReason="Environment is still being built"
           />
         </SectionCard>
 
