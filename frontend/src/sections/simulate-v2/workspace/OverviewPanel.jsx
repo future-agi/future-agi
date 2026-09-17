@@ -781,9 +781,13 @@ function AgentSummarySection({ env, envState, onGo, onManageVersions, agentConne
             </Button>
           ) : (
             <Button
-              variant="outlined" size="small"
+              variant="contained" size="small"
               onClick={onManageVersions}
-              sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider" }}
+              sx={{
+                typography: "s2", fontWeight: 700,
+                bgcolor: "common.white", color: "common.black",
+                "&:hover": { bgcolor: (t) => alpha("#FFFFFF", 0.88) },
+              }}
             >
               {agent ? "Manage versions" : "Attach agent"}
             </Button>
