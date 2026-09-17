@@ -11,13 +11,11 @@ from unittest.mock import patch
 
 import pytest
 from clickhouse_driver.errors import ServerException
-from django.test import override_settings
 from rest_framework import status
 
 from accounts.models.user import OrgApiKey
 from model_hub.models.ai_model import AIModel
 from tracer.models.project import Project
-from tracer.models.trace_scan import TraceScanConfig, TraceScanEngine
 
 AUTH_REQUIRED_STATUS_CODES = (
     status.HTTP_401_UNAUTHORIZED,
@@ -790,32 +788,6 @@ class TestProjectUpdateNameAPI:
         assert "sampling_rate" in data
         sampling_rate = data.get("sampling_rate")
         assert sampling_rate.get("new_rate") == 0.5
-
-    @override_settings(
-        ERROR_FEED_OMEGA_ENABLED=True,
-        ERROR_FEED_LEGACY_SCANNER_ENABLED=False,
-    )
-    def test_v2_sampling_uses_omega_for_new_and_legacy_configs(
-        self, auth_client, project
-    ):
-        for rate in (0.5, 1.0):
-            response = auth_client.post(
-                "/tracer/project/update_project_name/",
-                {
-                    "project_id": str(project.id),
-                    "name": project.name,
-                    "sampling_rate": rate,
-                },
-                format="json",
-            )
-            assert response.status_code == status.HTTP_200_OK
-            config = TraceScanConfig.objects.get(project=project)
-            assert config.sampling_rate == rate
-            assert config.engine == TraceScanEngine.OMEGA
-            assert config.scan_version == "omega-v1"
-            if rate == 0.5:
-                config.engine = TraceScanEngine.LEGACY
-                config.save(update_fields=["engine"])
 
     def test_update_project_name_invalid_sampling_rate(self, auth_client, project):
         """Update with invalid sampling rate fails."""

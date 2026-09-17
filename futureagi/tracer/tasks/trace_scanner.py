@@ -12,7 +12,6 @@ from datetime import timedelta
 from typing import List
 
 import structlog
-from django.conf import settings
 from django.db.models import F
 
 from tfc.temporal.drop_in import temporal_activity
@@ -20,6 +19,7 @@ from tracer.models.trace_error_analysis import TraceErrorGroup
 from tracer.models.trace_scan import TraceScanConfig, TraceScanEngine
 from tracer.queries.trace_scanner import (
     filter_already_scanned,
+    get_scan_config,
     is_trace_sampled,
     mark_traces_failed,
 )
@@ -80,7 +80,7 @@ def scan_traces_task(trace_ids: List[str], project_id: str, from_sweep: bool = F
     terminal so it can't pin the sweep watermark. Inline batches leave it off —
     an unreplicated trace may just be lagging, and the sweep catches it later.
     """
-    if not settings.ERROR_FEED_LEGACY_SCANNER_ENABLED:
+    if get_scan_config(project_id) is None:
         return
     time.sleep(SCAN_DELAY_SECONDS)
 
@@ -210,8 +210,6 @@ def sweep_scannable_traces():
     system-wide job and must not be scoped to a leaked workspace.
     ``max_retries=0``: the next tick recovers a sweep-level failure.
     """
-    if not settings.ERROR_FEED_LEGACY_SCANNER_ENABLED:
-        return
     configs = list(
         TraceScanConfig.no_workspace_objects.filter(
             enabled=True,
