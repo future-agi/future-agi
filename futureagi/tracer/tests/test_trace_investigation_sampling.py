@@ -87,7 +87,6 @@ def test_default_zero_rate_creates_no_jobs(observe_project):
 
 @pytest.mark.parametrize("rate", [0, 0.5, 1])
 @override_settings(
-    ERROR_FEED_OMEGA_ENABLED=True,
     ERROR_FEED_OMEGA_DELAY_SECONDS=0,
     ERROR_FEED_OMEGA_PROJECT_CONCURRENCY=32,
 )

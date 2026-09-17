@@ -151,17 +151,9 @@ type Publisher struct {
 	log    *slog.Logger
 }
 
-// FromEnv is disabled unless explicitly enabled. The first transport matches
-// the existing local Kafka broker. Authenticated production transport must be
-// configured before exposing this path beyond that trusted network.
+// FromEnv requires a broker. Authenticated production transport must be
+// configured before exposing this path beyond a trusted network.
 func FromEnv(log *slog.Logger) (*Publisher, error) {
-	enabled := os.Getenv("FI_ERROR_FEED_ENABLED")
-	if enabled == "" || enabled == "false" {
-		return nil, nil
-	}
-	if enabled != "true" {
-		return nil, errors.New("FI_ERROR_FEED_ENABLED must be true or false")
-	}
 	brokers := strings.Split(os.Getenv("FI_ERROR_FEED_KAFKA_BROKERS"), ",")
 	for i, b := range brokers {
 		brokers[i] = strings.TrimSpace(b)

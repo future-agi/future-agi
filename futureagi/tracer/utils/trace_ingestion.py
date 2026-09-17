@@ -26,7 +26,7 @@ from tracer.services.clickhouse.v2.deterministic_id import (
     deterministic_end_user_id,
     deterministic_trace_session_id,
 )
-from tracer.tasks.trace_scanner import scan_traces_task
+from tracer.services.trace_investigation import record_trace_notifications
 from tracer.utils.adapters import normalize_span_attributes
 from tracer.utils.otel import bulk_convert_otel_spans_to_observation_spans
 from tracer.utils.parsers import deserialize_trace_payload
@@ -730,43 +730,55 @@ def _bulk_update_traces(
         Trace.objects.bulk_update(traces_to_bulk_update, list(update_fields))
 
 
-def _trigger_trace_scanner(spans: list[ObservationSpan]):
-    """
-    Detect completed traces (root span with end_time) and trigger the scanner.
-
-    Root span = parent_span_id is None. end_time set = trace is complete.
-    Groups by project_id since scanner activity runs per-project.
-    Only "observe" projects are scanned — experiment projects are throwaway
-    evaluation runs and shouldn't burn scanner LLM tokens or surface in the feed.
-    """
-    complete_traces_by_project: dict[str, set[str]] = defaultdict(set)
-    for span in spans:
-        if span.parent_span_id is None and span.end_time is not None:
-            complete_traces_by_project[str(span.project_id)].add(str(span.trace_id))
-
-    if not complete_traces_by_project:
+def _record_inline_omega_roots(spans: list[ObservationSpan], organization_id: str):
+    """Admit PG-ingested ended roots into the same investigation ledger as Kafka."""
+    roots = [
+        span for span in spans if not span.parent_span_id and span.end_time is not None
+    ]
+    if not roots:
         return
-
-    observe_project_ids = {
-        str(pid)
-        for pid in Project.objects.filter(
-            id__in=complete_traces_by_project.keys(),
+    projects = {
+        str(project.id): project
+        for project in Project.no_workspace_objects.filter(
+            id__in={span.project_id for span in roots},
+            organization_id=organization_id,
             trace_type="observe",
-        ).values_list("id", flat=True)
+        )
     }
-
-    # Bound each scan task to a small batch so it finishes well under the scan
-    # activity's time_limit. One big batch at high sampling can exceed the limit
-    # and time out before writing anything — so split into per-task chunks.
-    scan_batch_size = 15
-    for project_id, trace_ids in complete_traces_by_project.items():
-        if project_id not in observe_project_ids:
+    deliveries = []
+    for span in roots:
+        project = projects.get(str(span.project_id))
+        if project is None:
             continue
-        tid_list = list(trace_ids)
-        for i in range(0, len(tid_list), scan_batch_size):
-            scan_traces_task.apply_async(
-                args=(tid_list[i : i + scan_batch_size], project_id)
-            )
+        event_id = uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"inline-root:{project.id}:{span.trace_id}:{span.id}:{span.end_time.isoformat()}",
+        )
+        deliveries.append(
+            {
+                "topic": "error-feed.inline.v1",
+                "partition": 0,
+                "offset": 0,
+                "value": {
+                    "version": 1,
+                    "event_id": event_id,
+                    "organization_id": project.organization_id,
+                    "workspace_id": project.workspace_id,
+                    "project_id": project.id,
+                    "event_kind": "root_span_written",
+                    "traces": [
+                        {
+                            "trace_id": span.trace_id,
+                            "root_span_id": str(span.id),
+                            "root_end_time": span.end_time,
+                        }
+                    ],
+                    "emitted_at": span.end_time,
+                },
+            }
+        )
+    for start in range(0, len(deliveries), 100):
+        record_trace_notifications(deliveries=deliveries[start : start + 100])
 
 
 @temporal_activity(max_retries=0, time_limit=3600, queue="trace_ingestion")
@@ -931,8 +943,8 @@ def bulk_create_observation_span_task(
                     )
                 )
 
-            # 5. Trigger scanner for completed traces (root span with end_time)
-            _trigger_trace_scanner(observation_spans_to_create)
+            # 5. Admit PG-ingested roots without starting the retired scanner.
+            _record_inline_omega_roots(observation_spans_to_create, organization_id)
 
         num_traces = len({p.get("trace") for p in parsed_data_list if p.get("trace")})
         emit_span_ingestion_usage(

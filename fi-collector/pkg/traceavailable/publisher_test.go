@@ -65,14 +65,9 @@ func TestEventsBoundedScopedAndDeduplicated(t *testing.T) {
 	}
 }
 
-func TestNotifierDefaultOffAndInvalidConfiguration(t *testing.T) {
-	t.Setenv("FI_ERROR_FEED_ENABLED", "")
-	if p, err := FromEnv(nil); p != nil || err != nil {
-		t.Fatal("must be off by default")
-	}
-	t.Setenv("FI_ERROR_FEED_ENABLED", "true")
+func TestNotifierRequiresBrokerConfiguration(t *testing.T) {
 	t.Setenv("FI_ERROR_FEED_KAFKA_BROKERS", "")
 	if _, err := FromEnv(nil); err == nil {
-		t.Fatal("enabled without brokers")
+		t.Fatal("missing broker configuration must fail")
 	}
 }

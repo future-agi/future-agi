@@ -10,7 +10,7 @@ mocked, so a regression fails here without Postgres/ClickHouse/Temporal.
 """
 
 import contextlib
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -20,7 +20,7 @@ from tracer.tasks import trace_scanner as sweep
 # Undecorated function: skip the activity wrapper's close_old_connections (DB).
 _run = sweep.sweep_scannable_traces._original_func
 
-_NOW = datetime(2026, 6, 24, 12, 0, 0, tzinfo=timezone.utc)
+_NOW = datetime(2026, 6, 24, 12, 0, 0, tzinfo=UTC)
 _UPPER = _NOW - timedelta(seconds=sweep._SWEEP_GRACE_SECONDS)
 _COLD_FLOOR = _NOW - timedelta(seconds=sweep._SWEEP_COLD_START_SECONDS)
 _LAG_FLOOR = _NOW - timedelta(seconds=sweep._SWEEP_MAX_LAG_SECONDS)
@@ -72,7 +72,9 @@ def _run_sweep(
             patch.object(
                 sweep,
                 "filter_already_scanned",
-                side_effect=(lambda x: x) if unscanned is None else (lambda x: unscanned),
+                side_effect=(lambda x: x)
+                if unscanned is None
+                else (lambda x: unscanned),
             )
         )
         stack.enter_context(
@@ -190,7 +192,10 @@ def test_per_project_fail_open_isolates_a_failing_project():
     # p1's CH read raises; p2 succeeds. p1 must not abort the tick, and p1's
     # watermark must NOT advance (so the next tick retries its window).
     r = _run_sweep(
-        side_effect=[RuntimeError("ch down"), _candidates(1, base=_NOW - timedelta(minutes=3))],
+        side_effect=[
+            RuntimeError("ch down"),
+            _candidates(1, base=_NOW - timedelta(minutes=3)),
+        ],
         rows=[
             {"project_id": "p1", "sampling_rate": 1.0, "last_swept_at": None},
             {"project_id": "p2", "sampling_rate": 1.0, "last_swept_at": None},
@@ -209,7 +214,7 @@ def test_no_sampling_projects_short_circuits_before_clickhouse():
         _run()
     cfg.no_workspace_objects.filter.assert_called_once_with(
         enabled=True,
-        engine=sweep.TraceScanEngine.LEGACY,
+        scan_version="v7.2",
         sampling_rate__gt=0,
         project__trace_type="observe",
     )

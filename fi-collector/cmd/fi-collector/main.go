@@ -283,7 +283,7 @@ func main() {
 		log.Error("unsupported property catalog mode", "mode", propertyMode)
 		os.Exit(1)
 	}
-	if os.Getenv("FI_ERROR_FEED_ENABLED") == "true" && cfg.Writer.AsyncInsert {
+	if cfg.Writer.AsyncInsert {
 		log.Error("Error Feed stored-root notifications require synchronous ClickHouse inserts")
 		os.Exit(1)
 	}

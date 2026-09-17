@@ -4,21 +4,25 @@ import django.db.models.deletion
 from django.db import migrations, models
 
 
+def move_scan_configs_to_omega(apps, schema_editor):
+    config = apps.get_model("tracer", "TraceScanConfig")
+    config._base_manager.using(schema_editor.connection.alias).update(
+        scan_version="omega-v1"
+    )
+
+
 class Migration(migrations.Migration):
     dependencies = [
         ("tracer", "0098_observabilityprovider_poll_state"),
     ]
 
     operations = [
-        migrations.AddField(
+        migrations.AlterField(
             model_name="tracescanconfig",
-            name="engine",
-            field=models.CharField(
-                choices=[("legacy", "Legacy"), ("omega", "Omega")],
-                default="legacy",
-                max_length=20,
-            ),
+            name="scan_version",
+            field=models.CharField(default="omega-v1", max_length=20),
         ),
+        migrations.RunPython(move_scan_configs_to_omega),
         migrations.AddField(
             model_name="tracescanconfig",
             name="omega_limits",
