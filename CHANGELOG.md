@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.38.4](https://github.com/future-agi/future-agi/compare/v1.38.3...v1.38.4) (2026-09-17)
+
+
+### Bug Fixes
+
+* **eval-tasks:** gate errored/skipped requeue on terminal watermark; sniff URL type across chunks ([b40979c](https://github.com/future-agi/future-agi/commit/b40979c80e8428f853ebfa5538383aa83964edb5))
+* **eval-tasks:** stop continuous tasks re-running converged failures every poll ([a113af7](https://github.com/future-agi/future-agi/commit/a113af7aa78c1fb8cf8e6aa19f7f983a28b51f52))
+* **eval-tasks:** stop continuous tasks re-running converged failures every poll ([7c99959](https://github.com/future-agi/future-agi/commit/7c99959f98669372f8611764e83d09df4683d110))
+
 ## [1.38.3](https://github.com/future-agi/future-agi/compare/v1.38.2...v1.38.3) (2026-09-15)
 
 
