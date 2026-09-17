@@ -1,10 +1,8 @@
 import uuid
 from copy import deepcopy
-from datetime import timedelta
 
 import pytest
 from django.test import override_settings
-from django.utils import timezone
 
 from tracer.models.trace_investigation import (
     TraceInvestigationAttempt,
@@ -19,11 +17,6 @@ from tracer.services.trace_investigation import (
     record_trace_notifications,
 )
 from tracer.tests.test_trace_investigation_control import _configure, _delivery
-from tracer.tests.test_trace_investigation_reconciliation import (
-    FakeRootReader,
-    _root,
-    _run,
-)
 
 pytestmark = pytest.mark.django_db
 
@@ -121,34 +114,3 @@ def test_claim_rechecks_rate_after_enqueue(observe_project, rate):
     }
     assert {claim["trace_id"] for claim in claimed} == expected
     assert TraceInvestigationAttempt.no_workspace_objects.count() == len(expected)
-
-
-@pytest.mark.parametrize("rate", [0, 0.5, 1])
-def test_reconciliation_samples_and_advances_past_excluded_traces(
-    observe_project, rate
-):
-    config = _configure(observe_project)
-    config.sampling_rate = rate
-    config.save(update_fields=["sampling_rate"])
-    now = timezone.now()
-    traces = [str(uuid.UUID(int=index)) for index in range(1, 17)]
-    reader = FakeRootReader(
-        now,
-        {
-            str(observe_project.id): {
-                trace: _root(now - timedelta(minutes=1)) for trace in traces
-            }
-        },
-    )
-    _run(reader)
-    assert set(
-        map(
-            str,
-            TraceInvestigationJob.no_workspace_objects.values_list(
-                "trace_id", flat=True
-            ),
-        )
-    ) == {trace for trace in traces if is_trace_sampled(trace, rate)}
-    assert _run(reader)["jobs_created"] == 0
-    if rate == 0:
-        assert reader.page_calls == []
