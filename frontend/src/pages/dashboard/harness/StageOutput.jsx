@@ -70,8 +70,9 @@ export default function StageOutput({ output, jobId, useCases, onChanged }) {
   return (
     <Accordion
       variant="outlined"
-      // Scenarios can be long; the others are short enough to read at a glance.
-      defaultExpanded={output.kind !== "scenarios"}
+      // Every stage opens on arrival. The suite is the thing people came to read, so making them
+      // click to see it put the whole point of the tab one interaction away.
+      defaultExpanded
       disableGutters
       // The theme leaves a collapsed accordion transparent and paints it only once
       // expanded, so the two states sit on different surfaces. Pin both to the darker

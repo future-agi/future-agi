@@ -85,6 +85,37 @@ describe("ScenarioSuite", () => {
     expect(screen.getByText("one")).toBeInTheDocument();
   });
 
+  it("puts everything the columns cannot hold behind the row detail", async () => {
+    const user = userEvent.setup();
+    render(
+      <ScenarioSuite
+        scenarios={[
+          scenario("one", {
+            fixture: { name: "Ada", age: 26, origin: "mixed" },
+            solution: [{ tool: "find_applicant" }, { tool: "quote_plan" }],
+          }),
+        ]}
+        jobId="job-1"
+        editable
+        useCases={["add an item to the cart"]}
+      />,
+    );
+    // Hidden until asked for, so the table stays one line per scenario.
+    expect(screen.queryByText("Add one Big Mac please")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /show detail/i }));
+
+    expect(screen.getByText("Add one Big Mac please")).toBeInTheDocument();
+    expect(screen.getByText("Analytical")).toBeInTheDocument();
+    expect(screen.getByText("Technical")).toBeInTheDocument();
+    expect(screen.getByText("Neutral")).toBeInTheDocument();
+    expect(screen.getByText("Technician")).toBeInTheDocument();
+    expect(screen.getByText("1. find_applicant")).toBeInTheDocument();
+    expect(screen.getByText("2. quote_plan")).toBeInTheDocument();
+    // The seeded values are what make an identity edit consequential, so they are visible.
+    expect(screen.getByText("Seeded into the world")).toBeInTheDocument();
+  });
+
   it("never sends the fields the world is seeded around", async () => {
     const user = userEvent.setup();
     render(

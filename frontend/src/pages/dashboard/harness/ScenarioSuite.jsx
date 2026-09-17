@@ -1,17 +1,21 @@
 import {
-  Accordion,
-  AccordionDetails,
-  AccordionSummary,
   Box,
   Button,
   Checkbox,
   Chip,
   Drawer,
   IconButton,
-  Paper,
   Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Tooltip,
   Typography,
 } from "@mui/material";
+import { alpha } from "@mui/material/styles";
 import PropTypes from "prop-types";
 import React, { useEffect, useMemo, useState } from "react";
 import { useSnackbar } from "notistack";
@@ -23,6 +27,27 @@ import { amendHarnessScenarios } from "src/api/harness/harness";
 // A use case is how the suite is read, so it is how the suite is shown. The axes a scenario was
 // planned against stay internal: they decide what gets written, not how it is grouped here.
 const UNGROUPED = "Other scenarios";
+
+// One scenario per line, the derived parts as columns, so a suite is comparable without opening
+// anything. The number is the row's own handle: it is what a person names when they say which rows
+// to act on.
+const selectableCheckboxSx = {
+  p: 0,
+  color: "text.disabled",
+  "&.Mui-checked": { color: "text.primary" },
+  "&.MuiCheckbox-indeterminate": { color: "text.primary" },
+};
+
+const COLUMNS = [
+  "select",
+  "#",
+  "Scenario",
+  "Persona",
+  "Situation",
+  "Sub-goals",
+  "Passes when",
+  "",
+];
 
 // Grouped on the contract's use cases rather than only on what the scenarios claim, so a use case
 // nobody wrote a scenario for still appears. Hiding it would hide a coverage gap. A scenario whose
@@ -77,6 +102,14 @@ export default function ScenarioSuite({ scenarios, jobId, editable, useCases, on
   const [waiting, setWaiting] = useState(false);
 
   const [chosen, setChosen] = useState(() => new Set());
+  const [opened, setOpened] = useState(() => new Set());
+  const toggleOpen = (name) =>
+    setOpened((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
 
   // Every keyword in the suite, most used first, so the row reads as the suite's own vocabulary.
   const keywords = useMemo(() => {
@@ -91,6 +124,14 @@ export default function ScenarioSuite({ scenarios, jobId, editable, useCases, on
     () => scenarios.filter((one) => matches(one, chosen)),
     [scenarios, chosen],
   );
+  const allSelected = shown.length > 0 && shown.every((one) => selected.has(one.name));
+  const someSelected = !allSelected && shown.some((one) => selected.has(one.name));
+  const toggleAll = () =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      shown.forEach((one) => (allSelected ? next.delete(one.name) : next.add(one.name)));
+      return next;
+    });
   const groups = useMemo(() => byUseCase(shown, useCases), [shown, useCases]);
 
   // While the harness is re-checking, ask the job again on a slow interval. A rework is a model
@@ -206,6 +247,8 @@ export default function ScenarioSuite({ scenarios, jobId, editable, useCases, on
     );
   }
 
+  let counter = 0;
+
   return (
     <Stack spacing={1.5}>
       {waiting && (
@@ -250,7 +293,7 @@ export default function ScenarioSuite({ scenarios, jobId, editable, useCases, on
             color="error"
             variant="outlined"
             disabled={busy}
-            startIcon={<Iconify icon="eva:trash-2-outline" width={16} />}
+            startIcon={<Iconify icon="solar:trash-bin-trash-linear" width={16} />}
             onClick={deleteSelected}
           >
             Delete
@@ -261,48 +304,227 @@ export default function ScenarioSuite({ scenarios, jobId, editable, useCases, on
         </Stack>
       )}
 
-      {groups.map(({ useCase, rows, covered, matched }) => {
-        const allOn = rows.length > 0 && rows.every((row) => selected.has(row.name));
-        const someOn = !allOn && rows.some((row) => selected.has(row.name));
-        return (
-          <Box key={useCase}>
-            <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }}>
-              <Checkbox
-                size="small"
-                checked={allOn}
-                indeterminate={someOn}
-                disabled={!rows.length}
-                onChange={() => toggleGroup(rows, allOn)}
-              />
-              <Typography variant="subtitle2">{useCase}</Typography>
-              <Chip size="small" label={rows.length} variant="outlined" />
-              {!covered && (
-                <Chip size="small" color="error" variant="outlined" label="not covered" />
-              )}
-              {!matched && (
-                <Chip size="small" color="warning" variant="outlined" label="unmatched" />
-              )}
-            </Stack>
+      <TableContainer>
+        <Table size="small" sx={{ minWidth: 1100 }}>
+          <TableHead>
+            <TableRow>
+              {COLUMNS.map((head, index) => {
+                const isActions = index === COLUMNS.length - 1;
+                const isSelect = head === "select";
+                return (
+                  <TableCell
+                    key={head || index}
+                    align={isActions ? "right" : "left"}
+                    padding={isSelect ? "checkbox" : "normal"}
+                    sx={{
+                      typography: "s3",
+                      fontWeight: 700,
+                      textTransform: "uppercase",
+                      letterSpacing: 0.4,
+                      color: "text.subtitle",
+                      bgcolor: "background.neutral",
+                      borderBottom: "1px solid",
+                      borderColor: "divider",
+                      whiteSpace: "nowrap",
+                      ...(head === "#" && { width: 44 }),
+                      ...(isSelect && { width: 44, pl: 1.5 }),
+                      // Pinned, so the edit control stays reachable however far the situation and
+                      // passes-when columns push the table. The shadow keeps it reading as one
+                      // column rather than as content that happens to be at the edge.
+                      ...(isActions && {
+                        position: "sticky",
+                        right: 0,
+                        zIndex: 2,
+                        width: 64,
+                        minWidth: 64,
+                        boxShadow: (theme) =>
+                          `-8px 0 12px -6px ${alpha(
+                            theme.palette.common.black,
+                            theme.palette.mode === "dark" ? 0.45 : 0.08,
+                          )}`,
+                      }),
+                    }}
+                  >
+                    {isSelect ? (
+                      <Checkbox
+                        size="small"
+                        checked={allSelected}
+                        indeterminate={someSelected}
+                        onChange={toggleAll}
+                        sx={selectableCheckboxSx}
+                      />
+                    ) : (
+                      head
+                    )}
+                  </TableCell>
+                );
+              })}
+            </TableRow>
+          </TableHead>
 
-            <Stack spacing={0.75} sx={{ pl: 1 }}>
-              {!covered && (
-                <Typography variant="caption" color="text.secondary" sx={{ pl: 1 }}>
-                  No scenarios were written for this use case.
-                </Typography>
-              )}
-              {rows.map((scenario) => (
-                <ScenarioRow
-                  key={scenario.name}
-                  scenario={scenario}
-                  checked={selected.has(scenario.name)}
-                  onToggle={() => toggle(scenario.name)}
-                  onEditPersona={editable ? () => setEditing(scenario) : null}
-                />
-              ))}
-            </Stack>
-          </Box>
-        );
-      })}
+          <TableBody>
+            {groups.map(({ useCase, rows, covered, matched }) => {
+              const allOn = rows.length > 0 && rows.every((row) => selected.has(row.name));
+              const someOn = !allOn && rows.some((row) => selected.has(row.name));
+              return (
+                <React.Fragment key={useCase}>
+                  <TableRow>
+                    <TableCell
+                      colSpan={COLUMNS.length}
+                      sx={{
+                        bgcolor: (theme) =>
+                          alpha(theme.palette.text.primary, theme.palette.mode === "dark" ? 0.08 : 0.05),
+                        py: 1,
+                      }}
+                    >
+                      <Stack direction="row" spacing={1.25} alignItems="center">
+                        <Checkbox
+                          size="small"
+                          checked={allOn}
+                          indeterminate={someOn}
+                          disabled={!rows.length}
+                          onChange={() => toggleGroup(rows, allOn)}
+                          sx={selectableCheckboxSx}
+                        />
+                        <Typography
+                          sx={{ typography: "s2", fontWeight: 700, flex: 1, minWidth: 0 }}
+                        >
+                          {useCase}
+                        </Typography>
+                        <Typography
+                          sx={{
+                            typography: "s3",
+                            fontWeight: 700,
+                            color: "text.subtitle",
+                            fontVariantNumeric: "tabular-nums",
+                          }}
+                        >
+                          {rows.length} {rows.length === 1 ? "scenario" : "scenarios"}
+                        </Typography>
+                        {!covered && (
+                          <Chip size="small" color="error" variant="outlined" label="not covered" />
+                        )}
+                        {!matched && (
+                          <Chip size="small" color="warning" variant="outlined" label="unmatched" />
+                        )}
+                      </Stack>
+                    </TableCell>
+                  </TableRow>
+
+                  {!covered && (
+                    <TableRow>
+                      <TableCell colSpan={COLUMNS.length}>
+                        <Typography variant="caption" color="text.secondary">
+                          No scenarios were written for this use case.
+                        </Typography>
+                      </TableCell>
+                    </TableRow>
+                  )}
+
+                  {rows.map((scenario) => {
+                    counter += 1;
+                    const persona = scenario.persona || {};
+                    const who = [persona.gender, persona.age_group].filter(Boolean).join(" \u00b7 ");
+                    return (
+                      <React.Fragment key={scenario.name}>
+                      <TableRow hover>
+                        <TableCell padding="checkbox">
+                          <Checkbox
+                            size="small"
+                            checked={selected.has(scenario.name)}
+                            onChange={() => toggle(scenario.name)}
+                            sx={selectableCheckboxSx}
+                          />
+                        </TableCell>
+                        <TableCell
+                          sx={{
+                            typography: "s3",
+                            color: "text.subtitle",
+                            fontVariantNumeric: "tabular-nums",
+                            verticalAlign: "top",
+                          }}
+                        >
+                          {counter}
+                        </TableCell>
+                        <TableCell sx={{ maxWidth: 260, verticalAlign: "top" }}>
+                          <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>
+                            {readable(scenario.name)}
+                          </Typography>
+                          <Tooltip title={scenario.branch || ""}>
+                            <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
+                              {scenario.branch}
+                            </Typography>
+                          </Tooltip>
+                        </TableCell>
+                        <TableCell sx={{ maxWidth: 170, verticalAlign: "top" }}>
+                          <Typography noWrap sx={{ typography: "s2" }}>
+                            {persona.name}
+                          </Typography>
+                          <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
+                            {who}
+                          </Typography>
+                        </TableCell>
+                        <TableCell sx={{ maxWidth: 300, verticalAlign: "top" }}>
+                          <Clamped text={scenario.instruction} />
+                        </TableCell>
+                        <TableCell sx={{ maxWidth: 220, verticalAlign: "top" }}>
+                          <Stack direction="row" gap={0.5} flexWrap="wrap">
+                            {(scenario.sub_goals || []).map((goal) => (
+                              <Chip key={goal} size="small" variant="outlined" label={readable(goal)} />
+                            ))}
+                          </Stack>
+                        </TableCell>
+                        <TableCell sx={{ maxWidth: 280, verticalAlign: "top" }}>
+                          <Clamped text={scenario.tests} />
+                        </TableCell>
+                        <TableCell
+                          align="right"
+                          sx={{
+                            position: "sticky",
+                            right: 0,
+                            bgcolor: "background.default",
+                            verticalAlign: "top",
+                          }}
+                        >
+                          <Stack direction="row" spacing={0.25} justifyContent="flex-end">
+                            {editable && (
+                              <Tooltip title="Edit">
+                                <IconButton size="small" onClick={() => setEditing(scenario)}>
+                                  <Iconify icon="solar:pen-new-square-linear" width={16} />
+                                </IconButton>
+                              </Tooltip>
+                            )}
+                            <Tooltip title={opened.has(scenario.name) ? "Hide detail" : "Show detail"}>
+                              <IconButton size="small" onClick={() => toggleOpen(scenario.name)}>
+                                <Iconify
+                                  icon={
+                                    opened.has(scenario.name)
+                                      ? "solar:alt-arrow-up-linear"
+                                      : "solar:alt-arrow-down-linear"
+                                  }
+                                  width={16}
+                                />
+                              </IconButton>
+                            </Tooltip>
+                          </Stack>
+                        </TableCell>
+                      </TableRow>
+                      {opened.has(scenario.name) && (
+                        <TableRow>
+                          <TableCell colSpan={COLUMNS.length} sx={{ bgcolor: "background.neutral" }}>
+                            <Detail scenario={scenario} />
+                          </TableCell>
+                        </TableRow>
+                      )}
+                      </React.Fragment>
+                    );
+                  })}
+                </React.Fragment>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </TableContainer>
 
       <Drawer anchor="right" open={Boolean(editing)} onClose={() => setEditing(null)}>
         <Box sx={{ width: "96vw", maxWidth: 720, p: 2 }}>
@@ -327,82 +549,151 @@ export default function ScenarioSuite({ scenarios, jobId, editable, useCases, on
   );
 }
 
-function ScenarioRow({ scenario, checked, onToggle, onEditPersona }) {
+// Everything the columns do not have room for. A scenario carries more than fits on one line, and
+// leaving the rest unreachable would mean the tab shows a summary of the suite rather than the
+// suite. Fields a given agent does not use stay out rather than showing as blank rows.
+function Detail({ scenario }) {
+  const persona = scenario.persona || {};
+  const caller = [
+    ["Personality", persona.personality],
+    ["Communication style", persona.communication_style],
+    ["Accent", persona.accent],
+    ["Profession", persona.occupation],
+    ["Location", persona.location],
+    ["Languages", (persona.languages || []).join(", ")],
+  ].filter(([, value]) => value);
+
+  const run = [
+    ["Background noise", scenario.background_noise ? "On" : "Off"],
+    ["Max turns", scenario.max_turns],
+    ["Call direction", scenario.call_direction],
+    ["Answered by", scenario.answered_by],
+  ].filter(([, value]) => value !== "" && value !== undefined && value !== null);
+
+  const seeded = Object.entries(scenario.fixture || {}).filter(([key]) => key !== "origin");
+
   return (
-    <Paper variant="outlined" sx={{ bgcolor: "background.default" }}>
-      <Accordion
-        variant="outlined"
-        disableGutters
-        sx={{ bgcolor: "transparent", "&:before": { display: "none" } }}
-      >
-        <AccordionSummary expandIcon={<Iconify icon="eva:arrow-ios-downward-fill" width={16} />}>
-          <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0, flex: 1 }}>
-            <Checkbox
-              size="small"
-              checked={checked}
-              // The row expands on click; the checkbox must not, or selecting one opens it too.
-              onClick={(event) => event.stopPropagation()}
-              onChange={onToggle}
-            />
-            <Box sx={{ minWidth: 0, flex: 1 }}>
-              <Typography variant="body2" noWrap>
-                {readable(scenario.name)}
-              </Typography>
-              {scenario.tests && (
-                <Typography variant="caption" color="text.secondary" noWrap display="block">
-                  {scenario.tests}
-                </Typography>
-              )}
-            </Box>
-            {onEditPersona && scenario.persona && (
-              <IconButton
+    <Stack spacing={2} sx={{ py: 1.5 }}>
+      {persona.initial_message && (
+        <Field label="Opens with">
+          <Typography sx={{ typography: "s3" }}>{persona.initial_message}</Typography>
+        </Field>
+      )}
+
+      {Boolean((persona.keywords || []).length) && (
+        <Field label="Keywords">
+          <Stack direction="row" gap={0.5} flexWrap="wrap">
+            {persona.keywords.map((word) => (
+              <Chip key={word} size="small" variant="outlined" label={word} />
+            ))}
+          </Stack>
+        </Field>
+      )}
+
+      {Boolean(caller.length) && (
+        <Field label="Caller">
+          <Stack direction="row" gap={2} flexWrap="wrap">
+            {caller.map(([label, value]) => (
+              <Pair key={label} label={label} value={value} />
+            ))}
+          </Stack>
+        </Field>
+      )}
+
+      {Boolean(run.length) && (
+        <Field label="Run conditions">
+          <Stack direction="row" gap={2} flexWrap="wrap">
+            {run.map(([label, value]) => (
+              <Pair key={label} label={label} value={String(value)} />
+            ))}
+          </Stack>
+        </Field>
+      )}
+
+      {Boolean(seeded.length) && (
+        <Field label="Seeded into the world">
+          <Stack direction="row" gap={2} flexWrap="wrap">
+            {seeded.map(([key, value]) => (
+              <Pair key={key} label={readable(key)} value={String(value)} />
+            ))}
+          </Stack>
+        </Field>
+      )}
+
+      {Boolean((scenario.solution || []).length) && (
+        <Field label="Known-good solution">
+          <Stack direction="row" gap={0.5} flexWrap="wrap" alignItems="center">
+            {scenario.solution.map((step, index) => (
+              <Chip
+                key={`${step.tool}-${index}`}
                 size="small"
-                aria-label="Edit persona"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onEditPersona();
-                }}
-              >
-                <Iconify icon="eva:edit-outline" width={16} />
-              </IconButton>
-            )}
+                variant="outlined"
+                label={`${index + 1}. ${step.tool}`}
+              />
+            ))}
           </Stack>
-        </AccordionSummary>
-        <AccordionDetails>
-          <Stack spacing={1}>
-            <Typography variant="body2">{scenario.instruction}</Typography>
-            {scenario.persona?.name && (
-              <Typography variant="caption" color="text.secondary">
-                {[
-                  scenario.persona.name,
-                  scenario.persona.age_group,
-                  scenario.persona.accent,
-                  scenario.persona.location,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </Typography>
-            )}
-            {Boolean(scenario.sub_goals?.length) && (
-              <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
-                {scenario.sub_goals.map((goal) => (
-                  <Chip key={goal} size="small" label={goal} variant="outlined" />
-                ))}
-              </Stack>
-            )}
-          </Stack>
-        </AccordionDetails>
-      </Accordion>
-    </Paper>
+        </Field>
+      )}
+    </Stack>
   );
 }
 
-ScenarioRow.propTypes = {
-  scenario: PropTypes.object.isRequired,
-  checked: PropTypes.bool,
-  onToggle: PropTypes.func,
-  onEditPersona: PropTypes.func,
-};
+Detail.propTypes = { scenario: PropTypes.object.isRequired };
+
+function Field({ label, children }) {
+  return (
+    <Stack spacing={0.5}>
+      <Typography
+        sx={{
+          typography: "s3",
+          fontWeight: 700,
+          textTransform: "uppercase",
+          letterSpacing: 0.4,
+          color: "text.subtitle",
+        }}
+      >
+        {label}
+      </Typography>
+      {children}
+    </Stack>
+  );
+}
+
+Field.propTypes = { label: PropTypes.string, children: PropTypes.node };
+
+function Pair({ label, value }) {
+  return (
+    <Stack spacing={0.25}>
+      <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{label}</Typography>
+      <Typography sx={{ typography: "s3" }}>{value}</Typography>
+    </Stack>
+  );
+}
+
+Pair.propTypes = { label: PropTypes.string, value: PropTypes.string };
+
+// Two lines, then ellipsis, with the whole value on hover. A situation can run to a paragraph and
+// a table that lets one row grow to five lines stops being scannable.
+function Clamped({ text }) {
+  const value = String(text || "");
+  return (
+    <Tooltip title={value}>
+      <Typography
+        sx={{
+          typography: "s3",
+          display: "-webkit-box",
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: "vertical",
+          overflow: "hidden",
+        }}
+      >
+        {value}
+      </Typography>
+    </Tooltip>
+  );
+}
+
+Clamped.propTypes = { text: PropTypes.string };
 
 ScenarioSuite.propTypes = {
   scenarios: PropTypes.arrayOf(PropTypes.object),
