@@ -4,8 +4,6 @@ Tracer Temporal schedules.
 These replace the Celery Beat schedules for tracer tasks.
 """
 
-from django.conf import settings
-
 from tfc.temporal.schedules.config import ScheduleConfig
 
 # Tracer schedules (migrated from Celery Beat)
@@ -67,14 +65,3 @@ TRACER_SCHEDULES: list[ScheduleConfig] = [
     #     description="Check and process trace error analysis",
     # ),
 ]
-
-if settings.ERROR_FEED_LEGACY_SCANNER_ENABLED:
-    TRACER_SCHEDULES.append(
-        ScheduleConfig(
-            schedule_id="sweep-scannable-traces",
-            activity_name="sweep_scannable_traces",
-            interval_seconds=60,
-            queue="agent_compass",
-            description="Scan completed, unscanned (collector-ingested) traces",
-        )
-    )

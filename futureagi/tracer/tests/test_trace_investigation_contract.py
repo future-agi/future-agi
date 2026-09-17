@@ -1,4 +1,3 @@
-from importlib import reload
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -48,14 +47,9 @@ def test_queued_legacy_task_and_sweep_stop_when_disabled():
 def test_v2_schedule_excludes_legacy_sweep():
     from tfc.temporal.schedules import tracer as schedules
 
-    try:
-        with override_settings(ERROR_FEED_LEGACY_SCANNER_ENABLED=False):
-            reload(schedules)
-            assert "sweep-scannable-traces" not in {
-                item.schedule_id for item in schedules.TRACER_SCHEDULES
-            }
-    finally:
-        reload(schedules)
+    assert "sweep-scannable-traces" not in {
+        item.schedule_id for item in schedules.TRACER_SCHEDULES
+    }
 
 
 def test_canonical_wire_result_digest_interoperability_vector():
