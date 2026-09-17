@@ -29,6 +29,11 @@ from tracer.utils.filter_operators import (
     normalize_span_attribute_filter_type,
     validate_json_map_filter_value,
 )
+from tracer.utils.graph_provenance import (
+    EXACT_GRAPH_PROVENANCES,
+    GRAPH_PROVENANCES,
+    graph_provenance_is_exact,
+)
 from tracer.utils.property_registry import (
     validate_property_filter_binding,
     validate_property_graph_binding,
@@ -1161,7 +1166,8 @@ class ObserveGraphDataQuerySerializer(StrictInputSerializer):
         default=False,
         help_text=(
             "Deprecated compatibility parameter. Observe graphs always return "
-            "complete exact data or a retryable error."
+            "a complete series or a retryable error; whether that series is "
+            "exact is declared per response by query_exact."
         ),
     )
     refresh = serializers.BooleanField(
@@ -1189,11 +1195,27 @@ class ObserveGraphDataResultSerializer(serializers.Serializer):
             "declared stratum coverage; degraded reads never publish points."
         ),
     )
-    query_complete = serializers.BooleanField(required=False)
-    query_exact = serializers.BooleanField(required=False)
-    query_provenance = serializers.ChoiceField(
-        choices=("materialized_rollup", "bounded_candidates", "exact_snapshot"),
+    query_complete = serializers.BooleanField(
         required=False,
+        help_text=(
+            "The read covered the whole requested window; nothing was "
+            "truncated by a budget."
+        ),
+    )
+    query_exact = serializers.BooleanField(
+        required=False,
+        help_text=(
+            "The published values were computed from the latest physical state "
+            "of every contributing span. True only for these provenances: "
+            f"{', '.join(sorted(EXACT_GRAPH_PROVENANCES))}. The live read paths "
+            "answer the whole window without collapsing physical span "
+            "versions, so a complete series is routinely inexact."
+        ),
+    )
+    query_provenance = serializers.ChoiceField(
+        choices=GRAPH_PROVENANCES,
+        required=False,
+        help_text="Which read produced this series; it determines query_exact.",
     )
     query_status = serializers.ChoiceField(
         choices=("complete", "sampled", "degraded", "pending"), required=False
@@ -1251,6 +1273,23 @@ class ObserveGraphDataResultSerializer(serializers.Serializer):
                     "data": (
                         "Incomplete graph reads must be explicitly sampled "
                         "before publishing graph points."
+                    )
+                }
+            )
+        provenance = attrs.get("query_provenance")
+        if (
+            attrs.get("query_complete") is True
+            and provenance is not None
+            and "query_exact" in attrs
+            and attrs["query_exact"] is not graph_provenance_is_exact(provenance)
+        ):
+            raise serializers.ValidationError(
+                {
+                    "query_exact": (
+                        "A complete graph read declares exactness from its "
+                        "provenance; query_exact must be "
+                        f"{graph_provenance_is_exact(provenance)} for "
+                        f"{provenance}."
                     )
                 }
             )

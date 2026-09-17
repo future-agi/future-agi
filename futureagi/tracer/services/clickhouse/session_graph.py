@@ -39,6 +39,13 @@ from tracer.services.clickhouse.v2.query_builders.trace_list import (
 from tracer.services.exact_aggregation_cache import (
     read_or_schedule_exact_snapshot,
 )
+from tracer.utils.graph_provenance import (
+    BOUNDED_CANDIDATES,
+    EMPTY_WINDOW,
+    MATERIALIZED_ROLLUP,
+    SERVER_READ_POLICY_UNAVAILABLE,
+    graph_provenance_metadata,
+)
 
 SESSION_GRAPH_WALL_DEADLINE_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
 SESSION_GRAPH_QUERY_TIMEOUT_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
@@ -169,11 +176,12 @@ def _fetch_rollup_system_metric_graph(
         interval=interval,
     )
     query, params = builder.build()
-    if (
+    empty_window = (
         builder.start_date is not None
         and builder.end_date is not None
         and builder.start_date >= builder.end_date
-    ):
+    )
+    if empty_window:
         rows: list[Any] = []
         columns: list[str] = []
         query_count = 0
@@ -200,8 +208,9 @@ def _fetch_rollup_system_metric_graph(
             "query_count": query_count,
             "query_elapsed_ms": round((monotonic() - started) * 1000, 3),
             "query_rows_returned": len(rows),
-            "query_provenance": "materialized_rollup",
-            "query_exact": False,
+            **graph_provenance_metadata(
+                EMPTY_WINDOW if empty_window else MATERIALIZED_ROLLUP
+            ),
         }
     )
     return response
@@ -661,7 +670,7 @@ def _fetch_system_metric_graph(
             metric_id,
             exc,
             sample=sample,
-            provenance="bounded_candidates",
+            provenance=BOUNDED_CANDIDATES,
         )
     except Exception as exc:
         if not is_read_budget_error(exc):
@@ -670,7 +679,7 @@ def _fetch_system_metric_graph(
             metric_id,
             exc,
             sample=sample,
-            provenance="bounded_candidates",
+            provenance=BOUNDED_CANDIDATES,
         )
 
 
@@ -723,7 +732,7 @@ def fetch_session_graph_ch(
                 return degraded_graph_response(
                     metric_id,
                     BoundedGraphReadError("query_failed", retryable=True),
-                    provenance="server_read_policy_unavailable",
+                    provenance=SERVER_READ_POLICY_UNAVAILABLE,
                 )
             started = monotonic()
             deadline = ReadDeadline.start(
@@ -757,12 +766,7 @@ def fetch_session_graph_ch(
                 started=started,
                 deadline_ms=deadline_ms,
             )
-            response.update(
-                {
-                    "query_exact": False,
-                    "query_provenance": "bounded_candidates",
-                }
-            )
+            response.update(graph_provenance_metadata(BOUNDED_CANDIDATES))
             return response
         identity = {
             "project_id": str(project_id),

@@ -88553,16 +88553,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         query_complete: {
           title: "Query complete",
+          description:
+            "The read covered the whole requested window; nothing was truncated by a budget.",
           type: "boolean",
         },
         query_exact: {
           title: "Query exact",
+          description:
+            "The published values were computed from the latest physical state of every contributing span. True only for these provenances: empty_window, exact_snapshot. The live read paths answer the whole window without collapsing physical span versions, so a complete series is routinely inexact.",
           type: "boolean",
         },
         query_provenance: {
           title: "Query provenance",
+          description:
+            "Which read produced this series; it determines query_exact.",
           type: "string",
-          enum: ["materialized_rollup", "bounded_candidates", "exact_snapshot"],
+          enum: [
+            "bounded_candidates",
+            "empty_window",
+            "exact_snapshot",
+            "materialized_rollup",
+            "server_read_policy_unavailable",
+          ],
         },
         query_status: {
           title: "Query status",
@@ -88704,16 +88716,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         query_complete: {
           title: "Query complete",
+          description:
+            "The read covered the whole requested window; nothing was truncated by a budget.",
           type: "boolean",
         },
         query_exact: {
           title: "Query exact",
+          description:
+            "The published values were computed from the latest physical state of every contributing span. True only for these provenances: empty_window, exact_snapshot. The live read paths answer the whole window without collapsing physical span versions, so a complete series is routinely inexact.",
           type: "boolean",
         },
         query_provenance: {
           title: "Query provenance",
+          description:
+            "Which read produced this series; it determines query_exact.",
           type: "string",
-          enum: ["materialized_rollup", "bounded_candidates", "exact_snapshot"],
+          enum: [
+            "bounded_candidates",
+            "empty_window",
+            "exact_snapshot",
+            "materialized_rollup",
+            "server_read_policy_unavailable",
+          ],
         },
         query_status: {
           title: "Query status",

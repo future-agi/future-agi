@@ -933,7 +933,8 @@ def test_system_graph_is_null_returns_exact_empty_without_clickhouse(monkeypatch
     assert response["query_sampled"] is False
     assert response["query_count"] == 0
     assert response["query_exact"] is True
-    assert response["query_provenance"] == "exact_snapshot"
+    # The window itself is empty; no exact snapshot was read to learn that.
+    assert response["query_provenance"] == "empty_window"
     assert analytics.calls == 0
     assert calls == []
 
