@@ -17,21 +17,40 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useSnackbar } from "notistack";
 
 import Iconify from "src/components/iconify";
-import PersonaCreateEditForm from "src/sections/persona/PersonaCreateEdit/PersonaCreateEditForm";
+import ScenarioEditForm from "./ScenarioEditForm";
 import { amendHarnessScenarios } from "src/api/harness/harness";
 
 // A use case is how the suite is read, so it is how the suite is shown. The axes a scenario was
 // planned against stay internal: they decide what gets written, not how it is grouped here.
 const UNGROUPED = "Other scenarios";
 
-const byUseCase = (scenarios) => {
+// Grouped on the contract's use cases rather than only on what the scenarios claim, so a use case
+// nobody wrote a scenario for still appears. Hiding it would hide a coverage gap. A scenario whose
+// use case matches none of them is kept in its own group and marked, because a paraphrase should be
+// visible rather than quietly sitting beside the real ones.
+const byUseCase = (scenarios, useCases = []) => {
   const groups = new Map();
+  useCases.forEach((one) => {
+    const key = String(one || "").trim();
+    if (key) groups.set(key, []);
+  });
   scenarios.forEach((scenario) => {
     const key = scenario.use_case?.trim() || UNGROUPED;
     groups.set(key, [...(groups.get(key) || []), scenario]);
   });
-  return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b));
+  const known = new Set(useCases.map((one) => String(one || "").trim()).filter(Boolean));
+  return [...groups.entries()]
+    .map(([useCase, rows]) => ({
+      useCase,
+      rows,
+      covered: rows.length > 0,
+      matched: known.size === 0 || known.has(useCase) || useCase === UNGROUPED,
+    }))
+    .sort((a, b) => a.useCase.localeCompare(b.useCase));
 };
+
+const matches = (scenario, chosen) =>
+  !chosen.size || (scenario.persona?.keywords || []).some((word) => chosen.has(word));
 
 const readable = (name) => String(name || "").replace(/[_-]+/g, " ").trim();
 
@@ -50,14 +69,29 @@ const summarise = (receipts) => {
   return parts.join(", ") || "nothing changed";
 };
 
-export default function ScenarioSuite({ scenarios, jobId, editable, onChanged }) {
+export default function ScenarioSuite({ scenarios, jobId, editable, useCases, onChanged }) {
   const { enqueueSnackbar } = useSnackbar();
   const [selected, setSelected] = useState(() => new Set());
   const [editing, setEditing] = useState(null);
   const [busy, setBusy] = useState(false);
   const [waiting, setWaiting] = useState(false);
 
-  const groups = useMemo(() => byUseCase(scenarios), [scenarios]);
+  const [chosen, setChosen] = useState(() => new Set());
+
+  // Every keyword in the suite, most used first, so the row reads as the suite's own vocabulary.
+  const keywords = useMemo(() => {
+    const seen = new Map();
+    scenarios.forEach((one) =>
+      (one.persona?.keywords || []).forEach((word) => seen.set(word, (seen.get(word) || 0) + 1)),
+    );
+    return [...seen.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  }, [scenarios]);
+
+  const shown = useMemo(
+    () => scenarios.filter((one) => matches(one, chosen)),
+    [scenarios, chosen],
+  );
+  const groups = useMemo(() => byUseCase(shown, useCases), [shown, useCases]);
 
   // While the harness is re-checking, ask the job again on a slow interval. A rework is a model
   // session and a proof, so seconds are the right unit; stop as soon as the suite we were handed
@@ -132,29 +166,37 @@ export default function ScenarioSuite({ scenarios, jobId, editable, onChanged })
       { rework: false },
     );
 
-  const savePersona = (payload) =>
-    send(
-      [
-        {
-          op: "set_persona",
-          scenario: editing.name,
-          persona: {
-            name: payload.name,
-            gender: payload.gender,
-            age_group: payload.age_group,
-            occupation: payload.profession,
-            location: payload.location,
-            personality: payload.personality,
-            communication_style: payload.communication_style,
-            accent: payload.accent,
-            languages: payload.languages,
-          },
+  // One edit, two kinds of change. The descriptive fields are written straight to the scenario;
+  // the persona may still turn out to matter for this agent, and the harness decides that, not us.
+  const saveScenario = (form) => {
+    const target = editing.name;
+    const changes = [
+      { op: "set_field", scenario: target, field: "tests", value: form.tests },
+      { op: "set_field", scenario: target, field: "branch", value: form.branch },
+      {
+        op: "set_field",
+        scenario: target,
+        field: "background_noise",
+        value: form.background_noise,
+      },
+    ];
+    if (editing.persona) {
+      changes.push({
+        op: "set_persona",
+        scenario: target,
+        persona: {
+          keywords: form.keywords,
+          personality: form.personality,
+          communication_style: form.communication_style,
+          accent: form.accent,
+          languages: form.languages,
+          occupation: form.occupation,
+          location: form.location,
         },
-      ],
-      // A persona can change what the world must seed and what a correct agent does, so the
-      // harness is allowed to work that out and re-prove the scenario.
-      { rework: true },
-    );
+      });
+    }
+    send(changes, { rework: true });
+  };
 
   if (!scenarios.length) {
     return (
@@ -171,6 +213,33 @@ export default function ScenarioSuite({ scenarios, jobId, editable, onChanged })
           The harness is re-checking a scenario, rewriting its setup and checks where the change
           matters and proving it again. This takes a minute or two.
         </Typography>
+      )}
+
+      {keywords.length > 0 && (
+        <Stack direction="row" gap={0.75} flexWrap="wrap" alignItems="center">
+          {keywords.map(([word, count]) => (
+            <Chip
+              key={word}
+              size="small"
+              label={`${word} ${count}`}
+              variant={chosen.has(word) ? "filled" : "outlined"}
+              color={chosen.has(word) ? "primary" : "default"}
+              onClick={() =>
+                setChosen((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(word)) next.delete(word);
+                  else next.add(word);
+                  return next;
+                })
+              }
+            />
+          ))}
+          {chosen.size > 0 && (
+            <Button size="small" onClick={() => setChosen(new Set())}>
+              Clear filter
+            </Button>
+          )}
+        </Stack>
       )}
 
       {selected.size > 0 && (
@@ -192,8 +261,8 @@ export default function ScenarioSuite({ scenarios, jobId, editable, onChanged })
         </Stack>
       )}
 
-      {groups.map(([useCase, rows]) => {
-        const allOn = rows.every((row) => selected.has(row.name));
+      {groups.map(({ useCase, rows, covered, matched }) => {
+        const allOn = rows.length > 0 && rows.every((row) => selected.has(row.name));
         const someOn = !allOn && rows.some((row) => selected.has(row.name));
         return (
           <Box key={useCase}>
@@ -202,13 +271,25 @@ export default function ScenarioSuite({ scenarios, jobId, editable, onChanged })
                 size="small"
                 checked={allOn}
                 indeterminate={someOn}
+                disabled={!rows.length}
                 onChange={() => toggleGroup(rows, allOn)}
               />
               <Typography variant="subtitle2">{useCase}</Typography>
               <Chip size="small" label={rows.length} variant="outlined" />
+              {!covered && (
+                <Chip size="small" color="error" variant="outlined" label="not covered" />
+              )}
+              {!matched && (
+                <Chip size="small" color="warning" variant="outlined" label="unmatched" />
+              )}
             </Stack>
 
             <Stack spacing={0.75} sx={{ pl: 1 }}>
+              {!covered && (
+                <Typography variant="caption" color="text.secondary" sx={{ pl: 1 }}>
+                  No scenarios were written for this use case.
+                </Typography>
+              )}
               {rows.map((scenario) => (
                 <ScenarioRow
                   key={scenario.name}
@@ -233,10 +314,11 @@ export default function ScenarioSuite({ scenarios, jobId, editable, onChanged })
             correct agent does, its setup and checks are rewritten and proved again.
           </Typography>
           {editing && (
-            <PersonaCreateEditForm
-              editPersona={editing.persona || {}}
+            <ScenarioEditForm
+              scenario={editing}
+              busy={busy}
               onCancel={() => setEditing(null)}
-              onSave={savePersona}
+              onSave={saveScenario}
             />
           )}
         </Box>
@@ -327,5 +409,7 @@ ScenarioSuite.propTypes = {
   jobId: PropTypes.string,
   // An agent that talks to nobody has no persona to edit, so the affordance is not shown at all.
   editable: PropTypes.bool,
+  // The contract's own use cases, so one nobody wrote a scenario for still shows as a gap.
+  useCases: PropTypes.arrayOf(PropTypes.string),
   onChanged: PropTypes.func,
 };

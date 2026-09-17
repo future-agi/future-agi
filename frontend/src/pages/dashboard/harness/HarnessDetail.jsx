@@ -258,6 +258,11 @@ export default function HarnessDetail() {
       ? !["contract", "environment", "scenarios"].includes(output.kind)
       : output.kind === detailTab,
   );
+  // The contract owns the use cases; the scenarios list needs them so a use case nobody wrote a
+  // scenario for still appears as a gap rather than vanishing.
+  const contractUseCases =
+    stageOutputs.find((output) => output.kind === "contract")?.data?.real_use_cases || [];
+
   const outputCounts = stageOutputs.reduce((counts, output) => {
     const key = ["contract", "environment", "scenarios"].includes(output.kind)
       ? output.kind
@@ -854,6 +859,7 @@ export default function HarnessDetail() {
                         key={output.id}
                         output={output}
                         jobId={jobId}
+                        useCases={contractUseCases}
                         onChanged={() =>
                           queryClient.invalidateQueries({
                             queryKey: ["harness-job", jobId],
