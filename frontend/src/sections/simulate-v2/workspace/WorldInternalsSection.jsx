@@ -1,11 +1,11 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
 import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, Collapse, Chip, IconButton, Tooltip } from "@mui/material";
+import { Box, Stack, Typography, Collapse, Chip, IconButton, Tooltip, Menu, MenuItem } from "@mui/material";
 import { useSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import { SectionCard } from "../components/primitives";
-import { schemaFor, toolImplFor, checkImplFor } from "../_mock/envInternals";
+import { schemaFor, toolImplFor, checkImplFor, classifyToolEffect } from "../_mock/envInternals";
 
 /**
  * "World" internals on the Contract tab.
@@ -15,7 +15,7 @@ import { schemaFor, toolImplFor, checkImplFor } from "../_mock/envInternals";
  * the handler code. This keeps Contract as the single home for "what this
  * env is made of" instead of hiding the concrete code behind a second tab.
  */
-export default function WorldInternalsSection({ env, envState }) {
+export default function WorldInternalsSection({ env, envState, patch }) {
   const schema = schemaFor(env);
   const tools = env?.tools || [];
   const evals = envState?.evals || env?.evalPreset || [];
@@ -27,7 +27,9 @@ export default function WorldInternalsSection({ env, envState }) {
       {schema.length > 0 && (
         <SchemaCard schema={schema} totalRows={totalRows} />
       )}
-      {tools.length > 0 && <ToolImplsCard tools={tools} />}
+      {tools.length > 0 && (
+        <ToolImplsCard tools={tools} envState={envState} patch={patch} />
+      )}
       {evals.length > 0 && <CheckImplsCard evals={evals} />}
     </Stack>
   );
@@ -35,6 +37,7 @@ export default function WorldInternalsSection({ env, envState }) {
 WorldInternalsSection.propTypes = {
   env: PropTypes.object.isRequired,
   envState: PropTypes.object,
+  patch: PropTypes.func,
 };
 
 /* ── DB schema ────────────────────────────────────────────────────────── */
@@ -139,8 +142,13 @@ SchemaColumnRow.propTypes = { col: PropTypes.object };
 
 /* ── tool implementations ─────────────────────────────────────────────── */
 
-function ToolImplsCard({ tools }) {
+function ToolImplsCard({ tools, envState, patch }) {
   const [openTool, setOpenTool] = useState(null);
+  const overrides = envState?.toolResolutions || {};
+  const setOverride = (name, kind) => {
+    if (!patch) return;
+    patch({ toolResolutions: { ...overrides, [name]: kind } });
+  };
   return (
     <SectionCard
       title="Tool implementations"
@@ -155,6 +163,10 @@ function ToolImplsCard({ tools }) {
         {tools.map((tool) => {
           const open = openTool === tool.name;
           const impl = toolImplFor(tool);
+          const inferred = classifyToolEffect(tool);
+          const overridden = overrides[tool.name];
+          const effect = overridden || inferred.kind;
+          const isInferred = !overridden;
           return (
             <Box key={tool.name}>
               <Stack
@@ -178,6 +190,11 @@ function ToolImplsCard({ tools }) {
                 <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1, minWidth: 0 }} noWrap>
                   {tool.desc}
                 </Typography>
+                <EffectPicker
+                  effect={effect}
+                  isInferred={isInferred}
+                  onPick={(next) => setOverride(tool.name, next)}
+                />
                 <Chip
                   size="small"
                   label={impl.file.split("/").pop()}
@@ -202,7 +219,90 @@ function ToolImplsCard({ tools }) {
     </SectionCard>
   );
 }
-ToolImplsCard.propTypes = { tools: PropTypes.array };
+ToolImplsCard.propTypes = { tools: PropTypes.array, envState: PropTypes.object, patch: PropTypes.func };
+
+/**
+ * Read/write effect chip with a small override menu.
+ *
+ * The verb heuristic picks a default (`inferred` tag), a stored
+ * override wins. Clicking the chip opens a menu with the two choices
+ * so a reader can correct the reader without leaving the row.
+ */
+function EffectPicker({ effect, isInferred, onPick }) {
+  const [anchor, setAnchor] = useState(null);
+  const isWrite = effect === "write";
+  const tint = isWrite ? "#CA8A04" : "#16A34A";
+  const label = isWrite ? "writes" : "read-only";
+  return (
+    <>
+      <Chip
+        size="small"
+        onClick={(e) => { e.stopPropagation(); setAnchor(e.currentTarget); }}
+        icon={
+          <Iconify
+            icon={isWrite ? "solar:pen-linear" : "solar:eye-linear"}
+            width={11}
+            sx={{ ml: "6px !important", color: `${tint} !important` }}
+          />
+        }
+        label={isInferred ? `${label} · inferred` : label}
+        sx={{
+          height: 20, borderRadius: 0.75, cursor: "pointer",
+          color: tint,
+          bgcolor: (t) => alpha(tint, t.palette.mode === "dark" ? 0.14 : 0.08),
+          border: "1px solid", borderColor: (t) => alpha(tint, t.palette.mode === "dark" ? 0.35 : 0.3),
+          "& .MuiChip-label": { px: 0.75, typography: "s3", fontWeight: 700 },
+        }}
+      />
+      <Menu
+        anchorEl={anchor}
+        open={!!anchor}
+        onClose={() => setAnchor(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+        transformOrigin={{ vertical: "top", horizontal: "right" }}
+        slotProps={{ paper: { sx: { minWidth: 220, mt: 0.5 } } }}
+      >
+        <EffectMenuItem
+          selected={!isWrite}
+          icon="solar:eye-linear"
+          label="Read-only"
+          hint="scenarios call it directly"
+          onClick={() => { onPick("read"); setAnchor(null); }}
+        />
+        <EffectMenuItem
+          selected={isWrite}
+          icon="solar:pen-linear"
+          label="Writes data"
+          hint="writes hit the sandbox, never production"
+          onClick={() => { onPick("write"); setAnchor(null); }}
+        />
+      </Menu>
+    </>
+  );
+}
+EffectPicker.propTypes = {
+  effect: PropTypes.string, isInferred: PropTypes.bool, onPick: PropTypes.func,
+};
+
+function EffectMenuItem({ selected, icon, label, hint, onClick }) {
+  return (
+    <MenuItem onClick={onClick} sx={{ alignItems: "flex-start", gap: 1.25, py: 1 }}>
+      <Iconify
+        icon={selected ? "solar:check-circle-bold" : icon}
+        width={16}
+        sx={{ color: selected ? "primary.main" : "text.subtitle", mt: "2px", flexShrink: 0 }}
+      />
+      <Box minWidth={0}>
+        <Typography sx={{ typography: "s2", fontWeight: 600 }}>{label}</Typography>
+        <Typography sx={{ typography: "s3", color: "text.subtitle", whiteSpace: "normal" }}>{hint}</Typography>
+      </Box>
+    </MenuItem>
+  );
+}
+EffectMenuItem.propTypes = {
+  selected: PropTypes.bool, icon: PropTypes.string, label: PropTypes.string,
+  hint: PropTypes.string, onClick: PropTypes.func,
+};
 
 /* ── check implementations ────────────────────────────────────────────── */
 

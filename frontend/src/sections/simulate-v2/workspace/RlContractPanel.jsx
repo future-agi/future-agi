@@ -47,7 +47,7 @@ export default function RlContractPanel({ env, envState, patch, onGo }) {
       )}
 
       {/* ── internals: DB schema + tool code + check code ─────────────── */}
-      <WorldInternalsSection env={env} envState={envState} />
+      <WorldInternalsSection env={env} envState={envState} patch={patch} />
 
       {/* ── run end conditions ────────────────────────────────────────── */}
       <SectionCard

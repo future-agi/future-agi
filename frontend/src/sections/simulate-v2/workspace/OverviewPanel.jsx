@@ -1893,33 +1893,26 @@ function SourceToSandboxMap({ env, envState, patch }) {
 
   const toolResolutions = envState?.toolResolutions || {};
 
-  /* Single out the last tool the reader can't classify. If every tool is
-     classifiable, singling out the last one still exercises the resolve
-     affordance — the mock is built around this row being present. */
-  const unresolvedIndex = (() => {
-    for (let i = tools.length - 1; i >= 0; i -= 1) {
-      if (classifyTool(tools[i]) === "unknown") return i;
-    }
-    return tools.length ? tools.length - 1 : -1;
-  })();
-
-  const setToolResolution = (name, choice) =>
-    patch && patch({ toolResolutions: { ...toolResolutions, [name]: choice } });
-
-  const toolRows = tools.map((t, i) => {
-    const effect = classifyTool(t);
-    const stored = toolResolutions[t.name];
-    const isUnresolved = i === unresolvedIndex && !stored;
+  /*
+    Every tool renders with an effect classification — verb heuristic
+    fills in the common case; a stored override wins. The "Needs your
+    answer" inline card that used to live below one row was homework
+    the reader shouldn't be handing back to the user in the build
+    flow; the classification and its override control now live on the
+    Contract tab's Tool implementations card, next to the code.
+  */
+  const toolRows = tools.map((t) => {
+    const effect = toolResolutions[t.name] || classifyTool(t);
     return {
       key: t.name,
       name: t.name,
-      origin: effect === "unknown" || (i === unresolvedIndex && !stored) ? "callGraph" : "config",
-      target: stored ? targetForEffect(stored) : (isUnresolved ? null : targetForEffect(effect)),
-      confirmed: !!stored,
-      isUnresolved,
+      origin: "config",
+      target: targetForEffect(effect === "unknown" ? "reads" : effect),
+      confirmed: !!toolResolutions[t.name],
+      isUnresolved: false,
     };
   });
-  const toAnswer = toolRows.filter((r) => r.isUnresolved).length;
+  const toAnswer = 0;
 
   const surface = getSurface(env.surface);
   const actors = [

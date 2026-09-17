@@ -8,6 +8,25 @@
  * so the reader is not chasing a re-shuffle between renders.
  */
 
+/**
+ * Verb-heuristic classifier for tool side effects.
+ *
+ * Read/write is a first-class property of a tool: scenarios can't be
+ * proved against a sandbox that mis-classifies mutation, and the reader
+ * needs a default rather than a per-tool intake form. Verbs settle the
+ * common case; anything unclassified falls back to `read` (safe default,
+ * always overridable on the Contract tab).
+ */
+const WRITE_VERBS = /^(refund|cancel|update|create|delete|remove|freeze|escalate|raise|rebook|issue|send|rotate|freeze|write|submit|move|patch|post|put|assign|resolve|approve|reject|open|close)/;
+const READ_VERBS = /^(get|read|check|list|search|fetch|verify|lookup|query|find|screenshot|browser)/;
+
+export function classifyToolEffect(tool) {
+  const n = (tool?.name || "").toLowerCase();
+  if (WRITE_VERBS.test(n)) return { kind: "write", inferred: true };
+  if (READ_VERBS.test(n)) return { kind: "read", inferred: true };
+  return { kind: "read", inferred: true };
+}
+
 /* ── DB schema per seed table ──────────────────────────────────────────── */
 
 /**
