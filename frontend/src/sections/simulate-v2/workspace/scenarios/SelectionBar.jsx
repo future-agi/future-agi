@@ -1,96 +1,95 @@
 import PropTypes from "prop-types";
 import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, Button, IconButton, Tooltip } from "@mui/material";
+import { Box, Stack, Typography, Button, Tooltip } from "@mui/material";
 import Iconify from "src/components/iconify";
 
 /**
- * Selection strip for the scenario table.
+ * Bulk-action bar for the scenario table.
  *
- * Sits flush with the table's own column-header row and mirrors its
- * styling (background.neutral, divider seams, uppercase micro-typography
- * for the state label) so the strip reads as an extension of the table
- * rather than a widget stapled on top. When nothing is selected there is
- * no bar; when a row is checked, the same visual band gains a status
- * label on the left and a few text actions on the right.
+ * Appears when one or more rows are checked. Two actions — Delete
+ * and Clear — plus a hint pointing at the builder chat, because
+ * bulk-editing scenario copy is easier as a natural-language
+ * instruction than as a mass form. Neutral card treatment matching
+ * the rest of the feature's cards; no accent fill.
  */
 export default function SelectionBar({ count, onDelete, onClear }) {
-  const focusBuilder = () => {
-    const el = document.querySelector(
-      'input[placeholder="Reply to the builder…"], textarea[placeholder="Reply to the builder…"]',
-    );
-    if (el && typeof el.focus === "function") el.focus();
-  };
-
   return (
     <Stack
       direction="row"
       alignItems="center"
-      spacing={1.5}
+      spacing={2}
       sx={{
-        px: 2.5, py: 1,
-        bgcolor: "background.neutral",
-        borderTop: "1px solid", borderBottom: "1px solid",
+        px: 2, py: 1.25,
+        borderRadius: 1.5,
+        border: "1px solid",
         borderColor: "divider",
+        bgcolor: "background.paper",
+        mb: 1.5,
       }}
     >
-      {/* status label — uppercase micro-caps to match the table's own
-          column headers, so this reads as another header row. */}
-      <Stack direction="row" alignItems="baseline" spacing={0.75}>
-        <Typography
-          sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle",
-                textTransform: "uppercase", letterSpacing: 0.4 }}
+      {/* count + label */}
+      <Stack direction="row" alignItems="center" spacing={1}>
+        <Box
+          sx={{
+            width: 22, height: 22, borderRadius: "50%",
+            display: "grid", placeItems: "center", flexShrink: 0,
+            bgcolor: "text.primary", color: "background.paper",
+          }}
         >
-          Selection
+          <Iconify icon="solar:check-read-linear" width={13} />
+        </Box>
+        <Typography sx={{ typography: "s2", color: "text.primary" }}>
+          <Box component="span" sx={{ fontWeight: 700 }}>{count}</Box>
+          {" "}
+          <Box component="span" sx={{ color: "text.secondary" }}>
+            {count === 1 ? "scenario selected" : "scenarios selected"}
+          </Box>
         </Typography>
-        <Typography sx={{ typography: "s2", fontWeight: 700 }}>
-          {count}
-        </Typography>
-        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-          of your scenarios
+      </Stack>
+
+      {/* hint pointing at the builder */}
+      <Stack
+        direction="row" alignItems="center" spacing={0.75}
+        sx={{ pl: 2, ml: 0.5, borderLeft: "1px solid", borderColor: "divider" }}
+      >
+        <Iconify icon="solar:chat-round-line-linear" width={14} sx={{ color: "text.subtitle" }} />
+        <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+          Type an instruction in the builder to edit them together
         </Typography>
       </Stack>
 
       <Box flex={1} />
 
-      {/* actions — text buttons, right-aligned, matched weight so the
-          reader can pick the one they want without hunting. */}
-      <Button
-        size="small"
-        onClick={focusBuilder}
-        startIcon={<Iconify icon="solar:pen-new-square-linear" width={13} />}
-        sx={{
-          typography: "s2", fontWeight: 600,
-          color: "text.primary", px: 1, minWidth: 0,
-          "&:hover": { bgcolor: "action.hover" },
-        }}
-      >
-        Edit in builder
-      </Button>
+      {/* actions */}
+      <Tooltip arrow title="Deselect all">
+        <Button
+          size="small"
+          onClick={onClear}
+          sx={{
+            typography: "s2", fontWeight: 600,
+            color: "text.secondary", minWidth: 0, px: 1,
+            "&:hover": { color: "text.primary", bgcolor: "transparent" },
+          }}
+        >
+          Clear
+        </Button>
+      </Tooltip>
 
       <Button
         size="small"
+        variant="contained"
+        disableElevation
         onClick={onDelete}
         startIcon={<Iconify icon="solar:trash-bin-trash-linear" width={13} />}
         sx={{
-          typography: "s2", fontWeight: 600,
-          color: "#DC2626", px: 1, minWidth: 0,
-          "&:hover": { bgcolor: (t) => alpha("#DC2626", t.palette.mode === "dark" ? 0.12 : 0.06) },
+          typography: "s2", fontWeight: 700,
+          bgcolor: "#DC2626", color: "common.white",
+          px: 1.5,
+          "&:hover": { bgcolor: "#B91C1C" },
         }}
       >
         Delete
       </Button>
-
-      <Box sx={{ width: 1, height: 18, bgcolor: "divider", mx: 0.5 }} />
-
-      <Tooltip arrow title="Clear selection">
-        <IconButton
-          size="small"
-          onClick={onClear}
-          sx={{ p: 0.5, color: "text.subtitle", "&:hover": { color: "text.primary" } }}
-        >
-          <Iconify icon="solar:close-circle-linear" width={15} />
-        </IconButton>
-      </Tooltip>
     </Stack>
   );
 }
