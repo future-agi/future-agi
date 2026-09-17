@@ -455,6 +455,180 @@ def _preflight_credential_probe(payload) -> list[dict[str, Any]]:
     return [result.as_dict() for result in results]
 
 
+_SOURCE_FIX_HINTS = {
+    "github_repository_invalid": (
+        "Use the owner/repository form, for example acme/support-agent"
+    ),
+    "github_ref_invalid": "Use a branch, tag or commit SHA for ref",
+    "github_clone_failed": (
+        "Check the repository exists and, for a private repository, that the "
+        "GitHub App is installed on it"
+    ),
+    "github_installation_token_failed": (
+        "Reinstall the GitHub App on this repository and retry"
+    ),
+    "github_installation_token_missing": (
+        "Reinstall the GitHub App on this repository and retry"
+    ),
+    "github_commit_mismatch": "Use a commit SHA that exists on the selected ref",
+    "archive_artifact_missing": "Upload the project folder again, then retry",
+    "archive_source_not_found": "Upload the project folder again, then retry",
+    "source_archive_too_large": (
+        "Remove dependencies, build output and recordings from the upload"
+    ),
+}
+
+
+def _check(check_id, label, status, detail, *, missing=(), fix=None):
+    return {
+        "id": check_id,
+        "label": label,
+        "status": status,
+        "detail": detail,
+        "missing": list(missing),
+        "fix": fix,
+    }
+
+
+def _probe_check(check_id, label, results, skipped_detail, fix_template):
+    if not results:
+        return _check(check_id, label, "skipped", skipped_detail)
+    failed = [item for item in results if not item.get("ok")]
+    if not failed:
+        detail = "; ".join(str(item.get("message") or "") for item in results)
+        return _check(check_id, label, "passed", detail)
+    aliases = sorted({alias for item in failed for alias in item.get("aliases") or []})
+    return _check(
+        check_id,
+        label,
+        "failed",
+        "; ".join(str(item.get("message") or "") for item in failed),
+        missing=aliases,
+        fix=fix_template.format(aliases=", ".join(aliases)),
+    )
+
+
+def _preflight_checks(
+    source_kind, source_error, scanned_files, missing, required_files, probe
+):
+    checks = []
+    if source_kind in {"remote", "provider"}:
+        checks.append(
+            _check(
+                "source",
+                "Source reachable",
+                "skipped",
+                f"{source_kind} targets have no source tree to read",
+            )
+        )
+    elif source_error is not None:
+        checks.append(
+            _check(
+                "source",
+                "Source reachable",
+                "failed",
+                source_error.message,
+                fix=_SOURCE_FIX_HINTS.get(source_error.code, source_error.message),
+            )
+        )
+    else:
+        checks.append(
+            _check(
+                "source",
+                "Source reachable",
+                "passed",
+                f"{scanned_files} files scanned",
+            )
+        )
+    file_aliases = set(required_files)
+    files_missing = [alias for alias in missing if alias in file_aliases]
+    creds_missing = [alias for alias in missing if alias not in file_aliases]
+    if source_kind == "remote":
+        checks.append(
+            _check(
+                "credentials_present",
+                "Target credentials",
+                "skipped",
+                "remote targets own their credentials",
+            )
+        )
+    elif creds_missing:
+        checks.append(
+            _check(
+                "credentials_present",
+                "Target credentials",
+                "failed",
+                f"{len(creds_missing)} required credential(s) not provided",
+                missing=creds_missing,
+                fix="Add " + ", ".join(creds_missing) + " under target credentials",
+            )
+        )
+    else:
+        checks.append(
+            _check(
+                "credentials_present",
+                "Target credentials",
+                "passed",
+                "every required credential is referenced",
+            )
+        )
+    if not required_files:
+        checks.append(
+            _check(
+                "credential_files",
+                "Credential files",
+                "skipped",
+                "the source does not require a credential file",
+            )
+        )
+    elif files_missing:
+        checks.append(
+            _check(
+                "credential_files",
+                "Credential files",
+                "failed",
+                "the source requires a credential file that has not been uploaded",
+                missing=files_missing,
+                fix="Upload the JSON credential file for " + ", ".join(files_missing),
+            )
+        )
+    else:
+        checks.append(
+            _check(
+                "credential_files",
+                "Credential files",
+                "passed",
+                "required credential files are uploaded",
+            )
+        )
+    target_probes = []
+    key_probes = []
+    for item in probe:
+        if str(item.get("provider") or "").endswith("_target"):
+            target_probes.append(item)
+        else:
+            key_probes.append(item)
+    checks.append(
+        _probe_check(
+            "credentials_valid",
+            "Credentials accepted by provider",
+            key_probes,
+            "no credential values were submitted to verify",
+            "Replace {aliases} with a key the provider accepts",
+        )
+    )
+    checks.append(
+        _probe_check(
+            "provider_target",
+            "Provider agent reachable",
+            target_probes,
+            "no hosted provider agent to look up",
+            "Check the agent ID belongs to the account behind {aliases}",
+        )
+    )
+    return checks
+
+
 class DaytonaHarnessProvider:
     """Platform-as-gateway. Persists the job and drives Daytona via Temporal."""
 
@@ -542,10 +716,12 @@ class DaytonaHarnessProvider:
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
         runtime = payload["runtime"]
+        source_error = None
         try:
             source_analysis = _preflight_source_connectors(request, payload)
         except HostedHarnessError as exc:
-            return Response(exc.as_dict(), status=exc.status_code)
+            source_error = exc
+            source_analysis = ([], [], 0)
         # Keep two-item patched return values compatible with tests and custom
         # providers written before credential-file discovery was added.
         if len(source_analysis) == 2:
@@ -558,12 +734,20 @@ class DaytonaHarnessProvider:
         )
         probe = _preflight_credential_probe(payload)
         credentials["report"]["probe"] = probe
-        # Every submitted key must be accepted: a wrong model key beside a valid transport
-        # key still ends in a run that cannot speak.
-        probe_failed = any(not item["ok"] for item in probe)
+        checks = _preflight_checks(
+            payload["source"]["kind"],
+            source_error,
+            scanned,
+            credentials["missing"],
+            required_files,
+            probe,
+        )
+        failed = any(check["status"] == "failed" for check in checks)
         return Response(
             {
-                "ready_to_submit": not credentials["missing"] and not probe_failed,
+                "ready_to_submit": not failed,
+                "state": "failed" if failed else "connected",
+                "checks": checks,
                 "credentials": credentials["report"],
                 "effective_parallelism": runtime["parallelism"],
                 "snapshot": {
