@@ -3,62 +3,80 @@ import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography, Button, Tooltip } from "@mui/material";
 import Iconify from "src/components/iconify";
 
+const BUILDER = "#7857FC";
+
 /**
  * Bulk-action bar for the scenario table.
  *
- * Appears when one or more rows are checked. Two direct actions —
- * Delete and Clear — and a hint pointing at the builder chat, because
- * bulk-editing scenario copy is easier as a natural-language
- * instruction than as a mass form ("make these callers older", "add a
- * sub-goal to each one that verifies delivery date"). The chat lives
- * on the left of the workspace; the hint carries an arrow to make the
- * connection obvious the first time.
+ * Appears when one or more rows are checked. Two actions — Delete and
+ * Clear — and a hint pointing at the builder chat, because bulk-editing
+ * scenario copy is easier as a natural-language instruction than as a
+ * mass form. The bar takes the builder-purple accent so the "these
+ * belong together" visual link between the checkboxes and the chat is
+ * immediate.
  */
 export default function SelectionBar({ count, onDelete, onClear }) {
   return (
     <Stack
       direction="row"
       alignItems="center"
-      spacing={1.5}
+      spacing={2}
       sx={{
         px: 2, py: 1.25,
-        border: "1px solid", borderColor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.2 : 0.16),
         borderRadius: 1.5,
-        bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.06 : 0.03),
+        border: "1px solid",
+        borderColor: (t) => alpha(BUILDER, t.palette.mode === "dark" ? 0.4 : 0.28),
+        bgcolor: (t) => alpha(BUILDER, t.palette.mode === "dark" ? 0.14 : 0.08),
         mb: 1.5,
       }}
     >
-      <Stack direction="row" alignItems="center" spacing={0.75}>
+      {/* count + label */}
+      <Stack direction="row" alignItems="center" spacing={1}>
         <Box
           sx={{
-            width: 22, height: 22, borderRadius: 0.75, display: "grid", placeItems: "center",
-            bgcolor: "text.primary", color: "background.paper",
-            typography: "s3", fontWeight: 700, fontVariantNumeric: "tabular-nums",
+            width: 22, height: 22, borderRadius: "50%",
+            display: "grid", placeItems: "center", flexShrink: 0,
+            bgcolor: BUILDER, color: "common.white",
           }}
         >
-          {count}
+          <Iconify icon="solar:check-read-linear" width={13} />
         </Box>
-        <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-          {count === 1 ? "scenario selected" : "scenarios selected"}
+        <Typography sx={{ typography: "s2", color: "text.primary" }}>
+          <Box component="span" sx={{ fontWeight: 700 }}>{count}</Box>
+          {" "}
+          <Box component="span" sx={{ color: "text.secondary" }}>
+            {count === 1 ? "scenario selected" : "scenarios selected"}
+          </Box>
         </Typography>
       </Stack>
 
-      <Box sx={{ height: 18, borderLeft: "1px solid", borderColor: "divider" }} />
-
-      <Stack direction="row" alignItems="center" spacing={0.5}>
-        <Iconify icon="solar:arrow-left-linear" width={13} sx={{ color: "text.subtitle" }} />
-        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+      {/* hint pointing at the builder */}
+      <Stack
+        direction="row" alignItems="center" spacing={0.75}
+        sx={{
+          pl: 2, ml: 0.5,
+          borderLeft: "1px solid",
+          borderColor: (t) => alpha(BUILDER, t.palette.mode === "dark" ? 0.35 : 0.24),
+        }}
+      >
+        <Iconify icon="solar:chat-round-line-linear" width={14} sx={{ color: BUILDER }} />
+        <Typography sx={{ typography: "s3", color: "text.secondary" }}>
           Type an instruction in the builder to edit them together
         </Typography>
       </Stack>
 
       <Box flex={1} />
 
+      {/* actions */}
       <Tooltip arrow title="Deselect all">
         <Button
           size="small"
           onClick={onClear}
-          sx={{ typography: "s2", fontWeight: 600, color: "text.secondary", minWidth: 0 }}
+          sx={{
+            typography: "s2", fontWeight: 600,
+            color: "text.secondary", minWidth: 0, px: 1,
+            "&:hover": { color: "text.primary", bgcolor: "transparent" },
+          }}
         >
           Clear
         </Button>
@@ -66,17 +84,15 @@ export default function SelectionBar({ count, onDelete, onClear }) {
 
       <Button
         size="small"
-        variant="outlined"
+        variant="contained"
+        disableElevation
         onClick={onDelete}
         startIcon={<Iconify icon="solar:trash-bin-trash-linear" width={13} />}
         sx={{
           typography: "s2", fontWeight: 700,
-          color: "#DC2626",
-          borderColor: (t) => alpha("#DC2626", t.palette.mode === "dark" ? 0.5 : 0.4),
-          "&:hover": {
-            borderColor: "#DC2626",
-            bgcolor: (t) => alpha("#DC2626", t.palette.mode === "dark" ? 0.1 : 0.06),
-          },
+          bgcolor: "#DC2626", color: "common.white",
+          px: 1.5,
+          "&:hover": { bgcolor: "#B91C1C" },
         }}
       >
         Delete
