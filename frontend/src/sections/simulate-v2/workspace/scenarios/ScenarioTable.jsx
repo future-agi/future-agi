@@ -29,7 +29,7 @@ const selectableCheckboxSx = {
  * Same rows, same derivations as the coverage matrix — nothing here is a
  * second source of truth.
  */
-export default function ScenarioTable({ rows, groups, env, onEdit, onRemove, onHideGroup }) {
+export default function ScenarioTable({ rows, groups, env, onEdit, onRemove, onHideGroup, selectedIds, onSelectionChange }) {
   /*
     Two shapes come in: pre-grouped (list view mirror) or a flat rows
     array (fallback). If groups are given, render section-header rows
@@ -40,37 +40,53 @@ export default function ScenarioTable({ rows, groups, env, onEdit, onRemove, onH
     ? groups
     : [{ id: "all", label: null, rows: rows || [] }];
 
-  /* All scenario ids across every section — used to seed the default
-     "everything selected" state and to compute the header-checkbox
-     tri-state (checked / indeterminate / unchecked). */
+  /* All scenario ids across every section — used to compute the
+     header-checkbox tri-state (checked / indeterminate / unchecked)
+     when the user wants a select-all shortcut on the current view. */
   const allIds = useMemo(
     () => sections.flatMap((s) => (s.rows || []).map((r) => r.id)).filter(Boolean),
     [sections],
   );
-  const [selected, setSelected] = useState(() => new Set(allIds));
 
-  /* When the ids in the table change (row added / removed / different
-     env), grow the selection to include any newly-visible rows and
-     drop ones that no longer exist. Preserves user opt-outs on rows
-     that survived the change. */
+  /*
+    Selection is a bulk-action affordance, not a run gate — every
+    scenario in the table runs on the next simulation regardless of
+    checked state. So the table opens with nothing selected; the
+    checkboxes only light up when the user wants to Delete or edit a
+    group of rows together (via the builder chat on the left).
+
+    Controlled from the parent so the SelectionBar + workspace chat
+    stay in sync. Falls back to internal state when unwired.
+  */
+  const [internalSelected, setInternalSelected] = useState(() => new Set());
+  const isControlled = Array.isArray(selectedIds);
+  const selected = isControlled ? new Set(selectedIds) : internalSelected;
+
+  const commit = (next) => {
+    if (isControlled) {
+      onSelectionChange?.(Array.from(next));
+    } else {
+      setInternalSelected(next);
+      onSelectionChange?.(Array.from(next));
+    }
+  };
+
+  /* Drop selection ids for rows that no longer exist in the table. */
   useEffect(() => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      let dirty = false;
-      allIds.forEach((id) => { if (!next.has(id) && !prev.has(id)) { next.add(id); dirty = true; } });
-      Array.from(next).forEach((id) => { if (!allIds.includes(id)) { next.delete(id); dirty = true; } });
-      return dirty ? next : prev;
-    });
-  }, [allIds]);
+    const cleaned = Array.from(selected).filter((id) => allIds.includes(id));
+    if (cleaned.length !== selected.size) commit(new Set(cleaned));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allIds.join("|")]);
 
-  const toggle = (id) => setSelected((prev) => {
-    const next = new Set(prev);
+  const toggle = (id) => {
+    const next = new Set(selected);
     if (next.has(id)) next.delete(id); else next.add(id);
-    return next;
-  });
-  const toggleAll = () => setSelected((prev) => (
-    prev.size === allIds.length ? new Set() : new Set(allIds)
-  ));
+    commit(next);
+  };
+  const toggleAll = () => {
+    const next = selected.size === allIds.length ? new Set() : new Set(allIds);
+    commit(next);
+  };
   const allChecked = allIds.length > 0 && selected.size === allIds.length;
   const someChecked = selected.size > 0 && selected.size < allIds.length;
 
@@ -347,6 +363,8 @@ ScenarioTable.propTypes = {
   onEdit: PropTypes.func,
   onRemove: PropTypes.func,
   onHideGroup: PropTypes.func,
+  selectedIds: PropTypes.array,
+  onSelectionChange: PropTypes.func,
 };
 
 /* ── readability helpers ──────────────────────────────────────────────────── */

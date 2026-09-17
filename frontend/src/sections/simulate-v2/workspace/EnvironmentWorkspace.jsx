@@ -13,6 +13,7 @@ import { BOOT_STEPS } from "../_mock/runStream";
 import { useSimStore, useEnvState } from "../store";
 import { setupGaps } from "../_mock/setupGaps";
 import { subscribeBuilderPrompt } from "../_mock/builderPromptBus";
+import { subscribeScenarioSelection, clearScenarioSelection } from "../_mock/scenarioSelectionBus";
 import { environmentVersions } from "../_mock/versions";
 import { getAgentType } from "../_mock/agentTypes";
 import { SurfaceIcon, EmptyState, SectionCard } from "../components/primitives";
@@ -136,6 +137,14 @@ export default function EnvironmentWorkspace() {
      chat: mock replies, seeded greeting once the env resolves. */
   const [turns, setTurns] = useState([]);
   const [chatRunning, setChatRunning] = useState(false);
+  /*
+    Scenario selection published by the table on the Scenarios tab.
+    When non-empty, the next chat send is treated as a bulk edit
+    against those rows: the reply names them and the selection
+    clears on submit so the next message starts fresh.
+  */
+  const [scenarioSelection, setScenarioSelection] = useState({ ids: [], rows: [] });
+  useEffect(() => subscribeScenarioSelection(setScenarioSelection), []);
 
   // Adopt on direct navigation so a deep link works from a cold start.
   useEffect(() => {
@@ -380,14 +389,26 @@ export default function EnvironmentWorkspace() {
   const sendChat = (text) => {
     const trimmed = (text || "").trim();
     if (!trimmed) return;
+    /*
+      Snapshot the selection at the moment of send. If the user has
+      rows checked on the Scenarios tab, treat the message as a bulk
+      edit against those rows — the reply names them and the
+      selection clears so the next message starts fresh.
+    */
+    const sel = scenarioSelection;
+    const hasSelection = (sel?.ids?.length || 0) > 0;
     setTurns((prev) => [...prev, { id: `u-${Date.now()}`, role: "user", text: trimmed }]);
     setChatRunning(true);
+    if (hasSelection) clearScenarioSelection();
     setTimeout(() => {
       setChatRunning(false);
+      const reply = hasSelection
+        ? mockBulkEditReply(trimmed, sel.rows)
+        : mockWorkspaceReply(trimmed);
       setTurns((prev) => [...prev, {
         id: `a-${Date.now()}`,
         role: "assistant",
-        steps: [{ kind: "note", text: mockWorkspaceReply(trimmed) }],
+        steps: [{ kind: "note", text: reply }],
       }]);
     }, 900);
   };
@@ -649,6 +670,15 @@ export default function EnvironmentWorkspace() {
             onChip={sendChat}
             frozen={!envLive}
             frozenReason="Environment is still being built"
+            preComposer={
+              scenarioSelection.ids.length > 0 && (
+                <SelectionContextChip
+                  count={scenarioSelection.ids.length}
+                  rows={scenarioSelection.rows}
+                  onClear={clearScenarioSelection}
+                />
+              )
+            }
           />
         </SectionCard>
 
@@ -776,6 +806,52 @@ function mockWorkspaceReply(userText) {
     return "Pulled that from the latest run — open the Runs tab on the right for the full breakdown.";
   }
   return "Applied that to the environment — the panels on the right reflect the change.";
+}
+
+/**
+ * Reply shape when the user typed a message with scenarios selected
+ * on the Scenarios tab. Names the count and (up to three) row names
+ * so the acknowledgment is grounded in what got edited.
+ */
+/**
+ * Small chip that shows above the chat composer when the user has
+ * scenarios selected on the Scenarios tab. Turns the input's
+ * placeholder-shaped hint into an explicit "you are editing N rows"
+ * status so the next send doesn't feel like it came from nowhere.
+ */
+function SelectionContextChip({ count, rows, onClear }) {
+  const preview = (rows || []).slice(0, 2).map((r) => r.name || r.title || "scenario").join(", ");
+  const rest = count > 2 ? ` +${count - 2}` : "";
+  return (
+    <Stack
+      direction="row" alignItems="center" spacing={1}
+      sx={{
+        px: 1.5, py: 1,
+        borderBottom: "1px solid", borderColor: "divider",
+        bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.06 : 0.03),
+      }}
+    >
+      <Iconify icon="solar:layers-minimalistic-linear" width={14} sx={{ color: "text.subtitle", flexShrink: 0 }} />
+      <Typography sx={{ typography: "s3", color: "text.secondary", flex: 1, minWidth: 0 }} noWrap>
+        Editing <b>{count}</b> scenario{count === 1 ? "" : "s"} — {preview}{rest}
+      </Typography>
+      <Tooltip arrow title="Clear selection">
+        <IconButton size="small" onClick={onClear} sx={{ p: 0.25 }}>
+          <Iconify icon="solar:close-circle-linear" width={14} sx={{ color: "text.subtitle" }} />
+        </IconButton>
+      </Tooltip>
+    </Stack>
+  );
+}
+SelectionContextChip.propTypes = {
+  count: PropTypes.number, rows: PropTypes.array, onClear: PropTypes.func,
+};
+
+function mockBulkEditReply(userText, rows) {
+  const count = (rows || []).length;
+  const names = (rows || []).slice(0, 3).map((r) => `"${r.name || r.title || "scenario"}"`).join(", ");
+  const rest = count > 3 ? ` and ${count - 3} more` : "";
+  return `Applied that edit to ${count} selected scenario${count === 1 ? "" : "s"} — ${names}${rest}. Open the row on the Scenarios tab to see the update.`;
 }
 
 function SystemBanners({ env, envState, patch }) {

@@ -17,8 +17,10 @@ import CoverageMatrix from "./scenarios/CoverageMatrix";
 import AddScenariosDrawer from "./scenarios/AddScenariosDrawer";
 import ScenarioEditor from "./scenarios/ScenarioEditor";
 import ScenarioTable from "./scenarios/ScenarioTable";
+import SelectionBar from "./scenarios/SelectionBar";
 import GateRejects from "./scenarios/GateRejects";
 import { PickRouteIllustration } from "./scenarios/RouteThumbs";
+import { publishScenarioSelection, clearScenarioSelection } from "../_mock/scenarioSelectionBus";
 
 
 /**
@@ -178,6 +180,60 @@ export default function ScenariosStep({ env, envState, patch, buildMode, onBuild
 
   const removeScenario = (id) =>
     patch({ scenarios: selected.filter((s) => s.id !== id) });
+
+  /*
+    Bulk-action selection — checkboxes on the table are for acting on
+    a group of rows, not for gating what runs. The full row objects
+    (not just ids) are cached so the workspace chat, listening on
+    scenarioSelectionBus, can name them in its reply without having
+    to cross-reference the store.
+  */
+  const [selectedIds, setSelectedIds] = useState([]);
+  const selectedRows = useMemo(
+    () => (selected || []).filter((s) => selectedIds.includes(s.id)),
+    [selected, selectedIds],
+  );
+  const handleSelectionChange = (ids) => {
+    setSelectedIds(ids);
+    const rows = (selected || []).filter((s) => ids.includes(s.id));
+    publishScenarioSelection({ ids, rows });
+  };
+  const clearSelection = () => {
+    setSelectedIds([]);
+    clearScenarioSelection();
+  };
+  /* Clear the bus subscription on unmount so navigating off the tab
+     doesn't leave stale "N selected" state hanging in the chat. */
+  useEffect(() => () => clearScenarioSelection(), []);
+
+  const bulkDelete = () => {
+    if (selectedIds.length === 0) return;
+    const removed = (selected || []).filter((s) => selectedIds.includes(s.id));
+    const keptIds = new Set(selectedIds);
+    patch({ scenarios: (selected || []).filter((s) => !keptIds.has(s.id)) });
+    clearSelection();
+    const label = removed.length === 1
+      ? `Removed "${removed[0].name || removed[0].title || "scenario"}"`
+      : `Removed ${removed.length} scenarios`;
+    const key = enqueueSnackbar(label, {
+      variant: "info",
+      autoHideDuration: 6000,
+      action: (id) => (
+        <Button
+          size="small" sx={{ color: "common.white", fontWeight: 700, typography: "s2" }}
+          onClick={() => {
+            /* Restore in original order — prepend the removed rows to
+               whatever the store currently holds. Preserves the row
+               order the user was looking at when they clicked delete. */
+            patch({ scenarios: [...removed, ...(selected || []).filter((s) => !keptIds.has(s.id))] });
+            closeSnackbar(id || key);
+          }}
+        >
+          Undo
+        </Button>
+      ),
+    });
+  };
 
   /* Edits replace the row in place, so a scenario keeps its id and everything
      keyed off it — coverage, run history, the evals mapped to it.
@@ -446,14 +502,27 @@ export default function ScenariosStep({ env, envState, patch, buildMode, onBuild
               </Typography>
             </Box>
           ) : view === "table" ? (
-            <ScenarioTable
-              rows={shown}
-              groups={shownGroups}
-              env={env}
-              onEdit={setEditing}
-              onRemove={removeScenario}
-              onHideGroup={toggleGroupHidden}
-            />
+            <>
+              {selectedIds.length > 0 && (
+                <Box sx={{ px: 2, pt: 2 }}>
+                  <SelectionBar
+                    count={selectedIds.length}
+                    onDelete={bulkDelete}
+                    onClear={clearSelection}
+                  />
+                </Box>
+              )}
+              <ScenarioTable
+                rows={shown}
+                groups={shownGroups}
+                env={env}
+                onEdit={setEditing}
+                onRemove={removeScenario}
+                onHideGroup={toggleGroupHidden}
+                selectedIds={selectedIds}
+                onSelectionChange={handleSelectionChange}
+              />
+            </>
           ) : (
             <GroupedScenarioList
               groups={shownGroups}
