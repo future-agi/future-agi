@@ -142,6 +142,17 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         "SIMULATOR_LLM_PROVIDER": provider,
         "SIMULATOR_LLM_MODEL": model,
     }
+    if backend == "claude":
+        gateway_key = str(os.environ.get("AGENTCC_INTERNAL_API_KEY") or "").strip()
+        gateway_url = str(os.environ.get("AGENTCC_BASE_URL") or "").strip()
+        if not gateway_key or not gateway_url:
+            raise HostedHarnessError(
+                "authoring_gateway_not_configured",
+                "Claude authoring requires AGENTCC_INTERNAL_API_KEY and a sandbox-reachable AGENTCC_BASE_URL",
+                status_code=503,
+            )
+        values["AGENTCC_API_KEY"] = gateway_key
+        values["AGENTCC_BASE_URL"] = gateway_url
     for name in (
         "LIVEKIT_URL",
         "LIVEKIT_API_KEY",
@@ -1062,6 +1073,9 @@ def _resolved_egress_domains(
     values: list[str] = [domain for domain in base_domains if isinstance(domain, str)]
     values.extend(_provider_egress_domains(target_secrets))
     values.extend(_provider_egress_domains(simulator_env))
+    gateway_host = _hostname_from_url(simulator_env.get("AGENTCC_BASE_URL"))
+    if gateway_host:
+        values.append(gateway_host)
     # The simulated caller rides the platform LiveKit server whenever the target connector does
     # not supply its own (Vapi/Retell); its signaling and TURN hosts are platform config, never
     # derivable from customer input. LiveKit targets share the customer's server, so skipping
@@ -1334,6 +1348,9 @@ class DaytonaHostedGateway:
             "us-east5-aiplatform.googleapis.com",
             "us-central1-aiplatform.googleapis.com",
         ]
+        gateway_host = _hostname_from_url(simulator_env.get("AGENTCC_BASE_URL"))
+        if gateway_host and gateway_host not in default_authoring_egress:
+            default_authoring_egress.insert(0, gateway_host)
         allowed_domains = list(
             dict.fromkeys(
                 getattr(
@@ -1357,7 +1374,9 @@ class DaytonaHostedGateway:
                 for name, value in simulator_env.items()
                 if name not in {"LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"}
             },
-            "CLAUDE_CODE_USE_VERTEX": "1",
+            "CLAUDE_CODE_USE_VERTEX": (
+                "0" if simulator_env.get("AGENTCC_API_KEY") else "1"
+            ),
             "GOOGLE_GENAI_USE_VERTEXAI": "True",
             "CLOUD_ML_REGION": getattr(
                 settings, "ALK_HOSTED_AUTHORING_CLAUDE_REGION", "us-east5"
@@ -1816,9 +1835,9 @@ class DaytonaHostedGateway:
                     retryable=True,
                 )
             sandbox.process.create_session(_ENTRYPOINT_SESSION)
-            # The fallback authoring command precedes hosted_entrypoint, so provide only the
-            # non-secret Vertex selectors and the protected credential-file path here.  API keys
-            # remain exclusively in simulator-secrets.json and are loaded (then deleted) by ALK.
+            # The fallback authoring command precedes hosted_entrypoint. Export only non-secret
+            # selectors here; the authoring wrapper reads its gateway key from the protected
+            # simulator-secrets file without placing it in the shell command.
             authoring_exports = {
                 name: value
                 for name, value in simulator_env.items()
@@ -2017,6 +2036,7 @@ class DaytonaHostedGateway:
             command_id,
             request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
         )
+        self._sync_offline_control(attempt, sandbox)
         # Probe the primary command before best-effort progress enrichment. If the provider
         # toolbox is unavailable, fail this poll promptly instead of multiplying the outage by
         # every optional artifact read below. Reconciliation applies a short grace period and
@@ -2049,6 +2069,94 @@ class DaytonaHostedGateway:
                 observation["process_logs"],
             )
         return observation
+
+    @staticmethod
+    def _sync_offline_control(attempt: HostedHarnessAttempt, sandbox) -> None:
+        """Serve control requests through the provider filesystem when HTTPS is blocked.
+
+        Scenario registration is required before calls can begin, so terminal artifact recovery
+        is too late for it.  This mailbox keeps the operation provider-neutral and routes the
+        request through the same platform service functions as the HTTP endpoint.
+        """
+
+        listing = sandbox.process.exec(
+            "find /work/outbound-spool/control -maxdepth 1 -type f "
+            "-name '*.request.json' -print 2>/dev/null | sort",
+            timeout=_PROGRESS_FILE_TIMEOUT_SECONDS,
+        )
+        if listing.exit_code:
+            return
+        from simulate.services.hosted_harness import (
+            begin_scenarios,
+            provision_scenarios,
+        )
+
+        for request_path in str(listing.result or "").splitlines():
+            request_path = request_path.strip()
+            if not request_path:
+                continue
+            response_path = (
+                request_path.removesuffix(".request.json") + ".response.json"
+            )
+            try:
+                sandbox.fs.download_file(response_path, _PROGRESS_FILE_TIMEOUT_SECONDS)
+                continue
+            except Exception:  # noqa: BLE001 - absence means the request is pending
+                pass
+            try:
+                request = json.loads(
+                    sandbox.fs.download_file(
+                        request_path, _PROGRESS_FILE_TIMEOUT_SECONDS
+                    ).decode("utf-8")
+                )
+                if (
+                    str(request.get("job_id")) != str(attempt.job_id)
+                    or str(request.get("attempt_id")) != str(attempt.id)
+                    or int(request.get("attempt_number", -1)) != attempt.attempt_number
+                ):
+                    raise HostedHarnessError(
+                        "offline_control_binding_mismatch",
+                        "sandbox control request does not belong to this attempt",
+                        status_code=403,
+                    )
+                payload = request.get("payload")
+                if not isinstance(payload, dict):
+                    raise HostedHarnessError(
+                        "offline_control_payload_invalid",
+                        "sandbox control request payload must be an object",
+                        status_code=400,
+                    )
+                if payload.get("operation") == "provision":
+                    result = provision_scenarios(attempt, payload)
+                elif payload.get("operation") == "begin":
+                    result = begin_scenarios(attempt, payload)
+                else:
+                    raise HostedHarnessError(
+                        "offline_control_operation_unknown",
+                        "sandbox control operation is not supported",
+                        status_code=400,
+                    )
+                response = result
+            except HostedHarnessError as exc:
+                response = {
+                    "error": {"code": exc.code, "message": exc.message},
+                }
+            except Exception as exc:  # noqa: BLE001 - return a bounded typed response to guest
+                logger.exception(
+                    "offline hosted control failed attempt=%s request=%s",
+                    attempt.id,
+                    request_path,
+                )
+                response = {
+                    "error": {
+                        "code": "offline_control_failed",
+                        "message": str(exc)[:1000],
+                    }
+                }
+            sandbox.fs.upload_file(
+                json.dumps(response, separators=(",", ":")).encode("utf-8"),
+                response_path,
+            )
 
     def adjust(
         self, job: HostedHarnessJob, request: dict[str, Any]
@@ -2328,6 +2436,126 @@ class DaytonaHostedGateway:
         job.payload = payload
         job.save(update_fields=["payload", "updated_at"])
 
+    def _recover_offline_delivery(self, attempt: HostedHarnessAttempt) -> bool:
+        """Replay the guest's durable outbound mirror through normal ingestion.
+
+        Some Daytona organizations enforce their own outbound allow-list and reject a
+        per-sandbox callback allow-list.  Provider/model traffic may still work while the guest
+        cannot POST results to the platform.  Because the control plane owns the sandbox, recover
+        the signed, redacted wire records before cleanup instead of converting a completed run
+        into ``evidence_undeliverable``.
+        """
+
+        from simulate.services.hosted_harness_ingestion import (
+            ingest_artifact,
+            ingest_event_batch,
+            ingest_manifest,
+            ingest_result_receipt,
+        )
+
+        sandbox = self.client.get(
+            str(attempt.provider_ref), request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS
+        )
+        packed = sandbox.process.exec(
+            "test -d /work/outbound-spool && "
+            "tar -czf /tmp/offline-outbound.tar.gz -C /work outbound-spool",
+            timeout=120,
+        )
+        if packed.exit_code:
+            return False
+        body = sandbox.fs.download_file("/tmp/offline-outbound.tar.gz", 180)
+        max_bytes = int(attempt.job.max_artifact_bytes * 1.1) + 16 * 1024 * 1024
+        if len(body) > max_bytes:
+            raise HostedHarnessError(
+                "offline_delivery_too_large",
+                "offline outbound archive exceeds the job artifact budget",
+                status_code=413,
+                retryable=False,
+            )
+
+        files: dict[str, bytes] = {}
+        expanded = 0
+        with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
+            for member in archive.getmembers():
+                path = Path(member.name)
+                if (
+                    not member.isfile()
+                    or path.is_absolute()
+                    or ".." in path.parts
+                    or not path.parts
+                    or path.parts[0] != "outbound-spool"
+                ):
+                    continue
+                expanded += member.size
+                if expanded > max_bytes:
+                    raise HostedHarnessError(
+                        "offline_delivery_too_large",
+                        "expanded offline outbound archive exceeds the job artifact budget",
+                        status_code=413,
+                        retryable=False,
+                    )
+                stream = archive.extractfile(member)
+                if stream is not None:
+                    files[path.as_posix()] = stream.read()
+
+        def json_file(name: str) -> dict[str, Any]:
+            value = json.loads(files[name].decode("utf-8"))
+            if not isinstance(value, dict):
+                raise ValueError(f"{name} must contain an object")
+            return value
+
+        artifact_prefix = "outbound-spool/artifacts/"
+        for name in sorted(files):
+            if not name.startswith(artifact_prefix) or not name.endswith(".json"):
+                continue
+            metadata = json_file(name)
+            digest = str(metadata["digest"])
+            artifact_body = files[f"{artifact_prefix}{digest}.bin"]
+            ingest_artifact(
+                attempt,
+                digest=digest,
+                kind=str(metadata["kind"]),
+                size=int(metadata["size"]),
+                content_type=str(metadata["content_type"]),
+                scenario_key=metadata.get("scenario_key"),
+                stream=io.BytesIO(artifact_body),
+            )
+
+        events_body = files.get("outbound-spool/events.spool.jsonl", b"")
+        events = [
+            json.loads(line)
+            for line in events_body.decode("utf-8").splitlines()
+            if line.strip()
+        ]
+        for offset in range(0, len(events), 100):
+            ingest_event_batch(attempt, events[offset : offset + 100])
+
+        receipt_prefix = "outbound-spool/receipts/"
+        for name in sorted(files):
+            if name.startswith(receipt_prefix) and name.endswith(".json"):
+                receipt = json_file(name)
+                ingest_result_receipt(attempt, receipt, digest_body=receipt)
+
+        manifest_name = "outbound-spool/manifest.json"
+        if manifest_name not in files:
+            return False
+        manifest = json_file(manifest_name)
+        ingest_manifest(attempt, manifest, digest_body=manifest)
+        logger.info(
+            "recovered offline hosted delivery attempt=%s events=%s receipts=%s artifacts=%s",
+            attempt.id,
+            len(events),
+            sum(
+                name.startswith(receipt_prefix) and name.endswith(".json")
+                for name in files
+            ),
+            sum(
+                name.startswith(artifact_prefix) and name.endswith(".json")
+                for name in files
+            ),
+        )
+        return True
+
     def cancel(self, job: HostedHarnessJob, *, reason: str) -> HostedHarnessJob:
         from daytona import DaytonaNotFoundError
 
@@ -2538,11 +2766,35 @@ class DaytonaHostedGateway:
                 "updated_at",
             ]
         )
+        if exit_code in {0, 4} and (
+            not attempt.terminal_event_received or not attempt.manifest_acked
+        ):
+            try:
+                self._recover_offline_delivery(attempt)
+            except Exception:  # noqa: BLE001 - preserve the typed delivery failure below
+                logger.exception(
+                    "offline hosted delivery recovery failed attempt=%s provider_ref=%s",
+                    attempt.id,
+                    attempt.provider_ref,
+                )
+            attempt.refresh_from_db(
+                fields=[
+                    "terminal_event_received",
+                    "manifest_acked",
+                    "terminal_stage",
+                    "terminal_reason",
+                    "terminal_failure",
+                    "state",
+                    "updated_at",
+                ]
+            )
         retry_pending = False
         if exit_code == 3:
             attempt.state = HostedHarnessAttempt.State.SUPERSEDED
             attempt.save(update_fields=["state", "updated_at"])
-        elif exit_code == 4:
+        elif exit_code == 4 and (
+            not attempt.terminal_event_received or not attempt.manifest_acked
+        ):
             # Spine v1.14 exit 4: terminal state reached, but the terminal
             # event could not be delivered (events channel died or the platform
             # rejected the final drain). Still an infrastructure failure — and
@@ -2572,7 +2824,7 @@ class DaytonaHostedGateway:
                 ]
             )
             retry_pending = self._should_retry(attempt, "infrastructure")
-        elif exit_code != 0 and not attempt.terminal_event_received:
+        elif exit_code not in {0, 4} and not attempt.terminal_event_received:
             guest_logs = observation.get("logs", "")
             # Older/full-pipeline guests return the stage's status directly. A failed
             # environment-authoring stage therefore exits 1, which used to be reported and
@@ -2996,9 +3248,16 @@ def prepare_dispatch_payload(
     # Without this names-only declaration, alternative credential groups (notably
     # uploaded Google ADC + project) are incorrectly reported as unsatisfied.
     metadata = dict(dispatched.get("metadata") or {})
+    # The generic source/world/compiler/certification path is the production contract. Agent
+    # providers and transports remain adapters selected later from the submitted contract; they
+    # must not select a different understanding implementation.
+    metadata.setdefault("generic_harness_v1", True)
     metadata["environment_value_names"] = sorted(
         {
-            *(str(name).upper() for name in metadata.get("environment_value_names", [])),
+            *(
+                str(name).upper()
+                for name in metadata.get("environment_value_names", [])
+            ),
             *(str(name).upper() for name in secrets_map),
         }
     )
@@ -3177,7 +3436,13 @@ def _record_harness_spend(
 
 
 def authoring_stage_outputs(
-    contract: Any, environment: Any, scenarios: Any, bundle: Any = None
+    contract: Any,
+    environment: Any,
+    scenarios: Any,
+    bundle: Any = None,
+    certification: Any = None,
+    repair_history: Any = None,
+    action_certification: Any = None,
 ) -> list[dict[str, Any]]:
     """Build the complete, secret-safe snapshots shown by the hosted-run UI."""
     outputs: list[dict[str, Any]] = []
@@ -3218,6 +3483,33 @@ def authoring_stage_outputs(
                 "data": _secret_safe(scenarios),
             }
         )
+    if isinstance(certification, dict):
+        status = str(certification.get("status") or "unknown")
+        repairs = (
+            (repair_history or {}).get("results")
+            if isinstance(repair_history, dict)
+            else []
+        )
+        actions = (
+            (action_certification or {}).get("actions")
+            if isinstance(action_certification, dict)
+            else []
+        )
+        outputs.append(
+            {
+                "id": "00000000-0000-0000-0000-000000000004",
+                "kind": "certification",
+                "title": "Environment certification",
+                "summary": f"{status} · {len(repairs or [])} repairs · {len(actions or [])} action probes",
+                "data": _secret_safe(
+                    {
+                        "certificate": certification,
+                        "repair_history": repair_history or {},
+                        "action_certification": action_certification or {},
+                    }
+                ),
+            }
+        )
     return outputs
 
 
@@ -3227,7 +3519,14 @@ def authoring_stage_outputs_from_archive(
     """Read only the bounded JSON snapshots from a sealed authoring archive."""
     documents: dict[str, Any] = {}
     scenario_documents: list[dict[str, Any]] = []
-    wanted = {"contract.json", "environment.json", "scenarios.json"}
+    wanted = {
+        "contract.json",
+        "environment.json",
+        "scenarios.json",
+        "certification.json",
+        "repair-history.json",
+        "action-certification.json",
+    }
     with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
         for member in archive.getmembers():
             path = Path(member.name)
@@ -3268,6 +3567,9 @@ def authoring_stage_outputs_from_archive(
         documents.get("contract.json"),
         documents.get("environment.json"),
         scenarios,
+        certification=documents.get("certification.json"),
+        repair_history=documents.get("repair-history.json"),
+        action_certification=documents.get("action-certification.json"),
     )
 
 
