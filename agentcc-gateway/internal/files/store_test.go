@@ -59,6 +59,33 @@ func TestStore_OrgIsolation(t *testing.T) {
 	}
 }
 
+// An empty org id must not act as a wildcard: a caller that resolves to no org
+// must not reach a tenant's file, and a tenant must not reach an org-less file.
+// Single-tenant (both empty) still matches.
+func TestStore_EmptyOrgIsNotWildcard(t *testing.T) {
+	s := NewStore()
+
+	tenantFile := s.Upload("org-1", "tenant.txt", "batch", []byte("tenant data"))
+	if s.Get(tenantFile.ID, "") != nil {
+		t.Error("an org-less caller read a tenant's file")
+	}
+	if s.Delete(tenantFile.ID, "") {
+		t.Error("an org-less caller deleted a tenant's file")
+	}
+	if got := s.List("", ""); len(got) != 0 {
+		t.Errorf("an org-less List surfaced %d tenant files, want 0", len(got))
+	}
+
+	orglessFile := s.Upload("", "shared.txt", "batch", []byte("shared"))
+	if s.Get(orglessFile.ID, "org-1") != nil {
+		t.Error("a tenant read an org-less file")
+	}
+	// Single-tenant: an org-less caller still reaches org-less files.
+	if s.Get(orglessFile.ID, "") == nil {
+		t.Error("an org-less caller cannot read an org-less file (single-tenant broken)")
+	}
+}
+
 func TestStore_List(t *testing.T) {
 	s := NewStore()
 
