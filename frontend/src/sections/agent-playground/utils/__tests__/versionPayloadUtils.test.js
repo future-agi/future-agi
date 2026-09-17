@@ -78,6 +78,46 @@ describe("buildVersionPayload", () => {
     expect(result.nodes[0].ports[0].key).toBe("response");
   });
 
+  it("derives JSON prompt output port schemas while serializing versions", () => {
+    const responseSchema = {
+      type: "object",
+      properties: { answer: { type: "string" } },
+    };
+    const nodes = [
+      {
+        id: "p-json",
+        type: "llm_prompt",
+        position: { x: 0, y: 0 },
+        data: {
+          label: "Prompt json",
+          node_template_id: "tpl-prompt",
+          ports: [
+            {
+              temp_id: "p-json-out",
+              key: "response",
+              display_name: "response",
+              direction: "output",
+              data_schema: { type: "string" },
+              required: true,
+            },
+          ],
+          config: {
+            outputFormat: "json",
+            modelConfig: {
+              model: "gpt-4o-mini",
+              responseSchema,
+            },
+            messages: [],
+          },
+        },
+      },
+    ];
+
+    const result = buildVersionPayload(nodes, []);
+
+    expect(result.nodes[0].ports[0].data_schema).toEqual(responseSchema);
+  });
+
   it("converts edges to node_connections with source_node_id/target_node_id", () => {
     const sourceNode = createPromptNode("s1");
     const targetNode = createPromptNode("t1");
