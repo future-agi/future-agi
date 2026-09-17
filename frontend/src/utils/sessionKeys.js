@@ -14,3 +14,6 @@ export const SS_KEY_WS_LEVEL = "wsLevel";
 // Which org the stored workspace belongs to, so a workspace from a previous org
 // is never reused after a switch.
 export const SS_KEY_WORKSPACE_ORG_ID = "workspaceOrgId";
+
+// Where to navigate back to after a cross-workspace hard reload.
+export const SS_KEY_POST_SWITCH_REDIRECT = "postSwitchRedirectUrl";
