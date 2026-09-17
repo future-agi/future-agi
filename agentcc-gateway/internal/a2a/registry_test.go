@@ -1,7 +1,13 @@
 package a2a
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestRegistryGet(t *testing.T) {
@@ -103,4 +109,120 @@ func TestRegistryWithSkills(t *testing.T) {
 	if a.Skills[0].ID != "book" {
 		t.Fatalf("expected skill id 'book', got %s", a.Skills[0].ID)
 	}
+}
+
+func TestAgentCardNilByDefault(t *testing.T) {
+	r := NewRegistry(map[string]AgentConfig{
+		"test": {URL: "http://test.local"},
+	})
+	a, _ := r.Get("test")
+	if a.Card() != nil {
+		t.Fatal("expected nil card before fetch")
+	}
+}
+
+func TestFetchCardsStoresCard(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/.well-known/agent.json" {
+			http.NotFound(w, r)
+			return
+		}
+		json.NewEncoder(w).Encode(AgentCard{
+			Name:    "travel",
+			URL:     "http://travel.local",
+			Version: "1.0",
+			Skills:  []Skill{{ID: "book", Name: "Book"}},
+		})
+	}))
+	defer srv.Close()
+
+	reg := NewRegistry(map[string]AgentConfig{
+		"travel": {URL: srv.URL},
+	})
+	reg.FetchCards(context.Background())
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		a, ok := reg.Get("travel")
+		if !ok {
+			t.Fatal("agent missing")
+		}
+		card := a.Card()
+		if card != nil {
+			if card.Name != "travel" {
+				t.Fatalf("expected name travel, got %s", card.Name)
+			}
+			if len(card.Skills) != 1 || card.Skills[0].ID != "book" {
+				t.Fatalf("unexpected skills: %+v", card.Skills)
+			}
+			if !a.Healthy() {
+				t.Fatal("expected healthy after successful card fetch")
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for agent card")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestFetchCardsAndListRace(t *testing.T) {
+	// Keep readers live until a background Store is observed so -race can
+	// see concurrent Card() loads vs FetchCards stores.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(AgentCard{Name: "race", Version: "1.0"})
+	}))
+	defer srv.Close()
+
+	reg := NewRegistry(map[string]AgentConfig{
+		"race": {URL: srv.URL},
+	})
+	ctx := context.Background()
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					for _, a := range reg.List() {
+						_ = a.Card()
+						_ = a.Healthy()
+					}
+				}
+			}
+		}()
+	}
+
+	for i := 0; i < 20; i++ {
+		reg.FetchCards(ctx)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		a, ok := reg.Get("race")
+		if !ok {
+			close(stop)
+			wg.Wait()
+			t.Fatal("agent missing")
+		}
+		if a.Card() != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			close(stop)
+			wg.Wait()
+			t.Fatal("timed out waiting for agent card during race test")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	close(stop)
+	wg.Wait()
 }

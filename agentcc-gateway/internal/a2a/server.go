@@ -143,7 +143,7 @@ func (s *Server) ListAgents(w http.ResponseWriter, r *http.Request) {
 			Description: a.Description,
 			Skills:      a.Skills,
 			Healthy:     a.Healthy(),
-			Card:        a.Card,
+			Card:        a.Card(),
 		})
 	}
 
