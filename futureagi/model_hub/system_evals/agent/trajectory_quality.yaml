@@ -1,0 +1,129 @@
+eval_id: 204
+name: trajectory_quality
+description: Evaluates the quality of an agent's execution trajectory without requiring a reference answer. Assesses tool selection appropriateness, step efficiency, and inter-step data flow using LLM-as-judge.
+criteria: "You are evaluating the quality of an AI agent's execution trajectory: the\
+  \ sequence of tool calls, observations, and reasoning steps it took to answer the\
+  \ user's input.\n\nThe trajectory is provided as a JSON array where each step has:\
+  \ a role (assistant/tool), the action taken or tool called, and the result or observation.\n\
+  \n## Criteria\n\n1. Tool selection appropriateness: The tools selected at each step\
+  \ must be suitable for accomplishing the user's goal.\n   - Pass: Agent uses a search\
+  \ tool to retrieve information before summarizing it.\n   - Fail: Agent uses a write\
+  \ tool when the user only asked a read-only question.\n   - Pass: Agent selects\
+  \ the most direct tool available for the task.\n   - Fail: Agent uses a general\
+  \ tool when a more specific tool would be more appropriate.\n\n2. Step efficiency:\
+  \ The agent should accomplish the task without unnecessary redundancy.\n   - Pass:\
+  \ Each tool call contributes new information or progresses the task.\n   - Fail:\
+  \ The agent calls the same tool with the same arguments multiple times without a\
+  \ clear reason.\n   - Pass: Exploratory calls (to understand what data is available)\
+  \ are acceptable as first steps.\n   - Fail: The agent repeats failed attempts without\
+  \ changing its approach.\n\n3. Inter-step data flow: Each step should build logically\
+  \ on the results of previous steps.\n   - Pass: The agent uses the output from step\
+  \ N as input to step N+1.\n   - Fail: The agent ignores a tool's output and proceeds\
+  \ with a different assumption.\n   - Pass: When a step fails, the agent adapts its\
+  \ next step accordingly.\n   - Fail: The agent proceeds as if a failed step succeeded.\n\
+  \n## Anti-bias Rules\n\n- Multiple valid paths can exist for the same task: do NOT\
+  \ penalize a trajectory simply because it differs from what you would have done.\n\
+  - Exploratory tool calls (e.g., listing available options before selecting one)\
+  \ are NOT inefficient — they reflect good information-gathering behavior.\n- Error\
+  \ recovery with retries is acceptable; only penalize if the agent retries the identical\
+  \ failing call without any change.\n- Short trajectories are not automatically better\
+  \ than long ones if the task genuinely requires multiple steps.\n- Do not penalize\
+  \ the agent for tool calls that returned errors outside its control.\n\n## Scoring\n\
+  \nScore 0.0 if the trajectory is clearly misguided: wrong tools, circular loops,\
+  \ or ignoring step outputs entirely. Score 0.5 if the trajectory is partially sound:\
+  \ mostly appropriate tools and flow, but with notable inefficiency or a step that\
+  \ ignores prior results. Score 1.0 if the trajectory is well-structured: appropriate\
+  \ tools at each step, no unnecessary redundancy, and each step builds logically\
+  \ on the last.\n\n## Inputs\n\n<input>{{input}}</input>\n\n<trajectory>{{context}}</trajectory>\n\
+  \n<output>{{output}}</output>"
+eval_tags:
+- Agents
+- Quality
+- Trajectory
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+output_type_normalized: percentage
+pass_threshold: 0.5
+config:
+  required_keys:
+  - input
+  - context
+  - output
+  output: score
+  eval_type_id: AgentEvaluator
+  config:
+    check_internet:
+      type: boolean
+      default: false
+  config_params_desc:
+    input: The original user query or task the agent was given
+    context: >-
+      The agent's execution trajectory as a JSON array. Each element represents one
+      step: {"role": "assistant"|"tool", "action": "tool_name or reasoning", "result":
+      "observation or output"}
+    output: The agent's final response to the user
+  param_modalities:
+    input:
+    - TEXT
+    - AUDIO
+    - JSON
+    - LIST
+    - NUMBER
+    - BOOLEAN
+    - INTEGER
+    - FLOAT
+    - ARRAY
+    - DATETIME
+    context:
+    - TEXT
+    - JSON
+    - LIST
+    - ARRAY
+    output:
+    - TEXT
+    - JSON
+    - LIST
+    - NUMBER
+    - BOOLEAN
+    - INTEGER
+    - FLOAT
+    - ARRAY
+    - DATETIME
+  rule_prompt: "You are evaluating the quality of an AI agent's execution trajectory:\
+    \ the sequence of tool calls, observations, and reasoning steps it took to answer\
+    \ the user's input.\n\nThe trajectory is provided as a JSON array where each step\
+    \ has: a role (assistant/tool), the action taken or tool called, and the result\
+    \ or observation.\n\n## Criteria\n\n1. Tool selection appropriateness: The tools\
+    \ selected at each step must be suitable for accomplishing the user's goal.\n \
+    \  - Pass: Agent uses a search tool to retrieve information before summarizing\
+    \ it.\n   - Fail: Agent uses a write tool when the user only asked a read-only\
+    \ question.\n   - Pass: Agent selects the most direct tool available for the task.\n\
+    \   - Fail: Agent uses a general tool when a more specific tool would be more\
+    \ appropriate.\n\n2. Step efficiency: The agent should accomplish the task without\
+    \ unnecessary redundancy.\n   - Pass: Each tool call contributes new information\
+    \ or progresses the task.\n   - Fail: The agent calls the same tool with the same\
+    \ arguments multiple times without a clear reason.\n   - Pass: Exploratory calls\
+    \ (to understand what data is available) are acceptable as first steps.\n   -\
+    \ Fail: The agent repeats failed attempts without changing its approach.\n\n3.\
+    \ Inter-step data flow: Each step should build logically on the results of previous\
+    \ steps.\n   - Pass: The agent uses the output from step N as input to step N+1.\n\
+    \   - Fail: The agent ignores a tool's output and proceeds with a different assumption.\n\
+    \   - Pass: When a step fails, the agent adapts its next step accordingly.\n  \
+    \ - Fail: The agent proceeds as if a failed step succeeded.\n\n## Anti-bias Rules\n\
+    \n- Multiple valid paths can exist for the same task: do NOT penalize a trajectory\
+    \ simply because it differs from what you would have done.\n- Exploratory tool\
+    \ calls (e.g., listing available options before selecting one) are NOT inefficient\
+    \ — they reflect good information-gathering behavior.\n- Error recovery with retries\
+    \ is acceptable; only penalize if the agent retries the identical failing call\
+    \ without any change.\n- Short trajectories are not automatically better than\
+    \ long ones if the task genuinely requires multiple steps.\n- Do not penalize the\
+    \ agent for tool calls that returned errors outside its control.\n\n## Scoring\n\
+    \nScore 0.0 if the trajectory is clearly misguided: wrong tools, circular loops,\
+    \ or ignoring step outputs entirely. Score 0.5 if the trajectory is partially\
+    \ sound: mostly appropriate tools and flow, but with notable inefficiency or a\
+    \ step that ignores prior results. Score 1.0 if the trajectory is well-structured:\
+    \ appropriate tools at each step, no unnecessary redundancy, and each step builds\
+    \ logically on the last.\n\n## Inputs\n\n<input>{{input}}</input>\n\n<trajectory>{{context}}</trajectory>\n\
+    \n<output>{{output}}</output>"
