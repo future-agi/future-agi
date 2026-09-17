@@ -60,6 +60,25 @@ def test_registry_native_user_resolution_keeps_legacy_label_semantics():
     )
 
 
+def test_native_user_resolution_accepts_session_user_alias():
+    from tracer.services.user_filter_capabilities import is_native_user_id_filter
+
+    assert is_native_user_id_filter(
+        {
+            "column_id": "user",
+            "property_id": "system_attribute:traces:user",
+            "filter_config": {"col_type": "SYSTEM_METRIC"},
+        }
+    )
+    assert not is_native_user_id_filter(
+        {
+            "column_id": "user",
+            "property_id": "custom_attribute:user",
+            "filter_config": {"col_type": "SPAN_ATTRIBUTE"},
+        }
+    )
+
+
 UNSUPPORTED = (
     "dataset",
     "eval_source",

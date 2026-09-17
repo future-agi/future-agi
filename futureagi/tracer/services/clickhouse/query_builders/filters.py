@@ -1714,6 +1714,27 @@ class ClickHouseFilterBuilder:
         curated ``end_users`` RMT, then map to end_user_id on spans."""
 
         if filter_op in NO_VALUE_OPS:
+            if enduser_column == "user_id_type":
+                dimension_op = "IS NULL" if filter_op == "is_null" else "IS NOT NULL"
+                dimension_ids = self._enduser_dimension_id_subquery(
+                    f"user_id_type {dimension_op}"
+                )
+                candidate_filter = self._candidate_trace_filter()
+                project_filter = self._strict_span_project_filter()
+                nil_user = (
+                    "end_user_id = toUUID('00000000-0000-0000-0000-000000000000') OR "
+                    if filter_op == "is_null"
+                    else ""
+                )
+                return (
+                    f"trace_id IN ("
+                    f"SELECT trace_id FROM {self.table} "
+                    f"WHERE ({nil_user}end_user_id IN ({dimension_ids})) "
+                    f"AND _peerdb_is_deleted = 0{self._span_membership_date_filter()}"
+                    f"{project_filter}"
+                    f"{candidate_filter})"
+                )
+
             comparison_op = "=" if filter_op == "is_null" else "!="
             candidate_filter = self._candidate_trace_filter()
             project_filter = self._strict_span_project_filter()
