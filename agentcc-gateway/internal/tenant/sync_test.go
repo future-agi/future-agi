@@ -27,6 +27,7 @@ func TestSyncFromControlPlane_Success(t *testing.T) {
 						"openai": map[string]interface{}{
 							"api_key": "sk-org1",
 							"enabled": true,
+						"api_path_prefix": "",
 						},
 					},
 				},
@@ -62,6 +63,9 @@ func TestSyncFromControlPlane_Success(t *testing.T) {
 	}
 	if cfg1.Providers["openai"].APIKey != "sk-org1" {
 		t.Errorf("org-1 openai key = %q, want sk-org1", cfg1.Providers["openai"].APIKey)
+	}
+	if prefix := cfg1.Providers["openai"].APIPathPrefix; prefix == nil || *prefix != "" {
+		t.Errorf("org-1 openai api path prefix = %#v, want explicit empty string", prefix)
 	}
 
 	cfg2 := store.Get("org-2")

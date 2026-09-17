@@ -28,6 +28,34 @@ func newTestProvider(t *testing.T, serverURL string) *Provider {
 	return p
 }
 
+func TestChatCompletion_UsesCustomAPIPathPrefix(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Errorf("path = %s, want /chat/completions", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(models.ChatCompletionResponse{ID: "custom-prefix"})
+	}))
+	defer ts.Close()
+
+	emptyPrefix := ""
+	p, err := New("test-openai", config.ProviderConfig{
+		BaseURL:       ts.URL,
+		APIKey:        "test-key",
+		APIPathPrefix: &emptyPrefix,
+	})
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+
+	_, err = p.ChatCompletion(context.Background(), &models.ChatCompletionRequest{
+		Model: "sonar",
+	})
+	if err != nil {
+		t.Fatalf("ChatCompletion() error: %v", err)
+	}
+}
+
 // ─────────────────────────────────────────────────────────────
 // CreateImage tests
 // ─────────────────────────────────────────────────────────────
