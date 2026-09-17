@@ -176,10 +176,15 @@ def bounded_score_table(ch_client):
 def production_score_table(ch_client):
     """Create an ephemeral Score table with the deployed tracer-project column.
 
-    ``CDC_MODEL_HUB_SCORE`` intentionally stays schema-change-free for this
-    release. Production already receives ``tracer_project_id`` through the
-    Score CDC schema, so this test-only table models that deployed shape without
-    changing or exercising runtime DDL.
+    This fixture used to inject ``tracer_project_id`` itself, because
+    ``CDC_MODEL_HUB_SCORE`` did not declare it and the docstring recorded that
+    as intentional for that release. This branch adds the column to the CDC
+    declaration, so injecting it again produced
+    ``Cannot add column tracer_project_id: column with this name already
+    exists`` and errored the whole fixture.
+
+    The column is now added only when the shared declaration lacks it, so the
+    fixture keeps modelling the deployed shape whichever side owns the column.
     """
 
     from tracer.services.clickhouse.schema import CDC_MODEL_HUB_SCORE
@@ -196,11 +201,12 @@ def production_score_table(ch_client):
         ddl,
         count=1,
     )
-    ddl = ddl.replace(
-        "    project_id Nullable(UUID),\n",
-        "    project_id Nullable(UUID),\n    tracer_project_id UUID,\n",
-        1,
-    )
+    if "tracer_project_id" not in ddl:
+        ddl = ddl.replace(
+            "    project_id Nullable(UUID),\n",
+            "    project_id Nullable(UUID),\n    tracer_project_id UUID,\n",
+            1,
+        )
     ch_client.execute(ddl)
     try:
         yield table

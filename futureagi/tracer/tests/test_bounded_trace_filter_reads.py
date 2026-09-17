@@ -4550,17 +4550,49 @@ def test_attribute_key_is_bound_and_preserved_for_all_map_expressions() -> None:
     assert match_params["latest_filter_param_0"] == value.lower()
 
 
-@pytest.mark.parametrize(
-    "key",
-    ["bad\x00key", "bad\nkey", "x" * 4097, "bad\ud800key"],
-)
-def test_attribute_key_control_invalid_utf8_and_length_fail_closed(key: str) -> None:
+@pytest.mark.parametrize("key", ["x" * 4097, "bad\ud800key"])
+def test_attribute_key_invalid_utf8_and_length_fail_closed(key: str) -> None:
+    """Unencodable or over-long keys are still refused before any scan."""
     builder = SpanListQueryBuilder(
         project_id=PROJECT_ID,
         filters=[_time_filter(), _attribute_filter(key, "value")],
     )
 
     assert builder.supports_bounded_filter_scan() is False
+
+
+@pytest.mark.parametrize("key", ["bad\x00key", "bad\nkey"])
+def test_attribute_keys_with_control_characters_are_filterable(key: str) -> None:
+    """Control characters are ordinary data now that keys are bound, not inlined.
+
+    These two used to fail closed alongside the invalid-UTF-8 and over-length
+    cases, because the key was interpolated into SQL text and a NUL or newline
+    could change the statement. This branch binds every attribute key as a
+    parameter, so the reason for refusing them is gone -- and refusing them was
+    not free: a key that ingestion accepted became permanently unfilterable,
+    visible in the catalog but impossible to query.
+
+    ``validate_exact_attribute_key`` now states the rule as preserving the
+    ingested UTF-8 identity, rejecting only what cannot round-trip (invalid
+    UTF-8) or exceeds ATTRIBUTE_KEY_MAX_UTF8_BYTES.
+
+    Verified end to end against ClickHouse 25.3 rather than assumed: a
+    NUL-containing map key stores and retrieves faithfully
+    (``mapContains(attrs, 'bad\\0key')`` matches, ``mapKeys`` returns it), and
+    clickhouse_connect binds it as a parameter and returns the correct row. The
+    injection concern that motivated the old gate does not survive binding.
+    """
+    builder = SpanListQueryBuilder(
+        project_id=PROJECT_ID,
+        filters=[_time_filter(), _attribute_filter(key, "value")],
+    )
+
+    assert builder.supports_bounded_filter_scan() is True
+
+    sql, params = builder.build_filter_match_query(["span-a"])
+    # The key reaches the query as bound data and never as SQL text.
+    assert params["latest_filter_key_0"] == key
+    assert key not in sql
 
 
 def test_negative_text_operators_are_literal_utf8_predicates() -> None:

@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("src/utils/axios", () => ({
   default: mocks,
+  readQuery: mocks.get,
   endpoints: {
     dashboard: {
       list: "/tracer/dashboard/",
@@ -60,8 +61,27 @@ import {
   FILTER_VALUE_REQUEST_TIMEOUT_MS,
   PROPERTY_CATALOG_REQUEST_TIMEOUT_MS,
 } from "../useDashboards";
+import { getFilterValueReadMessage } from "src/utils/queryReadState";
 
 describe("property catalog search contract", () => {
+  it("preserves exact custom JSON keys in public identities", () => {
+    for (const key of [
+      "\tline\n\u0000tail \t",
+      "x".repeat(4096),
+      "ΐ".repeat(1365) + "x",
+    ]) {
+      expect(
+        buildPropertyRegistryId({
+          metricName: key,
+          metricType: "custom_attribute",
+        }),
+      ).toBe(`custom_attribute:${key}`);
+      expect(
+        buildPropertyRegistryId({ propertyId: `custom_attribute:${key}` }),
+      ).toBe(`custom_attribute:${key}`);
+    }
+  });
+
   it("bounds multibyte searches without splitting a code point", () => {
     const search = boundPropertyCatalogSearch("é".repeat(400));
 
@@ -423,6 +443,244 @@ describe("usePropertyCatalog", () => {
     query_provenance: "activated_property_catalog",
     ...overrides,
   });
+
+  const currentPage = (overrides = {}) => {
+    const result = page({
+      query_provenance: "current_property_catalog",
+      query_exact: false,
+      ...overrides,
+    });
+    for (const key of [
+      "catalog_epoch",
+      "catalog_revision",
+      "activation_fingerprint",
+      "category_counts",
+      "category_counts_exact",
+    ])
+      delete result[key];
+    return result;
+  };
+
+  it("accepts current pages without activation or exact category counts", () => {
+    const result = currentPage();
+    expect(validatePropertyCatalogPage(result)).toBe(result);
+    expect(
+      validatePropertyCatalogPage(currentPage({ query_exact: true })),
+    ).toHaveProperty("__propertyCatalogCursorStopped", "malformed_page");
+  });
+
+  it("accepts usable false/partial current pages from older APIs", () => {
+    // Keep compatibility with the historical wire shape. New successful index
+    // reads use true/complete without claiming completeness of source history.
+    const partial = currentPage({
+      query_complete: false,
+      query_status: "partial",
+      coverage_reason: "project_unindexed",
+    });
+    expect(validatePropertyCatalogPage(partial)).toBe(partial);
+
+    // The activated catalog still requires its exact, complete contract.
+    const legacyPartial = validatePropertyCatalogPage({
+      ...currentPage(),
+      query_provenance: "activated_property_catalog",
+      query_exact: true,
+      query_complete: false,
+      query_status: "partial",
+    });
+    expect(legacyPartial).toHaveProperty(
+      "__propertyCatalogCursorStopped",
+      "malformed_page",
+    );
+
+    // Widening for "partial" must not admit other incomplete shapes.
+    for (const shape of [
+      { query_complete: false, query_status: "complete" },
+      { query_complete: false, query_status: "degraded" },
+      { query_complete: true, query_status: "partial" },
+    ]) {
+      expect(validatePropertyCatalogPage(currentPage(shape))).toHaveProperty(
+        "__propertyCatalogCursorStopped",
+        "malformed_page",
+      );
+    }
+  });
+
+  it.each([
+    { label: "empty", metrics: [] },
+    {
+      label: "partially populated",
+      metrics: [{ name: "observed", property_id: "custom_attribute:observed" }],
+    },
+  ])(
+    "keeps an $label index page usable and follows its cursor",
+    async ({ metrics }) => {
+      mocks.get
+        .mockResolvedValueOnce({
+          data: {
+            result: currentPage({
+              metrics,
+              has_more: true,
+              next_cursor: "index-next",
+            }),
+          },
+        })
+        .mockResolvedValueOnce({
+          data: {
+            result: currentPage({
+              metrics: [
+                { name: "later", property_id: "custom_attribute:later" },
+              ],
+            }),
+          },
+        });
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      const { result } = renderHook(() => usePropertyCatalog(), {
+        wrapper: createQueryWrapper(client),
+      });
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(result.current.metrics).toEqual(metrics);
+      expect(result.current.queryReadState).toBe("complete");
+      expect(result.current.cursorChainStopped).toBe(false);
+      expect(result.current.hasNextPage).toBe(true);
+      expect(mocks.get).toHaveBeenCalledTimes(1);
+
+      await act(async () => result.current.fetchNextPage());
+      await waitFor(() => expect(result.current.hasNextPage).toBe(false));
+      expect(result.current.metrics.map(({ name }) => name)).toEqual([
+        ...metrics.map(({ name }) => name),
+        "later",
+      ]);
+      expect(result.current.queryReadState).toBe("complete");
+      expect(result.current.total).toBeNull();
+      expect(result.current.totalIsExact).toBe(false);
+      expect(result.current.categoryCountsExact).toBe(false);
+      expect(mocks.get.mock.calls[1][1].params.cursor).toBe("index-next");
+    },
+  );
+
+  it("keeps an exhausted empty current index usable without exact counts", async () => {
+    mocks.get.mockResolvedValueOnce({
+      data: { result: currentPage({ metrics: [] }) },
+    });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { result } = renderHook(() => usePropertyCatalog(), {
+      wrapper: createQueryWrapper(client),
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.metrics).toEqual([]);
+    expect(result.current.queryReadState).toBe("complete");
+    expect(result.current.cursorChainStopped).toBe(false);
+    expect(result.current.hasNextPage).toBe(false);
+    expect(result.current.total).toBeNull();
+    expect(result.current.totalIsExact).toBe(false);
+  });
+
+  it("paginates current definitions and accepts live metadata updates", async () => {
+    mocks.get
+      .mockResolvedValueOnce({
+        data: {
+          result: currentPage({ has_more: true, next_cursor: "current-next" }),
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          result: currentPage({
+            metrics: [
+              {
+                name: "customer.plan",
+                property_id: "custom_attribute:customer.plan",
+                display_name: "Updated",
+              },
+              { name: "new", property_id: "custom_attribute:new" },
+            ],
+          }),
+        },
+      });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { result } = renderHook(() => usePropertyCatalog(), {
+      wrapper: createQueryWrapper(client),
+    });
+    await waitFor(() => expect(result.current.hasNextPage).toBe(true));
+    await act(async () => {
+      await result.current.fetchNextPage();
+    });
+    expect(result.current.cursorChainStopped).toBe(false);
+    await waitFor(() => expect(result.current.metrics).toHaveLength(2));
+    expect(result.current.metrics[0].display_name).toBe("Updated");
+    expect(result.current.categoryCountsExact).toBe(false);
+  });
+
+  it("restarts an expired first continuation without appending to the old walk", async () => {
+    mocks.get
+      .mockResolvedValueOnce({
+        data: { result: page({ has_more: true, next_cursor: "v1-next" }) },
+      })
+      .mockRejectedValueOnce({
+        response: { status: 400, data: { code: "cursor_expired" } },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          result: currentPage({
+            metrics: [{ name: "fresh", property_id: "custom_attribute:fresh" }],
+          }),
+        },
+      });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { result } = renderHook(() => usePropertyCatalog(), {
+      wrapper: createQueryWrapper(client),
+    });
+    await waitFor(() => expect(result.current.hasNextPage).toBe(true));
+    await act(async () => {
+      await result.current.fetchNextPage();
+    });
+    await waitFor(() =>
+      expect(result.current.metrics.map((metric) => metric.name)).toEqual([
+        "fresh",
+      ]),
+    );
+    expect(mocks.get).toHaveBeenCalledTimes(3);
+    expect(mocks.get.mock.calls[1][1].params.cursor).toBe("v1-next");
+    expect(mocks.get.mock.calls[2][1].params.cursor).toBeUndefined();
+    expect(result.current.cursorChainStopped).toBe(false);
+  });
+
+  it.each(["cursor_mismatch", "invalid_cursor", "permission_denied"])(
+    "does not restart a %s continuation",
+    async (code) => {
+      mocks.get
+        .mockResolvedValueOnce({
+          data: {
+            result: currentPage({
+              has_more: true,
+              next_cursor: "current-next",
+            }),
+          },
+        })
+        .mockRejectedValueOnce({ response: { status: 400, data: { code } } });
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      const reset = vi.spyOn(client, "resetQueries");
+      const { result } = renderHook(() => usePropertyCatalog(), {
+        wrapper: createQueryWrapper(client),
+      });
+      await waitFor(() => expect(result.current.hasNextPage).toBe(true));
+      await act(async () => {
+        await result.current.fetchNextPage();
+      });
+      await waitFor(() => expect(result.current.isError).toBe(true));
+      expect(reset).not.toHaveBeenCalled();
+      expect(mocks.get).toHaveBeenCalledTimes(2);
+    },
+  );
 
   it("reports a cached remote search refetch as pending", async () => {
     let resolveRefetch;
@@ -840,6 +1098,7 @@ describe("usePropertyCatalog", () => {
 
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.legacyFallbackRequired).toBe(false);
+    expect(result.current.queryReadState).toBe("degraded");
   });
 });
 
@@ -869,6 +1128,73 @@ describe("useDashboardFilterValues bounded-read state", () => {
       { wrapper: createQueryWrapper(queryClient) },
     );
   };
+
+  it.each([
+    { values: [] },
+    { values: [{ value: "observed", label: "Observed", type: "string" }] },
+  ])(
+    "paginates successful current-index values without a notice: %j",
+    async ({ values }) => {
+      const page = {
+        values,
+        query_complete: true,
+        query_status: "complete",
+        query_exact: false,
+        query_provenance: "current_property_catalog",
+        attribute_types_exact: false,
+        has_more: true,
+        next_cursor: "observed-next",
+        browse_status: "continuation",
+      };
+      mocks.get
+        .mockResolvedValueOnce({ data: { result: page } })
+        .mockResolvedValueOnce({
+          data: {
+            result: {
+              ...page,
+              values: [],
+              has_more: false,
+              next_cursor: null,
+              browse_status: "exhausted",
+            },
+          },
+        });
+      const { result } = renderValues({ search: "" });
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(result.current.data).toEqual(values);
+      expect(result.current.queryReadState).toBe("complete");
+      expect(
+        getFilterValueReadMessage(result.current.queryReadState),
+      ).toBeNull();
+      expect(result.current.hasNextPage).toBe(true);
+      expect(mocks.get).toHaveBeenCalledTimes(1);
+
+      await act(async () => result.current.fetchNextPage());
+      await waitFor(() => expect(result.current.hasNextPage).toBe(false));
+      expect(result.current.data).toEqual(values);
+      expect(result.current.browseStatus).toBe("exhausted");
+      expect(result.current.queryReadState).toBe("complete");
+      expect(result.current.cursorChainStopped).toBe(false);
+      expect(
+        getFilterValueReadMessage(result.current.queryReadState),
+      ).toBeNull();
+      expect(mocks.get.mock.calls[1][1].params.cursor).toBe("observed-next");
+    },
+  );
+
+  it("surfaces a 503 from the observed value reader", async () => {
+    mocks.get.mockRejectedValueOnce({
+      statusCode: 503,
+      code: "service_unavailable",
+    });
+    const { result } = renderValues();
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.queryReadState).toBe("error");
+    expect(getFilterValueReadMessage(result.current.queryReadState)).toMatch(
+      /unavailable/i,
+    );
+    expect(mocks.get).toHaveBeenCalledTimes(1);
+  });
 
   it("uses one namespaced registry identity for every native value adapter", () => {
     expect(
@@ -1460,6 +1786,8 @@ describe("useDashboardFilterValues bounded-read state", () => {
             values: [{ value: "CONVERSATION", type: "string" }],
             query_complete: true,
             query_status: "complete",
+            query_exact: false,
+            query_provenance: "current_property_catalog",
             ...cursorMetadata,
           },
         },

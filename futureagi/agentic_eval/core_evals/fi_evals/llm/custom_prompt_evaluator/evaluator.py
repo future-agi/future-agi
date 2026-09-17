@@ -1,10 +1,11 @@
 import json
-import os
+import math
 import re
 import time
 
-from django.conf import settings
 import jinja2
+import structlog
+from django.conf import settings
 from jinja2.sandbox import SandboxedEnvironment
 
 from agentic_eval.core.llm.llm import LLM
@@ -17,14 +18,12 @@ from agentic_eval.core.utils.llm_payloads import (
 )
 from agentic_eval.core.utils.model_config import ModelConfigs
 from agentic_eval.core.utils.score import clamp_unit_score
+from agentic_eval.core_evals.fi_evals.eval_type import LlmEvalTypeId
 from agentic_eval.core_evals.fi_utils.evals_result import EvalResult
-import structlog
+from agentic_eval.core_evals.fi_utils.utils import PreserveUndefined
+from model_hub.utils.ground_truth_retrieval import GT_CALIBRATION_INSTRUCTION
 
 logger = structlog.get_logger(__name__)
-from agentic_eval.core_evals.fi_utils.utils import PreserveUndefined
-
-from agentic_eval.core_evals.fi_evals.eval_type import LlmEvalTypeId
-from model_hub.utils.ground_truth_retrieval import GT_CALIBRATION_INSTRUCTION
 
 # Maximum chars of context that get injected into the eval prompt. Larger
 # values let huge transcripts/raw_logs flow in fully, at the cost of higher
@@ -197,6 +196,50 @@ class CustomPromptEvaluator(LLM):
                 rendered = rendered.replace("{{ " + key + " }}", str(value))
             return rendered
 
+    def _validate_result(self, value) -> None:
+        """Validate the declared result schema without coercing judge output.
+
+        Enums match exact strings, including declared case/whitespace. Multi-
+        choice requires at least one pick and no repeated picks, as the judge
+        instructions specify. Preserve the order of distinct picks. Empty
+        vocabulary retains the schema's plain-string fallback; configuration
+        validation is separate.
+        """
+        schema = response_format_schema(
+            self._output_type,
+            getattr(self, "_choices", None),
+            multi_choice=bool(getattr(self, "_multi_choice", False)),
+        )["json_schema"]["schema"]["properties"]["result"]
+        if schema["type"] == "number":
+            if type(value) not in (int, float) or (
+                isinstance(value, float) and not math.isfinite(value)
+            ):
+                raise ValueError(
+                    "Invalid evaluation result: expected a finite JSON number"
+                )
+        elif schema["type"] == "array":
+            if (
+                not isinstance(value, list)
+                or not value
+                or any(
+                    not isinstance(pick, str) or pick not in schema["items"]["enum"]
+                    for pick in value
+                )
+            ):
+                raise ValueError(
+                    "Invalid evaluation result: expected a nonempty list of declared choice strings"
+                )
+            if len(set(value)) != len(value):
+                raise ValueError(
+                    "Invalid evaluation result: duplicate choices are not allowed"
+                )
+        elif not isinstance(value, str) or (
+            "enum" in schema and value not in schema["enum"]
+        ):
+            raise ValueError(
+                "Invalid evaluation result: expected a string allowed by the result schema"
+            )
+
     def _evaluate(self, **kwargs) -> EvalResult:
         """
         Run the LLM evaluator.
@@ -303,7 +346,7 @@ class CustomPromptEvaluator(LLM):
                     rendered_prompt += f"<{k}>{val_str}</{k}>\n"
                 rendered_prompt += "--- End Input Data ---"
         except Exception as e:
-            raise ValueError(f"Error rendering rule prompt template: {str(e)}")
+            raise ValueError(f"Error rendering rule prompt template: {str(e)}") from e
 
         # Inject row_context when data injection is enabled (no mapping required)
         row_context = kwargs.get("row_context")
@@ -539,6 +582,7 @@ class CustomPromptEvaluator(LLM):
         })
 
         result_value = chat_completion_response_json["result"]
+        self._validate_result(result_value)
         if self._output_type in ("score", "numeric"):
             result_value = clamp_unit_score(result_value)
 

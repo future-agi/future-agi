@@ -1,6 +1,10 @@
 package auth
 
-import "time"
+import (
+	"net/url"
+	"strconv"
+	"time"
+)
 
 // Config controls the auth extension. Auth is always active when PGWrite
 // is set — without it, spans land with empty project_id (unusable).
@@ -12,6 +16,32 @@ type Config struct {
 	WarmTTL     time.Duration `yaml:"warm_ttl"`
 	PGPoolRead  int           `yaml:"pg_pool_read"`
 	PGPoolWrite int           `yaml:"pg_pool_write"`
+}
+
+// EndpointFromEnv returns a password-safe PostgreSQL URL when all endpoint
+// fields are supplied separately. It deliberately returns an empty string when
+// no fields are configured so existing PGWrite/PGRead URI configuration remains
+// compatible. The password is encoded by net/url, never interpolated into a
+// URI by a deployment template.
+func EndpointFromEnv(getenv func(string) string, prefix string) string {
+	host, port, database, user := getenv(prefix+"_HOST"), getenv(prefix+"_PORT"), getenv(prefix+"_DATABASE"), getenv(prefix+"_USER")
+	if host == "" && port == "" && database == "" && user == "" && getenv(prefix+"_PASSWORD") == "" {
+		return ""
+	}
+	if host == "" || port == "" || database == "" || user == "" {
+		return ""
+	}
+	parsedPort, err := strconv.Atoi(port)
+	if err != nil || parsedPort < 1 || parsedPort > 65535 {
+		return ""
+	}
+	return (&url.URL{
+		Scheme:   "postgres",
+		Host:     host + ":" + strconv.Itoa(parsedPort),
+		Path:     "/" + database,
+		User:     url.UserPassword(user, getenv(prefix+"_PASSWORD")),
+		RawQuery: "sslmode=disable",
+	}).String()
 }
 
 func (c *Config) IsEnabled() bool {

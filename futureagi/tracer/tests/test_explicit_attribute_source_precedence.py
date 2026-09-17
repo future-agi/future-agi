@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from unittest.mock import patch
 
 import pytest
+from clickhouse_connect.driver.binding import finalize_query
 
 from tracer.serializers.filters import FilterListField
 from tracer.serializers.trace import TraceObserveListQuerySerializer
@@ -72,6 +73,21 @@ COLLISIONS = (
     "llm.token_count.prompt",
     "llm.token_count.completion",
 )
+
+
+# These compilers bind the attribute key as a parameter instead of inlining it,
+# so a key assertion against the raw SQL text no longer bites. Rendering with
+# the caller-owned scope params the builder expects (project/window) lets the
+# same assertion check the statement the database actually receives.
+_CALLER_SCOPE = {
+    "project_id": PROJECT,
+    "start_date": datetime(2026, 9, 1),
+    "end_date": datetime(2026, 9, 5),
+}
+
+
+def rendered(sql, params):
+    return finalize_query(sql, {**_CALLER_SCOPE, **params})
 
 
 @pytest.fixture(autouse=True, scope="session")
@@ -158,7 +174,11 @@ def test_explicit_raw_collision_bypasses_alias_and_relational_handlers(
         ),
     ):
         sql, params = builder.translate(public([leaf(key)]))
-    assert f"'{key}'" in sql  # This compiler escapes keys as SQL literals.
+    # This compiler binds keys as data, so the key must be absent from the SQL
+    # text and present, correctly quoted, in the rendered statement.
+    assert params["attr_key_1"] == key
+    assert f"'{key}'" not in sql
+    assert f"'{key}'" in rendered(sql, params)
     assert (
         "attrs_number" if builder_cls is ClickHouseFilterBuilderV2 else "span_attr_num"
     ) in sql
@@ -176,7 +196,9 @@ def test_exact_graph_raw_alias_keeps_any_child_source(mode, key):
         project_id=PROJECT,
         observe_type=mode,
     )
-    assert f"'{key}'" in sql
+    assert params["attr_key_1"] == key
+    assert f"'{key}'" not in sql
+    assert f"'{key}'" in rendered(sql, params)
     assert "attrs_number" in sql
     assert "parent_span_id IS NULL" not in sql
     assert ("trace_id IN" in sql) == (mode == "trace")
@@ -392,7 +414,10 @@ def test_multiple_native_tags_and_raw_tag_bind_independently():
     assert "raw-singular-tag" in params.values()
     assert sql.count("FROM traces") == 2
     assert "attrs_string" in sql and "attributes_extra" in sql
-    assert "'tag'" in sql
+    # The raw singular key is bound, not inlined.
+    assert params["attr_key_3"] == "tag"
+    assert "'tag'" not in sql
+    assert "'tag'" in rendered(sql, params)
 
 
 @pytest.mark.parametrize("operation", ["is_null", "is_not_null"])

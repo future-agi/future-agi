@@ -106,14 +106,35 @@ afterEach(() => {
 });
 
 describe("opt-in query read transport", () => {
-  it("declares exactly thirteen enabled POST reads, not a generic POST-to-list rule", () => {
+  it("declares the enabled POST reads, not a generic POST-to-list rule", () => {
     expect(
       Object.values(OPENAPI_CONTRACT.endpoints).filter(
         (op) => op.post?.readQueryPost,
       ),
-    ).toHaveLength(13);
+    ).toHaveLength(15);
     expect(readQuery).toBeTypeOf("function");
   });
+  it.each(["metrics", "filter_values"])(
+    "keeps large catalog continuations in the %s POST body",
+    async (action) => {
+      const params =
+        action === "metrics"
+          ? { cursor_mode: true, cursor: "x".repeat(24000), page_size: 1 }
+          : {
+              property_id: "custom_attribute:key",
+              source: "traces",
+              cursor: "x".repeat(24000),
+              page_size: 1,
+            };
+      const url = `/tracer/dashboard/${action}/`;
+      await readQuery(url, { params });
+      const config = adapter.mock.calls.at(-1)[0];
+      expect(config.method).toBe("post");
+      expect(config.url).toBe(url);
+      expect(config.params).toBeUndefined();
+      expect(JSON.parse(config.data)).toEqual(params);
+    },
+  );
   it("keeps large session navigation filters entirely in the POST body", async () => {
     const navigation = {
       workspace_id: pid,

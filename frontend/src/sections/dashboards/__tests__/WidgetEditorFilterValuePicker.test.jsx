@@ -1,6 +1,14 @@
 import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "src/utils/test-utils";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "src/utils/test-utils";
+import { getFilterValueReadState } from "src/utils/queryReadState";
 
 const useResolvedFilterOptionsMock = vi.fn();
 
@@ -33,6 +41,7 @@ import {
   resolveWidgetCatalogResultMetrics,
   resolveWidgetCatalogSidebarCounts,
   restoreWidgetFilterConfig,
+  WidgetCatalogOption,
   WidgetCatalogPaginationControl,
 } from "../WidgetEditorView";
 
@@ -68,6 +77,577 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("WidgetEditor annotation breakdown capability", () => {
+  const label = "44444444-4444-4444-4444-444444444444";
+  const annotation = {
+    id: label,
+    name: "Quality",
+    type: "annotation",
+    source: "both",
+  };
+  const own = {
+    name: label,
+    display_name: "Quality",
+    category: "annotation_metric",
+    source: "both",
+  };
+  const foreign = { ...own, name: "55555555-5555-4555-8555-555555555555" };
+  const model = { name: "model", category: "system_metric", source: "traces" };
+  const context = {
+    selectedMetricSources: ["traces"],
+    selectedMetrics: [annotation],
+  };
+
+  it("offers the same label by identity, not a same-named label or system dimension", () => {
+    const options = buildWidgetCatalogPickerOptions({
+      metrics: [own, foreign, model],
+      pickerMode: "breakdown",
+      ...context,
+    });
+    expect(options.map((option) => option.id)).toEqual([label]);
+  });
+
+  it("requires a breakdown supported by every selected annotation metric", () => {
+    expect(
+      isWidgetCatalogOptionAllowed(own, "breakdown", {
+        ...context,
+        selectedMetrics: [annotation, { ...annotation, id: foreign.name }],
+      }),
+    ).toBe(false);
+    expect(
+      isWidgetCatalogOptionAllowed(own, "breakdown", {
+        ...context,
+        selectedMetrics: [
+          annotation,
+          { id: "trace_count", type: "system", source: "traces" },
+        ],
+      }),
+    ).toBe(true);
+  });
+
+  it("does not offer a second dimension but permits replacing the sole dimension", () => {
+    expect(
+      isWidgetCatalogOptionAllowed(own, "breakdown", {
+        ...context,
+        otherBreakdownCount: 1,
+      }),
+    ).toBe(false);
+    expect(
+      isWidgetCatalogOptionAllowed(own, "breakdown", {
+        ...context,
+        otherBreakdownCount: 0,
+      }),
+    ).toBe(true);
+  });
+
+  it("preserves filters, ungrouped metric discovery and non-annotation capabilities", () => {
+    expect(isWidgetCatalogOptionAllowed(foreign, "filter", context)).toBe(true);
+    expect(isWidgetCatalogOptionAllowed(model, "metric_filter", context)).toBe(
+      true,
+    );
+    expect(isWidgetCatalogOptionAllowed(model, "metric", context)).toBe(true);
+    expect(
+      isWidgetCatalogOptionAllowed(model, "breakdown", {
+        selectedMetricSources: ["traces"],
+        selectedMetrics: [],
+      }),
+    ).toBe(true);
+  });
+
+  it("does not offer an annotation metric incompatible with an existing dimension", () => {
+    expect(
+      isWidgetCatalogOptionAllowed(own, "metric", {
+        selectedBreakdowns: [{ id: label, type: "annotation", source: "both" }],
+      }),
+    ).toBe(true);
+    expect(
+      isWidgetCatalogOptionAllowed(foreign, "metric", {
+        selectedBreakdowns: [{ id: label, type: "annotation", source: "both" }],
+      }),
+    ).toBe(false);
+    expect(
+      isWidgetCatalogOptionAllowed(own, "metric", {
+        selectedBreakdowns: [{ id: "model", type: "system", source: "traces" }],
+      }),
+    ).toBe(false);
+  });
+
+  it("matches canonical label UUIDs independently of letter casing", () => {
+    const lowercase = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    expect(
+      isWidgetCatalogOptionAllowed({ ...own, name: lowercase }, "breakdown", {
+        ...context,
+        selectedMetrics: [{ ...annotation, id: lowercase.toUpperCase() }],
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("WidgetEditor picker capability closure", () => {
+  const label = "44444444-4444-4444-4444-444444444444";
+  const annotation = { id: label, type: "annotation", source: "both" };
+  const own = { name: label, category: "annotation_metric", source: "both" };
+  const trace = {
+    name: "trace_count",
+    category: "system_metric",
+    source: "traces",
+  };
+  const dataset = {
+    name: "row_count",
+    category: "system_metric",
+    source: "datasets",
+  };
+  const attributes = [{ key: "customer.cost", type: "number" }];
+
+  it.each(["datasets", "simulation"])(
+    "gates cursor fallback by the %s adapter before merging",
+    (source) => {
+      for (const pickerMode of ["filter", "metric_filter", "breakdown"]) {
+        const options = buildWidgetCursorAttributeOptions(
+          attributes,
+          pickerMode,
+          {
+            selectedMetricSources: [source],
+            targetMetricSource: source,
+          },
+        );
+        expect(mergeWidgetCursorAttributeOptions([], options, true)).toEqual(
+          [],
+        );
+      }
+    },
+  );
+
+  it.each([
+    "trace",
+    "eval_metric",
+    "annotation",
+    "dataset",
+    "simulation",
+    "user",
+    "prompt",
+  ])(
+    "keeps cursor fallback out of the explicit %s category",
+    (pickerCategory) => {
+      expect(
+        buildWidgetCursorAttributeOptions(attributes, "filter", {
+          pickerCategory,
+          selectedMetricSources: ["traces"],
+        }),
+      ).toEqual([]);
+    },
+  );
+
+  it.each(["all", "custom_attribute"])(
+    "retains valid trace cursor options in %s without weakening annotation grouping",
+    (pickerCategory) => {
+      const context = {
+        pickerCategory,
+        selectedMetrics: [annotation],
+        selectedMetricSources: ["traces"],
+        selectedBreakdowns: [annotation],
+        targetMetricSource: "traces",
+      };
+      for (const pickerMode of ["filter", "metric_filter"]) {
+        expect(
+          buildWidgetCursorAttributeOptions(
+            attributes,
+            pickerMode,
+            context,
+          ).map(({ id }) => id),
+        ).toEqual(["customer.cost"]);
+      }
+      expect(
+        buildWidgetCursorAttributeOptions(attributes, "breakdown", context),
+      ).toEqual([]);
+      expect(
+        buildWidgetCursorAttributeOptions(attributes, "metric", context),
+      ).toEqual([]);
+      expect(
+        buildWidgetCursorAttributeOptions(attributes, "metric", {
+          ...context,
+          selectedBreakdowns: [],
+        }).map(({ id }) => id),
+      ).toEqual(["customer.cost"]);
+      expect(
+        buildWidgetCursorAttributeOptions(attributes, "breakdown", {
+          ...context,
+          selectedMetrics: [
+            { id: "trace_count", type: "system", source: "traces" },
+          ],
+        }).map(({ id }) => id),
+      ).toEqual(["customer.cost"]);
+    },
+  );
+
+  it.each([null, 0])(
+    "rejects dataset metric addition/replacement at %s with retained annotation breakdown",
+    (metricTargetIndex) => {
+      const context = {
+        selectedMetrics: [annotation],
+        selectedMetricSources: ["traces"],
+        selectedBreakdowns: [annotation],
+        metricTargetIndex,
+      };
+      const saved = structuredClone(context);
+      expect(
+        buildWidgetCatalogPickerOptions({
+          metrics: [dataset],
+          pickerMode: "metric",
+          ...context,
+        }),
+      ).toEqual([]);
+      expect(
+        isWidgetCatalogOptionAllowed(own, "breakdown", {
+          selectedMetrics: [annotation, dataset],
+          selectedMetricSources: ["traces", "datasets"],
+        }),
+      ).toBe(false);
+      expect(context).toEqual(saved);
+    },
+  );
+
+  it("checks every prospective metric and removes only the replacement target", () => {
+    const context = {
+      selectedMetrics: [annotation, dataset],
+      selectedMetricSources: ["traces", "datasets"],
+      selectedBreakdowns: [annotation],
+    };
+    const saved = structuredClone(context);
+    expect(isWidgetCatalogOptionAllowed(trace, "metric", context)).toBe(false);
+    expect(
+      isWidgetCatalogOptionAllowed(trace, "metric", {
+        ...context,
+        metricTargetIndex: 0,
+      }),
+    ).toBe(false);
+    expect(
+      isWidgetCatalogOptionAllowed(trace, "metric", {
+        ...context,
+        metricTargetIndex: 1,
+      }),
+    ).toBe(true);
+    expect(
+      isWidgetCatalogOptionAllowed(own, "breakdown", {
+        selectedMetrics: [annotation, trace],
+        selectedMetricSources: ["traces"],
+      }),
+    ).toBe(true);
+    expect(context).toEqual(saved);
+  });
+
+  it("checks prospective cursor metrics against retained breakdowns too", () => {
+    const context = {
+      selectedMetrics: [annotation, dataset],
+      selectedMetricSources: ["traces", "datasets"],
+      selectedBreakdowns: [annotation],
+    };
+    expect(
+      buildWidgetCursorAttributeOptions(attributes, "metric", context),
+    ).toEqual([]);
+    expect(
+      buildWidgetCursorAttributeOptions(attributes, "metric", {
+        ...context,
+        metricTargetIndex: 1,
+      }),
+    ).toEqual([]);
+    expect(
+      buildWidgetCursorAttributeOptions(attributes, "metric", {
+        ...context,
+        metricTargetIndex: 1,
+        selectedBreakdowns: [],
+      }).map(({ id }) => id),
+    ).toEqual(["customer.cost"]);
+  });
+
+  // _build_custom_attr_query rejects all annotation/eval joined dimensions,
+  // including a same-label annotation otherwise valid for a companion metric.
+  it.each(["annotation_metric", "eval_metric"])(
+    "rejects custom metric additions/replacements with retained %s joins",
+    (category) => {
+      const breakdown = { id: label, type: category, source: "traces" };
+      const custom = {
+        name: "customer.cost",
+        category: "custom_attribute",
+        source: "traces",
+        data_type: "number",
+      };
+      for (const metricTargetIndex of [null, 0]) {
+        const context = {
+          selectedMetrics: [trace],
+          selectedMetricSources: ["traces"],
+          selectedBreakdowns: [breakdown],
+          metricTargetIndex,
+        };
+        const saved = structuredClone(context);
+        expect(
+          buildWidgetCatalogPickerOptions({
+            metrics: [custom],
+            pickerMode: "metric",
+            ...context,
+          }),
+        ).toEqual([]);
+        expect(
+          buildWidgetCursorAttributeOptions(attributes, "metric", context),
+        ).toEqual([]);
+        expect(context).toEqual(saved);
+      }
+    },
+  );
+
+  it.each(["annotation_metric", "eval_metric"])(
+    "rejects selecting/replacing a %s breakdown while any custom metric remains",
+    (category) => {
+      const custom = {
+        id: "customer.cost",
+        type: "custom_attribute",
+        source: "traces",
+      };
+      const option = { name: label, category, source: "both" };
+      for (const otherBreakdownCount of [0, 1]) {
+        const context = {
+          selectedMetrics: [trace, custom],
+          selectedMetricSources: ["traces"],
+          otherBreakdownCount,
+        };
+        expect(
+          buildWidgetCatalogPickerOptions({
+            metrics: [option],
+            pickerMode: "breakdown",
+            ...context,
+          }),
+        ).toEqual([]);
+        expect(isWidgetCatalogOptionAllowed(option, "filter", context)).toBe(
+          true,
+        );
+        expect(
+          isWidgetCatalogOptionAllowed(option, "metric_filter", {
+            ...context,
+            targetMetricSource: "traces",
+          }),
+        ).toBe(true);
+      }
+      expect(
+        isWidgetCatalogOptionAllowed(trace, "metric", {
+          selectedMetrics: [trace, custom],
+          selectedBreakdowns: [{ id: label, type: category, source: "both" }],
+          metricTargetIndex: 1,
+        }),
+      ).toBe(true);
+    },
+  );
+
+  it.each([
+    { selectedBreakdowns: [] },
+    { selectedBreakdowns: [{ id: "model", type: "system", source: "traces" }] },
+    {
+      selectedBreakdowns: [
+        { id: "customer.tier", type: "custom_attribute", source: "traces" },
+      ],
+    },
+  ])(
+    "keeps custom metrics available without joined breakdowns: %j",
+    ({ selectedBreakdowns }) => {
+      const custom = {
+        name: "customer.cost",
+        category: "custom_attribute",
+        source: "traces",
+        data_type: "number",
+      };
+      const context = {
+        selectedMetrics: [trace],
+        selectedMetricSources: ["traces"],
+        selectedBreakdowns,
+      };
+      expect(
+        buildWidgetCatalogPickerOptions({
+          metrics: [custom],
+          pickerMode: "metric",
+          ...context,
+        }).map(({ id }) => id),
+      ).toEqual(["customer.cost"]);
+      expect(
+        buildWidgetCursorAttributeOptions(attributes, "metric", context).map(
+          ({ id }) => id,
+        ),
+      ).toEqual(["customer.cost"]);
+    },
+  );
+
+  it.each([
+    ["datasets", "cell_status", "model"],
+    ["simulation", "status", "duration"],
+  ])(
+    "preserves existing %s dimensions in both selection orders",
+    (source, allowed, denied) => {
+      const candidate = { name: "metric", category: "system_metric", source };
+      for (const [id, expected] of [
+        [allowed, true],
+        [denied, false],
+      ]) {
+        const breakdown = { id, name: "Display label", type: "system", source };
+        expect(
+          isWidgetCatalogOptionAllowed(candidate, "metric", {
+            selectedBreakdowns: [breakdown],
+          }),
+        ).toBe(expected);
+        expect(
+          isWidgetCatalogOptionAllowed(
+            { name: id, category: "system_metric", source },
+            "breakdown",
+            {
+              selectedMetrics: [candidate],
+              selectedMetricSources: [source],
+            },
+          ),
+        ).toBe(expected);
+      }
+      expect(isWidgetCatalogOptionAllowed(candidate, "metric")).toBe(true);
+    },
+  );
+
+  it.each(["filter", "metric_filter", "breakdown", "metric"])(
+    "does not present raw inventory as an eligible %s result total",
+    (pickerMode) => {
+      expect(
+        getWidgetCatalogExactResultCount({
+          request: { category: "annotation_metric" },
+          categoryCounts: { annotation_metric: 27 },
+          categoryCountsExact: true,
+          requestSettled: true,
+          pickerMode,
+          selectedBreakdowns: pickerMode === "metric" ? [annotation] : [],
+        }),
+      ).toBeNull();
+    },
+  );
+
+  it.each([0, 27])(
+    "keeps unrestricted inventory totals exact, including %s",
+    (count) => {
+      expect(
+        getWidgetCatalogExactResultCount({
+          request: { category: "annotation_metric" },
+          categoryCounts: { annotation_metric: count },
+          categoryCountsExact: true,
+          requestSettled: true,
+          pickerMode: "metric",
+          selectedBreakdowns: [{ id: "", name: "" }],
+        }),
+      ).toBe(count);
+    },
+  );
+});
+
+describe("WidgetEditor catalog source labels", () => {
+  it("distinguishes same-named dimensions without changing their identities", () => {
+    const onSelect = vi.fn();
+    const options = buildWidgetCatalogPickerOptions({
+      metrics: ["all", "datasets"].map((source) => ({
+        name: "dataset",
+        display_name: "Dataset",
+        property_id: `system_attribute:${source}:dataset`,
+        category: "system_metric",
+        role: "dimension",
+        data_type: "string",
+        output_type: "string",
+        source,
+        // Captured DASH001 response includes search/category tokens here;
+        // these must not become displayed source names.
+        sources: [
+          source === "all" ? "all" : "dataset",
+          source === "all" ? "dataset" : "datasets",
+          "system",
+        ],
+      })),
+      pickerMode: "filter",
+      pickerCategory: "dataset",
+      selectedMetricSources: ["datasets"],
+    });
+    expect(options).toHaveLength(2);
+    render(
+      options.map((option) => (
+        <WidgetCatalogOption
+          key={option.registryId}
+          option={option}
+          onSelect={onSelect}
+        />
+      )),
+    );
+
+    const dataset = screen.getByRole("button", {
+      name: "Dataset (string, Datasets)",
+      exact: true,
+    });
+    expect(dataset).toHaveTextContent("Datasets");
+    expect(
+      screen.getByRole("button", {
+        name: "Dataset (string, All sources)",
+        exact: true,
+      }),
+    ).toHaveTextContent("All sources");
+    fireEvent.click(dataset);
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith(options[1]);
+    expect(options[1]).toMatchObject({
+      id: "dataset",
+      source: "datasets",
+      registryId: "system_attribute:datasets:dataset",
+    });
+  });
+
+  it("keeps numeric and string attributes separately selectable", () => {
+    const onSelect = vi.fn();
+    const options = ["string", "number"].map((dataType) => ({
+      id: "company_id",
+      name: "Company ID",
+      type: "custom_attribute",
+      source: "traces",
+      dataType,
+    }));
+    render(
+      options.map((option) => (
+        <WidgetCatalogOption
+          key={option.dataType}
+          option={option}
+          onSelect={onSelect}
+        />
+      )),
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Company ID (number, Traces)",
+        exact: true,
+      }),
+    );
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith(options[1]);
+    expect(
+      screen.getByRole("button", {
+        name: "Company ID (string, Traces)",
+        exact: true,
+      }),
+    ).toHaveTextContent("string");
+  });
+
+  it("shows the shared source without displaying category tokens", () => {
+    const option = {
+      id: "quality",
+      name: "Quality",
+      type: "eval_metric",
+      source: "both",
+      sources: ["annotation", "datasets", "traces"],
+      outputType: "CHOICE",
+    };
+    render(<WidgetCatalogOption option={option} onSelect={vi.fn()} />);
+    const row = screen.getByRole("button", {
+      name: "Quality (choice, Traces, Datasets)",
+      exact: true,
+    });
+    expect(row).toHaveTextContent("choice");
+    expect(row).toHaveTextContent("Traces, Datasets");
+    expect(row).not.toHaveTextContent("annotation");
+  });
+});
+
 describe("WidgetEditor property-catalog loading state", () => {
   it("keeps a settled partial search loading while the remote catalog request is in flight", () => {
     expect(
@@ -97,6 +677,88 @@ describe("WidgetEditor property-catalog loading state", () => {
 });
 
 describe("WidgetEditor filter-value picker", () => {
+  it.each([
+    { values: [] },
+    { values: [{ value: "observed", label: "Observed", type: "string" }] },
+  ])(
+    "keeps current-catalog suggestions selectable without a notice: %j",
+    async ({ values }) => {
+      const intersection = installIntersectionObserver();
+      const page = {
+        values,
+        query_complete: true,
+        query_status: "complete",
+        query_exact: false,
+        query_provenance: "current_property_catalog",
+        has_more: values.length > 0,
+        next_cursor: values.length > 0 ? "observed-next" : null,
+      };
+      const fetchNextPage = vi.fn(() => Promise.resolve());
+      useResolvedFilterOptionsMock.mockReturnValue({
+        options: page.values,
+        isLoading: false,
+        isError: false,
+        fetchNextPage,
+        hasNextPage: page.has_more,
+        continuationKey: page.next_cursor,
+        isFetchingNextPage: false,
+        isFetchNextPageError: false,
+        queryReadState: getFilterValueReadState(page),
+        cursorChainStopped: false,
+        refetch: vi.fn(),
+      });
+      const anchorEl = document.createElement("button");
+      document.body.appendChild(anchorEl);
+      const onApply = vi.fn();
+      const { unmount } = render(
+        <FilterValuePickerPopup
+          anchorEl={anchorEl}
+          filter={{
+            id: "customer.plan",
+            type: "custom_attribute",
+            dataType: "string",
+            value: [],
+          }}
+          onClose={vi.fn()}
+          onApply={onApply}
+          source="traces"
+        />,
+      );
+      try {
+        expect(screen.queryByRole("status")).not.toBeInTheDocument();
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+        expect(
+          screen.queryByText(
+            /history|coverage|suggestions only|temporarily unavailable/i,
+          ),
+        ).not.toBeInTheDocument();
+        expect(
+          screen.queryByRole("button", { name: "Retry" }),
+        ).not.toBeInTheDocument();
+        if (values.length) {
+          await act(async () => intersection.emit(true));
+          expect(fetchNextPage).toHaveBeenCalledOnce();
+          fireEvent.click(screen.getByText("Observed"));
+        } else {
+          expect(screen.getByText("No values found")).toBeInTheDocument();
+          fireEvent.change(screen.getByPlaceholderText("Search..."), {
+            target: { value: "literal-value" },
+          });
+          fireEvent.click(screen.getByText("literal-value"));
+          expect(fetchNextPage).not.toHaveBeenCalled();
+        }
+        fireEvent.click(screen.getByRole("button", { name: "Add" }));
+        expect(onApply).toHaveBeenCalledWith(
+          [values.length ? "observed" : "literal-value"],
+          ["string"],
+        );
+      } finally {
+        unmount();
+        anchorEl.remove();
+      }
+    },
+  );
+
   it("automatically continues retained values at the list end without a load-more button", async () => {
     const intersection = installIntersectionObserver();
     const nextPage = deferred();
@@ -145,6 +807,51 @@ describe("WidgetEditor filter-value picker", () => {
       await nextPage.promise;
     });
     document.body.removeChild(anchorEl);
+  });
+
+  it("stays open when its own trigger is clicked, and closes on a click elsewhere", async () => {
+    // WidgetEditorView auto-opens the picker ~150 ms after a filter is added.
+    // A user (or a Playwright flow) clicking "Select value..." just after that
+    // must not end up with no picker at all: the trigger's onClick re-opens
+    // and the click-away closes in the same event, and the close won.
+    useResolvedFilterOptionsMock.mockReturnValue({
+      options: [{ value: "alpha", label: "Alpha" }],
+      isLoading: false,
+      isError: false,
+      fetchNextPage: vi.fn(),
+      hasNextPage: false,
+      continuationKey: null,
+      isFetchingNextPage: false,
+      isFetchNextPageError: false,
+      queryReadState: "complete",
+      refetch: vi.fn(),
+    });
+    const anchorEl = document.createElement("button");
+    anchorEl.textContent = "Select value...";
+    const elsewhere = document.createElement("div");
+    document.body.append(anchorEl, elsewhere);
+    const onClose = vi.fn();
+
+    render(
+      <FilterValuePickerPopup
+        anchorEl={anchorEl}
+        filter={{ field: "project", value: [] }}
+        onClose={onClose}
+        onApply={vi.fn()}
+        source="traces"
+      />,
+    );
+    // ClickAwayListener arms itself on the next macrotask after mounting.
+    await act(() => new Promise((done) => setTimeout(done, 0)));
+    expect(screen.getByPlaceholderText("Search...")).toBeInTheDocument();
+
+    fireEvent.click(anchorEl);
+    expect(onClose).not.toHaveBeenCalled();
+
+    fireEvent.click(elsewhere);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    anchorEl.remove();
+    elsewhere.remove();
   });
 
   it("bounds oversized exact attribute values before lookup or selection", () => {
@@ -534,6 +1241,9 @@ describe("WidgetEditor filter-value picker", () => {
     );
 
     expect(screen.getByText("Retained")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Suggestions are temporarily unavailable",
+    );
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(retryFreshPage).toHaveBeenCalledOnce();
     document.body.removeChild(anchorEl);
@@ -669,6 +1379,192 @@ describe("WidgetEditor filter-value picker", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
     expect(onApply).toHaveBeenLastCalledWith(["gamma"], ["string"]);
     document.body.removeChild(anchorEl);
+  });
+
+  describe("saved array membership popup", () => {
+    let anchorEl;
+    afterEach(() => anchorEl?.remove());
+
+    const savedWire = {
+      filter_type: "array",
+      filter_op: "contains",
+      filter_value: ["hit"],
+      col_type: "SPAN_ATTRIBUTE",
+    };
+    const setOptions = (options) =>
+      useResolvedFilterOptionsMock.mockReturnValue({
+        options,
+        isLoading: false,
+        isError: false,
+        hasNextPage: false,
+        isFetchingNextPage: false,
+        isFetchNextPageError: false,
+        queryReadState: "complete",
+        refetch: vi.fn(),
+      });
+    const checkbox = (label) =>
+      within(screen.getByText(label).parentElement).getByRole("checkbox");
+    const openSaved = (wire, options, overrides = {}) => {
+      anchorEl = document.createElement("button");
+      document.body.appendChild(anchorEl);
+      setOptions(options);
+      const filter = {
+        id: "tags",
+        registryId: "custom_attribute:tags",
+        type: "custom_attribute",
+        ...restoreWidgetFilterConfig(wire),
+        ...overrides,
+      };
+      const onApply = vi.fn();
+      const picker = (activeFilter) => (
+        <FilterValuePickerPopup
+          anchorEl={anchorEl}
+          filter={activeFilter}
+          source="traces"
+          onClose={vi.fn()}
+          onApply={onApply}
+        />
+      );
+      return { ...render(picker(filter)), filter, onApply, picker };
+    };
+
+    it.each(["contains", "not_contains"])(
+      "restores literal saved %s members as checked and deselects once without duplicates",
+      (filterOp) => {
+        const wire = { ...savedWire, filter_op: filterOp };
+        const { filter, onApply } = openSaved(wire, [
+          { value: "hit", label: "Hit", type: "array" },
+          { value: "other", label: "Other", type: "array" },
+        ]);
+        expect(filter.valueTypes).toBeUndefined();
+        expect(checkbox("Hit")).toBeChecked();
+        fireEvent.click(screen.getByText("Hit"));
+        expect(checkbox("Hit")).not.toBeChecked();
+        expect(screen.getByRole("button", { name: "Add" })).toBeDisabled();
+        fireEvent.click(screen.getByText("Other"));
+        fireEvent.click(screen.getByRole("button", { name: "Add" }));
+        expect(onApply).toHaveBeenCalledWith(["other"], ["array"]);
+        const [value, valueTypes] = onApply.mock.calls[0];
+        expect(
+          buildWidgetFilterConfig({ ...filter, value, valueTypes }),
+        ).toEqual({
+          filter_type: "array",
+          filter_op: filterOp,
+          filter_value: ["other"],
+          col_type: "SPAN_ATTRIBUTE",
+        });
+      },
+    );
+
+    it("keeps Specify members selected after apply, save and reopen without array wire tags", () => {
+      const { filter, onApply, rerender, picker } = openSaved(savedWire, [
+        { value: "hit", label: "Hit", type: "array" },
+      ]);
+      fireEvent.change(screen.getByPlaceholderText("Search..."), {
+        target: { value: "miss" },
+      });
+      fireEvent.click(screen.getByText("miss"));
+      fireEvent.click(screen.getByRole("button", { name: "Add" }));
+      expect(onApply).toHaveBeenCalledWith(["hit", "miss"], ["array", "array"]);
+      const [value, valueTypes] = onApply.mock.calls[0];
+      const applied = { ...filter, value, valueTypes };
+      rerender(null);
+      rerender(picker(applied));
+      fireEvent.change(screen.getByPlaceholderText("Search..."), {
+        target: { value: "miss" },
+      });
+      expect(
+        within(
+          screen.getByText("miss").closest("[data-widget-filter-exact-value]"),
+        ).getByRole("checkbox"),
+      ).toBeChecked();
+
+      const wire = buildWidgetFilterConfig(applied);
+      expect(wire).toEqual({ ...savedWire, filter_value: ["hit", "miss"] });
+      expect(wire).not.toHaveProperty("attribute_value_types");
+      rerender(null);
+      // Once this member is observed, the fetched option must have the same
+      // identity as the earlier Specify entry, even after saved-wire hydration.
+      setOptions([
+        { value: "hit", label: "Hit", type: "array" },
+        { value: "miss", label: "Miss", type: "array" },
+      ]);
+      rerender(picker({ ...filter, ...restoreWidgetFilterConfig(wire) }));
+      expect(checkbox("Hit")).toBeChecked();
+      expect(checkbox("Miss")).toBeChecked();
+      fireEvent.click(screen.getByText("Miss"));
+      fireEvent.click(screen.getByRole("button", { name: "Add" }));
+      expect(onApply).toHaveBeenLastCalledWith(["hit"], ["array"]);
+    });
+
+    it.each([
+      {
+        action: "selects",
+        initial: ["hidden", false, "false"],
+        expected: ["hidden", false, "false", 0, "0"],
+      },
+      {
+        action: "deselects",
+        initial: ["hidden", false, "false", 0, "0"],
+        expected: ["hidden", false, "false"],
+      },
+    ])(
+      "$action visible typed members without losing hidden saved array selections",
+      ({ initial, expected }) => {
+        const { filter, onApply } = openSaved(
+          { ...savedWire, filter_value: initial },
+          [
+            { value: "hidden", label: "Hidden", type: "array" },
+            { value: false, label: "False boolean", type: "array" },
+            { value: "false", label: "False text", type: "array" },
+            { value: 0, label: "Zero number", type: "array" },
+            { value: "0", label: "Zero text", type: "array" },
+          ],
+        );
+        fireEvent.change(screen.getByPlaceholderText("Search..."), {
+          target: { value: "Zero" },
+        });
+        fireEvent.click(screen.getByText("Select all in list (2)"));
+        fireEvent.click(screen.getByRole("button", { name: "Add" }));
+        expect(onApply).toHaveBeenCalledWith(
+          expected,
+          expected.map(() => "array"),
+        );
+        const [value, valueTypes] = onApply.mock.calls[0];
+        expect(
+          buildWidgetFilterConfig({ ...filter, value, valueTypes }),
+        ).toEqual({
+          ...savedWire,
+          filter_value: expected,
+        });
+      },
+    );
+
+    it("resynchronizes only-dataType changes without retaining scalar or unsaved selections", () => {
+      const { filter, onApply, rerender, picker } = openSaved(
+        savedWire,
+        [
+          { value: "hit", label: "Hit", type: "string" },
+          { value: "extra", label: "Extra", type: "string" },
+        ],
+        { dataType: "string" },
+      );
+      expect(checkbox("Hit")).toBeChecked();
+      fireEvent.click(screen.getByText("Extra"));
+      fireEvent.change(screen.getByPlaceholderText("Search..."), {
+        target: { value: "Hit" },
+      });
+      setOptions([
+        { value: "hit", label: "Hit", type: "array" },
+        { value: "extra", label: "Extra", type: "array" },
+      ]);
+      rerender(picker({ ...filter, dataType: "array" }));
+      expect(screen.getByPlaceholderText("Search...")).toHaveValue("");
+      expect(checkbox("Hit")).toBeChecked();
+      expect(checkbox("Extra")).not.toBeChecked();
+      fireEvent.click(screen.getByRole("button", { name: "Add" }));
+      expect(onApply).toHaveBeenCalledWith(["hit"], ["array"]);
+    });
   });
 
   it("retains distinct boolean, numeric, and string option values", () => {

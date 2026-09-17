@@ -23,7 +23,9 @@ def _read(path: Path) -> str:
 def _compose_config() -> dict[str, object]:
     if shutil.which("docker") is None:
         pytest.skip("docker CLI is unavailable")
-    environment = os.environ.copy()
+    environment = {
+        key: value for key, value in os.environ.items() if key in ("PATH", "HOME")
+    }
     environment.update(
         {
             "FI_COLLECTOR_VERSION": "local",
@@ -33,16 +35,22 @@ def _compose_config() -> dict[str, object]:
             "PROPERTY_CATALOG_KAFKA_HEAP_OPTS": "-Xms256m -Xmx512m",
             "FI_COLLECTOR_CPUS": "1.0",
             "FI_COLLECTOR_MEMORY": "1G",
-            "PROPERTY_CATALOG_SEQUENCER_CPUS": "0.5",
-            "PROPERTY_CATALOG_SEQUENCER_MEMORY": "768M",
             "PROPERTY_CATALOG_CONSUMER_CPUS": "0.5",
             "PROPERTY_CATALOG_CONSUMER_MEMORY": "512M",
-            "PROPERTY_CATALOG_SUPERVISOR_CPUS": "0.5",
-            "PROPERTY_CATALOG_SUPERVISOR_MEMORY": "768M",
         }
     )
     result = subprocess.run(
-        ["docker", "compose", "config", "--format", "json"],
+        [
+            "docker",
+            "compose",
+            "--env-file",
+            os.devnull,
+            "-f",
+            str(COMPOSE_FILE),
+            "config",
+            "--format",
+            "json",
+        ],
         cwd=ROOT,
         env=environment,
         check=False,
@@ -60,48 +68,35 @@ def test_compose_builds_the_shared_collector_image_with_bounded_resources() -> N
     assert isinstance(services, dict)
 
     collector = services["fi-collector"]
-    sequencer = services["fi-property-catalog-sequencer"]
     consumer = services["fi-property-catalog-consumer"]
-    assert collector["image"] == "futureagi/fi-collector:local"
-    assert sequencer["image"] == "futureagi/fi-collector:local"
-    assert consumer["image"] == "futureagi/fi-collector:local"
-    assert Path(collector["build"]["context"]).name == "fi-collector"
-    assert Path(sequencer["build"]["context"]).name == "fi-collector"
-    assert Path(consumer["build"]["context"]).name == "fi-collector"
-    assert sequencer["entrypoint"] == ["/usr/local/bin/fi-property-catalog-sequencer"]
+    for service in (collector, consumer):
+        assert service["image"] == "futureagi/fi-collector:local"
+        assert Path(service["build"]["context"]).name == "fi-collector"
     assert consumer["entrypoint"] == ["/usr/local/bin/fi-property-catalog-consumer"]
+    assert consumer["command"] == []
 
     collector_env = collector["environment"]
-    sequencer_env = sequencer["environment"]
     consumer_env = consumer["environment"]
-    candidate_topic = collector_env["FI_PROPERTY_CATALOG_KAFKA_TOPIC"]
-    ordered_topic = sequencer_env["FI_PROPERTY_CATALOG_KAFKA_TOPIC"]
-    assert collector_env["FI_PROPERTY_CATALOG_MODE"] == "kafka"
-    assert sequencer_env["FI_PROPERTY_CATALOG_MODE"] == "sequencer"
-    assert sequencer_env["FI_PROPERTY_CATALOG_CANDIDATE_KAFKA_TOPIC"] == candidate_topic
-    assert consumer_env["FI_PROPERTY_CATALOG_KAFKA_TOPIC"] == ordered_topic
-    assert candidate_topic != ordered_topic
-    assert sequencer_env["FI_PROPERTY_CATALOG_SEQUENCER_TRANSACTIONAL_ID"]
-    assert sequencer_env["FI_PROPERTY_CATALOG_CANDIDATE_KAFKA_CONSUMER_GROUP"]
-    assert sequencer_env["FI_PROPERTY_CATALOG_CANDIDATE_KAFKA_INSTANCE_ID"]
-    sequencer_volumes = {
+    topic = collector_env["FI_OBSERVED_CATALOG_KAFKA_TOPIC"]
+    assert collector_env["FI_OBSERVED_CATALOG_MODE"] == "kafka"
+    assert topic == "futureagi.observed-attributes.v1"
+    assert consumer_env["FI_OBSERVED_CATALOG_KAFKA_TOPIC"] == topic
+    assert consumer_env["FI_OBSERVED_CATALOG_KAFKA_GROUP"] == (
+        "futureagi.observed-attributes.consumer.v1"
+    )
+    assert consumer_env["FI_OBSERVED_CATALOG_CH_DATABASE"] == (
+        services["backend"]["environment"]["PROPERTY_CATALOG_DATABASE"]
+    )
+    collector_volumes = {
         (volume["source"], volume["target"], volume.get("read_only", False))
-        for volume in sequencer["volumes"]
+        for volume in collector["volumes"]
     }
-    assert (
-        "property-catalog-sequencer-data",
-        "/var/lib/property-catalog-sequencer",
-        False,
-    ) in sequencer_volumes
-    assert (
-        "fi-collector-data",
-        "/var/lib/property-catalog-control",
-        True,
-    ) in sequencer_volumes
-
+    assert ("fi-collector-data", "/var/lib/fi-collector", False) in collector_volumes
+    assert collector_env["FI_OBSERVED_CATALOG_SPOOL_DIR"] == (
+        "/var/lib/fi-collector/observed-catalog"
+    )
     topic_init_env = services["property-catalog-topic-init"]["environment"]
-    assert topic_init_env["PROPERTY_CATALOG_CANDIDATE_KAFKA_TOPIC"] == candidate_topic
-    assert topic_init_env["PROPERTY_CATALOG_ORDERED_KAFKA_TOPIC"] == ordered_topic
+    assert topic_init_env["OBSERVED_CATALOG_KAFKA_TOPIC"] == topic
 
     kafka = services["property-catalog-kafka"]
     assert kafka["environment"]["KAFKA_HEAP_OPTS"] == "-Xms256m -Xmx512m"
@@ -121,21 +116,11 @@ def test_compose_builds_the_shared_collector_image_with_bounded_resources() -> N
             "protocol": "tcp",
         }
     ]
-    supervisor = services["property-catalog-supervisor"]
-    supervisor_command = " ".join(supervisor["command"])
-    assert "--once" in supervisor_command
-    assert "--initial-backfill" not in supervisor_command
-    assert supervisor["healthcheck"]["test"] == [
-        "CMD-SHELL",
-        "test -f /tmp/property-catalog-supervisor.ready",
-    ]
     for service_name in (
         "property-catalog-kafka",
         "property-catalog-topic-init",
         "fi-collector",
-        "fi-property-catalog-sequencer",
         "fi-property-catalog-consumer",
-        "property-catalog-supervisor",
     ):
         service = services[service_name]
         assert service.get("profiles") in (None, [])
@@ -143,9 +128,7 @@ def test_compose_builds_the_shared_collector_image_with_bounded_resources() -> N
     for service_name in (
         "property-catalog-kafka",
         "fi-collector",
-        "fi-property-catalog-sequencer",
         "fi-property-catalog-consumer",
-        "property-catalog-supervisor",
     ):
         assert services[service_name]["cpus"] > 0
         assert int(services[service_name]["mem_limit"]) > 0
@@ -154,19 +137,8 @@ def test_compose_builds_the_shared_collector_image_with_bounded_resources() -> N
         assert int(limits["memory"]) > 0
 
     internal_broker = "property-catalog-kafka:9092"
-    assert collector_env["FI_PROPERTY_CATALOG_KAFKA_BROKERS"] == internal_broker
-    assert sequencer_env["FI_PROPERTY_CATALOG_KAFKA_BROKERS"] == internal_broker
-    assert (
-        sequencer_env["FI_PROPERTY_CATALOG_CANDIDATE_KAFKA_BROKERS"] == internal_broker
-    )
-    assert consumer_env["FI_PROPERTY_CATALOG_KAFKA_BROKERS"] == internal_broker
-    supervisor_fence = supervisor["environment"][
-        "PROPERTY_CATALOG_DEV_REVISION_FENCE_FILE"
-    ]
-    sequencer_fence = sequencer_env["FI_PROPERTY_CATALOG_REVISION_FENCE_FILE"]
-    assert supervisor_fence.removeprefix("/var/lib/fi-collector") == (
-        sequencer_fence.removeprefix("/var/lib/property-catalog-control")
-    )
+    assert collector_env["FI_OBSERVED_CATALOG_KAFKA_BROKERS"] == internal_broker
+    assert consumer_env["FI_OBSERVED_CATALOG_KAFKA_BROKERS"] == internal_broker
 
 
 def test_installers_gate_success_on_the_full_catalog_path() -> None:
@@ -178,16 +150,21 @@ def test_installers_gate_success_on_the_full_catalog_path() -> None:
         "property-catalog-runtime-volume-init",
         "property-catalog-topic-init",
         "property-catalog-clickhouse-bootstrap",
-        "property-catalog-postgres-bootstrap",
         "fi-collector",
-        "fi-property-catalog-sequencer",
         "fi-property-catalog-consumer",
-        "property-catalog-supervisor",
         "backend",
     )
     for service in required_services:
         assert service in shell
         assert service in powershell
+
+    for retired in (
+        "property-catalog-postgres-bootstrap",
+        "fi-property-catalog-sequencer",
+        "property-catalog-supervisor",
+    ):
+        assert retired not in shell
+        assert retired not in powershell
 
     assert "INSTALL_READY_TIMEOUT_SECONDS" in shell
     assert "INSTALL_STABILITY_SECONDS" in shell
@@ -203,19 +180,13 @@ def test_installers_cover_kafka_port_and_all_catalog_persistent_state() -> None:
     for installer in (shell, powershell):
         assert "PROPERTY_CATALOG_KAFKA_PORT" in installer
         assert "property-catalog-kafka-data" in installer
-        assert "property-catalog-sequencer-data" in installer
+        assert "property-catalog-sequencer-data" not in installer
         assert "fi-collector-data" in installer
         assert "--ignore-buildable" in installer
-        assert "fi-property-catalog-sequencer" in installer
+        assert "fi-property-catalog-consumer" in installer
 
-    assert (
-        "fi-collector|fi-property-catalog-sequencer|fi-property-catalog-consumer"
-        in shell
-    )
-    assert (
-        "'fi-collector', 'fi-property-catalog-sequencer', 'fi-property-catalog-consumer'"
-        in powershell
-    )
+    assert "fi-collector|fi-property-catalog-consumer" in shell
+    assert "'fi-collector', 'fi-property-catalog-consumer'" in powershell
 
     assert "--wipe-volumes" in shell
     assert "WipeVolumes" in powershell
@@ -236,30 +207,44 @@ def test_shell_installer_parses() -> None:
     assert result.returncode == 0, result.stderr
 
 
-def test_explicit_backfill_entrypoints_are_pinned_and_gated() -> None:
-    shell = _read(BACKFILL_SH)
-    powershell = _read(BACKFILL_PS1)
-    for script in (shell, powershell):
-        assert "ch25_property_catalog_oss_supervisor" in script
-        assert "initial-backfill" in script
-        assert "property-catalog-supervisor" in script
-        assert "docker compose pull" not in script
-        assert "docker-compose pull" not in script
-        assert "git checkout" not in script
-        assert "git fetch" not in script
-        assert "git pull" not in script
-    assert "--execute" in shell
-    assert "-Execute" in powershell
-    assert os.access(BACKFILL_SH, os.X_OK)
+def test_dev_api_proxy_re_resolves_recreated_compose_services() -> None:
+    proxy = _read(ROOT / "deploy/dev-api-proxy/default.conf.template")
+    assert "resolver 127.0.0.11" in proxy
+    assert "server backend:80 resolve;" in proxy
+    assert "server fi-collector:4318 resolve;" in proxy
+    assert "proxy_pass http://dev_backend;" in proxy
+    assert "proxy_pass http://dev_fi_collector;" in proxy
 
-    result = subprocess.run(
-        ["bash", "-n", str(BACKFILL_SH)],
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
+
+def test_retired_lifecycle_management_commands_are_not_discoverable() -> None:
+    # Command discovery is filesystem-only; do not duplicate Django's expensive
+    # cold-start import proof, which belongs to the reader compatibility suite.
+    from django.core.management import find_commands
+
+    commands = find_commands(str(ROOT / "futureagi/tracer/management"))
+    assert not {
+        "ch25_activate_attribute_catalog",
+        "ch25_backfill_attribute_catalog",
+        "ch25_property_catalog_activate_latest",
+        "ch25_property_catalog_dev_rollout",
+        "ch25_property_catalog_lifecycle_controller",
+        "ch25_property_catalog_oss_supervisor",
+    } & set(commands)
+
+
+def test_shared_image_ships_the_backfill_binary_not_lifecycle_wrappers() -> None:
+    dockerfile = _read(ROOT / "fi-collector" / "Dockerfile")
+    for binary in (
+        "fi-collector",
+        "fi-property-catalog-consumer",
+        "fi-observed-catalog-backfill",
+    ):
+        assert f"-o /out/{binary} ./cmd/{binary}" in dockerfile
+        assert f"COPY --from=build /out/{binary} /usr/local/bin/{binary}" in dockerfile
+    assert "fi-property-catalog-sequencer" not in dockerfile
+    assert "fi-catalog-consumer" not in dockerfile
+    assert not BACKFILL_SH.exists()
+    assert not BACKFILL_PS1.exists()
 
 
 def test_power_shell_installer_parses_when_pwsh_is_available() -> None:
