@@ -17,9 +17,9 @@ from simulate.serializers.hosted_harness import (
     HarnessArtifactUploadResponseSerializer,
     HarnessEventBatchResponseSerializer,
     HarnessEventBatchSerializer,
-    HarnessManifestSerializer,
     HarnessIngressRequestSerializer,
     HarnessIngressResponseSerializer,
+    HarnessManifestSerializer,
     HarnessResultReceiptSerializer,
     HarnessScenarioOperationResponseSerializer,
     HarnessScenarioOperationSerializer,
@@ -107,12 +107,11 @@ class HostedHarnessAttemptViewSet(viewsets.ViewSet):
     )
     @action(detail=True, methods=["post"])
     def ingress(self, request, pk=None):
-        """Mint a short-lived, no-header Daytona URL for one guest-selected HTTP port.
+        """Mint a short-lived, no-header URL for one guest-selected HTTP port.
 
         The attempt capability authenticates the trusted ALK guest. Customer processes never
         receive that bearer and therefore cannot expose arbitrary sandbox ports themselves.
         """
-        from django.conf import settings
 
         attempt = self._attempt
         if not attempt.provider_ref:
@@ -125,26 +124,18 @@ class HostedHarnessAttemptViewSet(viewsets.ViewSet):
         remaining = max(60, int((attempt.expires_at - timezone.now()).total_seconds()))
         expires_in_seconds = min(requested_ttl, remaining, 86400)
         try:
-            # Inside the guard: a backend image without the SDK must surface as the typed
-            # 502 below, not as an unhandled 500 the guest reports as spawn_failed.
-            from daytona import Daytona, DaytonaConfig
+            # Import inside the guard so a backend image missing the selected provider SDK
+            # surfaces as the typed 502 below rather than an unhandled server error.
+            from simulate.services.hosted_sandbox import get_sandbox_provider
 
-            client = Daytona(
-                DaytonaConfig(
-                    api_key=getattr(settings, "DAYTONA_API_KEY", ""),
-                    api_url=getattr(settings, "DAYTONA_API_URL", None),
-                    target=getattr(settings, "DAYTONA_TARGET", None),
-                    organization_id=getattr(
-                        settings, "DAYTONA_ORGANIZATION_ID", None
-                    ),
-                )
-            )
-            sandbox = client.get(str(attempt.provider_ref))
-            preview = sandbox.create_signed_preview_url(
+            provider = get_sandbox_provider()
+            sandbox = provider.get(str(attempt.provider_ref))
+            preview = provider.create_preview_url(
+                sandbox,
                 request.validated_data["port"],
                 expires_in_seconds=expires_in_seconds,
             )
-            preview_url = str(getattr(preview, "url", "") or "")
+            preview_url = preview.url
             if not preview_url.startswith("https://"):
                 raise ValueError("signed preview URL is missing or not HTTPS")
         except Exception as exc:
@@ -161,9 +152,7 @@ class HostedHarnessAttemptViewSet(viewsets.ViewSet):
                 status_code=502,
                 retryable=True,
             ) from exc
-        return Response(
-            {"url": preview_url, "expires_in_seconds": expires_in_seconds}
-        )
+        return Response({"url": preview_url, "expires_in_seconds": expires_in_seconds})
 
     @validated_request(
         request_serializer=HarnessManifestSerializer,

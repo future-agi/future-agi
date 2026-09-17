@@ -54,6 +54,7 @@ async-timeout==5.0.1 ; python_full_version < '3.11.3'
 attrs==25.4.0
     # via
     #   aiohttp
+    #   e2b
     #   jsonschema
     #   referencing
 audioop-lts==0.2.2 ; python_full_version >= '3.13'
@@ -87,6 +88,8 @@ botocore==1.42.28
     #   boto3
     #   s3transfer
     #   traceai-bedrock
+bracex==3.0.1
+    # via wcmatch
 build==1.4.0
     # via chromadb
 carehare==1.0.2
@@ -176,6 +179,8 @@ confection==1.3.2
     #   spacy
     #   thinc
     #   weasel
+connectrpc==0.11.1
+    # via e2b
 cron-descriptor==2.0.6
     # via django-celery-beat
 cryptography==46.0.5
@@ -279,6 +284,8 @@ djangorestframework-simplejwt==5.5.1
     # via core-backend
 djangorestframework-stubs==3.16.7
     # via core-backend
+dockerfile-parse==2.0.1
+    # via e2b
 docstring-parser==0.17.0
     # via
     #   anthropic
@@ -287,6 +294,8 @@ drf-yasg==1.21.14
     # via core-backend
 durationpy==0.10
     # via kubernetes
+e2b==2.37.1
+    # via core-backend
 ecdsa==0.19.1
     # via python-jose
 elementpath==4.8.0
@@ -430,7 +439,9 @@ h11==0.16.0
     #   httpcore
     #   uvicorn
 h2==4.3.0
-    # via httpx
+    # via
+    #   e2b
+    #   httpx
 hdbscan==0.8.41
     # via core-backend
 hf-xet==1.2.0 ; platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'arm64' or platform_machine == 'x86_64'
@@ -450,6 +461,8 @@ httpx==0.28.1
     #   anthropic
     #   chromadb
     #   datasets
+    #   daytona
+    #   e2b
     #   elevenlabs
     #   google-genai
     #   langfuse
@@ -748,6 +761,7 @@ opentelemetry-api==1.39.1
     #   opentelemetry-propagator-b3
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
+    #   pyqwest
     #   temporalio
 opentelemetry-exporter-otlp==1.39.1
     # via
@@ -885,6 +899,7 @@ packaging==24.2
     #   datasets
     #   deprecation
     #   drf-yasg
+    #   e2b
     #   google-cloud-aiplatform
     #   google-cloud-bigquery
     #   huggingface-hub
@@ -989,6 +1004,12 @@ protobuf==6.33.6
     #   qdrant-client
     #   temporalio
     #   weaviate-client
+protobuf-py==0.1.1
+    # via
+    #   connectrpc
+    #   e2b
+protobuf-py-ext==0.1.1 ; (platform_machine == 'arm64' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'AMD64' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'ARM64' and platform_python_implementation == 'CPython' and sys_platform == 'win32')
+    # via protobuf-py
 psycopg==3.3.2
     # via core-backend
 psycopg-binary==3.3.2 ; implementation_name != 'pypy'
@@ -1070,6 +1091,10 @@ pypika==0.50.0
     # via chromadb
 pyproject-hooks==1.2.0
     # via build
+pyqwest==0.7.0
+    # via
+    #   connectrpc
+    #   e2b
 pyreadline3==3.5.4 ; sys_platform == 'win32'
     # via humanfriendly
 pysaml2==7.5.0
@@ -1080,6 +1105,13 @@ python-dateutil==2.9.0.post0
     # via
     #   botocore
     #   celery
+    #   daytona-analytics-api-client
+    #   daytona-analytics-api-client-async
+    #   daytona-api-client
+    #   daytona-api-client-async
+    #   daytona-toolbox-api-client
+    #   daytona-toolbox-api-client-async
+    #   e2b
     #   google-cloud-bigquery
     #   kubernetes
     #   pandas
@@ -1191,6 +1223,7 @@ retrying==1.4.2
 rich==14.2.0
     # via
     #   chromadb
+    #   e2b
     #   typer
 rouge-score==0.1.2
     # via core-backend
@@ -1398,6 +1431,7 @@ typing-extensions==4.15.0
     #   django-stubs
     #   django-stubs-ext
     #   djangorestframework-stubs
+    #   e2b
     #   elevenlabs
     #   fi-instrumentation-otel
     #   google-cloud-aiplatform
@@ -1502,6 +1536,8 @@ watchfiles==1.1.1
     #   core-backend
     #   granian
     #   uvicorn
+wcmatch==11.0.1
+    # via e2b
 wcwidth==0.2.14
     # via prompt-toolkit
 weasel==1.0.0

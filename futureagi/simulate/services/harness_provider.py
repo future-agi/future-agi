@@ -1,20 +1,9 @@
-"""Execution-backend switch for the hosted ALK harness control plane.
+"""Public execution-backend switch for the hosted ALK harness control plane.
 
-`HarnessJobViewSet` is provider-neutral: it validates the v1.6 request contract
-(`futureagi.harness-job.v1`) and delegates to the provider selected by
-``settings.HARNESS_PROVIDER``:
-
-- ``daytona`` (default): the platform *is* the gateway. It persists the job,
-  starts ``HostedHarnessGatewayWorkflow`` and drives the Daytona sandbox
-  (matches the hosted-execution seams contract v1.6 — "the gateway drives the
-  Daytona API from outside; no network runtime provider exists").
-- ``sandbox``: the platform is a thin proxy to an out-of-process ALK sandbox
-  server (dev: ALK's local-process provider; prod: a managed sandbox service).
-  The v1.6 request is mapped to the sandbox server's flat contract and
-  forwarded over HTTP; no viewset or UI change is required to switch.
-
-Both providers accept the *same* validated v1.6 payload, so switching backends
-never changes the platform's public request schema.
+``HARNESS_PROVIDER=hosted`` persists jobs and starts the platform-managed gateway.
+``HARNESS_PROVIDER=sandbox`` proxies to an out-of-process ALK sandbox server.
+The hosted gateway independently selects Daytona or E2B through
+``HOSTED_SANDBOX_PROVIDER``; the public v1.6 request contract does not change.
 """
 
 from __future__ import annotations
@@ -38,11 +27,11 @@ from simulate.models import (
 
 
 def get_harness_provider():
-    """Return the configured harness execution provider (default: daytona)."""
-    name = str(getattr(settings, "HARNESS_PROVIDER", "daytona") or "daytona").lower()
+    """Return the configured public harness backend."""
+    name = str(getattr(settings, "HARNESS_PROVIDER", "hosted") or "hosted").lower()
     if name == "sandbox":
         return SandboxHarnessProvider()
-    return DaytonaHarnessProvider()
+    return HostedHarnessProvider()
 
 
 def _organization(request):
@@ -87,12 +76,11 @@ def _scope_jobs(queryset, request):
     return queryset.filter(workspace=workspace)
 
 
-def _validate_secret_refs_daytona(secret_refs: dict) -> None:
-    """Reject secret_refs the Daytona resolver cannot materialize.
+def _validate_secret_refs_hosted(secret_refs: dict) -> None:
+    """Reject secret references that the managed gateway cannot materialize.
 
-    platform-vault target_provider refs keep working.  Any other manager
-    (including harness_environment_file) returns a typed error rather than
-    silently accepting something the resolver will fail on inside the sandbox.
+    Platform-vault target-provider references work for every managed sandbox provider. Other
+    managers return a typed error rather than failing later inside a sandbox.
     """
     from simulate.services.hosted_harness import HostedHarnessError
 
@@ -102,20 +90,28 @@ def _validate_secret_refs_daytona(secret_refs: dict) -> None:
             raise HostedHarnessError(
                 "secret_manager_unsupported",
                 f"secret manager {manager!r} for alias {alias!r} is not supported "
-                f"by the daytona provider; use platform-vault target_provider refs",
+                "by the hosted provider; use platform-vault target_provider refs",
                 status_code=422,
             )
 
 
-def _validate_known_daytona_egress(payload: dict[str, Any], callback_url: str) -> None:
-    """Reject known Daytona egress overflow before persisting or enqueueing a
-    job."""
+def _validate_known_hosted_egress(payload: dict[str, Any], callback_url: str) -> None:
+    """Reject an egress set unsupported by the configured sandbox provider."""
+    from simulate.services.hosted_harness import HostedHarnessError
     from simulate.services.hosted_harness_gateway import (
+        _authoring_ttl_seconds,
+        _execution_ttl_seconds,
         _hostname_from_url,
         _known_simulator_egress_inputs,
         _resolved_egress_domains,
         _validate_egress_domains,
         _validate_resolved_egress_domains,
+    )
+    from simulate.services.hosted_sandbox import (
+        SandboxProviderConfigurationError,
+        sandbox_egress_domain_limit,
+        sandbox_provider_name,
+        validate_sandbox_requirements,
     )
 
     security = payload.get("security") or {}
@@ -133,7 +129,27 @@ def _validate_known_daytona_egress(payload: dict[str, Any], callback_url: str) -
         _known_simulator_egress_inputs(),
         _hostname_from_url(callback_url),
     )
-    _validate_resolved_egress_domains(domains)
+    _validate_resolved_egress_domains(
+        domains, max_domains=sandbox_egress_domain_limit()
+    )
+    runtime = payload["runtime"]
+    max_ttl_seconds = max(
+        _authoring_ttl_seconds(sandbox_provider_name()),
+        _execution_ttl_seconds(runtime),
+    )
+    try:
+        validate_sandbox_requirements(
+            runtime["cpu_units"],
+            runtime["memory_mb"],
+            10,
+            max_ttl_seconds,
+        )
+    except SandboxProviderConfigurationError as exc:
+        raise HostedHarnessError(
+            "sandbox_requirements_unsupported",
+            str(exc),
+            status_code=422,
+        ) from exc
 
 
 def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
@@ -455,10 +471,10 @@ def _preflight_credential_probe(payload) -> list[dict[str, Any]]:
     return [result.as_dict() for result in results]
 
 
-class DaytonaHarnessProvider:
-    """Platform-as-gateway. Persists the job and drives Daytona via Temporal."""
+class HostedHarnessProvider:
+    """Persist jobs and drive the configured managed sandbox through Temporal."""
 
-    name = "daytona"
+    name = "hosted"
 
     def create(self, request) -> Response:
         from simulate.services.hosted_harness import (
@@ -487,8 +503,8 @@ class DaytonaHarnessProvider:
         # This uses only references/configuration and deployment env presence.
         # Definitive launch validation runs again after vault resolution.
         try:
-            _validate_secret_refs_daytona(payload["agent"]["secret_refs"])
-            _validate_known_daytona_egress(payload, base_url)
+            _validate_secret_refs_hosted(payload["agent"]["secret_refs"])
+            _validate_known_hosted_egress(payload, base_url)
             _validate_required_credential_files(request, payload)
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
@@ -530,6 +546,7 @@ class DaytonaHarnessProvider:
             HOSTED_ENGINE_CATALOG,
             HOSTED_RUNTIME_CATALOG,
         )
+        from simulate.services.hosted_sandbox import sandbox_runtime_reference
 
         payload = request.validated_data
         base_url = (
@@ -537,8 +554,8 @@ class DaytonaHarnessProvider:
             or request.build_absolute_uri("/")
         ).rstrip("/")
         try:
-            _validate_secret_refs_daytona(payload["agent"]["secret_refs"])
-            _validate_known_daytona_egress(payload, base_url)
+            _validate_secret_refs_hosted(payload["agent"]["secret_refs"])
+            _validate_known_hosted_egress(payload, base_url)
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
         runtime = payload["runtime"]
@@ -561,14 +578,15 @@ class DaytonaHarnessProvider:
         # Every submitted key must be accepted: a wrong model key beside a valid transport
         # key still ends in a run that cannot speak.
         probe_failed = any(not item["ok"] for item in probe)
+        runtime_name, runtime_digest = sandbox_runtime_reference()
         return Response(
             {
                 "ready_to_submit": not credentials["missing"] and not probe_failed,
                 "credentials": credentials["report"],
                 "effective_parallelism": runtime["parallelism"],
                 "snapshot": {
-                    "name": getattr(settings, "ALK_DAYTONA_SNAPSHOT", None),
-                    "digest": getattr(settings, "ALK_DAYTONA_SNAPSHOT_DIGEST", None),
+                    "name": runtime_name or None,
+                    "digest": runtime_digest or None,
                     "engines": HOSTED_ENGINE_CATALOG,
                     "runtimes": HOSTED_RUNTIME_CATALOG,
                 },
@@ -607,7 +625,7 @@ class DaytonaHarnessProvider:
 
     def adjust(self, request, pk) -> Response:
         from simulate.services.hosted_harness import HostedHarnessError
-        from simulate.services.hosted_harness_gateway import DaytonaHostedGateway
+        from simulate.services.hosted_harness_gateway import HostedHarnessGateway
 
         job = self._job(request, pk)
         if job is None:
@@ -616,7 +634,7 @@ class DaytonaHarnessProvider:
                 status=status.HTTP_404_NOT_FOUND,
             )
         try:
-            job = DaytonaHostedGateway().adjust(job, request.validated_data)
+            job = HostedHarnessGateway().adjust(job, request.validated_data)
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
         return Response(serialize_job(job))
@@ -927,12 +945,27 @@ class DaytonaHarnessProvider:
         return Response(result, status=status.HTTP_201_CREATED)
 
     def health(self) -> dict[str, Any]:
+        from simulate.services.hosted_sandbox import (
+            sandbox_provider_name,
+            sandbox_runtime_reference,
+        )
+
+        provider = sandbox_provider_name()
+        runtime_name, runtime_build_id = sandbox_runtime_reference()
+        if provider == "e2b":
+            configured = bool(
+                getattr(settings, "E2B_API_KEY", "")
+                and runtime_name
+                and runtime_build_id
+                and int(getattr(settings, "ALK_E2B_MAX_TTL_SECONDS", 0)) > 0
+            )
+        else:
+            configured = bool(getattr(settings, "DAYTONA_API_KEY", "") and runtime_name)
         return {
-            "configured": bool(
-                getattr(settings, "DAYTONA_API_KEY", "")
-                and getattr(settings, "ALK_DAYTONA_SNAPSHOT", "")
-            ),
-            "provider": "daytona",
+            "configured": configured,
+            "provider": provider,
+            "sandbox_provider": provider,
+            "public_ingress": provider == "daytona",
         }
 
     def _job(self, request, pk):
