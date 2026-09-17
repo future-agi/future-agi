@@ -2159,12 +2159,18 @@ export default function WidgetEditorView() {
     isResolving: isResolvingWorkspace,
     isSwitching: isSwitchingWorkspace,
     resolveAttempted: resolveAttemptedWorkspace,
+    resolveError: resolveWorkspaceError,
   } = useCrossWorkspaceRecovery({
     dashboardId,
     isError: isDashboardError,
     error: dashboardError,
     isLoading: isDashboardLoading,
   });
+  // A transient resolve failure (network / 5xx) must not render as
+  // "not found" — it falls through to the editorLoadState error branch
+  // with the retry UI.
+  const resolveWorkspaceFailedTransiently =
+    Boolean(resolveWorkspaceError) && resolveWorkspaceError?.statusCode !== 404;
   const createMutation = useCreateWidget();
   const updateMutation = useUpdateWidget();
   const deleteMutation = useDeleteWidget();
@@ -4166,12 +4172,14 @@ export default function WidgetEditorView() {
   }
 
   // A definite 404 (after the cross-workspace resolve has run) is the only
-  // case rendered as "not found" here. Transient failures (network / 5xx)
-  // must fall through to the editorLoadState error branch below, which shows
-  // the retry UI instead of claiming the dashboard is missing.
+  // case rendered as "not found" here. Transient failures (network / 5xx) —
+  // of the dashboard fetch or of the resolve call itself — must fall
+  // through to the editorLoadState error branch below, which shows the
+  // retry UI instead of claiming the dashboard is missing.
   if (
     !dashboard &&
-    (isDashboardError ? dashboardError?.statusCode === 404 : resolveAttemptedWorkspace)
+    (isDashboardError ? dashboardError?.statusCode === 404 : resolveAttemptedWorkspace) &&
+    !resolveWorkspaceFailedTransiently
   ) {
     return (
       <Box

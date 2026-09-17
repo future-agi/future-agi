@@ -324,6 +324,7 @@ const recovery = vi.hoisted(() => ({
   isResolving: false,
   isSwitching: false,
   resolveAttempted: false,
+  resolveError: null,
 }));
 
 vi.mock("src/hooks/use_cross_workspace_recovery", () => ({
@@ -331,6 +332,7 @@ vi.mock("src/hooks/use_cross_workspace_recovery", () => ({
     isResolving: recovery.isResolving,
     isSwitching: recovery.isSwitching,
     resolveAttempted: recovery.resolveAttempted,
+    resolveError: recovery.resolveError,
   }),
 }));
 
@@ -339,6 +341,7 @@ describe("DashboardDetailView — cross-workspace recovery", () => {
     vi.clearAllMocks();
     recovery.isResolving = false;
     recovery.isSwitching = false;
+    recovery.resolveError = null;
     h.widgets = [{ id: "w-1", name: "Tokens", position: 0, width: 12 }];
     // Simulate a 404 — the primary fetch failed, triggering the resolve path.
     h.dashboardData = null;
@@ -371,6 +374,22 @@ describe("DashboardDetailView — cross-workspace recovery", () => {
         /Dashboard not found or you may not have access to this workspace/i,
       ),
     ).toBeInTheDocument();
+  });
+
+  it("shows the transient-failure retry UI when the resolve call itself fails non-404", () => {
+    // The primary fetch 404'd (cross-workspace), but the resolve request hit
+    // a network error / 5xx — that must not be presented as "not found".
+    recovery.resolveAttempted = true;
+    recovery.resolveError = { statusCode: 503 };
+
+    render(<DashboardDetailView />);
+    expect(
+      screen.getByText(/Something went wrong while loading this dashboard/i),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Dashboard not found/i),
+    ).not.toBeInTheDocument();
   });
 });
 

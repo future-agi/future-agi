@@ -29,6 +29,7 @@ export function useCrossWorkspaceRecovery({
   const {
     data: resolvedWorkspace,
     isFetching: isResolving,
+    error: resolveError,
     refetch: resolveWorkspace,
   } = useResolveDashboardWorkspace(dashboardId);
 
@@ -93,5 +94,5 @@ export function useCrossWorkspaceRecovery({
     currentWorkspaceId,
   ]);
 
-  return { isResolving, isSwitching, resolveAttempted };
+  return { isResolving, isSwitching, resolveAttempted, resolveError };
 }
