@@ -3,15 +3,18 @@ import {
   Box,
   Button,
   Chip,
-  Divider,
+  IconButton,
   MenuItem,
+  Slider,
   Stack,
-  Switch,
   TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Typography,
 } from "@mui/material";
+import { alpha } from "@mui/material/styles";
 import PropTypes from "prop-types";
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 
 import Iconify from "src/components/iconify";
 import {
@@ -23,21 +26,37 @@ import {
   ProfessionOptions,
 } from "src/sections/persona/PersonaCreateEdit/common";
 
-// Only what a person may change. A scenario is proved against a world before it is kept, and the
-// fields left out here are the ones that proof depends on: the caller's identity is seeded into
-// the world, and what they want is what the checks were written against. Showing them disabled
-// would read as broken rather than deliberate, so they are absent and explained instead.
-// These lists carry a lowercase value and a display label. A scenario's persona is written with
-// the label casing, so matching on the label is what makes an existing accent or language select
-// itself instead of coming up blank.
+// Edit one scenario.
+//
+// Every scenario is proved before it is kept: the world is set up, a known-good run has to pass, and
+// the checks have to fail when nothing is done. That proof pins the caller's identity, the task, the
+// setup and the checks, so none of them is offered here. The drawer holds what a person may change
+// and nothing else: a control that cannot be used is worse than no control, and a row explaining
+// what you may not do is worse still.
+//
+//   Every agent      passes when, branch, keywords
+//   Conversational   personality, communication style, accent, language, profession, location
+//   Voice            max turns, background noise
 const readable = (name) => String(name || "").replace(/[_-]+/g, " ").trim();
 
+// These lists carry a lowercase value and a display label. A scenario's persona is written with the
+// label casing, so matching on the label is what makes an existing accent or language select itself
+// instead of coming up blank.
 const pick = (options) =>
   (options || []).map((one) => (typeof one === "string" ? one : one.label ?? one.value));
 
-export default function ScenarioEditForm({ scenario, busy, onCancel, onSave }) {
+// Where the call is made from. The voice runtime maps each of these to a real ambience clip, so
+// these are the settings that actually reach a run; anything else would be a label over silence.
+const NOISE = ["off", "home", "office", "retail", "street", "vehicle", "transit", "outdoors"];
+
+const noiseOf = (value) => {
+  if (!value) return "off";
+  return typeof value === "string" ? value : "home";
+};
+
+const draftOf = (scenario) => {
   const persona = scenario.persona || {};
-  const [form, setForm] = useState({
+  return {
     tests: scenario.tests || "",
     branch: scenario.branch || "",
     keywords: persona.keywords || [],
@@ -47,31 +66,64 @@ export default function ScenarioEditForm({ scenario, busy, onCancel, onSave }) {
     languages: persona.languages || [],
     occupation: persona.occupation || "",
     location: persona.location || "",
-    background_noise: Boolean(scenario.background_noise),
-  });
+    max_turns: scenario.max_turns || 10,
+    background_noise: noiseOf(scenario.background_noise),
+  };
+};
+
+export default function ScenarioEditForm({ scenario, busy, onCancel, onSave }) {
+  const initial = useMemo(() => draftOf(scenario), [scenario]);
+  const [form, setForm] = useState(initial);
   const set = (key) => (value) => setForm((prev) => ({ ...prev, [key]: value }));
   const conversational = Boolean(scenario.persona);
+  // A save re-checks the scenario, and a change the harness judges consequential costs a model call
+  // and a fresh proof. Saving an untouched form would pay that for nothing.
+  const dirty = JSON.stringify(form) !== JSON.stringify(initial);
 
   return (
-    <Stack spacing={2.5} sx={{ mt: 2 }}>
-      <Stack spacing={2}>
+    <Stack sx={{ height: "100%" }}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={2}
+        sx={{ px: 2.5, py: 2, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
+      >
+        <Box flex={1} minWidth={0}>
+          <Typography noWrap sx={{ typography: "m2", fontWeight: 600 }}>
+            {readable(scenario.name)}
+          </Typography>
+          <Typography noWrap sx={{ typography: "s2", color: "text.subtitle" }}>
+            {scenario.use_case}
+          </Typography>
+        </Box>
+        <IconButton size="small" onClick={onCancel}>
+          <Iconify icon="solar:close-circle-linear" width={18} sx={{ color: "text.subtitle" }} />
+        </IconButton>
+      </Stack>
+
+      <Stack spacing={2.5} sx={{ flex: 1, overflow: "auto", p: 2.5 }}>
+        <SectionHeader
+          title="Scenario"
+          hint="None of this is part of what the scenario was proved against, so it saves straight to the suite."
+        />
+
         <TextField
-          fullWidth
-          multiline
-          minRows={2}
           size="small"
           label="Passes when"
-          helperText="What this scenario claims to check. Shown in results."
+          multiline
+          minRows={2}
           value={form.tests}
           onChange={(event) => set("tests")(event.target.value)}
+          helperText="What a pass looks like. Shown in results."
+          InputProps={{ sx: { typography: "s2" } }}
         />
         <TextField
-          fullWidth
           size="small"
-          label="What makes this one different"
-          helperText="Tells it apart from the others in the same use case."
+          label="Branch"
           value={form.branch}
           onChange={(event) => set("branch")(event.target.value)}
+          helperText="What makes this one different from its siblings in the same use case."
+          InputProps={{ sx: { typography: "s2" } }}
         />
         <Autocomplete
           multiple
@@ -89,137 +141,215 @@ export default function ScenarioEditForm({ scenario, busy, onCancel, onSave }) {
             <TextField
               {...params}
               label="Keywords"
-              helperText="Used to filter the suite. Never affects a run."
+              helperText="Filters the suite. Never reaches a run."
             />
           )}
         />
-      </Stack>
 
-      {conversational && (
-        <>
-          <Divider textAlign="left">
-            <Typography variant="caption" color="text.secondary">
-              The caller
-            </Typography>
-          </Divider>
-
-          <Stack spacing={2}>
-            <TextField
-              select
-              fullWidth
-              size="small"
-              label="Personality"
-              value={form.personality}
-              onChange={(event) => set("personality")(event.target.value)}
-            >
-              {PersonalityOptions.map((one) => (
-                <MenuItem key={one.value ?? one} value={one.value ?? one}>
-                  {one.label ?? one}
-                </MenuItem>
-              ))}
-            </TextField>
-
-            <TextField
-              select
-              fullWidth
-              size="small"
-              label="Communication style"
-              value={form.communication_style}
-              onChange={(event) => set("communication_style")(event.target.value)}
-            >
-              {CommunicationStyleOptions.map((one) => (
-                <MenuItem key={one.value ?? one} value={one.value ?? one}>
-                  {one.label ?? one}
-                </MenuItem>
-              ))}
-            </TextField>
-
-            <Autocomplete
-              size="small"
-              options={pick(AccentOptions)}
-              value={form.accent}
-              onChange={(event, value) => set("accent")(value || "")}
-              renderInput={(params) => <TextField {...params} label="Accent" />}
+        {conversational && (
+          <>
+            <SectionHeader
+              title="Caller"
+              hint="How the caller comes across. An agent decides nothing from how somebody sounds, so none of this reaches the world or the checks."
             />
 
-            <Autocomplete
-              multiple
-              size="small"
-              options={pick(LanguageOptions)}
-              value={form.languages}
-              onChange={(event, value) => set("languages")(value)}
-              renderInput={(params) => (
-                <TextField
-                  {...params}
-                  label="Languages"
-                  helperText="Set only what this agent supports."
-                />
-              )}
-            />
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+              <TextField
+                select
+                fullWidth
+                size="small"
+                label="Personality"
+                value={form.personality}
+                onChange={(event) => set("personality")(event.target.value)}
+                InputProps={{ sx: { typography: "s2" } }}
+              >
+                {PersonalityOptions.map((one) => (
+                  <MenuItem
+                    key={one.value ?? one}
+                    value={one.value ?? one}
+                    sx={{ typography: "s2" }}
+                  >
+                    {one.label ?? one}
+                  </MenuItem>
+                ))}
+              </TextField>
+              <TextField
+                select
+                fullWidth
+                size="small"
+                label="Communication style"
+                value={form.communication_style}
+                onChange={(event) => set("communication_style")(event.target.value)}
+                InputProps={{ sx: { typography: "s2" } }}
+              >
+                {CommunicationStyleOptions.map((one) => (
+                  <MenuItem
+                    key={one.value ?? one}
+                    value={one.value ?? one}
+                    sx={{ typography: "s2" }}
+                  >
+                    {one.label ?? one}
+                  </MenuItem>
+                ))}
+              </TextField>
+            </Stack>
 
-            <Autocomplete
-              freeSolo
-              size="small"
-              options={pick(ProfessionOptions)}
-              value={form.occupation}
-              onChange={(event, value) => set("occupation")(value || "")}
-              renderInput={(params) => <TextField {...params} label="Profession" />}
-            />
-
-            <Autocomplete
-              freeSolo
-              size="small"
-              options={pick(LocationOptions)}
-              value={form.location}
-              onChange={(event, value) => set("location")(value || "")}
-              renderInput={(params) => <TextField {...params} label="Location" />}
-            />
-
-            <Stack direction="row" alignItems="center" justifyContent="space-between">
-              <Box>
-                <Typography variant="body2">Background noise</Typography>
-                <Typography variant="caption" color="text.secondary">
-                  Tests how the agent copes in real conditions.
-                </Typography>
-              </Box>
-              <Switch
-                checked={form.background_noise}
-                onChange={(event) => set("background_noise")(event.target.checked)}
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+              <Autocomplete
+                fullWidth
+                size="small"
+                options={pick(AccentOptions)}
+                value={form.accent}
+                onChange={(event, value) => set("accent")(value || "")}
+                renderInput={(params) => <TextField {...params} label="Accent" />}
+              />
+              <Autocomplete
+                multiple
+                fullWidth
+                size="small"
+                options={pick(LanguageOptions)}
+                value={form.languages}
+                onChange={(event, value) => set("languages")(value)}
+                renderInput={(params) => <TextField {...params} label="Language" />}
               />
             </Stack>
-          </Stack>
-        </>
-      )}
 
-      <Stack spacing={1}>
-        <LockedRow
-          label="Caller"
-          value={[persona.name, persona.age_group].filter(Boolean).join(", ")}
-          prompt={`change the caller in ${scenario.name} to a different person`}
-        />
-        <LockedRow
-          label="Opens with"
-          value={persona.initial_message}
-          prompt={`reword the opening line in ${scenario.name}`}
-        />
-        <LockedRow
-          label="What the caller wants"
-          value={scenario.instruction}
-          prompt={`change what the caller wants in ${scenario.name}`}
-        />
-        <LockedRow
-          label="What is measured"
-          value={(scenario.sub_goals || []).map(readable).join(", ")}
-          prompt={`change what is measured in ${scenario.name}`}
-        />
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+              <Autocomplete
+                freeSolo
+                fullWidth
+                size="small"
+                options={pick(ProfessionOptions)}
+                value={form.occupation}
+                onChange={(event, value) => set("occupation")(value || "")}
+                renderInput={(params) => <TextField {...params} label="Profession" />}
+              />
+              <Autocomplete
+                freeSolo
+                fullWidth
+                size="small"
+                options={pick(LocationOptions)}
+                value={form.location}
+                onChange={(event, value) => set("location")(value || "")}
+                renderInput={(params) => <TextField {...params} label="Location" />}
+              />
+            </Stack>
+
+            <SectionHeader
+              title="Call constraints"
+              hint="Every scenario carries defaults. Overriding them here is safe."
+            />
+
+            <Box>
+              <Stack direction="row" alignItems="center" spacing={1}>
+                <Typography sx={{ typography: "s2", fontWeight: 600, flex: 1 }}>
+                  Max turns
+                </Typography>
+                <Typography sx={{ typography: "s2", fontVariantNumeric: "tabular-nums" }}>
+                  {form.max_turns}
+                </Typography>
+              </Stack>
+              <Slider
+                size="small"
+                min={2}
+                max={40}
+                value={form.max_turns}
+                onChange={(event, value) => set("max_turns")(value)}
+              />
+              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                How long the call may go before it is called off.
+              </Typography>
+            </Box>
+
+            <Box>
+              <Typography sx={{ typography: "s2", fontWeight: 600, mb: 0.75 }}>
+                Background noise
+              </Typography>
+              <ToggleButtonGroup
+                size="small"
+                exclusive
+                value={form.background_noise}
+                onChange={(event, value) => value && set("background_noise")(value)}
+                sx={{
+                  flexWrap: "wrap",
+                  gap: 0.5,
+                  "& .MuiToggleButton-root": {
+                    typography: "s2",
+                    fontWeight: 600,
+                    textTransform: "none",
+                    px: 1.5,
+                    py: 0.375,
+                    color: "text.secondary",
+                    border: "1px solid",
+                    borderColor: "divider",
+                    borderRadius: 1,
+                    "&.Mui-selected": {
+                      bgcolor: (theme) => alpha(theme.palette.primary.main, 0.12),
+                      color: "primary.main",
+                      borderColor: "primary.main",
+                    },
+                  },
+                }}
+              >
+                {NOISE.map((one) => (
+                  <ToggleButton key={one} value={one}>
+                    {one}
+                  </ToggleButton>
+                ))}
+              </ToggleButtonGroup>
+              <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.75 }}>
+                Where the call is made from. Each of these is a real ambience the run plays.
+              </Typography>
+            </Box>
+          </>
+        )}
+
+        <Stack
+          direction="row"
+          spacing={1.25}
+          alignItems="flex-start"
+          sx={{
+            p: 1.75,
+            borderRadius: 1.25,
+            border: "1px solid",
+            borderColor: (theme) => alpha(theme.palette.primary.main, 0.24),
+            bgcolor: (theme) => alpha(theme.palette.primary.main, 0.06),
+          }}
+        >
+          <Iconify
+            icon="solar:shield-check-linear"
+            width={15}
+            sx={{ color: "primary.main", flexShrink: 0, mt: "1px" }}
+          />
+          <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+            This scenario was proved before it was kept: the world was set up, a known-good run had
+            to pass, and the checks had to fail when nothing was done. Saving re-checks it against
+            that same proof.
+          </Typography>
+        </Stack>
       </Stack>
 
-      <Stack direction="row" spacing={1} justifyContent="flex-end">
-        <Button size="small" onClick={onCancel} disabled={busy}>
+      <Stack
+        direction="row"
+        justifyContent="flex-end"
+        spacing={1}
+        sx={{ px: 2.5, py: 1.75, borderTop: "1px solid", borderColor: "divider", flexShrink: 0 }}
+      >
+        <Button
+          onClick={onCancel}
+          disabled={busy}
+          sx={{ typography: "s2", fontWeight: 600, color: "text.secondary" }}
+        >
           Cancel
         </Button>
-        <Button size="small" variant="contained" disabled={busy} onClick={() => onSave(form)}>
-          Save
+        <Button
+          variant="contained"
+          size="small"
+          disabled={busy || !dirty}
+          onClick={() => onSave(form)}
+          sx={{ typography: "s2", fontWeight: 700 }}
+        >
+          Save scenario
         </Button>
       </Stack>
     </Stack>
@@ -233,76 +363,24 @@ ScenarioEditForm.propTypes = {
   onSave: PropTypes.func.isRequired,
 };
 
-// A field the scenario is proved around, shown rather than hidden. Seeing the value and being told
-// how to change it is more use than an empty space where a control might have been, and the prompt
-// is the exact thing to say once the chat is wired.
-function LockedRow({ label, value, prompt }) {
+function SectionHeader({ title, hint }) {
   return (
-    <Box
-      sx={{
-        p: 1.5,
-        borderRadius: 1.25,
-        border: "1px solid",
-        borderColor: "divider",
-        bgcolor: "background.neutral",
-      }}
-    >
-      <Stack direction="row" alignItems="flex-start" spacing={1}>
-        <Iconify
-          icon="solar:lock-keyhole-minimalistic-linear"
-          width={13}
-          sx={{ color: "text.subtitle", mt: "3px", flexShrink: 0 }}
-        />
-        <Box flex={1} minWidth={0}>
-          <Typography
-            sx={{
-              typography: "s3",
-              fontWeight: 700,
-              color: "text.secondary",
-              mb: 0.375,
-              textTransform: "uppercase",
-              letterSpacing: 0.4,
-            }}
-          >
-            {label}
-          </Typography>
-          <Typography
-            sx={{
-              typography: "s2",
-              display: "-webkit-box",
-              WebkitLineClamp: 3,
-              WebkitBoxOrient: "vertical",
-              overflow: "hidden",
-            }}
-          >
-            {value || "\u2014"}
-          </Typography>
-          <Stack direction="row" alignItems="center" spacing={0.75} sx={{ mt: 1 }}>
-            <Iconify
-              icon="solar:chat-round-line-linear"
-              width={13}
-              sx={{ color: "text.subtitle" }}
-            />
-            <Typography
-              noWrap
-              sx={{
-                typography: "s3",
-                fontFamily: "ui-monospace, Menlo, monospace",
-                color: "text.subtitle",
-                minWidth: 0,
-              }}
-            >
-              {prompt}
-            </Typography>
-          </Stack>
-        </Box>
-      </Stack>
+    <Box>
+      <Typography
+        sx={{
+          typography: "s3",
+          fontWeight: 700,
+          color: "text.primary",
+          textTransform: "uppercase",
+          letterSpacing: 0.6,
+          mb: 0.375,
+        }}
+      >
+        {title}
+      </Typography>
+      <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{hint}</Typography>
     </Box>
   );
 }
 
-LockedRow.propTypes = {
-  label: PropTypes.string,
-  value: PropTypes.string,
-  prompt: PropTypes.string,
-};
+SectionHeader.propTypes = { title: PropTypes.string, hint: PropTypes.string };
