@@ -181,6 +181,8 @@ def resolve_experiment(identifier: str, organization, workspace=None):
         dataset__organization=organization,
         deleted=False,
     )
+    if workspace:
+        matches = matches.filter(dataset__workspace=workspace)
     if matches.count() == 1:
         return matches.first(), None
 
