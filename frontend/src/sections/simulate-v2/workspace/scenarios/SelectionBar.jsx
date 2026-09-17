@@ -28,24 +28,13 @@ export default function SelectionBar({ count, onDelete, onClear }) {
       }}
     >
       {/* count + label */}
-      <Stack direction="row" alignItems="center" spacing={1}>
-        <Box
-          sx={{
-            width: 22, height: 22, borderRadius: "50%",
-            display: "grid", placeItems: "center", flexShrink: 0,
-            bgcolor: "text.primary", color: "background.paper",
-          }}
-        >
-          <Iconify icon="solar:check-read-linear" width={13} />
+      <Typography sx={{ typography: "s2", color: "text.primary" }}>
+        <Box component="span" sx={{ fontWeight: 700 }}>{count}</Box>
+        {" "}
+        <Box component="span" sx={{ color: "text.secondary" }}>
+          {count === 1 ? "scenario selected" : "scenarios selected"}
         </Box>
-        <Typography sx={{ typography: "s2", color: "text.primary" }}>
-          <Box component="span" sx={{ fontWeight: 700 }}>{count}</Box>
-          {" "}
-          <Box component="span" sx={{ color: "text.secondary" }}>
-            {count === 1 ? "scenario selected" : "scenarios selected"}
-          </Box>
-        </Typography>
-      </Stack>
+      </Typography>
 
       {/* hint pointing at the builder */}
       <Stack
