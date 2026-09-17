@@ -31,11 +31,11 @@ export async function downloadEvidence(claim, path, {baseUrl, database, username
   const maxBytes = Math.min(claim.limits.max_evidence_bytes, 256 * 1024 * 1024);
   const maxRows = 50000;
   const query = `SELECT * FROM spans FINAL
-WHERE project_id = {project:UUID} AND trace_id = {trace:String}
-AND (org_id = {org:UUID} OR isNull(org_id)) AND is_deleted = 0
+PREWHERE project_id = {project:UUID} AND trace_id = {trace:String}
+WHERE (org_id = {org:UUID} OR isNull(org_id)) AND is_deleted = 0
 AND created_at <= {cutoff:DateTime64(6)} AND updated_at <= {cutoff:DateTime64(6)}
 ORDER BY start_time, id LIMIT ${maxRows + 1}
-SETTINGS max_execution_time=30, max_result_bytes=${maxBytes}, result_overflow_mode='throw'
+SETTINGS max_execution_time=30, max_result_bytes=${maxBytes}, result_overflow_mode='throw', max_threads=1, max_memory_usage=134217728
 FORMAT JSONEachRow`;
   const response = await fetchImpl(endpoint, {method: 'POST', body: query, signal, redirect: 'error',
     headers: {'Content-Type': 'text/plain', 'X-ClickHouse-User': username, 'X-ClickHouse-Key': password}});
@@ -95,8 +95,30 @@ export async function storeEvidence(chunks, path, claim, {signal, maxBytes = cla
 // File offsets are host-owned. The model cannot select a path or execute a query.
 export function createEvidenceReader(store, {maxResultBytes, maxTotalBytes, signal}) {
   const receipts = new Map();
+  const readRanges = new Map();
   let readBytes = 0;
+  function fullyRead(span) {
+    const ranges = (readRanges.get(span.span_id) ?? []).sort((a, b) => a[0] - b[0]);
+    let covered = 0;
+    for (const [start, end] of ranges) {
+      if (start > covered) break;
+      covered = Math.max(covered, end);
+    }
+    return covered >= span.bytes;
+  }
   return {
+    allSpansRead() {
+      for (const span of store.index.values()) if (!fullyRead(span)) return false;
+      return true;
+    },
+    unreadSpanIds(limit = 20) {
+      const ids = [];
+      for (const span of store.index.values()) {
+        if (!fullyRead(span)) ids.push(span.span_id);
+        if (ids.length >= limit) break;
+      }
+      return ids;
+    },
     inventory(cursor = 0) {
       if (!Number.isSafeInteger(cursor) || cursor < 0 || cursor > store.index.size) throw new Error('Invalid inventory cursor');
       const rows = [];
@@ -150,6 +172,9 @@ export function createEvidenceReader(store, {maxResultBytes, maxTotalBytes, sign
         const text = result.text;
         receipts.set(evidenceId, {evidence_id: evidenceId, span_id: spanId, parent_span_id: span.parent_span_id || null,
           excerpt: text.slice(0, 8000)});
+        const ranges = readRanges.get(spanId) ?? [];
+        ranges.push([offset, offset + returned]);
+        readRanges.set(spanId, ranges);
         return result;
       } finally { await file.close(); }
     },
