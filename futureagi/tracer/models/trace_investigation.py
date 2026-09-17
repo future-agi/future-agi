@@ -70,6 +70,13 @@ class TraceInvestigationJob(BaseModel):
         default=TraceInvestigationJobState.WAITING,
     )
     not_before = models.DateTimeField()
+    current_report = models.ForeignKey(
+        "tracer.TraceInvestigationReport",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="current_for_jobs",
+    )
 
     class Meta:
         db_table = "tracer_trace_investigation_job"
@@ -155,13 +162,23 @@ class TraceInvestigationReport(BaseModel):
     )
     idempotency_key = models.CharField(max_length=255)
     result_digest = models.CharField(max_length=71)
-    result = models.JSONField()
-    occurrences = models.JSONField(default=list)
+    contract_version = models.CharField(max_length=64)
+    evidence_digest = models.CharField(max_length=71)
+    execution_status = models.CharField(max_length=20)
+    outcome = models.CharField(max_length=20)
+    coverage_scope = models.CharField(max_length=255)
+    observed_span_count = models.PositiveIntegerField()
+    read_complete = models.BooleanField()
+    future_arrivals_known = models.BooleanField()
+    model_calls = models.PositiveIntegerField()
+    input_tokens = models.PositiveBigIntegerField()
+    output_tokens = models.PositiveBigIntegerField()
+    cost_usd = models.DecimalField(max_digits=20, decimal_places=9, null=True)
+    cost_status = models.CharField(max_length=64)
     grouping_status = models.CharField(
         max_length=20,
         choices=TraceInvestigationGroupingStatus.choices,
     )
-    active_projection_updated = models.BooleanField(default=False)
 
     class Meta:
         db_table = "tracer_trace_investigation_report"
@@ -175,5 +192,204 @@ class TraceInvestigationReport(BaseModel):
             models.Index(
                 fields=["project", "grouping_status", "created_at"],
                 name="trace_inv_report_group_idx",
+            )
+        ]
+
+
+class TraceInvestigationRequirementCheck(BaseModel):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    report = models.ForeignKey(
+        TraceInvestigationReport,
+        on_delete=models.CASCADE,
+        related_name="requirement_checks",
+    )
+    requirement_id = models.CharField(max_length=128)
+    ordinal = models.PositiveIntegerField()
+    requirement = models.TextField()
+    status = models.CharField(max_length=64)
+
+    class Meta:
+        db_table = "tracer_trace_investigation_requirement_check"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["report", "requirement_id"], name="unique_inv_requirement_id"
+            )
+        ]
+
+
+class TraceInvestigationFinding(BaseModel):
+    id = models.UUIDField(primary_key=True, editable=False)
+    report = models.ForeignKey(
+        TraceInvestigationReport, on_delete=models.CASCADE, related_name="findings"
+    )
+    finding_id = models.CharField(max_length=128)
+    ordinal = models.PositiveIntegerField()
+    kind = models.CharField(max_length=64)
+    statement = models.TextField()
+    recovery = models.CharField(max_length=64)
+    requirement = models.ForeignKey(
+        TraceInvestigationRequirementCheck,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="findings",
+    )
+    cluster = models.ForeignKey(
+        "tracer.TraceErrorGroup",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="investigation_findings",
+    )
+
+    class Meta:
+        db_table = "tracer_trace_investigation_finding"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["report", "finding_id"], name="unique_inv_finding_id"
+            )
+        ]
+        indexes = [
+            models.Index(fields=["cluster"], name="trace_inv_finding_cluster_idx")
+        ]
+
+
+class TraceInvestigationEvidenceReceipt(BaseModel):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    report = models.ForeignKey(
+        TraceInvestigationReport,
+        on_delete=models.CASCADE,
+        related_name="evidence_receipts",
+    )
+    evidence_id = models.CharField(max_length=128)
+    ordinal = models.PositiveIntegerField()
+    span_id = models.CharField(max_length=64)
+    parent_span_id = models.CharField(max_length=64, null=True, blank=True)
+    excerpt = models.TextField()
+    end_time = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "tracer_trace_investigation_evidence_receipt"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["report", "evidence_id"], name="unique_inv_evidence_id"
+            )
+        ]
+
+
+class TraceInvestigationAttribution(BaseModel):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    finding = models.ForeignKey(
+        TraceInvestigationFinding, on_delete=models.CASCADE, related_name="attributions"
+    )
+    role = models.CharField(max_length=16)
+    status = models.CharField(max_length=16)
+    span_id = models.CharField(max_length=64, null=True, blank=True)
+
+    class Meta:
+        db_table = "tracer_trace_investigation_attribution"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["finding", "role"], name="unique_inv_finding_role"
+            )
+        ]
+
+
+class TraceInvestigationFindingEvidence(BaseModel):
+    finding = models.ForeignKey(TraceInvestigationFinding, on_delete=models.CASCADE)
+    evidence = models.ForeignKey(
+        TraceInvestigationEvidenceReceipt, on_delete=models.CASCADE
+    )
+
+    class Meta:
+        db_table = "tracer_trace_investigation_finding_evidence"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["finding", "evidence"], name="unique_inv_finding_evidence"
+            )
+        ]
+
+
+class TraceInvestigationAttributionEvidence(BaseModel):
+    attribution = models.ForeignKey(
+        TraceInvestigationAttribution, on_delete=models.CASCADE
+    )
+    evidence = models.ForeignKey(
+        TraceInvestigationEvidenceReceipt, on_delete=models.CASCADE
+    )
+
+    class Meta:
+        db_table = "tracer_trace_investigation_attribution_evidence"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["attribution", "evidence"],
+                name="unique_inv_attribution_evidence",
+            )
+        ]
+
+
+class TraceInvestigationRequirementEvidence(BaseModel):
+    requirement = models.ForeignKey(
+        TraceInvestigationRequirementCheck, on_delete=models.CASCADE
+    )
+    evidence = models.ForeignKey(
+        TraceInvestigationEvidenceReceipt, on_delete=models.CASCADE
+    )
+
+    class Meta:
+        db_table = "tracer_trace_investigation_requirement_evidence"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["requirement", "evidence"],
+                name="unique_inv_requirement_evidence",
+            )
+        ]
+
+
+class TraceInvestigationVerificationReceipt(BaseModel):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    report = models.ForeignKey(
+        TraceInvestigationReport,
+        on_delete=models.CASCADE,
+        related_name="verification_receipts",
+    )
+    receipt_id = models.CharField(max_length=128)
+    ordinal = models.PositiveIntegerField()
+    executed = models.BooleanField()
+
+    class Meta:
+        db_table = "tracer_trace_investigation_verification_receipt"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["report", "receipt_id"], name="unique_inv_verification_id"
+            )
+        ]
+
+
+class TraceInvestigationGatewayCall(BaseModel):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    report = models.ForeignKey(
+        TraceInvestigationReport, on_delete=models.CASCADE, related_name="gateway_calls"
+    )
+    ordinal = models.PositiveIntegerField()
+    request_id = models.CharField(max_length=255, null=True, blank=True)
+    model_used = models.CharField(max_length=255)
+    cost_usd = models.DecimalField(max_digits=20, decimal_places=9, null=True)
+    input_tokens = models.PositiveBigIntegerField(null=True)
+    output_tokens = models.PositiveBigIntegerField(null=True)
+    total_tokens = models.PositiveBigIntegerField(null=True)
+    cached_input_tokens = models.PositiveBigIntegerField(null=True)
+    reasoning_output_tokens = models.PositiveBigIntegerField(null=True)
+    cache_status = models.CharField(max_length=64, null=True, blank=True)
+    status = models.CharField(max_length=64, null=True, blank=True)
+    http_status = models.PositiveSmallIntegerField(null=True)
+    retry_of = models.PositiveIntegerField(null=True)
+    retry_delay_ms = models.PositiveIntegerField(null=True)
+
+    class Meta:
+        db_table = "tracer_trace_investigation_gateway_call"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["report", "ordinal"], name="unique_inv_gateway_ordinal"
             )
         ]

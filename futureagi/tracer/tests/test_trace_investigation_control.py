@@ -14,7 +14,7 @@ from tracer.models.trace_investigation import (
     TraceInvestigationJobState,
     TraceInvestigationReport,
 )
-from tracer.models.trace_scan import TraceScanConfig, TraceScanEngine, TraceScanResult
+from tracer.models.trace_scan import TraceScanConfig, TraceScanResult
 from tracer.services.trace_investigation import (
     InvestigationConflict,
     InvestigationNotFound,
@@ -57,7 +57,6 @@ def _configure(project):
         project=project,
         sampling_rate=1.0,
         enabled=True,
-        engine=TraceScanEngine.OMEGA,
         scan_version="omega-v1",
         omega_memory=[
             {
@@ -109,7 +108,18 @@ def _result(claim, *, digest=None, findings=True):
         "execution_status": "completed",
         "outcome": "failure" if findings else "success",
         "findings": finding_rows,
-        "requirement_checks": [],
+        "requirement_checks": (
+            [
+                {
+                    "requirement_id": "requirement-1",
+                    "requirement": "Execute the requested amount.",
+                    "status": "violated",
+                    "evidence_ids": ["evidence-1"],
+                }
+            ]
+            if findings
+            else []
+        ),
         "evidence_receipts": [
             {
                 "evidence_id": "evidence-1",
@@ -183,7 +193,6 @@ def test_notification_batch_is_durable_idempotent_and_tenant_scoped(observe_proj
 
 
 @override_settings(
-    ERROR_FEED_OMEGA_ENABLED=True,
     ERROR_FEED_OMEGA_DELAY_SECONDS=0,
     ERROR_FEED_OMEGA_PROJECT_CONCURRENCY=1,
 )
@@ -228,7 +237,6 @@ def test_claim_pins_context_and_reserves_project_capacity(observe_project):
     ],
 )
 @override_settings(
-    ERROR_FEED_OMEGA_ENABLED=True,
     ERROR_FEED_OMEGA_DELAY_SECONDS=0,
 )
 def test_claim_rejects_limits_the_worker_cannot_execute(observe_project, limits):
@@ -245,7 +253,6 @@ def test_claim_rejects_limits_the_worker_cannot_execute(observe_project, limits)
 
 
 @override_settings(
-    ERROR_FEED_OMEGA_ENABLED=True,
     ERROR_FEED_OMEGA_DELAY_SECONDS=0,
     ERROR_FEED_OMEGA_LEASE_SECONDS=120,
 )
@@ -295,7 +302,6 @@ def test_renew_cancel_and_scope_checks(observe_project):
 
 
 @override_settings(
-    ERROR_FEED_OMEGA_ENABLED=True,
     ERROR_FEED_OMEGA_DELAY_SECONDS=0,
 )
 def test_publication_is_idempotent_and_newer_generation_wins(observe_project):
@@ -316,7 +322,6 @@ def test_publication_is_idempotent_and_newer_generation_wins(observe_project):
         result=_result(first_claim),
     )
     assert stale["grouping_status"] == "stale"
-    assert stale["active_projection_updated"] is False
     assert not TraceScanResult.no_workspace_objects.filter(trace_id=trace_id).exists()
     job = TraceInvestigationJob.no_workspace_objects.get(trace_id=trace_id)
     assert (job.generation, job.state) == (2, TraceInvestigationJobState.WAITING)
@@ -340,13 +345,12 @@ def test_publication_is_idempotent_and_newer_generation_wins(observe_project):
     assert accepted["grouping_status"] == "pending"
     assert len(accepted["occurrence_ids"]) == 1
     assert duplicate == {**accepted, "status": "duplicate"}
-    projection = TraceScanResult.no_workspace_objects.get(trace_id=trace_id)
-    assert projection.has_issues is True
-    assert projection.meta["gateway_accounting"][0]["cost"] is None
+    assert not TraceScanResult.no_workspace_objects.filter(trace_id=trace_id).exists()
     report = TraceInvestigationReport.no_workspace_objects.get(id=accepted["report_id"])
-    assert report.result["evidence_receipts"][0]["excerpt"] == (
-        "requested=100 executed=10"
-    )
+    assert report.evidence_receipts.get().excerpt == ("requested=100 executed=10")
+    assert report.findings.get().id == accepted["occurrence_ids"][0]
+    assert report.gateway_calls.get().cost_usd is None
+    assert report.job.current_report_id == report.id
 
     conflicting = deepcopy(result)
     conflicting["result_digest"] = f"sha256:{'b' * 64}"
@@ -359,10 +363,9 @@ def test_publication_is_idempotent_and_newer_generation_wins(observe_project):
 
 
 @override_settings(
-    ERROR_FEED_OMEGA_ENABLED=True,
     ERROR_FEED_OMEGA_DELAY_SECONDS=0,
 )
-def test_cancelled_attempt_report_is_retained_without_updating_projection(
+def test_cancelled_attempt_report_is_retained_without_replacing_current_report(
     observe_project,
 ):
     _configure(observe_project)
@@ -389,19 +392,18 @@ def test_cancelled_attempt_report_is_retained_without_updating_projection(
 
     assert receipt["status"] == "accepted"
     assert receipt["grouping_status"] == "stale"
-    assert receipt["active_projection_updated"] is False
     assert not TraceScanResult.no_workspace_objects.filter(
         trace_id=claim["trace_id"]
     ).exists()
     report = TraceInvestigationReport.no_workspace_objects.get(id=receipt["report_id"])
-    assert report.result["gateway_accounting"][0]["cost"] is None
+    assert report.gateway_calls.get().cost_usd is None
+    assert report.job.current_report_id is None
 
 
 @override_settings(
-    ERROR_FEED_OMEGA_ENABLED=True,
     ERROR_FEED_OMEGA_DELAY_SECONDS=0,
 )
-def test_publication_rejects_cross_project_trace_projection(
+def test_publication_preserves_historical_cross_project_scan(
     observe_project,
     organization,
     workspace,
@@ -426,18 +428,16 @@ def test_publication_rejects_cross_project_trace_projection(
         status="completed",
     )
 
-    with pytest.raises(
-        InvestigationConflict,
-        match="trace projection belongs to a different project",
-    ):
-        _publish(
-            idempotency_key="cross-project-publication",
-            lease_token=claim["lease_token"],
-            result=_result(claim),
-        )
-    assert not TraceInvestigationReport.no_workspace_objects.filter(
-        idempotency_key="cross-project-publication"
-    ).exists()
+    receipt = _publish(
+        idempotency_key="cross-project-publication",
+        lease_token=claim["lease_token"],
+        result=_result(claim),
+    )
+    assert receipt["status"] == "accepted"
+    assert (
+        TraceScanResult.no_workspace_objects.get(trace_id=claim["trace_id"]).project_id
+        == foreign_project.id
+    )
 
 
 @override_settings(INTERNAL_API_SECRET="test-secret")
