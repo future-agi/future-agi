@@ -488,3 +488,72 @@ describe("AddProviderDialog validation", () => {
     expect(save.disabled).toBe(false);
   });
 });
+
+// Regression coverage for #2281: switching named providers must always land
+// on that provider's own upstream adapter, never a format left over from
+// whichever provider was previously selected. Custom is the one multi-format
+// preset, so it's special-cased to keep the current format instead.
+describe("AddProviderDialog — API format follows the selected provider", () => {
+  const providerSelect = () =>
+    screen.getByRole("combobox", { name: "Provider" });
+  const apiFormatSelect = () =>
+    screen.getByRole("combobox", { name: "API Format" });
+
+  it("switches api_format to anthropic when Anthropic is selected from the OpenAI default", async () => {
+    renderCreateDialog();
+
+    await userEvent.click(providerSelect());
+    await userEvent.click(await screen.findByRole("option", { name: "Anthropic" }));
+
+    expect(apiFormatSelect()).toHaveTextContent("anthropic");
+  });
+
+  it("switches api_format to azure, and offers azure as a selectable option", async () => {
+    renderCreateDialog();
+
+    await userEvent.click(providerSelect());
+    await userEvent.click(
+      await screen.findByRole("option", { name: "Azure OpenAI" }),
+    );
+
+    expect(apiFormatSelect()).toHaveTextContent("azure");
+  });
+
+  it("does not retain a stale format when switching back from Anthropic to OpenAI", async () => {
+    renderCreateDialog();
+
+    await userEvent.click(providerSelect());
+    await userEvent.click(await screen.findByRole("option", { name: "Anthropic" }));
+    expect(apiFormatSelect()).toHaveTextContent("anthropic");
+
+    await userEvent.click(providerSelect());
+    await userEvent.click(await screen.findByRole("option", { name: "OpenAI" }));
+    expect(apiFormatSelect()).toHaveTextContent("openai");
+  });
+
+  it("switches api_format to google when Google is selected from the OpenAI default", async () => {
+    renderCreateDialog();
+
+    await userEvent.click(providerSelect());
+    await userEvent.click(
+      await screen.findByRole("option", { name: "Google (Gemini)" }),
+    );
+
+    expect(apiFormatSelect()).toHaveTextContent("google");
+  });
+
+  it("keeps the current format when switching to Custom if Custom still supports it", async () => {
+    renderCreateDialog();
+
+    await userEvent.click(providerSelect());
+    await userEvent.click(await screen.findByRole("option", { name: "Anthropic" }));
+    expect(apiFormatSelect()).toHaveTextContent("anthropic");
+
+    await userEvent.click(providerSelect());
+    await userEvent.click(
+      await screen.findByRole("option", { name: "Custom / Self-hosted" }),
+    );
+
+    expect(apiFormatSelect()).toHaveTextContent("anthropic");
+  });
+});
