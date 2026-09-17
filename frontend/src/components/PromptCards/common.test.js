@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getBlocks, normalizeContentBlocks } from "./common";
+import { getBlocks, getTextSelectionRange, normalizeContentBlocks } from "./common";
 
 const mockQuill = (ops) => ({ getContents: () => ({ ops }) });
 
@@ -186,3 +186,132 @@ describe("getBlocks", () => {
     expect(getBlocks(mockQuill([]))).toEqual([]);
   });
 });
+
+describe("getTextSelectionRange", () => {
+  it("returns null when quill is null or undefined", () => {
+    expect(getTextSelectionRange(null)).toBeNull();
+    expect(getTextSelectionRange(undefined)).toBeNull();
+  });
+
+  it("returns full text range for text-only document", () => {
+    const quill = mockQuill([{ insert: "Hello world\n" }]);
+    expect(getTextSelectionRange(quill)).toEqual({ index: 0, length: 12 });
+  });
+
+  it("excludes media blot at the beginning of the document", () => {
+    const quill = mockQuill([
+      {
+        insert: {
+          ImageBlot: {
+            imageData: { url: "https://img.com", imgName: "x", imgSize: 100 },
+          },
+        },
+      },
+      { insert: "Prompt text here\n" },
+    ]);
+    expect(getTextSelectionRange(quill)).toEqual({ index: 1, length: 17 });
+  });
+
+  it("excludes media blot at the end of the document", () => {
+    const quill = mockQuill([
+      { insert: "Prompt text here" },
+      {
+        insert: {
+          PdfBlot: {
+            pdfData: { url: "https://pdf.dev", pdf_name: "doc", pdfSize: 300 },
+          },
+        },
+      },
+      { insert: "\n" },
+    ]);
+    // Cursor in first text segment selects only first text segment
+    expect(getTextSelectionRange(quill, { index: 5, length: 0 })).toEqual({
+      index: 0,
+      length: 16,
+    });
+  });
+
+  it("selects active text segment when media blot is between text segments", () => {
+    const quill = mockQuill([
+      { insert: "Before text" },
+      {
+        insert: {
+          AudioBlot: {
+            audioData: { url: "https://aud.io", audioName: "a", audioSize: 200 },
+          },
+        },
+      },
+      { insert: "After text\n" },
+    ]);
+    // Cursor at index 2 (inside "Before text", which is range [0, 11))
+    expect(getTextSelectionRange(quill, { index: 2, length: 0 })).toEqual({
+      index: 0,
+      length: 11,
+    });
+    // Cursor at index 15 (inside "After text\n", which is range [12, 23))
+    expect(getTextSelectionRange(quill, { index: 15, length: 0 })).toEqual({
+      index: 12,
+      length: 11,
+    });
+  });
+
+  it("excludes multiple consecutive media blots", () => {
+    const quill = mockQuill([
+      {
+        insert: {
+          ImageBlot: {
+            imageData: { url: "https://img.com", imgName: "x", imgSize: 100 },
+          },
+        },
+      },
+      {
+        insert: {
+          AudioBlot: {
+            audioData: { url: "https://aud.io", audioName: "a", audioSize: 200 },
+          },
+        },
+      },
+      { insert: "Target prompt content\n" },
+    ]);
+    expect(getTextSelectionRange(quill)).toEqual({ index: 2, length: 22 });
+  });
+
+  it("includes inline EditVariable embeds inside text range and excludes media embeds", () => {
+    const quill = mockQuill([
+      {
+        insert: {
+          ImageBlot: {
+            imageData: { url: "https://img.com", imgName: "x", imgSize: 100 },
+          },
+        },
+      },
+      { insert: "Hello {{" },
+      { insert: { EditVariable: { fromBlock: false } } },
+      { insert: "var}} world\n" },
+    ]);
+    // Op 0 is ImageBlot (len 1, range [0, 1)).
+    // Op 1 ("Hello {{", len 8), Op 2 (EditVariable, len 1), Op 3 ("var}} world\n", len 12) form text segment [1, 22) of length 21.
+    expect(getTextSelectionRange(quill)).toEqual({ index: 1, length: 21 });
+  });
+
+  it("returns null when document contains only media blots and no text", () => {
+    const quill = mockQuill([
+      {
+        insert: {
+          ImageBlot: {
+            imageData: { url: "https://img.com", imgName: "x", imgSize: 100 },
+          },
+        },
+      },
+      {
+        insert: {
+          AudioBlot: {
+            audioData: { url: "https://aud.io", audioName: "a", audioSize: 200 },
+          },
+        },
+      },
+    ]);
+    expect(getTextSelectionRange(quill)).toBeNull();
+  });
+});
+
