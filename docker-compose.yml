@@ -683,11 +683,13 @@ services:
       PROPERTY_CATALOG_ORDERED_KAFKA_TOPIC: ${PROPERTY_CATALOG_ORDERED_KAFKA_TOPIC:-${PROPERTY_CATALOG_KAFKA_TOPIC:-futureagi.oss.property-catalog.ordered.v1}}
       PROPERTY_CATALOG_KAFKA_PARTITIONS: ${PROPERTY_CATALOG_KAFKA_PARTITIONS:-6}
       PROPERTY_CATALOG_KAFKA_RETENTION_MS: ${PROPERTY_CATALOG_KAFKA_RETENTION_MS:-259200000}
+      ERROR_FEED_KAFKA_TOPIC: ${ERROR_FEED_KAFKA_TOPIC:-error-feed.trace-available.v1}
     command:
       - |
         candidate="$${PROPERTY_CATALOG_CANDIDATE_KAFKA_TOPIC}"
         ordered="$${PROPERTY_CATALOG_ORDERED_KAFKA_TOPIC}"
-        for topic in "$${candidate}" "$${ordered}"; do
+        error_feed="$${ERROR_FEED_KAFKA_TOPIC}"
+        for topic in "$${candidate}" "$${ordered}" "$${error_feed}"; do
           case "$${topic}" in
             ''|*[!A-Za-z0-9._-]*) echo >&2 "invalid unified property catalog topic"; exit 64 ;;
           esac
@@ -699,7 +701,7 @@ services:
         case "$${PROPERTY_CATALOG_KAFKA_PARTITIONS}" in
           ''|*[!0-9]*) echo >&2 "invalid property catalog partition count"; exit 64 ;;
         esac
-        for topic in "$${candidate}" "$${ordered}"; do
+        for topic in "$${candidate}" "$${ordered}" "$${error_feed}"; do
           /opt/kafka/bin/kafka-topics.sh \
             --bootstrap-server property-catalog-kafka:9092 \
             --create \
@@ -741,6 +743,8 @@ services:
       FI_PROPERTY_CATALOG_REVISION_FENCE_FILE: /var/lib/fi-collector/property-catalog/revision-fence-v2.json
       FI_PROPERTY_CATALOG_KAFKA_BROKERS: property-catalog-kafka:9092
       FI_PROPERTY_CATALOG_KAFKA_TOPIC: ${PROPERTY_CATALOG_CANDIDATE_KAFKA_TOPIC:-futureagi.oss.property-catalog.candidates.v1}
+      FI_ERROR_FEED_KAFKA_BROKERS: property-catalog-kafka:9092
+      FI_ERROR_FEED_KAFKA_TOPIC: ${ERROR_FEED_KAFKA_TOPIC:-error-feed.trace-available.v1}
       # Point at the same ClickHouse the backend uses (HTTP port 8123).
       FI_CH_URL: http://clickhouse:8123
       FI_CH_DATABASE: ${FI_CH_DATABASE:-${CH25_DATABASE:-${CH_DATABASE:-default}}}

@@ -1,14 +1,17 @@
+import uuid
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from tracer.models.trace_scan import TraceScanEngine
+from tracer.models.trace_scan import TraceScanConfig
 from tracer.queries.trace_scanner import get_scan_config
 from tracer.serializers.trace_investigation import PublishInvestigationRequestSerializer
 from tracer.services.trace_investigation import canonical_wire_result_digest
 
 
 def test_legacy_scanner_rejects_omega_project_config():
-    config = SimpleNamespace(enabled=True, engine=TraceScanEngine.OMEGA)
+    assert TraceScanConfig._meta.get_field("scan_version").get_default() == "omega-v1"
+    config = SimpleNamespace(enabled=True, scan_version="omega-v1")
     with patch(
         "tracer.queries.trace_scanner.TraceScanConfig.objects.get_or_create",
         return_value=(config, False),
@@ -29,10 +32,38 @@ def test_queued_legacy_task_skips_omega_project_before_embedding():
     embed.apply_async.assert_not_called()
 
 
-def test_opt_in_v2_adds_no_scheduler_and_preserves_legacy_sweep():
+def test_pg_ingested_root_enters_omega_ledger_with_stable_identity():
+    from tracer.utils.trace_ingestion import _record_inline_omega_roots
+
+    project_id = uuid.uuid4()
+    organization_id = uuid.uuid4()
+    project = SimpleNamespace(
+        id=project_id, organization_id=organization_id, workspace_id=None
+    )
+    root = SimpleNamespace(
+        id=uuid.uuid4(),
+        trace_id=uuid.uuid4(),
+        project_id=project_id,
+        parent_span_id=None,
+        end_time=datetime(2026, 9, 17, tzinfo=UTC),
+    )
+    with (
+        patch("tracer.utils.trace_ingestion.Project") as projects,
+        patch("tracer.utils.trace_ingestion.record_trace_notifications") as record,
+    ):
+        projects.no_workspace_objects.filter.return_value = [project]
+        _record_inline_omega_roots([root], str(organization_id))
+        _record_inline_omega_roots([root], str(organization_id))
+    first = record.call_args_list[0].kwargs["deliveries"][0]
+    second = record.call_args_list[1].kwargs["deliveries"][0]
+    assert first == second
+    assert first["value"]["traces"][0]["trace_id"] == root.trace_id
+
+
+def test_omega_replaces_legacy_sweep():
     from tfc.temporal.schedules import tracer as schedules
 
-    assert "sweep-scannable-traces" in {
+    assert "sweep-scannable-traces" not in {
         item.schedule_id for item in schedules.TRACER_SCHEDULES
     }
     assert not any(

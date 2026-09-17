@@ -7,14 +7,12 @@ from django.utils import timezone
 
 from tracer.models.project import Project
 from tracer.models.trace_investigation import TraceInvestigationJob
-from tracer.models.trace_scan import TraceScanConfig, TraceScanEngine
+from tracer.models.trace_scan import TraceScanConfig
 from tracer.services.trace_investigation import claim_due_investigations
 
 
 @pytest.mark.django_db
-@override_settings(
-    ERROR_FEED_OMEGA_ENABLED=True, ERROR_FEED_OMEGA_PROJECT_CONCURRENCY=2
-)
+@override_settings(ERROR_FEED_OMEGA_PROJECT_CONCURRENCY=2)
 def test_large_older_project_backlog_cannot_starve_another_project(observe_project):
     now = timezone.now()
     other = Project.no_workspace_objects.create(
@@ -29,7 +27,6 @@ def test_large_older_project_backlog_cannot_starve_another_project(observe_proje
             project=project,
             sampling_rate=1.0,
             enabled=True,
-            engine=TraceScanEngine.OMEGA,
             scan_version="omega-v1",
             omega_last_claimed_at=now - timedelta(days=2 - index),
         )
