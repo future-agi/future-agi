@@ -16,6 +16,7 @@ from tracer.models.trace_investigation import (
     TraceInvestigationReconciliationCursor,
 )
 from tracer.models.trace_scan import TraceScanConfig, TraceScanEngine, TraceScanResult
+from tracer.queries.trace_scanner import is_trace_sampled
 from tracer.services.clickhouse.v2 import get_reader
 from tracer.services.clickhouse.v2.query_settings import ch_query_settings
 
@@ -65,6 +66,7 @@ def _eligible_configs(project_limit: int) -> list[TraceScanConfig]:
         TraceScanConfig.no_workspace_objects.filter(
             enabled=True,
             engine=TraceScanEngine.OMEGA,
+            sampling_rate__gt=0,
             project__trace_type="observe",
         )
         .select_related("project")
@@ -92,6 +94,7 @@ def _prepare_window(
                     id=config_id,
                     enabled=True,
                     engine=TraceScanEngine.OMEGA,
+                    sampling_rate__gt=0,
                     project__trace_type="observe",
                 )
             )
@@ -170,12 +173,24 @@ def _apply_page(
             workspace_id=config.project.workspace_id,
             trace_type="observe",
         )
-        current_config = TraceScanConfig.no_workspace_objects.select_for_update().get(
-            id=config.id,
-            project=project,
-            enabled=True,
-            engine=TraceScanEngine.OMEGA,
+        current_config = (
+            TraceScanConfig.no_workspace_objects.select_for_update()
+            .filter(
+                id=config.id,
+                project=project,
+                enabled=True,
+                engine=TraceScanEngine.OMEGA,
+                sampling_rate__gt=0,
+            )
+            .first()
         )
+        if current_config is None:
+            return False, {}
+        valid_ids = [
+            trace_id
+            for trace_id in valid_ids
+            if is_trace_sampled(trace_id, current_config.sampling_rate)
+        ]
         cursor = TraceInvestigationReconciliationCursor.no_workspace_objects.select_for_update().get(
             id=window.cursor_id,
             project=project,

@@ -68,6 +68,7 @@ def _delivery(project, *, offset=1, event_id=None, trace_id=None):
 def _configure(project):
     return TraceScanConfig.no_workspace_objects.create(
         project=project,
+        sampling_rate=1.0,
         enabled=True,
         engine=TraceScanEngine.OMEGA,
         scan_version="omega-v1",
@@ -168,6 +169,7 @@ def _publish(*, idempotency_key, lease_token, result):
 
 @override_settings(ERROR_FEED_OMEGA_DELAY_SECONDS=0)
 def test_notification_batch_is_durable_idempotent_and_tenant_scoped(observe_project):
+    _configure(observe_project)
     delivery = _delivery(observe_project)
 
     first = record_trace_notifications(deliveries=[delivery])

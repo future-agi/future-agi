@@ -74,10 +74,6 @@ class TraceInvestigationDelivery(BaseModel):
         db_table = "tracer_trace_investigation_delivery"
         constraints = [
             models.UniqueConstraint(
-                fields=["topic", "partition", "offset"],
-                name="unique_trace_investigation_delivery",
-            ),
-            models.UniqueConstraint(
                 fields=["organization", "event_id"],
                 name="unique_trace_investigation_event",
             ),
