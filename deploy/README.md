@@ -46,13 +46,13 @@ Paste each into `deploy/.env.production`.
 
 Each image is independently versioned. Pin all five in `.env.production`:
 
-| Variable | Image |
-|---|---|
-| `FUTURE_AGI_VERSION` | `futureagi/future-agi` (backend + worker) |
-| `FRONTEND_VERSION` | `futureagi/frontend` |
-| `AGENTCC_GATEWAY_VERSION` | `futureagi/agentcc-gateway` |
-| `SERVING_VERSION` | `futureagi/serving` |
-| `CODE_EXECUTOR_VERSION` | `futureagi/code-executor` |
+| Variable                  | Image                                     |
+| ------------------------- | ----------------------------------------- |
+| `FUTURE_AGI_VERSION`      | `futureagi/future-agi` (backend + worker) |
+| `FRONTEND_VERSION`        | `futureagi/frontend`                      |
+| `AGENTCC_GATEWAY_VERSION` | `futureagi/agentcc-gateway`               |
+| `SERVING_VERSION`         | `futureagi/serving`                       |
+| `CODE_EXECUTOR_VERSION`   | `futureagi/code-executor`                 |
 
 Use immutable `vX.Y.Z` tags. Mutable tags (`vX.Y`, `latest`) are discouraged in production — they shift under you on the next release.
 
@@ -72,7 +72,7 @@ Verify:
 ```bash
 docker compose ps
 curl -fsS http://localhost:3000/ > /dev/null && echo "frontend ok"
-curl -fsS http://localhost:8000/healthz > /dev/null && echo "backend ok"
+curl -fsS http://localhost:8000/health/ > /dev/null && echo "backend ok"
 ```
 
 ## Deployment topologies
@@ -178,19 +178,19 @@ Roll back by setting the bumped variable(s) to the previous tag and re-running t
 
 ## Resource sizing
 
-| Service | RAM | CPU |
-|---|---|---|
-| backend | 1–2 GB | 1–2 cores |
-| worker | 1 GB | 1 core |
-| agentcc-gateway | 256 MB | 0.5 core |
-| serving | 512 MB | 0.5 core |
-| code-executor | 1 GB (cap) | 2 cores (cap) |
-| postgres | 1–2 GB | 1 core |
-| clickhouse | 2–4 GB | 2 cores |
-| redis | 256 MB | 0.5 core |
-| minio | 512 MB | 0.5 core |
-| temporal | 512 MB | 0.5 core |
-| **total** | **~10 GB** | **~10 cores** |
+| Service         | RAM        | CPU           |
+| --------------- | ---------- | ------------- |
+| backend         | 1–2 GB     | 1–2 cores     |
+| worker          | 1 GB       | 1 core        |
+| agentcc-gateway | 256 MB     | 0.5 core      |
+| serving         | 512 MB     | 0.5 core      |
+| code-executor   | 1 GB (cap) | 2 cores (cap) |
+| postgres        | 1–2 GB     | 1 core        |
+| clickhouse      | 2–4 GB     | 2 cores       |
+| redis           | 256 MB     | 0.5 core      |
+| minio           | 512 MB     | 0.5 core      |
+| temporal        | 512 MB     | 0.5 core      |
+| **total**       | **~10 GB** | **~10 cores** |
 
 ## Pre-flight checklist
 
