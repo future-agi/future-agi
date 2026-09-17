@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from django.conf import settings
 from rest_framework import serializers
 
 from simulate.models import MAX_SCENARIOS_PER_JOB
@@ -338,8 +339,20 @@ class HarnessJobCreateSerializer(serializers.Serializer):
         # 20-30).  Enforce the same conservative per-scenario budget server-side so older
         # UIs and direct API clients cannot reintroduce that failure mode.
         if attrs["scenario_count"] > 10:
+            floor = attrs["scenario_count"] * 360
+            # A floor larger than the sandbox provider will ever grant does not protect the run, it
+            # guarantees the launch is refused before a single scenario is written. Cap it at what
+            # the provider can actually live for, minus the authoring budget and the same slack the
+            # gateway adds.
+            ceiling = int(getattr(settings, "ALK_E2B_MAX_TTL_SECONDS", 0) or 0)
+            provider = str(getattr(settings, "HOSTED_SANDBOX_PROVIDER", "") or "")
+            if provider == "e2b" and ceiling > 0:
+                authoring = int(
+                    getattr(settings, "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS", 3600)
+                )
+                floor = min(floor, max(60, ceiling - authoring - 120))
             runtime["max_duration_seconds"] = max(
-                runtime["max_duration_seconds"], attrs["scenario_count"] * 360
+                runtime["max_duration_seconds"], floor
             )
         connector = agent["connector"]
         if connector in {"livekit", "vapi", "retell", "auto"} and (
