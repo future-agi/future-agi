@@ -10,7 +10,8 @@ COPY futureagi/ .
 RUN pip install --no-cache-dir \
     "daytona==0.207.0" \
     "httpx-ws==0.7.2" \
-    "urllib3>=2.1"
+    "urllib3>=2.1" \
+    "e2b==2.37.1"
 
 # The gRPC import path loads the EE trace scanner, which requires these corpora.
 # Pin both the nltk_data revision and archive checksums for reproducible images.

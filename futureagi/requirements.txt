@@ -61,6 +61,7 @@ async-timeout==5.0.1 ; python_full_version < '3.11.3'
 attrs==25.4.0
     # via
     #   aiohttp
+    #   e2b
     #   jsonschema
     #   referencing
 backoff==2.2.1
@@ -82,6 +83,8 @@ botocore==1.42.28
     #   boto3
     #   s3transfer
     #   traceai-bedrock
+bracex==3.0.1
+    # via wcmatch
 carehare==1.0.2
     # via channels-rabbitmq
 cbor2==5.8.0
@@ -143,6 +146,8 @@ colorama==0.4.6 ; sys_platform == 'win32'
     #   click
     #   qrcode
     #   tqdm
+connectrpc==0.11.1
+    # via e2b
 cron-descriptor==2.0.6
     # via django-celery-beat
 cryptography==46.0.5
@@ -237,11 +242,15 @@ djangorestframework-simplejwt==5.5.1
     # via core-backend
 djangorestframework-stubs==3.16.7
     # via core-backend
+dockerfile-parse==2.0.1
+    # via e2b
 docstring-parser==0.17.0
     # via
     #   anthropic
     #   google-cloud-aiplatform
 drf-yasg==1.21.14
+    # via core-backend
+e2b==2.37.1
     # via core-backend
 ecdsa==0.19.1
     # via python-jose
@@ -366,8 +375,12 @@ h11==0.16.0
     #   httpcore
     #   uvicorn
     #   wsproto
+h2==4.3.0
+    # via e2b
 hf-xet==1.2.0 ; platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'arm64' or platform_machine == 'x86_64'
     # via huggingface-hub
+hpack==4.1.0
+    # via h2
 httpcore==1.0.9
     # via
     #   httpx
@@ -380,6 +393,7 @@ httpx==0.28.1
     # via
     #   anthropic
     #   daytona
+    #   e2b
     #   google-genai
     #   httpx-ws
     #   langfuse
@@ -400,6 +414,8 @@ huggingface-hub==0.36.0
     # via tokenizers
 humanize==4.15.0
     # via flower
+hyperframe==6.1.0
+    # via h2
 idna==3.11
     # via
     #   anyio
@@ -484,12 +500,16 @@ lz4==4.4.5
     # via
     #   clickhouse-connect
     #   core-backend
+markdown-it-py==4.0.0
+    # via rich
 markupsafe==3.0.3
     # via jinja2
 marshmallow==3.26.2
     # via dataclasses-json
 mcp==1.26.0
     # via core-backend
+mdurl==0.1.2
+    # via markdown-it-py
 minio==7.2.20
     # via core-backend
 mixpanel==5.0.0
@@ -557,6 +577,7 @@ opentelemetry-api==1.39.1
     #   opentelemetry-propagator-b3
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
+    #   pyqwest
     #   temporalio
 opentelemetry-exporter-otlp==1.39.1
     # via
@@ -687,6 +708,7 @@ orjson==3.11.5 ; platform_python_implementation != 'PyPy'
 packaging==24.2
     # via
     #   drf-yasg
+    #   e2b
     #   google-cloud-aiplatform
     #   google-cloud-bigquery
     #   huggingface-hub
@@ -747,6 +769,12 @@ protobuf==6.33.6
     #   opentelemetry-proto
     #   proto-plus
     #   temporalio
+protobuf-py==0.1.1
+    # via
+    #   connectrpc
+    #   e2b
+protobuf-py-ext==0.1.1 ; (platform_machine == 'arm64' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'AMD64' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'ARM64' and platform_python_implementation == 'CPython' and sys_platform == 'win32')
+    # via protobuf-py
 psycopg==3.3.2
     # via core-backend
 psycopg-binary==3.3.2 ; implementation_name != 'pypy'
@@ -795,6 +823,8 @@ pydantic-settings==2.12.0
     #   mcp
 pydub==0.25.1
     # via core-backend
+pygments==2.19.2
+    # via rich
 pyjwt==2.10.1
     # via
     #   core-backend
@@ -812,6 +842,10 @@ pypdf==6.6.0
     # via core-backend
 pypdfium2==5.6.0
     # via pdfplumber
+pyqwest==0.7.0
+    # via
+    #   connectrpc
+    #   e2b
 pysaml2==7.5.0
     # via core-backend
 python-crontab==3.3.0
@@ -826,6 +860,7 @@ python-dateutil==2.9.0.post0
     #   daytona-api-client-async
     #   daytona-toolbox-api-client
     #   daytona-toolbox-api-client-async
+    #   e2b
     #   google-cloud-bigquery
     #   pandas
     #   posthog
@@ -911,6 +946,8 @@ restrictedpython==8.5
     # via core-backend
 retrying==1.4.2
     # via core-backend
+rich==14.2.0
+    # via e2b
 rouge-score==0.1.2
     # via core-backend
 rpds-py==0.30.0
@@ -1034,6 +1071,7 @@ typing-extensions==4.16.0
     #   django-stubs
     #   django-stubs-ext
     #   djangorestframework-stubs
+    #   e2b
     #   fi-instrumentation-otel
     #   google-cloud-aiplatform
     #   google-genai
@@ -1122,6 +1160,8 @@ watchfiles==1.1.1
     # via
     #   core-backend
     #   granian
+wcmatch==11.0.1
+    # via e2b
 wcwidth==0.2.14
     # via prompt-toolkit
 webauthn==2.5.1
