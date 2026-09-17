@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { Box, Stack, Tab, Tabs, Typography } from "@mui/material";
 import useEnvironmentsTab from "./hooks/useEnvironmentsTab";
-import { resetEnvironmentsStore } from "./store/useEnvironmentsStore";
+import { resetEnvironmentsEntryState } from "./store/useEnvironmentsStore";
 import BuildEnvironmentTab from "./BuildEnvironmentTab";
 import MyEnvironmentsTab from "./MyEnvironmentsTab";
 import { ENTRY_TAB, ENVIRONMENTS_HEADER, ENV_TABS_SX } from "./environmentOptions";
@@ -10,9 +10,10 @@ export default function EnvironmentsHome() {
   const { tab, setTab } = useEnvironmentsTab();
 
   // The draft must survive the hop to the build page, so the matrix starts clean
-  // on mount instead of clearing on unmount.
+  // on mount instead of clearing on unmount. Only the entry/build slice is
+  // cleared — adopted workspaces persist.
   useEffect(() => {
-    resetEnvironmentsStore();
+    resetEnvironmentsEntryState();
   }, []);
 
   return (

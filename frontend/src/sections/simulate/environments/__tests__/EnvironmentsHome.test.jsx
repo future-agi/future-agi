@@ -119,6 +119,16 @@ describe("EnvironmentsHome", () => {
     expect(useEnvironmentsStore.getState().draft).toEqual({ kind: "repo" });
   });
 
+  it("keeps adopted workspace envs on mount (the reset only clears the entry slice)", () => {
+    useEnvironmentsStore
+      .getState()
+      .adoptEnvironment({ id: "env-a", name: "A" }, "2026-09-17T00:00:00Z");
+    renderHome("/dashboard/simulate/environments");
+    expect(
+      useEnvironmentsStore.getState().workspaceEnvs["env-a"],
+    ).toBeDefined();
+  });
+
   it("renders the header and no scratch button", () => {
     renderHome("/dashboard/simulate/environments?tab=build");
 

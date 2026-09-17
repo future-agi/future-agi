@@ -16,13 +16,10 @@ export const DERIVING_LABEL = {
   idle: "Reading your agent…",
 };
 
-// The muted tab rail on the building pane (labels only in Phase-2).
-export const BUILDING_TABS = [
-  { id: "overview", label: "Overview" },
-  { id: "contract", label: "Contract" },
-  { id: "scenarios", label: "Scenarios" },
-  { id: "evals", label: "Evaluations" },
-];
+// The tab rail on the building pane. It re-exports the workspace tabs so the
+// muted loading rail and the live workspace rail always show the same five
+// labels (including Runs); the building pane just renders them pointer-dead.
+export { WORKSPACE_TABS as BUILDING_TABS } from "../workspace/workspace.constants";
 
 export const BUILD_HEADER_COPY = {
   back: "Change source",

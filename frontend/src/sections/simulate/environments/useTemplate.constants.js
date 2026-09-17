@@ -6,11 +6,6 @@ import { slugify } from "./helpers/slugify";
 // decision is where to build it. These constants back the "where to build it"
 // panel shown after a template card is clicked.
 
-// Snackbar shown after the mock adopt hook resolves. The real workspace
-// navigation lands in Phase-3, so we acknowledge the create and stop there.
-export const TEMPLATE_ADOPT_COPY =
-  "Environment created — the workspace lands in Phase-3.";
-
 export const TEMPLATE_ADOPT_LABEL = "Build environment";
 
 export const BUILD_MODES = { CLOUD: "cloud", LOCAL: "local" };

@@ -34,12 +34,13 @@ const makeProgress = (over = {}) => ({
 });
 
 describe("BuildingStage", () => {
-  it("renders the four muted tab labels and the console", () => {
+  it("renders the five muted tab labels and the console", () => {
     render(<BuildingStage progress={makeProgress()} />);
 
     BUILDING_TABS.forEach((t) => {
       expect(screen.getByText(t.label)).toBeInTheDocument();
     });
+    expect(screen.getAllByRole("tab")).toHaveLength(5);
     expect(screen.getByPlaceholderText("Reply to the builder…")).toBeInTheDocument();
   });
 

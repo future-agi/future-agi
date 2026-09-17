@@ -121,7 +121,15 @@ const SOURCE_NAME_SLUGS = {
 const getEvalPromptText = (evalData, config = {}) =>
   evalData?.instructions || config?.rule_prompt || "";
 
-const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
+const EvalPickerConfigFull = ({
+  evalData,
+  onBack,
+  onSave,
+  isSaving,
+  progress = null,
+  primaryLabel = null,
+  showClose = false,
+}) => {
   // Fail closed while capabilities load (both flags true) so gated controls
   // never flash as available before the fetch resolves.
   const { locked: fagiLocked, isLoading: capsLoading } = useFeatureLocked(
@@ -145,6 +153,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     onFiltersChange,
     sourceTimeWindow,
     filterForm: localFilterForm,
+    onClose,
   } = useEvalPickerContext();
   const normalizedEvalData = useMemo(
     () => normalizeEvalPickerEval(evalData),
@@ -1259,6 +1268,10 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           )}
         </Box>
         <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
+          {/* Host-supplied progress (multi-eval queue walk). Built-in evals
+              hide the version controls, so a bar floating mid-header reads as
+              misplaced — it sits with the version controls instead. */}
+          {progress}
           {/* Save-as-new-version — user evals only. System evals are
               read-only by product policy (editing triggers Copy flow).
               Sits beside the existing version dropdown so the user can
@@ -1301,6 +1314,11 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                 </MenuItem>
               ))}
             </Select>
+          )}
+          {showClose && (
+            <IconButton onClick={onClose} size="small" sx={{ p: 0.5 }}>
+              <Iconify icon="mingcute:close-line" width={20} />
+            </IconButton>
           )}
         </Box>
       </Box>
@@ -2286,11 +2304,12 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   disabled={addDisabled}
                   sx={{ textTransform: "none" }}
                 >
-                  {source === "composite"
-                    ? "Add to Composite"
-                    : isEditMode
-                      ? "Update Evaluation"
-                      : "Add Evaluation"}
+                  {primaryLabel ||
+                    (source === "composite"
+                      ? "Add to Composite"
+                      : isEditMode
+                        ? "Update Evaluation"
+                        : "Add Evaluation")}
                 </LoadingButton>
               </span>
             </CustomTooltip>
@@ -2306,6 +2325,9 @@ EvalPickerConfigFull.propTypes = {
   onBack: PropTypes.func.isRequired,
   onSave: PropTypes.func.isRequired,
   isSaving: PropTypes.bool,
+  progress: PropTypes.node,
+  primaryLabel: PropTypes.string,
+  showClose: PropTypes.bool,
 };
 
 export default EvalPickerConfigFull;

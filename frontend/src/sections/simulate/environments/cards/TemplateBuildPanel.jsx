@@ -1,14 +1,17 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
 import { alpha } from "@mui/material/styles";
-import { enqueueSnackbar } from "notistack";
+import { useNavigate } from "react-router-dom";
 import {
   Box, Button, Stack, Tab, Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { SegmentedTabs } from "src/components/tabs/tabs";
+import { paths } from "src/routes/paths";
 import { useAdoptTemplate } from "src/api/simulate-environments/environments";
 import { packStats } from "../helpers/packStats";
+import { useEnvironmentsStore } from "../store/useEnvironmentsStore";
+import { seedFromTemplate } from "../workspace/helpers/seedEnvState";
 import SectionCard from "../components/SectionCard";
 import LocalScaffoldCard from "./LocalScaffoldCard";
 import {
@@ -19,7 +22,6 @@ import {
   CLOUD_CARD,
   NOTHING_TOUCHES_PRODUCTION,
   STATS_CARD,
-  TEMPLATE_ADOPT_COPY,
   TEMPLATE_ADOPT_LABEL,
   TEMPLATE_SHAPE,
   surfaceIconFor,
@@ -35,8 +37,11 @@ import {
  * detail pane, so it takes a base `template` rather than owning a route.
  */
 export default function TemplateBuildPanel({ template, showName = false }) {
+  const navigate = useNavigate();
   const [mode, setMode] = useState(BUILD_MODES.CLOUD);
   const adopt = useAdoptTemplate();
+  const adoptEnvironment = useEnvironmentsStore((s) => s.adoptEnvironment);
+  const patchEnvState = useEnvironmentsStore((s) => s.patchEnvState);
 
   if (!template) return null;
 
@@ -50,9 +55,18 @@ export default function TemplateBuildPanel({ template, showName = false }) {
     { label: "Agent", value: AGENT_STAT_VALUE },
   ];
 
+  // Adopting a template seeds the workspace directly: register the env record,
+  // seed its per-env state (baseline agent, generated scenarios, the preset as
+  // suggested evals, the template lock), then open the workspace. There is no
+  // build page or derivation stream for a prebuilt world.
   const handleAdopt = () =>
     adopt.mutate(template.id, {
-      onSuccess: () => enqueueSnackbar(TEMPLATE_ADOPT_COPY, { variant: "info" }),
+      onSuccess: ({ envId }) => {
+        const now = new Date().toISOString();
+        adoptEnvironment({ ...template, id: envId, templateId: template.id }, now);
+        patchEnvState(envId, seedFromTemplate(template, now));
+        navigate(paths.dashboard.simulate.environments.detail(envId));
+      },
     });
 
   return (
