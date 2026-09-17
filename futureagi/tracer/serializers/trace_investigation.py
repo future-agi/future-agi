@@ -162,8 +162,6 @@ class InvestigationRequirementCheckSerializer(StrictInputSerializer):
     requirement_id = serializers.CharField(max_length=128)
     requirement = serializers.CharField(max_length=8000)
     status = serializers.CharField(max_length=64)
-    expected = serializers.JSONField(required=False, allow_null=True)
-    observed = serializers.JSONField(required=False, allow_null=True)
     evidence_ids = serializers.ListField(
         child=serializers.CharField(max_length=128), max_length=100
     )
@@ -176,8 +174,6 @@ class InvestigationEvidenceReceiptSerializer(StrictInputSerializer):
         max_length=64, required=False, allow_null=True
     )
     excerpt = serializers.CharField(max_length=8000)
-    input = serializers.JSONField(required=False, allow_null=True)
-    output = serializers.JSONField(required=False, allow_null=True)
     end_time = serializers.DateTimeField(required=False, allow_null=True)
 
 
@@ -207,6 +203,8 @@ class GatewayAccountingSerializer(StrictInputSerializer):
     cost = serializers.FloatField(min_value=0, allow_null=True)
     input_tokens = serializers.IntegerField(required=False, min_value=0)
     output_tokens = serializers.IntegerField(required=False, min_value=0)
+    # Provider diagnostics are accepted on the wire, but only named accounting
+    # scalars are retained in the normalized database rows.
     raw = serializers.JSONField(required=False, allow_null=True)
 
 
@@ -265,7 +263,6 @@ class PublishInvestigationResponseSerializer(serializers.Serializer):
     report_id = serializers.UUIDField()
     occurrence_ids = serializers.ListField(child=serializers.UUIDField())
     grouping_status = serializers.CharField()
-    active_projection_updated = serializers.BooleanField()
 
 
 class InvestigationControlErrorSerializer(serializers.Serializer):

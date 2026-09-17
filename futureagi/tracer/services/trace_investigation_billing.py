@@ -64,7 +64,18 @@ def charge_trace_investigation(report: TraceInvestigationReport) -> None:
     The shared emitter is fire-and-forget. A Redis failure is logged there, not
     retried here; this matches the existing scanner's billing behavior.
     """
-    validated = _validated_cost(report.result)
+    calls = list(report.gateway_calls.all())
+    validated = _validated_cost(
+        {
+            "usage": {
+                "model_calls": report.model_calls,
+                "cost_usd": report.cost_usd,
+            },
+            "gateway_accounting": [
+                {"cost": call.cost_usd, "model_used": call.model_used} for call in calls
+            ],
+        }
+    )
     if validated is None:
         logger.warning("trace_investigation_cost_unpriced", report_id=str(report.id))
         return

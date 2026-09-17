@@ -17,18 +17,22 @@ from tracer.models.project import Project
 from tracer.models.trace_investigation import (
     TraceInvestigationAttempt,
     TraceInvestigationAttemptStatus,
+    TraceInvestigationAttribution,
+    TraceInvestigationAttributionEvidence,
     TraceInvestigationDelivery,
+    TraceInvestigationEvidenceReceipt,
+    TraceInvestigationFinding,
+    TraceInvestigationFindingEvidence,
+    TraceInvestigationGatewayCall,
     TraceInvestigationGroupingStatus,
     TraceInvestigationJob,
     TraceInvestigationJobState,
     TraceInvestigationReport,
+    TraceInvestigationRequirementCheck,
+    TraceInvestigationRequirementEvidence,
+    TraceInvestigationVerificationReceipt,
 )
-from tracer.models.trace_scan import (
-    TraceScanConfig,
-    TraceScanEngine,
-    TraceScanResult,
-    TraceScanStatus,
-)
+from tracer.models.trace_scan import TraceScanConfig
 from tracer.queries.trace_scanner import is_trace_sampled
 from tracer.services.trace_investigation_billing import charge_trace_investigation
 
@@ -241,7 +245,7 @@ def record_trace_notifications(
                 accepted += 1
 
             config = TraceScanConfig.no_workspace_objects.filter(
-                project=project, enabled=True, engine=TraceScanEngine.OMEGA
+                project=project, enabled=True
             ).first()
             if config is None:
                 continue
@@ -429,9 +433,6 @@ def claim_due_investigations(
     *, worker_id: str, engine_version: str, limit: int
 ) -> dict[str, object]:
     """Claim due generations while transactionally enforcing project capacity."""
-    if not settings.ERROR_FEED_OMEGA_ENABLED:
-        return {"claims": []}
-
     now = timezone.now()
     _expire_claims(now)
     due_jobs = TraceInvestigationJob.no_workspace_objects.filter(
@@ -454,7 +455,6 @@ def claim_due_investigations(
     candidate_ids = list(
         TraceScanConfig.no_workspace_objects.filter(
             enabled=True,
-            engine=TraceScanEngine.OMEGA,
             sampling_rate__gt=0,
             scan_version=engine_version,
             project__trace_type="observe",
@@ -496,7 +496,6 @@ def claim_due_investigations(
                 or job.not_before > now
                 or not config.enabled
                 or config.sampling_rate <= 0
-                or config.engine != TraceScanEngine.OMEGA
                 or config.scan_version != engine_version
             ):
                 continue
@@ -654,10 +653,169 @@ def _publication_receipt(
     return {
         "status": "duplicate" if duplicate else "accepted",
         "report_id": report.id,
-        "occurrence_ids": [item["occurrence_id"] for item in report.occurrences],
+        "occurrence_ids": (
+            list(report.findings.order_by("ordinal").values_list("id", flat=True))
+            if report.grouping_status != TraceInvestigationGroupingStatus.STALE
+            else []
+        ),
         "grouping_status": report.grouping_status,
-        "active_projection_updated": report.active_projection_updated,
     }
+
+
+def _persist_investigation_details(
+    report: TraceInvestigationReport, result: Mapping[str, object]
+) -> None:
+    """Persist the validated wire result as relational, report-scoped rows."""
+    checks = {}
+    for ordinal, row in enumerate(result["requirement_checks"]):
+        requirement_id = row["requirement_id"]
+        if requirement_id in checks:
+            raise InvestigationConflict("duplicate requirement_id")
+        checks[requirement_id] = TraceInvestigationRequirementCheck(
+            report=report,
+            requirement_id=requirement_id,
+            ordinal=ordinal,
+            requirement=row["requirement"],
+            status=row["status"],
+        )
+    TraceInvestigationRequirementCheck.objects.bulk_create(checks.values())
+
+    evidence = {}
+    for ordinal, row in enumerate(result["evidence_receipts"]):
+        evidence_id = row["evidence_id"]
+        if evidence_id in evidence:
+            raise InvestigationConflict("duplicate evidence_id")
+        evidence[evidence_id] = TraceInvestigationEvidenceReceipt(
+            report=report,
+            evidence_id=evidence_id,
+            ordinal=ordinal,
+            span_id=row["span_id"],
+            parent_span_id=row.get("parent_span_id"),
+            excerpt=row["excerpt"],
+            end_time=row.get("end_time"),
+        )
+    TraceInvestigationEvidenceReceipt.objects.bulk_create(evidence.values())
+
+    def cited_ids(row: Mapping[str, object]) -> list[str]:
+        ids = row["evidence_ids"]
+        if len(ids) != len(set(ids)) or any(item not in evidence for item in ids):
+            raise InvestigationConflict("invalid evidence citation")
+        return ids
+
+    TraceInvestigationRequirementEvidence.objects.bulk_create(
+        TraceInvestigationRequirementEvidence(
+            requirement=check, evidence=evidence[evidence_id]
+        )
+        for row in result["requirement_checks"]
+        for check in [checks[row["requirement_id"]]]
+        for evidence_id in cited_ids(row)
+    )
+
+    findings = {}
+    for ordinal, row in enumerate(result["findings"]):
+        finding_id = row["finding_id"]
+        if finding_id in findings:
+            raise InvestigationConflict("duplicate finding_id")
+        requirement_id = row.get("requirement_id")
+        if requirement_id is not None and requirement_id not in checks:
+            raise InvestigationConflict("unknown finding requirement_id")
+        findings[finding_id] = TraceInvestigationFinding(
+            id=uuid.uuid5(report.id, finding_id),
+            report=report,
+            finding_id=finding_id,
+            ordinal=ordinal,
+            kind=row["kind"],
+            statement=row["statement"],
+            recovery=row["recovery"],
+            requirement=checks.get(requirement_id),
+        )
+    TraceInvestigationFinding.objects.bulk_create(findings.values())
+    TraceInvestigationFindingEvidence.objects.bulk_create(
+        TraceInvestigationFindingEvidence(
+            finding=findings[row["finding_id"]], evidence=evidence[evidence_id]
+        )
+        for row in result["findings"]
+        for evidence_id in cited_ids(row)
+    )
+
+    attributions = []
+    attribution_citations = []
+    for row in result["findings"]:
+        finding = findings[row["finding_id"]]
+        for role in ("origin", "decisive", "symptom"):
+            value = row["attribution"][role]
+            attribution = TraceInvestigationAttribution(
+                finding=finding,
+                role=role,
+                status=value["status"],
+                span_id=value.get("span_id"),
+            )
+            attributions.append(attribution)
+            attribution_citations.append((attribution, cited_ids(value)))
+    TraceInvestigationAttribution.objects.bulk_create(attributions)
+    TraceInvestigationAttributionEvidence.objects.bulk_create(
+        TraceInvestigationAttributionEvidence(
+            attribution=attribution, evidence=evidence[evidence_id]
+        )
+        for attribution, ids in attribution_citations
+        for evidence_id in ids
+    )
+
+    receipts = {}
+    for ordinal, row in enumerate(result["verification_receipts"]):
+        receipt_id = row["receipt_id"]
+        if receipt_id in receipts:
+            raise InvestigationConflict("duplicate receipt_id")
+        receipts[receipt_id] = TraceInvestigationVerificationReceipt(
+            report=report,
+            receipt_id=receipt_id,
+            ordinal=ordinal,
+            executed=row["executed"],
+        )
+    TraceInvestigationVerificationReceipt.objects.bulk_create(receipts.values())
+
+    calls = []
+    for ordinal, row in enumerate(result["gateway_accounting"]):
+        raw = row.get("raw") or {}
+        if not isinstance(raw, dict):
+            raise InvestigationConflict("invalid gateway diagnostics")
+        usage = raw.get("usage") or {}
+        if not isinstance(usage, dict):
+            raise InvestigationConflict("invalid gateway usage")
+        prompt_details = usage.get("prompt_tokens_details") or {}
+        completion_details = usage.get("completion_tokens_details") or {}
+        if not isinstance(prompt_details, dict) or not isinstance(
+            completion_details, dict
+        ):
+            raise InvestigationConflict("invalid gateway token details")
+        calls.append(
+            TraceInvestigationGatewayCall(
+                report=report,
+                ordinal=ordinal,
+                request_id=row.get("request_id"),
+                model_used=row["model_used"],
+                cost_usd=row.get("cost"),
+                input_tokens=(
+                    row["input_tokens"]
+                    if row.get("input_tokens") is not None
+                    else usage.get("prompt_tokens")
+                ),
+                output_tokens=(
+                    row["output_tokens"]
+                    if row.get("output_tokens") is not None
+                    else usage.get("completion_tokens")
+                ),
+                total_tokens=usage.get("total_tokens"),
+                cached_input_tokens=prompt_details.get("cached_tokens"),
+                reasoning_output_tokens=completion_details.get("reasoning_tokens"),
+                cache_status=raw.get("cache_status"),
+                status=raw.get("status"),
+                http_status=raw.get("http_status"),
+                retry_of=raw.get("retry_of"),
+                retry_delay_ms=raw.get("retry_delay_ms"),
+            )
+        )
+    TraceInvestigationGatewayCall.objects.bulk_create(calls)
 
 
 def publish_investigation(
@@ -722,28 +880,17 @@ def publish_investigation(
             and attempt.lease_expires_at > now
         )
         findings = result["findings"]
-        occurrences = (
-            [
-                {
-                    "occurrence_id": str(
-                        uuid.uuid5(report_id, str(finding["finding_id"]))
-                    ),
-                    "finding_id": finding["finding_id"],
-                }
-                for finding in findings
-            ]
-            if active
-            else []
-        )
         grouping_status = (
             TraceInvestigationGroupingStatus.STALE
             if not active
             else (
                 TraceInvestigationGroupingStatus.PENDING
-                if occurrences
+                if findings
                 else TraceInvestigationGroupingStatus.NOT_REQUIRED
             )
         )
+        coverage = result["coverage"]
+        usage = result["usage"]
         report = TraceInvestigationReport.no_workspace_objects.create(
             id=report_id,
             organization_id=job.organization_id,
@@ -753,53 +900,25 @@ def publish_investigation(
             attempt=attempt,
             idempotency_key=idempotency_key,
             result_digest=result["result_digest"],
-            result=_json_value(result),
-            occurrences=occurrences,
+            contract_version=result["contract_version"],
+            evidence_digest=result["evidence_digest"],
+            execution_status=result["execution_status"],
+            outcome=result["outcome"],
+            coverage_scope=coverage["scope"],
+            observed_span_count=coverage["observed_span_count"],
+            read_complete=coverage["read_complete"],
+            future_arrivals_known=coverage["future_arrivals_known"],
+            model_calls=usage["model_calls"],
+            input_tokens=usage["input_tokens"],
+            output_tokens=usage["output_tokens"],
+            cost_usd=usage.get("cost_usd"),
+            cost_status=usage["cost_status"],
             grouping_status=grouping_status,
-            active_projection_updated=active,
         )
+        _persist_investigation_details(report, result)
         transaction.on_commit(lambda report=report: charge_trace_investigation(report))
         if active:
-            existing_projection = (
-                TraceScanResult.no_workspace_objects.select_for_update()
-                .filter(trace_id=job.trace_id)
-                .first()
-            )
-            if (
-                existing_projection is not None
-                and existing_projection.project_id != job.project_id
-            ):
-                raise InvestigationConflict(
-                    "trace projection belongs to a different project"
-                )
-            TraceScanResult.no_workspace_objects.update_or_create(
-                trace_id=job.trace_id,
-                defaults={
-                    "project_id": job.project_id,
-                    "status": (
-                        TraceScanStatus.COMPLETED
-                        if result["execution_status"] == "completed"
-                        else TraceScanStatus.FAILED
-                    ),
-                    "has_issues": bool(findings),
-                    "key_moments": [],
-                    "meta": {
-                        "omega_report_id": str(report.id),
-                        "outcome": result["outcome"],
-                        "evidence_digest": result["evidence_digest"],
-                        "coverage": _json_value(result["coverage"]),
-                        "usage": _json_value(result["usage"]),
-                        "gateway_accounting": _json_value(result["gateway_accounting"]),
-                        "grouping_status": grouping_status,
-                    },
-                    "scan_version": attempt.engine_version,
-                    "error_message": (
-                        None
-                        if result["execution_status"] == "completed"
-                        else "Omega investigation failed"
-                    ),
-                },
-            )
+            job.current_report = report
 
         if attempt.status == TraceInvestigationAttemptStatus.CLAIMED:
             attempt.status = (
@@ -816,5 +935,5 @@ def publish_investigation(
                 job.state = TraceInvestigationJobState.COMPLETED
             else:
                 job.state = TraceInvestigationJobState.CANCELLED
-            job.save(update_fields=["state", "updated_at"])
+            job.save(update_fields=["state", "current_report", "updated_at"])
         return _publication_receipt(report, duplicate=False)

@@ -49,10 +49,11 @@ def test_charge_uses_existing_emitter_with_stable_tenant_event():
         organization_id=uuid.uuid4(),
         project_id=uuid.uuid4(),
         workspace_id=None,
-        result={
-            "gateway_accounting": [{"model_used": "gemini", "cost": 0.01}],
-            "usage": {"model_calls": 1, "cost_usd": 0.01},
-        },
+        model_calls=1,
+        cost_usd=Decimal("0.01"),
+        gateway_calls=SimpleNamespace(
+            all=lambda: [SimpleNamespace(model_used="gemini", cost_usd=Decimal("0.01"))]
+        ),
     )
     with (
         patch(
@@ -73,7 +74,7 @@ def test_charge_uses_existing_emitter_with_stable_tenant_event():
 
 
 @pytest.mark.django_db
-@override_settings(ERROR_FEED_OMEGA_ENABLED=True, ERROR_FEED_OMEGA_DELAY_SECONDS=0)
+@override_settings(ERROR_FEED_OMEGA_DELAY_SECONDS=0)
 def test_publish_and_duplicate_schedule_same_billing_event(
     observe_project, django_capture_on_commit_callbacks
 ):
