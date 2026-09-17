@@ -33,6 +33,60 @@ test('failure diagnostics classify host budget errors without exposing upstream 
   }
 });
 
+for (const scenario of ['controller_truncated', 'controller_exhausted', 'verifier_truncated', 'provider_overrun']) {
+  test(`output budget reserves verification and rejects partial assessments: ${scenario}`, async () => {
+    const scratch = await mkdtemp(join(tmpdir(), 'omega-budget-test-'));
+    try {
+      const claim = makeClaim();
+      claim.limits.max_output_tokens_total = 1000;
+      const row = {id: 'span-budget', project_id: claim.project_id, trace_id: claim.trace_id,
+        input: 'Refund 10', output: 'Refunded 10'};
+      const raw = JSON.stringify(row);
+      const evidenceId = `${row.id}:0:${Buffer.byteLength(raw)}`;
+      const assessment = {outcome: 'success', findings: [], requirement_checks: [
+        {requirement_id: 'refund', requirement: 'Refund 10', status: 'satisfied', evidence_ids: [evidenceId]}]};
+      const caps = [], phases = [];
+      const result = await investigateTrace(claim, {scratchRoot: scratch,
+        fetchEvidence: async (c, path) => storeEvidence([Buffer.from(raw + '\n')], path, c),
+        gatewayConfig: {baseUrl: 'http://fixture/v1', model: 'fixture', apiKey: 'fixture',
+          fetchImpl: async (_url, init) => {
+            const request = JSON.parse(init.body);
+            const verifier = request.messages.find(m => m.role === 'system').content.includes('Independently check');
+            phases.push(verifier ? 'verifier' : 'controller');
+            caps.push(request.max_tokens);
+            let message, used, finishReason = 'stop';
+            if (caps.length === 1) {
+              used = 100;
+              message = {role: 'assistant', content: '', tool_calls: [{id: 'read-budget', type: 'function',
+                function: {name: 'read_span', arguments: JSON.stringify({span_id: row.id, offset: 0, length: 4096})}}]};
+            } else if (!verifier) {
+              used = 400;
+              finishReason = scenario === 'controller_exhausted' ? 'stop' : 'length';
+              message = {role: 'assistant', content: finishReason === 'length' ? '{"action":' : JSON.stringify({
+                action: 'investigate', question: 'Check refund', child_instructions: 'Compare amount', assessment})};
+            } else {
+              used = scenario === 'provider_overrun' ? 501 : 300;
+              finishReason = scenario === 'verifier_truncated' ? 'length' : 'stop';
+              message = {role: 'assistant', content: JSON.stringify(assessment)};
+            }
+            return new Response(JSON.stringify({choices: [{message, finish_reason: finishReason}],
+              usage: {prompt_tokens: 100, completion_tokens: used}}),
+            {headers: {'content-type': 'application/json', 'x-agentcc-cost': '0.000100'}});
+          }}});
+      assert.deepEqual(caps, [500, 400, 500]);
+      assert.deepEqual(phases, ['controller', 'controller', 'verifier']);
+      assert.equal(result.usage.model_calls, 3);
+      assert.equal(result.usage.cost_usd, 0.0003);
+      const failed = ['verifier_truncated', 'provider_overrun'].includes(scenario);
+      assert.equal(result.execution_status, failed ? 'failed' : 'completed');
+      assert.equal(result.outcome, failed ? 'unknown' : 'success');
+      if (!failed) assert.equal(result.coverage.read_complete, true);
+      assert.equal(result.usage.output_tokens, scenario === 'provider_overrun' ? 1001 : 800);
+      assert.deepEqual(await readdir(scratch), []);
+    } finally { await rm(scratch, {recursive: true, force: true}); }
+  });
+}
+
 async function runScriptedAssessment(rowFields, assessmentForEvidence) {
   const scratch = await mkdtemp(join(tmpdir(), 'omega-coverage-test-'));
   const originalFetch = globalThis.fetch;
@@ -173,4 +227,85 @@ test('unresolved external payloads preserve findings supported by inline evidenc
   assert.equal(result.coverage.read_complete, false);
   assert.equal(result.findings.length, 1);
   assert.equal(result.evidence_receipts[0].excerpt, raw);
+});
+
+test('unread contradictory child cannot produce supported success', async () => {
+  const scratch = await mkdtemp(join(tmpdir(), 'omega-unread-child-test-'));
+  try {
+    const claim = makeClaim();
+    const root = {id: 'root-span', project_id: claim.project_id, trace_id: claim.trace_id,
+      parent_span_id: '', input: 'Refund 10', output: 'Refund complete'};
+    const child = {id: 'child-span', project_id: claim.project_id, trace_id: claim.trace_id,
+      parent_span_id: root.id, input: 'Refund 10', output: 'Refunded 5'};
+    const rootRaw = JSON.stringify(root);
+    const rows = rootRaw + '\n' + JSON.stringify(child) + '\n';
+    const evidenceId = `${root.id}:0:${Buffer.byteLength(rootRaw)}`;
+    const assessment = {outcome: 'success', findings: [], requirement_checks: [
+      {requirement_id: 'refund', requirement: 'Refund 10', status: 'satisfied', evidence_ids: [evidenceId]}]};
+    const result = await investigateTrace(claim, {scratchRoot: scratch,
+      fetchEvidence: async (c, path) => storeEvidence([Buffer.from(rows)], path, c),
+      gatewayConfig: {baseUrl: 'http://fixture/v1', model: 'fixture', apiKey: 'fixture',
+        fetchImpl: async (_url, init) => {
+          const request = JSON.parse(init.body);
+          const verifier = request.messages.find(m => m.role === 'system').content.includes('Independently check');
+          const hasToolResponse = request.messages.some(m => m.role === 'tool');
+          const message = !verifier && !hasToolResponse
+            ? {role: 'assistant', content: '', tool_calls: [{id: 'read-root', type: 'function',
+              function: {name: 'read_span', arguments: JSON.stringify({span_id: root.id, offset: 0, length: 4096})}}]}
+            : {role: 'assistant', content: JSON.stringify(verifier ? assessment :
+              {action: 'finish', question: '', child_instructions: '', assessment})};
+          return new Response(JSON.stringify({choices: [{message}],
+            usage: {prompt_tokens: 10, completion_tokens: 5}}),
+          {headers: {'content-type': 'application/json', 'x-agentcc-cost': '0'}});
+        }}});
+    assert.equal(result.coverage.observed_span_count, 2);
+    assert.equal(result.coverage.read_complete, false);
+    assert.equal(result.evidence_receipts.length, 1);
+    assert.equal(result.outcome, 'unknown');
+  } finally { await rm(scratch, {recursive: true, force: true}); }
+});
+
+test('verifier rechecks an unread child after an unsupported success', async () => {
+  const scratch = await mkdtemp(join(tmpdir(), 'omega-cover-loop-test-'));
+  try {
+    const claim = makeClaim();
+    const root = {id: 'root-span', project_id: claim.project_id, trace_id: claim.trace_id,
+      parent_span_id: '', input: 'Refund 10', output: 'Refund complete'};
+    const child = {id: 'child-span', project_id: claim.project_id, trace_id: claim.trace_id,
+      parent_span_id: root.id, input: 'Refund 10', output: 'Refunded 5'};
+    const rootRaw = JSON.stringify(root);
+    const childRaw = JSON.stringify(child);
+    const rootEvidenceId = `${root.id}:0:${Buffer.byteLength(rootRaw)}`;
+    const success = {outcome: 'success', findings: [], requirement_checks: [
+      {requirement_id: 'refund', requirement: 'Refund 10', status: 'satisfied', evidence_ids: [rootEvidenceId]}]};
+    const failure = {outcome: 'failure', findings: [], requirement_checks: [
+      {requirement_id: 'refund', requirement: 'Refund 10', status: 'violated', evidence_ids: [rootEvidenceId]}]};
+    let verifierCalls = 0;
+    const result = await investigateTrace(claim, {scratchRoot: scratch,
+      fetchEvidence: async (c, path) => storeEvidence([Buffer.from(rootRaw + '\n' + childRaw + '\n')], path, c),
+      gatewayConfig: {baseUrl: 'http://fixture/v1', model: 'fixture', apiKey: 'fixture',
+        fetchImpl: async (_url, init) => {
+          const request = JSON.parse(init.body);
+          const verifier = request.messages.find(m => m.role === 'system').content.includes('Independently check');
+          let message;
+          if (verifier) {
+            verifierCalls++;
+            if (verifierCalls === 2) {
+              message = {role: 'assistant', content: '', tool_calls: [{id: 'read-child-' + verifierCalls,
+                type: 'function', function: {name: 'read_span', arguments: JSON.stringify({span_id: child.id,
+                  offset: 0, length: 4096})}}]};
+            } else message = {role: 'assistant', content: JSON.stringify(verifierCalls === 1 ? success : failure)};
+          } else if (!request.messages.some(m => m.role === 'tool')) {
+            message = {role: 'assistant', content: '', tool_calls: [{id: 'read-root', type: 'function',
+              function: {name: 'read_span', arguments: JSON.stringify({span_id: root.id, offset: 0, length: 4096})}}]};
+          } else message = {role: 'assistant', content: JSON.stringify({action: 'finish', question: '',
+            child_instructions: '', assessment: success})};
+          return new Response(JSON.stringify({choices: [{message}], usage: {prompt_tokens: 10, completion_tokens: 5}}),
+            {headers: {'content-type': 'application/json', 'x-agentcc-cost': '0'}});
+        }}});
+    assert.equal(verifierCalls, 3);
+    assert.equal(result.execution_status, 'completed');
+    assert.equal(result.outcome, 'failure');
+    assert.equal(result.coverage.read_complete, true);
+  } finally { await rm(scratch, {recursive: true, force: true}); }
 });

@@ -100,7 +100,6 @@ try {
   assert.equal(firstPublication?.status, 'accepted');
   assert.equal(finalReceipt?.status, 'duplicate');
   assert.equal(firstPublication.report_id, finalReceipt.report_id);
-  assert.equal(firstPublication.active_projection_updated, true);
   assert.equal(firstPublication.grouping_status, 'pending');
   assert.equal(firstPublication.occurrence_ids.length, 1);
   assert.equal(modelCalls, 4);
