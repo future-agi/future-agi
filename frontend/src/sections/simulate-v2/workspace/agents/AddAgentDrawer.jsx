@@ -79,7 +79,6 @@ export default function AddAgentDrawer({ open, onClose, env, onAdd, editing, new
   /* Per-source-kind readiness check for the primary CTA. */
   const canSave = ({
     repo: location.trim() && refValue.trim(),
-    endpoint: location.trim(),
     platform: platformReady,
     mcp: mcpUrl.trim(),
     upload: !!file,
@@ -104,7 +103,6 @@ export default function AddAgentDrawer({ open, onClose, env, onAdd, editing, new
     const chosenType = getAgentType(chosenTypeId);
     const via = ({
       repo: `Read from ${location}${refValue ? ` @ ${refKind}: ${refValue}` : ""}`,
-      endpoint: `Probed at ${location}`,
       platform: chosenType?.label || "Hosted platform",
       mcp: `MCP manifest at ${mcpUrl}`,
       upload: `Uploaded — ${file?.name || "bundle"}`,
@@ -211,18 +209,6 @@ export default function AddAgentDrawer({ open, onClose, env, onAdd, editing, new
             />
           )}
 
-          {sourceKind === "endpoint" && (
-            <TextField
-              size="small" fullWidth
-              label="Running agent URL"
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
-              placeholder="https://api.yourapp.com/agent"
-              helperText="We'll probe the deployed agent and infer its shape from how it answers."
-              InputProps={{ sx: { typography: "s2", fontFamily: "ui-monospace, Menlo, monospace" } }}
-            />
-          )}
-
           {sourceKind === "platform" && (
             <PlatformFields
               pickable={pickable}
@@ -320,13 +306,15 @@ AddAgentDrawer.propTypes = {
  */
 function deriveSourceKind(agent) {
   if (!agent) return null;
+  /* Prefill hint only — the picker is now free to change on every version,
+     so this just seeds the initial card selection so the drawer opens on
+     the same source the previous version used. */
+  if (agent.sourceKind) return agent.sourceKind;
   const v = agent.values || {};
   if (v.provider) return "platform";
   if (v.mcpUrl) return "mcp";
-  if (v.endpoint) return "endpoint";
   if (v.repoUrl || agent.ref) return "repo";
   if (agent.location?.startsWith("mcp:")) return "mcp";
-  if (agent.location?.startsWith("http")) return "endpoint";
   return null;
 }
 

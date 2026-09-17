@@ -12,6 +12,7 @@ import { getSurface } from "../_mock/surfaces";
 import { BOOT_STEPS } from "../_mock/runStream";
 import { useSimStore, useEnvState } from "../store";
 import { setupGaps } from "../_mock/setupGaps";
+import { subscribeBuilderPrompt } from "../_mock/builderPromptBus";
 import { environmentVersions } from "../_mock/versions";
 import { getAgentType } from "../_mock/agentTypes";
 import { SurfaceIcon, EmptyState, SectionCard } from "../components/primitives";
@@ -26,6 +27,7 @@ import VersionBar from "./VersionBar";
 import EnvVersionPin from "./EnvVersionPin";
 import BuildRecordPanel from "./BuildRecordPanel";
 import RlContractPanel from "./RlContractPanel";
+import SettingsPanel from "./SettingsPanel";
 
 /**
  * `setup` marks the items that gate a run — those carry a completion tick and
@@ -51,6 +53,7 @@ const TABS = [
   { id: "scenarios", label: "Scenarios",         icon: "solar:layers-minimalistic-linear", badge: "scenarios" },
   { id: "evals",     label: "Evaluations",       icon: "solar:shield-check-linear", badge: "evals" },
   { id: "runs",      label: "Runs",              icon: "solar:play-circle-linear", badge: "runs" },
+  { id: "settings",  label: "Settings",          icon: "solar:settings-linear" },
 ];
 
 /* `agent` isn't a visible tab (it lives inside Overview) but stays a valid
@@ -86,6 +89,11 @@ const CHIPS_BY_TAB = {
   runs: [
     "Summarise the last run",
     "Which scenarios fail most often?",
+  ],
+  settings: [
+    "Rotate my OpenAI key",
+    "Which env vars are the grader reading?",
+    "Change the task timeout to 10 minutes",
   ],
 };
 
@@ -146,6 +154,42 @@ export default function EnvironmentWorkspace() {
         text: `${env.name} is live. Ask me to tweak scenarios, tighten a rule, or add an eval — or edit directly on the right.`,
       }],
     }]));
+  }, [env?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* Module-level pub/sub for builder-prompt suggestions. The Edit-scenario
+     drawer's suggestion pills emit here; we append the message directly
+     to `turns` (rather than routing through `sendChat`) so this doesn't
+     depend on `sendChat` being defined below in the file. */
+  useEffect(() => {
+    return subscribeBuilderPrompt((text) => {
+      // eslint-disable-next-line no-console
+      console.log("[simv2] builder prompt received:", text);
+      setTurns((prev) => [...prev, { id: `u-${Date.now()}`, role: "user", text }]);
+      setChatRunning(true);
+      setTimeout(() => {
+        setChatRunning(false);
+        setTurns((prev) => [...prev, {
+          id: `a-${Date.now()}`,
+          role: "assistant",
+          steps: [{ kind: "note", text: mockWorkspaceReply(text) }],
+        }]);
+      }, 900);
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /*
+    Heal legacy state whose `envState.evals` was seeded to [] before we
+    started auto-adding the env's preset at build time. Fires once per
+    env id and only when there's nothing in evals — user removals stay
+    removed. Without this the Overview page fires the "Add evaluations
+    to run" gap on any env built pre-fix, even though the eval tab would
+    auto-seed the moment it mounted. */
+  useEffect(() => {
+    if (!env?.id) return;
+    if ((envState?.evals?.length || 0) > 0) return;
+    const preset = env?.evalPreset || [];
+    if (!preset.length) return;
+    patch({ evals: preset });
   }, [env?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!env) {
@@ -602,13 +646,15 @@ export default function EnvironmentWorkspace() {
             {panel === "agent" ? (
               <AgentsPanel env={env} envState={envState} patch={patch} onGo={go} />
             ) : panel === "scenarios" ? (
-              <ScenariosStep env={env} envState={envState} patch={patch} onGo={go} />
+              <ScenariosStep env={env} envState={envState} patch={patch} onGo={go} onBuilderPrompt={sendChat} />
             ) : panel === "evals" ? (
               <EvalsStep env={env} envState={envState} patch={patch} onGo={go} />
             ) : panel === "runs" ? (
               <RunsPanel env={env} envState={envState} onGo={go} />
             ) : panel === "contract" ? (
               <RlContractPanel env={env} envState={envState} patch={patch} onGo={go} />
+            ) : panel === "settings" ? (
+              <SettingsPanel env={env} envState={envState} patch={patch} />
             ) : panel === "build" ? (
               <BuildRecordPanel env={env} envState={envState} patch={patch} />
             ) : (

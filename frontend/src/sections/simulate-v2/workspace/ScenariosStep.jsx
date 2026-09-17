@@ -1,16 +1,17 @@
 import PropTypes from "prop-types";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSnackbar } from "notistack";
 import {
   Box, Stack, Typography, Button, Tooltip, IconButton, Tab,
-  TextField, Popover, Checkbox, InputBase,
+  TextField, Popover, Checkbox, InputBase, Menu, MenuItem, ListItemIcon,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { SegmentedTabs } from "src/components/tabs/tabs";
 import { alpha } from "@mui/material/styles";
 import { SectionCard, PersonaBadge } from "../components/primitives";
 import { generatedPool } from "../_mock/scenarios";
-import { staleScenarios, proofStatus, reproved, markEdited, INVALIDATING } from "../_mock/proofs";
+import { staleScenarios, proofStatus, reproved, autoReprove, brokenScenarios, markEdited, INVALIDATING } from "../_mock/proofs";
+import { subTasksFor } from "../_mock/contract";
 import ScenarioDetail from "../components/ScenarioDetail";
 import CoverageMatrix from "./scenarios/CoverageMatrix";
 import AddScenariosDrawer from "./scenarios/AddScenariosDrawer";
@@ -33,7 +34,7 @@ import { PickRouteIllustration } from "./scenarios/RouteThumbs";
  * by side on the derived axes, which is the view you want when the question is
  * what is in here rather than what is this.
  */
-export default function ScenariosStep({ env, envState, patch, buildMode }) {
+export default function ScenariosStep({ env, envState, patch, buildMode, onBuilderPrompt }) {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState(null);
   const { enqueueSnackbar, closeSnackbar } = useSnackbar();
@@ -48,28 +49,89 @@ export default function ScenariosStep({ env, envState, patch, buildMode }) {
     same `shown` rows.
   */
   const [query, setQuery] = useState("");
-  const [selectedUseCases, setSelectedUseCases] = useState([]);
+  /* Hidden groups — click-to-hide directly on the group header replaces
+     the old filter modal. IDs are dimension-specific (a "persona:polite"
+     id means nothing under Goal grouping) so switching Group by clears
+     the hidden set. */
+  const [hiddenGroupIds, setHiddenGroupIds] = useState([]);
+  /* When set, the list narrows to just the broken scenarios. Turned on by
+     the red banner's "Show them" button so a user can go from "N broke"
+     straight to those exact rows without hunting through 68. */
+  const [focusBroken, setFocusBroken] = useState(false);
+  /* Row-level facet filter — same shape the rest of the product uses
+     (Runs list, Improvements list). Four dimensions, each a multi-select. */
+  const [filters, setFilters] = useState({ status: [], persona: [], kind: [], subgoal: [] });
   const [filterAnchor, setFilterAnchor] = useState(null);
+  const filterCount = Object.values(filters).reduce((sum, arr) => sum + arr.length, 0);
+  const toggleFilter = (dim, id) => setFilters((prev) => {
+    const has = prev[dim].includes(id);
+    return { ...prev, [dim]: has ? prev[dim].filter((v) => v !== id) : [...prev[dim], id] };
+  });
+  const clearFilters = () => setFilters({ status: [], persona: [], kind: [], subgoal: [] });
+  /* Grouping mode — matches the trace-table pattern from the run view.
+     Users read the scenarios differently depending on what they're
+     debugging: by goal for coverage, by persona to spot a caller type
+     the agent handles badly, by sub-goal to see which step everyone
+     lands on. */
+  const [groupBy, setGroupByRaw] = useState("goal");
+  const [groupByAnchor, setGroupByAnchor] = useState(null);
+  const setGroupBy = (next) => { setGroupByRaw(next); setHiddenGroupIds([]); };
+  const toggleGroupHidden = (id) => setHiddenGroupIds((prev) => (
+    prev.includes(id) ? prev.filter((v) => v !== id) : [...prev, id]
+  ));
   const selected = envState?.scenarios || [];
 
-  const allUseCases = useMemo(() => {
-    const map = new Map();
-    selected.forEach((r) => {
-      const uc = deriveUseCase(r);
-      if (!map.has(uc.id)) map.set(uc.id, uc);
-    });
-    return [...map.values()];
-  }, [selected]);
-
   const q = query.trim().toLowerCase();
+
+  /* Row-facet extractors — each returns the id(s) a scenario belongs to
+     for one filter dimension. Kept as pure helpers so the popover can
+     use the same functions to count how many scenarios each option
+     covers. */
+  const statusFacets = (r) => {
+    const ids = [];
+    if (r.provedBroke) ids.push("broken");
+    if (r.critical) ids.push("critical");
+    if (proofStatus(r, env, envState).edited) ids.push("edited");
+    return ids;
+  };
+  const personaFacet = (r) => r?.persona?.name || null;
+  const kindFacet = (r) => {
+    const id = String(r?.id || "");
+    if (id.includes("-rule-")) return "rule";
+    if (id.includes("-trap-")) return "trap";
+    if (id.includes("-adversarial-")) return "adversarial";
+    if (id.includes("-edge-")) return "edge";
+    return "happy";
+  };
+  const subgoalFacet = (r) => {
+    const subs = subTasksFor(r, env);
+    return subs?.[0]?.label || null;
+  };
+
+  const matchesFilters = (r) => {
+    if (filters.status.length) {
+      const ids = statusFacets(r);
+      if (!filters.status.some((s) => ids.includes(s))) return false;
+    }
+    if (filters.persona.length && !filters.persona.includes(personaFacet(r))) return false;
+    if (filters.kind.length && !filters.kind.includes(kindFacet(r))) return false;
+    if (filters.subgoal.length && !filters.subgoal.includes(subgoalFacet(r))) return false;
+    return true;
+  };
+
   const shown = selected.filter((r) => {
-    if (selectedUseCases.length && !selectedUseCases.includes(deriveUseCase(r).id)) return false;
+    if (focusBroken && !r.provedBroke) return false;
+    if (!matchesFilters(r)) return false;
     if (!q) return true;
     const hay = `${r.name || ""} ${r.summary || ""} ${r.title || ""} ${r.task || ""} ${r.useCase || ""}`.toLowerCase();
     return hay.includes(q);
   });
-  const shownGroups = groupScenarios(shown);
-  const anyFilter = q.length > 0 || selectedUseCases.length > 0;
+  /* Groups first, then apply the hide list. Row-level narrowing lives in
+     `shown` (search) and everything else — hiding — is expressed as
+     "which groups to show" so the interaction stays purely visual. */
+  const allGroups = groupScenarios(shown, groupBy, env);
+  const shownGroups = allGroups.filter((g) => !hiddenGroupIds.includes(g.id));
+  const hiddenCount = allGroups.length - shownGroups.length;
 
   /*
     Adding scenarios in real life isn't instant — every row goes
@@ -143,10 +205,28 @@ export default function ScenariosStep({ env, envState, patch, buildMode }) {
     happened yet.
   */
   const stale = buildMode ? [] : staleScenarios(selected, env, envState);
-  const staleReasons = [...new Set(stale.flatMap((s) => proofStatus(s, env, envState).reasons))];
-  /* Edited rows are a different story from world drift, and the banner says
-     which of the two it is looking at. */
-  const edited = stale.filter((s) => proofStatus(s, env, envState).edited);
+  /* Broken subset from the most recent auto-re-prove pass — the ones the
+     world change actually invalidated. `provedBroke` is stamped by
+     `autoReprove` and stays on the scenario until the user edits/removes
+     it, so this is stable across renders. */
+  const broken = buildMode ? [] : brokenScenarios(selected);
+  const brokenReasons = [...new Set(broken.flatMap((s) => s.brokeReasons || []))];
+
+  /* Auto re-prove the moment we notice drift. Every scenario whose proof
+     still holds gets restamped to the current env version; the ~20% that
+     don't survive keep the old stamp plus a `provedBroke` flag so the
+     banner and the row treatment can call them out. Deterministic per
+     scenario id + env version, so a reload lands on the same result. */
+  const autoRunRef = useRef(null);
+  useEffect(() => {
+    if (buildMode) return;
+    if (stale.length === 0) return;
+    const key = `${env.id}::${envState?.activeEnvVersion || "v1"}::${stale.length}`;
+    if (autoRunRef.current === key) return;
+    autoRunRef.current = key;
+    patch({ scenarios: autoReprove(selected, env, envState) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [buildMode, env.id, envState?.activeEnvVersion, stale.length]);
 
   return (
     <Box sx={{ p: 2 }}>
@@ -195,37 +275,46 @@ export default function ScenariosStep({ env, envState, patch, buildMode }) {
         )}
       </Stack>
 
-      {stale.length > 0 && (
+      {broken.length > 0 && (
         <Stack
           direction="row" alignItems="flex-start" spacing={1.5}
           sx={{
             mb: 2, px: 2.5, py: 1.75, borderRadius: 1.5, border: "1px solid",
-            borderColor: alpha("#CA8A04", 0.35),
-            bgcolor: (t) => alpha("#CA8A04", t.palette.mode === "dark" ? 0.1 : 0.05),
+            borderColor: alpha("#DC2626", 0.35),
+            bgcolor: (t) => alpha("#DC2626", t.palette.mode === "dark" ? 0.08 : 0.04),
           }}
         >
-          <Iconify icon="solar:danger-triangle-bold" width={16} sx={{ color: "#CA8A04", flexShrink: 0, mt: "2px" }} />
+          <Iconify icon="solar:danger-triangle-bold" width={16} sx={{ color: "#DC2626", flexShrink: 0, mt: "2px" }} />
           <Box flex={1} minWidth={0}>
             <Typography sx={{ typography: "s2", fontWeight: 700 }}>
-              {stale.length} of {selected.length} scenarios need re-proving
-              {edited.length > 0 && stale.length > edited.length
-                ? ` — ${edited.length} edited, ${stale.length - edited.length} outgrown by the world`
-                : edited.length === stale.length ? " after being edited" : ""}
+              {broken.length} scenarios broke after the env changed
             </Typography>
             <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              This environment is on {proofStatus(stale[0], env, envState).current}.{" "}
-              {staleReasons.map((r) => INVALIDATING[r]).join("; ")}. They will still run and still
-              report a number — the number is just no longer standing on a proof.
+              We re-checked them against {envState?.activeEnvVersion || "the current version"}. Fix, remove, or dismiss.
             </Typography>
           </Box>
-          <Button
-            variant="contained" color="primary" size="small"
-            onClick={() => patch({ scenarios: reproved(selected, env, envState) })}
-            startIcon={<Iconify icon="solar:refresh-circle-linear" width={15} />}
-            sx={{ typography: "s2", fontWeight: 700, flexShrink: 0 }}
-          >
-            Re-prove {stale.length}
-          </Button>
+          <Stack direction="row" spacing={0.75} sx={{ flexShrink: 0 }}>
+            <Button
+              variant="contained" color="primary" size="small"
+              onClick={() => setFocusBroken(true)}
+              startIcon={<Iconify icon="solar:eye-linear" width={14} />}
+              sx={{ typography: "s2", fontWeight: 700 }}
+            >
+              Show them
+            </Button>
+            <Button
+              variant="outlined" size="small"
+              onClick={() => {
+                /* Keep the scenarios but drop the broken flag — user has
+                   accepted the current state as OK and wants to keep them. */
+                patch({ scenarios: selected.map((s) => (s.provedBroke ? { ...s, provedBroke: false, brokeReasons: [] } : s)) });
+                setFocusBroken(false);
+              }}
+              sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider" }}
+            >
+              Dismiss
+            </Button>
+          </Stack>
         </Stack>
       )}
 
@@ -260,28 +349,84 @@ export default function ScenariosStep({ env, envState, patch, buildMode }) {
             />
             <Button
               size="small" variant="outlined"
+              onClick={(e) => setGroupByAnchor(e.currentTarget)}
+              startIcon={<Iconify icon={(SCENARIO_GROUPINGS.find((g) => g.id === groupBy) || SCENARIO_GROUPINGS[0]).icon} width={14} />}
+              endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={12} />}
+              sx={{
+                typography: "s2", fontWeight: 700, textTransform: "none",
+                color: "text.primary", borderColor: "divider",
+              }}
+            >
+              {`Group by · ${(SCENARIO_GROUPINGS.find((g) => g.id === groupBy) || SCENARIO_GROUPINGS[0]).label}`}
+            </Button>
+            <Popover
+              open={!!groupByAnchor}
+              anchorEl={groupByAnchor}
+              onClose={() => setGroupByAnchor(null)}
+              anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
+              transformOrigin={{ vertical: "top", horizontal: "left" }}
+              slotProps={{ paper: { sx: { minWidth: 200, p: 0.5, mt: 0.5 } } }}
+            >
+              {SCENARIO_GROUPINGS.map((g) => {
+                const active = g.id === groupBy;
+                return (
+                  <Box
+                    key={g.id}
+                    onClick={() => { setGroupBy(g.id); setGroupByAnchor(null); }}
+                    sx={{
+                      display: "flex", alignItems: "center", gap: 1,
+                      px: 1.25, py: 0.875, borderRadius: 0.75, cursor: "pointer",
+                      bgcolor: active ? "action.hover" : "transparent",
+                      "&:hover": { bgcolor: "action.hover" },
+                    }}
+                  >
+                    <Iconify icon={g.icon} width={14} sx={{ color: active ? "primary.main" : "text.subtitle" }} />
+                    <Typography sx={{ typography: "s2", flex: 1, fontWeight: active ? 700 : 500 }}>
+                      {g.label}
+                    </Typography>
+                    {active && <Iconify icon="eva:checkmark-fill" width={14} sx={{ color: "primary.main" }} />}
+                  </Box>
+                );
+              })}
+            </Popover>
+            <Button
+              size="small" variant="outlined"
               onClick={(e) => setFilterAnchor(e.currentTarget)}
               startIcon={<Iconify icon="mage:filter" width={14} />}
               endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={12} />}
               sx={{
                 typography: "s2", fontWeight: 700, textTransform: "none",
-                color: selectedUseCases.length ? "primary.main" : "text.primary",
-                borderColor: selectedUseCases.length ? "primary.main" : "divider",
+                color: filterCount ? "primary.main" : "text.primary",
+                borderColor: filterCount ? "primary.main" : "divider",
               }}
             >
-              Filter{selectedUseCases.length ? ` (${selectedUseCases.length})` : ""}
+              Filter{filterCount ? ` (${filterCount})` : ""}
             </Button>
-            {anyFilter && (
+            <ScenarioFilterMenu
+              anchorEl={filterAnchor}
+              onClose={() => setFilterAnchor(null)}
+              filters={filters}
+              onToggle={toggleFilter}
+              onClearAll={clearFilters}
+              scenarios={selected}
+              statusOf={statusFacets}
+              personaOf={personaFacet}
+              kindOf={kindFacet}
+              subgoalOf={subgoalFacet}
+            />
+            {(q.length > 0 || hiddenCount > 0 || focusBroken || filterCount > 0) && (
               <>
-                <Typography sx={{ typography: "s3", color: "text.subtitle", whiteSpace: "nowrap" }}>
-                  {shown.length} of {selected.length}
+                <Typography sx={{ typography: "s3", color: focusBroken ? "#DC2626" : "text.subtitle", whiteSpace: "nowrap" }}>
+                  {focusBroken
+                    ? `Showing ${shown.length} broken`
+                    : `${shown.length} of ${selected.length}${hiddenCount > 0 ? ` · ${hiddenCount} group${hiddenCount === 1 ? "" : "s"} hidden` : ""}`}
                 </Typography>
                 <Button
                   size="small"
-                  onClick={() => { setQuery(""); setSelectedUseCases([]); }}
+                  onClick={() => { setQuery(""); setHiddenGroupIds([]); setFocusBroken(false); clearFilters(); }}
                   sx={{ typography: "s3", fontWeight: 600, color: "text.secondary" }}
                 >
-                  Clear
+                  {focusBroken || (hiddenCount > 0 && !q && !filterCount) ? "Show all" : "Clear"}
                 </Button>
               </>
             )}
@@ -292,19 +437,12 @@ export default function ScenariosStep({ env, envState, patch, buildMode }) {
             </SegmentedTabs>
           </Stack>
 
-          <UseCaseFilterPopover
-            anchorEl={filterAnchor}
-            onClose={() => setFilterAnchor(null)}
-            allUseCases={allUseCases}
-            countBy={(id) => selected.filter((r) => deriveUseCase(r).id === id).length}
-            selected={selectedUseCases}
-            onChange={setSelectedUseCases}
-          />
-
           {shownGroups.length === 0 ? (
             <Box sx={{ px: 2.5, py: 6, textAlign: "center" }}>
               <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
-                No scenarios match your filters.
+                {hiddenCount > 0 && q.length === 0
+                  ? "Every group is hidden — click Show all to bring them back."
+                  : "No scenarios match your search."}
               </Typography>
             </Box>
           ) : view === "table" ? (
@@ -314,6 +452,7 @@ export default function ScenariosStep({ env, envState, patch, buildMode }) {
               env={env}
               onEdit={setEditing}
               onRemove={removeScenario}
+              onHideGroup={toggleGroupHidden}
             />
           ) : (
             <GroupedScenarioList
@@ -323,6 +462,7 @@ export default function ScenariosStep({ env, envState, patch, buildMode }) {
               buildMode={buildMode}
               onEdit={setEditing}
               onRemove={removeScenario}
+              onHideGroup={toggleGroupHidden}
             />
           )}
         </SectionCard>
@@ -358,6 +498,7 @@ export default function ScenariosStep({ env, envState, patch, buildMode }) {
         env={env}
         envState={envState}
         onSave={saveScenario}
+        onBuilderPrompt={onBuilderPrompt}
       />
     </Box>
   );
@@ -558,12 +699,42 @@ const deriveUseCase = (row) => {
   return { id: "other", label: "Other" };
 };
 
-const groupScenarios = (rows) => {
+/**
+ * Group key + label for one row, in a given mode.
+ *
+ * The trace table on the run view uses the same three axes ("Goal",
+ * "Persona", "Failure sub-goal"), so we mirror them here — same
+ * derivation, so a scenarios-tab "Persona" bucket matches the trace
+ * table's "Persona" bucket after a run.
+ */
+const groupKeyOf = (row, mode, env) => {
+  if (mode === "persona") {
+    const name = row?.persona?.name;
+    if (!name) return { id: "persona:none", label: "No persona" };
+    return { id: `persona:${name.toLowerCase()}`, label: name };
+  }
+  if (mode === "subgoal") {
+    const subs = subTasksFor(row, env);
+    const first = subs?.[0]?.label;
+    if (!first) return { id: "subgoal:none", label: "No sub-goals" };
+    const slug = first.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+    return { id: `subgoal:${slug}`, label: first };
+  }
+  return deriveUseCase(row);
+};
+
+export const SCENARIO_GROUPINGS = [
+  { id: "goal", label: "Goal", icon: "solar:target-linear" },
+  { id: "persona", label: "Persona", icon: "solar:user-rounded-linear" },
+  { id: "subgoal", label: "Sub-goal", icon: "solar:map-linear" },
+];
+
+const groupScenarios = (rows, mode = "goal", env) => {
   const buckets = new Map();
   rows.forEach((r) => {
-    const uc = deriveUseCase(r);
-    if (!buckets.has(uc.id)) buckets.set(uc.id, { id: uc.id, label: uc.label, rows: [] });
-    buckets.get(uc.id).rows.push(r);
+    const key = groupKeyOf(r, mode, env);
+    if (!buckets.has(key.id)) buckets.set(key.id, { id: key.id, label: key.label, rows: [] });
+    buckets.get(key.id).rows.push(r);
   });
   /* Bigger groups first — the tail of one-off adversarial/edge titles
      shouldn't push the meaty use-case groups out of view. */
@@ -576,7 +747,7 @@ const groupScenarios = (rows) => {
  * views. This renders each use-case section as a collapsible block
  * with a sticky header.
  */
-function GroupedScenarioList({ groups, env, envState, buildMode, onEdit, onRemove }) {
+function GroupedScenarioList({ groups, env, envState, buildMode, onEdit, onRemove, onHideGroup }) {
   return (
     <Box>
       {groups.map((g) => (
@@ -588,6 +759,7 @@ function GroupedScenarioList({ groups, env, envState, buildMode, onEdit, onRemov
           buildMode={buildMode}
           onEdit={onEdit}
           onRemove={onRemove}
+          onHideGroup={onHideGroup}
         />
       ))}
     </Box>
@@ -600,6 +772,7 @@ GroupedScenarioList.propTypes = {
   buildMode: PropTypes.bool,
   onEdit: PropTypes.func,
   onRemove: PropTypes.func,
+  onHideGroup: PropTypes.func,
 };
 
 /**
@@ -608,7 +781,7 @@ GroupedScenarioList.propTypes = {
  * Chevron flips right → down on toggle. Header row is the whole click
  * target so there's no tiny hit area.
  */
-function CollapsibleGroup({ group, env, envState, buildMode, onEdit, onRemove }) {
+function CollapsibleGroup({ group, env, envState, buildMode, onEdit, onRemove, onHideGroup }) {
   const [open, setOpen] = useState(true);
 
   return (
@@ -658,6 +831,17 @@ function CollapsibleGroup({ group, env, envState, buildMode, onEdit, onRemove })
         >
           {group.rows.length} {group.rows.length === 1 ? "scenario" : "scenarios"}
         </Typography>
+        {onHideGroup && (
+          <Tooltip arrow title="Hide this group">
+            <IconButton
+              size="small"
+              onClick={(e) => { e.stopPropagation(); onHideGroup(group.id); }}
+              sx={{ flexShrink: 0, color: "text.subtitle", "&:hover": { color: "text.primary" } }}
+            >
+              <Iconify icon="solar:eye-closed-linear" width={15} />
+            </IconButton>
+          </Tooltip>
+        )}
       </Stack>
 
       {open && (
@@ -685,9 +869,9 @@ function CollapsibleGroup({ group, env, envState, buildMode, onEdit, onRemove })
                     <Iconify icon="solar:pen-new-square-linear" width={15} sx={{ color: "text.subtitle" }} />
                   </IconButton>
                 </Tooltip>
-                <Tooltip arrow title="Remove from this environment">
+                <Tooltip arrow title="Delete scenario">
                   <IconButton size="small" onClick={() => onRemove(s.id)} sx={{ mt: 1, mr: 1.5, flexShrink: 0 }}>
-                    <Iconify icon="solar:close-circle-linear" width={16} sx={{ color: "text.subtitle" }} />
+                    <Iconify icon="solar:trash-bin-trash-linear" width={16} sx={{ color: "text.subtitle" }} />
                   </IconButton>
                 </Tooltip>
               </Stack>
@@ -705,6 +889,7 @@ CollapsibleGroup.propTypes = {
   buildMode: PropTypes.bool,
   onEdit: PropTypes.func,
   onRemove: PropTypes.func,
+  onHideGroup: PropTypes.func,
 };
 
 /* ── filter popover ──────────────────────────────────────────────────────── */
@@ -718,7 +903,128 @@ CollapsibleGroup.propTypes = {
  * a clear header + footer treatment so the frame reads as a real
  * filter panel rather than a menu.
  */
-function UseCaseFilterPopover({ anchorEl, onClose, allUseCases, countBy, selected, onChange }) {
+/**
+ * Multi-dimension scenario filter menu — same MUI Menu + section-heading +
+ * MenuItem shape the Improvements list uses. Sections: Status, Persona,
+ * Kind, Sub-goal. Multi-select: a check mark on the right of each row
+ * indicates selection; clicking a row toggles it without closing the menu.
+ */
+function ScenarioFilterMenu({
+  anchorEl, onClose, filters, onToggle, onClearAll,
+  scenarios, statusOf, personaOf, kindOf, subgoalOf,
+}) {
+  const STATUS_OPTIONS = [
+    { id: "broken",   label: "Broken" },
+    { id: "critical", label: "Critical" },
+    { id: "edited",   label: "Edited" },
+  ];
+  const KIND_OPTIONS = [
+    { id: "happy",       label: "Happy path" },
+    { id: "rule",        label: "Rule enforcement" },
+    { id: "trap",        label: "Data trap" },
+    { id: "adversarial", label: "Adversarial" },
+    { id: "edge",        label: "Edge case" },
+  ];
+
+  const counts = (getter, options) => {
+    const c = {};
+    scenarios.forEach((r) => {
+      const val = getter(r);
+      const list = Array.isArray(val) ? val : [val];
+      list.forEach((v) => { if (v == null) return; c[v] = (c[v] || 0) + 1; });
+    });
+    return options.map((o) => ({ ...o, count: c[o.id] || 0 }));
+  };
+  const dynamicOptions = (getter) => {
+    const c = new Map();
+    scenarios.forEach((r) => {
+      const v = getter(r);
+      if (!v) return;
+      c.set(v, (c.get(v) || 0) + 1);
+    });
+    return [...c.entries()].map(([id, count]) => ({ id, label: id, count }))
+      .sort((a, b) => b.count - a.count);
+  };
+
+  const totalSelected = filters.status.length + filters.persona.length + filters.kind.length + filters.subgoal.length;
+
+  const renderSection = (title, dim, options, isFirst) => {
+    if (!options.length) return null;
+    return (
+      <Box key={title}>
+        <Stack
+          direction="row" alignItems="center"
+          sx={{ px: 1, pt: isFirst ? 0 : 1, pb: 0.5 }}
+        >
+          <Typography sx={{ typography: "s3", color: "text.subtitle", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4, flex: 1 }}>
+            {title}
+          </Typography>
+        </Stack>
+        {options.map((o) => {
+          const isSelected = filters[dim].includes(o.id);
+          return (
+            <MenuItem
+              key={o.id}
+              selected={isSelected}
+              onClick={() => onToggle(dim, o.id)}
+              sx={{ typography: "s2", pr: 1.25 }}
+            >
+              <Box sx={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {o.label}
+              </Box>
+              <Typography sx={{ typography: "s3", color: "text.subtitle", fontVariantNumeric: "tabular-nums", mr: isSelected ? 0.75 : 2.25 }}>
+                {o.count}
+              </Typography>
+              {isSelected && (
+                <ListItemIcon sx={{ minWidth: "auto !important", color: "primary.main" }}>
+                  <Iconify icon="eva:checkmark-fill" width={16} />
+                </ListItemIcon>
+              )}
+            </MenuItem>
+          );
+        })}
+      </Box>
+    );
+  };
+
+  return (
+    <Menu
+      anchorEl={anchorEl}
+      open={!!anchorEl}
+      onClose={onClose}
+      slotProps={{ paper: { sx: { minWidth: 280, maxHeight: 520, p: 1.5 } } }}
+    >
+      {totalSelected > 0 && (
+        <Stack direction="row" alignItems="center" sx={{ px: 1, pb: 0.75, mb: 0.5, borderBottom: "1px solid", borderColor: "divider" }}>
+          <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1 }}>
+            {totalSelected} selected
+          </Typography>
+          <Button size="small" onClick={onClearAll} sx={{ typography: "s3", fontWeight: 600, color: "text.secondary" }}>
+            Clear all
+          </Button>
+        </Stack>
+      )}
+      {renderSection("Status", "status", counts(statusOf, STATUS_OPTIONS), true)}
+      {renderSection("Persona", "persona", dynamicOptions(personaOf))}
+      {renderSection("Kind", "kind", counts(kindOf, KIND_OPTIONS))}
+      {renderSection("Sub-goal", "subgoal", dynamicOptions(subgoalOf))}
+    </Menu>
+  );
+}
+ScenarioFilterMenu.propTypes = {
+  anchorEl: PropTypes.any,
+  onClose: PropTypes.func,
+  filters: PropTypes.object,
+  onToggle: PropTypes.func,
+  onClearAll: PropTypes.func,
+  scenarios: PropTypes.array,
+  statusOf: PropTypes.func,
+  personaOf: PropTypes.func,
+  kindOf: PropTypes.func,
+  subgoalOf: PropTypes.func,
+};
+
+function UseCaseFilterPopover({ anchorEl, onClose, allUseCases, countBy, selected, onChange, dimensionLabel = "use case" }) {
   const [q, setQ] = useState("");
 
   /* Reset the internal search when the popover closes so it opens
@@ -761,7 +1067,7 @@ function UseCaseFilterPopover({ anchorEl, onClose, allUseCases, countBy, selecte
       >
         <Iconify icon="mage:filter" width={14} sx={{ color: "text.secondary", mr: 0.75 }} />
         <Typography sx={{ typography: "s2", fontWeight: 700, flex: 1 }}>
-          Filter by use case
+          {`Filter by ${dimensionLabel.toLowerCase()}`}
         </Typography>
         {selected.length > 0 && (
           <Typography sx={{ typography: "s3", color: "text.subtitle", mr: 0.75 }}>
@@ -794,7 +1100,7 @@ function UseCaseFilterPopover({ anchorEl, onClose, allUseCases, countBy, selecte
             <InputBase
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="Search use cases…"
+              placeholder={`Search ${dimensionLabel.toLowerCase()}s…`}
               autoFocus
               sx={{ typography: "s2", flex: 1, color: "text.primary" }}
             />

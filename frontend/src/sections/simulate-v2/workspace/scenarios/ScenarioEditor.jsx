@@ -2,11 +2,13 @@ import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
 import { alpha } from "@mui/material/styles";
 import {
-  Box, Stack, Typography, IconButton, Button, TextField, Slider,
+  Box, Stack, Typography, IconButton, Button, TextField, Slider, Tooltip,
   MenuItem, Select, InputLabel, FormControl, ToggleButton, ToggleButtonGroup,
 } from "@mui/material";
+import { useSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import SideDrawer from "../../components/SideDrawer";
+import { emitBuilderPrompt } from "../../_mock/builderPromptBus";
 
 /**
  * Edit one scenario.
@@ -76,8 +78,9 @@ const deriveNoise = (persona) => {
   return traits.some((t) => t.includes("noise")) ? "high" : "none";
 };
 
-export default function ScenarioEditor({ open, onClose, row, env, envState, onSave }) {
+export default function ScenarioEditor({ open, onClose, row, env, envState, onSave, onBuilderPrompt }) {
   const [draft, setDraft] = useState(row || {});
+  const { enqueueSnackbar } = useSnackbar();
 
   useEffect(() => {
     if (!row) return;
@@ -137,8 +140,8 @@ export default function ScenarioEditor({ open, onClose, row, env, envState, onSa
           />
           <TextField
             size="small" label="Use case" value={draft.useCase || ""}
-            onChange={(e) => set("useCase")(e.target.value)}
-            helperText="The user-facing sentence describing what this group of scenarios tests."
+            disabled
+            helperText="Read-only — the use case comes from the scenario pack and groups this row with its siblings. Move to a different pack to change it."
             InputProps={{ sx: { typography: "s2" } }}
           />
           <TextField
@@ -330,34 +333,53 @@ export default function ScenarioEditor({ open, onClose, row, env, envState, onSa
             hint="These parts are locked to the verification proof. Ask the builder on the left to change them — it'll re-run the checks and tell you if the change broke the scenario."
           />
 
-          <LockedRow
-            label="What the caller wants"
-            value={draft.task}
-            prompt={`change what the caller wants in ${draft.name} to …`}
-          />
-          <LockedRow
-            label="Setup / world state"
-            value={draft.setup || "seeded from the environment"}
-            prompt={`change the setup for ${draft.name} to …`}
-          />
-          <LockedRow
-            label="What we measure (checks)"
-            value={
-              draft.checks?.length
-                ? draft.checks.map((c) => c.label || c.id).join(" · ")
-                : "graded against the passes-when line + the derived sub-goals"
-            }
-            prompt={`change the checks on ${draft.name} to …`}
-          />
-          <LockedRow
-            label="Sub-goals (what the runner watches)"
-            value={
-              draft.subTasks?.length
-                ? `${draft.subTasks.length} steps: ${draft.subTasks.map((s) => (typeof s === "string" ? s : (s?.label || s?.text || ""))).filter(Boolean).join(" → ")}`
-                : "derived from the tools + rules this scenario touches"
-            }
-            prompt={`rewrite the sub-goals on ${draft.name}`}
-          />
+          {/* Clicking any of these hands the suggestion to the builder
+              chat on the left via `builderPromptBus` — a module-level
+              pub/sub the workspace subscribes to on mount. No prop
+              drilling, no window events, just an in-process emit. */}
+          {(() => {
+            const send = (text) => {
+              emitBuilderPrompt(text);
+              onBuilderPrompt?.(text);
+              onClose();
+            };
+            return (
+              <>
+                <LockedRow
+                  label="What the caller wants"
+                  value={draft.task}
+                  prompt={`change what the caller wants in ${draft.name} to …`}
+                  onSend={send}
+                />
+                <LockedRow
+                  label="Setup / world state"
+                  value={draft.setup || "seeded from the environment"}
+                  prompt={`change the setup for ${draft.name} to …`}
+                  onSend={send}
+                />
+                <LockedRow
+                  label="What we measure (checks)"
+                  value={
+                    draft.checks?.length
+                      ? draft.checks.map((c) => c.label || c.id).join(" · ")
+                      : "graded against the passes-when line + the derived sub-goals"
+                  }
+                  prompt={`change the checks on ${draft.name} to …`}
+                  onSend={send}
+                />
+                <LockedRow
+                  label="Sub-goals (what the runner watches)"
+                  value={
+                    draft.subTasks?.length
+                      ? `${draft.subTasks.length} steps: ${draft.subTasks.map((s) => (typeof s === "string" ? s : (s?.label || s?.text || ""))).filter(Boolean).join(" → ")}`
+                      : "derived from the tools + rules this scenario touches"
+                  }
+                  prompt={`rewrite the sub-goals on ${draft.name}`}
+                  onSend={send}
+                />
+              </>
+            );
+          })()}
 
           <Stack
             direction="row" spacing={1.25} alignItems="flex-start"
@@ -437,7 +459,7 @@ SectionHeader.propTypes = { title: PropTypes.string, hint: PropTypes.string };
  * always visible in the workspace, so the affordance is "copy this
  * and send it".
  */
-function LockedRow({ label, value, prompt }) {
+function LockedRow({ label, value, prompt, onSend }) {
   return (
     <Box
       sx={{
@@ -461,30 +483,61 @@ function LockedRow({ label, value, prompt }) {
             {value || "—"}
           </Typography>
           {/*
-            Mode-aware purple — the brand's #7857FC clears WCAG on white
-            but sits close to the dark background in dark theme, so the
-            example prompt reads as faint. Switching to the lighter
-            purple.light (#A792FD) in dark restores contrast without
-            changing the light-theme look.
+            The suggestion reads as a filled purple pill so it's obviously
+            a button — clicking it sends the prompt into the builder chat
+            on the left. The whole card is still clickable, but the pill
+            names the exact action.
           */}
-          <Stack direction="row" alignItems="center" spacing={0.75} sx={{ mt: 1 }}>
-            <Iconify
-              icon="solar:chat-round-line-linear"
-              width={13}
-              sx={{ color: (t) => (t.palette.mode === "dark" ? "#A792FD" : "#7857FC") }}
-            />
-            <Typography
-              sx={{
-                typography: "s3", fontFamily: "ui-monospace, Menlo, monospace",
-                color: (t) => (t.palette.mode === "dark" ? "#A792FD" : "#7857FC"),
-              }}
-            >
-              &ldquo;{prompt}&rdquo;
-            </Typography>
-          </Stack>
+          {/* Suggestion pill is the click target — subtle at rest, its
+              own hover state, and a "Send to builder" title on hover so
+              the reader knows what will happen. */}
+          {onSend ? (
+            <Tooltip arrow placement="top" title="Send this to the builder chat">
+              <Box
+                onClick={(e) => { e.stopPropagation(); onSend(prompt); }}
+                role="button"
+                tabIndex={0}
+                sx={{
+                  mt: 1, display: "inline-flex", alignItems: "center", gap: 0.75,
+                  px: 1, py: 0.5, borderRadius: 1,
+                  cursor: "pointer",
+                  border: "1px solid",
+                  borderColor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.14 : 0.12),
+                  color: "text.secondary",
+                  bgcolor: "background.paper",
+                  "&:hover, &:focus-visible": {
+                    borderColor: "text.primary",
+                    color: "text.primary",
+                    outline: "none",
+                  },
+                  transition: "border-color .12s ease, color .12s ease",
+                  maxWidth: "100%",
+                }}
+              >
+                <Iconify icon="solar:chat-round-line-linear" width={12} sx={{ color: "inherit", flexShrink: 0, opacity: 0.7 }} />
+                <Typography
+                  noWrap
+                  sx={{
+                    typography: "s3", fontFamily: "ui-monospace, Menlo, monospace",
+                    color: "inherit", minWidth: 0,
+                  }}
+                >
+                  {prompt}
+                </Typography>
+                <Iconify icon="solar:arrow-right-linear" width={12} sx={{ color: "inherit", flexShrink: 0, opacity: 0.6 }} />
+              </Box>
+            </Tooltip>
+          ) : (
+            <Stack direction="row" alignItems="center" spacing={0.75} sx={{ mt: 1 }}>
+              <Iconify icon="solar:chat-round-line-linear" width={13} sx={{ color: "text.subtitle" }} />
+              <Typography sx={{ typography: "s3", fontFamily: "ui-monospace, Menlo, monospace", color: "text.subtitle" }}>
+                &ldquo;{prompt}&rdquo;
+              </Typography>
+            </Stack>
+          )}
         </Box>
       </Stack>
     </Box>
   );
 }
-LockedRow.propTypes = { label: PropTypes.string, value: PropTypes.string, prompt: PropTypes.string };
+LockedRow.propTypes = { label: PropTypes.string, value: PropTypes.string, prompt: PropTypes.string, onSend: PropTypes.func };

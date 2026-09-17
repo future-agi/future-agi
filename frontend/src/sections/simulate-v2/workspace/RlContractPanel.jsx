@@ -11,6 +11,9 @@ import { setupGaps, gapCounts, GAP_STATUS } from "../_mock/setupGaps";
 import { getAgentType } from "../_mock/agentTypes";
 import { getSurface } from "../_mock/surfaces";
 import ActorsPanel from "./ActorsPanel";
+import CapabilityGraph from "./CapabilityGraph";
+import { TwinSandboxSection } from "./OverviewPanel";
+import WorldInternalsSection from "./WorldInternalsSection";
 
 /**
  * The RL environment contract.
@@ -57,6 +60,31 @@ export default function RlContractPanel({ env, envState, patch, onGo, buildMode 
           </Box>
         </Stack>
       </Stack>
+
+      {/* Definition sections that used to live on Overview. The contract
+          IS the environment's definition, so the world it exposes (twin
+          sandbox) and the capability graph read from the agent both
+          belong here, above the five RL contract parts. */}
+      {envState?.twinBacking && (
+        <Box sx={{ mb: 2 }}>
+          <TwinSandboxSection env={env} envState={envState} />
+        </Box>
+      )}
+      {!envState?.twinBacking && (envState?.agent || (env.tools?.length || 0) > 0) && (
+        <Box sx={{ mb: 2 }}>
+          <CapabilityGraph env={env} envState={envState} onGo={onGo} />
+        </Box>
+      )}
+
+      {/*
+        World internals — DB schema, tool handler code, check code.
+        Contract already says what this env IS in the abstract (the five
+        RL parts below); this shows the concrete files a run reads
+        from. The product team suggested a separate "World" tab; we
+        keep it here so a reader looking for "what this env is made
+        of" finds definition and internals in one place.
+      */}
+      <WorldInternalsSection env={env} envState={envState} />
 
       {/* ── 1 · adapter ── */}
       <Part

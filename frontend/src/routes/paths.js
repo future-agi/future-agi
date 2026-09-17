@@ -128,6 +128,11 @@ export const paths = {
       // travel in the query string so a comparison is a link someone can send.
       simulationCompare: (envId) => `${ROOTS.DASHBOARD}/simulate/environments/${envId}/compare`,
       simulationRuns: `${ROOTS.DASHBOARD}/simulate/runs`,
+      /* Global list of every self-improvement run the user has kicked off —
+         Simulation-source and Dataset-source alike. `improvementDetail`
+         opens the existing OptimizationRunView. */
+      improvements: `${ROOTS.DASHBOARD}/simulate/improvements`,
+      improvementDetail: (id) => `${ROOTS.DASHBOARD}/simulate/improvements/${id}`,
       // Where a finished run reports. The legacy execution-detail screen, fed
       // for prototype runs by the mock adapter in simulate-v2/_mock.
       executionDetail: (testId, executionId) =>

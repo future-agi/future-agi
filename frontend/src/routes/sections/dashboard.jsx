@@ -365,6 +365,12 @@ const CreateNewAgentDefinition = lazyWithRetry(
 const RunTests = lazyWithRetry(
   () => import("src/pages/dashboard/run-tests/RunTests"),
 );
+const SimImprovementsPage = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate-v2/ImprovementsPage"),
+);
+const SimImprovementDetailPage = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate-v2/ImprovementDetailPage"),
+);
 const SimulatedRuns = lazyWithRetry(
   () => import("src/pages/dashboard/simulate-v2/SimulatedRunsPage"),
 );
@@ -1386,6 +1392,18 @@ export const dashboardRoutes = (
             {
               path: "environments",
               element: <SimEnvironments />,
+            },
+            {
+              /* Global "Improvements" list — every self-improvement run
+                 (from Simulation and Dataset sources) folded into one
+                 screen with a compare selector. Detail route re-opens
+                 the existing OptimizationRunView. */
+              path: "improvements",
+              element: <SimImprovementsPage />,
+            },
+            {
+              path: "improvements/:improvementId",
+              element: <SimImprovementDetailPage />,
             },
             {
               /* /environments/browse is legacy — the old two-column

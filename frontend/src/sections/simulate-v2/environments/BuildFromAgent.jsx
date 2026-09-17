@@ -315,7 +315,16 @@ export default function BuildFromAgent() {
     if (scenarios?.length) patch.scenarios = scenarios;
     if (evalIds?.length) patch.evals = evalIds;
     if (rt && source?.runtime) {
-      patch.agent = { typeId: rt.id, values: source.runtime, via: "endpoint", connectedAt: new Date().toISOString() };
+      /* Record which source kind the agent was attached from so downstream
+         version-add flows can lock to it. Falls back to "repo" for legacy
+         sources that don't carry `kind` yet. */
+      patch.agent = {
+        typeId: rt.id,
+        values: source.runtime,
+        via: "endpoint",
+        sourceKind: source.kind || "repo",
+        connectedAt: new Date().toISOString(),
+      };
     }
     if (Object.keys(patch).length) {
       dispatch({ type: "patchEnvState", envId: confirmed.id, patch });
@@ -383,20 +392,19 @@ export default function BuildFromAgent() {
   /*
     The derived env has a stable id (`env-returns-line`), so a previous
     session's envState — including anything the user added under
-    `evals` — persists in localStorage. Wipe `evals` once per env id
-    on mount so this flow always lands on an empty "Added evaluations"
-    list, with the preset showing up as "Suggested". User additions
-    made later in the same session are safe: this only fires the first
-    time we see this env id.
-  */
+    `evals` — persists in localStorage. First-see of this env id, seed
+    the Added-evaluations list with the environment's preset so Overview
+    doesn't fire the "Add evaluations to run" gap while the user hasn't
+    visited the Evals tab yet. User additions and removals made later in
+    the same session are safe: this only fires the first time we see
+    this env id. */
   const evalsResetRef = useRef(null);
   useEffect(() => {
     if (!env?.id) return;
     if (evalsResetRef.current === env.id) return;
     evalsResetRef.current = env.id;
-    if ((envState.evals?.length || 0) > 0) {
-      dispatch({ type: "patchEnvState", envId: env.id, patch: { evals: [] } });
-    }
+    const preset = env.evalPreset || [];
+    dispatch({ type: "patchEnvState", envId: env.id, patch: { evals: preset } });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [env?.id]);
 
@@ -414,10 +422,36 @@ export default function BuildFromAgent() {
     if (versionsSeededRef.current === env.id) return;
     versionsSeededRef.current = env.id;
     const now = new Date().toISOString();
+    /* Two version stores get reset here — the env-level `agentVersions`
+       (read by header pill + Overview summary) AND the source agent's own
+       `versions[]` array (read by Manage-versions and the hero card). The
+       fixed-id demo reuse dragged stale versions into brand-new builds if
+       we only wiped the env-level list.
+
+       We also stamp `sourceKind` onto the agent from the current build's
+       `source.kind` — the AddAgent drawer's version-lock reads that field,
+       and the fixed-id demo state carries agents that predate the field.
+       Every rebuild is authoritative, so overwriting with the live pick
+       is correct. */
+    const seededV1 = {
+      id: "v1", label: "v1",
+      note: "Initial version",
+      via: envState.agent?.via,
+      values: envState.agent?.values || {},
+      connectedAt: now,
+    };
     dispatch({
       type: "patchEnvState",
       envId: env.id,
       patch: {
+        agent: envState.agent
+          ? {
+            ...envState.agent,
+            sourceKind: source?.kind || envState.agent.sourceKind || "repo",
+            versions: [seededV1],
+            activeVersionId: "v1",
+          }
+          : envState.agent,
         agentVersions: [
           { id: "agent-v1", label: "v1", note: "First version connected to this environment.", reach: "endpoint", createdAt: now },
         ],

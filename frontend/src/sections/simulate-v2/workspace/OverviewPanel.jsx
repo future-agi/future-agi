@@ -92,14 +92,9 @@ export default function OverviewPanel({ buildMode, env, envState, patch, onGo, a
 
   return (
     <Box sx={{ p: 2 }}>
-      {/* Twin-backed env — the sandbox preview is the star of Overview
-          so users land in the workspace and immediately see the live
-          service their agent will talk to. Sub-header carries the
-          service name, endpoint URL, and OpenAPI / Open surface
-          buttons so there's no duplicated chrome below. */}
-      {envState?.twinBacking && (
-        <TwinSandboxSection env={env} envState={envState} />
-      )}
+      {/* TwinSandboxSection + CapabilityGraph moved to the Contract tab.
+          Overview now answers "how's this env doing right now?" — state,
+          not definition. */}
 
       {/* Auto-detected twin suggestion — for agent-derived envs where
           we read the agent's code and noticed it talks to SaaS
@@ -200,6 +195,11 @@ export default function OverviewPanel({ buildMode, env, envState, patch, onGo, a
 
       {!locked && <AgentRefreshBanner env={env} envState={envState} patch={patch} />}
 
+      {/* State-of-the-env summary tiles + latest run — the "how's this
+          env doing right now?" answer that used to be missing. Each
+          tile jumps to the tab it summarises. */}
+      <StateSummary env={env} envState={envState} onGo={onGo} />
+
       {/*
         Getting-started checklist for envs that haven't been seeded
         yet (no agent, no derived rules/scenarios). Scratch envs come
@@ -230,14 +230,9 @@ export default function OverviewPanel({ buildMode, env, envState, patch, onGo, a
         gone.
       */}
       <GroupHeading>Capabilities</GroupHeading>
-      {/*
-        The graph first, then the lists. Twelve tools and five rules read as
-        two unrelated inventories; drawn together they are one object, and the
-        shape of the environment is legible before any of it is read.
-      */}
-      {showRichOverview && !envState?.twinBacking && (
-        <CapabilityGraph env={env} envState={envState} onGo={onGo} />
-      )}
+      {/* CapabilityGraph moved to the Contract tab — that's where the
+          shape of the environment belongs. Overview keeps the summary,
+          not the definition. */}
       {/*
         The reviewability record — how the reader mapped source to
         sandbox. Every derived fact carries an origin and a sandbox
@@ -507,6 +502,120 @@ OverviewPanel.propTypes = {
   onFork: PropTypes.func,
 };
 
+/**
+ * StateSummary — the state-of-the-env answer that Overview should lead with.
+ *
+ * Four tiles (Scenarios, Evaluations, Runs, Rules) each clickable to jump to
+ * the relevant tab, plus a latest-run card when there is one. Every number
+ * comes from the same state Runs/Scenarios/Evaluations tabs read from, so
+ * the summary and the detail can't drift.
+ */
+function StateSummary({ env, envState, onGo }) {
+  const scenarioCount = envState?.scenarios?.length || 0;
+  const evalCount = envState?.evals?.length || 0;
+  const runs = envState?.runs || [];
+  const ruleCount = env?.rules?.length || 0;
+  const latest = runs[0] || null;
+  const latestPassRate = latest?.passRate != null ? Math.round(latest.passRate) : null;
+
+  const tiles = [
+    { id: "scenarios", label: "Scenarios",     value: scenarioCount, icon: "solar:layers-minimalistic-linear", to: "scenarios" },
+    { id: "evals",     label: "Evaluations",   value: evalCount,     icon: "solar:shield-check-linear",        to: "evals" },
+    { id: "runs",      label: "Runs",          value: runs.length,   icon: "solar:play-circle-linear",         to: "runs", disabled: runs.length === 0 },
+    { id: "rules",     label: "Hard rules",    value: ruleCount,     icon: "solar:shield-keyhole-linear",      to: "contract" },
+  ];
+
+  return (
+    <Box sx={{ mb: 3 }}>
+      <Stack direction={{ xs: "column", md: "row" }} spacing={1.5} sx={{ mb: latest ? 1.5 : 0 }}>
+        {tiles.map((t) => (
+          <Box
+            key={t.id}
+            onClick={t.disabled ? undefined : () => onGo?.(t.to)}
+            sx={{
+              flex: 1, minWidth: 0, p: 1.75, borderRadius: 1.5,
+              border: "1px solid", borderColor: "divider",
+              bgcolor: "background.paper",
+              cursor: t.disabled ? "default" : "pointer",
+              transition: "border-color .12s ease, background-color .12s ease",
+              "&:hover": t.disabled ? {} : {
+                borderColor: "text.disabled",
+                bgcolor: (th) => alpha(th.palette.text.primary, th.palette.mode === "dark" ? 0.03 : 0.02),
+              },
+            }}
+          >
+            <Stack direction="row" alignItems="center" spacing={1}>
+              <Iconify icon={t.icon} width={14} sx={{ color: "text.subtitle" }} />
+              <Typography sx={{ typography: "s3", color: "text.subtitle", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.4, flex: 1 }}>
+                {t.label}
+              </Typography>
+              {!t.disabled && (
+                <Iconify icon="solar:alt-arrow-right-linear" width={12} sx={{ color: "text.disabled" }} />
+              )}
+            </Stack>
+            <Typography sx={{ typography: "h6", fontWeight: 700, mt: 0.5, fontVariantNumeric: "tabular-nums" }}>
+              {t.value}
+            </Typography>
+          </Box>
+        ))}
+      </Stack>
+
+      {latest && (
+        <Box
+          onClick={() => onGo?.("runs")}
+          sx={{
+            p: 1.75, borderRadius: 1.5, cursor: "pointer",
+            border: "1px solid", borderColor: "divider",
+            bgcolor: "background.paper",
+            "&:hover": {
+              borderColor: "text.disabled",
+              bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.03 : 0.02),
+            },
+          }}
+        >
+          <Stack direction="row" alignItems="center" spacing={1.5}>
+            <Box
+              sx={{
+                width: 32, height: 32, borderRadius: 1, display: "grid", placeItems: "center",
+                flexShrink: 0,
+                bgcolor: (t) => alpha("#16A34A", t.palette.mode === "dark" ? 0.16 : 0.1),
+                color: "#16A34A",
+              }}
+            >
+              <Iconify icon="solar:play-circle-linear" width={16} />
+            </Box>
+            <Box flex={1} minWidth={0}>
+              <Typography sx={{ typography: "s3", color: "text.subtitle", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.4 }}>
+                Latest run
+              </Typography>
+              <Typography noWrap sx={{ typography: "s2", fontWeight: 700 }}>
+                {latest.label || latest.name || "Run"}
+                {latest.agentVersion ? ` · ${latest.agentVersion}` : ""}
+              </Typography>
+            </Box>
+            {latestPassRate != null && (
+              <Stack alignItems="flex-end" sx={{ flexShrink: 0 }}>
+                <Typography sx={{ typography: "s1", fontWeight: 700, color: latestPassRate >= 80 ? "#16A34A" : latestPassRate >= 50 ? "#CA8A04" : "#DC2626", fontVariantNumeric: "tabular-nums" }}>
+                  {latestPassRate}%
+                </Typography>
+                <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                  pass rate
+                </Typography>
+              </Stack>
+            )}
+            <Iconify icon="solar:alt-arrow-right-linear" width={14} sx={{ color: "text.disabled", flexShrink: 0 }} />
+          </Stack>
+        </Box>
+      )}
+    </Box>
+  );
+}
+StateSummary.propTypes = {
+  env: PropTypes.object,
+  envState: PropTypes.object,
+  onGo: PropTypes.func,
+};
+
 function GroupHeading({ children }) {
   return (
     <Typography
@@ -751,7 +860,7 @@ function timeAgo(iso) {
  * env feel like a real running product on the Overview, not a wall of
  * metadata cards.
  */
-function TwinSandboxSection({ env, envState }) {
+export function TwinSandboxSection({ env, envState }) {
   const backing = envState.twinBacking;
   const services = backing.services || [];
   const [activeServiceId, setActiveServiceId] = useState(services[0]);

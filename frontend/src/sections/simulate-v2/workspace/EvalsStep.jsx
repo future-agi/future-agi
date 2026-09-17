@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Box, Stack, Typography, Button, IconButton, Tooltip } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
@@ -60,6 +60,26 @@ export default function EvalsStep({ env, envState, patch, onGo }) {
       .filter((e, i, arr) => arr.findIndex((x) => x.id === e.id) === i);
   }, [env.evalPreset, envState?.twinBacking, appliedIds]);
 
+  /*
+    Auto-seed the env's suggested evals into Added on first empty mount.
+    The old flow had a separate "Suggested" card the user had to click
+    "Add all" on — but nobody ever wanted the suggestions to *not* be
+    scored, so the click was a formality. Preseed on empty and drop the
+    Suggested card entirely; the user can still remove any of them from
+    Added or open the library for more. Ref-guarded so we don't loop
+    when the user deliberately clears everything.
+    */
+  const seededRef = useRef(false);
+  useEffect(() => {
+    if (seededRef.current) return;
+    if (needsScenarios) return;
+    if (appliedEvals.length > 0) { seededRef.current = true; return; }
+    if (suggested.length === 0) { seededRef.current = true; return; }
+    seededRef.current = true;
+    add(suggested);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needsScenarios, suggested.length, appliedEvals.length]);
+
 
   return (
     <Box sx={{ p: 2 }}>
@@ -119,59 +139,12 @@ export default function EvalsStep({ env, envState, patch, onGo }) {
         )}
       </Stack>
 
-      {/*
-        Suggested → Added split.
-        Adding a suggestion moves it into Added below and it disappears
-        from this list; removing it from Added returns it here.
-      */}
-      {suggested.length > 0 && !needsScenarios && (
-        <SectionCard
-          title={`Suggested evaluations (${suggested.length})`}
-          subtitle="The environment thinks these would matter — add the ones you want the run scored against."
-          sx={{ mb: 2 }}
-          action={
-            <Button
-              size="small"
-              variant="outlined"
-              onClick={() => add(suggested)}
-              startIcon={<Iconify icon="solar:add-circle-linear" width={14} />}
-              sx={{
-                typography: "s2", fontWeight: 700, textTransform: "none",
-                color: "primary.main", borderColor: (t) => alpha(t.palette.primary.main, 0.4),
-                "&:hover": { borderColor: "primary.main", bgcolor: (t) => alpha(t.palette.primary.main, t.palette.mode === "dark" ? 0.08 : 0.04) },
-              }}
-            >
-              Add all {suggested.length}
-            </Button>
-          }
-        >
-          <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
-            {suggested.map((e) => (
-              <EvalRow
-                key={e.id}
-                item={e}
-                action={
-                  <Button
-                    size="small"
-                    onClick={() => add([e])}
-                    startIcon={<Iconify icon="solar:add-circle-linear" width={13} />}
-                    sx={{ typography: "s2", fontWeight: 700, color: "primary.main", minWidth: 0 }}
-                  >
-                    Add
-                  </Button>
-                }
-              />
-            ))}
-          </Stack>
-        </SectionCard>
-      )}
-
       {/* ── what will actually score the run ── */}
       <SectionCard
         title={`Added evaluations (${appliedEvals.length})`}
         subtitle={
           appliedEvals.length
-            ? "Every task is scored against these. Add more from Suggested or the library any time."
+            ? "Every task is scored against these. Add more from the library any time."
             : undefined
         }
       >
@@ -182,9 +155,7 @@ export default function EvalsStep({ env, envState, patch, onGo }) {
             body={
               needsScenarios
                 ? "An evaluation scores the tasks a run produces, so it needs scenarios to point at. Add some and this unlocks."
-                : suggested.length > 0
-                  ? "Pick one from the suggestions above, or open the library for more."
-                  : "You can run without them — you'll get traces, but nothing will tell you whether the agent was right."
+                : "You can run without them — you'll get traces, but nothing will tell you whether the agent was right. Open the library to add some."
             }
             action={
               <Stack direction="row" spacing={1}>

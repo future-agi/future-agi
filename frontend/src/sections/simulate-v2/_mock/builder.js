@@ -43,12 +43,12 @@ export const sourceKindsFor = (modality) => {
  * still runs afterwards and can correct the answer.
  */
 export const MODALITY_SOURCES = {
-  voice: ["repo", "endpoint", "platform", "mcp", "upload"],
-  chat: ["repo", "endpoint", "mcp", "upload"],
-  cua: ["repo", "endpoint", "upload"],
+  voice: ["repo", "platform", "mcp", "upload"],
+  chat: ["repo", "mcp", "upload"],
+  cua: ["repo", "upload"],
   coding: ["repo", "mcp", "upload"],
   physical: ["repo", "upload"],
-  custom: ["repo", "endpoint", "platform", "mcp", "upload"],
+  custom: ["repo", "platform", "mcp", "upload"],
 };
 
 /**
@@ -136,14 +136,6 @@ export const SOURCE_KINDS = [
     icon: "solar:code-square-linear",
     placeholder: "https://github.com/your-org/your-agent",
     depth: "Deepest — exact argument names and permitted values",
-  },
-  {
-    id: "endpoint",
-    label: "Running agent",
-    blurb: "We talk to a deployed agent and infer its shape from how it answers.",
-    icon: "solar:plug-circle-linear",
-    placeholder: "https://api.yourapp.com/agent",
-    depth: "Inferred from behaviour, confirmed with you",
   },
   {
     id: "platform",

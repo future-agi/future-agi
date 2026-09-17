@@ -91,6 +91,9 @@ export function seededState() {
              one, so the seeded agent rendered a single row. */
           values: { provider: "livekit", agentId: "asst_9f2c1188", callDirection: "inbound" },
           via: "endpoint",
+          /* Anchor for the version-lock: every new version added to this
+             agent has to come from the same source origin. */
+          sourceKind: "platform",
           connectedAt: daysAgo(2),
         },
         scenarios: builtScenarios,
@@ -131,6 +134,7 @@ export function seededState() {
             streaming: true,
           },
           via: "endpoint",
+          sourceKind: "repo",
           connectedAt: daysAgo(4),
         },
         scenarios: travelScenarios,
@@ -159,6 +163,7 @@ export function seededState() {
           typeId: "browser_agent",
           values: { framework: "playwright", viewport: "1280x800", recordVideo: true },
           via: "mcp",
+          sourceKind: "mcp",
           connectedAt: daysAgo(5),
         },
         scenarios: browserScenarios,
@@ -206,6 +211,7 @@ export function seededState() {
           typeId: "voice_platform",
           values: { provider: "vapi", agentId: "asst_v1c2f3", callDirection: "inbound" },
           via: "endpoint",
+          sourceKind: "platform",
           connectedAt: daysAgo(0),
         },
         scenarios: voiceScenarios,

@@ -371,10 +371,54 @@ export const SIMULATION_COLUMNS = [
  * picker evals carry no presentation fields — both are normalised here so
  * everything downstream can read one shape.
  */
+/**
+ * Default variable → column mapping for every preset eval. A preset arrives
+ * pre-mapped so the run has everything it needs to score without the user
+ * touching a picker. Custom evals from the drawer bring their own mapping;
+ * these defaults only fill in the blanks for auto-seeded catalogue evals.
+ *
+ * Keys are the eval's input variables (`output`, `expected`, `tool_calls`…);
+ * values name the run column each maps to. Nothing here is a real DB column
+ * — this is prototype scaffolding — but the strings match the vocabulary the
+ * rest of the flow already uses so a reader recognises them.
+ */
+const DEFAULT_MAPPINGS = {
+  task_success:    { output: "transcript", expected: "scenario.expected_outcome" },
+  policy_adherence:{ output: "transcript", rules: "env.rules" },
+  compliance:      { output: "transcript", rules: "env.rules" },
+  pii_leakage:     { output: "transcript" },
+  hallucination:   { output: "transcript", context: "world_state" },
+  tool_use:        { tool_calls: "run.tool_calls", expected: "scenario.expected_tools" },
+  target_click:    { events: "run.pointer_events", target: "scenario.target_element" },
+  step_efficiency: { steps: "run.steps", expected: "scenario.reference_solution" },
+  escalation:      { output: "transcript", policy: "env.rules" },
+  tone:            { output: "transcript" },
+  empathy:         { output: "transcript" },
+  latency:         { latency_metrics: "run.latency_metrics" },
+  bargein:         { events: "run.turn_events" },
+  memory:          { output: "transcript", state_before: "world_state.before", state_after: "world_state.after" },
+  patch_success:   { patch: "run.patch", test_results: "run.test_results" },
+  patch_quality:   { patch: "run.patch", diff_stats: "run.diff_stats" },
+  format_adherence:{ output: "transcript" },
+  cumulative_reward:{ reward_events: "run.reward_events" },
+  physics:         { trajectory: "run.trajectory" },
+};
+
+export const defaultMappingFor = (id) => DEFAULT_MAPPINGS[id] || {};
+
 export const resolveEval = (applied) => {
   if (!applied) return null;
-  if (typeof applied === "string") return getEval(applied);
+  if (typeof applied === "string") {
+    const base = getEval(applied);
+    if (!base) return null;
+    /* Bare-id records predate variable mapping — attach the default so
+       the row can show what the scorer is looking at. */
+    return { ...base, mapping: defaultMappingFor(applied) };
+  }
   const known = getEval(applied.id);
+  const mapping = applied.mapping && Object.keys(applied.mapping).length
+    ? applied.mapping
+    : defaultMappingFor(applied.id);
   return {
     icon: "solar:shield-check-linear",
     color: "#7857FC",
@@ -383,6 +427,7 @@ export const resolveEval = (applied) => {
     type: "LLM judge",
     ...known,
     ...applied,
+    mapping,
   };
 };
 

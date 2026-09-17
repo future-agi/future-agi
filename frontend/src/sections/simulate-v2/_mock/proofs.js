@@ -129,4 +129,65 @@ export const reproved = (scenarios = [], env, envState) =>
     ...s,
     provedAgainst: currentEnvVersion(env, envState).label,
     provedAt: new Date().toISOString(),
+    provedBroke: false,
+    brokeReasons: [],
   }));
+
+/**
+ * Deterministic hash of a string → [0, 1). Same seed = same bucket, so a
+ * scenario's fate under auto-re-prove is stable across renders and reloads.
+ * Not cryptographic; just a spread-out fingerprint for a demo.
+ */
+const seededFraction = (seed) => {
+  const s = String(seed || "");
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i += 1) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return ((h >>> 0) % 10000) / 10000;
+};
+
+/**
+ * Runs the three gates against the current env for every stale scenario:
+ * scenarios whose proof still holds get restamped and drop out of the
+ * "needs attention" list; ones that broke keep the old stamp plus a
+ * `provedBroke` flag + the specific reasons so the UI can show only the
+ * ones that no longer work.
+ *
+ * The prototype decides which scenarios "break" by hashing the scenario id
+ * together with the current env version — a ~20% failure rate across the
+ * stale set, stable across renders, so the demo is reproducible.
+ */
+export const autoReprove = (scenarios = [], env, envState) => {
+  const currentLabel = currentEnvVersion(env, envState).label;
+  const now = new Date().toISOString();
+  return scenarios.map((s) => {
+    const status = proofStatus(s, env, envState);
+    if (!status.stale) return s;
+    const roll = seededFraction(`${s.id}::${currentLabel}`);
+    const stillWorks = roll >= 0.2;
+    if (stillWorks) {
+      return {
+        ...s,
+        provedAgainst: currentLabel,
+        provedAt: now,
+        provedBroke: false,
+        brokeReasons: [],
+      };
+    }
+    /* Keep the old proof stamp so the banner still shows what the scenario
+       was proved against; add the flags the UI reads to filter down to
+       "the scenarios that won't work". */
+    return {
+      ...s,
+      provedBroke: true,
+      brokeReasons: status.reasons,
+      brokeAgainst: currentLabel,
+    };
+  });
+};
+
+/** The subset of scenarios that auto-re-prove has flagged as no longer working. */
+export const brokenScenarios = (scenarios = []) =>
+  scenarios.filter((s) => s.provedBroke);

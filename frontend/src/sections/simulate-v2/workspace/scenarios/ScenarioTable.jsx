@@ -29,7 +29,7 @@ const selectableCheckboxSx = {
  * Same rows, same derivations as the coverage matrix — nothing here is a
  * second source of truth.
  */
-export default function ScenarioTable({ rows, groups, env, onEdit, onRemove }) {
+export default function ScenarioTable({ rows, groups, env, onEdit, onRemove, onHideGroup }) {
   /*
     Two shapes come in: pre-grouped (list view mirror) or a flat rows
     array (fallback). If groups are given, render section-header rows
@@ -174,6 +174,17 @@ export default function ScenarioTable({ rows, groups, env, onEdit, onRemove }) {
                       <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
                         {section.rows.length} {section.rows.length === 1 ? "scenario" : "scenarios"}
                       </Typography>
+                      {onHideGroup && (
+                        <Tooltip arrow title="Hide this group">
+                          <IconButton
+                            size="small"
+                            onClick={(e) => { e.stopPropagation(); onHideGroup(section.id); }}
+                            sx={{ p: 0.25, color: "text.subtitle", "&:hover": { color: "text.primary" } }}
+                          >
+                            <Iconify icon="solar:eye-closed-linear" width={14} />
+                          </IconButton>
+                        </Tooltip>
+                      )}
                     </Stack>
                   </TableCell>
                 </TableRow>
@@ -214,6 +225,24 @@ export default function ScenarioTable({ rows, groups, env, onEdit, onRemove }) {
                     <TruncTooltip title={row.name || row.title}>
                       <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>{row.name || row.title}</Typography>
                     </TruncTooltip>
+                    {row.provedBroke && (
+                      <Tooltip arrow title="Broke when the env changed — the proof no longer holds.">
+                        <Box
+                          sx={{
+                            display: "inline-flex", alignItems: "center", gap: 0.375,
+                            height: 16, px: 0.5, borderRadius: 0.5,
+                            border: (t) => `1px solid ${alpha("#DC2626", 0.4)}`,
+                            color: "#DC2626",
+                            bgcolor: (t) => alpha("#DC2626", t.palette.mode === "dark" ? 0.14 : 0.08),
+                          }}
+                        >
+                          <Iconify icon="solar:danger-triangle-bold" width={10} />
+                          <Typography sx={{ typography: "s3", fontWeight: 700, letterSpacing: 0.3 }}>
+                            Broken
+                          </Typography>
+                        </Box>
+                      </Tooltip>
+                    )}
                     {row.critical && (
                       <Tooltip arrow title="Critical — a failure here is a release blocker">
                         <Box sx={{ display: "flex" }}>
@@ -317,6 +346,7 @@ ScenarioTable.propTypes = {
   env: PropTypes.object,
   onEdit: PropTypes.func,
   onRemove: PropTypes.func,
+  onHideGroup: PropTypes.func,
 };
 
 /* ── readability helpers ──────────────────────────────────────────────────── */

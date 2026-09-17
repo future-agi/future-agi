@@ -711,7 +711,7 @@ function PanelHostedPlatform() {
         <Label>Platform</Label>
         {platforms.length === 0 ? (
           <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 1 }}>
-            No hosted platforms for this agent type yet. Try Running agent or Source repository instead.
+            No hosted platforms for this agent type yet. Try Source repository instead.
           </Typography>
         ) : (
           <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75, mt: 0.75 }}>
@@ -1399,15 +1399,6 @@ const OPTIONS = [
     icon: "solar:widget-linear",
     blurb: "Skip world setup — pick a prebuilt world, then connect your agent to it.",
     setupSubtitle: "Prebuilt environments you can adapt in minutes — pick one, then wire your agent.",
-  },
-  {
-    id: "running",
-    group: "bring",
-    title: "Running agent",
-    icon: "solar:link-round-linear",
-    blurb: "Point us at your deployed endpoint. We call it once per simulated turn — your agent keeps running where it already runs, we drive the world around it.",
-    preview: ["HTTP", "HTTPS", "gRPC"],
-    setupSubtitle: "Every simulated turn POSTs to this endpoint.",
   },
   {
     id: "source",

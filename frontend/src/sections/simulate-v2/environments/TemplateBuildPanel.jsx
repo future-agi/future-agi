@@ -101,10 +101,11 @@ export default function TemplateBuildPanel({ template, showName = false }) {
         envDerivedForAgent: "v1",
         scenarios: seededScenarios.length ? seededScenarios : scenarios,
         scenarioSource: env.twinBacking ? "twin_starter" : "templates",
-        /* Start with nothing added — the template's preset evals surface as
-           Suggested on the Evaluations tab, and the user adds the ones they
-           want to score against (same as the build-from-agent flow). */
-        evals: [],
+        /* Seed the added-evals list with the template's preset (same set
+           the Evaluations tab used to render as "Suggested"). Saves the
+           user a click and, more importantly, keeps the "Add evaluations
+           to run" gap from firing on Overview the moment the env opens. */
+        evals: (env.evalPreset || []).map((id) => id),
         /* Sticker: this env came straight from a template. Locks agent- and
            env-version editing until the user forks it into a personal copy —
            templates are meant to be run as-shipped, not modified in place. */

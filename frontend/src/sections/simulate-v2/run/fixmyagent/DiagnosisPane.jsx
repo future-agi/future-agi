@@ -7,6 +7,7 @@ import { RunTracePanel, RunTraceLog } from "../../components/RunTrace";
 import TaskLinks from "./TaskLinks";
 import OmegaHandoff from "../OmegaHandoff";
 import NewAgentVersion from "../NewAgentVersion";
+import ImaginePane from "./ImaginePane";
 
 /**
  * What is wrong, and what to change about it.
@@ -47,6 +48,31 @@ const priorityOf = (p, tasks) => {
 */
 const analyzedRuns = new Set();
 
+function TabButton({ active, onClick, icon, children }) {
+  return (
+    <Box
+      onClick={onClick}
+      sx={{
+        display: "inline-flex", alignItems: "center", gap: 0.5,
+        py: 1.25, cursor: "pointer",
+        borderBottom: "2px solid",
+        borderColor: active ? "text.primary" : "transparent",
+        color: active ? "text.primary" : "text.subtitle",
+        "&:hover": { color: "text.primary" },
+      }}
+    >
+      <Iconify icon={icon} width={14} />
+      <Typography sx={{ typography: "s2", fontWeight: active ? 700 : 500 }}>{children}</Typography>
+    </Box>
+  );
+}
+TabButton.propTypes = {
+  active: PropTypes.bool,
+  onClick: PropTypes.func,
+  icon: PropTypes.string,
+  children: PropTypes.node,
+};
+
 export default function DiagnosisPane({
   tasks, report, trace, proposals, verdict,
   applied, setApplied, current, projected, willFix,
@@ -67,6 +93,11 @@ export default function DiagnosisPane({
   const [versioning, setVersioning] = useState(false);
   const [open, setOpen] = useState({});
   const [showDiagnosis, setShowDiagnosis] = useState(true);
+  /* Diagnosis is the fixed six-analyzer read; Imagine is the freeform
+     follow-up canvas over the same run. Kept as a top-level tab inside
+     this pane so the user can jump between them without losing the
+     drawer's context (env pin, run id, failing task list). */
+  const [tab, setTab] = useState("diagnosis");
 
   const included = proposals.filter((p) => applied[p.id]);
   /* Nothing failed, so there is nothing to search for. The refactor into a
@@ -166,6 +197,23 @@ export default function DiagnosisPane({
         </IconButton>
       </Stack>
 
+      {/* ── tab bar — only shown once the analyzers finish and there's
+            something to look at, so the animation and the empty state don't
+            share the chrome. ── */}
+      {phase === "done" && !nothingToFix && (
+        <Stack
+          direction="row" spacing={2}
+          sx={{ px: 2.5, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
+        >
+          <TabButton active={tab === "diagnosis"} onClick={() => setTab("diagnosis")} icon="solar:document-medicine-linear">
+            Diagnosis
+          </TabButton>
+          <TabButton active={tab === "imagine"} onClick={() => setTab("imagine")} icon="solar:magic-stick-3-linear">
+            Imagine
+          </TabButton>
+        </Stack>
+      )}
+
       {phase === "running" && (
         <Box sx={{ flex: 1, overflowY: "auto" }}>
           <RunTracePanel
@@ -197,7 +245,11 @@ export default function DiagnosisPane({
         </Stack>
       )}
 
-      {phase === "done" && !nothingToFix && (
+      {phase === "done" && !nothingToFix && tab === "imagine" && (
+        <ImaginePane tasks={tasks} env={env} />
+      )}
+
+      {phase === "done" && !nothingToFix && tab === "diagnosis" && (
         <>
           <Box sx={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
             {/* ── diagnosis ── */}
