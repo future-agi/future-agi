@@ -37,6 +37,24 @@ from simulate.models import (
 )
 
 
+_SOURCE_ARCHIVE_SUFFIXES = (".zip", ".tar", ".tar.gz", ".tgz", ".rar", ".7z")
+_SOURCE_ARCHIVE_DETAIL = (
+    "upload the expanded project folder; archives are not supported"
+)
+
+
+def _rejected_archive_upload(files) -> Response | None:
+    """Refuse a lone archive: nothing unpacks it, so it would ship as an opaque blob."""
+    if len(files) == 1 and str(files[0].name).lower().endswith(
+        _SOURCE_ARCHIVE_SUFFIXES
+    ):
+        return Response(
+            {"detail": _SOURCE_ARCHIVE_DETAIL},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    return None
+
+
 def get_harness_provider():
     """Return the configured harness execution provider (default: daytona)."""
     name = str(getattr(settings, "HARNESS_PROVIDER", "daytona") or "daytona").lower()
@@ -906,6 +924,9 @@ class DaytonaHarnessProvider:
                 {"detail": "one relative path is required per file"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        rejected = _rejected_archive_upload(files)
+        if rejected is not None:
+            return rejected
         if len(files) > 5_000:
             return Response(
                 {"detail": "source may contain at most 5000 files"},
@@ -1139,6 +1160,9 @@ class SandboxHarnessProvider:
                 {"detail": "one relative path is required per file"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        rejected = _rejected_archive_upload(files)
+        if rejected is not None:
+            return rejected
         try:
             result = self._client().upload_source(
                 files, paths, str(request.data.get("name") or "uploaded-agent")
