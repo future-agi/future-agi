@@ -364,6 +364,12 @@ port_holder() {
   elif command -v ss >/dev/null 2>&1; then
     out=$(ss -ltn 2>/dev/null)
     [[ -n "$out" ]] && awk -v p=":$port\$" '$4 ~ p {print $0; exit}' <<<"$out"
+  elif command -v netstat >/dev/null 2>&1; then
+    # Windows fallback (MSYS2, Git Bash): neither lsof nor ss exists there.
+    # Match TCP listeners in LISTENING state on exactly $port; the trailing
+    # anchor keeps :3000 from matching :30000, and UDP lines never match.
+    out=$(netstat -ano 2>/dev/null | awk -v p="$port" '$1 == "TCP" && $4 == "LISTENING" && $2 ~ ":"p"$"')
+    [[ -n "$out" ]] && head -1 <<<"$out"
   fi
   set -eE
   return 0
