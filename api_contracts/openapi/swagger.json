@@ -50081,6 +50081,114 @@
             },
             "parameters": []
         },
+        "/simulate/api/harness-environments/": {
+            "get": {
+                "operationId": "simulate_api_harness-environments_list",
+                "summary": "The environments surface: list, delete, and start a simulation.",
+                "description": "An environment is the job that built it (the world itself lives in object\nstorage, addressed from the job's metadata), so these endpoints project the\nsame rows the harness-jobs API serves. They exist separately because the\nlist needs a row, not a run: the jobs list returns every event, receipt and\nstage-output payload for up to a hundred jobs, which is a detail document\nrepeated a hundred times.\n\nRunning and grading a simulation are deliberately not here. ``run`` starts\none and returns 202; progress is read from the job.",
+                "parameters": [
+                    {
+                        "name": "page",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "minimum": 1
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "maximum": 100,
+                        "minimum": 1
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentListResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/simulate/api/harness-environments/{id}/": {
+            "delete": {
+                "operationId": "simulate_api_harness-environments_delete",
+                "summary": "Soft-delete an environment, cancelling its run first if one is live.",
+                "description": "Deleting while a sandbox is running would leave that sandbox billing\nagainst a row nobody can see, so cancellation is requested before the\nrow disappears. The authoring archive and the organization's secrets are\nleft in place: neither is owned by this row, and other environments may\nreference the same credentials.",
+                "parameters": [],
+                "responses": {
+                    "204": {
+                        "description": "Deleted"
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/run/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_run",
+                "summary": "Start a simulation on an existing environment.",
+                "description": "This reuses the saved contract and scenario suite rather than authoring\na new one, which is what makes a second run comparable to the first.",
+                "parameters": [],
+                "responses": {
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentRunResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-jobs/": {
             "get": {
                 "operationId": "simulate_api_harness-jobs_list",
@@ -50183,10 +50291,10 @@
                     }
                 ],
                 "responses": {
-                    "201": {
+                    "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/HarnessPreflight"
+                            "$ref": "#/definitions/HarnessPreflightResponse"
                         }
                     },
                     "default": {
@@ -50199,7 +50307,8 @@
                 "tags": [
                     "simulate"
                 ],
-                "x-runtime-request-validation": true
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": []
         },
@@ -68649,8 +68758,7 @@
         "/usage/admin/invoice/preview/": {
             "post": {
                 "operationId": "usage_admin_invoice_preview_create",
-                "summary": "Preview invoice for an org+period.",
-                "description": "Creates no invoice and deducts no credits, but does backfill missing\n``UsageSummary`` rows for the usage period. Open to staff so the admin's\nread-only Generate Invoice page can show what would be billed.",
+                "description": "Preview invoice for an org+period (no side effects).",
                 "parameters": [
                     {
                         "name": "data",
@@ -118389,6 +118497,168 @@
                 }
             }
         },
+        "HarnessEnvironment": {
+            "required": [
+                "id",
+                "name",
+                "description",
+                "source_kind",
+                "agent_type",
+                "status",
+                "stage",
+                "scenario_count",
+                "tools_count",
+                "last_updated",
+                "created_at"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "source_kind": {
+                    "title": "Source kind",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "agent_type": {
+                    "title": "Agent type",
+                    "type": "string",
+                    "enum": [
+                        "voice",
+                        "chat"
+                    ]
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "building",
+                        "running",
+                        "completed",
+                        "failed"
+                    ]
+                },
+                "stage": {
+                    "title": "Stage",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "scenario_count": {
+                    "title": "Scenario count",
+                    "type": "integer"
+                },
+                "tools_count": {
+                    "title": "Tools count",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "last_updated": {
+                    "title": "Last updated",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                }
+            }
+        },
+        "HarnessEnvironmentListResponse": {
+            "required": [
+                "count",
+                "next",
+                "previous",
+                "total_pages",
+                "current_page",
+                "results"
+            ],
+            "type": "object",
+            "properties": {
+                "count": {
+                    "title": "Count",
+                    "type": "integer"
+                },
+                "next": {
+                    "title": "Next",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "previous": {
+                    "title": "Previous",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "total_pages": {
+                    "title": "Total pages",
+                    "type": "integer"
+                },
+                "current_page": {
+                    "title": "Current page",
+                    "type": "integer"
+                },
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessEnvironment"
+                    }
+                }
+            }
+        },
+        "HarnessEnvironmentRunResponse": {
+            "required": [
+                "environment_id",
+                "job_id",
+                "run_id",
+                "state",
+                "stage"
+            ],
+            "type": "object",
+            "properties": {
+                "environment_id": {
+                    "title": "Environment id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "job_id": {
+                    "title": "Job id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "run_id": {
+                    "title": "Run id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "stage": {
+                    "title": "Stage",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
         "HarnessJobInfo": {
             "required": [
                 "job_id",
@@ -118883,6 +119153,16 @@
                     ],
                     "x-nullable": true
                 },
+                "call_direction": {
+                    "title": "Call direction",
+                    "description": "inbound: the simulated caller dials the agent. outbound: the agent dials the simulated caller. Voice connectors only.",
+                    "type": "string",
+                    "enum": [
+                        "inbound",
+                        "outbound"
+                    ],
+                    "x-nullable": true
+                },
                 "config": {
                     "title": "Config",
                     "type": "object",
@@ -119234,6 +119514,138 @@
                         "type": "string",
                         "maxLength": 4096
                     }
+                }
+            }
+        },
+        "HarnessPreflightCheck": {
+            "required": [
+                "id",
+                "label",
+                "status",
+                "detail",
+                "missing",
+                "fix"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "label": {
+                    "title": "Label",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "passed",
+                        "failed",
+                        "skipped"
+                    ]
+                },
+                "detail": {
+                    "title": "Detail",
+                    "type": "string"
+                },
+                "missing": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "fix": {
+                    "title": "Fix",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessPreflightCredentials": {
+            "required": [
+                "scanned_files",
+                "detected_connectors",
+                "requirements",
+                "credential_choices",
+                "probe"
+            ],
+            "type": "object",
+            "properties": {
+                "scanned_files": {
+                    "title": "Scanned files",
+                    "type": "integer"
+                },
+                "detected_connectors": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "requirements": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "credential_choices": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "probe": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                }
+            }
+        },
+        "HarnessPreflightResponse": {
+            "required": [
+                "ready_to_submit",
+                "state",
+                "checks",
+                "credentials",
+                "effective_parallelism",
+                "snapshot"
+            ],
+            "type": "object",
+            "properties": {
+                "ready_to_submit": {
+                    "title": "Ready to submit",
+                    "type": "boolean"
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "enum": [
+                        "connected",
+                        "failed"
+                    ]
+                },
+                "checks": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessPreflightCheck"
+                    }
+                },
+                "credentials": {
+                    "$ref": "#/definitions/HarnessPreflightCredentials"
+                },
+                "effective_parallelism": {
+                    "title": "Effective parallelism",
+                    "type": "integer"
+                },
+                "snapshot": {
+                    "title": "Snapshot",
+                    "type": "object"
                 }
             }
         },

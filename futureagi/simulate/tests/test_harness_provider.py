@@ -1013,3 +1013,176 @@ def test_harness_job_adjustment_rejects_empty_instruction(user):
     )
 
     assert response.status_code == 400
+
+
+@override_settings(HARNESS_PROVIDER="daytona")
+def test_daytona_preflight_source_failure_keeps_status_and_reports_check(settings):
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = []
+    settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {}
+    payload = _v1_payload()
+    payload["agent"] = {"connector": "auto", "config": {}, "secret_refs": {}}
+    request = SimpleNamespace(
+        validated_data=payload,
+        build_absolute_uri=lambda _path: "https://harness.example.test/",
+    )
+    clone_failed = HostedHarnessError(
+        "github_clone_failed",
+        "fatal: repository not found",
+        status_code=502,
+        retryable=True,
+    )
+
+    with patch(
+        "simulate.services.harness_provider._preflight_source_connectors",
+        side_effect=clone_failed,
+    ):
+        response = DaytonaHarnessProvider().preflight(request)
+
+    assert response.status_code == 502
+    assert response.data["error"] == "github_clone_failed"
+    assert response.data["state"] == "failed"
+    assert response.data["ready_to_submit"] is False
+    source = next(item for item in response.data["checks"] if item["id"] == "source")
+    assert source["status"] == "failed"
+    assert source["detail"] == "fatal: repository not found"
+    assert "GitHub App" in source["fix"]
+
+
+def test_daytona_preflight_lists_five_checks_in_order(settings):
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = []
+    settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {}
+    payload = _v1_payload()
+    payload["agent"] = {"connector": "auto", "config": {}, "secret_refs": {}}
+    request = SimpleNamespace(
+        validated_data=payload,
+        build_absolute_uri=lambda _path: "https://harness.example.test/",
+    )
+
+    with patch(
+        "simulate.services.harness_provider._preflight_source_connectors",
+        return_value=(["livekit"], [], 12),
+    ):
+        response = DaytonaHarnessProvider().preflight(request)
+
+    assert response.status_code == 200
+    assert response.data["state"] == "failed"
+    assert [item["id"] for item in response.data["checks"]] == [
+        "source",
+        "credentials_present",
+        "credential_files",
+        "credentials_valid",
+        "provider_target",
+    ]
+    by_id = {item["id"]: item for item in response.data["checks"]}
+    assert by_id["source"]["status"] == "passed"
+    assert by_id["credentials_present"]["status"] == "failed"
+    assert by_id["credentials_present"]["missing"] == [
+        "LIVEKIT_URL",
+        "LIVEKIT_API_KEY",
+        "LIVEKIT_API_SECRET",
+    ]
+    assert by_id["credentials_valid"]["status"] == "skipped"
+
+
+@pytest.mark.django_db
+def test_source_upload_rejects_a_lone_archive(user):
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.post(
+        "/simulate/api/harness-jobs/sources/",
+        {
+            "files": [SimpleUploadedFile("agent.zip", b"PK\x03\x04")],
+            "paths": ["agent.zip"],
+            "name": "agent",
+        },
+        format="multipart",
+    )
+
+    assert response.status_code == 400
+    assert "archives are not supported" in response.json()["detail"]
+
+
+@pytest.mark.django_db
+@override_settings(HARNESS_PROVIDER="daytona")
+def test_environments_list_reports_absent_contract_as_null(user, workspace):
+    create_hosted_job(
+        user.organization,
+        _v1_payload(),
+        idempotency_key="env-list-1",
+        workspace=workspace,
+    )
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.get(
+        "/simulate/api/harness-environments/",
+        HTTP_X_WORKSPACE_ID=str(workspace.id),
+    )
+
+    assert response.status_code == 200
+    row = response.json()["results"][0]
+    assert row["name"] == "agent"
+    assert row["source_kind"] == "github"
+    assert row["status"] == "building"
+    assert row["tools_count"] is None
+    assert row["description"] is None
+    assert row["scenario_count"] == 10
+
+
+@pytest.mark.django_db
+@override_settings(HARNESS_PROVIDER="daytona")
+def test_environments_list_sorts_undated_rows_last(user, workspace):
+    undated, _ = create_hosted_job(
+        user.organization,
+        _v1_payload(),
+        idempotency_key="env-list-undated",
+        workspace=workspace,
+    )
+    dated, _ = create_hosted_job(
+        user.organization,
+        _v1_payload(),
+        idempotency_key="env-list-dated",
+        workspace=workspace,
+    )
+    undated.content_updated_at = None
+    undated.save(update_fields=["content_updated_at", "updated_at"])
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.get(
+        "/simulate/api/harness-environments/",
+        HTTP_X_WORKSPACE_ID=str(workspace.id),
+    )
+
+    assert [row["id"] for row in response.json()["results"]] == [
+        str(dated.id),
+        str(undated.id),
+    ]
+
+
+@pytest.mark.django_db
+@override_settings(HARNESS_PROVIDER="daytona")
+def test_environments_delete_hides_the_row(user, workspace):
+    job, _ = create_hosted_job(
+        user.organization,
+        _v1_payload(),
+        idempotency_key="env-delete",
+        workspace=workspace,
+    )
+    job.state = job.State.COMPLETED
+    job.save(update_fields=["state", "updated_at"])
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    deleted = client.delete(
+        f"/simulate/api/harness-environments/{job.id}/",
+        HTTP_X_WORKSPACE_ID=str(workspace.id),
+    )
+    listed = client.get(
+        "/simulate/api/harness-environments/",
+        HTTP_X_WORKSPACE_ID=str(workspace.id),
+    )
+
+    assert deleted.status_code == 204
+    assert listed.json()["count"] == 0
