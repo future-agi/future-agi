@@ -57,6 +57,61 @@ def test_population_worker_budget_is_separate_and_can_be_lowered():
     assert reduced["FILTER_SELECTOR_POPULATION_MAX_THREADS"] == 1
 
 
+def test_text_seed_row_budget_is_operator_tunable_within_a_measured_range():
+    """The short exact-string seed is sized by rows read, not by slice hours."""
+
+    defaults = load_numeric_settings(INTERACTIVE_READ_SETTING_SPECS, source={})
+    assert defaults["FILTER_SELECTOR_TEXT_SEED_TARGET_READ_ROWS"] == 2_000_000
+
+    lowered = load_numeric_settings(
+        INTERACTIVE_READ_SETTING_SPECS,
+        source={"FILTER_SELECTOR_TEXT_SEED_TARGET_READ_ROWS": "100000"},
+    )
+    validate_interactive_read_settings(lowered)
+    assert lowered["FILTER_SELECTOR_TEXT_SEED_TARGET_READ_ROWS"] == 100_000
+
+
+@pytest.mark.parametrize("value", [0, -1, 99_999, 50_000_001, True, "unlimited"])
+def test_text_seed_row_budget_rejects_values_outside_the_measured_range(value):
+    with pytest.raises(ValueError):
+        load_numeric_settings(
+            INTERACTIVE_READ_SETTING_SPECS,
+            source={"FILTER_SELECTOR_TEXT_SEED_TARGET_READ_ROWS": value},
+        )
+
+
+def test_the_text_seed_witness_slack_defaults_to_one_hour_with_zero_as_the_hatch():
+    """The bounded witness is the default contract; zero is the way back.
+
+    One hour is the owner-decided default: on the measured cohort it omitted
+    nothing (largest child-witness lag 468 s; the root carried the value itself
+    in 165 of 165 matching traces) while reading 28.7x fewer bytes. ZERO
+    remains a settable value and emits no envelope at all, so an install whose
+    spans really do arrive more than an hour after their root can be put back
+    on the unbounded contract without a deploy.
+    """
+
+    defaults = load_numeric_settings(INTERACTIVE_READ_SETTING_SPECS, source={})
+    assert defaults["FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS"] == 1
+
+    for raw, expected in (("0", 0), (0, 0), ("1", 1), (24, 24), ("168", 168)):
+        enabled = load_numeric_settings(
+            INTERACTIVE_READ_SETTING_SPECS,
+            source={"FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS": raw},
+        )
+        validate_interactive_read_settings(enabled)
+        assert enabled["FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS"] == expected
+
+
+@pytest.mark.parametrize("value", [-1, 169, 1.5, True, "off"])
+def test_the_text_seed_witness_slack_rejects_values_outside_one_week(value):
+    with pytest.raises(ValueError):
+        load_numeric_settings(
+            INTERACTIVE_READ_SETTING_SPECS,
+            source={"FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS": value},
+        )
+
+
 @pytest.mark.parametrize("value", [0, -1, 5, True, "unlimited"])
 def test_population_worker_budget_rejects_unbounded_or_invalid_values(value):
     with pytest.raises(ValueError):

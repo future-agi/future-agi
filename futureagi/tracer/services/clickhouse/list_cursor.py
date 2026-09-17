@@ -28,6 +28,11 @@ CURSOR_VERSION = 4
 CURSOR_SALT = "tracer.clickhouse-list-cursor.v4"
 DEFAULT_CURSOR_MAX_AGE_SECONDS = 24 * 60 * 60
 
+# Hours of witness slack a running pagination may carry. The ceiling matches
+# FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS's own range; a token outside it
+# was not minted by this codec.
+MAX_CURSOR_WITNESS_SLACK_HOURS = 168
+
 
 class ListCursorError(ValueError):
     """A sanitized cursor validation error safe to expose at the API edge."""
@@ -48,6 +53,14 @@ class ListCursor:
     scan_slice_end: datetime | None = None
     scan_before_start_time: datetime | None = None
     scan_before_id: Any = None
+    # The witness slack the pagination STARTED with, when the read that minted
+    # this token had one. ``None`` is the legacy shape - a token minted before
+    # this field, or by a lane that has no witness envelope - and resolves to
+    # the current runtime setting, which is exactly what those tokens got
+    # before. Deliberately NOT a CURSOR_VERSION bump: rejecting live tokens
+    # would 400 the grid down to the numbered lane for a field whose absence
+    # is already well defined.
+    witness_slack_hours: int | None = None
 
 
 def _utc_datetime(value: datetime, field_name: str) -> datetime:
@@ -308,6 +321,7 @@ def encode_list_cursor(
     scan_slice_end: datetime | None = None,
     scan_before_start_time: datetime | None = None,
     scan_before_id: Any = None,
+    witness_slack_hours: int | None = None,
 ) -> str:
     window_start = _utc_datetime(window_start, "window_start")
     window_end = _utc_datetime(window_end, "window_end")
@@ -339,6 +353,12 @@ def encode_list_cursor(
         < (scan_slice_end or window_end)
     ):
         raise ValueError("invalid list scan checkpoint")
+    if witness_slack_hours is not None and (
+        not isinstance(witness_slack_hours, int)
+        or isinstance(witness_slack_hours, bool)
+        or not 0 <= witness_slack_hours <= MAX_CURSOR_WITNESS_SLACK_HOURS
+    ):
+        raise ValueError("invalid list cursor witness slack")
     payload = {
         "v": CURSOR_VERSION,
         "resource": resource,
@@ -355,6 +375,11 @@ def encode_list_cursor(
         "scan_before_start_time": _json_value(scan_before_start_time),
         "scan_before_id": _json_value(scan_before_id),
     }
+    if witness_slack_hours is not None:
+        # Absent, not null: a caller with no slack to carry must mint the same
+        # payload - and therefore the same boundary fingerprint - as before
+        # this field existed.
+        payload["witness_slack_hours"] = int(witness_slack_hours)
     return signing.dumps(
         payload, key=settings.SECRET_KEY, salt=CURSOR_SALT, compress=True
     )
@@ -458,6 +483,13 @@ def decode_list_cursor(
         raise ListCursorError("invalid_cursor", "The continuation cursor is invalid.")
     if (scan_before_start_time is None) != (scan_before_id is None):
         raise ListCursorError("invalid_cursor", "The continuation cursor is invalid.")
+    witness_slack_hours = payload.get("witness_slack_hours")
+    if witness_slack_hours is not None and (
+        not isinstance(witness_slack_hours, int)
+        or isinstance(witness_slack_hours, bool)
+        or not 0 <= witness_slack_hours <= MAX_CURSOR_WITNESS_SLACK_HOURS
+    ):
+        raise ListCursorError("invalid_cursor", "The continuation cursor is invalid.")
     if scan_before_start_time is not None and (
         not isinstance(scan_before_start_time, datetime)
         or not (scan_slice_start or window_start)
@@ -479,6 +511,7 @@ def decode_list_cursor(
         scan_slice_end=scan_slice_end,
         scan_before_start_time=scan_before_start_time,
         scan_before_id=scan_before_id,
+        witness_slack_hours=witness_slack_hours,
     )
 
 
