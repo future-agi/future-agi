@@ -29,6 +29,11 @@ class Migration(migrations.Migration):
             name="omega_memory",
             field=models.JSONField(blank=True, default=list),
         ),
+        migrations.AddField(
+            model_name="tracescanconfig",
+            name="omega_last_claimed_at",
+            field=models.DateTimeField(blank=True, db_index=True, null=True),
+        ),
         migrations.CreateModel(
             name="TraceInvestigationJob",
             fields=[
@@ -155,10 +160,6 @@ class Migration(migrations.Migration):
             options={
                 "db_table": "tracer_trace_investigation_delivery",
                 "constraints": [
-                    models.UniqueConstraint(
-                        fields=("topic", "partition", "offset"),
-                        name="unique_trace_investigation_delivery",
-                    ),
                     models.UniqueConstraint(
                         fields=("organization", "event_id"),
                         name="unique_trace_investigation_event",

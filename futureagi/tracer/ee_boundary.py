@@ -169,20 +169,16 @@ def price_trace_investigation_usage(
     return TraceInvestigationUsagePricing(True, amount, "")
 
 
-def enqueue_trace_investigation_usage(event_payload: dict) -> None:
-    """Strictly enqueue one already-pinned cloud usage event.
-
-    Unlike the normal request-path emitter, this propagates Redis failures so
-    the durable report outbox can retry the same event ID.
-    """
+def emit_trace_investigation_usage(event_payload: dict) -> None:
+    """Emit a feed-specific credit event through the existing billing path."""
     if is_oss():
         raise RuntimeError("cloud usage emitter is unavailable")
     try:
         from ee.usage.deployment import DeploymentMode
         from ee.usage.schemas.events import UsageEvent
-        from ee.usage.services.emitter import emit_confirmed
+        from ee.usage.services.emitter import emit
     except ImportError as error:
         raise RuntimeError("cloud usage emitter is unavailable") from error
     if not DeploymentMode.is_cloud():
         raise RuntimeError("cloud usage emission is not applicable")
-    emit_confirmed(UsageEvent.model_validate(event_payload))
+    emit(UsageEvent.model_validate(event_payload))

@@ -6,19 +6,12 @@ import pytest
 from django.test import override_settings
 from django.utils import timezone
 
-from accounts.models import User
-from accounts.models.organization_membership import OrganizationMembership
-from accounts.models.workspace import Workspace, WorkspaceMembership
-from tfc.constants.levels import Level
-from tfc.constants.roles import OrganizationRoles
 from tracer.models.project import Project
 from tracer.models.trace_investigation import (
     TraceInvestigationAttempt,
     TraceInvestigationAttemptStatus,
     TraceInvestigationJob,
     TraceInvestigationJobState,
-    TraceInvestigationMemorySnapshot,
-    TraceInvestigationMemoryStatus,
     TraceInvestigationReport,
 )
 from tracer.models.trace_scan import TraceScanConfig, TraceScanEngine, TraceScanResult
@@ -30,12 +23,6 @@ from tracer.services.trace_investigation import (
     publish_investigation,
     record_trace_notifications,
     update_investigation_attempt,
-)
-from tracer.services.trace_investigation_memory import (
-    change_active_memory,
-    create_memory_candidate,
-    record_memory_evaluation,
-    submit_reviewed_feedback,
 )
 
 pytestmark = pytest.mark.django_db
@@ -451,202 +438,6 @@ def test_publication_rejects_cross_project_trace_projection(
     assert not TraceInvestigationReport.no_workspace_objects.filter(
         idempotency_key="cross-project-publication"
     ).exists()
-
-
-@override_settings(
-    ERROR_FEED_OMEGA_ENABLED=True,
-    ERROR_FEED_OMEGA_DELAY_SECONDS=0,
-)
-def test_reviewed_feedback_evaluation_promotion_and_rollback(
-    observe_project,
-    user,
-):
-    _configure(observe_project)
-    record_trace_notifications(deliveries=[_delivery(observe_project)])
-    claim = claim_due_investigations(
-        worker_id="node-1", engine_version="omega-v1", limit=1
-    )["claims"][0]
-    publication = _publish(
-        idempotency_key="memory-source-report",
-        lease_token=claim["lease_token"],
-        result=_result(claim),
-    )
-    feedback_args = {
-        "actor": user,
-        "organization_id": observe_project.organization_id,
-        "workspace_id": observe_project.workspace_id,
-        "project_id": observe_project.id,
-        "report_id": publication["report_id"],
-        "occurrence_id": publication["occurrence_ids"][0],
-        "finding_id": "finding-1",
-        "idempotency_key": "review-finding-1",
-        "feedback_type": "confirm_finding",
-        "comment": "The retained receipt confirms the mismatch.",
-    }
-    feedback = submit_reviewed_feedback(**feedback_args)
-    assert submit_reviewed_feedback(**feedback_args) == feedback
-    assert feedback["active_memory_unchanged"] is True
-
-    parent = TraceInvestigationMemorySnapshot.no_workspace_objects.get(
-        project=observe_project,
-        status=TraceInvestigationMemoryStatus.ACTIVE,
-    )
-    candidate = create_memory_candidate(
-        organization_id=observe_project.organization_id,
-        workspace_id=observe_project.workspace_id,
-        project_id=observe_project.id,
-        expected_parent_snapshot_id=parent.id,
-        idempotency_key="candidate-1",
-        source_feedback_ids=[feedback["feedback_id"]],
-        entries=[
-            *parent.entries,
-            {
-                "id": "refund-receipt-pairing",
-                "text": "Retain requested and posted amount evidence together.",
-                "source_feedback_id": feedback["feedback_id"],
-            },
-        ],
-    )
-    failed_evaluation = record_memory_evaluation(
-        organization_id=observe_project.organization_id,
-        workspace_id=observe_project.workspace_id,
-        project_id=observe_project.id,
-        candidate_id=candidate["candidate_id"],
-        candidate_digest=candidate["candidate_digest"],
-        idempotency_key="evaluation-failed",
-        cohort_id="holdout-1",
-        metrics={
-            "sample_count": 10,
-            "precision": 0.5,
-            "recall": 0.5,
-            "unknown_rate": 0.2,
-            "cost_usd": None,
-            "latency_ms": 100.0,
-        },
-        passed=False,
-        holdout_disjoint=True,
-    )
-    change_args = {
-        "actor": user,
-        "organization_id": observe_project.organization_id,
-        "workspace_id": observe_project.workspace_id,
-        "project_id": observe_project.id,
-        "action": "promote",
-        "idempotency_key": "promotion-1",
-        "expected_current_snapshot_id": parent.id,
-        "target_snapshot_id": candidate["candidate_id"],
-        "target_digest": candidate["candidate_digest"],
-        "evaluation_id": failed_evaluation["evaluation_id"],
-    }
-    with pytest.raises(InvestigationConflict, match="does not permit promotion"):
-        change_active_memory(**change_args)
-
-    passed_evaluation = record_memory_evaluation(
-        organization_id=observe_project.organization_id,
-        workspace_id=observe_project.workspace_id,
-        project_id=observe_project.id,
-        candidate_id=candidate["candidate_id"],
-        candidate_digest=candidate["candidate_digest"],
-        idempotency_key="evaluation-passed",
-        cohort_id="holdout-2",
-        metrics={
-            "sample_count": 10,
-            "precision": 0.9,
-            "recall": 0.8,
-            "unknown_rate": 0.1,
-            "cost_usd": 0,
-            "latency_ms": 90.0,
-        },
-        passed=True,
-        holdout_disjoint=True,
-    )
-    change_args["evaluation_id"] = passed_evaluation["evaluation_id"]
-    promoted = change_active_memory(**change_args)
-    assert promoted["active_snapshot_id"] == candidate["candidate_id"]
-
-    record_trace_notifications(deliveries=[_delivery(observe_project, offset=99)])
-    next_claim = claim_due_investigations(
-        worker_id="node-2", engine_version="omega-v1", limit=1
-    )["claims"][0]
-    assert next_claim["memory"]["snapshot_id"] == str(candidate["candidate_id"])
-    assert len(next_claim["memory"]["entries"]) == 2
-
-    rolled_back = change_active_memory(
-        actor=user,
-        organization_id=observe_project.organization_id,
-        workspace_id=observe_project.workspace_id,
-        project_id=observe_project.id,
-        action="rollback",
-        idempotency_key="rollback-1",
-        expected_current_snapshot_id=candidate["candidate_id"],
-        target_snapshot_id=parent.id,
-        target_digest=parent.digest,
-        evaluation_id=None,
-    )
-    assert rolled_back["active_snapshot_id"] == parent.id
-    config = TraceScanConfig.no_workspace_objects.get(project=observe_project)
-    assert config.omega_memory == parent.entries
-
-
-@override_settings(
-    ERROR_FEED_OMEGA_ENABLED=True,
-    ERROR_FEED_OMEGA_DELAY_SECONDS=0,
-)
-def test_feedback_rejects_member_restricted_to_another_workspace(
-    observe_project,
-    organization,
-    user,
-):
-    _configure(observe_project)
-    record_trace_notifications(deliveries=[_delivery(observe_project)])
-    claim = claim_due_investigations(
-        worker_id="node-1", engine_version="omega-v1", limit=1
-    )["claims"][0]
-    publication = _publish(
-        idempotency_key="restricted-feedback-source",
-        lease_token=claim["lease_token"],
-        result=_result(claim),
-    )
-
-    restricted = User.objects.create_user(
-        email="restricted-workspace@futureagi.com",
-        password="testpassword123",
-        name="Restricted Workspace Member",
-    )
-    org_membership = OrganizationMembership.no_workspace_objects.create(
-        user=restricted,
-        organization=organization,
-        role=OrganizationRoles.MEMBER,
-        level=Level.MEMBER,
-        is_active=True,
-    )
-    other_workspace = Workspace.no_workspace_objects.create(
-        name="Other Workspace",
-        organization=organization,
-        created_by=user,
-    )
-    WorkspaceMembership.no_workspace_objects.create(
-        workspace=other_workspace,
-        user=restricted,
-        role=OrganizationRoles.WORKSPACE_MEMBER,
-        level=Level.WORKSPACE_MEMBER,
-        organization_membership=org_membership,
-        is_active=True,
-    )
-
-    with pytest.raises(InvestigationNotFound, match="project scope was not found"):
-        submit_reviewed_feedback(
-            actor=restricted,
-            organization_id=observe_project.organization_id,
-            workspace_id=observe_project.workspace_id,
-            project_id=observe_project.id,
-            report_id=publication["report_id"],
-            occurrence_id=publication["occurrence_ids"][0],
-            finding_id="finding-1",
-            idempotency_key="restricted-feedback",
-            feedback_type="confirm_finding",
-            comment="Must not cross the workspace boundary.",
-        )
 
 
 @override_settings(INTERNAL_API_SECRET="test-secret")

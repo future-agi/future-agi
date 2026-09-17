@@ -42,13 +42,9 @@ from tracer.views.saved_view import SavedViewViewSet
 from tracer.views.shared_link import SharedLinkViewSet, resolve_shared_link
 from tracer.views.trace import GetUserCodeExampleView, TraceView, UsersView
 from tracer.views.trace_investigation import (
-    ChangeActiveMemoryView,
     ClaimInvestigationsView,
-    CreateMemoryCandidateView,
     PublishInvestigationView,
-    RecordMemoryEvaluationView,
     RecordTraceNotificationsView,
-    SubmitInvestigationFeedbackView,
     UpdateInvestigationAttemptView,
 )
 from tracer.views.trace_session import TraceSessionView
@@ -99,26 +95,6 @@ urlpatterns = [
         "internal/error-feed-v2/reports/",
         PublishInvestigationView.as_view(),
         name="error-feed-v2-reports",
-    ),
-    path(
-        "internal/error-feed-v2/memory/candidates/",
-        CreateMemoryCandidateView.as_view(),
-        name="error-feed-v2-memory-candidate",
-    ),
-    path(
-        "internal/error-feed-v2/memory/evaluations/",
-        RecordMemoryEvaluationView.as_view(),
-        name="error-feed-v2-memory-evaluation",
-    ),
-    path(
-        "error-feed-v2/feedback/",
-        SubmitInvestigationFeedbackView.as_view(),
-        name="error-feed-v2-feedback",
-    ),
-    path(
-        "error-feed-v2/memory/changes/",
-        ChangeActiveMemoryView.as_view(),
-        name="error-feed-v2-memory-change",
     ),
     # Imagine analysis — trigger + poll for dynamic analysis results
     path("imagine-analysis/", ImagineAnalysisView.as_view(), name="imagine-analysis"),

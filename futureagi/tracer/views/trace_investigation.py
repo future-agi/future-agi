@@ -5,24 +5,15 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from simulate.authentication import InternalServiceAuthentication
-from tfc.permissions.rbac import IsOrganizationAdmin, IsOrganizationMember
 from tfc.utils.api_contracts import validated_request
 from tracer.serializers.trace_investigation import (
-    ChangeActiveMemoryRequestSerializer,
-    ChangeActiveMemoryResponseSerializer,
     ClaimInvestigationsRequestSerializer,
     ClaimInvestigationsResponseSerializer,
-    CreateMemoryCandidateRequestSerializer,
-    CreateMemoryCandidateResponseSerializer,
     InvestigationControlErrorSerializer,
     PublishInvestigationRequestSerializer,
     PublishInvestigationResponseSerializer,
-    RecordMemoryEvaluationRequestSerializer,
-    RecordMemoryEvaluationResponseSerializer,
     RecordTraceNotificationsRequestSerializer,
     RecordTraceNotificationsResponseSerializer,
-    SubmitInvestigationFeedbackRequestSerializer,
-    SubmitInvestigationFeedbackResponseSerializer,
     UpdateInvestigationAttemptRequestSerializer,
     UpdateInvestigationAttemptResponseSerializer,
 )
@@ -35,13 +26,6 @@ from tracer.services.trace_investigation import (
     record_trace_notifications,
     update_investigation_attempt,
 )
-from tracer.services.trace_investigation_memory import (
-    change_active_memory,
-    create_memory_candidate,
-    record_memory_evaluation,
-    submit_reviewed_feedback,
-)
-from tracer.views.feed._permissions import ErrorFeedLicenseRequired
 
 
 def _error_response(error: InvestigationControlError) -> Response:
@@ -124,87 +108,5 @@ class PublishInvestigationView(InternalInvestigationView):
     def post(self, request: Request) -> Response:
         try:
             return Response(publish_investigation(**request.validated_data))
-        except InvestigationControlError as error:
-            return _error_response(error)
-
-
-class CreateMemoryCandidateView(InternalInvestigationView):
-    @validated_request(
-        CreateMemoryCandidateRequestSerializer,
-        responses={
-            200: CreateMemoryCandidateResponseSerializer,
-            404: InvestigationControlErrorSerializer,
-            409: InvestigationControlErrorSerializer,
-        },
-        reject_unknown_fields=True,
-    )
-    def post(self, request: Request) -> Response:
-        try:
-            return Response(create_memory_candidate(**request.validated_data))
-        except InvestigationControlError as error:
-            return _error_response(error)
-
-
-class RecordMemoryEvaluationView(InternalInvestigationView):
-    @validated_request(
-        RecordMemoryEvaluationRequestSerializer,
-        responses={
-            200: RecordMemoryEvaluationResponseSerializer,
-            404: InvestigationControlErrorSerializer,
-            409: InvestigationControlErrorSerializer,
-        },
-        reject_unknown_fields=True,
-    )
-    def post(self, request: Request) -> Response:
-        try:
-            return Response(record_memory_evaluation(**request.validated_data))
-        except InvestigationControlError as error:
-            return _error_response(error)
-
-
-class SubmitInvestigationFeedbackView(ErrorFeedLicenseRequired, APIView):
-    permission_classes = [IsAuthenticated, IsOrganizationMember]
-
-    @validated_request(
-        SubmitInvestigationFeedbackRequestSerializer,
-        responses={
-            200: SubmitInvestigationFeedbackResponseSerializer,
-            404: InvestigationControlErrorSerializer,
-            409: InvestigationControlErrorSerializer,
-        },
-        reject_unknown_fields=True,
-    )
-    def post(self, request: Request) -> Response:
-        try:
-            return Response(
-                submit_reviewed_feedback(
-                    actor=request.user,
-                    **request.validated_data,
-                )
-            )
-        except InvestigationControlError as error:
-            return _error_response(error)
-
-
-class ChangeActiveMemoryView(ErrorFeedLicenseRequired, APIView):
-    permission_classes = [IsAuthenticated, IsOrganizationAdmin]
-
-    @validated_request(
-        ChangeActiveMemoryRequestSerializer,
-        responses={
-            200: ChangeActiveMemoryResponseSerializer,
-            404: InvestigationControlErrorSerializer,
-            409: InvestigationControlErrorSerializer,
-        },
-        reject_unknown_fields=True,
-    )
-    def post(self, request: Request) -> Response:
-        try:
-            return Response(
-                change_active_memory(
-                    actor=request.user,
-                    **request.validated_data,
-                )
-            )
         except InvestigationControlError as error:
             return _error_response(error)

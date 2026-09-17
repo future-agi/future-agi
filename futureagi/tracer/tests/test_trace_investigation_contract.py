@@ -44,12 +44,16 @@ def test_queued_legacy_task_and_sweep_stop_when_disabled():
     scan.assert_not_called()
 
 
-def test_v2_schedule_excludes_legacy_sweep():
+def test_v2_adds_no_scheduler_and_preserves_legacy_sweep():
     from tfc.temporal.schedules import tracer as schedules
 
-    assert "sweep-scannable-traces" not in {
+    assert "sweep-scannable-traces" in {
         item.schedule_id for item in schedules.TRACER_SCHEDULES
     }
+    assert not any(
+        "omega" in item.schedule_id or "error-feed-v2" in item.schedule_id
+        for item in schedules.TRACER_SCHEDULES
+    )
 
 
 def test_canonical_wire_result_digest_interoperability_vector():

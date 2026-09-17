@@ -21,8 +21,6 @@ from tracer.models.trace_investigation import (
     TraceInvestigationGroupingStatus,
     TraceInvestigationJob,
     TraceInvestigationJobState,
-    TraceInvestigationMemorySnapshot,
-    TraceInvestigationMemoryStatus,
     TraceInvestigationReport,
 )
 from tracer.models.trace_scan import (
@@ -32,6 +30,7 @@ from tracer.models.trace_scan import (
     TraceScanStatus,
 )
 from tracer.queries.trace_scanner import is_trace_sampled
+from tracer.services.trace_investigation_billing import charge_trace_investigation
 
 CONTRACT_VERSION = "omega-investigation/v1"
 _DEFAULT_LIMITS = {
@@ -331,43 +330,12 @@ def validate_investigation_memory(memory: object) -> tuple[list[dict], str]:
     return normalized_memory, _digest(normalized_memory)
 
 
-def get_or_create_active_memory(
-    config: TraceScanConfig,
-) -> TraceInvestigationMemorySnapshot:
-    active = (
-        TraceInvestigationMemorySnapshot.no_workspace_objects.select_for_update()
-        .filter(
-            project_id=config.project_id,
-            status=TraceInvestigationMemoryStatus.ACTIVE,
-        )
-        .first()
-    )
-    if active is not None:
-        normalized, digest = validate_investigation_memory(active.entries)
-        if normalized != active.entries or digest != active.digest:
-            raise InvestigationConflict("active project Omega memory is invalid")
-        return active
-
-    normalized, digest = validate_investigation_memory(config.omega_memory)
+def _pinned_context(config: TraceScanConfig) -> tuple[str, str, list, dict]:
+    memory, memory_digest = validate_investigation_memory(config.omega_memory)
     snapshot_id = uuid.uuid5(
         uuid.NAMESPACE_URL,
-        f"omega-memory:{config.project_id}:{config.updated_at.isoformat()}:{digest}",
+        f"omega-memory:{config.project_id}:{config.updated_at.isoformat()}:{memory_digest}",
     )
-    return TraceInvestigationMemorySnapshot.no_workspace_objects.create(
-        id=snapshot_id,
-        organization_id=config.project.organization_id,
-        workspace_id=config.project.workspace_id,
-        project_id=config.project_id,
-        idempotency_key=f"bootstrap:{snapshot_id}",
-        status=TraceInvestigationMemoryStatus.ACTIVE,
-        digest=digest,
-        entries=normalized,
-        source_feedback_ids=[],
-    )
-
-
-def _pinned_context(config: TraceScanConfig) -> tuple[str, str, list, dict]:
-    active_memory = get_or_create_active_memory(config)
     configured_limits = config.omega_limits
     if not isinstance(configured_limits, dict) or set(configured_limits) - set(
         _DEFAULT_LIMITS
@@ -396,9 +364,9 @@ def _pinned_context(config: TraceScanConfig) -> tuple[str, str, list, dict]:
         raise InvestigationConflict("max_parallel_children cannot exceed max_children")
 
     return (
-        str(active_memory.id),
-        active_memory.digest,
-        active_memory.entries,
+        str(snapshot_id),
+        memory_digest,
+        memory,
         limits,
     )
 
@@ -742,6 +710,9 @@ def publish_investigation(
                 raise InvestigationConflict(
                     "publication identity was reused with a different result"
                 )
+            transaction.on_commit(
+                lambda report=existing: charge_trace_investigation(report)
+            )
             return _publication_receipt(existing, duplicate=True)
         report_id = uuid.uuid4()
         active = (
@@ -787,14 +758,7 @@ def publish_investigation(
             grouping_status=grouping_status,
             active_projection_updated=active,
         )
-        # Persist cost attribution in the same transaction as every report,
-        # including late/cancelled attempts. Pricing and enqueueing happen in a
-        # separate gated drain, so publication performs no billing-system I/O.
-        from tracer.services.trace_investigation_billing import (
-            record_trace_investigation_usage,
-        )
-
-        record_trace_investigation_usage(report)
+        transaction.on_commit(lambda report=report: charge_trace_investigation(report))
         if active:
             existing_projection = (
                 TraceScanResult.no_workspace_objects.select_for_update()

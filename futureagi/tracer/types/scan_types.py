@@ -107,7 +107,6 @@ class ClusteringSummary:
     clustered: int = 0
     new_clusters: int = 0
     assigned: int = 0
-    failed: int = 0
 
 
 # ---------------------------------------------------------------------------
