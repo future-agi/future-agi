@@ -116,73 +116,76 @@ export const CustomTreeNode = ({
               flexShrink: 0,
             }}
           >
-            {/* Duration */}
-            <Box
-              component="span"
-              sx={{
-                display: "flex",
-                flexDirection: "row",
-                alignItems: "center",
-                gap: 0.5,
-              }}
-            >
-              <SvgColor
+            {duration != null && (
+              <Box
+                component="span"
                 sx={{
-                  height: 12,
-                  width: 12,
-                  bgcolor: "text.disabled",
+                  display: "flex",
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 0.5,
                 }}
-                src="/assets/icons/navbar/ic_new_clock.svg"
-              />
-              <Typography color="text.disabled" typography={"s3"}>
-                {formatMs(duration ?? 0)}
-              </Typography>
-            </Box>
-            {/* Tokens */}
-            <Box
-              component="span"
-              sx={{
-                display: "flex",
-                flexDirection: "row",
-                alignItems: "center",
-                gap: 0.5,
-              }}
-            >
-              <SvgColor
+              >
+                <SvgColor
+                  sx={{
+                    height: 12,
+                    width: 12,
+                    bgcolor: "text.disabled",
+                  }}
+                  src="/assets/icons/navbar/ic_new_clock.svg"
+                />
+                <Typography color="text.disabled" typography={"s3"}>
+                  {formatMs(duration)}
+                </Typography>
+              </Box>
+            )}
+            {tokens != null && (
+              <Box
+                component="span"
                 sx={{
-                  height: 12,
-                  width: 12,
-                  bgcolor: "text.disabled",
+                  display: "flex",
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 0.5,
                 }}
-                src="/assets/icons/ic_tokens.svg"
-              />
-              <Typography color="text.disabled" typography={"s3"}>
-                {(tokens ?? 0).toLocaleString()}
-              </Typography>
-            </Box>
+              >
+                <SvgColor
+                  sx={{
+                    height: 12,
+                    width: 12,
+                    bgcolor: "text.disabled",
+                  }}
+                  src="/assets/icons/ic_tokens.svg"
+                />
+                <Typography color="text.disabled" typography={"s3"}>
+                  {tokens.toLocaleString()}
+                </Typography>
+              </Box>
+            )}
 
-            {/* Cost */}
-            <Box
-              component="span"
-              sx={{
-                display: "flex",
-                flexDirection: "row",
-                alignItems: "center",
-                gap: 0.5,
-              }}
-            >
-              <SvgColor
+            {cost != null && (
+              <Box
+                component="span"
                 sx={{
-                  height: 12,
-                  width: 12,
-                  bgcolor: "text.disabled",
+                  display: "flex",
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 0.5,
                 }}
-                src="/assets/icons/components/ic_cost.svg"
-              />
-              <Typography color="text.disabled" typography={"s3"}>
-                {(cost ?? 0).toFixed(4)}
-              </Typography>
-            </Box>
+              >
+                <SvgColor
+                  sx={{
+                    height: 12,
+                    width: 12,
+                    bgcolor: "text.disabled",
+                  }}
+                  src="/assets/icons/components/ic_cost.svg"
+                />
+                <Typography color="text.disabled" typography={"s3"}>
+                  {cost.toFixed(4)}
+                </Typography>
+              </Box>
+            )}
           </Box>
         </Box>
       </Stack>
