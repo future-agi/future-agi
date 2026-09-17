@@ -20,22 +20,47 @@ const HuggingFaceDetailDrawer = ({
 }) => {
   useEffect(() => {
     if (!show) return;
-    if (show && showNameField && huggingFaceDetail?.name) {
-      const defaultValues = { name: huggingFaceDetail.name };
-      if (subsetOptions?.length > 0) {
-        defaultValues.huggingface_dataset_config = subsetOptions[0].value;
-      }
-      if (splitOptions?.length > 0) {
-        defaultValues.huggingface_dataset_split = splitOptions[0].value;
-      }
-      defaultValues.num_rows = 1;
-      reset(defaultValues);
+
+    const currentValues = watch();
+    const valuesToReset = {};
+
+    if (showNameField && huggingFaceDetail?.name && !currentValues.name) {
+      valuesToReset.name = huggingFaceDetail.name;
+    }
+
+    const selectedSubset = currentValues.huggingface_dataset_config;
+    const hasSelectedSubset = subsetOptions?.some(
+      ({ value }) => value === selectedSubset,
+    );
+    if (subsetOptions?.length > 0 && !hasSelectedSubset) {
+      valuesToReset.huggingface_dataset_config = subsetOptions[0].value;
+    }
+
+    const selectedSplit = currentValues.huggingface_dataset_split;
+    const hasSelectedSplit = splitOptions?.some(
+      ({ value }) => value === selectedSplit,
+    );
+    if (splitOptions?.length > 0 && !hasSelectedSplit) {
+      valuesToReset.huggingface_dataset_split = splitOptions[0].value;
+    }
+
+    if (
+      currentValues.num_rows === undefined ||
+      currentValues.num_rows === null ||
+      currentValues.num_rows === ""
+    ) {
+      valuesToReset.num_rows = 1;
+    }
+
+    if (Object.keys(valuesToReset).length > 0) {
+      reset({ ...currentValues, ...valuesToReset });
     }
   }, [
     show,
     showNameField,
     huggingFaceDetail?.name,
     reset,
+    watch,
     subsetOptions,
     splitOptions,
   ]);
