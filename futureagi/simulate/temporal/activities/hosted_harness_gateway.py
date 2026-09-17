@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+
 from django.utils import timezone
 from temporalio import activity
 
@@ -18,7 +19,7 @@ from simulate.temporal.types.hosted_harness_gateway import (
 async def author_hosted_harness_job(
     input: HostedHarnessGatewayInput,
 ) -> HostedHarnessAuthoringOutput:
-    """Author the frozen bundle inside a Daytona sandbox before the execution launch.
+    """Author the frozen bundle in a managed sandbox before execution launch.
 
     Contract/environment/scenario generation is model-heavy, so it runs in a throwaway sandbox
     (authoring credentials only) rather than on the control-plane worker. A job that already
@@ -27,7 +28,7 @@ async def author_hosted_harness_job(
     from simulate.models import HostedHarnessJob
     from simulate.services.hosted_harness import HostedHarnessError
     from simulate.services.hosted_harness_gateway import (
-        DaytonaHostedGateway,
+        HostedHarnessGateway,
         store_authoring_archive,
     )
 
@@ -47,7 +48,7 @@ async def author_hosted_harness_job(
         job = HostedHarnessJob.no_workspace_objects.select_related("organization").get(
             id=input.job_id
         )
-        body = DaytonaHostedGateway().author(job)
+        body = HostedHarnessGateway().author(job)
         store_authoring_archive(job, body)
 
     def _failed(code: str, detail: str) -> None:
@@ -108,13 +109,13 @@ async def launch_hosted_harness_job(
     input: HostedHarnessGatewayInput,
 ) -> HostedHarnessLaunchOutput:
     from simulate.models import HostedHarnessJob
-    from simulate.services.hosted_harness_gateway import DaytonaHostedGateway
+    from simulate.services.hosted_harness_gateway import HostedHarnessGateway
 
     def _launch() -> str:
         job = HostedHarnessJob.no_workspace_objects.select_related("organization").get(
             id=input.job_id
         )
-        attempt = DaytonaHostedGateway().launch(
+        attempt = HostedHarnessGateway().launch(
             job, endpoint_base_url=input.endpoint_base_url
         )
         return str(attempt.id)
@@ -128,13 +129,13 @@ async def poll_hosted_harness_attempt(
     input: HostedHarnessAttemptInput,
 ) -> HostedHarnessPollOutput:
     from simulate.models import HostedHarnessAttempt, HostedHarnessJob
-    from simulate.services.hosted_harness_gateway import DaytonaHostedGateway
+    from simulate.services.hosted_harness_gateway import HostedHarnessGateway
 
     def _poll() -> tuple[bool, str, bool]:
         attempt = HostedHarnessAttempt.no_workspace_objects.select_related(
             "job", "job__organization"
         ).get(id=input.attempt_id)
-        job = DaytonaHostedGateway().reconcile_completed(attempt)
+        job = HostedHarnessGateway().reconcile_completed(attempt)
         if job is None:
             return False, attempt.job.state, False
         retryable = job.state == HostedHarnessJob.State.RETRY_WAIT
@@ -149,14 +150,14 @@ async def cancel_hosted_harness_attempt(
     input: HostedHarnessAttemptInput,
 ) -> HostedHarnessPollOutput:
     from simulate.models import HostedHarnessAttempt
-    from simulate.services.hosted_harness_gateway import DaytonaHostedGateway
+    from simulate.services.hosted_harness_gateway import HostedHarnessGateway
 
     def _cancel() -> str:
         attempt = HostedHarnessAttempt.no_workspace_objects.select_related(
             "job", "job__organization"
         ).get(id=input.attempt_id)
         reason = attempt.job.cancel_reason or "user_canceled"
-        job = DaytonaHostedGateway().cancel(attempt.job, reason=reason)
+        job = HostedHarnessGateway().cancel(attempt.job, reason=reason)
         return job.state
 
     state = await _run_db(_cancel)

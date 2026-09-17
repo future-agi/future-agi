@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sys
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -680,19 +679,16 @@ def test_attempt_can_mint_bounded_signed_ingress_url(organization, settings):
     capability.attempt.save(update_fields=["provider_ref", "updated_at"])
 
     sandbox = MagicMock()
-    sandbox.create_signed_preview_url.return_value = SimpleNamespace(
+    provider = MagicMock()
+    provider.get.return_value = sandbox
+    provider.create_preview_url.return_value = SimpleNamespace(
         url="https://signed-preview.example/provider-callback"
     )
-    daytona_client = MagicMock()
-    daytona_client.get.return_value = sandbox
-    daytona_class = MagicMock(return_value=daytona_client)
-    fake_daytona = SimpleNamespace(
-        Daytona=daytona_class,
-        DaytonaConfig=MagicMock(return_value=object()),
-    )
-    settings.DAYTONA_API_KEY = "configured"
 
-    with patch.dict(sys.modules, {"daytona": fake_daytona}):
+    with patch(
+        "simulate.services.hosted_sandbox.get_sandbox_provider",
+        return_value=provider,
+    ):
         response = APIClient().post(
             f"{BASE}/{capability.attempt.id}/ingress/",
             {"port": 8080, "expires_in_seconds": 7200},
@@ -704,21 +700,27 @@ def test_attempt_can_mint_bounded_signed_ingress_url(organization, settings):
     assert response.json()["url"] == (
         "https://signed-preview.example/provider-callback"
     )
-    daytona_client.get.assert_called_once_with("sandbox-provider-id")
-    sandbox.create_signed_preview_url.assert_called_once()
+    expires_in_seconds = response.json()["expires_in_seconds"]
+    assert 60 <= expires_in_seconds <= 7200
+    provider.get.assert_called_once_with("sandbox-provider-id")
+    provider.create_preview_url.assert_called_once_with(
+        sandbox, 8080, expires_in_seconds=expires_in_seconds
+    )
 
 
 @pytest.mark.django_db
-def test_ingress_without_daytona_sdk_is_a_typed_502(organization, settings):
+def test_ingress_without_selected_provider_sdk_is_a_typed_502(organization):
     job, _ = create_hosted_job(
         organization, _payload(), idempotency_key="attempt-ingress-no-sdk-key"
     )
     capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
     capability.attempt.provider_ref = "sandbox-provider-id"
     capability.attempt.save(update_fields=["provider_ref", "updated_at"])
-    settings.DAYTONA_API_KEY = "configured"
 
-    with patch.dict(sys.modules, {"daytona": None}):
+    with patch(
+        "simulate.services.hosted_sandbox.get_sandbox_provider",
+        side_effect=ImportError("provider SDK is unavailable"),
+    ):
         response = APIClient().post(
             f"{BASE}/{capability.attempt.id}/ingress/",
             {"port": 8080, "expires_in_seconds": 7200},

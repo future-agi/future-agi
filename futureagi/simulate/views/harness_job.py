@@ -35,9 +35,9 @@ from tfc.utils.api_contracts import validated_request
 class HarnessJobViewSet(viewsets.ViewSet):
     """Provider-neutral control plane for hosted ALK harness jobs.
 
-    Validates the v1.6 request contract and delegates execution to the backend
-    selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
-    ``sandbox``). See ``simulate.services.harness_provider``.
+    Validates the v1.6 request contract and delegates execution to the public backend selected by
+    ``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+    selects its managed sandbox runtime.
     """
 
     permission_classes = [IsAuthenticated]
@@ -132,11 +132,10 @@ class HarnessJobViewSet(viewsets.ViewSet):
                 {"detail": "an organization is required"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        # Daytona cannot dereference the local-sandbox
-        # ``harness_environment_file`` manager. Google ADC crosses the hosted
-        # seam as encrypted JSON; the guest recreates the 0600 file and exports
-        # GOOGLE_APPLICATION_CREDENTIALS inside the sandbox.
-        if get_harness_provider().name == "daytona":
+        # Managed sandboxes cannot dereference the local-sandbox
+        # ``harness_environment_file`` manager. Google ADC crosses the hosted seam as encrypted
+        # JSON; the guest recreates the 0600 file and exports GOOGLE_APPLICATION_CREDENTIALS.
+        if get_harness_provider().name == "hosted":
             if environment_name != "GOOGLE_APPLICATION_CREDENTIALS":
                 return Response(
                     {

@@ -161,19 +161,12 @@ def test_one_attempt_growing_does_not_disturb_another():
 
 def test_the_ledger_is_read_before_the_only_delete_that_exists(monkeypatch):
     """Pins the ordering, so a reordered or second deletion path fails here."""
-    import sys
-    import types
-
     from simulate.services import hosted_harness_gateway as gateway
-
-    # The method imports daytona at call time, and the SDK is not a test dependency.
-    fake = types.ModuleType("daytona")
-    fake.DaytonaNotFoundError = type("DaytonaNotFoundError", (Exception,), {})
-    monkeypatch.setitem(sys.modules, "daytona", fake)
 
     order = []
 
     class _Client:
+        name = "test-provider"
         # **kwargs so a new option on the real call (request_timeout, say) does not read as a
         # broken ordering invariant.
         def get(self, ref, **kwargs):
@@ -197,7 +190,7 @@ def test_the_ledger_is_read_before_the_only_delete_that_exists(monkeypatch):
     )
     monkeypatch.setattr(gateway, "record_cleanup", lambda *a, **k: None)
 
-    driver = gateway.DaytonaHostedGateway.__new__(gateway.DaytonaHostedGateway)
+    driver = gateway.HostedHarnessGateway.__new__(gateway.HostedHarnessGateway)
     driver.client = _Client()
     driver._delete_and_record(_Attempt())
 

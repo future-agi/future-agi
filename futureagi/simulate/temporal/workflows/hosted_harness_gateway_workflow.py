@@ -33,7 +33,7 @@ class HostedHarnessGatewayWorkflow:
                 "launch_hosted_harness_job",
                 input,
                 task_queue=QUEUE_RUNNER,
-                # A cold image build can exceed twenty minutes; a short bound cancels and restarts it.
+                # A cold runtime build can exceed twenty minutes; a short bound cancels and restarts it.
                 start_to_close_timeout=timedelta(minutes=45),
                 retry_policy=RetryPolicy(
                     maximum_attempts=input.max_infrastructure_attempts,
@@ -61,9 +61,9 @@ class HostedHarnessGatewayWorkflow:
                         "poll_hosted_harness_attempt",
                         attempt_input,
                         task_queue=QUEUE_RUNNER,
-                        # Reconciliation can include a Daytona delete whose own
-                        # timeout is two minutes. Keep the activity envelope
-                        # comfortably outside that provider deadline.
+                        # Reconciliation can include a managed sandbox deletion whose own timeout
+                        # is two minutes. Keep the activity envelope comfortably outside that
+                        # provider deadline.
                         start_to_close_timeout=timedelta(minutes=5),
                         retry_policy=RetryPolicy(
                             maximum_attempts=3,
@@ -74,7 +74,7 @@ class HostedHarnessGatewayWorkflow:
                     )
                 except ActivityError as exc:
                     # Polling only observes/reconciles durable provider state.
-                    # A temporarily slow Daytona API must not kill the workflow
+                    # A temporarily slow sandbox API must not kill the workflow
                     # while the guest is still running. Temporal already applied
                     # the bounded activity retry policy; wait, then observe again.
                     # Cancellation remains terminal and is handled by Temporal.

@@ -37,12 +37,21 @@ from simulate.services.hosted_harness import (
     request_cancellation,
 )
 from simulate.services.hosted_harness_diagnostics import (
-    DaytonaDiagnostics,
+    SandboxDiagnostics,
     cache_attempt_redaction_values,
     cached_attempt_redaction_values,
     forget_attempt_redaction_values,
-    poll_daytona_diagnostics,
+    poll_sandbox_diagnostics,
     redaction_values,
+)
+from simulate.services.hosted_sandbox import (
+    SandboxCommandRequest,
+    SandboxConflictError,
+    SandboxLaunchSpec,
+    SandboxNotFoundError,
+    SandboxProviderConfigurationError,
+    SandboxProviderError,
+    get_sandbox_provider,
 )
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import ensure_bucket, get_storage_client
@@ -81,13 +90,38 @@ _SCENARIO_DIRECTORY_COUNT_COMMAND = (
 )
 _ADJUSTMENTS_PATH = "/run/futureagi/adjustments.jsonl"
 _ADJUSTMENT_STATUS_PATH = "/run/futureagi/adjustment-status.jsonl"
-_DIRECT_IMAGE_WITH_ADJUSTMENTS = "direct-image-adjustments-v1"
 _SIMULATOR_SECRETS_PATH = "/run/futureagi/simulator-secrets.json"
 _SIMULATOR_VERTEX_CREDENTIALS_PATH = "/run/futureagi/simulator-vertex-sa.json"
 _PROVIDER_POLL_TIMEOUT_SECONDS = 15
 _DIAGNOSTICS_POLL_INTERVAL_SECONDS = 15
 _PROGRESS_FILE_TIMEOUT_SECONDS = 5
 _PROVIDER_UNREACHABLE_GRACE_SECONDS = 180
+
+
+def _authoring_ttl_seconds(provider_name: str | None = None) -> int:
+    if provider_name == "daytona":
+        return max(
+            60,
+            int(getattr(settings, "ALK_HOSTED_AUTHORING_TTL_MINUTES", 40)) * 60,
+        )
+    return max(60, int(getattr(settings, "ALK_HOSTED_AUTHORING_TIMEOUT", 3900)))
+
+
+def _execution_ttl_seconds(runtime: Mapping[str, Any]) -> int:
+    authoring_seconds = max(
+        0,
+        int(
+            getattr(
+                settings,
+                "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS",
+                3600,
+            )
+        ),
+    )
+    return max(
+        int(getattr(settings, "ALK_HOSTED_SANDBOX_TTL_SECONDS", 7200)),
+        authoring_seconds + int(runtime["max_duration_seconds"]) + 120,
+    )
 
 
 def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
@@ -119,7 +153,7 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
             ) from exc
 
     provider = str(os.environ.get("SIMULATOR_LLM_PROVIDER") or "vertex").strip()
-    model = str(os.environ.get("SIMULATOR_LLM_MODEL") or "gemini-2.5-flash").strip()
+    model = str(os.environ.get("SIMULATOR_LLM_MODEL") or "gemini-3.7-flash").strip()
     location = str(os.environ.get("GOOGLE_CLOUD_LOCATION") or "global").strip()
     derived_backend = (
         "vertex-gemini"
@@ -175,9 +209,7 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
     # The sandbox resolves nothing on our network, so the guest's collector is configured
     # separately and only falls back to ours when they are the same host.
     collector = str(
-        os.environ.get("ALK_HOSTED_FI_BASE_URL")
-        or os.environ.get("FI_BASE_URL")
-        or ""
+        os.environ.get("ALK_HOSTED_FI_BASE_URL") or os.environ.get("FI_BASE_URL") or ""
     ).strip()
     if collector:
         values["FI_BASE_URL"] = collector
@@ -864,6 +896,18 @@ def _effective_connector(
     return connector
 
 
+def _webrtc_egress_cidrs(
+    payload: Mapping[str, Any], secrets_map: Mapping[str, Any]
+) -> tuple[str, ...]:
+    if _effective_connector(payload, secrets_map) not in {
+        "livekit",
+        "vapi",
+        "retell",
+    }:
+        return ()
+    return tuple(sorted(getattr(settings, "ALK_HOSTED_WEBRTC_EGRESS_CIDRS", []) or []))
+
+
 def _connector_egress_domains(
     payload: Mapping[str, Any], secrets_map: Mapping[str, Any]
 ) -> set[str]:
@@ -969,15 +1013,17 @@ def _validate_egress_domains(domains: list[str]) -> None:
         _validate_egress_host(domain)
 
 
-def _validate_resolved_egress_domains(domains: Iterable[str]) -> None:
-    """Enforce Daytona's cap after platform, provider, and customer hosts combine."""
+def _validate_resolved_egress_domains(
+    domains: Iterable[str], *, max_domains: int | None = _MAX_EGRESS_DOMAINS
+) -> None:
+    """Enforce the selected sandbox provider's resolved-domain limit."""
     normalized = _normalize_egress_domains(domains)
-    if len(normalized) > _MAX_EGRESS_DOMAINS:
+    if max_domains is not None and len(normalized) > max_domains:
         raise HostedHarnessError(
             "egress_domain_limit_exceeded",
             "resolved sandbox egress requires "
             f"{len(normalized)} domains after normalization; "
-            f"Daytona supports at most {_MAX_EGRESS_DOMAINS}",
+            f"the selected sandbox provider supports at most {max_domains}",
             status_code=400,
         )
     for domain in normalized:
@@ -1029,7 +1075,7 @@ def _provider_egress_domains(secrets_map: Mapping[str, Any]) -> set[str]:
     if "RETELL_API_KEY" in aliases:
         # Retell web calls are created through its API, then bridged through Retell's managed
         # LiveKit deployment. Keep these provider-owned hosts derived from the credential type
-        # instead of asking customers to understand Daytona's network policy.
+        # instead of asking customers to understand the managed sandbox network policy.
         domains.update(
             {
                 "api.retellai.com",
@@ -1062,7 +1108,7 @@ def _resolved_egress_domains(
     simulator_env: Mapping[str, Any] | None = None,
     callback_host: str | None = None,
 ) -> set[str]:
-    """Build Daytona's authoritative minimized domain union for one launch."""
+    """Build the authoritative minimized domain union for one managed launch."""
     target_secrets = target_secrets or {}
     simulator_env = simulator_env or {}
     security = payload.get("security") or {}
@@ -1276,47 +1322,25 @@ def _load_bundle_scenarios(manifest: dict, job: HostedHarnessJob) -> list[dict]:
     return results
 
 
-class DaytonaHostedGateway:
+class HostedHarnessGateway:
     def __init__(self) -> None:
-        from daytona import Daytona, DaytonaConfig
-
-        api_key = getattr(settings, "DAYTONA_API_KEY", "")
-        snapshot = getattr(settings, "ALK_DAYTONA_SNAPSHOT", "")
-        dockerfile = getattr(settings, "ALK_DAYTONA_DOCKERFILE", "")
-        if not api_key or not (snapshot or dockerfile):
+        try:
+            self.client = get_sandbox_provider()
+        except SandboxProviderConfigurationError as exc:
             raise HostedHarnessError(
-                "daytona_not_configured",
-                "DAYTONA_API_KEY and either ALK_DAYTONA_SNAPSHOT or "
-                "ALK_DAYTONA_DOCKERFILE are required",
+                "sandbox_provider_not_configured",
+                str(exc),
                 status_code=503,
                 retryable=True,
-            )
-        self.snapshot = snapshot
-        self.dockerfile = dockerfile
-        self.snapshot_digest = getattr(settings, "ALK_DAYTONA_SNAPSHOT_DIGEST", "")
-        self.client = Daytona(
-            DaytonaConfig(
-                api_key=api_key,
-                api_url=getattr(settings, "DAYTONA_API_URL", None),
-                target=getattr(settings, "DAYTONA_TARGET", None),
-                organization_id=getattr(settings, "DAYTONA_ORGANIZATION_ID", None),
-            )
-        )
+            ) from exc
 
     def author(self, job: HostedHarnessJob) -> bytes:
-        """Run ALK authoring (understand -> environment -> scenarios) inside a Daytona sandbox.
+        """Run ALK authoring inside an isolated managed sandbox.
 
-        Scenario generation is LLM-heavy and must run off the control-plane worker. This provisions
-        a throwaway sandbox with only the authoring model credentials (never the target call
-        secrets), runs the same ``authoring_entrypoint`` the local SDK uses, and returns the packed
-        frozen authoring archive that ``bundle_author_v2`` later seals inside the execution sandbox.
+        Scenario generation is model-heavy and must run off the control-plane worker. This
+        provisions a throwaway sandbox with only the authoring model credentials, runs the same
+        ``authoring_entrypoint`` the local SDK uses, and returns the frozen authoring archive.
         """
-        from daytona import (
-            CreateSandboxFromImageParams,
-            CreateSandboxFromSnapshotParams,
-            Image,
-            Resources,
-        )
 
         _mark_stage(job, "acquiring_source")
         source_archive, commit_sha = HostedSourceAcquirer().acquire(job)
@@ -1374,7 +1398,7 @@ class DaytonaHostedGateway:
                     default_authoring_egress,
                 )
             )
-        )[:20]
+        )
         if authoring_target_secrets:
             provider_domain = {
                 "vapi": "api.vapi.ai",
@@ -1382,7 +1406,10 @@ class DaytonaHostedGateway:
                 "retell_chat": "api.retellai.com",
             }.get(connector)
             if provider_domain and provider_domain not in allowed_domains:
-                allowed_domains = [provider_domain, *allowed_domains][:20]
+                allowed_domains.insert(0, provider_domain)
+        _validate_resolved_egress_domains(
+            allowed_domains, max_domains=self.client.max_egress_domains
+        )
         authoring_env = {
             **{
                 name: value
@@ -1403,47 +1430,25 @@ class DaytonaHostedGateway:
             authoring_env["GOOGLE_CLOUD_PROJECT"] = project_id
             authoring_env["ANTHROPIC_VERTEX_PROJECT_ID"] = project_id
 
-        ttl_minutes = int(getattr(settings, "ALK_HOSTED_AUTHORING_TTL_MINUTES", 40))
+        ttl_seconds = _authoring_ttl_seconds(self.client.name)
         sandbox = None
         try:
-            common_params = {
-                "language": "python",
-                "os_user": getattr(
-                    settings, "ALK_HOSTED_SANDBOX_OS_USER", "svc-control"
-                ),
-                "labels": {
+            launch_spec = SandboxLaunchSpec(
+                cpu_units=payload["runtime"]["cpu_units"],
+                memory_mb=payload["runtime"]["memory_mb"],
+                disk_gb=10,
+                ttl_seconds=ttl_seconds,
+                os_user=getattr(settings, "ALK_HOSTED_SANDBOX_OS_USER", "svc-control"),
+                labels={
                     "futureagi.job": str(job.id),
                     "futureagi.authoring": "1",
                 },
-                "network_block_all": not allowed_domains,
-                "domain_allow_list": ",".join(sorted(allowed_domains)) or None,
-                "ephemeral": True,
-                "ttl_minutes": ttl_minutes,
-                "auto_delete_interval": ttl_minutes,
-            }
-            dockerfile = getattr(self, "dockerfile", "")
-            if dockerfile:
-                launch_params = CreateSandboxFromImageParams(
-                    image=Image.from_dockerfile(dockerfile),
-                    resources=Resources(
-                        cpu=payload["runtime"]["cpu_units"],
-                        memory=max(
-                            4,
-                            (payload["runtime"]["memory_mb"] + 1023) // 1024,
-                        ),
-                        disk=10,
-                    ),
-                    **common_params,
-                )
-                launch_timeout = 1200
-            else:
-                launch_params = CreateSandboxFromSnapshotParams(
-                    snapshot=self.snapshot,
-                    **common_params,
-                )
-                launch_timeout = 300
+                allowed_domains=tuple(sorted(allowed_domains)),
+            )
             _mark_stage(job, "understanding_agent")
-            sandbox = self.client.create(launch_params, timeout=launch_timeout)
+            sandbox = self.client.create(
+                launch_spec, timeout=self.client.create_timeout_seconds
+            )
             sandbox.fs.upload_file(source_archive, "/work/source.tar.gz")
             sandbox.fs.upload_file(
                 json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(),
@@ -1614,13 +1619,6 @@ class DaytonaHostedGateway:
     def launch(
         self, job: HostedHarnessJob, *, endpoint_base_url: str
     ) -> HostedHarnessAttempt:
-        from daytona import (
-            CreateSandboxFromImageParams,
-            CreateSandboxFromSnapshotParams,
-            Image,
-            Resources,
-            SessionExecuteRequest,
-        )
 
         _mark_stage(job, "acquiring_source")
         source_archive, commit_sha = HostedSourceAcquirer().acquire(job)
@@ -1667,16 +1665,14 @@ class DaytonaHostedGateway:
         # private-host protection remain fail-closed; the resolved cap is checked
         # after wildcard minimization and provider/connector additions.
         _validate_egress_domains(payload["security"]["allowed_egress_domains"])
-        _validate_resolved_egress_domains(allowed_domains)
+        _validate_resolved_egress_domains(
+            allowed_domains, max_domains=self.client.max_egress_domains
+        )
         capability = register_attempt(
             job.id,
             endpoint_base_url=endpoint_base_url,
-            snapshot_name=(
-                _DIRECT_IMAGE_WITH_ADJUSTMENTS
-                if getattr(self, "dockerfile", "")
-                else self.snapshot
-            ),
-            snapshot_digest=(self.snapshot_digest or None) if self.snapshot else None,
+            snapshot_name=self.client.runtime_name,
+            snapshot_digest=self.client.runtime_digest or None,
         )
         attempt = capability.attempt
         cache_attempt_redaction_values(
@@ -1694,68 +1690,29 @@ class DaytonaHostedGateway:
                 f"sha256:{commit_sha}" if len(commit_sha) == 64 else commit_sha
             )
         attempt.save(update_fields=["source_digest", "bundle_digest", "updated_at"])
-        authoring_seconds = max(
-            0,
-            int(
-                getattr(
-                    settings,
-                    "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS",
-                    3600,
-                )
-            ),
-        )
-        ttl_seconds = max(
-            int(getattr(settings, "ALK_HOSTED_SANDBOX_TTL_SECONDS", 7200)),
-            authoring_seconds + payload["runtime"]["max_duration_seconds"] + 120,
-        )
-        ttl_minutes = max(1, (ttl_seconds + 59) // 60)
-        # Voice/WebRTC media (ICE) needs UDP to the media server's advertised IP, which a DNS
-        # domain-allowlist cannot express when media and signaling resolve to different IPs. When
-        # unrestricted egress is enabled the sandbox runs with open outbound so media can flow;
-        # otherwise the domain allowlist (block-all + allowlist) applies.
+        ttl_seconds = _execution_ttl_seconds(payload["runtime"])
+        # E2B can combine domain and CIDR rules, which keeps LiveKit/WebRTC UDP media bounded.
+        # Daytona deliberately ignores CIDRs to preserve its established domain-only behavior.
         unrestricted = bool(getattr(settings, "ALK_HOSTED_EGRESS_UNRESTRICTED", False))
-        network_block_all = False if unrestricted else (not allowed_domains)
-        domain_allow_list = (
-            None if unrestricted else (",".join(sorted(allowed_domains)) or None)
-        )
+        allowed_cidrs = _webrtc_egress_cidrs(payload, secrets_map)
         sandbox = None
         try:
-            common_params = {
-                "language": "python",
-                "os_user": getattr(
-                    settings, "ALK_HOSTED_SANDBOX_OS_USER", "svc-control"
-                ),
-                "labels": {
+            launch_spec = SandboxLaunchSpec(
+                cpu_units=payload["runtime"]["cpu_units"],
+                memory_mb=payload["runtime"]["memory_mb"],
+                disk_gb=10,
+                ttl_seconds=ttl_seconds,
+                os_user=getattr(settings, "ALK_HOSTED_SANDBOX_OS_USER", "svc-control"),
+                labels={
                     "futureagi.job": str(job.id),
                     "futureagi.attempt": str(attempt.id),
                 },
-                "network_block_all": network_block_all,
-                "domain_allow_list": domain_allow_list,
-                "ephemeral": True,
-                "ttl_minutes": ttl_minutes,
-                "auto_delete_interval": ttl_minutes,
-            }
-            dockerfile = getattr(self, "dockerfile", "")
-            if dockerfile:
-                launch_params = CreateSandboxFromImageParams(
-                    image=Image.from_dockerfile(dockerfile),
-                    resources=Resources(
-                        cpu=payload["runtime"]["cpu_units"],
-                        memory=max(4, (payload["runtime"]["memory_mb"] + 1023) // 1024),
-                        disk=10,
-                    ),
-                    **common_params,
-                )
-                launch_timeout = 1200
-            else:
-                launch_params = CreateSandboxFromSnapshotParams(
-                    snapshot=self.snapshot,
-                    **common_params,
-                )
-                launch_timeout = 300
+                allowed_domains=tuple(sorted(allowed_domains)),
+                allowed_cidrs=allowed_cidrs,
+                unrestricted_egress=unrestricted,
+            )
             sandbox = self.client.create(
-                launch_params,
-                timeout=launch_timeout,
+                launch_spec, timeout=self.client.create_timeout_seconds
             )
             attempt.provider_ref = sandbox.id
             attempt.state = HostedHarnessAttempt.State.PROVISIONING
@@ -1867,10 +1824,6 @@ class DaytonaHostedGateway:
                     "GOOGLE_GENAI_USE_VERTEXAI",
                 }
             }
-            export_command = " ".join(
-                f"{name}={shlex.quote(value)}"
-                for name, value in sorted(authoring_exports.items())
-            )
             provider_profile_args = (
                 f"--target-secrets {authoring_secrets_path} "
                 "--provider-profile-cache /work/provider-import-profile.json "
@@ -1879,10 +1832,9 @@ class DaytonaHostedGateway:
             )
             command = sandbox.process.execute_session_command(
                 _ENTRYPOINT_SESSION,
-                SessionExecuteRequest(
+                SandboxCommandRequest(
                     command=(
-                        (f"export {export_command} && " if export_command else "")
-                        + "if [ ! -f /work/authoring/contract.json ]; then "
+                        "if [ ! -f /work/authoring/contract.json ]; then "
                         "python -m fi.alk.harness.hosted_authoring_entrypoint "
                         "/work/job.json --source /work/source --output /work/authoring "
                         f"--adjustments {_ADJUSTMENTS_PATH} "
@@ -1896,6 +1848,7 @@ class DaytonaHostedGateway:
                         "python -m fi.alk.harness.hosted_entrypoint /work/job.json "
                         "--source /work/source --output /work/artifacts"
                     ),
+                    env=authoring_exports,
                     run_async=True,
                     suppress_input_echo=True,
                 ),
@@ -1917,7 +1870,7 @@ class DaytonaHostedGateway:
             ):
                 provider_reason = "organization_suspended_depleted_credits"
             details = {
-                "provider": "daytona",
+                "provider": self.client.name,
                 "exception_type": type(exc).__name__,
             }
             if isinstance(provider_status_code, int):
@@ -1972,7 +1925,7 @@ class DaytonaHostedGateway:
                     provider_ref="",
                     verified_absent=True,
                     retry_pending=retry_pending,
-                    details={"provider": "daytona", "sandbox_created": False},
+                    details={"provider": self.client.name, "sandbox_created": False},
                 )
             else:
                 job = self._delete_and_record(attempt, retry_pending=retry_pending)
@@ -1993,7 +1946,7 @@ class DaytonaHostedGateway:
         command_id: str | None = None,
         command: Any | None = None,
         final: bool = False,
-    ) -> DaytonaDiagnostics | None:
+    ) -> SandboxDiagnostics | None:
         if (
             not final
             and attempt.diagnostics_captured_at
@@ -2019,7 +1972,7 @@ class DaytonaHostedGateway:
                 )
                 return None
         try:
-            return poll_daytona_diagnostics(
+            return poll_sandbox_diagnostics(
                 attempt,
                 sandbox,
                 session_id=_ENTRYPOINT_SESSION,
@@ -2091,7 +2044,6 @@ class DaytonaHostedGateway:
         the attempt-local inbox consumed by ALK at stage boundaries. Keeping the
         whole inbox in metadata also makes retries and the UI deterministic.
         """
-        from daytona import DaytonaNotFoundError
 
         terminal_states = {
             HostedHarnessJob.State.COMPLETED,
@@ -2131,7 +2083,7 @@ class DaytonaHostedGateway:
                 status_code=409,
                 retryable=True,
             )
-        if attempt.snapshot_name != _DIRECT_IMAGE_WITH_ADJUSTMENTS:
+        if not self.client.supports_adjustments:
             raise HostedHarnessError(
                 "adjustment_protocol_unavailable",
                 "this run started before live messages were enabled; start a new run to use them",
@@ -2142,7 +2094,7 @@ class DaytonaHostedGateway:
                 str(attempt.provider_ref),
                 request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
             )
-        except DaytonaNotFoundError as exc:
+        except SandboxNotFoundError as exc:
             raise HostedHarnessError(
                 "adjustment_sandbox_missing",
                 "the active hosted sandbox no longer exists",
@@ -2299,7 +2251,7 @@ class DaytonaHostedGateway:
             stage = "generating_scenarios"
         if isinstance(scenarios, list):
             stage = "validating_environment"
-        DaytonaHostedGateway._sync_adjustment_progress(job, sandbox)
+        HostedHarnessGateway._sync_adjustment_progress(job, sandbox)
         if not outputs:
             return
         # Once the guest event channel advances into runtime stages it is authoritative.
@@ -2361,7 +2313,6 @@ class DaytonaHostedGateway:
         job.save(update_fields=["payload", "updated_at"])
 
     def cancel(self, job: HostedHarnessJob, *, reason: str) -> HostedHarnessJob:
-        from daytona import DaytonaNotFoundError
 
         job = request_cancellation(job, reason)
         attempt = HostedHarnessAttempt.no_workspace_objects.filter(
@@ -2371,7 +2322,7 @@ class DaytonaHostedGateway:
             return job
         try:
             sandbox = self.client.get(str(attempt.provider_ref))
-        except DaytonaNotFoundError:
+        except SandboxNotFoundError:
             attempt.terminal_stage = "canceled"
             attempt.terminal_reason = reason
             attempt.save(
@@ -2382,7 +2333,7 @@ class DaytonaHostedGateway:
                 attempt.id,
                 provider_ref=str(attempt.provider_ref),
                 verified_absent=True,
-                details={"provider": "daytona", "already_absent": True},
+                details={"provider": self.client.name, "already_absent": True},
             )
         sandbox.fs.upload_file(
             json.dumps({"reason": reason}, separators=(",", ":")).encode(),
@@ -2392,16 +2343,8 @@ class DaytonaHostedGateway:
             "pkill -TERM -f 'fi.alk.harness.hosted_entrypoint' || true",
             timeout=30,
         )
-        deadline = time.monotonic() + 120
-        while time.monotonic() < deadline:
-            observation = self.inspect(attempt)
-            if observation["exit_code"] is not None:
-                break
-            time.sleep(2)
-        # Cleanup derives the final job state from the attempt's terminal
-        # stage. The already-absent branch sets this above; the normal branch
-        # must do the same or an intentional cancellation is misreported as a
-        # platform failure after the sandbox is deleted.
+        # Cancellation is terminal. Once the signal is sent, delete the sandbox immediately;
+        # provider-side deletion supplies the cleanup acknowledgment.
         attempt.terminal_stage = "canceled"
         attempt.terminal_reason = reason
         attempt.terminal_failure = None
@@ -2433,13 +2376,10 @@ class DaytonaHostedGateway:
     def reconcile_completed(
         self, attempt: HostedHarnessAttempt
     ) -> HostedHarnessJob | None:
-        from daytona import DaytonaConflictError, DaytonaError, DaytonaNotFoundError
 
-        # ``launch`` can fail before Daytona returns a sandbox id.  That path has already
+        # A launch can fail before the provider returns a sandbox id. That path has already
         # recorded cleanup and projected the job into RETRY_WAIT (or terminal FAILED when the
-        # attempt budget is exhausted).  The workflow deliberately polls the returned attempt
-        # once to learn that durable state; do not try ``client.get("")`` and replace the useful
-        # ``sandbox_launch_failed`` diagnosis with a misleading ``sandbox_disappeared`` error.
+        # attempt budget is exhausted). Do not replace that diagnosis with sandbox_disappeared.
         attempt.refresh_from_db()
         job = attempt.job
         job.refresh_from_db()
@@ -2456,7 +2396,7 @@ class DaytonaHostedGateway:
 
         try:
             observation = self.inspect(attempt)
-        except DaytonaNotFoundError:
+        except SandboxNotFoundError:
             retry_pending = False
             if not attempt.terminal_event_received:
                 attempt.terminal_stage = "failed"
@@ -2482,14 +2422,12 @@ class DaytonaHostedGateway:
                 provider_ref=str(attempt.provider_ref),
                 verified_absent=True,
                 retry_pending=retry_pending,
-                details={"provider": "daytona", "already_absent": True},
+                details={"provider": self.client.name, "already_absent": True},
             )
-        except DaytonaError as exc:
-            # Daytona can keep reporting a sandbox as STARTED while its toolbox/daemon is no
-            # longer reachable. The SDK's default file timeout is much longer than the Temporal
-            # poll activity timeout, which previously left the workflow retrying the poll for
-            # hours with no terminal diagnosis. Tolerate a short control-plane wobble, then
-            # retire the sandbox and start a genuinely fresh infrastructure attempt.
+        except SandboxProviderError as exc:
+            # A provider may still report the sandbox as running while its control channel is
+            # unavailable. Tolerate a short wobble, then replace it using the infrastructure
+            # retry budget.
             grace_seconds = int(
                 getattr(
                     settings,
@@ -2518,7 +2456,7 @@ class DaytonaHostedGateway:
                     "grace period"
                 ),
                 "details": {
-                    "provider": "daytona",
+                    "provider": self.client.name,
                     "exception_type": type(exc).__name__,
                     "grace_seconds": grace_seconds,
                 },
@@ -2537,7 +2475,7 @@ class DaytonaHostedGateway:
                     attempt,
                     retry_pending=self._should_retry(attempt, "infrastructure"),
                 )
-            except DaytonaConflictError:
+            except SandboxConflictError:
                 # The first delete request can be accepted even when its wait call ends in a
                 # lifecycle 409 ("state change in progress"). Cleanup is not verified yet, so
                 # let the next workflow poll observe absence instead of burning all activity
@@ -2554,11 +2492,9 @@ class DaytonaHostedGateway:
             attempt.save(update_fields=["heartbeat_at", "updated_at"])
             return None
 
-        # Event/manifest ingestion runs independently from the provider poll.  The attempt object
-        # held by the workflow may predate the terminal HTTP requests even though both commits are
-        # already visible in the database by the time Daytona reports process exit.  Refresh the
-        # delivery fields before classifying exit 0, or a fully acknowledged run is overwritten
-        # with the false `terminal_delivery_incomplete` platform failure.
+        # Event/manifest ingestion runs independently from the provider poll. The attempt object
+        # held by the workflow may predate terminal HTTP requests even though both commits are
+        # visible by the time the provider reports process exit. Refresh before classifying it.
         attempt.refresh_from_db(
             fields=[
                 "terminal_event_received",
@@ -2686,14 +2622,13 @@ class DaytonaHostedGateway:
     def _delete_and_record(
         self, attempt: HostedHarnessAttempt, *, retry_pending: bool = False
     ) -> HostedHarnessJob:
-        from daytona import DaytonaNotFoundError
 
         try:
             sandbox = self.client.get(
                 str(attempt.provider_ref),
                 request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
             )
-        except DaytonaNotFoundError:
+        except SandboxNotFoundError:
             absent = True
         else:
             # A terminal poll normally finalized diagnostics already. Launch failures and
@@ -2703,22 +2638,24 @@ class DaytonaHostedGateway:
                 self._capture_diagnostics(attempt, sandbox, final=True)
             # The last moment the ledger exists: after the delete there is nothing to ask.
             _read_harness_spend(attempt, sandbox)
-            self.client.delete(sandbox, timeout=120, wait=True)
-            try:
-                self.client.get(
-                    str(attempt.provider_ref),
-                    request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
-                )
-            except DaytonaNotFoundError:
-                absent = True
-            else:
-                absent = False
+            absent = self.client.delete(sandbox, timeout=120, wait=True)
+            if not absent:
+                try:
+                    self.client.get(
+                        str(attempt.provider_ref),
+                        request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
+                    )
+                except SandboxNotFoundError:
+                    absent = True
         return record_cleanup(
             attempt.id,
             provider_ref=str(attempt.provider_ref),
             verified_absent=absent,
             retry_pending=retry_pending,
-            details={"provider": "daytona", "deleted_at": timezone.now().isoformat()},
+            details={
+                "provider": self.client.name,
+                "deleted_at": timezone.now().isoformat(),
+            },
         )
 
 
@@ -3028,7 +2965,10 @@ def prepare_dispatch_payload(
     metadata = dict(dispatched.get("metadata") or {})
     metadata["environment_value_names"] = sorted(
         {
-            *(str(name).upper() for name in metadata.get("environment_value_names", [])),
+            *(
+                str(name).upper()
+                for name in metadata.get("environment_value_names", [])
+            ),
             *(str(name).upper() for name in secrets_map),
         }
     )
