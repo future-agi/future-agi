@@ -13,13 +13,16 @@ import pytest
 from clickhouse_driver import Client
 
 from conftest import _require_safe_ch25_test_target
+from tracer.services.clickhouse import exact_graph_reads
 from tracer.services.clickhouse.query_builders import TimeSeriesQueryBuilder
 from tracer.services.clickhouse.query_builders.user_list import UserListQueryBuilder
+from tracer.services.clickhouse.v2.query_builders import user_time_series
 from tracer.services.clickhouse.v2.query_builders.agent_graph import (
     AgentGraphQueryBuilderV2,
 )
 from tracer.services.clickhouse.v2.query_builders.user_time_series import (
     UserDetailTimeSeriesQueryBuilderV2,
+    UserGraphMembershipPlan,
     UserTimeSeriesQueryBuilderV2,
 )
 
@@ -1097,3 +1100,214 @@ def test_user_graphs_count_only_latest_live_span_rows(ch_client, user_graph_tabl
     filtered_detail.TRACE_SESSION_REMAP_TABLE = trace_session_remap
     filtered_query, filtered_params = filtered_detail.build()
     assert _execute(ch_client, filtered_query, filtered_params) == []
+
+
+def _seed_replay_population(ch_client, user_graph_tables):
+    """Ten physical rows in one replacement-key hour; four disagree on replay."""
+
+    spans, end_users, _remap, _ts_remap = user_graph_tables
+    ids = {
+        "project": "00000000-0000-4000-8000-000000000081",
+        "organization": "00000000-0000-4000-8000-000000000082",
+        "user_one": "00000000-0000-4000-8000-000000000083",
+        "user_two": "00000000-0000-4000-8000-000000000084",
+        "user_three": "00000000-0000-4000-8000-000000000085",
+    }
+    hour = datetime(2026, 7, 15, 10, 0, tzinfo=UTC)
+    ch_client.execute(f"ALTER TABLE {end_users} ADD COLUMN user_id String")
+
+    def span(trace, span_id, minute, cost, user, *, deleted=0, version=1):
+        at = hour + timedelta(minutes=minute)
+        return (
+            ids["project"], "llm", "svc", at, trace, span_id, "",
+            user, None, 10, 4, 2, 2, cost, "OK", at, deleted, version,
+        )
+
+    ch_client.execute(
+        f"INSERT INTO {spans} VALUES",
+        [
+            # Untouched live span.
+            span("t-live", "s1", 20, 5.0, ids["user_one"]),
+            # Corrected out of the requested window, still inside the hour.
+            span("t-move", "s2", 20, 7.0, ids["user_one"]),
+            span("t-move", "s2", 5, 7.0, ids["user_one"], version=2),
+            # Tombstoned by a later version.
+            span("t-tomb", "s3", 30, 11.0, ids["user_one"]),
+            span("t-tomb", "s3", 30, 11.0, ids["user_one"], deleted=1, version=2),
+            # Value correction: the old cost must not reach the metric.
+            span("t-cost", "s4", 25, 100.0, ids["user_one"]),
+            span("t-cost", "s4", 25, 9.0, ids["user_one"], version=2),
+            # The winning version clears the user. Reducing each column on its
+            # own would skip the NULL and revive the older owner.
+            span("t-null", "s5", 35, 13.0, ids["user_two"]),
+            span("t-null", "s5", 35, 13.0, None, version=2),
+            # A second surviving user.
+            span("t-u3", "s6", 40, 3.0, ids["user_three"]),
+        ],
+    )
+    ch_client.execute(
+        f"INSERT INTO {end_users} (project_id, end_user_id, organization_id, version, is_deleted, user_id) VALUES",
+        [
+            (ids["project"], ids[key], ids["organization"], 1, 0, f"user-{index}")
+            for index, key in enumerate(("user_one", "user_two", "user_three"))
+        ],
+    )
+    return ids, hour + timedelta(minutes=15), hour + timedelta(minutes=45)
+
+
+def _graph_builder(ids, window_start, window_end, tables, *, plan=None):
+    spans, _end_users, end_user_remap, _ts_remap = tables
+    builder = UserTimeSeriesQueryBuilderV2(
+        project_id=ids["project"],
+        filters=[
+            {
+                "column_id": "created_at",
+                "filter_config": {
+                    "filter_type": "datetime",
+                    "filter_op": "between",
+                    "filter_value": [window_start, window_end],
+                },
+            }
+        ],
+        interval="hour",
+        user_membership_sql=exact_graph_reads._active_user_dimension_membership_sql(),
+        user_membership_params={},
+        user_membership_plan=plan,
+        # The reader freezes naive UTC bounds; matching them selects the
+        # whole-snapshot population instead of a narrower trace partition.
+        exact_snapshot_start=window_start.replace(tzinfo=None),
+        exact_snapshot_end=window_end.replace(tzinfo=None),
+    )
+    builder.TABLE = spans
+    builder.END_USER_REMAP_TABLE = end_user_remap
+    return builder
+
+
+@pytest.mark.parametrize(
+    ("predicate", "expected"),
+    [
+        # Only the superseded version of t-cost had cost 100. A flag evaluated
+        # before the replay would admit its user; on the winner nothing matches.
+        ("(cost > 50)", None),
+        # Positive control on the same population and the same flag machinery.
+        ("(cost > 4)", {"active_users": 1, "total_cost_sum": 14.0}),
+    ],
+)
+def test_fused_attribute_flags_are_evaluated_on_the_winning_version(
+    ch_client, user_graph_tables, predicate, expected
+):
+    ids, window_start, window_end = _seed_replay_population(
+        ch_client, user_graph_tables
+    )
+    plan = UserGraphMembershipPlan((predicate,), (True,))
+    builder = _graph_builder(
+        ids, window_start, window_end, user_graph_tables, plan=plan
+    )
+    query, params = builder.build()
+    query = re.sub(r"\bend_users\b", user_graph_tables[1], query)
+
+    assert "FROM spans FINAL" not in query
+    assert "FROM end_users " not in query
+    flat = " ".join(query.split())
+    assert f"status, {predicate}), _version) AS latest_state" in flat
+    assert "countIf(rs.user_member_match_0) AS user_member_trace_0" in query
+
+    rows = _execute(ch_client, query, params)
+    if expected is None:
+        assert rows == []
+    else:
+        assert len(rows) == 1
+        for key, value in expected.items():
+            assert rows[0][key] == value
+
+
+def test_exact_user_graph_argmax_replay_equals_final_over_the_identity_hour(
+    ch_client, user_graph_tables
+):
+    """The ordered replay and a FINAL snapshot agree on the same population.
+
+    Every row is inside one replacement-key hour and the requested window is a
+    strict subset of it, so a reader that applied the precise timestamps before
+    collapsing versions would disagree on four of them.
+    """
+
+    spans, end_users, _remap, _ts_remap = user_graph_tables
+    ids, window_start, window_end = _seed_replay_population(
+        ch_client, user_graph_tables
+    )
+    project_id = ids["project"]
+    user_one, user_three = ids["user_one"], ids["user_three"]
+    builder = _graph_builder(ids, window_start, window_end, user_graph_tables)
+    query, params = builder.build()
+    query = re.sub(r"\bend_users\b", end_users, query)
+
+    assert "FROM spans FINAL" not in query and f"FROM {spans} FINAL" not in query
+    assert query.count(f"FROM {spans}") == 1
+    assert query.count("FROM latest_spans") == 1
+
+    # Independent oracle: the whole-row FINAL snapshot this reducer replaces,
+    # rendered from the same builder module over the same identity hours.
+    projection = ", ".join(
+        ("trace_id", "id", *user_time_series.USER_GRAPH_SPAN_COLUMNS)
+    )
+    reference_cte = re.sub(
+        r"\bspans\b",
+        spans,
+        user_time_series._full_snapshot_latest_spans_cte(
+            table="spans", project_predicate="project_id = %(project_id)s"
+        ),
+    )
+    reference = _execute(
+        ch_client,
+        f"WITH {reference_cte} SELECT {projection} FROM latest_spans ORDER BY trace_id",
+        {
+            "project_id": project_id,
+            "user_snapshot_scan_start": params["user_snapshot_scan_start"],
+            "user_snapshot_scan_end": params["user_snapshot_scan_end"],
+            "user_snapshot_start_us": params["user_snapshot_start_us"],
+            "user_snapshot_end_us": params["user_snapshot_end_us"],
+        },
+    )
+    replayed_cte = re.sub(
+        r"\bspans\b",
+        spans,
+        user_time_series._latest_spans_argmax_cte(
+            table="spans", project_predicate="project_id = %(project_id)s"
+        ),
+    )
+    replayed = _execute(
+        ch_client,
+        f"WITH {replayed_cte} SELECT {projection} FROM latest_spans ORDER BY trace_id",
+        {
+            "project_id": project_id,
+            "user_snapshot_scan_start": params["user_snapshot_scan_start"],
+            "user_snapshot_scan_end": params["user_snapshot_scan_end"],
+            "user_snapshot_start_us": params["user_snapshot_start_us"],
+            "user_snapshot_end_us": params["user_snapshot_end_us"],
+        },
+    )
+    # Four of the ten physical rows disagree before the replay; the corrected
+    # timestamp, the tombstone, the corrected cost and the cleared owner must
+    # all reach the same answer either way.
+    assert replayed == reference
+    assert [row["trace_id"] for row in replayed] == [
+        "t-cost",
+        "t-live",
+        "t-null",
+        "t-u3",
+    ]
+    assert [row["cost"] for row in replayed] == [9.0, 5.0, 13.0, 3.0]
+    # The cleared owner stays cleared: a per-column reduction would skip the
+    # NULL and hand this row back to its previous user.
+    assert [row["end_user_id"] for row in replayed] == [
+        uuid.UUID(user_one),
+        uuid.UUID(user_one),
+        None,
+        uuid.UUID(user_three),
+    ]
+
+    rows = _execute(ch_client, query, params)
+    assert len(rows) == 1
+    assert rows[0]["active_users"] == 2
+    assert rows[0]["total_cost_sum"] == 17.0
+    assert rows[0]["total_tokens"] == 12

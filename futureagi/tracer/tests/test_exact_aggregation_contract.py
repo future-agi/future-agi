@@ -7839,6 +7839,8 @@ def test_exact_worker_forwards_session_context_to_eval_annotation_reader(
 
 @pytest.mark.unit
 def test_exact_user_graph_uses_one_full_window_current_state_statement():
+    from tracer.services.clickhouse import exact_graph_reads as exact_module
+
     analytics = _ExactEntityAnalytics()
     start = datetime(2026, 1, 1)
     end = datetime(2026, 3, 15)
@@ -7857,22 +7859,29 @@ def test_exact_user_graph_uses_one_full_window_current_state_statement():
     assert params["end_date"] == end
     # Output and snapshot bounds are equal: every live snapshot trace already
     # belongs to this output. Replace recursive min-trace partition selection
-    # with full-hour FINAL, then apply precise timestamps to the winners.
+    # with a full-hour ordered replay, then apply precise timestamps to the
+    # winners — one scan of the window, and no FINAL merge over its parts.
     assert "candidate_trace_ids AS" not in query
     assert "HAVING min(start_time)" not in query
-    assert query.count("FROM spans FINAL") == 1
+    assert "FROM spans FINAL" not in query
+    assert query.count("FROM spans") == 1
+    assert query.count("FROM latest_spans") == 1
     assert params["user_snapshot_scan_start"] == start
     assert params["user_snapshot_scan_end"] == end
     assert "fromUnixTimestamp64Micro(%(user_snapshot_start_us)s, 'UTC')" in query
     assert "fromUnixTimestamp64Micro(%(user_snapshot_end_us)s, 'UTC')" in query
-    assert "WHERE snapshot_spans.is_deleted = 0" in query
-    assert "optimize_move_to_prewhere_if_final = 0" in query
+    assert "HAVING latest_state.2 = 0" in query
     assert "GROUP BY end_user_id, trace_id" in query
     assert "FROM end_users AS dimension_user FINAL" in query
     assert "FROM user_rows" not in query
     assert "candidate_user_session_remap_target_new_ids AS" not in query
-    assert "OVER (PARTITION BY new_id)" not in query
     assert "additional_table_filters" not in settings
+    # The replay is in sort-key order, so this reader gets a thread budget
+    # instead of the filter selector's single thread.
+    assert settings["max_threads"] == exact_module.settings.DASHBOARD_TRACE_READ_MAX_THREADS
+    assert settings["max_threads"] > exact_module.settings.FILTER_SELECTOR_MAX_THREADS
+    assert settings["optimize_move_to_prewhere_if_final"] == 0
+    assert settings["max_bytes_to_read"] == exact_module.EXACT_GRAPH_MAX_BYTES_TO_READ
     assert result["query_complete"] is True
     assert result["query_sampled"] is False
 
