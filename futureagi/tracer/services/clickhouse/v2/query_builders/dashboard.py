@@ -36,9 +36,11 @@ from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     compile_span_attribute_row_predicate,
     compile_span_filter_plans,
 )
+from tracer.services.clickhouse.v2.adapter import CH_INSERT_COLUMNS
 from tracer.services.clickhouse.v2.query_builders._rewrite import V2RewriteMixin
 from tracer.services.clickhouse.v2.query_builders.filters import (
-    rewrite_and_apply_v2_settings,
+    _append_v2_settings,
+    rewrite_v1_sql_to_v2,
 )
 
 # Tables whose columns must NOT be rewritten (they keep `_peerdb_is_deleted`).
@@ -70,6 +72,40 @@ _EXACT_QUANTILE_RE = re.compile(
     flags=re.DOTALL,
 )
 _SAFE_CLUSTER_NAME_RE = re.compile(r"\A[A-Za-z0-9_-]+\Z")
+
+# The replay winner reproduces ``SELECT spans.*``: ClickHouse expands ``*`` to
+# the ordinary (non-MATERIALIZED, non-ALIAS) columns, which is exactly
+# ``CH_INSERT_COLUMNS`` plus the version column.
+_EXACT_REPLAY_IDENTITY_COLUMNS = (
+    "project_id",
+    "observation_type",
+    "service_name",
+    "trace_id",
+    "id",
+)
+# The candidate CTE's name marks a statement that carries the exact replay;
+# ``build_metric_query`` reads it to choose that statement's aggregation.
+_EXACT_REPLAY_CANDIDATE_CTE = "dashboard_filter_candidate_identities"
+
+# Fat payload columns that no dashboard metric, filter or breakdown expression
+# can name: ``_qualify_span_expression`` does not know them and neither builder
+# emits them. Keeping them out of the winner tuple is what makes the aggregate
+# state proportional to the candidate count rather than to the payload.
+# ``attributes_extra`` is the exception — overflow-JSON attribute filters
+# compile against it — so it is packed on demand, never by default.
+_EXACT_REPLAY_OVERFLOW_COLUMN = "attributes_extra"
+_EXACT_REPLAY_OVERFLOW_TOKEN = "span_attributes_raw"
+_EXACT_REPLAY_UNPACKED_COLUMNS = frozenset(
+    {
+        "status_message",
+        "input",
+        "output",
+        "span_events",
+        "resource_attrs",
+        "metadata",
+        _EXACT_REPLAY_OVERFLOW_COLUMN,
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -308,7 +344,21 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
                 )
         if not witnesses:
             return None
+        attribute_keys = self._exact_replay_attribute_keys(per_metric_filters)
+        if attribute_keys is None:
+            return None
         witness = " AND ".join(f"({predicate})" for predicate in witnesses)
+        packed = self._exact_replay_packed_columns(
+            attribute_keys,
+            overflow=self._exact_replay_reads_overflow_json(per_metric_filters),
+        )
+        packed_sql = ",\n                        ".join(
+            expression for _, expression in packed
+        )
+        unpacked_sql = ",\n                dashboard_candidate_winner.".join(
+            f"{position} AS {column}"
+            for position, (column, _) in enumerate(packed, start=1)
+        )
         # Latency already requires a root in the outer winner predicate. Use
         # that necessary condition only for raw identity discovery, before
         # reading child attribute maps; parent/root status is NOT immutable.
@@ -319,8 +369,20 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
             if root_only else ""
         )
         source_alias = "spans" if alias == "spans" else alias
+        # Two legs, one Map read. The candidate leg already decompresses
+        # attrs_string for the witness, so it also elects the witness-matching
+        # winner with a packed argMax and reports that winner's version. The
+        # replay leg then reads nothing but the identity columns and the
+        # version, and keeps an identity only when its newest version IS the
+        # witness-matching one — so a later tombstone, a cleared key, a
+        # corrected value or a re-parented child excludes the identity exactly
+        # as a full version replay would, without ever materialising a Map.
+        # One physical row supplies every published column (packed tuple), and
+        # the tuple is unpacked one level above the aggregate that builds it:
+        # unpacking it in the same SELECT aliases a winner element to a name
+        # argMax itself reads, which the CH 25.3 analyzer rejects.
         return f"""(
-            WITH dashboard_filter_candidate_identities AS (
+            WITH {_EXACT_REPLAY_CANDIDATE_CTE} AS (
                 SELECT
                     dashboard_candidate_source.project_id AS project_id,
                     dashboard_candidate_source.observation_type
@@ -330,7 +392,15 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
                         dashboard_candidate_source.start_time
                     ) AS identity_hour,
                     dashboard_candidate_source.trace_id AS trace_id,
-                    dashboard_candidate_source.id AS id
+                    dashboard_candidate_source.id AS id,
+                    max(dashboard_candidate_source._peerdb_version)
+                        AS dashboard_witness_version,
+                    argMax(
+                        tuple(
+                        {packed_sql}
+                        ),
+                        dashboard_candidate_source._peerdb_version
+                    ) AS dashboard_candidate_winner
                 FROM spans AS dashboard_candidate_source
                 PREWHERE dashboard_candidate_source.project_id
                             IN %(project_ids)s
@@ -347,40 +417,184 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
                     dashboard_candidate_source.trace_id,
                     dashboard_candidate_source.id
             )
-            SELECT dashboard_replay_source.*
-            FROM spans AS dashboard_replay_source
-            PREWHERE dashboard_replay_source.project_id IN %(project_ids)s
-              AND dashboard_replay_source.start_time
-                    >= toStartOfHour(toDateTime64(%(start_date)s, 6, 'UTC'))
-              AND dashboard_replay_source.start_time
-                    < toStartOfHour(toDateTime64(%(end_date)s, 6, 'UTC'))
-                        + INTERVAL 1 HOUR
-              AND tuple(
-                dashboard_replay_source.project_id,
-                dashboard_replay_source.observation_type,
-                dashboard_replay_source.service_name,
-                toStartOfHour(dashboard_replay_source.start_time),
-                dashboard_replay_source.trace_id,
-                dashboard_replay_source.id
-            ) IN (
+            SELECT
+                project_id,
+                observation_type,
+                service_name,
+                trace_id,
+                id,
+                dashboard_replay_version AS _peerdb_version,
+                dashboard_candidate_winner.{unpacked_sql}
+            FROM (
                 SELECT
-                    project_id,
-                    observation_type,
-                    service_name,
-                    identity_hour,
-                    trace_id,
-                    id
-                FROM dashboard_filter_candidate_identities
-            )
-            ORDER BY dashboard_replay_source._peerdb_version DESC
-            LIMIT 1 BY
-                dashboard_replay_source.project_id,
-                dashboard_replay_source.observation_type,
-                dashboard_replay_source.service_name,
-                toStartOfHour(dashboard_replay_source.start_time),
-                dashboard_replay_source.trace_id,
-                dashboard_replay_source.id
+                    dashboard_replay_source.project_id AS project_id,
+                    dashboard_replay_source.observation_type
+                        AS observation_type,
+                    dashboard_replay_source.service_name AS service_name,
+                    dashboard_replay_source.trace_id AS trace_id,
+                    dashboard_replay_source.id AS id,
+                    max(dashboard_replay_source._peerdb_version)
+                        AS dashboard_replay_version,
+                    any(dashboard_candidate_state.dashboard_candidate_winner)
+                        AS dashboard_candidate_winner
+                FROM spans AS dashboard_replay_source
+                INNER JOIN {_EXACT_REPLAY_CANDIDATE_CTE}
+                        AS dashboard_candidate_state
+                    ON dashboard_replay_source.project_id
+                        = dashboard_candidate_state.project_id
+                   AND dashboard_replay_source.observation_type
+                        = dashboard_candidate_state.observation_type
+                   AND dashboard_replay_source.service_name
+                        = dashboard_candidate_state.service_name
+                   AND toStartOfHour(dashboard_replay_source.start_time)
+                        = dashboard_candidate_state.identity_hour
+                   AND dashboard_replay_source.trace_id
+                        = dashboard_candidate_state.trace_id
+                   AND dashboard_replay_source.id
+                        = dashboard_candidate_state.id
+                PREWHERE dashboard_replay_source.project_id IN %(project_ids)s
+                  AND dashboard_replay_source.start_time
+                        >= toStartOfHour(toDateTime64(%(start_date)s, 6, 'UTC'))
+                  AND dashboard_replay_source.start_time
+                        < toStartOfHour(toDateTime64(%(end_date)s, 6, 'UTC'))
+                            + INTERVAL 1 HOUR
+                GROUP BY
+                    dashboard_replay_source.project_id,
+                    dashboard_replay_source.observation_type,
+                    dashboard_replay_source.service_name,
+                    toStartOfHour(dashboard_replay_source.start_time),
+                    dashboard_replay_source.trace_id,
+                    dashboard_replay_source.id
+                HAVING max(dashboard_replay_source._peerdb_version)
+                    = any(dashboard_candidate_state.dashboard_witness_version)
+            ) AS dashboard_replay_identities
         ) AS {source_alias}"""
+
+    @staticmethod
+    def _exact_replay_attribute_key(item: dict) -> str | None:
+        """The span-attribute Map key one filter or breakdown item reads."""
+
+        canonical_filter = item.get("canonical_filter")
+        raw_key = None
+        if isinstance(canonical_filter, dict):
+            raw_key = canonical_filter.get("column_id") or canonical_filter.get(
+                "columnId"
+            )
+        if not raw_key:
+            raw_key = (
+                item.get("metric_name") or item.get("name") or item.get("id") or ""
+            )
+        if not isinstance(raw_key, str):
+            return None
+        try:
+            return _sanitize_attr_key(raw_key)
+        except ValueError:
+            return None
+
+    def _exact_replay_attribute_keys(
+        self,
+        per_metric_filters: list[dict],
+    ) -> tuple[str, ...] | None:
+        """Every ``attrs_string`` key the outer statement can read, or None.
+
+        The winner carries a key-narrowed ``attrs_string`` because that Map is
+        the statement's entire read cost. A key the outer statement reads but
+        the narrowing dropped would silently read as absent, so enumeration
+        must be exhaustive and a custom attribute whose key cannot be
+        enumerated abandons this source instead of narrowing a Map blind.
+        Number and boolean attribute items are enumerated too: every
+        custom-attribute breakdown renders through ``span_attr_str`` whatever
+        its declared type. Over-inclusion only keeps a key nothing reads.
+        ``attrs_number`` and ``attrs_bool`` are carried whole — they are a
+        rounding error beside ``attrs_string``, and a system metric can name a
+        literal ``attrs_number`` key no filter or breakdown enumerates.
+        """
+
+        keys: list[str] = []
+        for item in self.global_filters + (per_metric_filters or []):
+            item_type = item.get("metric_type") or item.get("type")
+            if item_type == "system_metric":
+                continue
+            key = self._exact_replay_attribute_key(item)
+            if key is None:
+                if item_type == "custom_attribute":
+                    return None
+                continue
+            keys.append(key)
+        for breakdown in self.breakdowns:
+            if breakdown.get("type") != "custom_attribute":
+                continue
+            key = self._exact_replay_attribute_key(breakdown)
+            if key is None:
+                return None
+            keys.append(key)
+        metric_presence = getattr(self, "_exact_metric_presence", None)
+        if metric_presence is not None:
+            keys.append(metric_presence[1])
+        return tuple(dict.fromkeys(keys))
+
+    def _exact_replay_reads_overflow_json(
+        self,
+        per_metric_filters: list[dict],
+    ) -> bool:
+        """Does any attribute filter compile against the overflow JSON column?
+
+        Array and map attribute filters read ``span_attributes_raw``, which the
+        v2 rewrite retargets to ``attributes_extra``. Those shapes need the
+        column in the winner tuple; every other shape is better off without it.
+        """
+
+        for item in self.global_filters + (per_metric_filters or []):
+            canonical_filter = item.get("canonical_filter")
+            if not isinstance(canonical_filter, dict):
+                continue
+            try:
+                predicate, _ = compile_span_attribute_row_predicate(canonical_filter)
+            except (UnsupportedFilterShapeError, ValueError):
+                return True
+            if _EXACT_REPLAY_OVERFLOW_TOKEN in predicate:
+                return True
+        return False
+
+    def _exact_replay_packed_columns(
+        self,
+        attribute_keys: tuple[str, ...],
+        *,
+        overflow: bool,
+    ) -> tuple[tuple[str, str], ...]:
+        """The winner tuple: ``SELECT *`` minus identity minus fat payload.
+
+        The narrowing keys are inlined rather than bound. This source is built
+        once per alias against one shared parameter dict — the annotation
+        metric builds a span-filter source and a metric source from different
+        filter lists — so an indexed binding would be reassigned and one
+        derived table would narrow to the other's key with no error at all.
+        ``_sanitize_attr_key`` already restricts keys to ``[A-Za-z0-9._-]``,
+        which is why the v1 builder inlines the very same keys.
+        """
+
+        quoted_keys = [f"'{attribute_key}'" for attribute_key in attribute_keys]
+        narrowed_strings = (
+            "mapFilter((k, v) -> (k IN ("
+            + ", ".join(quoted_keys)
+            + ")), dashboard_candidate_source.attrs_string)"
+            if quoted_keys
+            else "mapFilter((k, v) -> 0, dashboard_candidate_source.attrs_string)"
+        )
+        packed: list[tuple[str, str]] = []
+        for column in CH_INSERT_COLUMNS:
+            if column in _EXACT_REPLAY_IDENTITY_COLUMNS:
+                continue
+            if column in _EXACT_REPLAY_UNPACKED_COLUMNS and not (
+                overflow and column == _EXACT_REPLAY_OVERFLOW_COLUMN
+            ):
+                continue
+            packed.append(
+                (column, narrowed_strings)
+                if column == "attrs_string"
+                else (column, f"dashboard_candidate_source.{column}")
+            )
+        return tuple(packed)
 
     def _spans_source(
         self,
@@ -957,7 +1171,17 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
     def build_metric_query(self, metric: dict) -> tuple[str, dict]:
         sql, params = super().build_metric_query(metric)
         sql = _protect_usage_cdc_columns(sql)
-        sql = rewrite_and_apply_v2_settings(sql)
+        # The exact replay groups both of its legs by the full spans sorting
+        # key, so ordered aggregation streams one merged stream per selected
+        # part - 700 to 1,400 parts a window on a mid-size tenant - and that
+        # machinery is about three quarters of the statement's peak, for a
+        # set operation whose result cannot depend on the execution strategy.
+        # That statement states hash execution; every other dashboard shape
+        # keeps the v2 default.
+        sql = _append_v2_settings(
+            rewrite_v1_sql_to_v2(sql),
+            aggregation_in_order=_EXACT_REPLAY_CANDIDATE_CTE not in sql,
+        )
         sql = _restore_usage_cdc_columns(sql)
         # Mixed-table query: rewrite already fixed spans refs, now restore
         # _peerdb_is_deleted for every legacy-table alias.
