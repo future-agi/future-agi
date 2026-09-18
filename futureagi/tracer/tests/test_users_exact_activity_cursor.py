@@ -748,7 +748,10 @@ def test_cursor_metadata_excludes_successful_attribute_split_and_resets_next_req
 
 
 def test_cursor_metadata_excludes_optional_witness_recovery():
-    m = manager([raw_filter("equals", "yes", "text", key="tag")])
+    # A non-ASCII exact-text value keeps the seeded page and its optional
+    # physical witness; a plain-ASCII value walks newest matching activity
+    # instead (test_users_matching_walk.py) and never reads that witness.
+    m = manager([raw_filter("equals", "yés", "text", key="tag")])
     rows = candidates(2)
     with (
         patch.object(m, "_read_dimension_candidates", side_effect=reader(rows)),

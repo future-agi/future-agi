@@ -21,6 +21,11 @@ PROJECT = str(UUID(int=101))
 ORG = str(UUID(int=102))
 USER = str(UUID(int=103))
 SERVICE = "tracer.services.users_list_manager.V2AnalyticsQueryService"
+# A plain-ASCII exact-text filter walks newest matching activity instead of
+# seeding the candidate page (test_users_matching_walk.py). A non-ASCII value
+# still qualifies as an exact-text accelerator but carries no plain-text
+# witness, so it keeps the seeded page and this physical witness prune.
+SEEDED_PAGE_VALUE = "café-1"
 
 
 def manager(value="10000001", operation="in", filter_type="string"):
@@ -141,7 +146,7 @@ def test_dense_matches_consume_only_a_page_prefix_not_remaining_candidates():
 
 def test_no_witnesses_advances_batch_without_metric_hydration():
     rows = candidates(200)
-    subject = manager()
+    subject = manager(SEEDED_PAGE_VALUE)
 
     def dimension_page(**kwargs):
         offset = (
@@ -208,7 +213,7 @@ def test_non_equivalent_or_negative_types_do_not_prune(value, operation, kind):
 
 
 def test_stale_witness_still_has_to_pass_latest_replay_and_filter():
-    subject = manager()
+    subject = manager(SEEDED_PAGE_VALUE)
     rows = candidates(2)
     with (
         patch(SERVICE) as service,
@@ -245,7 +250,7 @@ def test_pruning_never_leaks_matching_predicate_into_all_spans_metrics():
 
 
 def test_page_size_ten_preserves_unconsumed_witnesses_and_raw_cursor():
-    subject = manager()
+    subject = manager(SEEDED_PAGE_VALUE)
     rows = candidates(40)
     with (
         patch(SERVICE) as service,
@@ -253,7 +258,9 @@ def test_page_size_ten_preserves_unconsumed_witnesses_and_raw_cursor():
         patch.object(
             subject,
             "_read_exact_candidate_rows",
-            return_value=[{**row, "company_id": "10000001"} for row in rows[:25]],
+            return_value=[
+                {**row, "company_id": SEEDED_PAGE_VALUE} for row in rows[:25]
+            ],
         ),
     ):
         service.return_value.execute_ch_query.return_value = SimpleNamespace(data=rows)
@@ -269,7 +276,7 @@ def test_page_size_ten_preserves_unconsumed_witnesses_and_raw_cursor():
 
 
 def test_shortened_prefix_has_more_even_without_dimension_lookahead():
-    subject = manager()
+    subject = manager(SEEDED_PAGE_VALUE)
     rows = candidates(40)
     with (
         patch(SERVICE) as service,
@@ -277,7 +284,9 @@ def test_shortened_prefix_has_more_even_without_dimension_lookahead():
         patch.object(
             subject,
             "_read_exact_candidate_rows",
-            return_value=[{**row, "company_id": "10000001"} for row in rows[:25]],
+            return_value=[
+                {**row, "company_id": SEEDED_PAGE_VALUE} for row in rows[:25]
+            ],
         ),
     ):
         service.return_value.execute_ch_query.return_value = SimpleNamespace(data=rows)
@@ -292,7 +301,7 @@ def test_shortened_prefix_has_more_even_without_dimension_lookahead():
 
 
 def test_latest_hydration_timeout_does_not_advance_over_witnesses():
-    subject = manager()
+    subject = manager(SEEDED_PAGE_VALUE)
     rows = candidates(64)
     with (
         patch(SERVICE) as service,
