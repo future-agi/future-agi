@@ -8,10 +8,7 @@ import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 
 assert.equal(process.getuid(), 1000);
-for (const name of ['core', 'model-provider-adapter', 'model-chat-provider', 'model-response-provider',
-  'workflow-runtime-adapter', 'workflow-local-provider', 'workflow-graph-provider']) {
-  await import('@omega/' + name);
-}
+await import('@future-agi/omega-runtime');
 for (const path of ['/app/.git', '/app/examples', '/app/packages']) {
   await assert.rejects(access(path));
 }
@@ -52,7 +49,7 @@ try {
   assert.equal(result.evidence.reads.length, 1);
   assert.equal((await readdir('/tmp')).filter(name => name.startsWith('omega-attempt-')).length, 0);
   assert.ok(!stdout.includes('fixture-only'));
-  console.log(JSON.stringify({status: 'passed', uid: process.getuid(), installed_packages: 7,
+  console.log(JSON.stringify({status: 'passed', uid: process.getuid(), installed_packages: 1,
     real_omega_tool_roundtrip: true, gateway_protocol_calls: calls, reported_mock_cost_usd: result.accounting.cost_usd,
     readonly_root: true, scratch_cleaned: true, live_inference: false}));
 } finally {

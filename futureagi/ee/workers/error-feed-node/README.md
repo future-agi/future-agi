@@ -1,7 +1,7 @@
 # Local Omega Node worker
 
 This is the local Error Feed Node service under integration.
-It installs actual Omega npm tarballs into a private local Docker image. There
+It installs one Omega runtime npm tarball into a private local Docker image. There
 is no Python wheel, npm publication, Docker push, or Omega source copy into Django.
 
 The daemon records Kafka notifications in Django before acknowledging offsets,
@@ -15,7 +15,7 @@ real Kafka, ClickHouse, Django and Postgres, and a scripted gateway response.
 ## Build locally
 
 From this worker repository, follow the [root build instructions](../../README.md)
-to obtain the private runtime tarballs from the separate Omega checkout. Then:
+to obtain the private runtime tarball from the separate Omega checkout. Then:
 
 ```sh
 node workers/error-feed-node/prepare-image.mjs

@@ -1,7 +1,7 @@
 import {createHash} from 'node:crypto';
 import {mkdtemp, mkdir, rm} from 'node:fs/promises';
 import {join} from 'node:path';
-import {createOmega, agent, tool} from '@omega/core';
+import {createOmega, agent, tool} from '@future-agi/omega-runtime';
 import {createGatewayProvider} from './gateway-provider.mjs';
 import {downloadEvidence, createEvidenceReader, validateClaim} from './evidence-store.mjs';
 

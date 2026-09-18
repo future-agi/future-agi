@@ -1,5 +1,5 @@
 import {readFile} from 'node:fs/promises';
-import {ChatCompletionsCompatibleProvider} from '@omega/core';
+import {ChatCompletionsCompatibleProvider} from '@future-agi/omega-runtime';
 
 // AgentCC owns rates, aliases and tenant pricing. Its response header is USD
 // with six decimals; absent metadata must never become a free invocation.
