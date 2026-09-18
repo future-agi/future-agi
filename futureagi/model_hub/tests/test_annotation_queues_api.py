@@ -1351,6 +1351,118 @@ class TestUpdateQueue:
         )
         assert resp.status_code == status.HTTP_200_OK
 
+    def test_update_rejects_cross_org_evaluator(
+        self, auth_client, organization, workspace, user
+    ):
+        """PATCH binding another org's evaluator is rejected at the field layer.
+
+        Mirrors ``test_create_rejects_cross_org_evaluator_at_field_layer`` for
+        the update path: the org-scoped queryset in
+        ``AnnotationQueueSerializer.get_fields`` refuses to resolve a foreign
+        ``custom_eval_config`` UUID, so an org A user cannot point an org A
+        queue at an org B evaluator by knowing the UUID.
+        """
+        create_queue(auth_client, name="Update Cross Org Queue")
+        queue_id = get_queue_id(auth_client, "Update Cross Org Queue")
+
+        other_org = Organization.objects.create(
+            name=f"Other Org {uuid.uuid4().hex[:8]}"
+        )
+        other_project = Project.objects.create(
+            name="Other Org Project",
+            organization=other_org,
+            model_type="GenerativeLLM",
+            trace_type="observe",
+        )
+        eval_template = EvalTemplate.objects.create(
+            name=f"Other Org Eval Template {uuid.uuid4().hex[:8]}",
+            organization=other_org,
+            output_type_normalized="pass_fail",
+        )
+        cross_org_config = CustomEvalConfig.objects.create(
+            name="Other Org Config",
+            project=other_project,
+            eval_template=eval_template,
+            config={},
+            mapping={},
+            filters={},
+        )
+
+        resp = auth_client.patch(
+            queue_detail_url(queue_id),
+            {"custom_eval_config": str(cross_org_config.id)},
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        queue = AnnotationQueue.objects.get(pk=queue_id)
+        assert queue.custom_eval_config_id is None
+
+    def test_update_rejects_cross_project_evaluator(
+        self, auth_client, organization, workspace, user
+    ):
+        """PATCH binding a same-org / different-project evaluator is rejected
+        by ``validate_custom_eval_config``.
+
+        The field-layer org-scoped queryset lets this one through (both
+        projects share the caller's org), so the project guard in
+        ``validate_custom_eval_config`` is the check under test.
+        """
+        project = Project.objects.create(
+            name="Update Queue Project",
+            organization=organization,
+            workspace=workspace,
+            model_type="GenerativeLLM",
+            trace_type="observe",
+        )
+        other_project = Project.objects.create(
+            name="Update Evaluator Project",
+            organization=organization,
+            workspace=workspace,
+            model_type="GenerativeLLM",
+            trace_type="observe",
+        )
+        label_id = create_label_for_queue(
+            auth_client, name="Update Project Guard Label"
+        )
+        create_resp = auth_client.post(
+            QUEUE_URL,
+            {
+                "name": "Update Cross Project Queue",
+                "project_id": str(project.id),
+                "label_ids": [str(label_id)],
+            },
+            format="json",
+        )
+        assert create_resp.status_code == status.HTTP_201_CREATED, create_resp.data
+        queue_id = create_resp.data["id"]
+
+        eval_template = EvalTemplate.objects.create(
+            name=f"Update Cross Project Template {uuid.uuid4().hex[:8]}",
+            organization=organization,
+            workspace=workspace,
+            output_type_normalized="pass_fail",
+        )
+        cross_project_config = CustomEvalConfig.objects.create(
+            name="Update Cross Project Config",
+            project=other_project,
+            eval_template=eval_template,
+            config={},
+            mapping={},
+            filters={},
+        )
+
+        resp = auth_client.patch(
+            queue_detail_url(queue_id),
+            {"custom_eval_config": str(cross_project_config.id)},
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "project" in str(resp.data).lower()
+        queue = AnnotationQueue.objects.get(pk=queue_id)
+        assert queue.custom_eval_config_id is None
+
 
 # ---------------------------------------------------------------------------
 # 1.4b – Multi-role data backfill
