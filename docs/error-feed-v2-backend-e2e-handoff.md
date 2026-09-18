@@ -21,7 +21,7 @@ Status: integration in progress; the full ingest-to-Feed path is not yet verifie
 - Schema reconciliation and legacy backfill: `futureagi/tracer/migrations/0099_*` through `0102_reconcile_report_flags.py`. Historical scan flags and findings are copied to the new tables; do not dual-write new investigations to `TraceScanResult`/`TraceScanIssue`.
 - Feed selectors now read current investigation reports/findings: `futureagi/tracer/queries/feed.py`. The UI makes a small evidence-label adjustment in `frontend/src/pages/dashboard/error-feed/components/OverviewTab.jsx`; no new Feed route is required for this cutover.
 
-The RCA adapter edits in `futureagi/ee/agenthub/cluster_rca/` are **not yet committed or pushed**. Do not treat RCA as complete from this branch alone.
+The RCA selectors in `futureagi/ee/agenthub/cluster_rca/` read current normalized findings for both Omega and backfilled legacy reports. The full RCA agent flow still needs a grouped Omega issue to verify it end to end.
 
 ## Evidence so far
 
@@ -45,5 +45,5 @@ For each failure, identify the broken boundary (notification, admission, claim, 
 ## Remaining ownership and decisions
 
 - **Atharva:** connect grouping to current findings and memberships; verify the resulting issue through the existing Feed APIs. Treat the experiment `results-for-clustering.json` as a test artifact, not the database contract.
-- **Kartik/backend:** finish and verify the RCA current-finding adapter, complete the local E2E run, and fix any boundary failures. The current branch does not prove grouping, RCA, UI, or tenant balance deduction end to end.
+- **Kartik/backend:** complete the local E2E run and fix any boundary failures. Selector checks cover RCA reads, but the current branch does not prove grouping, the full RCA agent, UI, or tenant balance deduction end to end.
 - **Later:** add a managed Playwright E2E flow once its harness can start the Omega worker and control the model response. The current harness does not provide that control, so this branch uses the agreed harness-gap exemption.
