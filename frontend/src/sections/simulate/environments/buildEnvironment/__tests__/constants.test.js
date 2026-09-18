@@ -8,11 +8,6 @@ import {
   pipelineStatus,
   pipelineSummary,
 } from "../buildPipeline.constants";
-import {
-  READ_SECTIONS,
-  MOCK_SECTION_ISSUES,
-  READ_AUDIT_COPY,
-} from "../readAudit.constants";
 import { BUILDING_TABS, DERIVING_LABEL } from "../build.constants";
 
 describe("provenance constants", () => {
@@ -93,20 +88,6 @@ describe("build pipeline constants", () => {
     expect(
       pipelineSummary(pipelineStatus(["understand"], true, "setup", { stepId: "build-env" })).label,
     ).toBe("Failed at building environment");
-  });
-});
-
-describe("read-audit constants", () => {
-  it("declares the four read sections in order", () => {
-    expect(READ_SECTIONS.map((s) => s.key)).toEqual(["tools", "rules", "data", "behavior"]);
-  });
-
-  it("mocks issues only on rules and data", () => {
-    expect(Object.keys(MOCK_SECTION_ISSUES)).toEqual(["rules", "data"]);
-  });
-
-  it("carries the read-audit copy", () => {
-    expect(READ_AUDIT_COPY.build).toBe("Build the environment");
   });
 });
 

@@ -1,12 +1,14 @@
-import PropTypes from "prop-types";
 import { useReducer } from "react";
 import { Box, Stack } from "@mui/material";
+import { parseGitHubInput } from "src/pages/dashboard/harness/requestMapper";
 import Field from "../components/Field";
 import Label from "../components/Label";
 import ChipCard from "../components/ChipCard";
 import ProviderRow from "../components/ProviderRow";
 import ContinueRow from "../components/ContinueRow";
 import EnvironmentValues from "./EnvironmentValues";
+import RuntimePreflight from "./RuntimePreflight";
+import usePanelBuild from "../hooks/usePanelBuild";
 import {
   REPO_PROVIDERS,
   DEFAULT_REPO_PROVIDER,
@@ -37,12 +39,37 @@ function reducer(s, a) {
   return { ...s, [a.field]: value };
 }
 
-export default function PanelSourceRepo({ onBuild }) {
+export default function PanelSourceRepo() {
   const [form, dispatch] = useReducer(reducer, initial);
-  const set = (field) => (value) => dispatch({ field, value });
+  const build = usePanelBuild();
+  // Any edit invalidates a prior preflight result, so re-disable Build.
+  const set = (field) => (value) => {
+    dispatch({ field, value });
+    build.resetPreflight();
+  };
   const { provider, repo, branch, entry, visibility, installationId, envText, egress, secretFiles } = form;
   const isPrivate = visibility === REPO_VISIBILITY.PRIVATE;
-  const canGo = !!repo.trim();
+  // The repo must parse to owner/repo (or a GitHub URL) before we can preflight.
+  // Only flag a non-empty, unparseable value so the field isn't red before typing.
+  const parsedRepo = parseGitHubInput(repo);
+  const repoError = repo.trim() && !parsedRepo
+    ? "Enter a repository as owner/repo or a GitHub URL."
+    : "";
+  const canGo = !!parsedRepo;
+
+  const buildSource = () => ({
+    kind: "repo",
+    provider,
+    value: repo.trim(),
+    ref: branch.trim() || DEFAULT_BRANCH,
+    entry: entry.trim(),
+    visibility,
+    installationId: isPrivate ? (installationId.trim() || null) : null,
+    envText: envText.trim() || null,
+    egress: egress.trim() || null,
+    secretFiles,
+  });
+
   return (
     <Stack spacing={1.75} sx={{ p: 2.5 }}>
       <ProviderRow
@@ -56,6 +83,7 @@ export default function PanelSourceRepo({ onBuild }) {
         placeholder="owner/repo"
         value={repo} onChange={set("repo")}
         mono
+        error={repoError}
         helper="We read the code so scenarios stay in sync with your actual tools."
       />
       <Stack direction="row" spacing={1.5}>
@@ -102,23 +130,19 @@ export default function PanelSourceRepo({ onBuild }) {
         egress={egress} onEgress={set("egress")}
         secretFiles={secretFiles} onSecretFiles={set("secretFiles")}
       />
+      <RuntimePreflight
+        status={build.status}
+        canRun={canGo}
+        onRun={() => build.runPreflight(buildSource())}
+        checks={build.checks}
+        state={build.state}
+        error={build.error}
+      />
       <ContinueRow
-        disabled={!canGo}
-        hint="Add a repository"
-        onClick={() => onBuild?.({
-          kind: "repo",
-          provider,
-          value: repo.trim(),
-          ref: branch.trim() || DEFAULT_BRANCH,
-          entry: entry.trim(),
-          visibility,
-          installationId: isPrivate ? (installationId.trim() || null) : null,
-          envText: envText.trim() || null,
-          egress: egress.trim() || null,
-          secretFiles,
-        })}
+        disabled={!build.readyToSubmit}
+        hint={build.status === "done" ? "Resolve the checks above" : "Run preflight to continue"}
+        onClick={build.commitBuild}
       />
     </Stack>
   );
 }
-PanelSourceRepo.propTypes = { onBuild: PropTypes.func };

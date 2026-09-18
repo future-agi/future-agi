@@ -6,12 +6,40 @@ import {
   fireEvent,
   waitFor,
 } from "src/utils/test-utils";
-import { uploadHarnessSource } from "src/api/harness/harness";
-import PanelCodeUpload from "../PanelCodeUpload";
 
+const navigate = vi.fn();
+vi.mock("react-router-dom", async () => {
+  const actual = await vi.importActual("react-router-dom");
+  return { ...actual, useNavigate: () => navigate };
+});
+
+// uploadHarnessSource is the archive upload; preflightHarnessJob is the inline
+// preflight. The rest of the surface is imported by the environments tree.
 vi.mock("src/api/harness/harness", () => ({
   uploadHarnessSource: vi.fn(),
+  preflightHarnessJob: vi.fn(),
+  storeHarnessSecretValues: vi.fn(),
+  createHarnessJob: vi.fn(),
+  harnessIdempotencyKey: () => "idem-test",
+  getHarnessJob: vi.fn(),
+  listHarnessJobs: vi.fn(),
 }));
+
+const { uploadHarnessSource, preflightHarnessJob } = await import(
+  "src/api/harness/harness"
+);
+const { default: PanelCodeUpload } = await import("../PanelCodeUpload");
+const { useEnvironmentsStore, resetEnvironmentsStore } = await import(
+  "../../store/useEnvironmentsStore"
+);
+
+const PASS = {
+  ready_to_submit: true,
+  state: "connected",
+  checks: [
+    { id: "source", label: "Source", status: "passed", detail: "Archive unpacked", missing: [], fix: null },
+  ],
+};
 
 const render = (ui) => {
   const client = new QueryClient({
@@ -26,22 +54,26 @@ const chooseFiles = (container, files) => {
   return input;
 };
 
-const cta = () => screen.getByRole("button", { name: /Build environment/ });
+const preflightBtn = () => screen.getByRole("button", { name: "Run preflight" });
+const buildBtn = () => screen.getByRole("button", { name: /Build environment/ });
 
 beforeEach(() => {
+  resetEnvironmentsStore();
+  navigate.mockReset();
   uploadHarnessSource.mockReset();
+  preflightHarnessJob.mockReset();
   uploadHarnessSource.mockResolvedValue({ source_id: "src-uuid-1", file_count: 2, total_bytes: 1537, name: "agent.py" });
 });
 
 describe("PanelCodeUpload", () => {
   it("shows the folder-upload copy and never mentions zip", () => {
-    const { container } = render(<PanelCodeUpload onBuild={vi.fn()} />);
+    const { container } = render(<PanelCodeUpload />);
     expect(screen.getByText("Upload your agent folder")).toBeInTheDocument();
     expect(container.textContent).not.toMatch(/zip/i);
   });
 
   it("is a folder picker (webkitdirectory) like the product, with no type filter", () => {
-    const { container } = render(<PanelCodeUpload onBuild={vi.fn()} />);
+    const { container } = render(<PanelCodeUpload />);
     const input = container.querySelector('input[type="file"][multiple]');
     expect(input.hasAttribute("webkitdirectory")).toBe(true);
     expect(input.hasAttribute("directory")).toBe(true);
@@ -49,22 +81,20 @@ describe("PanelCodeUpload", () => {
   });
 
   it("uploads the chosen folder and shows a summary (no per-file list)", async () => {
-    const { container } = render(<PanelCodeUpload onBuild={vi.fn()} />);
+    const { container } = render(<PanelCodeUpload />);
     chooseFiles(container, [
       new File(["a".repeat(1536)], "agent.py"),
       new File(["x"], "tools.py"),
     ]);
     await waitFor(() => expect(uploadHarnessSource).toHaveBeenCalledTimes(1));
-    // Summary card, not a deletable list of file rows.
     expect(await screen.findByText(/2 files/)).toBeInTheDocument();
     expect(screen.queryByText("tools.py")).toBeNull();
-    // Replace (clear/replace) is the only file control.
     expect(screen.getByRole("button", { name: "Replace" })).toBeInTheDocument();
   });
 
   it("filters excluded files client-side and reports them in the summary", async () => {
     uploadHarnessSource.mockResolvedValue({ source_id: "src-uuid-1", file_count: 1, total_bytes: 1536 });
-    const { container } = render(<PanelCodeUpload onBuild={vi.fn()} />);
+    const { container } = render(<PanelCodeUpload />);
     chooseFiles(container, [
       new File(["SECRET=1"], ".env"),
       new File(["a".repeat(1536)], "agent.py"),
@@ -77,7 +107,7 @@ describe("PanelCodeUpload", () => {
   });
 
   it("posts the folder as multipart files + paths + name", async () => {
-    const { container } = render(<PanelCodeUpload onBuild={vi.fn()} />);
+    const { container } = render(<PanelCodeUpload />);
     chooseFiles(container, [
       new File(["a".repeat(1536)], "agent.py"),
       new File(["x"], "tools.py"),
@@ -89,84 +119,90 @@ describe("PanelCodeUpload", () => {
     expect(formData.get("name")).toBe("agent.py");
   });
 
-  it("gates the CTA until the archive upload resolves, then hands the id to onBuild", async () => {
+  it("gates Run preflight until the archive resolves, then builds through preflight", async () => {
     let resolveUpload;
     uploadHarnessSource.mockReturnValue(
       new Promise((resolve) => {
         resolveUpload = resolve;
       }),
     );
-    const onBuild = vi.fn();
-    const { container } = render(<PanelCodeUpload onBuild={onBuild} />);
+    preflightHarnessJob.mockResolvedValue(PASS);
+    const { container } = render(<PanelCodeUpload />);
 
     chooseFiles(container, [new File(["a".repeat(1536)], "agent.py")]);
-    // Upload in flight: progress surface shows, but CTA still gated.
+    // Upload in flight: progress shows, but both actions are gated.
     expect(screen.getAllByText(/Uploading your folder to the runner/).length).toBeGreaterThan(0);
-    expect(cta()).toBeDisabled();
+    expect(preflightBtn()).toBeDisabled();
+    expect(buildBtn()).toBeDisabled();
 
     resolveUpload({ source_id: "src-uuid-1", file_count: 1, total_bytes: 1536 });
-    await waitFor(() => expect(cta()).toBeEnabled());
+    // Upload resolved → Run preflight enables; Build stays gated until it passes.
+    await waitFor(() => expect(preflightBtn()).toBeEnabled());
+    expect(buildBtn()).toBeDisabled();
 
-    fireEvent.click(cta());
-    expect(onBuild).toHaveBeenCalledWith({
+    fireEvent.click(preflightBtn());
+    await waitFor(() => expect(buildBtn()).toBeEnabled());
+    // The preflight body points at the uploaded archive.
+    expect(preflightHarnessJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: expect.objectContaining({ kind: "archive", archive_artifact_id: "src-uuid-1" }),
+      }),
+    );
+
+    fireEvent.click(buildBtn());
+    expect(useEnvironmentsStore.getState().pendingBuild.draft).toMatchObject({
       kind: "upload",
       entry: "agent.py",
-      files: [{ name: "agent.py" }],
       archive_artifact_id: "src-uuid-1",
-      envText: null,
-      egress: null,
-      secretFiles: [],
     });
+    expect(navigate).toHaveBeenCalledWith("/dashboard/simulate/environments/build");
   });
 
-  it("renders an error and keeps the CTA gated when the upload fails", async () => {
+  it("renders an error and keeps Run preflight gated when the upload fails", async () => {
     uploadHarnessSource.mockRejectedValue({
       response: { data: { detail: "Upload rejected" } },
     });
-    const { container } = render(<PanelCodeUpload onBuild={vi.fn()} />);
-
+    const { container } = render(<PanelCodeUpload />);
     chooseFiles(container, [new File(["a".repeat(1536)], "agent.py")]);
     expect(await screen.findByText("Upload rejected")).toBeInTheDocument();
-    expect(cta()).toBeDisabled();
+    expect(preflightBtn()).toBeDisabled();
   });
 
   it("names the field-limit cause on a 400 instead of a generic error", async () => {
     uploadHarnessSource.mockRejectedValue({ response: { status: 400 } });
-    const { container } = render(<PanelCodeUpload onBuild={vi.fn()} />);
+    const { container } = render(<PanelCodeUpload />);
     chooseFiles(container, [new File(["a".repeat(1536)], "agent.py")]);
     expect(
       await screen.findByText(/too many files for the runner/i),
     ).toBeInTheDocument();
-    expect(cta()).toBeDisabled();
+    expect(preflightBtn()).toBeDisabled();
   });
 
   it("surfaces a prepare error and never calls the upload endpoint", () => {
-    const { container } = render(<PanelCodeUpload onBuild={vi.fn()} />);
+    const { container } = render(<PanelCodeUpload />);
     chooseFiles(container, [new File(["SECRET=1"], ".env")]);
-
     expect(
       screen.getByText("The selected folder contains no uploadable source files."),
     ).toBeInTheDocument();
     expect(uploadHarnessSource).not.toHaveBeenCalled();
-    expect(cta()).toBeDisabled();
+    expect(preflightBtn()).toBeDisabled();
   });
 
   it("surfaces the over-cap message without uploading", () => {
-    const { container } = render(<PanelCodeUpload onBuild={vi.fn()} />);
+    const { container } = render(<PanelCodeUpload />);
     chooseFiles(
       container,
-      Array.from({ length: 5001 }, (_, i) => new File(["x"], `f${i}.py`)),
+      Array.from({ length: 1001 }, (_, i) => new File(["x"], `f${i}.py`)),
     );
-
     expect(
-      screen.getByText("Source uploads support at most 5000 files and 200 MiB."),
+      screen.getByText(/this folder has 1001 files; uploads support at most 1000/i),
     ).toBeInTheDocument();
     expect(uploadHarnessSource).not.toHaveBeenCalled();
-    expect(cta()).toBeDisabled();
+    expect(preflightBtn()).toBeDisabled();
   });
 
   it("auto-fills the entry field from the first file in the folder", async () => {
-    const { container } = render(<PanelCodeUpload onBuild={vi.fn()} />);
+    const { container } = render(<PanelCodeUpload />);
     chooseFiles(container, [
       new File(["a".repeat(1536)], "agent.py"),
       new File(["x"], "tools.py"),
@@ -176,11 +212,12 @@ describe("PanelCodeUpload", () => {
   });
 
   it("replaces the whole selection on a new folder pick (all-or-nothing archive)", async () => {
-    const { container } = render(<PanelCodeUpload onBuild={vi.fn()} />);
+    const { container } = render(<PanelCodeUpload />);
     chooseFiles(container, [new File(["a".repeat(1536)], "agent.py")]);
-    await waitFor(() => expect(cta()).toBeEnabled());
+    await waitFor(() => expect(preflightBtn()).toBeEnabled());
 
-    // Replace with a different folder → a fresh upload, CTA re-gated then re-enabled.
+    // Replace with a different folder → a fresh upload, Run preflight re-gated then
+    // re-enabled.
     let resolveSecond;
     uploadHarnessSource.mockReturnValueOnce(
       new Promise((resolve) => {
@@ -188,10 +225,10 @@ describe("PanelCodeUpload", () => {
       }),
     );
     chooseFiles(container, [new File(["b".repeat(2048)], "main.py")]);
-    expect(cta()).toBeDisabled();
+    expect(preflightBtn()).toBeDisabled();
     expect(uploadHarnessSource).toHaveBeenCalledTimes(2);
 
     resolveSecond({ source_id: "src-uuid-2", file_count: 1, total_bytes: 2048 });
-    await waitFor(() => expect(cta()).toBeEnabled());
+    await waitFor(() => expect(preflightBtn()).toBeEnabled());
   });
 });

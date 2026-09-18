@@ -1,7 +1,9 @@
 import PropTypes from "prop-types";
 import { Box, Typography, TextField } from "@mui/material";
 
-export default function Field({ label, required, value, onChange, placeholder, helper, mono, type, multiline, fullWidth, autoComplete }) {
+export default function Field({ label, required, value, onChange, placeholder, helper, error, mono, type, multiline, fullWidth, autoComplete }) {
+  // An error message takes over the helper line and turns the input red.
+  const caption = error || helper;
   return (
     <Box sx={{ flex: fullWidth ? 1 : undefined }}>
       {label && (
@@ -12,6 +14,7 @@ export default function Field({ label, required, value, onChange, placeholder, h
       )}
       <TextField
         fullWidth size="small"
+        error={!!error}
         value={value}
         onChange={(e) => onChange?.(e.target.value)}
         placeholder={placeholder}
@@ -26,9 +29,9 @@ export default function Field({ label, required, value, onChange, placeholder, h
           },
         }}
       />
-      {helper && (
-        <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.5 }}>
-          {helper}
+      {caption && (
+        <Typography sx={{ typography: "s3", color: error ? "error.main" : "text.subtitle", mt: 0.5 }}>
+          {caption}
         </Typography>
       )}
     </Box>
@@ -38,6 +41,7 @@ Field.propTypes = {
   label: PropTypes.node, required: PropTypes.bool,
   value: PropTypes.string, onChange: PropTypes.func,
   placeholder: PropTypes.string, helper: PropTypes.node,
+  error: PropTypes.node,
   mono: PropTypes.bool, type: PropTypes.string,
   multiline: PropTypes.bool, fullWidth: PropTypes.bool,
   autoComplete: PropTypes.string,

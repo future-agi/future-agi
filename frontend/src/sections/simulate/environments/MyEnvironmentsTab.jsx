@@ -1,8 +1,11 @@
+import { useState } from "react";
 import { Box, Stack, Typography, Button } from "@mui/material";
 import { useNavigate } from "react-router-dom";
+import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import { getHarnessJob } from "src/api/harness/harness";
+import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import {
   useMyEnvironments,
   useDeleteEnvironment,
@@ -12,7 +15,7 @@ import {
 } from "src/api/simulate-environments/environment";
 import { runSimulationTarget } from "src/api/simulate-environments/runs";
 import { ENTRY_TAB } from "./environmentOptions";
-import { EMPTY_MESSAGE } from "./myEnvironments.constants";
+import { EMPTY_MESSAGE, DEFAULT_PAGE_SIZE } from "./myEnvironments.constants";
 import useEnvironmentsTab from "./hooks/useEnvironmentsTab";
 import MyEnvironmentsTable from "./MyEnvironmentsTable";
 
@@ -24,8 +27,11 @@ import MyEnvironmentsTable from "./MyEnvironmentsTable";
 export default function MyEnvironmentsTab() {
   const navigate = useNavigate();
   const { setTab } = useEnvironmentsTab();
-  const { data, isLoading, isPending } = useMyEnvironments();
-  const rows = data || [];
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const { data, isLoading, isPending } = useMyEnvironments({ page, pageSize });
+  const rows = data?.rows || [];
+  const total = data?.total || 0;
   const loading = isLoading || isPending;
 
   const deleteEnvironment = useDeleteEnvironment();
@@ -41,7 +47,11 @@ export default function MyEnvironmentsTab() {
         navigate(runSimulationTarget(harnessJobToEnvironment(item).env)),
       )
       .catch(() => navigate(paths.dashboard.simulate.test));
-  const onDelete = (env) => deleteEnvironment.mutate(env.id);
+  const onDelete = (env) =>
+    deleteEnvironment.mutate(env.id, {
+      onError: (error) =>
+        enqueueSnackbar(errorMessage(error), { variant: "error" }),
+    });
 
   return (
     <Box
@@ -57,7 +67,7 @@ export default function MyEnvironmentsTab() {
         pb: 2,
       }}
     >
-      {!loading && rows.length === 0 ? (
+      {!loading && total === 0 ? (
         <Box
           sx={{
             flex: 1,
@@ -87,6 +97,14 @@ export default function MyEnvironmentsTab() {
       ) : (
         <MyEnvironmentsTable
           rows={rows}
+          total={total}
+          page={page}
+          pageSize={pageSize}
+          onPageChange={setPage}
+          onPageSizeChange={(n) => {
+            setPageSize(n);
+            setPage(0);
+          }}
           isLoading={loading}
           onOpen={onOpen}
           onRun={onRun}

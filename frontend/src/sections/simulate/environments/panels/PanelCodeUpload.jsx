@@ -10,6 +10,8 @@ import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import Field from "../components/Field";
 import ContinueRow from "../components/ContinueRow";
 import EnvironmentValues from "./EnvironmentValues";
+import RuntimePreflight from "./RuntimePreflight";
+import usePanelBuild from "../hooks/usePanelBuild";
 import { CODE_UPLOAD_COPY } from "../codeUpload.constants";
 
 const initial = {
@@ -85,9 +87,14 @@ function FolderInput({ onPick }) {
 }
 FolderInput.propTypes = { onPick: PropTypes.func.isRequired };
 
-export default function PanelCodeUpload({ onBuild }) {
+export default function PanelCodeUpload() {
   const [form, dispatch] = useReducer(reducer, initial);
-  const set = (field) => (value) => dispatch({ type: "set", field, value });
+  const build = usePanelBuild();
+  // Any edit invalidates a prior preflight result, so re-disable Build.
+  const set = (field) => (value) => {
+    dispatch({ type: "set", field, value });
+    build.resetPreflight();
+  };
   // Each new folder selection bumps this; an in-flight upload only applies its
   // result if it is still the latest, so switching folders mid-upload can't let
   // a stale upload clobber the current selection.
@@ -118,8 +125,19 @@ export default function PanelCodeUpload({ onBuild }) {
     return parts.join(" · ");
   };
 
+  const buildSource = () => ({
+    kind: "upload",
+    entry: entry.trim(),
+    files: fileNames.map((name) => ({ name })),
+    archive_artifact_id: archiveArtifactId,
+    envText: envText.trim() || null,
+    egress: egress.trim() || null,
+    secretFiles,
+  });
+
   const onDrop = async (list) => {
-    // A new selection supersedes any upload already in flight.
+    // A new folder supersedes both any upload in flight and any prior preflight.
+    build.resetPreflight();
     const seq = (uploadSeq.current += 1);
     let prepared;
     try {
@@ -261,20 +279,19 @@ export default function PanelCodeUpload({ onBuild }) {
         egress={egress} onEgress={set("egress")}
         secretFiles={secretFiles} onSecretFiles={set("secretFiles")}
       />
+      <RuntimePreflight
+        status={build.status}
+        canRun={canGo}
+        onRun={() => build.runPreflight(buildSource())}
+        checks={build.checks}
+        state={build.state}
+        error={build.error}
+      />
       <ContinueRow
-        disabled={!canGo}
-        hint={uploading ? CODE_UPLOAD_COPY.uploadingHint : CODE_UPLOAD_COPY.emptyHint}
-        onClick={() => onBuild?.({
-          kind: "upload",
-          entry: entry.trim(),
-          files: fileNames.map((name) => ({ name })),
-          archive_artifact_id: archiveArtifactId,
-          envText: envText.trim() || null,
-          egress: egress.trim() || null,
-          secretFiles,
-        })}
+        disabled={!build.readyToSubmit}
+        hint={build.status === "done" ? "Resolve the checks above" : "Run preflight to continue"}
+        onClick={build.commitBuild}
       />
     </Stack>
   );
 }
-PanelCodeUpload.propTypes = { onBuild: PropTypes.func };

@@ -1,9 +1,10 @@
 import { useEffect, useReducer, useRef } from "react";
 import { useNavigate } from "react-router-dom";
+import { enqueueSnackbar } from "notistack";
 import { Box } from "@mui/material";
 
 import { paths } from "src/routes/paths";
-import { usePreflight } from "src/api/simulate-environments/preflight";
+import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import { useBuildProgress } from "src/api/simulate-environments/buildProgress";
 import { useBuildEnvironment } from "src/api/simulate-environments/environments";
 import { runSimulationTarget } from "src/api/simulate-environments/runs";
@@ -25,33 +26,35 @@ import {
   pipelineSummary,
 } from "./buildPipeline.constants";
 import BuildHeader from "./BuildHeader";
-import ReadAudit from "./read-audit/ReadAudit";
 import BuildingStage from "./building/BuildingStage";
 import DerivingAnimation from "./building/DerivingAnimation";
 
 const BUILD_TAB = `${paths.dashboard.simulate.environments.root}?tab=build`;
 
 /*
-  The build orchestrator. Reads the draft the Build tab handed off, runs the
-  real preflight, then walks the source through the read-audit → derivation
-  chain. Ported from the designer's BuildFromAgent root (502–592): a flex-column
-  with a fixed header over a single scrolling body that swaps by build stage. The
-  stage machine lives in the store (preflight | building); this component owns
-  none of it — it only reads the slice and fans the pieces out to the header and
-  the body. Home resets the slice on mount, so the build page never resets on
-  unmount (decision 5).
+  The build orchestrator. Inline preflight already ran below the source form and
+  passed, so the panel handed off a one-shot `pendingBuild` ticket and navigated
+  here. This page consumes that ticket once on mount, creates the real job, then
+  walks the derivation → building pane. There is no read-audit and no second
+  preflight — the create call is the only network step it owns.
+
+  Ported from the designer's BuildFromAgent root (502–592): a flex-column with a
+  fixed header over a single scrolling body that swaps by build stage. The stage
+  machine (preflight | building) lives in the store; this component only reads
+  the slice and fans the pieces out. Home resets the slice on mount, so the build
+  page never resets on unmount (decision 5).
 */
 export default function BuildEnvironment() {
   const navigate = useNavigate();
   const {
-    draft, buildStage, envId, buildProgress, retriedSections,
-    startPreflight, acceptAudit, adoptEnvironment,
+    draft, buildStage, envId, buildProgress,
+    consumePendingBuild, startPreflight, acceptAudit, adoptEnvironment,
   } = useEnvironmentsStoreShallow((s) => ({
     draft: s.draft,
     buildStage: s.buildStage,
     envId: s.envId,
     buildProgress: s.buildProgress,
-    retriedSections: s.retriedSections,
+    consumePendingBuild: s.consumePendingBuild,
     startPreflight: s.startPreflight,
     acceptAudit: s.acceptAudit,
     adoptEnvironment: s.adoptEnvironment,
@@ -73,20 +76,35 @@ export default function BuildEnvironment() {
     environmentNameFor,
   );
 
-  // A stale or hand-typed /build URL has no draft — bounce back to the matrix.
-  useEffect(() => {
-    if (!draft) navigate(BUILD_TAB, { replace: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Fire a fresh preflight once on mount; the slice is never reset on unmount.
-  useEffect(() => {
-    if (draft) startPreflight();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const { audit, refetch } = usePreflight(draft, { retriedSections });
   const build = useBuildEnvironment();
+
+  // Consume the one-shot ticket and fire create exactly once. A genuine handoff
+  // leaves a ticket (non-persisted); a refresh / hand-typed URL / remount finds
+  // none and bounces — so a reload can never mint a second job with a fresh
+  // idempotency key. The ref guards React 18 StrictMode's double-invoke (which
+  // preserves refs across the simulated remount) so we consume the ticket once.
+  const startedRef = useRef(false);
+  useEffect(() => {
+    if (startedRef.current) return;
+    startedRef.current = true;
+    const ticket = consumePendingBuild();
+    if (!ticket) {
+      navigate(BUILD_TAB, { replace: true });
+      return;
+    }
+    startPreflight();
+    build.mutate(ticket.draft, {
+      onSuccess: ({ envId: minted }) => acceptAudit({ envId: minted, answers: {} }),
+      // A create failure (e.g. the sandbox is unavailable) must never silently
+      // do nothing — surface it and return to the source form to retry.
+      onError: (error) => {
+        enqueueSnackbar(errorMessage(error), { variant: "error" });
+        navigate(BUILD_TAB, { replace: true });
+      },
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const agentRef = agentRefLabel(draft);
   const progress = useBuildProgress({
     envId,
@@ -114,7 +132,8 @@ export default function BuildEnvironment() {
   // the in-place workspace can render off the client slices and a later refresh
   // or My-Env open resolves the env by id. Ref-guarded against a same-mount
   // re-fire; the `env` guard stops a stale remount (whose first render still
-  // sees the building slice) from re-seeding over the reader's edits.
+  // sees the building slice) from re-seeding over the reader's edits. There is
+  // no audit anymore — `worldFor(undefined)` falls back to the mock world.
   const primed = !!env;
   const buildDone = STAGE_ORDER.every((stage) => buildProgress.done.includes(stage));
   const adoptedRef = useRef(false);
@@ -126,22 +145,15 @@ export default function BuildEnvironment() {
     // template path and the `connectedAt: string` shape the cards expect.
     const now = new Date().toISOString();
     adoptEnvironment(
-      { ...envFromDraft(draft, name, audit), id: envId, buildStatus: "ready" },
+      { ...envFromDraft(draft, name, undefined), id: envId, buildStatus: "ready" },
       now,
     );
-    patch(seedAgentBuilt(draft, audit, now));
-  }, [buildDone, envId, env, draft, name, audit, adoptEnvironment, patch]);
+    patch(seedAgentBuilt(draft, undefined, now));
+  }, [buildDone, envId, env, draft, name, adoptEnvironment, patch]);
 
   const onRun = () => navigate(runSimulationTarget(env));
 
   const onBack = () => navigate(BUILD_TAB);
-
-  // Mint the env id only when the audit is accepted; never before.
-  const onBuild = (answers) =>
-    build.mutate(undefined, {
-      onSuccess: ({ envId: minted }) =>
-        acceptAudit({ envId: minted, answers }),
-    });
 
   if (!draft) return null;
 
@@ -160,17 +172,9 @@ export default function BuildEnvironment() {
       />
 
       <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden", p: 2 }}>
-        {buildStage === BUILD_STAGE.PREFLIGHT &&
-          (!audit ? (
-            <DerivingAnimation label={DERIVING_LABEL.idle} />
-          ) : (
-            <ReadAudit
-              audit={audit}
-              onBuild={onBuild}
-              onBack={onBack}
-              onRetryRead={refetch}
-            />
-          ))}
+        {buildStage === BUILD_STAGE.PREFLIGHT && (
+          <DerivingAnimation label={DERIVING_LABEL.creating} />
+        )}
 
         {buildStage === BUILD_STAGE.BUILDING && (
           <BuildingStage

@@ -1,4 +1,3 @@
-import PropTypes from "prop-types";
 import { useReducer } from "react";
 import { Box, Stack, Typography } from "@mui/material";
 import { AGENT_TYPES } from "src/sections/agents/constants";
@@ -8,6 +7,8 @@ import ChipCard from "../components/ChipCard";
 import ContinueRow from "../components/ContinueRow";
 import PlatformLogo from "../components/PlatformLogo";
 import { PLATFORM_LOGOS } from "../components/platformLogos";
+import RuntimePreflight from "./RuntimePreflight";
+import usePanelBuild from "../hooks/usePanelBuild";
 import { ENTRY_AGENT_TYPES, CALL_DIRECTION, CALL_DIRECTION_LABEL } from "../agentTypes";
 import { HOSTED_PLATFORMS_BY_TYPE, HOSTED_EMPTY_ROSTER_COPY } from "../hostedPlatforms";
 
@@ -30,9 +31,14 @@ function reducer(s, a) {
   return { ...s, [a.field]: value };
 }
 
-export default function PanelHostedPlatform({ onBuild }) {
+export default function PanelHostedPlatform() {
   const [form, dispatch] = useReducer(reducer, initial);
-  const set = (field) => (value) => dispatch({ field, value });
+  const build = usePanelBuild();
+  // Any edit invalidates a prior preflight result, so re-disable Build.
+  const set = (field) => (value) => {
+    dispatch({ field, value });
+    build.resetPreflight();
+  };
   const { agentType, platform, id, key, repoUrl, callDirection } = form;
   const platforms = HOSTED_PLATFORMS_BY_TYPE[agentType] || [];
 
@@ -50,6 +56,16 @@ export default function PanelHostedPlatform({ onBuild }) {
 
   const chosen = platforms.find((p) => p.id === platform) || platforms[0];
   const canGo = !!chosen && !!id.trim() && !!key.trim();
+
+  const buildSource = () => ({
+    kind: "platform",
+    agentType,
+    provider: chosen?.id,
+    agentId: id.trim(),
+    apiKey: key.trim(),
+    ...(repoUrl.trim() ? { repoUrl: repoUrl.trim() } : {}),
+    ...(agentType === AGENT_TYPES.VOICE ? { callDirection } : {}),
+  });
 
   return (
     <Stack spacing={1.75} sx={{ p: 2.5 }}>
@@ -126,20 +142,19 @@ export default function PanelHostedPlatform({ onBuild }) {
           )}
         </>
       )}
+      <RuntimePreflight
+        status={build.status}
+        canRun={canGo}
+        onRun={() => build.runPreflight(buildSource())}
+        checks={build.checks}
+        state={build.state}
+        error={build.error}
+      />
       <ContinueRow
-        disabled={!canGo}
-        hint={!chosen ? "Pick a supported path above" : "Fill both fields"}
-        onClick={() => onBuild?.({
-          kind: "platform",
-          agentType,
-          provider: chosen?.id,
-          agentId: id.trim(),
-          apiKey: key.trim(),
-          ...(repoUrl.trim() ? { repoUrl: repoUrl.trim() } : {}),
-          ...(agentType === AGENT_TYPES.VOICE ? { callDirection } : {}),
-        })}
+        disabled={!build.readyToSubmit}
+        hint={build.status === "done" ? "Resolve the checks above" : "Run preflight to continue"}
+        onClick={build.commitBuild}
       />
     </Stack>
   );
 }
-PanelHostedPlatform.propTypes = { onBuild: PropTypes.func };

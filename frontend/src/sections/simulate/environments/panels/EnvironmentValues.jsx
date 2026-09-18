@@ -40,42 +40,85 @@ export default function EnvironmentValues({
 
   return (
     <Box>
-      <Button
-        size="small"
-        onClick={() => setOpen((o) => !o)}
-        startIcon={<Iconify icon={open ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"} width={12} />}
-        sx={{ typography: "s3", fontWeight: "fontWeightSemiBold", color: "text.secondary", px: 0.5 }}
-      >
-        {open ? "Hide environment values" : "Environment values (optional)"}
-      </Button>
+      {/* Credential-file upload sits at the toggle's level and stays visible even
+          when the (optional) env-values body is collapsed: a source that needs a
+          credential file must never be gated behind an "optional" accordion. */}
+      <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
+        <Button
+          size="small"
+          onClick={() => setOpen((o) => !o)}
+          startIcon={<Iconify icon={open ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"} width={12} />}
+          sx={{ typography: "s3", fontWeight: "fontWeightSemiBold", color: "text.secondary", px: 0.5 }}
+        >
+          {open ? "Hide environment values" : "Environment values (optional)"}
+        </Button>
+        <Button
+          size="small"
+          disabled={upload.isPending}
+          onClick={() => fileRef.current?.click()}
+          startIcon={<Iconify icon="solar:upload-linear" width={12} />}
+          sx={{ typography: "s3", fontWeight: "fontWeightSemiBold", color: "text.secondary", px: 0.5, flexShrink: 0 }}
+        >
+          Upload credential file
+        </Button>
+        <input
+          ref={fileRef}
+          type="file"
+          hidden
+          accept="application/json,.json"
+          onChange={(e) => {
+            onFile(e.target.files?.[0]);
+            e.target.value = "";
+          }}
+        />
+      </Stack>
+
+      {/* Uploaded files echo here, always visible, so an upload made while the
+          body is collapsed still confirms. */}
+      {secretFiles.length > 0 && (
+        <Stack spacing={1} sx={{ mt: 1 }}>
+          {secretFiles.map((f) => (
+            <Alert
+              key={f.secret_ref}
+              severity="success"
+              variant="outlined"
+              onClose={() => removeSecretFile(f.secret_ref)}
+              sx={{
+                typography: "s3",
+                py: 0.5,
+                alignItems: "center",
+                // Center the leading check, the text, and the close X on one line,
+                // and shrink both icons to match the s3 body.
+                "& .MuiAlert-icon": {
+                  py: 0,
+                  mr: 1,
+                  alignItems: "center",
+                  "& .MuiSvgIcon-root": { fontSize: 18 },
+                },
+                "& .MuiAlert-message": { py: 0 },
+                "& .MuiAlert-action": {
+                  py: 0,
+                  mr: 0,
+                  alignItems: "center",
+                  "& .MuiSvgIcon-root": { fontSize: 18 },
+                },
+              }}
+            >
+              {f.name} uploaded · mounted per run, never written to the job
+            </Alert>
+          ))}
+        </Stack>
+      )}
+
       {open && (
         <Stack spacing={1.5} sx={{ mt: 1.25 }}>
           <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
             Credentials the sandbox needs to run your code. Values stay in this browser session, are sent only for preflight and run execution, and are never written to jobs, logs, or artifacts.
           </Typography>
           <Box>
-            <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 0.5 }}>
+            <Box sx={{ mb: 0.5 }}>
               <Label>Paste .env contents</Label>
-              <Button
-                size="small"
-                disabled={upload.isPending}
-                onClick={() => fileRef.current?.click()}
-                startIcon={<Iconify icon="solar:upload-linear" width={12} />}
-                sx={{ typography: "s3", fontWeight: "fontWeightSemiBold", color: "text.secondary", px: 0.5 }}
-              >
-                Upload credential file
-              </Button>
-              <input
-                ref={fileRef}
-                type="file"
-                hidden
-                accept="application/json,.json"
-                onChange={(e) => {
-                  onFile(e.target.files?.[0]);
-                  e.target.value = "";
-                }}
-              />
-            </Stack>
+            </Box>
             <TextField
               fullWidth
               multiline
@@ -86,17 +129,6 @@ export default function EnvironmentValues({
               sx={{ "& .MuiInputBase-input": { typography: "s2", fontFamily: "ui-monospace, Menlo, monospace" } }}
             />
           </Box>
-          {secretFiles.map((f) => (
-            <Alert
-              key={f.secret_ref}
-              severity="success"
-              variant="outlined"
-              onClose={() => removeSecretFile(f.secret_ref)}
-              sx={{ typography: "s3", py: 0.25 }}
-            >
-              {f.name} uploaded · mounted per run, never written to the job
-            </Alert>
-          ))}
           <Field
             label="Additional egress domains"
             placeholder="api.example.com, turn.example.com"

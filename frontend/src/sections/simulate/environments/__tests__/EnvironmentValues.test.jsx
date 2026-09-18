@@ -36,6 +36,23 @@ describe("EnvironmentValues", () => {
     expect(screen.getByRole("button", { name: /Environment values \(optional\)/ })).toBeInTheDocument();
   });
 
+  it("keeps the credential-file upload and its confirmation visible while collapsed", async () => {
+    const { container } = renderWithQuery(<Harness />);
+    // Collapsed: no .env textarea yet…
+    expect(screen.queryByPlaceholderText(/OPENAI_API_KEY/)).toBeNull();
+    // …but the credential-file upload sits at the toggle's level, always visible.
+    expect(screen.getByRole("button", { name: /Upload credential file/ })).toBeInTheDocument();
+
+    // Uploading without expanding still confirms, and never opens the body.
+    fireEvent.change(container.querySelector('input[type="file"]'), {
+      target: { files: [new File(['{"k":"v"}'], "creds.json", { type: "application/json" })] },
+    });
+    await waitFor(() =>
+      expect(screen.getByText(/creds\.json uploaded/)).toBeInTheDocument(),
+    );
+    expect(screen.queryByPlaceholderText(/OPENAI_API_KEY/)).toBeNull();
+  });
+
   it("reveals the textarea and egress field when expanded", () => {
     renderWithQuery(<Harness />);
     fireEvent.click(screen.getByRole("button", { name: /Environment values \(optional\)/ }));

@@ -1,8 +1,8 @@
 // MOCK_WORLD — the v1 world overlay for an environment whose harness
 // stage_outputs carry nothing parseable yet (see environment.js
 // stageOutputsToWorld). It is the full-fidelity version of the same
-// customer-support world Phase-2 already surfaces in the read-audit
-// (preflightFails.js MOCK_READING), plus the designer's `env-voice-support`
+// customer-support world the v1 read-audit projected
+// (mockReading.js MOCK_READING), plus the designer's `env-voice-support`
 // metadata (id/name/surface/domain/tagline/description/evalPreset).
 //
 // MOCK_READING is the read-audit projection of this world: it truncates the
@@ -11,7 +11,7 @@
 // are supplied here at full fidelity. The tool set (names, count and order) is
 // read straight off MOCK_READING, so a rename there fails the scenario tests
 // loudly rather than silently drifting.
-import { MOCK_READING } from "./preflightFails";
+import { MOCK_READING } from "./mockReading";
 
 // Descriptions + argument lists for each MOCK_READING tool, keyed by name.
 const TOOL_DETAILS = {

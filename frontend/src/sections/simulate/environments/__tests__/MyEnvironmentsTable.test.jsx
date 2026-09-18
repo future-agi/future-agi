@@ -13,12 +13,16 @@ vi.mock("react-router-dom", async () => {
 });
 
 vi.mock("src/api/harness/harness", () => ({
-  listHarnessJobs: vi.fn(),
   getHarnessJob: vi.fn(),
 }));
+vi.mock("src/api/simulate-environments/harnessEnvironments", () => ({
+  listHarnessEnvironments: vi.fn(),
+  deleteHarnessEnvironment: vi.fn(),
+}));
 
-const { listHarnessJobs, getHarnessJob } = await import(
-  "src/api/harness/harness"
+const { getHarnessJob } = await import("src/api/harness/harness");
+const { listHarnessEnvironments, deleteHarnessEnvironment } = await import(
+  "src/api/simulate-environments/harnessEnvironments"
 );
 const { default: MyEnvironmentsTab } = await import("../MyEnvironmentsTab");
 
@@ -32,30 +36,69 @@ const JOB_DETAIL = {
   stage_outputs: [],
 };
 
-// A small harness-jobs payload: two stages beyond the terminal ones, a voice
-// connector (livekit/vapi) and a plain chat connector (http).
-const HARNESS_JOBS = [
-  {
-    job: { job_id: "job-support", metadata: { name: "Customer Support Line" } },
-    status: { stage: "completed", updated_at: "2026-09-15T09:00:00Z" },
-    credentials: { detected_connectors: ["livekit"] },
-  },
-  {
-    job: { job_id: "job-billing", metadata: { name: "Billing Chat Agent" } },
-    status: { stage: "running", updated_at: "2026-09-15T11:59:50Z" },
-    credentials: { detected_connectors: ["http"] },
-  },
-  {
-    job: { job_id: "job-triage", metadata: { name: "Repo Triage Bot" } },
-    status: { stage: "queued", updated_at: "2026-09-14T12:00:00Z" },
-    credentials: { detected_connectors: [] },
-  },
-  {
-    job: { job_id: "job-airline", metadata: { name: "Airline Rebooking" } },
-    status: { stage: "failed", updated_at: "2026-08-01T12:00:00Z" },
-    credentials: { detected_connectors: ["vapi"] },
-  },
-];
+// A small harness-environments page: the four pill states, two voice rows and
+// two chat rows, with a real description on the first row.
+const HARNESS_ENVS = {
+  count: 4,
+  next: null,
+  previous: null,
+  total_pages: 1,
+  current_page: 1,
+  results: [
+    {
+      id: "job-support",
+      name: "Customer Support Line",
+      description: "Handles inbound billing calls",
+      source_kind: "provider",
+      agent_type: "voice",
+      status: "completed",
+      stage: "completed",
+      scenario_count: 8,
+      tools_count: 3,
+      last_updated: "2026-09-15T09:00:00Z",
+      created_at: "2026-09-10T09:00:00Z",
+    },
+    {
+      id: "job-billing",
+      name: "Billing Chat Agent",
+      description: null,
+      source_kind: "github",
+      agent_type: "chat",
+      status: "running",
+      stage: "running",
+      scenario_count: 0,
+      tools_count: null,
+      last_updated: "2026-09-15T11:59:50Z",
+      created_at: "2026-09-14T09:00:00Z",
+    },
+    {
+      id: "job-triage",
+      name: "Repo Triage Bot",
+      description: null,
+      source_kind: "github",
+      agent_type: "chat",
+      status: "building",
+      stage: "queued",
+      scenario_count: 0,
+      tools_count: null,
+      last_updated: "2026-09-14T12:00:00Z",
+      created_at: "2026-09-14T10:00:00Z",
+    },
+    {
+      id: "job-airline",
+      name: "Airline Rebooking",
+      description: null,
+      source_kind: "provider",
+      agent_type: "voice",
+      status: "failed",
+      stage: "failed",
+      scenario_count: 0,
+      tools_count: null,
+      last_updated: "2026-08-01T12:00:00Z",
+      created_at: "2026-07-01T09:00:00Z",
+    },
+  ],
+};
 
 const renderTab = () => {
   const client = new QueryClient({
@@ -81,8 +124,10 @@ describe("MyEnvironmentsTable", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-09-15T12:00:00Z"));
     navigate.mockReset();
-    listHarnessJobs.mockReset();
-    listHarnessJobs.mockResolvedValue(HARNESS_JOBS);
+    listHarnessEnvironments.mockReset();
+    listHarnessEnvironments.mockResolvedValue(HARNESS_ENVS);
+    deleteHarnessEnvironment.mockReset();
+    deleteHarnessEnvironment.mockResolvedValue(undefined);
     getHarnessJob.mockReset();
     getHarnessJob.mockResolvedValue(JOB_DETAIL);
   });
@@ -128,20 +173,25 @@ describe("MyEnvironmentsTable", () => {
     expect(screen.getAllByText("Chat")).toHaveLength(2);
   });
 
-  it("marks the columns the harness API cannot fill with a dummy header pill", async () => {
+  it("marks only the columns the environments list cannot fill with a dummy header pill", async () => {
     renderTab();
     await screen.findByText("Customer Support Line");
 
-    // Description, Tools, Scenarios, Sub-goals, Runs.
-    expect(screen.getAllByText("Dummy")).toHaveLength(5);
-    // The placeholder cells render a dash rather than a value.
+    // Description, Tools and Scenarios are real now; only Sub-goals and Runs
+    // stay behind a dummy header.
+    expect(screen.getAllByText("Dummy")).toHaveLength(2);
+    // The real description renders for the first row; its tool/scenario counts show.
+    expect(
+      within(rowFor("Customer Support Line")).getByText("Handles inbound billing calls"),
+    ).toBeInTheDocument();
+    // The sub-goals / runs placeholder cells still render a dash.
     expect(
       within(rowFor("Customer Support Line")).getAllByText("—").length,
     ).toBeGreaterThan(0);
   });
 
-  it("shows the empty state when the harness list resolves empty", async () => {
-    listHarnessJobs.mockResolvedValue([]);
+  it("shows the empty state when the environments list resolves empty", async () => {
+    listHarnessEnvironments.mockResolvedValue({ results: [] });
     renderTab();
 
     expect(await screen.findByText("No environments yet")).toBeInTheDocument();
@@ -223,6 +273,32 @@ describe("MyEnvironmentsTable", () => {
     ).toHaveAttribute("aria-disabled", "true");
   });
 
+  it("drives server pagination: shows the server total and fetches the next page", async () => {
+    // A total larger than one page: only the first page of rows comes back, but
+    // the pager is driven by the server count.
+    listHarnessEnvironments.mockResolvedValue({
+      ...HARNESS_ENVS,
+      count: 30,
+      total_pages: 2,
+    });
+    const user = userEvent.setup();
+    renderTab();
+    await screen.findByText("Customer Support Line");
+
+    // The footer reflects the server total, not the four rows on screen.
+    expect(screen.getByText(/1–25 of 30/)).toBeInTheDocument();
+    expect(listHarnessEnvironments).toHaveBeenCalledWith({ page: 1, limit: 25 });
+
+    // The next chevron is the last button in the tab; clicking it asks the
+    // backend for the second page.
+    const buttons = screen.getAllByRole("button");
+    await user.click(buttons[buttons.length - 1]);
+
+    await waitFor(() =>
+      expect(listHarnessEnvironments).toHaveBeenCalledWith({ page: 2, limit: 25 }),
+    );
+  });
+
   it("removes the environment after confirming delete", async () => {
     const user = userEvent.setup();
     renderTab();
@@ -235,8 +311,18 @@ describe("MyEnvironmentsTable", () => {
     expect(within(dialog).getByText("Delete environment?")).toBeInTheDocument();
     expect(within(dialog).getByText("Customer Support Line")).toBeInTheDocument();
 
+    // Delete invalidates the list, so the refetched page no longer carries the
+    // removed row.
+    deleteHarnessEnvironment.mockResolvedValueOnce(undefined);
+    listHarnessEnvironments.mockResolvedValue({
+      ...HARNESS_ENVS,
+      count: 3,
+      results: HARNESS_ENVS.results.filter((r) => r.id !== "job-support"),
+    });
+
     await user.click(within(dialog).getByRole("button", { name: "Delete" }));
 
+    expect(deleteHarnessEnvironment).toHaveBeenCalledWith("job-support");
     await waitFor(() =>
       expect(screen.queryByText("Customer Support Line")).toBeNull(),
     );

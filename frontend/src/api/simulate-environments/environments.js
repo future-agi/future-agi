@@ -1,57 +1,92 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { listHarnessJobs } from "src/api/harness/harness";
-import { harnessJobToRow } from "src/sections/simulate/environments/helpers/harnessJobToRow";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  keepPreviousData,
+} from "@tanstack/react-query";
+import {
+  createHarnessJob,
+  harnessIdempotencyKey,
+} from "src/api/harness/harness";
+import { draftToPreflightPayload } from "src/api/simulate-environments/preflightPayload";
+import {
+  listHarnessEnvironments,
+  deleteHarnessEnvironment,
+} from "src/api/simulate-environments/harnessEnvironments";
+import { harnessEnvToRow } from "src/sections/simulate/environments/helpers/harnessJobToRow";
 
 export const SIMULATE_ENVIRONMENTS_KEY = ["simulate-environments"];
-export const myEnvironmentsQueryKey = () => [
-  ...SIMULATE_ENVIRONMENTS_KEY,
-  "list",
+// The prefix every page of the list shares — invalidating it refetches whatever
+// page is currently shown.
+export const myEnvironmentsListKey = () => [...SIMULATE_ENVIRONMENTS_KEY, "list"];
+export const myEnvironmentsQueryKey = (page = 0, pageSize = 25) => [
+  ...myEnvironmentsListKey(),
+  { page, pageSize },
 ];
 
-// The mutation hooks below still mock the backend endpoints behind a react-query
-// surface; swapping each mutationFn to axios is a one-file change once the
-// backend lands.
+// Map the RAW paginated payload ({ count, …, results }) to the page the table
+// needs: the mapped rows plus the server's total row count for the pager.
+const toPage = (data) => ({
+  rows: (Array.isArray(data?.results) ? data.results : []).map(harnessEnvToRow),
+  total: data?.count ?? 0,
+});
 
-// The query cache holds the RAW harness-jobs payload ({ job, status }[]);
-// `select` maps it to table rows on read, so the delete updater below must
-// filter the raw shape, not the mapped rows.
-const toRows = (data) =>
-  (Array.isArray(data) ? data : []).map(harnessJobToRow);
-
-// TODO: interim source — the My Environments table reads from the
-// harness-jobs list and maps each job to a flat row. Several columns (see
-// harnessJobToRow) have no field in this payload and render as placeholders;
-// replace with the dedicated environments endpoint once it lands.
-export function useMyEnvironments() {
+// Server-paginated: `page` is the table's 0-indexed page, the endpoint is
+// 1-indexed. keepPreviousData holds the current page on screen while the next
+// one loads, so paging doesn't flash an empty table.
+export function useMyEnvironments({ page = 0, pageSize = 25 } = {}) {
   return useQuery({
-    queryKey: myEnvironmentsQueryKey(),
-    queryFn: listHarnessJobs,
-    select: toRows,
+    queryKey: myEnvironmentsQueryKey(page, pageSize),
+    queryFn: () => listHarnessEnvironments({ page: page + 1, limit: pageSize }),
+    select: toPage,
+    placeholderData: keepPreviousData,
   });
 }
 
-// TODO: axios.delete(endpoints.simulateEnvironments.detail(envId))
 export function useDeleteEnvironment() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (envId) => ({ id: envId }),
-    onSuccess: ({ id }) => {
-      // The cache holds raw { job, status } items, so match on job.job_id.
-      queryClient.setQueryData(myEnvironmentsQueryKey(), (items) =>
-        (items || []).filter((item) => item?.job?.job_id !== id),
-      );
+    // The caller shows its own error snackbar; suppress the global one.
+    meta: { errorHandled: true },
+    mutationFn: (id) => deleteHarnessEnvironment(id),
+    // Refetch the visible page (its rows shift up from later pages), rather than
+    // filtering one page in place — which server pagination can't do correctly.
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: myEnvironmentsListKey() });
     },
   });
 }
 
-// TODO: axios.post(endpoints.simulateEnvironments.build, source)
-// Return only the server-minted id — never echo the raw source back, since it
-// can carry apiKey/envText secrets that would then sit in the mutation cache.
+// Create the real harness job for a build. The draft is mapped to the same
+// schema-valid body the preflight used (`draftToPreflightPayload`) — per the
+// contract, a create body equals its validated preflight body. Only the
+// server-minted job id is returned; the raw draft is never echoed back, since
+// it can carry source details that would then sit in the mutation cache.
+//
+// A draft that cannot be built for real (`{ skipped }`) keeps the client-minted
+// id, so the mock building path is unchanged for those sources.
 export function useBuildEnvironment() {
+  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async () => ({
-      envId: `env-${Date.now().toString(36)}`,
-    }),
+    // The caller surfaces the failure itself (a snackbar on the build page), so
+    // opt out of the global mutation-error toast to avoid a double message.
+    meta: { errorHandled: true },
+    mutationFn: async (draft) => {
+      const built = draftToPreflightPayload(draft);
+      if (built.skipped) {
+        return { envId: `env-${Date.now().toString(36)}`, skipped: built.skipped };
+      }
+      const dto = await createHarnessJob(built.payload, harnessIdempotencyKey());
+      return { envId: dto.job.job_id };
+    },
+    onSuccess: (result) => {
+      // A real job now exists on the server, so the next My-Environments read
+      // must include it. The skip path minted a client-side id and created
+      // nothing, so it leaves the list alone.
+      if (!result.skipped) {
+        queryClient.invalidateQueries({ queryKey: myEnvironmentsListKey() });
+      }
+    },
   });
 }
 

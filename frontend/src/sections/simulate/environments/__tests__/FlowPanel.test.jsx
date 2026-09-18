@@ -4,7 +4,6 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { render } from "src/utils/test-utils";
-import { useEnvironmentsStore, resetEnvironmentsStore } from "../store/useEnvironmentsStore";
 
 const navigate = vi.fn();
 vi.mock("react-router-dom", async () => {
@@ -12,6 +11,21 @@ vi.mock("react-router-dom", async () => {
   return { ...actual, useNavigate: () => navigate };
 });
 
+// The source panel runs the real preflight inline before Build enables.
+vi.mock("src/api/harness/harness", () => ({
+  preflightHarnessJob: vi.fn(),
+  storeHarnessSecretValues: vi.fn(),
+  createHarnessJob: vi.fn(),
+  harnessIdempotencyKey: () => "idem-test",
+  getHarnessJob: vi.fn(),
+  listHarnessJobs: vi.fn(),
+  uploadHarnessSource: vi.fn(),
+}));
+
+const { preflightHarnessJob } = await import("src/api/harness/harness");
+const { useEnvironmentsStore, resetEnvironmentsStore } = await import(
+  "../store/useEnvironmentsStore"
+);
 const { default: FlowPanel } = await import("../panels/FlowPanel");
 
 const renderPanel = (choice) => {
@@ -67,15 +81,24 @@ describe("FlowPanel", () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it("hands the draft to the store and navigates to the build page", async () => {
+  it("runs preflight then stages the draft and navigates on Build", async () => {
+    preflightHarnessJob.mockResolvedValue({
+      ready_to_submit: true,
+      state: "connected",
+      checks: [],
+    });
     const user = userEvent.setup();
     renderPanel("source");
 
     await user.type(screen.getByPlaceholderText("owner/repo"), "owner/repo");
-    await user.click(screen.getByRole("button", { name: /Build environment/ }));
+    await user.click(screen.getByRole("button", { name: "Run preflight" }));
+
+    const build = await screen.findByRole("button", { name: /Build environment/ });
+    await waitFor(() => expect(build).toBeEnabled());
+    await user.click(build);
 
     await waitFor(() => {
-      expect(useEnvironmentsStore.getState().draft?.kind).toBe("repo");
+      expect(useEnvironmentsStore.getState().pendingBuild?.draft?.kind).toBe("repo");
     });
     expect(navigate).toHaveBeenCalledWith(
       "/dashboard/simulate/environments/build",

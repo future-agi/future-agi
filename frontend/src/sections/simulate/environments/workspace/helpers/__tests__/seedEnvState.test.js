@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { generatedPool } from "src/api/simulate-environments/_fixtures/scenarioPool";
 import { MOCK_WORLD } from "src/api/simulate-environments/_fixtures/world";
-import { MOCK_READING } from "src/api/simulate-environments/_fixtures/preflightFails";
+import { MOCK_READING } from "src/api/simulate-environments/_fixtures/mockReading";
 import { AGENT_TYPES } from "src/sections/agents/constants";
 import {
   seedFromTemplate,

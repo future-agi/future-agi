@@ -34918,6 +34918,65 @@ export const SimulateApiCallExecutionsListResponse = zod.array(
 );
 
 /**
+ * An environment is the job that built it (the world itself lives in object
+storage, addressed from the job's metadata), so these endpoints project the
+same rows the harness-jobs API serves. They exist separately because the
+list needs a row, not a run: the jobs list returns every event, receipt and
+stage-output payload for up to a hundred jobs, which is a detail document
+repeated a hundred times.
+
+Running and grading a simulation are deliberately not here. ``run`` starts
+one and returns 202; progress is read from the job.
+ * @summary The environments surface: list, delete, and start a simulation.
+ */
+
+export const simulateApiHarnessEnvironmentsListQueryLimitMax = 100;
+
+export const SimulateApiHarnessEnvironmentsListQueryParams = zod.object({
+  page: zod.number().min(1).optional(),
+  limit: zod
+    .number()
+    .min(1)
+    .max(simulateApiHarnessEnvironmentsListQueryLimitMax)
+    .optional(),
+});
+
+export const SimulateApiHarnessEnvironmentsListResponse = zod.object({
+  count: zod.number(),
+  next: zod.string().min(1),
+  previous: zod.string().min(1),
+  total_pages: zod.number(),
+  current_page: zod.number(),
+  results: zod.array(
+    zod.object({
+      id: zod.string().uuid(),
+      name: zod.string().min(1),
+      description: zod.string().min(1),
+      source_kind: zod.string().min(1),
+      agent_type: zod.enum(["voice", "chat"]),
+      status: zod.enum(["building", "running", "completed", "failed"]),
+      stage: zod.string().min(1),
+      scenario_count: zod.number(),
+      tools_count: zod.number(),
+      last_updated: zod.string().datetime({ offset: true }),
+      created_at: zod.string().datetime({ offset: true }),
+    }),
+  ),
+});
+
+/**
+ * Deleting while a sandbox is running would leave that sandbox billing
+against a row nobody can see, so cancellation is requested before the
+row disappears. The authoring archive and the organization's secrets are
+left in place: neither is owned by this row, and other environments may
+reference the same credentials.
+ * @summary Soft-delete an environment, cancelling its run first if one is live.
+ */
+export const SimulateApiHarnessEnvironmentsDeleteParams = zod.object({
+  id: zod.string(),
+});
+
+/**
  * Validates the v1.6 request contract and delegates execution to the backend
 selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
 ``sandbox``). See ``simulate.services.harness_provider``.

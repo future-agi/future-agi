@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1004,
+  endpointCount: 1006,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -27674,6 +27674,53 @@ export const OPENAPI_CONTRACT = Object.freeze({
           500: {
             $ref: "#/definitions/CallExecutionErrorResponse",
           },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/": {
+      get: {
+        operationId: "simulate_api_harness-environments_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          page: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+            },
+          },
+          limit: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 100,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessEnvironmentListResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/": {
+      delete: {
+        operationId: "simulate_api_harness-environments_delete",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -59165,6 +59212,49 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessEnvironmentListResponse: {
+      required: [
+        "count",
+        "next",
+        "previous",
+        "total_pages",
+        "current_page",
+        "results",
+      ],
+      type: "object",
+      properties: {
+        count: {
+          title: "Count",
+          type: "integer",
+        },
+        next: {
+          title: "Next",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        previous: {
+          title: "Previous",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        total_pages: {
+          title: "Total pages",
+          type: "integer",
+        },
+        current_page: {
+          title: "Current page",
+          type: "integer",
+        },
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironment",
+          },
+        },
+      },
+    },
     HarnessEventBatch: {
       required: ["schema_version", "events"],
       type: "object",
@@ -85880,6 +85970,80 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Embedding status",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    HarnessEnvironment: {
+      required: [
+        "id",
+        "name",
+        "description",
+        "source_kind",
+        "agent_type",
+        "status",
+        "stage",
+        "scenario_count",
+        "tools_count",
+        "last_updated",
+        "created_at",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        source_kind: {
+          title: "Source kind",
+          type: "string",
+          minLength: 1,
+        },
+        agent_type: {
+          title: "Agent type",
+          type: "string",
+          enum: ["voice", "chat"],
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["building", "running", "completed", "failed"],
+        },
+        stage: {
+          title: "Stage",
+          type: "string",
+          minLength: 1,
+        },
+        scenario_count: {
+          title: "Scenario count",
+          type: "integer",
+        },
+        tools_count: {
+          title: "Tools count",
+          type: "integer",
+          "x-nullable": true,
+        },
+        last_updated: {
+          title: "Last updated",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
         },
       },
     },
