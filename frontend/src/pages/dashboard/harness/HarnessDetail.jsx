@@ -255,9 +255,21 @@ export default function HarnessDetail() {
   const stageOutputs = current?.stage_outputs || [];
   const selectedOutputs = stageOutputs.filter((output) =>
     detailTab === "runs"
-      ? !["contract", "environment", "scenarios"].includes(output.kind)
-      : output.kind === detailTab,
+      ? !["contract", "environment", "scenarios", "coverage"].includes(output.kind)
+      : // Coverage describes the suite, so it belongs beside it rather than in a tab of its own.
+        output.kind === detailTab ||
+        (detailTab === "scenarios" && output.kind === "coverage"),
   );
+  // Coverage reads before the suite, not after it. It is a fixed-height summary of a list that has
+  // no bound: at a thousand scenarios, putting it underneath means scrolling the entire suite to
+  // reach the one panel that says whether the suite is any good.
+  const orderedOutputs = [
+    ...selectedOutputs.filter((one) => one.kind === "coverage"),
+    ...selectedOutputs.filter((one) => one.kind !== "coverage"),
+  ];
+  // The matrix cross-tabulates the suite, so it needs the rows the sibling output already carries.
+  const suiteScenarios =
+    selectedOutputs.find((one) => one.kind === "scenarios")?.data || [];
   const outputCounts = stageOutputs.reduce((counts, output) => {
     const key = ["contract", "environment", "scenarios"].includes(output.kind)
       ? output.kind
@@ -851,12 +863,13 @@ export default function HarnessDetail() {
             >
               {detailTab !== "runs" ? (
                 <Stack spacing={1.5}>
-                  {selectedOutputs.length ? (
-                    selectedOutputs.map((output) => (
+                  {orderedOutputs.length ? (
+                    orderedOutputs.map((output) => (
                       <StageOutput
                         key={output.id}
                         output={output}
                         jobId={jobId}
+                        scenarios={suiteScenarios}
                         onChanged={() =>
                           queryClient.invalidateQueries({
                             queryKey: ["harness-job", jobId],
@@ -874,11 +887,12 @@ export default function HarnessDetail() {
                 </Stack>
               ) : (
                 <Stack spacing={1.5}>
-                  {selectedOutputs.map((output) => (
+                  {orderedOutputs.map((output) => (
                     <StageOutput
                         key={output.id}
                         output={output}
                         jobId={jobId}
+                        scenarios={suiteScenarios}
                         onChanged={() =>
                           queryClient.invalidateQueries({
                             queryKey: ["harness-job", jobId],

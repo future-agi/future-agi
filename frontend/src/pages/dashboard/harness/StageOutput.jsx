@@ -12,6 +12,7 @@ import PropTypes from "prop-types";
 
 import Iconify from "src/components/iconify";
 import ScenarioSuite from "./ScenarioSuite";
+import CoverageMatrix from "./CoverageMatrix";
 
 
 function RawDetails({ data }) {
@@ -65,7 +66,7 @@ RawDetails.propTypes = {
 // One artifact the runner produced during a stage. `kind` is a closed set from ALK —
 // contract, environment, scenarios, simulation — and anything else falls back to raw JSON
 // rather than rendering nothing, so a new kind is visible rather than silently dropped.
-export default function StageOutput({ output, jobId, onChanged }) {
+export default function StageOutput({ output, jobId, scenarios, onChanged }) {
   const data = output.data || {};
   return (
     <Accordion
@@ -188,7 +189,16 @@ export default function StageOutput({ output, jobId, onChanged }) {
           />
         )}
 
-        {!["contract", "environment", "scenarios", "simulation"].includes(
+        {output.kind === "coverage" && (
+          <Stack spacing={1}>
+            {/* The matrix needs the scenarios' own coordinates, which live on the sibling
+                output, so the page hands them down rather than this refetching them. */}
+            <CoverageMatrix scenarios={scenarios} coverage={data} />
+            <RawDetails data={data} />
+          </Stack>
+        )}
+
+        {!["contract", "environment", "scenarios", "simulation", "coverage"].includes(
           output.kind,
         ) && <RawDetails data={data} />}
       </AccordionDetails>
@@ -197,6 +207,8 @@ export default function StageOutput({ output, jobId, onChanged }) {
 }
 
 StageOutput.propTypes = {
+  // The suite's own rows, handed down so the coverage matrix can read each scenario's coordinate.
+  scenarios: PropTypes.arrayOf(PropTypes.object),
   // Editing a suite happens against a job, so the id is what turns a read-only list editable.
   jobId: PropTypes.string,
   onChanged: PropTypes.func,
