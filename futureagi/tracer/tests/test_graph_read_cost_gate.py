@@ -683,3 +683,261 @@ def test_affordable_rows_scale_with_the_wall_not_with_a_window():
     assert (
         graph_read_cost.raw_graph_scan_fits_wall(rows + 1, remaining_ms=20_000) is True
     )
+
+
+# --- the users graph: same door, its own statement, its own rate ------------
+#
+# The aggregate users graph had no gate at all: its dispatcher ran the ordered
+# latest-state statement on the interactive wall, expired there at thirty
+# seconds, and only then scheduled the identical statement. On the highest-
+# volume tenant that statement reads 311M physical spans over six months at a
+# measured 553 rows/ms - 563 s, against a 180 s background wall - so the wall
+# was spent, the worker then failed, and the user got neither an answer nor a
+# chart. These tests pin that the lane is decided before the statement, from
+# the index, at THIS statement's rate, and that the probe costs exactly the
+# identity-hour window the statement scans.
+
+
+class _UsersGraphAnalytics(Analytics):
+    """The gate's probe answered; the reader itself is patched in each test."""
+
+    def execute_ch_query(self, query, params, **kwargs):
+        assert "EXPLAIN ESTIMATE" in query, (
+            "the users graph reader is patched; only the cost probe may run"
+        )
+        return super().execute_ch_query(query, params, **kwargs)
+
+
+@pytest.fixture
+def users_reader(monkeypatch):
+    reads = []
+
+    def _reader(**kwargs):
+        reads.append(kwargs)
+        return {
+            "metric_name": kwargs["metric_id"],
+            "data": [],
+            "query_complete": True,
+            "query_status": "complete",
+            "query_sampled": False,
+        }
+
+    monkeypatch.setattr(graph_dispatch, "read_exact_user_system_graph", _reader)
+    return reads
+
+
+def _fetch_users(analytics, *, organization_id=ORG_ID, refresh=False, days=180):
+    return graph_dispatch.fetch_user_system_metric_graph_ch(
+        analytics=analytics,
+        project_id=PROJECT_ID,
+        filters=[_window(days)],
+        interval="week",
+        metric_id="cost",
+        refresh=refresh,
+        organization_id=organization_id,
+        workspace_id=None,
+    )
+
+
+SIX_MONTHS_ON_THE_REFERENCE_TENANT = 311_340_000
+
+
+@pytest.mark.unit
+def test_unaffordable_users_graph_is_scheduled_without_spending_the_wall(
+    scheduled, users_reader
+):
+    """The production shape on the reference tenant, decided before the read."""
+    from django.conf import settings
+
+    background_affords = (
+        settings.GRAPH_BACKGROUND_WALL_MS * graph_read_cost._USER_GRAPH_SCAN_ROWS_PER_MS
+    )
+    analytics = _UsersGraphAnalytics(estimated_rows=background_affords)
+    response = _fetch_users(analytics)
+
+    assert users_reader == [], "the statement must not be issued on this wall"
+    assert len(analytics.cost_probes) == 1
+    refreshes = scheduled.enqueued
+    assert len(refreshes) == 1
+    assert refreshes[0][0] == "observe-user-system-graph"
+    assert refreshes[0][2]["refresh"] is False, "the user's own flag, never forced"
+    assert response["query_status"] == "pending"
+
+
+@pytest.mark.unit
+def test_six_months_on_the_reference_tenant_is_refused_in_probe_time(
+    scheduled, users_reader
+):
+    """311M rows at 553 rows/ms is 563 s: no wall the product owns runs it.
+
+    Before: thirty seconds inline, a pending envelope, then a worker attempt
+    that expires at 180 s and a failed refresh the browser renders as an
+    error. Now: the same terminal answer in the time one metadata probe takes,
+    and no full-window scan on either lane.
+    """
+
+    analytics = _UsersGraphAnalytics(estimated_rows=SIX_MONTHS_ON_THE_REFERENCE_TENANT)
+    response = _fetch_users(analytics)
+
+    assert users_reader == []
+    assert scheduled.enqueued == []
+    assert response["query_status"] == "degraded"
+    assert response["query_error_code"] == "read_budget_exceeded"
+    assert response["query_provenance"] == "read_cost_gate"
+
+
+@pytest.mark.unit
+def test_users_graph_probe_that_cannot_answer_schedules_not_scans(
+    scheduled, users_reader
+):
+    """Unknown is not small. An uncosted read goes to the bounded worker."""
+
+    analytics = _UsersGraphAnalytics(estimated_rows=None)
+    response = _fetch_users(analytics)
+
+    assert users_reader == []
+    assert len(scheduled.enqueued) == 1
+    assert response["query_status"] == "pending"
+
+
+@pytest.mark.unit
+def test_users_graph_that_fits_the_wall_reads_exactly_as_before(
+    scheduled, users_reader
+):
+    """A week on the reference tenant (2.1M rows) keeps its synchronous answer."""
+
+    analytics = _UsersGraphAnalytics(estimated_rows=2_140_000)
+    response = _fetch_users(analytics, days=7)
+
+    assert len(users_reader) == 1
+    assert len(analytics.cost_probes) == 1
+    assert scheduled.enqueued == []
+    assert response["query_status"] == "complete"
+    assert response["query_provenance"] == "exact_snapshot"
+
+
+@pytest.mark.unit
+def test_unaffordable_users_graph_without_a_background_lane_fails_fast(
+    scheduled, users_reader
+):
+    analytics = _UsersGraphAnalytics(estimated_rows=SIX_MONTHS_ON_THE_REFERENCE_TENANT)
+    response = _fetch_users(analytics, organization_id=None)
+
+    assert users_reader == []
+    assert scheduled.enqueued == []
+    assert response["query_status"] == "degraded"
+    assert response["query_error_code"] == "read_budget_exceeded"
+    assert response["query_provenance"] == "read_cost_gate"
+
+
+@pytest.mark.unit
+def test_users_graph_probe_costs_the_window_the_statement_scans():
+    """The gate's probe and the statement bound the same identity hours.
+
+    The statement scans complete identity hours because the replacement key
+    holds ``toStartOfHour(start_time)``. A probe over a narrower window would
+    under-cost the read; over a wider one it would refuse charts that fit.
+    """
+    from tracer.services.clickhouse.exact_graph_reads import (
+        read_exact_user_system_graph,
+    )
+
+    end = datetime(2026, 9, 16, 10, 25, 30, tzinfo=UTC)
+    start = end - timedelta(days=45)
+    window = {
+        "column_id": "created_at",
+        "filter_config": {
+            "col_type": "SYSTEM_METRIC",
+            "filter_type": "datetime",
+            "filter_op": "between",
+            "filter_value": [start.isoformat(), end.isoformat()],
+        },
+    }
+
+    class _Capture:
+        captured = None
+
+        def remaining_read_ms(self, cap_ms):
+            return int(cap_ms)
+
+        def execute_ch_query(self, query, params=None, **kwargs):
+            self.captured = (query, dict(params or {}))
+            raise RuntimeError("captured")
+
+    statement = _Capture()
+    with pytest.raises(RuntimeError):
+        read_exact_user_system_graph(
+            analytics=statement,
+            project_id=PROJECT_ID,
+            filters=[window],
+            interval="day",
+            metric_id="cost",
+        )
+    probe = _Capture()
+    # The dispatcher's own gate, on the same filters: it must derive the
+    # window the way the reader does (down to the naive-UTC normalisation the
+    # analyzer applies), not from a parallel reading of the request.
+    verdict = graph_dispatch._affordable_user_graph_read(
+        analytics=probe,
+        project_id=PROJECT_ID,
+        filters=[window],
+        interactive_deadline_ms=30_000,
+    )
+    assert isinstance(verdict, graph_dispatch._GraphReadUnaffordable)
+    assert verdict.estimated_rows is None, (
+        "a probe that raised leaves the read uncosted"
+    )
+    _statement_sql, statement_params = statement.captured
+    _probe_sql, probe_params = probe.captured
+    assert (
+        probe_params["graph_cost_scan_start"]
+        == statement_params["user_snapshot_scan_start"]
+    )
+    assert (
+        probe_params["graph_cost_scan_end"]
+        == statement_params["user_snapshot_scan_end"]
+    )
+    assert probe_params["graph_cost_scan_end"] > end.replace(tzinfo=None), (
+        "the end hour is rounded UP"
+    )
+    assert probe_params["graph_cost_scan_start"].tzinfo == (
+        statement_params["user_snapshot_scan_start"].tzinfo
+    )
+
+
+@pytest.mark.unit
+def test_users_graph_rate_keeps_the_reference_windows_where_measured():
+    """The calibration's consequences, as arithmetic rather than trust.
+
+    Measured on the reference tenant: a week (2.14M rows) completes inline in
+    about a second; six months (311M rows) read 21% of its window in 120 s.
+    The rate must keep the first on the interactive wall, the second off
+    every wall, and thirty days (87.4M rows) off the interactive wall but on
+    the worker's.
+    """
+    from django.conf import settings
+
+    interactive = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
+    background = settings.GRAPH_BACKGROUND_WALL_MS
+    assert graph_read_cost.user_graph_scan_fits_wall(
+        2_140_000, remaining_ms=interactive
+    )
+    assert not graph_read_cost.user_graph_scan_fits_wall(
+        87_400_000, remaining_ms=interactive
+    )
+    assert graph_read_cost.user_graph_scan_fits_wall(
+        87_400_000, remaining_ms=background
+    )
+    assert not graph_read_cost.user_graph_scan_fits_wall(
+        SIX_MONTHS_ON_THE_REFERENCE_TENANT, remaining_ms=background
+    )
+    # This statement really is dearer per row than the raw filtered graph's;
+    # a constant borrowed from that statement would have scheduled six months
+    # to a worker that then expires.
+    assert (
+        graph_read_cost._USER_GRAPH_SCAN_ROWS_PER_MS
+        < graph_read_cost._RAW_SCAN_ROWS_PER_MS
+    )
+    assert graph_read_cost.raw_graph_scan_fits_wall(
+        SIX_MONTHS_ON_THE_REFERENCE_TENANT, remaining_ms=background
+    )

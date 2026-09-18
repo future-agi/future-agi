@@ -35,8 +35,11 @@ from tracer.services.clickhouse.exact_graph_reads import (
 )
 from tracer.services.clickhouse.graph_read_cost import (
     estimate_raw_graph_scan_rows,
+    estimate_user_graph_scan_rows,
     raw_graph_scan_fits_wall,
     raw_graph_scan_window,
+    user_graph_scan_fits_wall,
+    user_graph_scan_window,
 )
 from tracer.services.clickhouse.query_builders import (
     TimeSeriesQueryBuilder,
@@ -1643,8 +1646,14 @@ def _schedule_unaffordable_graph_read(
     refresh: bool,
     organization_id: str | None,
     workspace_id: str | None,
+    namespace: str = "observe-system-graph",
+    fits_wall: Any = raw_graph_scan_fits_wall,
 ) -> dict[str, Any]:
     """Hand a read the interactive wall cannot run to the background lane.
+
+    ``namespace`` is the exact-refresh lane the worker dispatches on and
+    ``fits_wall`` the affordability rule for the statement that lane runs;
+    the defaults are the raw filtered graph's, the users graph passes its own.
 
     The background lane is a wider wall, not an unbounded one, so the same
     arithmetic is asked again against the deadline the worker would actually
@@ -1664,14 +1673,14 @@ def _schedule_unaffordable_graph_read(
     unaffordable = BoundedGraphReadError("read_budget_exceeded", retryable=True)
     # Unknown is not "too big": it is "not costed here". Route it to the wider
     # wall rather than refusing a read that may well fit.
-    schedulable = verdict.estimated_rows is None or raw_graph_scan_fits_wall(
+    schedulable = verdict.estimated_rows is None or fits_wall(
         verdict.estimated_rows,
         remaining_ms=GRAPH_WALL_DEADLINE_MS,
     )
     if organization_id and schedulable:
         try:
             scheduled = _read_or_refresh_exact_graph(
-                namespace="observe-system-graph",
+                namespace=namespace,
                 identity=dict(identity),
                 refresh=refresh,
                 pending_payload=pending_payload,
@@ -2075,6 +2084,52 @@ def fetch_all_system_metrics_ch(
     }
 
 
+def _affordable_user_graph_read(
+    *,
+    analytics: Any,
+    project_id: str,
+    filters: list[dict[str, Any]],
+    interactive_deadline_ms: int,
+) -> _GraphReadUnaffordable | None:
+    """Decide, before the statement, whether this wall can run the users graph.
+
+    The same question ``_affordable_raw_graph_seed`` asks of a filtered graph,
+    at this statement's own cost per row and over the identity-hour window it
+    actually scans. ``None`` means the read is proven to fit and the path
+    continues exactly as before; the sentinel means it is not, or could not be
+    costed, and the read goes to the bounded worker without spending the wall
+    it is about to expire on. There is no second lever here: the users graph
+    compiles no trace witness, so the window is the read.
+
+    An unbounded or empty window is not decided here: the reader refuses or
+    answers those itself without a statement, and this function must not
+    raise anything the reader would not.
+    """
+
+    try:
+        analyzed = BaseQueryBuilder.analyze_bounded_datetime_filters(
+            filters, strict=True
+        )
+    except Exception:  # noqa: BLE001 - the reader raises the same, in its own words
+        return None
+    if analyzed.empty or analyzed.start is None or analyzed.end is None:
+        return None
+    scan_start, scan_end = user_graph_scan_window(analyzed.start, analyzed.end)
+    estimated_rows = estimate_user_graph_scan_rows(
+        analytics=analytics,
+        project_id=project_id,
+        scan_start=scan_start,
+        scan_end=scan_end,
+        timeout_ms=analytics.remaining_read_ms(interactive_deadline_ms),
+    )
+    if user_graph_scan_fits_wall(
+        estimated_rows,
+        remaining_ms=analytics.remaining_read_ms(interactive_deadline_ms),
+    ):
+        return None
+    return _GraphReadUnaffordable(estimated_rows)
+
+
 def fetch_user_system_metric_graph_ch(
     *,
     analytics: Any,
@@ -2092,11 +2147,14 @@ def fetch_user_system_metric_graph_ch(
     The aggregate user graph is one ordered latest-state pass over the whole
     window, and on the largest tenants that pass outlives the interactive wall.
     This surface therefore keeps the same read-or-schedule contract the other
-    exact Observe graphs use: a cache-only probe first, the unchanged direct
-    read while nothing is cached, and one deduplicated background refresh -
-    never a second interactive attempt - once the read budget has actually
-    failed. The background lane runs the identical statement under the worker's
-    own wall and the graph thread budget this reader already carries.
+    exact Observe graphs use: a cache-only probe first; a cost gate that hands
+    a read the index says this wall cannot run to the worker WITHOUT spending
+    the wall (and refuses outright, in the time the probe takes, one that no
+    wall the product owns can absorb); the unchanged direct read while the
+    read is proven to fit; and one deduplicated background refresh - never a
+    second interactive attempt - should a read predicted to fit still fail.
+    The background lane runs the identical statement under the worker's own
+    wall and the graph thread budget this reader already carries.
     """
 
     project_id = _validated_project_id(project_id)
@@ -2155,6 +2213,27 @@ def fetch_user_system_metric_graph_ch(
         analytics,
         ReadDeadline.start(interactive_deadline_ms),
     )
+    verdict = _affordable_user_graph_read(
+        analytics=bounded_analytics,
+        project_id=project_id,
+        filters=filters,
+        interactive_deadline_ms=interactive_deadline_ms,
+    )
+    if isinstance(verdict, _GraphReadUnaffordable):
+        # Nothing ran in the foreground, so the background worker - which owns
+        # the same statement under GRAPH_BACKGROUND_WALL_MS instead of this
+        # interactive wall - is its first and only execution.
+        return _schedule_unaffordable_graph_read(
+            metric_id=normalized_metric_id,
+            verdict=verdict,
+            identity=identity,
+            pending_payload=pending_payload,
+            refresh=refresh,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            namespace="observe-user-system-graph",
+            fits_wall=user_graph_scan_fits_wall,
+        )
     try:
         response = read_exact_user_system_graph(
             analytics=bounded_analytics,

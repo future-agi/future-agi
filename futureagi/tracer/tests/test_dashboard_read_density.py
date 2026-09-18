@@ -1,8 +1,10 @@
 """Cost prediction for exact dashboard trace statements.
 
 The predictor decides which lane a heavy widget takes before its statement
-runs. Every failure mode here has to degrade to "no prediction", because that
-is the pre-existing inline behaviour the routing is layered on top of.
+runs. An unknown scope or an unmeasured statement degrades to "no prediction",
+the pre-existing inline path. A probe that cannot answer for a costable
+statement does not: that read is uncosted, and an uncosted read is scheduled,
+never admitted to the interactive wall on the strength of not knowing.
 """
 
 import uuid
@@ -239,7 +241,14 @@ def test_same_filter_shape_on_different_values_is_estimated_separately(settings)
     assert estimated_rows_for(estimates, rejected_sql, rejected_params) == 12
 
 
-def test_probe_failure_means_no_prediction(settings):
+def test_probe_failure_means_unknown_not_absent(settings):
+    """A costable statement whose probe raises is recorded as uncosted.
+
+    Leaving it out of the mapping made it indistinguishable from a statement
+    that has nothing to estimate, and the gate then let it run inline: the
+    production shape, one probe earlier.
+    """
+
     settings.DASHBOARD_ATTR_ROLLUP_ENABLED = False
     sql, params = _build_metric_sql(_attribute_filtered_config())
     analytics = MagicMock()
@@ -251,7 +260,49 @@ def test_probe_failure_means_no_prediction(settings):
         deadline=ReadDeadline.start(30_000),
     )
 
-    assert estimates == {}
+    assert list(estimates.values()) == [None]
+    assert estimated_rows_for(estimates, sql, params) is None
+
+
+def test_probe_with_no_deadline_left_is_unknown_not_absent(settings):
+    settings.DASHBOARD_ATTR_ROLLUP_ENABLED = False
+    sql, params = _build_metric_sql(_attribute_filtered_config())
+    analytics = MagicMock()
+    deadline = ReadDeadline.start(1)
+    while True:
+        try:
+            deadline.remaining_ms()
+        except Exception:  # noqa: BLE001 - the wall has expired
+            break
+
+    estimates = probe_candidate_estimates(
+        [(sql, params)],
+        analytics=analytics,
+        deadline=deadline,
+    )
+
+    assert list(estimates.values()) == [None]
+    analytics.execute_ch_query.assert_not_called()
+
+
+def test_an_uncosted_statement_is_not_admitted_inline_even_on_a_cold_scope():
+    """Unknown means schedule. The scope's density does not enter into it."""
+
+    scope_key = density_scope_key([str(uuid.uuid4())])
+    assert read_density_record(scope_key) is None
+
+    assert exceeds_remaining_deadline(
+        {"EXPLAIN ESTIMATE SELECT 1": None},
+        scope_key=scope_key,
+        remaining_ms=30_000,
+    )
+    # A costed sibling does not rescue the uncosted one.
+    observe_completed_read(scope_key, 1_000, _result(1_000_000, 1_000.0))
+    assert exceeds_remaining_deadline(
+        {"EXPLAIN ESTIMATE SELECT 1": 1, "EXPLAIN ESTIMATE SELECT 2": None},
+        scope_key=scope_key,
+        remaining_ms=30_000,
+    )
 
 
 def test_statement_without_a_candidate_cte_is_never_probed(settings):

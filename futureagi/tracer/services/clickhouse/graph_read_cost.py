@@ -250,8 +250,147 @@ def raw_graph_scan_fits_wall(estimated_rows: int | None, *, remaining_ms: int) -
     return False
 
 
+# The aggregate users graph is a different statement from the raw filtered
+# graph - one ordered latest-state pass (``argMax`` over nine columns, GROUP BY
+# the sorting key in order, HAVING on the winner) over every physical span in
+# its window - and it has its own cost per row. Measured on production against
+# the highest-volume reference tenant, this surface's own statement at its own
+# ``EXACT_GRAPH_USER_READ_SETTINGS`` (DASHBOARD_TRACE_READ_MAX_THREADS
+# workers), at the windows the gate is asked about:
+#
+#   six months, one statement, four workers, read-only profile: 66.38M
+#   physical spans and 9.43 GB in 120,005 ms of server time (the profile's
+#   own 120 s ceiling; the window holds 311.3M rows, so the statement was
+#   21% through) = 553 rows/ms, steady across eight 15 s progress samples;
+#   the same statement's first thirty seconds at six and twelve months in the
+#   production sweep read 16.9M rows each = 552 and 563 rows/ms.
+#
+# This statement costs about 3.2x more per row than the raw filtered graph
+# statement (1,796 rows/ms above): it decompresses nine columns into an
+# ``argMax`` tuple and retires every identity through an in-order GROUP BY,
+# where the raw statement reads and folds. One constant cannot serve both.
+#
+# The consequence, stated: at 553 rows/ms the 180 s background wall affords
+# 99.5M rows, about thirty days of the reference tenant's traffic, and the
+# 30 s interactive wall 16.6M rows, about a week. A six-month window on that
+# tenant (311M rows, predicted 563 s) is refused in the time the probe takes
+# instead of after thirty seconds inline and a failed three-minute worker
+# attempt. Like the raw constant this is a throughput, not a window:
+# affordable rows are this rate multiplied by the milliseconds the request
+# still has.
+#
+# Two caveats on the calibration. The measured run was cut at 21% of its
+# window, so the tail - merging the external-aggregation parts the scan
+# spilled (12.7k of them at the 32 MiB EXACT_GRAPH_READ_EXTERNAL_SPILL_BYTES
+# threshold) - is unmeasured and 563 s is a floor, not the whole statement;
+# "thirty days fits the background wall" is this arithmetic, not a measured
+# thirty-day read. And the rate is a property of the statement AT its
+# settings: it is coupled to DASHBOARD_TRACE_READ_MAX_THREADS and to that
+# spill threshold, and must be re-measured if either moves.
+_USER_GRAPH_SCAN_ROWS_PER_MS = 553
+
+
+def user_graph_scan_window(
+    start_date: datetime,
+    end_date: datetime,
+) -> tuple[datetime, datetime]:
+    """Return the identity-hour window the users graph statement scans.
+
+    ``UserTimeSeriesQueryBuilderV2.build`` bounds its scan by complete
+    identity hours (the replacement key holds ``toStartOfHour(start_time)``):
+    the start floored to the hour, the end rounded up to the next hour when
+    it is not already on one. The gate costs exactly that window, and a test
+    pins the two against each other.
+    """
+
+    scan_start = start_date.replace(minute=0, second=0, microsecond=0)
+    scan_end = end_date.replace(minute=0, second=0, microsecond=0)
+    if scan_end < end_date:
+        scan_end += timedelta(hours=1)
+    return scan_start, scan_end
+
+
+def estimate_user_graph_scan_rows(
+    *,
+    analytics: Any,
+    project_id: str,
+    scan_start: datetime,
+    scan_end: datetime,
+    timeout_ms: int,
+) -> int | None:
+    """Estimate the physical spans the aggregate users graph statement scans.
+
+    The statement's key condition is ``project_id`` plus a half-open range on
+    ``toStartOfHour(start_time)`` - whole identity hours, because the
+    replacement key holds the hour, not the timestamp - and that is what this
+    probe costs, and nothing else: no ``end_users`` dimension join, no remap
+    subquery (``EXPLAIN`` would execute one to plan around it), projections
+    pinned off for the reason given on the raw probe. Measured at four workers
+    on the reference tenant it costs about 100 ms at six and twelve months.
+    """
+
+    probe_settings = {
+        "max_threads": settings.DASHBOARD_TRACE_READ_MAX_THREADS,
+        "optimize_use_projections": 0,
+    }
+    query = """
+        EXPLAIN ESTIMATE
+        SELECT count()
+        FROM spans
+        WHERE project_id = toUUID(%(graph_cost_project_id)s)
+          AND toStartOfHour(start_time) >= %(graph_cost_scan_start)s
+          AND toStartOfHour(start_time) < %(graph_cost_scan_end)s
+    """
+    params = {
+        "graph_cost_project_id": str(project_id),
+        "graph_cost_scan_start": scan_start,
+        "graph_cost_scan_end": scan_end,
+    }
+    try:
+        result = analytics.execute_ch_query(
+            query,
+            params,
+            timeout_ms=int(timeout_ms),
+            settings=probe_settings,
+        )
+    except Exception:
+        # Unknown, never small: ``user_graph_scan_fits_wall`` refuses to call
+        # an uncosted read affordable.
+        logger.info("user_graph_scan_estimate_unavailable", exc_info=True)
+        return None
+    return _reduce_estimate(
+        getattr(result, "data", None), getattr(result, "columns", None)
+    )
+
+
+def user_graph_scan_fits_wall(estimated_rows: int | None, *, remaining_ms: int) -> bool:
+    """Whether the users graph statement is PROVEN to complete in *remaining_ms*.
+
+    Same contract as ``raw_graph_scan_fits_wall``, at this statement's own
+    rate: an unknown estimate does not fit, and absence of proof means
+    schedule, not scan.
+    """
+
+    if estimated_rows is None:
+        logger.info("user_graph_scan_estimate_unknown_not_affordable")
+        return False
+    affordable_rows = max(0, int(remaining_ms)) * _USER_GRAPH_SCAN_ROWS_PER_MS
+    if estimated_rows <= affordable_rows:
+        return True
+    logger.info(
+        "user_graph_scan_predicted_over_wall",
+        estimated_rows=int(estimated_rows),
+        affordable_rows=int(affordable_rows),
+        remaining_ms=int(remaining_ms),
+    )
+    return False
+
+
 __all__ = [
     "estimate_raw_graph_scan_rows",
+    "estimate_user_graph_scan_rows",
     "raw_graph_scan_fits_wall",
     "raw_graph_scan_window",
+    "user_graph_scan_fits_wall",
+    "user_graph_scan_window",
 ]

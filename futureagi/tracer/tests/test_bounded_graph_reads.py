@@ -4772,6 +4772,39 @@ USERS_GRAPH_ORG_ID = "00000000-0000-4000-8000-000000000904"
 USERS_GRAPH_WORKSPACE_ID = "00000000-0000-4000-8000-000000000905"
 
 
+class _AffordableUsersGraphAnalytics:
+    """Answer the users graph's cost probe with a scan the wall affords.
+
+    The dispatcher now costs the read before issuing it, and a fake that
+    cannot answer that probe leaves the read UNCOSTED - which routes it to the
+    background lane and never reaches the reader these tests exercise. The
+    reader itself is patched in every test here, so no other statement is
+    ever asked of this object.
+    """
+
+    supports_per_query_read_settings = True
+
+    def __init__(self):
+        self.probes = []
+
+    def execute_ch_query(self, query, params=None, **kwargs):
+        assert "EXPLAIN ESTIMATE" in query, "only the cost probe may reach this fake"
+        self.probes.append((query, dict(params or {}), kwargs))
+        return SimpleNamespace(
+            data=[
+                {
+                    "database": "default",
+                    "table": "spans",
+                    "parts": 3,
+                    "rows": 1_000,
+                    "marks": 1,
+                }
+            ],
+            columns=["database", "table", "parts", "rows", "marks"],
+            query_time_ms=1,
+        )
+
+
 def _users_graph_snapshot_probe(monkeypatch, *, probe_result):
     """Record snapshot traffic and answer the cache-only probe deterministically.
 
@@ -4835,7 +4868,7 @@ def test_users_graph_serves_a_cached_exact_snapshot_without_reading_clickhouse(
     reads = _users_graph_reader(monkeypatch, outcome=ValueError("must not read"))
 
     response = graph_dispatch.fetch_user_system_metric_graph_ch(
-        analytics=object(),
+        analytics=_AffordableUsersGraphAnalytics(),
         project_id=PROJECT_ID,
         filters=[_date_filter()],
         interval="hour",
@@ -4866,7 +4899,7 @@ def test_users_graph_refresh_on_a_cached_snapshot_schedules_instead_of_reading(
     reads = _users_graph_reader(monkeypatch, outcome=ValueError("must not read"))
 
     response = graph_dispatch.fetch_user_system_metric_graph_ch(
-        analytics=object(),
+        analytics=_AffordableUsersGraphAnalytics(),
         project_id=PROJECT_ID,
         filters=[_date_filter()],
         interval="hour",
@@ -4897,7 +4930,7 @@ def test_users_graph_running_refresh_answers_pending_without_a_statement(monkeyp
     reads = _users_graph_reader(monkeypatch, outcome=ValueError("must not read"))
 
     response = graph_dispatch.fetch_user_system_metric_graph_ch(
-        analytics=object(),
+        analytics=_AffordableUsersGraphAnalytics(),
         project_id=PROJECT_ID,
         filters=[_date_filter()],
         interval="hour",
@@ -4933,7 +4966,7 @@ def test_users_graph_read_budget_failure_schedules_the_exact_refresh(monkeypatch
     )
 
     response = graph_dispatch.fetch_user_system_metric_graph_ch(
-        analytics=object(),
+        analytics=_AffordableUsersGraphAnalytics(),
         project_id=PROJECT_ID,
         filters=[_date_filter()],
         interval="hour",
@@ -4965,7 +4998,7 @@ def test_users_graph_without_a_tenant_scope_keeps_the_degraded_response(monkeypa
     )
 
     response = graph_dispatch.fetch_user_system_metric_graph_ch(
-        analytics=object(),
+        analytics=_AffordableUsersGraphAnalytics(),
         project_id=PROJECT_ID,
         filters=[_date_filter()],
         interval="hour",
@@ -4993,7 +5026,7 @@ def test_users_graph_non_budget_failure_still_raises(monkeypatch):
 
     with pytest.raises(ValueError):
         graph_dispatch.fetch_user_system_metric_graph_ch(
-            analytics=object(),
+            analytics=_AffordableUsersGraphAnalytics(),
             project_id=PROJECT_ID,
             filters=[_date_filter()],
             interval="hour",

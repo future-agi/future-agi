@@ -3,8 +3,10 @@
 A widget too heavy for the interactive wall used to prove it by spending the
 whole wall on a statement that could not finish, and only then handing the
 identical SQL to the exact worker. These tests pin the replacement: the lane
-is decided from metadata, and every way the prediction can be unavailable
-leaves the request on the path it takes today.
+is decided from metadata; a scope that has not learned its density yet keeps
+the path it takes today; a probe that cannot answer hands the read to the
+worker instead of admitting it inline uncosted; and the worker costs its own
+read too, so a scope whose statements only ever complete there still learns.
 """
 
 import uuid
@@ -18,6 +20,7 @@ from django.core.cache import cache
 from tracer.services.clickhouse.dashboard_read_density import (
     density_scope_key,
     observe_completed_read,
+    read_density_record,
 )
 from tracer.services.clickhouse.query_service import QueryResult
 from tracer.views.dashboard import (
@@ -219,34 +222,79 @@ def test_cold_scope_runs_byte_identical_to_the_unrouted_statement(workspace):
     assert routed.reads[0].settings == _DASHBOARD_TRACE_READ_SETTINGS
 
 
-def test_unavailable_probe_keeps_the_inline_path(workspace):
+def test_unavailable_probe_schedules_instead_of_running_inline(workspace):
+    """A probe that cannot answer never licenses the full-window statement.
+
+    This is the shape the gate exists to remove - a probe that fails, then the
+    statement spending the whole interactive wall - and it must not survive
+    one probe earlier in the chain. Unknown means schedule, on a cold scope
+    as much as a dense one.
+    """
+
+    for seed in (False, True):
+        cache.clear()
+        project_id = uuid.uuid4()
+        if seed:
+            _seed_dense_scope(project_id)
+        analytics = _StubAnalytics(probe_error=RuntimeError("estimate unavailable"))
+
+        _response, scheduled = _run_widget_query(
+            analytics, _attribute_filtered_query(project_id), workspace
+        )
+
+        assert len(analytics.probes) == 1
+        assert analytics.reads == []
+        assert scheduled.call_count == 1
+        assert scheduled.call_args.kwargs["refresh"] is True
+
+
+def test_background_worker_probes_so_its_completion_teaches_the_scope(workspace):
+    """The worker costs the read too, and never routes on the answer.
+
+    On the highest-volume tenant no filtered widget beyond a week completes
+    inline, so a scope that learned bytes per estimated row only from inline
+    completions never learned it, and every request spent the interactive
+    wall before this lane ran the identical statement. The worker's completed
+    read is the one that has to teach it.
+    """
+
     project_id = uuid.uuid4()
-    _seed_dense_scope(project_id)
-    analytics = _StubAnalytics(probe_error=RuntimeError("estimate unavailable"))
+    scope_key = density_scope_key([str(project_id)])
+    assert read_density_record(scope_key) is None
+    analytics = _StubAnalytics(estimated_rows=1_000, read_bytes=2_000_000)
 
     _response, scheduled = _run_widget_query(
-        analytics, _attribute_filtered_query(project_id), workspace
-    )
-
-    assert len(analytics.probes) == 1
-    assert len(analytics.reads) == 1
-    assert scheduled.call_count == 0
-
-
-def test_background_worker_never_probes(workspace):
-    project_id = uuid.uuid4()
-    _seed_dense_scope(project_id)
-    analytics = _StubAnalytics(estimated_rows=700_000)
-
-    _run_widget_query(
         analytics,
         _attribute_filtered_query(project_id),
         workspace,
         exact_worker=True,
     )
 
-    assert analytics.probes == []
+    assert len(analytics.probes) == 1
     assert len(analytics.reads) == 1
+    assert scheduled.call_count == 0
+    record = read_density_record(scope_key)
+    assert record is not None
+    assert record.bytes_per_estimated_row == pytest.approx(2_000.0)
+    assert record.bytes_per_ms == pytest.approx(4_000.0)
+
+
+def test_background_worker_runs_an_uncosted_read_on_its_own_wall(workspace):
+    """The worker is where an uncosted read was scheduled to; it runs there."""
+
+    project_id = uuid.uuid4()
+    analytics = _StubAnalytics(probe_error=RuntimeError("estimate unavailable"))
+
+    _response, scheduled = _run_widget_query(
+        analytics,
+        _attribute_filtered_query(project_id),
+        workspace,
+        exact_worker=True,
+    )
+
+    assert len(analytics.probes) == 1
+    assert len(analytics.reads) == 1
+    assert scheduled.call_count == 0
 
 
 def test_completed_inline_read_teaches_the_scope_its_density(workspace):

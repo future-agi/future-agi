@@ -6932,7 +6932,9 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
         if trace_metrics:
             # Do not reuse the previous uncollapsed physical-window results.
             # The worker receives this same identity; no cache TTL is relaxed.
-            cache_identity["trace_snapshot_semantics"] = "physical-latest-complete-series-v2"
+            cache_identity["trace_snapshot_semantics"] = (
+                "physical-latest-complete-series-v2"
+            )
 
         def _schedule_heavy_dashboard_read():
             payload = _read_public_dashboard_query(
@@ -7054,7 +7056,9 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
             trace_builder._latest_state_spans_required = True
             if project_ids:
                 trace_prepared = DashboardViewSet._prepare_metric_queries(trace_builder)
-                trace_query_groups = trace_builder.group_prepared_metric_queries(trace_prepared)
+                trace_query_groups = trace_builder.group_prepared_metric_queries(
+                    trace_prepared
+                )
             else:
                 metric_results.extend(
                     _complete_empty_metric_results(trace_builder, "traces")
@@ -7104,22 +7108,29 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
             )
 
         if trace_prepared:
+            # Cost the read before the statement, on BOTH lanes. The probe
+            # reads part metadata only; charging its time to the same deadline
+            # keeps one request on one wall budget. The worker probes too, not
+            # to route - it is already the lane a heavy read was handed to -
+            # but so that its completed statement teaches the scope its bytes
+            # per estimated row. On the highest-volume tenant no filtered
+            # widget beyond a week completes inline, so a scope whose density
+            # only ever learned from inline completions never learned at all,
+            # and every request on it spent the interactive wall before the
+            # identical statement ran here.
+            trace_candidate_estimates = probe_candidate_estimates(
+                [
+                    (
+                        (trace_prepared[indices[0]][1], trace_prepared[indices[0]][2])
+                        if plan is None
+                        else (plan.sql, plan.params)
+                    )
+                    for indices, plan in trace_query_groups
+                ],
+                analytics=trace_analytics,
+                deadline=read_deadline,
+            )
             if not _exact_worker:
-                # Decide the lane before the statement, not after it fails.
-                # The probe reads part metadata only; charging its time to the
-                # same deadline keeps one request on one wall budget.
-                trace_candidate_estimates = probe_candidate_estimates(
-                    [
-                        (
-                            (trace_prepared[indices[0]][1], trace_prepared[indices[0]][2])
-                            if plan is None
-                            else (plan.sql, plan.params)
-                        )
-                        for indices, plan in trace_query_groups
-                    ],
-                    analytics=trace_analytics,
-                    deadline=read_deadline,
-                )
                 try:
                     remaining_ms = read_deadline.remaining_ms(statement_timeout_ms)
                 except ReadDeadlineExceeded:
@@ -7154,15 +7165,21 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
                 indices, plan = item
                 if plan is None:
                     return DashboardViewSet._run_metric_queries(
-                        trace_builder, "traces", _fetch_trace_rows,
+                        trace_builder,
+                        "traces",
+                        _fetch_trace_rows,
                         max_workers=1,
                         prepared_queries=(trace_prepared[indices[0]],),
                     )
                 try:
                     grouped_rows = _fetch_trace_rows(plan.sql, plan.params)
-                    _complete, results = trace_builder.metric_group_results(plan, grouped_rows)
+                    _complete, results = trace_builder.metric_group_results(
+                        plan, grouped_rows
+                    )
                 except Exception as exc:
-                    if not (is_read_budget_error(exc) or is_clickhouse_query_error(exc)):
+                    if not (
+                        is_read_budget_error(exc) or is_clickhouse_query_error(exc)
+                    ):
                         raise
                     raise DashboardExactReadError(
                         "dashboard metric group exceeded its read budget",
@@ -7174,21 +7191,27 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
                 if len(trace_query_groups) == 1:
                     grouped_results = [_exec_trace_group(trace_query_groups[0])]
                 else:
-                    with ThreadPoolExecutor(max_workers=min(
-                        len(trace_query_groups), _DASHBOARD_TRACE_MAX_CONCURRENT_METRICS,
-                    )) as pool:
-                        grouped_results = list(pool.map(_exec_trace_group, trace_query_groups))
+                    with ThreadPoolExecutor(
+                        max_workers=min(
+                            len(trace_query_groups),
+                            _DASHBOARD_TRACE_MAX_CONCURRENT_METRICS,
+                        )
+                    ) as pool:
+                        grouped_results = list(
+                            pool.map(_exec_trace_group, trace_query_groups)
+                        )
             except DashboardExactReadError:
                 if not _exact_worker:
                     return _schedule_heavy_dashboard_read()
                 raise
             trace_results = [None] * len(trace_prepared)
-            for (indices, _plan), results in zip(trace_query_groups, grouped_results, strict=True):
+            for (indices, _plan), results in zip(
+                trace_query_groups, grouped_results, strict=True
+            ):
                 for index, result in zip(indices, results, strict=True):
                     trace_results[index] = result
             assert all(result is not None for result in trace_results)
             metric_results.extend(trace_results)
-
 
         if dataset_prepared:
             if legacy_analytics is None:

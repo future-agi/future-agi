@@ -13,9 +13,17 @@ density record the product learns from its own completed statements turns
 those rows into milliseconds. The prediction is compared against the deadline
 the request actually has left, never against a window or a seconds constant.
 
-Every leg is optional and fails open: an unavailable probe, an unknown scope,
-or an unmeasured statement all mean "no prediction", which is exactly today's
-inline path.
+Two of the legs are optional and fall back to today's inline path: an unknown
+scope (no density record yet) and an unmeasured statement (a transport that
+reports no bytes) mean "no prediction". The probe leg does not. A statement
+that CAN be costed - it embeds the candidate CTE - and whose probe fails is an
+uncosted read, and an uncosted read is exactly the one least safe to issue on
+the interactive wall: the shape this gate exists to remove is a probe that
+cannot answer followed by the full statement spending the whole wall and
+publishing nothing. Absence of proof means schedule, not scan; the bounded
+worker then costs it again on a wall that can survive being wrong about it.
+A statement with no candidate CTE has nothing cheap to estimate and is never
+probed, so it is not "unknown" in this sense and keeps the inline path.
 """
 
 from __future__ import annotations
@@ -166,17 +174,20 @@ def probe_candidate_estimates(
     *,
     analytics: Any,
     deadline: ReadDeadline,
-) -> dict[str, int]:
+) -> dict[str, int | None]:
     """Estimate each distinct candidate read these statements embed.
 
     The returned mapping is keyed by statement text together with the values
     bound into it, so ``estimated_rows_for`` recovers a statement's own
-    estimate and never a sibling's. Any probe failure simply leaves that
-    statement out: the prediction is optional and its absence is the
-    pre-existing inline behaviour.
+    estimate and never a sibling's. A statement with no candidate CTE is not
+    in the mapping at all: there is nothing cheap to estimate for it. A
+    statement whose probe could not answer - it raised, or the deadline was
+    already gone before it could be asked - is in the mapping as ``None``:
+    costable, and NOT costed. The two are different facts and
+    ``exceeds_remaining_deadline`` treats them differently.
     """
 
-    estimates: dict[str, int] = {}
+    estimates: dict[str, int | None] = {}
     for sql, params in statements:
         estimate_sql = DashboardQueryBuilderV2.candidate_estimate_statement(sql)
         if estimate_sql is None:
@@ -187,7 +198,9 @@ def probe_candidate_estimates(
         try:
             timeout_ms = deadline.remaining_ms()
         except ReadDeadlineExceeded:
-            break
+            # No time to ask, so no answer: unknown, not absent.
+            estimates[key] = None
+            continue
         try:
             result = analytics.execute_ch_query(
                 estimate_sql,
@@ -199,12 +212,15 @@ def probe_candidate_estimates(
                 int(row.get("rows") or 0) for row in (result.data or [])
             )
         except Exception:
+            # ``None`` is "unknown", never "small". The caller routes an
+            # unknown read to the wall that can survive being wrong about it.
             logger.info("dashboard_candidate_estimate_unavailable", exc_info=True)
+            estimates[key] = None
     return estimates
 
 
 def estimated_rows_for(
-    estimates: dict[str, int],
+    estimates: dict[str, int | None],
     sql: str,
     params: dict,
 ) -> int | None:
@@ -217,15 +233,26 @@ def estimated_rows_for(
 
 
 def exceeds_remaining_deadline(
-    estimates: dict[str, int],
+    estimates: dict[str, int | None],
     *,
     scope_key: str,
     remaining_ms: int,
 ) -> bool:
-    """Whether any probed statement is predicted to outlast the request."""
+    """Whether any probed statement is predicted to outlast the request.
+
+    A costable statement whose probe could not answer is not admitted to the
+    interactive wall: nobody could say what it costs, and treating "unknown"
+    as "affordable" reproduces the defect this gate removes one probe earlier,
+    precisely when the system knows least about the read. Unknown means
+    schedule. A scope with no density record yet is a different case - the
+    estimate is known, only the rate is not - and keeps the inline path.
+    """
 
     if not estimates:
         return False
+    if any(estimated_rows is None for estimated_rows in estimates.values()):
+        logger.info("dashboard_trace_read_uncosted_not_admitted_inline")
+        return True
     record = read_density_record(scope_key)
     if record is None:
         return False
