@@ -15,7 +15,7 @@ real Kafka, ClickHouse, Django and Postgres, and a scripted gateway response.
 ## Build locally
 
 From this worker repository, follow the [root build instructions](../../README.md)
-to obtain the private runtime tarball from the separate Omega checkout. Then:
+to fetch the private runtime tarball from GitHub Packages. Then:
 
 ```sh
 node workers/error-feed-node/prepare-image.mjs
