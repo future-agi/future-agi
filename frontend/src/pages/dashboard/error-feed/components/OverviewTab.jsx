@@ -1809,7 +1809,9 @@ function TraceEvidence({ evidence, trace, traceId, workingTraceId }) {
             color="text.secondary"
             sx={{ textTransform: "uppercase", letterSpacing: "0.06em" }}
           >
-            Trace Evidence
+            {failReel.some((step) => step.label === "RECEIPT")
+              ? "Investigation Evidence"
+              : "Trace Evidence"}
           </Typography>
         </Stack>
 

@@ -19,7 +19,10 @@ def reconcile(apps, schema_editor):
     Membership = apps.get_model("tracer", "ErrorClusterTraces")
     table = Report._meta.db_table
     with connection.cursor() as cursor:
-        columns = {col.name for col in connection.introspection.get_table_description(cursor, table)}
+        columns = {
+            col.name
+            for col in connection.introspection.get_table_description(cursor, table)
+        }
     if "result" not in columns:
         return
 
@@ -40,11 +43,25 @@ def reconcile(apps, schema_editor):
         "ALTER COLUMN occurrences SET DEFAULT '[]'::jsonb, "
         "ALTER COLUMN active_projection_updated SET DEFAULT false"
     )
+    # The prototype made every Omega result field mandatory. Legacy scans have
+    # no model contract or coverage figures, so those columns must accept NULL
+    # before 0101 inserts their reports.
+    for field in Report._meta.local_fields:
+        if field.null and field.column in columns:
+            schema_editor.execute(
+                f"ALTER TABLE {quote(table)} ALTER COLUMN {quote(field.column)} "
+                "DROP NOT NULL"
+            )
     schema_editor.execute(
         "ALTER TABLE tracer_trace_scan_config ALTER COLUMN engine SET DEFAULT 'omega'"
     )
     with connection.cursor() as cursor:
-        job_columns = {col.name for col in connection.introspection.get_table_description(cursor, Job._meta.db_table)}
+        job_columns = {
+            col.name
+            for col in connection.introspection.get_table_description(
+                cursor, Job._meta.db_table
+            )
+        }
     if "current_report_id" not in job_columns:
         schema_editor.add_field(Job, Job._meta.get_field("current_report"))
 
@@ -64,8 +81,29 @@ def reconcile(apps, schema_editor):
         model = apps.get_model("tracer", name)
         if model._meta.db_table not in connection.introspection.table_names():
             schema_editor.create_model(model)
+    Finding = apps.get_model("tracer", "TraceInvestigationFinding")
     with connection.cursor() as cursor:
-        member_columns = {col.name for col in connection.introspection.get_table_description(cursor, Membership._meta.db_table)}
+        finding_columns = {
+            col.name
+            for col in connection.introspection.get_table_description(
+                cursor, Finding._meta.db_table
+            )
+        }
+    for field in Finding._meta.local_fields:
+        if field.column not in finding_columns:
+            schema_editor.add_field(Finding, field)
+        elif field.null:
+            schema_editor.execute(
+                f"ALTER TABLE {quote(Finding._meta.db_table)} "
+                f"ALTER COLUMN {quote(field.column)} DROP NOT NULL"
+            )
+    with connection.cursor() as cursor:
+        member_columns = {
+            col.name
+            for col in connection.introspection.get_table_description(
+                cursor, Membership._meta.db_table
+            )
+        }
     if "finding_id" not in member_columns:
         schema_editor.add_field(Membership, Membership._meta.get_field("finding"))
 
@@ -124,10 +162,14 @@ def reconcile(apps, schema_editor):
     Check = apps.get_model("tracer", "TraceInvestigationRequirementCheck")
     Finding = apps.get_model("tracer", "TraceInvestigationFinding")
     Evidence = apps.get_model("tracer", "TraceInvestigationEvidenceReceipt")
-    RequirementEvidence = apps.get_model("tracer", "TraceInvestigationRequirementEvidence")
+    RequirementEvidence = apps.get_model(
+        "tracer", "TraceInvestigationRequirementEvidence"
+    )
     FindingEvidence = apps.get_model("tracer", "TraceInvestigationFindingEvidence")
     Attribution = apps.get_model("tracer", "TraceInvestigationAttribution")
-    AttributionEvidence = apps.get_model("tracer", "TraceInvestigationAttributionEvidence")
+    AttributionEvidence = apps.get_model(
+        "tracer", "TraceInvestigationAttributionEvidence"
+    )
     Verification = apps.get_model("tracer", "TraceInvestigationVerificationReceipt")
     GatewayCall = apps.get_model("tracer", "TraceInvestigationGatewayCall")
     with connection.cursor() as cursor:
@@ -145,32 +187,50 @@ def reconcile(apps, schema_editor):
         Check.objects.using(connection.alias).filter(report_id=report.id).delete()
         Finding.objects.using(connection.alias).filter(report_id=report.id).delete()
         Evidence.objects.using(connection.alias).filter(report_id=report.id).delete()
-        Verification.objects.using(connection.alias).filter(report_id=report.id).delete()
+        Verification.objects.using(connection.alias).filter(
+            report_id=report.id
+        ).delete()
         GatewayCall.objects.using(connection.alias).filter(report_id=report.id).delete()
         checks = {}
         for ordinal, row in enumerate(result["requirement_checks"]):
-            checks[row["requirement_id"]] = Check.objects.using(connection.alias).create(
-                report_id=report.id, requirement_id=row["requirement_id"], ordinal=ordinal,
-                requirement=row["requirement"], status=row["status"]
+            checks[row["requirement_id"]] = Check.objects.using(
+                connection.alias
+            ).create(
+                report_id=report.id,
+                requirement_id=row["requirement_id"],
+                ordinal=ordinal,
+                requirement=row["requirement"],
+                status=row["status"],
             )
         evidence = {}
         for ordinal, row in enumerate(result["evidence_receipts"]):
-            evidence[row["evidence_id"]] = Evidence.objects.using(connection.alias).create(
-                report_id=report.id, evidence_id=row["evidence_id"], ordinal=ordinal,
-                span_id=row["span_id"], parent_span_id=row.get("parent_span_id"),
-                excerpt=row["excerpt"], end_time=row.get("end_time")
+            evidence[row["evidence_id"]] = Evidence.objects.using(
+                connection.alias
+            ).create(
+                report_id=report.id,
+                evidence_id=row["evidence_id"],
+                ordinal=ordinal,
+                span_id=row["span_id"],
+                parent_span_id=row.get("parent_span_id"),
+                excerpt=row["excerpt"],
+                end_time=row.get("end_time"),
             )
         for row in result["requirement_checks"]:
             for evidence_id in row["evidence_ids"]:
                 RequirementEvidence.objects.using(connection.alias).create(
-                    requirement=checks[row["requirement_id"]], evidence=evidence[evidence_id]
+                    requirement=checks[row["requirement_id"]],
+                    evidence=evidence[evidence_id],
                 )
         for ordinal, row in enumerate(result["findings"]):
             finding = Finding.objects.using(connection.alias).create(
-                id=uuid.uuid5(report.id, row["finding_id"]), report_id=report.id,
-                finding_id=row["finding_id"], ordinal=ordinal, kind=row["kind"],
-                statement=row["statement"], recovery=row["recovery"],
-                requirement=checks.get(row.get("requirement_id"))
+                id=uuid.uuid5(report.id, row["finding_id"]),
+                report_id=report.id,
+                finding_id=row["finding_id"],
+                ordinal=ordinal,
+                kind=row["kind"],
+                statement=row["statement"],
+                recovery=row["recovery"],
+                requirement=checks.get(row.get("requirement_id")),
             )
             for evidence_id in row["evidence_ids"]:
                 FindingEvidence.objects.using(connection.alias).create(
@@ -179,8 +239,10 @@ def reconcile(apps, schema_editor):
             for role in ("origin", "decisive", "symptom"):
                 value = row["attribution"][role]
                 attribution = Attribution.objects.using(connection.alias).create(
-                    finding=finding, role=role, status=value["status"],
-                    span_id=value.get("span_id")
+                    finding=finding,
+                    role=role,
+                    status=value["status"],
+                    span_id=value.get("span_id"),
                 )
                 for evidence_id in value["evidence_ids"]:
                     AttributionEvidence.objects.using(connection.alias).create(
@@ -188,23 +250,34 @@ def reconcile(apps, schema_editor):
                     )
         for ordinal, row in enumerate(result["verification_receipts"]):
             Verification.objects.using(connection.alias).create(
-                report_id=report.id, receipt_id=row["receipt_id"], ordinal=ordinal,
-                executed=row["executed"]
+                report_id=report.id,
+                receipt_id=row["receipt_id"],
+                ordinal=ordinal,
+                executed=row["executed"],
             )
         for ordinal, row in enumerate(result["gateway_accounting"]):
             raw = row.get("raw") or {}
             usage = raw.get("usage") or {}
             GatewayCall.objects.using(connection.alias).create(
-                report_id=report.id, ordinal=ordinal, request_id=row.get("request_id"),
-                model_used=row["model_used"], cost_usd=row.get("cost"),
+                report_id=report.id,
+                ordinal=ordinal,
+                request_id=row.get("request_id"),
+                model_used=row["model_used"],
+                cost_usd=row.get("cost"),
                 input_tokens=row.get("input_tokens", usage.get("prompt_tokens")),
                 output_tokens=row.get("output_tokens", usage.get("completion_tokens")),
                 total_tokens=usage.get("total_tokens"),
-                cached_input_tokens=(usage.get("prompt_tokens_details") or {}).get("cached_tokens"),
-                reasoning_output_tokens=(usage.get("completion_tokens_details") or {}).get("reasoning_tokens"),
-                cache_status=raw.get("cache_status"), status=raw.get("status"),
-                http_status=raw.get("http_status"), retry_of=raw.get("retry_of"),
-                retry_delay_ms=raw.get("retry_delay_ms")
+                cached_input_tokens=(usage.get("prompt_tokens_details") or {}).get(
+                    "cached_tokens"
+                ),
+                reasoning_output_tokens=(
+                    usage.get("completion_tokens_details") or {}
+                ).get("reasoning_tokens"),
+                cache_status=raw.get("cache_status"),
+                status=raw.get("status"),
+                http_status=raw.get("http_status"),
+                retry_of=raw.get("retry_of"),
+                retry_delay_ms=raw.get("retry_delay_ms"),
             )
         Report.objects.using(connection.alias).filter(id=report.id).update(
             source_version="pre-release-omega"

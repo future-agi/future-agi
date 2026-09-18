@@ -163,6 +163,7 @@ class TraceInvestigationReport(BaseModel):
     is_current = models.BooleanField(default=False)
     error_message = models.TextField(null=True, blank=True)
     turn_count = models.PositiveIntegerField(null=True, blank=True)
+    has_issues = models.BooleanField(null=True, blank=True)
     job = models.ForeignKey(
         TraceInvestigationJob,
         on_delete=models.CASCADE,

@@ -40,7 +40,12 @@ from tracer.models.trace_error_analysis import (
     TraceErrorDetail,
     TraceErrorGroup,
 )
-from tracer.models.trace_scan import TraceScanIssue, TraceScanResult
+from tracer.models.trace_investigation import (
+    TraceInvestigationFinding,
+    TraceInvestigationKeyMoment,
+    TraceInvestigationReport,
+    TraceInvestigationTool,
+)
 from tracer.queries import deep_analysis_state
 from tracer.services.clickhouse.v2 import get_reader
 from tracer.services.clickhouse.v2.span_reader import CHSpan
@@ -1061,10 +1066,13 @@ def _project_cluster_briefs_corpus(
     concatenated scanner issue briefs. Clusters without briefs are skipped.
     Single query, grouped in Python.
     """
-    rows = TraceScanIssue.objects.filter(
-        scan_result__project_id=project_id,
+    rows = TraceInvestigationFinding.objects.filter(
+        report__project_id=project_id,
+        report__is_current=True,
+        report__deleted=False,
         cluster__source=ClusterSource.SCANNER,
-    ).values_list("cluster__cluster_id", "brief")
+        deleted=False,
+    ).values_list("cluster__cluster_id", "statement")
 
     by_cluster: dict[str, list[str]] = {}
     for cid, brief in rows:
@@ -1371,12 +1379,15 @@ def _insight_brief_phrase(cluster_id: str, project_id: str) -> PatternInsight | 
     distinctive n-gram.
     """
     rows = (
-        TraceScanIssue.objects.filter(
-            scan_result__project_id=project_id, cluster__source=ClusterSource.SCANNER
+        TraceInvestigationFinding.objects.filter(
+            report__project_id=project_id,
+            report__is_current=True,
+            report__deleted=False,
+            cluster__source=ClusterSource.SCANNER,
+            deleted=False,
         )
-        .exclude(brief__isnull=True)
-        .exclude(brief="")
-        .values_list("cluster__cluster_id", "brief")
+        .exclude(statement="")
+        .values_list("cluster__cluster_id", "statement")
     )
     mine: list[str] = []
     others: list[str] = []
@@ -1472,38 +1483,29 @@ def _insight_distribution_shift(
     )
 
 
-def _tool_name_set(items) -> set[str]:
-    """Normalize a ``tools_available``/``tools_called`` list (bare names or
-    ``{"name", "status"}`` dicts) to a set of tool-name strings."""
-    out: set[str] = set()
-    for item in items or []:
-        name = item.get("name") if isinstance(item, dict) else item
-        if name:
-            out.add(name)
-    return out
-
-
 def _insight_missing_tool(trace_ids: list[str]) -> PatternInsight | None:
     """A tool the agent had available but didn't use — the most actionable
     scanner signal ("the missing step")."""
     if not trace_ids:
         return None
-    metas = TraceScanResult.objects.filter(trace_id__in=trace_ids).values_list(
-        "meta", flat=True
+    reports = list(
+        TraceInvestigationReport.objects.filter(
+            trace_id__in=trace_ids, is_current=True, deleted=False
+        ).values_list("id", flat=True)
     )
+    tools_by_report: dict = {}
+    for report_id, role, name in TraceInvestigationTool.objects.filter(
+        report_id__in=reports, deleted=False
+    ).values_list("report_id", "role", "name"):
+        tools_by_report.setdefault(report_id, {}).setdefault(role, set()).add(name)
     missing_counter: Counter = Counter()
     traces_with_tools = 0
-    for meta in metas:
-        if not meta:
-            continue
-        # tools_available is a list of names; tools_called is a list of dicts
-        # ({"name", "status"}). Normalize both to a set of names — a raw
-        # set() over the dict form raises "unhashable type: dict".
-        available = _tool_name_set(meta.get("tools_available"))
+    for tools in tools_by_report.values():
+        available = tools.get("available", set())
         if not available:
             continue
         traces_with_tools += 1
-        called = _tool_name_set(meta.get("tools_called"))
+        called = tools.get("called", set())
         for tool in available - called:
             missing_counter[tool] += 1
     if not missing_counter or traces_with_tools == 0:
@@ -1573,22 +1575,22 @@ def _insight_judge_phrase(cluster_id: str, project_id: str) -> PatternInsight | 
 
 
 def _scanner_key_moments(trace_ids: list[str]) -> list[KeyMoment]:
-    """Deduped kevinified key-moment pairs from the cluster's scan results
-    (max 8). Separate from the insight grid — rendered as its own list."""
-    rows = TraceScanResult.objects.filter(trace_id__in=trace_ids).values_list(
-        "key_moments", flat=True
-    )
+    """Deduped key moments from current investigation reports (max 8)."""
+    rows = TraceInvestigationKeyMoment.objects.filter(
+        report__trace_id__in=trace_ids,
+        report__is_current=True,
+        report__deleted=False,
+        deleted=False,
+    ).values_list("kevinified", "verbatim")
     seen: set = set()
     out: list[KeyMoment] = []
-    for km_list in rows:
-        for km in km_list or []:
-            kv = km.get("kevinified", "")
-            if not kv or kv in seen:
-                continue
-            seen.add(kv)
-            out.append(KeyMoment(kevinified=kv, verbatim=km.get("verbatim", "") or ""))
-            if len(out) >= 8:
-                return out
+    for kevinified, verbatim in rows:
+        if not kevinified or kevinified in seen:
+            continue
+        seen.add(kevinified)
+        out.append(KeyMoment(kevinified=kevinified, verbatim=verbatim or ""))
+        if len(out) >= 8:
+            return out
     return out
 
 
@@ -1727,19 +1729,49 @@ def _get_trace_scores_batch(trace_ids: list[str]) -> dict:
     return {str(r["trace_id"]): r["avg"] for r in rows}
 
 
-def _get_scan_results_batch(trace_ids: list[str]) -> dict:
-    """Return {trace_id_str: TraceScanResult} — first scan result per trace."""
+def _get_investigation_reports_batch(trace_ids: list[str], project_id: str) -> dict:
+    """Return the current, project-scoped report for each trace."""
     if not trace_ids:
         return {}
-    rows = TraceScanResult.objects.filter(trace_id__in=trace_ids).only(
-        "id", "trace_id", "meta", "key_moments"
-    )
-    out: dict = {}
-    for sr in rows:
-        tid = str(sr.trace_id)
-        if tid not in out:
-            out[tid] = sr
-    return out
+    rows = TraceInvestigationReport.objects.filter(
+        project_id=project_id,
+        trace_id__in=trace_ids,
+        is_current=True,
+        deleted=False,
+    ).prefetch_related("key_moments", "evidence_receipts")
+    return {str(report.trace_id): report for report in rows}
+
+
+def _investigation_reel(
+    report: TraceInvestigationReport, highlight_terms: list[str] | None = None
+) -> list[dict]:
+    moments = [
+        {
+            "kevinified": moment.kevinified,
+            "verbatim": moment.verbatim,
+            "role": moment.role,
+            "span": moment.span_id,
+            "status": moment.status,
+            "is_failure": moment.is_failure,
+        }
+        for moment in report.key_moments.all()
+        if not moment.deleted
+    ]
+    if moments:
+        return _key_moments_to_reel(moments, highlight_terms=highlight_terms)
+    return [
+        {
+            "label": "RECEIPT",
+            "text": _highlight_text(receipt.excerpt, highlight_terms or [], "error"),
+            "span": receipt.span_id,
+            "status": "ok",
+            "isFailure": False,
+            "raw": receipt.excerpt,
+            "meta": None,
+        }
+        for receipt in report.evidence_receipts.all()
+        if not receipt.deleted and receipt.excerpt
+    ][:8]
 
 
 def _highlight_text(text: str, terms: list[str], hl: str) -> object:
@@ -1800,7 +1832,7 @@ def _key_moments_to_reel(
     project_id: str | None = None,
 ) -> list[dict]:
     """
-    Map TraceScanResult.key_moments to ReelStep dicts the frontend renders.
+    Map saved key moments to ReelStep dicts the frontend renders.
 
     Frontend ReelStep shape: { label, text, span, status, isFailure, raw, meta }.
     New scans carry deterministic span attribution (role/span/status/
@@ -1965,13 +1997,13 @@ def _build_representative_trace(
     root: CHSpan | None = None,
     totals: tuple[int | None, int | None, int | None] | None = None,
     score: float | None = None,
-    scan_result: TraceScanResult | None = None,
+    investigation_report: TraceInvestigationReport | None = None,
     judge: tuple[str | None, float | None] | None = None,
     _prefetched: bool = False,
 ) -> RepresentativeTrace:
     """Turn a Trace into a RepresentativeTrace dataclass.
 
-    Prefetched values (``root``, ``totals``, ``score``, ``scan_result``)
+    Prefetched values (``root``, ``totals``, ``score``, ``investigation_report``)
     can be supplied by ``_fetch_representative_traces`` to avoid the per-
     trace round-trips. Pass ``_prefetched=True`` to skip the single-trace
     fallbacks even when a prefetched value is missing (i.e. genuine None
@@ -2015,21 +2047,17 @@ def _build_representative_trace(
 
     turns = None
     fail_reel: list[dict] = []
-    if not _prefetched and scan_result is None:
-        scan_result = (
-            TraceScanResult.objects.filter(trace_id=trace.id)
-            .only("id", "meta", "key_moments")
+    if not _prefetched and investigation_report is None:
+        investigation_report = (
+            TraceInvestigationReport.objects.filter(
+                trace_id=trace.id, is_current=True, deleted=False
+            )
+            .prefetch_related("key_moments", "evidence_receipts")
             .first()
         )
-    if scan_result:
-        if scan_result.meta:
-            turns = scan_result.meta.get("turn_count")
-        fail_reel = _key_moments_to_reel(
-            scan_result.key_moments,
-            highlight_terms=highlight_terms or [],
-            hl="error",
-            trace_id=None if _prefetched else str(trace.id),
-        )
+    if investigation_report:
+        turns = investigation_report.turn_count
+        fail_reel = _investigation_reel(investigation_report, highlight_terms)
 
     if judge is None and not _prefetched:
         judge = trace_judge(str(trace.id))
@@ -2063,8 +2091,8 @@ def _fetch_success_trace_pass_reel(cluster_id: str) -> list[dict]:
     Build the "Working Trace" reel from the cluster's success trace.
 
     Success traces are matched via KNN on ClickHouse root-input embeddings —
-    they are clean traces with similar inputs that may never have been scanned,
-    so `TraceScanResult.key_moments` is usually empty. Fall back to the trace's
+    they are clean traces with similar inputs that may never have an investigation,
+    so key moments are usually empty. Fall back to the trace's
     own root input + output (+ key_moments if they exist) so the reel always
     has something useful to show.
     """
@@ -2093,18 +2121,12 @@ def _fetch_success_trace_pass_reel(cluster_id: str) -> list[dict]:
     if input_text:
         steps.append({"label": "USER INPUT", "text": input_text, "meta": None})
 
-    # 2. Any key_moments the scanner captured (often empty for clean traces)
-    scan_result = (
-        TraceScanResult.objects.filter(trace_id=success_id).only("key_moments").first()
-    )
-    if scan_result:
-        steps.extend(
-            _key_moments_to_reel(
-                scan_result.key_moments,
-                trace_id=success_id,
-                project_id=str(cluster.project_id) if cluster.project_id else None,
-            )
-        )
+    # 2. Any saved investigation evidence (often empty for clean traces).
+    report = _get_investigation_reports_batch(
+        [success_id], str(cluster.project_id)
+    ).get(success_id)
+    if report:
+        steps.extend(_investigation_reel(report))
 
     # 3. Final successful output
     if output_text:
@@ -2195,7 +2217,7 @@ def _fetch_representative_traces(
     roots = _get_root_spans_batch(trace_ids, project_id)
     totals = _get_trace_totals_batch(trace_ids, project_id)
     scores = _get_trace_scores_batch(trace_ids)
-    scans = _get_scan_results_batch(trace_ids)
+    reports = _get_investigation_reports_batch(trace_ids, project_id)
     judges = _trace_judges_batch(trace_ids)
     session_judges = _session_judges_batch(list(session_by_trace.values()))
 
@@ -2221,7 +2243,7 @@ def _fetch_representative_traces(
             root=roots.get(str(trace.id)),
             totals=totals.get(str(trace.id)),
             score=_score_for(str(trace.id)),
-            scan_result=scans.get(str(trace.id)),
+            investigation_report=reports.get(str(trace.id)),
             judge=_judge_for(str(trace.id)),
             _prefetched=True,
         )
@@ -2309,12 +2331,15 @@ def _fetch_traces_aggregates(cluster_id: str, project_id: str) -> TracesAggregat
     total_traces = len(set(trace_ids))
 
     has_issues_map = dict(
-        TraceScanResult.objects.filter(trace_id__in=trace_ids).values_list(
-            "trace_id", "has_issues"
-        )
+        TraceInvestigationReport.objects.filter(
+            project_id=project_id,
+            trace_id__in=trace_ids,
+            is_current=True,
+            deleted=False,
+        ).values_list("trace_id", "has_issues")
     )
-    failing = sum(1 for v in has_issues_map.values() if v)
-    passing = sum(1 for v in has_issues_map.values() if not v)
+    failing = sum(1 for v in has_issues_map.values() if v is True)
+    passing = sum(1 for v in has_issues_map.values() if v is False)
 
     # PR3: span-only via _avg_eval_score — keeps the avg comparable to
     # pre-row_type semantics. Trace-level evals (PR4) surface elsewhere.
@@ -2335,16 +2360,15 @@ def _fetch_traces_aggregates(cluster_id: str, project_id: str) -> TracesAggregat
     p50 = _percentile(per_trace_latency, 50)
     p95 = _percentile(per_trace_latency, 95)
 
-    # Average turn count from scan meta
-    turn_counts: list[int] = []
-    for meta in TraceScanResult.objects.filter(trace_id__in=trace_ids).values_list(
-        "meta", flat=True
-    ):
-        if meta and meta.get("turn_count") is not None:
-            try:
-                turn_counts.append(int(meta["turn_count"]))
-            except (TypeError, ValueError):
-                continue
+    turn_counts = list(
+        TraceInvestigationReport.objects.filter(
+            project_id=project_id,
+            trace_id__in=trace_ids,
+            is_current=True,
+            deleted=False,
+            turn_count__isnull=False,
+        ).values_list("turn_count", flat=True)
+    )
     avg_turns = statistics.fmean(turn_counts) if turn_counts else 0.0
 
     return TracesAggregates(
@@ -2421,12 +2445,7 @@ def _fetch_trace_rows(
     totals_by_trace = _get_trace_totals_batch(page_trace_ids, project_id)
     scores_by_trace = _get_trace_scores_batch(page_trace_ids)
     roots_by_trace = _get_root_spans_batch(page_trace_ids, project_id)
-    scans_by_trace = {
-        str(sr.trace_id): sr
-        for sr in TraceScanResult.objects.filter(trace_id__in=page_trace_ids).only(
-            "trace_id", "meta"
-        )
-    }
+    reports_by_trace = _get_investigation_reports_batch(page_trace_ids, project_id)
 
     rows: list[TracesListRow] = []
     for trace in page_traces:
@@ -2450,9 +2469,9 @@ def _fetch_trace_rows(
             input_text = _trace_input_str(trace)
 
         turns = None
-        scan_result = scans_by_trace.get(tid)
-        if scan_result and scan_result.meta:
-            turns = scan_result.meta.get("turn_count")
+        report = reports_by_trace.get(tid)
+        if report:
+            turns = report.turn_count
 
         rows.append(
             TracesListRow(
@@ -2565,9 +2584,14 @@ def _project_scope_total(project_id: str, source: str, start, end=None) -> int:
                 created_at_gte=start,
                 roots_only=True,
             )
-    qs = TraceScanResult.objects.filter(project_id=project_id, created_at__gte=start)
+    qs = TraceInvestigationReport.objects.filter(
+        project_id=project_id,
+        is_current=True,
+        deleted=False,
+        recorded_at__gte=start,
+    )
     if end is not None:
-        qs = qs.filter(created_at__lt=end)
+        qs = qs.filter(recorded_at__lt=end)
     return qs.count()
 
 
@@ -2706,15 +2730,17 @@ def _fetch_events_over_time_with_passing(
 
     users_by_day = {bucket: len(users) for bucket, users in users_by_day.items()}
 
-    # Project-wide passing scans per day (has_issues=False) — context for
+    # Project-wide passing investigations per day — context for
     # the dual-axis chart
     pass_rows = (
-        TraceScanResult.objects.filter(
+        TraceInvestigationReport.objects.filter(
             project_id=project_id,
             has_issues=False,
-            created_at__gte=since,
+            is_current=True,
+            deleted=False,
+            recorded_at__gte=since,
         )
-        .annotate(bucket=TruncDate("created_at"))
+        .annotate(bucket=TruncDate("recorded_at"))
         .values("bucket")
         .annotate(passing=Count("id"))
     )

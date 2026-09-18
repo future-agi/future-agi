@@ -907,6 +907,7 @@ def publish_investigation(
             source=TraceInvestigationSource.OMEGA,
             recorded_at=now,
             is_current=active,
+            has_issues=bool(result["findings"]),
             job=job,
             attempt=attempt,
             idempotency_key=idempotency_key,
