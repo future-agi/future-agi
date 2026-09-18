@@ -1,6 +1,5 @@
 """Long text may change acquisition, never exact membership or child scope."""
 
-import re
 from datetime import timedelta
 from types import SimpleNamespace
 
@@ -9,21 +8,23 @@ from clickhouse_driver.util.escape import escape_chars_map, escape_params
 from django.test import override_settings
 
 from tracer.services.clickhouse.query_builders import latest_filter_predicates
-from tracer.services.clickhouse.query_builders.trace_list import TraceListQueryBuilder
-from tracer.services.clickhouse.v2.query_builders.trace_list import (
+from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     _CLICKHOUSE_MAX_QUERY_SIZE_BYTES,
     _ESCAPED_LITERAL_CHARS,
+    _rendered_literal_bytes,
+)
+from tracer.services.clickhouse.query_builders.trace_list import TraceListQueryBuilder
+from tracer.services.clickhouse.v2.query_builders.trace_list import (
     _MAX_NGRAM_ANCHOR_BYTES,
     TraceListQueryBuilderV2,
     _caseless_ascii_ngram_anchor,
-    _rendered_literal_bytes,
     _runs_within_anchor_budget,
 )
 from tracer.tests.test_bounded_trace_filter_reads import (
     _attribute_filter,
     _render_driver_sql,
+    _time_filter,
 )
-from tracer.tests.test_bounded_trace_filter_reads import _time_filter
 from tracer.tests.test_trace_indexed_coordinate_reads import END, PROJECT, builder
 from tracer.tests.test_trace_root_physical_replay import assert_coherent_classifier
 
@@ -347,6 +348,7 @@ def test_the_short_text_lane_keeps_its_own_approved_slack():
     subject.pin_filter_seed_witness_slack_hours(None)
     assert subject.filter_seed_witness_slack_hours() == 1
 
+
 # No letter here is an i or a k, so every value below anchors whole: the worst
 # case for a statement that inlines the anchor beside the exact literal.
 _ANCHORABLE_UNIT = "a common message 000123 another response. "
@@ -354,7 +356,7 @@ OVERSIZED_TEXT = _ANCHORABLE_UNIT * 2600
 # Past the seed's inline budget even on its own, so the seed must stand down.
 UNSEEDABLE_TEXT = _ANCHORABLE_UNIT * 5620
 ORDINARY_LONG_TEXT = _ANCHORABLE_UNIT * 60
-_WINDOW = dict(slice_start=END - timedelta(days=365), slice_end=END, limit=50)
+_WINDOW = {"slice_start": END - timedelta(days=365), "slice_end": END, "limit": 50}
 
 
 def _rendered_seed_statement(subject) -> str:
@@ -486,9 +488,7 @@ def test_index_companions_exist_only_inside_index_hints(operation, monkeypatch):
         "arrayMap(x -> lowerUTF8(x), mapValues(attrs_string))",
         "arrayMap(x -> lower(x), mapValues(attrs_string))",
     ):
-        assert with_sql.count(companion) == sum(
-            hint.count(companion) for hint in hints
-        )
+        assert with_sql.count(companion) == sum(hint.count(companion) for hint in hints)
         assert companion not in _outside_index_hints(without_sql)
 
     # Outside every hint the two statements are the same predicate, bound to
@@ -599,9 +599,7 @@ def test_inline_budget_counts_what_the_driver_actually_renders(value):
     at the parser instead.
     """
 
-    context = SimpleNamespace(
-        server_info=SimpleNamespace(get_timezone=lambda: "UTC")
-    )
+    context = SimpleNamespace(server_info=SimpleNamespace(get_timezone=lambda: "UTC"))
     rendered = escape_params({"v": value}, context)["v"]
     assert _rendered_literal_bytes(value) == len(rendered.encode())
 

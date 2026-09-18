@@ -34,6 +34,7 @@ from tracer.services.clickhouse.query_builders.filter_seed_witness import (
 )
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     _TRACE_ANY_SPAN_COLUMNS,
+    _rendered_literal_bytes,
 )
 from tracer.services.clickhouse.query_builders.trace_list import (
     _LONG_WINDOW_ORDERED_ROOT_INITIAL_SLICE,
@@ -197,13 +198,15 @@ def _runs_within_anchor_budget(runs: list[str]) -> list[str]:
         return runs
     kept: set[int] = set()
     spent = 0
-    for index, run in sorted(enumerate(runs), key=lambda pair: (-len(pair[1]), pair[0])):
+    for index, run in sorted(
+        enumerate(runs), key=lambda pair: (-len(pair[1]), pair[0])
+    ):
         if spent + len(run) + 1 > _MAX_NGRAM_ANCHOR_BYTES:
             continue
         kept.add(index)
         spent += len(run) + 1
     if not kept:
-        return [max(runs, key=len)[: _MAX_NGRAM_ANCHOR_BYTES]]
+        return [max(runs, key=len)[:_MAX_NGRAM_ANCHOR_BYTES]]
     return [run for index, run in enumerate(runs) if index in kept]
 
 
@@ -238,31 +241,13 @@ def _caseless_ascii_ngram_anchor(value: str) -> str | None:
     )
 
 
-# ClickHouse parses at most ``max_query_size`` bytes of a statement (262144 by
-# default) and rejects the whole thing with SYNTAX_ERROR before it starts, so a
-# statement that carries its filter text inline has a hard size ceiling.
-_CLICKHOUSE_MAX_QUERY_SIZE_BYTES = 262_144
-
 # The candidate seed writes each value's exact witness and its index anchor
 # into the statement once apiece. Hold their sum inside a budget that leaves
-# the rest of the statement room under the ceiling above; a value past it keeps
-# the ordinary exact route, which carries the witness and no anchor.
+# the rest of the statement room under the parser ceiling
+# (``_CLICKHOUSE_MAX_QUERY_SIZE_BYTES``, in the shared predicate compiler with
+# the literal-size arithmetic every lane budgets by); a value past it keeps the
+# ordinary exact route, which carries the witness and no anchor.
 _LONG_TEXT_SEED_INLINE_BUDGET_BYTES = 232 * 1024
-
-
-# clickhouse-driver renders a string literal by expanding each of these to two
-# characters, so every occurrence costs a byte more than the value carries.
-# Counting only the backslash and the quote understates a value full of tabs or
-# newlines by a third, which is exactly the escaped-text shape this budget has
-# to hold. Pinned against the driver's own table by the unit tests.
-_ESCAPED_LITERAL_CHARS = "\\'\b\f\r\n\t\0\a\v"
-
-
-def _rendered_literal_bytes(value: str) -> int:
-    """What one string literal costs once clickhouse-driver has escaped it."""
-
-    expanded = sum(value.count(char) for char in _ESCAPED_LITERAL_CHARS)
-    return len(value.encode()) + expanded + 2
 
 
 class UserEnrichmentLimitExceeded(ReadDeadlineExceeded):

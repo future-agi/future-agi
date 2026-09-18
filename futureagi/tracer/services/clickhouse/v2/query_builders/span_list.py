@@ -581,10 +581,7 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
         population_predicates = [
             f"({predicate})"
             for plan in population_plans
-            if (
-                predicate := plan.raw_index_witness_predicate
-                or self._filter_population_plan_predicate(plan, ordinary_seed=True)
-            )
+            if (predicate := self._population_discovery_witness(plan))
         ]
         if self._bounded_sampling_rate is not None:
             # Sampling is stable across physical versions, so stale versions
@@ -627,6 +624,30 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
             {key_scope}
         """,
             params,
+        )
+
+    def _population_discovery_witness(self, plan):
+        """The raw witness the discovery aggregate carries for one plan.
+
+        The index witness when the value has a companion behind it: key
+        presence plus the deployed blooms, which prune granules without
+        reading a Map value. A value too large for its companions leaves that
+        witness as bare key presence, and for a key most spans carry that is
+        no discovery at all - every hour is a hit, each hit replays one hour,
+        and a week is walked two statements per hour (measured read-only
+        against production: twelve statements for six hours and no row). So
+        a companion-less plan discovers by its raw value witness instead,
+        which this statement can afford: unlike the seed it carries no
+        comparison of its own, so the value is inlined here once either way.
+        Both witnesses are necessary conditions of the same matches; only the
+        hour they locate and the columns they read differ.
+        """
+
+        index_witness = plan.raw_index_witness_predicate
+        if index_witness and index_witness != plan.raw_key_witness_predicate:
+            return index_witness
+        return plan.raw_witness_predicate or self._filter_population_plan_predicate(
+            plan, ordinary_seed=True
         )
 
     @staticmethod
@@ -723,8 +744,11 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
         # Equality/IN already have a typed raw value witness. Other scalar
         # leaves retain compiler key-only/absent metadata, never a promoted
         # latest-state predicate. Prefix and time discovery share this policy.
+        # The seed carries the exact comparison once whatever happens here, so
+        # the compiler decides whether this SECOND copy of the value still fits
+        # under the parser limit, and hands back key presence when it does not.
         if ordinary_seed and plan.raw_key_witness_predicate:
-            return plan.raw_witness_predicate
+            return plan.population_witness_predicate
         return super()._filter_population_plan_predicate(
             plan, ordinary_seed=ordinary_seed
         )
