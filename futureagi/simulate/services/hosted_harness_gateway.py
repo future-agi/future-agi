@@ -26,6 +26,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from simulate.models import (
+    MAX_SCENARIOS_PER_JOB,
     HostedHarnessAttempt,
     HostedHarnessJob,
     HostedHarnessSecret,
@@ -1366,6 +1367,12 @@ class DaytonaHostedGateway:
             "us-east5-aiplatform.googleapis.com",
             "us-central1-aiplatform.googleapis.com",
         ]
+        # A provider tier that restricts network access rejects any domain allow list outright, so
+        # the same switch the run path uses has to reach this launch too. Authoring runs first, so
+        # without it a job fails before it produces anything.
+        authoring_unrestricted = bool(
+            getattr(settings, "ALK_HOSTED_EGRESS_UNRESTRICTED", False)
+        )
         allowed_domains = list(
             dict.fromkeys(
                 getattr(
@@ -1415,8 +1422,14 @@ class DaytonaHostedGateway:
                     "futureagi.job": str(job.id),
                     "futureagi.authoring": "1",
                 },
-                "network_block_all": not allowed_domains,
-                "domain_allow_list": ",".join(sorted(allowed_domains)) or None,
+                "network_block_all": (
+                    False if authoring_unrestricted else (not allowed_domains)
+                ),
+                "domain_allow_list": (
+                    None
+                    if authoring_unrestricted
+                    else (",".join(sorted(allowed_domains)) or None)
+                ),
                 "ephemeral": True,
                 "ttl_minutes": ttl_minutes,
                 "auto_delete_interval": ttl_minutes,
@@ -1667,7 +1680,12 @@ class DaytonaHostedGateway:
         # private-host protection remain fail-closed; the resolved cap is checked
         # after wildcard minimization and provider/connector additions.
         _validate_egress_domains(payload["security"]["allowed_egress_domains"])
-        _validate_resolved_egress_domains(allowed_domains)
+        # The resolved cap is Daytona's limit on the allow list we send. With unrestricted egress
+        # no list is sent, so enforcing it here would fail a launch over a constraint that does not
+        # apply. Customer input stays validated above either way.
+        unrestricted = bool(getattr(settings, "ALK_HOSTED_EGRESS_UNRESTRICTED", False))
+        if not unrestricted:
+            _validate_resolved_egress_domains(allowed_domains)
         capability = register_attempt(
             job.id,
             endpoint_base_url=endpoint_base_url,
@@ -1713,7 +1731,6 @@ class DaytonaHostedGateway:
         # domain-allowlist cannot express when media and signaling resolve to different IPs. When
         # unrestricted egress is enabled the sandbox runs with open outbound so media can flow;
         # otherwise the domain allowlist (block-all + allowlist) applies.
-        unrestricted = bool(getattr(settings, "ALK_HOSTED_EGRESS_UNRESTRICTED", False))
         network_block_all = False if unrestricted else (not allowed_domains)
         domain_allow_list = (
             None if unrestricted else (",".join(sorted(allowed_domains)) or None)
@@ -2171,10 +2188,10 @@ class DaytonaHostedGateway:
                     return locked
 
             delta = _scenario_delta(instruction)
-            if delta and locked.scenario_count + delta > 200:
+            if delta and locked.scenario_count + delta > MAX_SCENARIOS_PER_JOB:
                 raise HostedHarnessError(
                     "scenario_limit_exceeded",
-                    "a hosted run can contain at most 200 scenarios",
+                    f"a hosted run can contain at most {MAX_SCENARIOS_PER_JOB} scenarios",
                     status_code=422,
                 )
             record = {
@@ -2811,6 +2828,19 @@ def _authoring_archive_for(job: HostedHarnessJob) -> bytes | None:
         "collections.json",
         "contract.json",
         "simulator_prompt.md",
+        # The world's own manifest. Without it the archive carries every part of a world and no
+        # way to restore it, so nothing downstream can re-prove a scenario against the world it
+        # was proved against. Not synthesised when missing: it records whether the handlers came
+        # from the submitted source, and inventing that would forge the provenance the check
+        # exists to protect.
+        "manifest.json",
+        # The sub-goal catalogue. Without it an edit reloads an empty one, so a rework cannot write
+        # the check body for a sub-goal it adds and the sub-goal ships ungradeable.
+        "sub_goals.json",
+        # The suite's coverage report. Recomputable from the scenarios, since each carries its
+        # own coordinate, but packing it means a consumer reads the same numbers the run
+        # produced rather than recomputing and risking a different answer.
+        "coverage.json",
     ):
         path = bundle_dir / name
         if path.is_file() and not path.is_symlink():
@@ -2919,6 +2949,19 @@ def pack_authoring_archive(authoring_root: Path) -> bytes:
         "collections.json",
         "contract.json",
         "simulator_prompt.md",
+        # The world's own manifest. Without it the archive holds every part of a world and no way
+        # to restore one, so nothing downstream can re-prove a scenario against the world it was
+        # proved against. Never synthesised when absent: it records whether the handlers came from
+        # the submitted source, and inventing that forges the provenance the check exists to
+        # protect.
+        "manifest.json",
+        # The sub-goal catalogue. Without it an edit reloads an empty one, so a rework cannot write
+        # the check body for a sub-goal it adds and the sub-goal ships ungradeable.
+        "sub_goals.json",
+        # The suite's coverage report. Recomputable from the scenarios, since each carries its
+        # own coordinate, but packing it means a consumer reads the same numbers the run
+        # produced rather than recomputing and risking a different answer.
+        "coverage.json",
     ):
         path = authoring_root / name
         if path.is_file() and not path.is_symlink():
@@ -3232,7 +3275,11 @@ def _record_harness_spend(
 
 
 def authoring_stage_outputs(
-    contract: Any, environment: Any, scenarios: Any, bundle: Any = None
+    contract: Any,
+    environment: Any,
+    scenarios: Any,
+    bundle: Any = None,
+    coverage: Any = None,
 ) -> list[dict[str, Any]]:
     """Build the complete, secret-safe snapshots shown by the hosted-run UI."""
     outputs: list[dict[str, Any]] = []
@@ -3273,6 +3320,24 @@ def authoring_stage_outputs(
                 "data": _secret_safe(scenarios),
             }
         )
+    # Its own snapshot rather than a field on the scenarios one: those rows are the scenarios, and
+    # this describes the set they form. Keeping it separate also means a suite authored before the
+    # report existed still renders, with this simply absent.
+    if isinstance(coverage, dict) and coverage.get("axes"):
+        axes = coverage.get("axes") or {}
+        pairs = coverage.get("pairs") or {}
+        outputs.append(
+            {
+                "id": "00000000-0000-0000-0000-000000000004",
+                "kind": "coverage",
+                "title": "Coverage",
+                "summary": (
+                    f"{coverage.get('placed', 0)} of {coverage.get('scenarios', 0)} placed · "
+                    f"{len(axes)} axes · {len(pairs)} pairs"
+                ),
+                "data": _secret_safe(coverage),
+            }
+        )
     return outputs
 
 
@@ -3282,7 +3347,7 @@ def authoring_stage_outputs_from_archive(
     """Read only the bounded JSON snapshots from a sealed authoring archive."""
     documents: dict[str, Any] = {}
     scenario_documents: list[dict[str, Any]] = []
-    wanted = {"contract.json", "environment.json", "scenarios.json"}
+    wanted = {"contract.json", "environment.json", "scenarios.json", "coverage.json"}
     with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
         for member in archive.getmembers():
             path = Path(member.name)
@@ -3311,19 +3376,98 @@ def authoring_stage_outputs_from_archive(
                 scenario_documents.append(value)
             else:
                 documents[name] = value
-    scenarios = documents.get("scenarios.json")
-    if not isinstance(scenarios, list) and scenario_documents:
+    index = documents.get("scenarios.json")
+    # A scenario's own folder is the source of truth; the index is regenerated from it. Older
+    # archives carry an index that summarised each scenario and dropped the caller, the branch, the
+    # seeded data and the known-good solution, so prefer the folders and keep only the index's
+    # ordering, which is the suite's own.
+    if scenario_documents:
+        order = (
+            [str(one.get("name") or "") for one in index if isinstance(one, dict)]
+            if isinstance(index, list)
+            else []
+        )
         scenarios = sorted(
             scenario_documents,
-            key=lambda scenario: str(scenario.get("scenario_key") or ""),
+            key=lambda scenario: (
+                order.index(str(scenario.get("name") or ""))
+                if str(scenario.get("name") or "") in order
+                else len(order),
+                str(scenario.get("scenario_key") or ""),
+            ),
         )
+    else:
+        scenarios = index
     if isinstance(scenarios, list) and scenario_limit is not None:
         scenarios = scenarios[: max(0, scenario_limit)]
     return authoring_stage_outputs(
         documents.get("contract.json"),
         documents.get("environment.json"),
         scenarios,
+        coverage=documents.get("coverage.json"),
     )
+
+
+def amend_authoring_archive(
+    body: bytes, document: dict, *, rework: bool = True
+) -> tuple[bytes, dict]:
+    """Apply a scenario change-set to a sealed authoring archive, returning the new archive.
+
+    The archive is the only source of truth for a suite: ``stage_outputs`` is derived from it and a
+    rerun reads it back, so an edit that does not reach it is an edit that disappears. Everything
+    needed is inside (the world, the contract and the scenarios), so this runs wherever the
+    harness package is importable and needs no sandbox.
+
+    Unpacked, amended and repacked as one step because a half-written archive is worse than an
+    unchanged one: the caller either gets bytes to store or an exception, never a partial suite.
+
+    The harness is **invoked, not imported**. Its own CLI is the contract every other stage is
+    launched through, and for a good reason: reworking a scenario needs the harness's model
+    dependencies, which live in the runner's own virtualenv and not in whichever interpreter is
+    serving this call. Importing it worked for nothing and failed in both real callers.
+    """
+    python = os.getenv("ALK_RUNNER_PYTHON", "python")
+
+    with tempfile.TemporaryDirectory() as scratch:
+        root = Path(scratch) / "authoring"
+        root.mkdir(parents=True)
+        with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
+            archive.extractall(root, filter="data")
+        command = [
+            python,
+            "-m",
+            "fi.alk.harness.cli",
+            "amend",
+            "--out",
+            str(root),
+            "--changes",
+            "-",
+        ]
+        if not rework:
+            command.append("--no-rework")
+        # The interpreter's own environment, so a deployment needs nothing set: a released wheel
+        # already carries the `amend` command. A checkout mounted for development puts itself on
+        # PYTHONPATH and wins over the installed copy, which is how an unreleased change is tested
+        # without rebuilding the image.
+        finished = subprocess.run(
+            command,
+            input=json.dumps(document),
+            capture_output=True,
+            text=True,
+            env={**os.environ},
+            # A rework is a model session and a proof for every scenario it touches.
+            timeout=int(getattr(settings, "ALK_AMEND_TIMEOUT_SECONDS", 1800)),
+        )
+        if finished.returncode != 0:
+            # Exit 2 is the harness refusing the change-set itself, and its message names the
+            # offending op or field, so it is worth surfacing rather than burying.
+            detail = (finished.stderr or finished.stdout or "").strip()[:600]
+            raise HostedHarnessError(
+                "scenario_changes_refused" if finished.returncode == 2 else "scenario_amend_failed",
+                detail or "the harness could not apply these changes",
+                status_code=400 if finished.returncode == 2 else 500,
+            )
+        return pack_authoring_archive(root), json.loads(finished.stdout or "{}")
 
 
 def store_authoring_archive(
@@ -3359,6 +3503,31 @@ def store_authoring_archive(
         update_fields.extend(["stage_outputs", "current_stage", "state"])
     job.save(update_fields=update_fields)
     return object_key
+
+
+def amend_job_scenarios(
+    job: HostedHarnessJob, document: dict, *, rework: bool = True
+) -> dict:
+    """Edit a finished job's suite, and leave the archive and the read-model agreeing.
+
+    The whole operation is three existing pieces: read the archive this job was authored into,
+    apply the change-set to it, store it back under the same key. Storing already recomputes
+    ``stage_outputs``, so the tab shows the edit without a second path that could disagree with
+    the archive it came from.
+
+    Refused before anything is fetched when there is nothing to edit, because a job that never
+    authored has no suite and saying so is more useful than an empty change-set.
+    """
+    body = _authoring_archive_for(job)
+    if not body:
+        raise HostedHarnessError(
+            "authoring_artifacts_not_found",
+            "this run has no authored suite to edit",
+            status_code=409,
+        )
+    amended, receipts = amend_authoring_archive(body, document, rework=rework)
+    store_authoring_archive(job, amended)
+    return receipts
 
 
 def store_source_archive(organization, files, paths, name: str) -> dict[str, Any]:

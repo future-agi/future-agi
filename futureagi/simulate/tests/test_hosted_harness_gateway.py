@@ -528,6 +528,22 @@ def test_fresh_authoring_archive_contains_contract_and_scenarios_only(tmp_path):
         ]
 
 
+def test_fresh_authoring_archive_carries_the_sub_goal_catalogue(tmp_path):
+    """The catalogue travels with the bundle. Without it an edit reloads an empty one, so a rework
+    cannot write the check body for a sub-goal it adds and the sub-goal ships ungradeable."""
+    root = tmp_path / "authoring"
+    scenario = root / "scenarios" / "one"
+    scenario.mkdir(parents=True)
+    (root / "contract.json").write_text('{"agent":"ride"}', encoding="utf-8")
+    (root / "sub_goals.json").write_text('{"sub_goals":[]}', encoding="utf-8")
+    (scenario / "scenario.json").write_text('{"name":"one"}', encoding="utf-8")
+
+    body = pack_authoring_archive(root)
+
+    with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
+        assert "sub_goals.json" in archive.getnames()
+
+
 def test_fresh_authoring_archive_rejects_missing_scenarios(tmp_path):
     (tmp_path / "contract.json").write_text("{}", encoding="utf-8")
 

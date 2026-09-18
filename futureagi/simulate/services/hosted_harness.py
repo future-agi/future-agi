@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -178,8 +179,17 @@ def register_attempt(
                     HostedHarnessAttempt.State.CLEANING_UP,
                 ),
             ).update(state=HostedHarnessAttempt.State.SUPERSEDED)
+        # The capability has to outlive the whole sandbox, not just the calls. Authoring runs first
+        # and on a large suite it runs for a long time, so a deadline derived from the run budget
+        # alone expires while scenarios are still being written and the guest then loops on
+        # capabilities_expired with nothing surfaced to the job. The gateway sizes the sandbox as
+        # authoring + max_duration + slack; this is the same window.
+        authoring_seconds = max(
+            0,
+            int(getattr(settings, "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS", 3600)),
+        )
         runnable_deadline = now + timedelta(
-            seconds=job.payload["runtime"]["max_duration_seconds"]
+            seconds=authoring_seconds + job.payload["runtime"]["max_duration_seconds"]
         )
         expires_at = runnable_deadline + timedelta(seconds=_TOKEN_TAIL_SECONDS)
         attempt = HostedHarnessAttempt.no_workspace_objects.create(

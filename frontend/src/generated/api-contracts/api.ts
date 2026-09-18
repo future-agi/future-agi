@@ -567,6 +567,7 @@ import type {
   HarnessManifestApi,
   HarnessPreflightApi,
   HarnessResultReceiptApi,
+  HarnessScenarioAmendApi,
   HarnessScenarioOperationApi,
   HarnessScenarioOperationResponseApi,
   HarnessSecretFileUploadResponseApi,
@@ -58640,6 +58641,57 @@ export const simulateApiHarnessJobsExtend = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(harnessJobExtendApi),
+    },
+  );
+};
+
+export type simulateApiHarnessJobsScenariosAmendScenariosResponse201 = {
+  data: HarnessScenarioAmendApi;
+  status: 201;
+};
+
+export type simulateApiHarnessJobsScenariosAmendScenariosResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiHarnessJobsScenariosAmendScenariosResponseSuccess =
+  simulateApiHarnessJobsScenariosAmendScenariosResponse201 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessJobsScenariosAmendScenariosResponseError =
+  simulateApiHarnessJobsScenariosAmendScenariosResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessJobsScenariosAmendScenariosResponse =
+  | simulateApiHarnessJobsScenariosAmendScenariosResponseSuccess
+  | simulateApiHarnessJobsScenariosAmendScenariosResponseError;
+
+export const getSimulateApiHarnessJobsScenariosAmendScenariosUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-jobs/${id}/scenarios/amend/`;
+};
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the backend
+selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
+``sandbox``). See ``simulate.services.harness_provider``.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const simulateApiHarnessJobsScenariosAmendScenarios = async (
+  id: string,
+  harnessScenarioAmendApi: HarnessScenarioAmendApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessJobsScenariosAmendScenariosResponse> => {
+  return apiMutator<simulateApiHarnessJobsScenariosAmendScenariosResponse>(
+    getSimulateApiHarnessJobsScenariosAmendScenariosUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessScenarioAmendApi),
     },
   );
 };

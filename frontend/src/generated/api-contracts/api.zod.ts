@@ -35028,7 +35028,7 @@ export const simulateApiHarnessJobsCreateBodyAgentSecretRefsVersionMax = 255;
 
 export const simulateApiHarnessJobsCreateBodyAgentSecretRefsDefault = {};
 export const simulateApiHarnessJobsCreateBodyScenarioCountDefault = 10;
-export const simulateApiHarnessJobsCreateBodyScenarioCountMax = 200;
+export const simulateApiHarnessJobsCreateBodyScenarioCountMax = 1000;
 
 export const simulateApiHarnessJobsCreateBodyRuntimeIsolationDefault = `dedicated_vm`;
 export const simulateApiHarnessJobsCreateBodyRuntimeCpuUnitsDefault = 4;
@@ -35335,7 +35335,7 @@ export const simulateApiHarnessJobsPreflightBodyAgentSecretRefsVersionMax = 255;
 
 export const simulateApiHarnessJobsPreflightBodyAgentSecretRefsDefault = {};
 export const simulateApiHarnessJobsPreflightBodyScenarioCountDefault = 10;
-export const simulateApiHarnessJobsPreflightBodyScenarioCountMax = 200;
+export const simulateApiHarnessJobsPreflightBodyScenarioCountMax = 1000;
 
 export const simulateApiHarnessJobsPreflightBodyRuntimeIsolationDefault = `dedicated_vm`;
 export const simulateApiHarnessJobsPreflightBodyRuntimeCpuUnitsDefault = 4;
@@ -35919,6 +35919,53 @@ export const SimulateApiHarnessJobsExtendBody = zod.object({
     .min(1)
     .max(simulateApiHarnessJobsExtendBodyClientRequestIdMax)
     .optional(),
+});
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the backend
+selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
+``sandbox``). See ``simulate.services.harness_provider``.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const SimulateApiHarnessJobsScenariosAmendScenariosParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessJobsScenariosAmendScenariosBodyChangesItemScenarioMax = 255;
+
+export const simulateApiHarnessJobsScenariosAmendScenariosBodyChangesItemFieldMax = 64;
+
+export const simulateApiHarnessJobsScenariosAmendScenariosBodyChangesMax = 200;
+
+export const simulateApiHarnessJobsScenariosAmendScenariosBodyReworkDefault =
+  true;
+
+export const SimulateApiHarnessJobsScenariosAmendScenariosBody = zod.object({
+  changes: zod
+    .array(
+      zod.object({
+        op: zod.enum(["set_persona", "set_field", "drop"]),
+        scenario: zod
+          .string()
+          .min(1)
+          .max(
+            simulateApiHarnessJobsScenariosAmendScenariosBodyChangesItemScenarioMax,
+          ),
+        persona: zod.record(zod.string(), zod.string()).optional(),
+        field: zod
+          .string()
+          .min(1)
+          .max(
+            simulateApiHarnessJobsScenariosAmendScenariosBodyChangesItemFieldMax,
+          )
+          .optional(),
+        value: zod.object({}).passthrough().optional(),
+      }),
+    )
+    .max(simulateApiHarnessJobsScenariosAmendScenariosBodyChangesMax),
+  rework: zod
+    .boolean()
+    .default(simulateApiHarnessJobsScenariosAmendScenariosBodyReworkDefault),
 });
 
 export const SimulateApiHarnessAttemptsArtifactsArtifactManifestParams =

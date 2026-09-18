@@ -654,3 +654,43 @@ async def _cancel_hosted_harness_gateway_workflow_async(job_id: str) -> None:
     client = await get_client()
     handle = client.get_workflow_handle(f"hosted-harness-{job_id}")
     await handle.signal("cancel")
+
+
+def start_hosted_harness_amend(job_id: str, changes: list[dict]) -> str:
+    """Put a scenario change-set on the runner's queue, from sync Django code.
+
+    Only the changes the API could not apply itself arrive here: a rework needs the harness and its
+    model dependencies, which the API image does not carry. Returns the workflow id; the caller
+    polls the job, because the suite changing is the real answer and a receipt is only a promise of
+    it.
+    """
+    return async_to_sync(_start_hosted_harness_amend_async)(
+        job_id=job_id, changes=changes
+    )
+
+
+async def _start_hosted_harness_amend_async(job_id: str, changes: list[dict]) -> str:
+    from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
+
+    from simulate.temporal.constants import QUEUE_RUNNER
+    from simulate.temporal.types.hosted_harness_gateway import HostedHarnessAmendInput
+    from simulate.temporal.workflows.hosted_harness_gateway_workflow import (
+        HostedHarnessAmendWorkflow,
+    )
+    from tfc.temporal.common.client import get_client
+
+    client = await get_client()
+    # One amend at a time per job. Two edits racing on one archive would each fetch it, change a
+    # different scenario and store a whole suite back, so the later write would drop the earlier
+    # edit entirely.
+    workflow_id = f"harness-amend-{job_id}"
+    logger.info("starting_hosted_harness_amend", job_id=job_id, changes=len(changes))
+    await client.start_workflow(
+        HostedHarnessAmendWorkflow.run,
+        HostedHarnessAmendInput(job_id=job_id, changes=list(changes)),
+        id=workflow_id,
+        task_queue=QUEUE_RUNNER,
+        id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
+        id_conflict_policy=WorkflowIDConflictPolicy.FAIL,
+    )
+    return workflow_id

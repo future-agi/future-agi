@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1004,
+  endpointCount: 1005,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -27870,6 +27870,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           201: {
             $ref: "#/definitions/HarnessJobExtend",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-jobs/{id}/scenarios/amend/": {
+      post: {
+        operationId: "simulate_api_harness-jobs_scenarios_amend_scenarios",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: false,
+        requestBody: {
+          $ref: "#/definitions/HarnessScenarioAmend",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/HarnessScenarioAmend",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -59291,7 +59310,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Scenario count",
           type: "integer",
           default: 10,
-          maximum: 200,
+          maximum: 1000,
           minimum: 1,
         },
         seed: {
@@ -59481,7 +59500,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Scenario count",
           type: "integer",
           default: 10,
-          maximum: 200,
+          maximum: 1000,
           minimum: 1,
         },
         seed: {
@@ -59618,6 +59637,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           pattern: "^sha256:[0-9a-f]{64}$",
           minLength: 1,
+        },
+      },
+    },
+    HarnessScenarioAmend: {
+      required: ["changes"],
+      type: "object",
+      properties: {
+        changes: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessScenarioChange",
+          },
+          maxItems: 200,
+        },
+        rework: {
+          title: "Rework",
+          type: "boolean",
+          default: true,
         },
       },
     },
@@ -86638,6 +86675,42 @@ export const OPENAPI_CONTRACT = Object.freeze({
         judged: {
           title: "Judged",
           type: "boolean",
+        },
+      },
+    },
+    HarnessScenarioChange: {
+      required: ["op", "scenario"],
+      type: "object",
+      properties: {
+        op: {
+          title: "Op",
+          type: "string",
+          enum: ["set_persona", "set_field", "drop"],
+        },
+        scenario: {
+          title: "Scenario",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        persona: {
+          title: "Persona",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        field: {
+          title: "Field",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+        },
+        value: {
+          title: "Value",
+          type: "object",
+          "x-nullable": true,
         },
       },
     },
