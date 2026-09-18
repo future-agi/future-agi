@@ -3205,7 +3205,11 @@ def _record_harness_spend(
 
 
 def authoring_stage_outputs(
-    contract: Any, environment: Any, scenarios: Any, bundle: Any = None
+    contract: Any,
+    environment: Any,
+    scenarios: Any,
+    bundle: Any = None,
+    coverage: Any = None,
 ) -> list[dict[str, Any]]:
     """Build the complete, secret-safe snapshots shown by the hosted-run UI."""
     outputs: list[dict[str, Any]] = []
@@ -3246,6 +3250,24 @@ def authoring_stage_outputs(
                 "data": _secret_safe(scenarios),
             }
         )
+    # Its own snapshot rather than a field on the scenarios one: those rows are the scenarios, and
+    # this describes the set they form. Keeping it separate also means a suite authored before the
+    # report existed still renders, with this simply absent.
+    if isinstance(coverage, dict) and coverage.get("axes"):
+        axes = coverage.get("axes") or {}
+        pairs = coverage.get("pairs") or {}
+        outputs.append(
+            {
+                "id": "00000000-0000-0000-0000-000000000004",
+                "kind": "coverage",
+                "title": "Coverage",
+                "summary": (
+                    f"{coverage.get('placed', 0)} of {coverage.get('scenarios', 0)} placed · "
+                    f"{len(axes)} axes · {len(pairs)} pairs"
+                ),
+                "data": _secret_safe(coverage),
+            }
+        )
     return outputs
 
 
@@ -3255,7 +3277,7 @@ def authoring_stage_outputs_from_archive(
     """Read only the bounded JSON snapshots from a sealed authoring archive."""
     documents: dict[str, Any] = {}
     scenario_documents: list[dict[str, Any]] = []
-    wanted = {"contract.json", "environment.json", "scenarios.json"}
+    wanted = {"contract.json", "environment.json", "scenarios.json", "coverage.json"}
     with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
         for member in archive.getmembers():
             path = Path(member.name)
@@ -3312,6 +3334,7 @@ def authoring_stage_outputs_from_archive(
         documents.get("contract.json"),
         documents.get("environment.json"),
         scenarios,
+        coverage=documents.get("coverage.json"),
     )
 
 
