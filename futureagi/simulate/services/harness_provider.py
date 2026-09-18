@@ -630,11 +630,15 @@ class DaytonaHarnessProvider:
         """
         from simulate.services.hosted_harness import HostedHarnessError
         from simulate.services.hosted_harness_gateway import amend_job_scenarios
+        from tfc.utils.api_errors import build_error_envelope
 
         job = self._job(request, pk)
         if job is None:
             return Response(
-                {"detail": "Hosted harness job not found"},
+                build_error_envelope(
+                    "Hosted harness job not found",
+                    status_code=status.HTTP_404_NOT_FOUND,
+                ),
                 status=status.HTTP_404_NOT_FOUND,
             )
         payload = request.validated_data
@@ -653,7 +657,11 @@ class DaytonaHarnessProvider:
             # The harness validates the document again before touching anything, and its refusal
             # names the offending op or field. Passing it through beats a generic 400.
             return Response(
-                {"code": "scenario_changes_invalid", "detail": str(exc)},
+                build_error_envelope(
+                    str(exc),
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    code="scenario_changes_invalid",
+                ),
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
