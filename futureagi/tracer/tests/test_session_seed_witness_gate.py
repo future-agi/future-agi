@@ -166,13 +166,15 @@ def test_a_witness_envelope_snaps_to_whole_hours_around_the_slice() -> None:
         ((_attribute_filter(),), True),
         ((_attribute_filter(), _session_field_filter()), False),
         ((_session_field_filter(),), False),
+        # A numeric leaf witnesses through a typed map and walks like a string
+        # one; its seed gate is the key-presence witness.
         (
             (
                 _attribute_filter(
                     "retry_count", 3, filter_type="number", operation="equals"
                 ),
             ),
-            False,
+            True,
         ),
         ((_attribute_filter(operation="not_in"),), False),
     ],

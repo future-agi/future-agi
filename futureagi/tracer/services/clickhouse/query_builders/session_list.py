@@ -1282,8 +1282,51 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             return None
         return tuple(plans)
 
+    # The typed picker maps a positive scalar plan can witness through. A plan
+    # whose key witness names none of them compiled to JSON-only provenance,
+    # which carries no key bloom for a seed or a gate to prune on.
+    _TYPED_WITNESS_MAPS: tuple[str, ...] = (
+        "span_attr_str",
+        "span_attr_num",
+        "span_attr_bool",
+    )
+
     def prefers_bounded_filter_page(self) -> bool:
-        """Page-first policy, not an exact candidate SQL capability change."""
+        """Page-first policy, not an exact candidate SQL capability change.
+
+        A positive scalar-attribute page on the candidate lane is seeded by an
+        ANY-SPAN witness over the whole request window: one scalar subquery
+        that materialises every session owning a physical row carrying the
+        value, before the statement's root and membership scans can even be
+        planned. That cost is the witness scan's, not the value's. Measured
+        on production's high-volume tenant at twelve months, one boolean
+        ``equals`` leaf: the ``attrs_bool`` key bloom leaves 59% of the
+        window's granules, the scan alone is 238 M rows / 13.7 GB / 9.4 s on
+        the product's two threads, it yields about 1.44 M sessions, and every
+        ``IN`` set built from it is then the table. ClickHouse builds those
+        sets while PLANNING, so the statement dies at the 30 s wall as
+        ``ExceptionBeforeStart`` with zero bytes read - at 30 days, 3, 6 and
+        12 months alike, and at any boolean value, because the witness scan
+        does not shrink when the value is rare.
+
+        The bounded walk is exact for the same predicate and bounded per
+        statement: root-ordered seeds by slice, then ``build_filter_match_query``
+        replays only the seeded sessions' spans (the fused shape, two
+        ``spans`` scans) and stops at the first ordered prefix of survivors.
+        A value most sessions carry completes inside the first populated
+        slice; a rare one exhausts its budget as partial plus cursor, which is
+        what a filtered walk publishes for strings today - never a wider
+        statement.
+
+        So every plan that witnesses through a TYPED picker map takes the
+        walk, whatever the map's type. The earlier rule admitted string maps
+        only and kept numeric and boolean plans on the candidate lane as a
+        cost preference ("no numeric route is demoted merely because it lacks
+        the stronger value witness"); the measurement above is what that
+        preference cost. A plan compiled to JSON-only provenance still keeps
+        the candidate lane: it has no key bloom for a seed or a gate to prune
+        on, so the walk has nothing cheaper to offer it.
+        """
         # Native identity/aggregate predicates retain their specialized paths.
         if any(
             not self._is_raw_attribute_filter(item)
@@ -1298,11 +1341,11 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             for plan in plans
         ):
             return False
-        # Compiled storage provenance includes typed picker branches. Numeric
-        # zero/key-only plans stay on their existing path too; no numeric route
-        # is demoted merely because it lacks the stronger value witness.
+        # Compiled storage provenance includes typed picker branches; any one
+        # typed key witness is the necessary condition the seed gate and the
+        # sparse anchor probe rest on, and the classifier applies every plan.
         keys = " ".join(plan.raw_key_witness_predicate or "" for plan in plans)
-        return "span_attr_str" in keys and "span_attr_num" not in keys
+        return any(column in keys for column in self._TYPED_WITNESS_MAPS)
 
     def supports_candidate_first_page(self) -> bool:
         """Return true for the exact root-time ordered fast path.

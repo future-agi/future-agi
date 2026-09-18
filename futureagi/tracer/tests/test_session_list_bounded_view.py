@@ -1691,7 +1691,13 @@ def test_sparse_session_cursor_follows_checkpoint_without_skip_or_duplicate(
 @pytest.mark.unit
 @pytest.mark.parametrize("org", [False, True])
 @pytest.mark.parametrize("cursor", [False, True])
-@pytest.mark.parametrize("kind,preferred", [("text", True), ("mixed", True), ("number", False), ("boolean", False)])
+# Every typed picker map takes the walk: a number or boolean leaf used to keep
+# the candidate lane, whose any-span witness dies before start at long windows
+# on a high-volume tenant (see ``prefers_bounded_filter_page``).
+@pytest.mark.parametrize(
+    "kind,preferred",
+    [("text", True), ("mixed", True), ("number", True), ("boolean", True)],
+)
 def test_string_page_public_dispatch_and_old_order_token(org, cursor, kind, preferred):
     from tracer.services.clickhouse.list_cursor import encode_list_cursor
     from tracer.tests.test_session_positive_witness_page import (
@@ -1703,31 +1709,74 @@ def test_string_page_public_dispatch_and_old_order_token(org, cursor, kind, pref
         leaf,
     )
     from tracer.views.trace_session import TraceSessionView
+
     filters = [leaf("company", ["alpha"], "text", "in")]
     if kind in {"mixed", "number"}:
-        filters.append(leaf("other", False, "boolean") if kind == "mixed" else leaf("other", 7))
+        filters.append(
+            leaf("other", False, "boolean") if kind == "mixed" else leaf("other", 7)
+        )
     elif kind == "boolean":
         filters = [leaf("flag", True, "boolean")]
     view, request = _view_and_request()
-    analytics = SimpleNamespace(execute_ch_query=mock.Mock(return_value=SimpleNamespace(data=[])))
-    data = {"filters": builder(*filters).filters, "sort_params": [], "page_number": 0, "page_size": 2, "cursor_mode": cursor}
-    kwargs = {"project_id": None if org else PROJECT, "project": None, "analytics": analytics,
-              "org_project_ids": [PROJECT, OTHER] if org else None}
-    with mock.patch("tracer.views.trace_session._read_session_filter_page", return_value=_bounded_page()) as bounded:
-        selected = TraceSessionView._select_session_page(view, request, validated_data=data, **kwargs)
+    analytics = SimpleNamespace(
+        execute_ch_query=mock.Mock(return_value=SimpleNamespace(data=[]))
+    )
+    data = {
+        "filters": builder(*filters).filters,
+        "sort_params": [],
+        "page_number": 0,
+        "page_size": 2,
+        "cursor_mode": cursor,
+    }
+    kwargs = {
+        "project_id": None if org else PROJECT,
+        "project": None,
+        "analytics": analytics,
+        "org_project_ids": [PROJECT, OTHER] if org else None,
+    }
+    with mock.patch(
+        "tracer.views.trace_session._read_session_filter_page",
+        return_value=_bounded_page(),
+    ) as bounded:
+        selected = TraceSessionView._select_session_page(
+            view, request, validated_data=data, **kwargs
+        )
     # The candidate cursor route costs its slice width against an index-only
     # density probe before the page statement; this double reports no columns,
     # so the width reducer says "unknown" and the page is read unnarrowed.
     expected_reads = 0 if preferred else (2 if cursor else 1)
-    assert bounded.call_count == int(preferred) and analytics.execute_ch_query.call_count == expected_reads
+    assert (
+        bounded.call_count == int(preferred)
+        and analytics.execute_ch_query.call_count == expected_reads
+    )
     assert selected.candidate_cursor is (cursor and not preferred)
-    assert selected.cursor_query["session_order_contract"] == "latest-root-physical-key-v2-string-page-first"
+    assert (
+        selected.cursor_query["session_order_contract"]
+        == "latest-root-physical-key-v2-string-page-first"
+    )
     if cursor:
-        token = encode_list_cursor(resource="observe_sessions", scope=selected.cursor_scope,
-            query={**selected.cursor_query, "session_order_contract": "latest-root-physical-key-v1"},
-            page_size=2, window_start=START, window_end=START + timedelta(days=7), order=(START, USER), seen_rows=2)
+        token = encode_list_cursor(
+            resource="observe_sessions",
+            scope=selected.cursor_scope,
+            query={
+                **selected.cursor_query,
+                "session_order_contract": "latest-root-physical-key-v1",
+            },
+            page_size=2,
+            window_start=START,
+            window_end=START + timedelta(days=7),
+            order=(START, USER),
+            seen_rows=2,
+        )
         analytics.execute_ch_query.reset_mock()
-        with pytest.raises(ListCursorError), mock.patch("tracer.views.trace_session._read_session_filter_page",
-                                                       side_effect=AssertionError("Old order must fail before reading")):
-            TraceSessionView._select_session_page(view, request, validated_data={**data, "cursor": token}, **kwargs)
+        with (
+            pytest.raises(ListCursorError),
+            mock.patch(
+                "tracer.views.trace_session._read_session_filter_page",
+                side_effect=AssertionError("Old order must fail before reading"),
+            ),
+        ):
+            TraceSessionView._select_session_page(
+                view, request, validated_data={**data, "cursor": token}, **kwargs
+            )
         analytics.execute_ch_query.assert_not_called()
