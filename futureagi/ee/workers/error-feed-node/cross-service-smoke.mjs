@@ -3,22 +3,27 @@
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {randomUUID} from 'node:crypto';
-import {mkdtemp, rm} from 'node:fs/promises';
+import {mkdtemp, readFile, rm} from 'node:fs/promises';
 import {Kafka, logLevel} from 'kafkajs';
 const {runDaemon} = await import((process.env.OMEGA_RUNTIME_ROOT || '/app/worker') + '/daemon.mjs');
 
 const scope = JSON.parse(process.env.OMEGA_E2E_SCOPE);
 const django = process.env.OMEGA_E2E_DJANGO_URL;
-const secret = process.env.OMEGA_INTERNAL_API_SECRET;
+const secret = process.env.OMEGA_INTERNAL_API_SECRET
+  || (process.env.OMEGA_INTERNAL_API_SECRET_FILE
+    ? (await readFile(process.env.OMEGA_INTERNAL_API_SECRET_FILE, 'utf8')).trim() : '');
 if (!scope.project_id || !scope.organization_id || !django || !secret) throw new Error('Explicit isolated Django scope and test secret required');
+const clickhouseUrl = process.env.OMEGA_E2E_CLICKHOUSE_URL || 'http://omega-integration-clickhouse:8123';
+const kafkaBrokers = (process.env.OMEGA_KAFKA_BROKERS || 'omega-integration-kafka:9092').split(',');
 const traceId = randomUUID();
 const spanId = '1234567890abcdef';
 const stamp = new Date(Date.now() - 120000).toISOString().replace('T', ' ').replace('Z', '');
 const row = {project_id: scope.project_id, org_id: scope.organization_id, trace_id: traceId, id: spanId,
   parent_span_id: '', name: 'synthetic refund', input: 'Refund exactly 10', output: 'Refunded 5',
   start_time: stamp, end_time: stamp, created_at: stamp, updated_at: stamp, is_deleted: 0, _version: 1};
-const inserted = await fetch('http://omega-integration-clickhouse:8123/', {method: 'POST',
-  headers: {'X-ClickHouse-User': 'default', 'X-ClickHouse-Key': 'omega_local_fixture'},
+const inserted = await fetch(clickhouseUrl + '/', {method: 'POST',
+  headers: {'X-ClickHouse-User': process.env.OMEGA_E2E_CLICKHOUSE_WRITE_USER || 'default',
+    'X-ClickHouse-Key': process.env.OMEGA_E2E_CLICKHOUSE_WRITE_PASSWORD || ''},
   body: 'INSERT INTO default.spans FORMAT JSONEachRow\n' + JSON.stringify(row)});
 if (!inserted.ok) throw new Error('Synthetic ClickHouse insert failed: ' + inserted.status);
 await inserted.body.cancel();
@@ -82,7 +87,7 @@ const server = createServer(async (request, response) => {
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const localUrl = 'http://127.0.0.1:' + server.address().port;
 const scratch = await mkdtemp('/tmp/omega-cross-service-');
-const kafka = new Kafka({clientId: 'omega-cross-service-producer', brokers: ['omega-integration-kafka:9092'], logLevel: logLevel.NOTHING});
+const kafka = new Kafka({clientId: 'omega-cross-service-producer', brokers: kafkaBrokers, logLevel: logLevel.NOTHING});
 const producer = kafka.producer();
 try {
   await producer.connect();
@@ -91,12 +96,14 @@ try {
   const message = {key: scope.project_id, value: JSON.stringify(event)};
   await producer.send({topic: 'error-feed.trace-available.v1', messages: [message, message]});
   await runDaemon({...process.env,
-    OMEGA_KAFKA_BROKERS: 'omega-integration-kafka:9092', OMEGA_KAFKA_GROUP: 'omega-cross-service-' + traceId,
+    OMEGA_KAFKA_BROKERS: kafkaBrokers.join(','), OMEGA_KAFKA_GROUP: process.env.OMEGA_E2E_KAFKA_GROUP || 'omega-cross-service-' + traceId,
     OMEGA_ENGINE_VERSION: 'omega-v1', OMEGA_REPORT_SPOOL: scratch + '/spool', OMEGA_SCRATCH_DIR: scratch,
     OMEGA_DJANGO_URL: localUrl, OMEGA_CONCURRENCY: '1',
-    OMEGA_CLICKHOUSE_URL: 'http://omega-integration-clickhouse:8123', OMEGA_CLICKHOUSE_DATABASE: 'default',
-    OMEGA_CLICKHOUSE_USERNAME: 'omega_reader', OMEGA_CLICKHOUSE_PASSWORD: 'omega_reader_fixture',
-    AGENTCC_BASE_URL: localUrl + '/v1', AGENTCC_API_KEY: 'synthetic-gateway-key', OMEGA_MODEL_ID: 'synthetic-model'}, control.signal);
+    OMEGA_CLICKHOUSE_URL: clickhouseUrl, OMEGA_CLICKHOUSE_DATABASE: 'default',
+    OMEGA_CLICKHOUSE_USERNAME: process.env.OMEGA_CLICKHOUSE_USERNAME || 'omega_reader',
+    OMEGA_CLICKHOUSE_PASSWORD: process.env.OMEGA_CLICKHOUSE_PASSWORD || 'omega_reader_fixture',
+    AGENTCC_BASE_URL: localUrl + '/v1', AGENTCC_API_KEY_FILE: '',
+    AGENTCC_API_KEY: 'synthetic-gateway-key', OMEGA_MODEL_ID: 'synthetic-model'}, control.signal);
   assert.equal(firstPublication?.status, 'accepted');
   assert.equal(finalReceipt?.status, 'duplicate');
   assert.equal(firstPublication.report_id, finalReceipt.report_id);
