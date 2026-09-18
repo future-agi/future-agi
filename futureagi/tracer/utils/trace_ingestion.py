@@ -26,7 +26,7 @@ from tracer.services.clickhouse.v2.deterministic_id import (
     deterministic_end_user_id,
     deterministic_trace_session_id,
 )
-from tracer.tasks.trace_scanner import scan_traces_task
+from tracer.tasks.trace_scanner import SCAN_TASK_TRACE_LIMIT, scan_traces_task
 from tracer.utils.adapters import normalize_span_attributes
 from tracer.utils.otel import bulk_convert_otel_spans_to_observation_spans
 from tracer.utils.parsers import deserialize_trace_payload
@@ -758,14 +758,13 @@ def _trigger_trace_scanner(spans: list[ObservationSpan]):
     # Bound each scan task to a small batch so it finishes well under the scan
     # activity's time_limit. One big batch at high sampling can exceed the limit
     # and time out before writing anything — so split into per-task chunks.
-    scan_batch_size = 15
     for project_id, trace_ids in complete_traces_by_project.items():
         if project_id not in observe_project_ids:
             continue
         tid_list = list(trace_ids)
-        for i in range(0, len(tid_list), scan_batch_size):
+        for i in range(0, len(tid_list), SCAN_TASK_TRACE_LIMIT):
             scan_traces_task.apply_async(
-                args=(tid_list[i : i + scan_batch_size], project_id)
+                args=(tid_list[i : i + SCAN_TASK_TRACE_LIMIT], project_id)
             )
 
 

@@ -51,6 +51,14 @@ providers:
   #   models:
   #     - gemini-2.0-flash
   #     - gemini-2.0-pro
+
+  # Vertex models that are available only from the global endpoint:
+  # vertex-global:
+  #   base_url: "https://aiplatform.googleapis.com/v1/projects/${GOOGLE_CLOUD_PROJECT}/locations/global"
+  #   api_format: "gemini"
+  #   credentials_file: "${GOOGLE_APPLICATION_CREDENTIALS}"
+  #   models:
+  #     - vertex_ai/gemini-3.8-flash
   #     - gemini-1.5-pro
 
   # Google Vertex AI (same api_format as gemini, different base URL + Bearer auth):

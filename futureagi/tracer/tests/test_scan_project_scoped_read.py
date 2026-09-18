@@ -136,7 +136,7 @@ def test_fetch_trace_data_scopes_read_to_project():
     with patch("tracer.services.clickhouse.v2.get_reader", return_value=reader):
         result = fetch_trace_data(["t1", "t2"], "proj-42")
     assert sink["project_id"] == "proj-42"  # FAILS if fetch drops the scope
-    assert sink["include_heavy"] is False  # scanner reads lean (fat cols stubbed)
+    assert sink["include_heavy"] is True  # investigation needs captured tool definitions/events
     assert result == []
 
 
@@ -154,7 +154,7 @@ def test_get_trace_input_data_scopes_embed_read():
     ):
         # one scanned trace so we reach the reader (CH root input is the sole
         # source post-cutover — no PG Trace.input fallback).
-        tsr.objects.filter.return_value.values_list.return_value = [("t-1", True)]
+        tsr.objects.filter.return_value.filter.return_value.values_list.return_value = [("t-1", True)]
         get_trace_input_data(["t-1"], "proj-embed")
     assert sink["project_id"] == "proj-embed"
 

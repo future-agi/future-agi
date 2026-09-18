@@ -1,7 +1,7 @@
 """
-Trace Scanner V7.2 — Lightweight AI trace error scanner.
+Trace Scanner — grounded, bounded per-trace error investigation.
 
-Gemini 3.6 Flash (Vertex) via agentcc gateway, 1 trace per LLM call.
+Gemini 3.8 Flash (Vertex) via AgentCC, one trace per investigation.
 Outputs: issues[] + key_moments[] + meta{}
 """
 
@@ -29,11 +29,7 @@ from ee.agenthub.trace_scanner.prompt import (
     VALID_SUBCATEGORIES,
     build_prompt_v8,
 )
-from agentic_eval.core.utils.model_config import (
-    LiteLlmProvider,
-    ModelConfig,
-    ModelConfigs,
-)
+from agentic_eval.core.utils.model_config import LiteLlmProvider, ModelConfig
 try:
     from ee.usage.services.gateway_llm_client import (
         call_llm as gateway_call_llm,
@@ -284,17 +280,18 @@ def _collapse_same_event(failed: set, dims: dict) -> set:
 # that has leaked into the wrong field.
 _MAX_BRIEF_CHARS = 110
 SCAN_VERSION = "v7.2"
+INVESTIGATION_SCAN_VERSION = "v2-adaptive-2"
 
-# Prefer the registry entry; fall back to an inline config so this module
-# keeps working in deployments whose `ModelConfigs` hasn't picked up the
-# new entry yet (e.g. ee landing before the agentic_eval bump).
-_DEFAULT_SCANNER_MODEL: ModelConfig = getattr(
-    ModelConfigs, "VERTEX_GEMINI_3_6_FLASH", None
-) or ModelConfig(
+_DEFAULT_SCANNER_MODEL = ModelConfig(
     provider=LiteLlmProvider.VERTEX_AI.value,
-    model_name="vertex_ai/gemini-3.6-flash",
+    model_name="vertex_ai/gemini-3.8-flash",
+    # ModelConfig requires a default, but the investigation transport does not
+    # send a sampling override because Gemini 3.8 ignores it.
     temperature=0.2,
-    max_tokens=8100,
+    max_tokens=65_536,
+    supports_audio=True,
+    supports_pdf=True,
+    vertex_location="global",
 )
 
 
@@ -351,6 +348,9 @@ class ScanResult:
     # already-scanned anti-join treats any row as terminal, so writing one
     # converts a passing outage into a trace that is never looked at again.
     retryable: bool = False
+    outcome: str = "unknown"
+    investigation: dict = field(default_factory=dict)
+    scan_version: str = "v7.2"
 
 
 class TraceScanner:
@@ -369,7 +369,14 @@ class TraceScanner:
     MAX_TOKENS = 6144
 
     def __init__(self, model_config: Optional[ModelConfig] = None):
+        from ee.agenthub.trace_scanner.investigation_provider import (
+            InvestigationProvider,
+        )
+
         self.model_config = model_config or _DEFAULT_SCANNER_MODEL
+        self._investigation_provider = InvestigationProvider(
+            self.model_config.model_name
+        )
         self.total_cost_usd: float = 0.0
         self.token_usage = {
             "prompt_tokens": 0,
@@ -388,12 +395,126 @@ class TraceScanner:
         Returns:
             List of ScanResult, one per trace.
         """
+        from ee.agenthub.trace_scanner.investigation import Investigation
+
+        provider = self._investigation_provider
         results = []
-        for i in range(0, len(traces), BATCH_SIZE):
-            batch = traces[i : i + BATCH_SIZE]
-            batch_results = self._scan_single_batch(batch)
-            results.extend(batch_results)
+        for trace in traces:
+            try:
+                records = self._investigation_records(trace)
+                report = Investigation(provider).run(
+                    objective=(
+                        trace.get("objective")
+                        or "Determine separately (1) whether each end result the user requested was fulfilled within the recorded trace and (2) whether the agent followed applicable instructions while handling it. Reconstruct the current request from the conversation, retaining relevant earlier context. A compliant retry, refusal, fallback, or escalation does not fulfill the original task unless it achieves that result or the user evidentially revised the request. Do not treat wrapper spans, intermediate thoughts, or tool outputs as the final user-facing response. An answer may be delivered through a tool. Missing capture is not proof of a missing answer."
+                    ),
+                    scope=str(trace["trace_id"]),
+                    records=records,
+                )
+                # No fixed taxonomy: preserve the verified description. Legacy
+                # classification fields stay empty until the grouping layer owns them.
+                findings = list(report["findings"])
+                if not any(
+                    finding.get("kind") == "outcome" and finding["status"] == "violated"
+                    for finding in findings
+                ):
+                    # Requirement checks are independently normalized and grounded
+                    # by the harness. Do not lose them at the legacy issue boundary.
+                    findings.extend(
+                        {
+                            "status": "violated",
+                            "summary": check["requirement"],
+                            "evidence_ids": check["evidence_ids"],
+                        }
+                        for check in report["outcome"].get("requirements", [])
+                        if check["status"] == "violated"
+                    )
+                issues = [
+                    ScanIssue(
+                        category="",
+                        group="",
+                        fix_layer="",
+                        confidence="M",
+                        brief=finding["summary"],
+                    )
+                    for finding in findings
+                    if finding["status"] == "violated"
+                ]
+                sources = {record["id"]: record["value"] for record in records}
+                moments = []
+                cited = set()
+                for finding in findings:
+                    if finding["status"] != "violated":
+                        continue
+                    for source_id in finding["evidence_ids"]:
+                        if source_id in cited or source_id not in sources:
+                            continue
+                        cited.add(source_id)
+                        span = sources[source_id]
+                        attrs = span.get("span_attributes") or {}
+                        # Show recorded content, never label a generated summary
+                        # as a verbatim quote. Citation denotes evidence, not the
+                        # exact originating failure step.
+                        content = {
+                            key: attrs[key]
+                            for key in ("input.value", "output.value")
+                            if key in attrs
+                        }
+                        moments.append(
+                            KeyMoment(
+                                kevinified=finding["summary"],
+                                verbatim=json.dumps(content, ensure_ascii=False),
+                                role=str(attrs.get("span.kind") or ""),
+                                span=str(span.get("span_id") or ""),
+                                status=str(span.get("status_code") or ""),
+                                is_failure=False,
+                            )
+                        )
+                results.append(
+                    ScanResult(
+                        trace_id=str(trace["trace_id"]),
+                        has_issues=bool(issues),
+                        issues=issues,
+                        key_moments=moments,
+                        outcome=report["outcome"]["status"],
+                        investigation=report,
+                        scan_version=INVESTIGATION_SCAN_VERSION,
+                    )
+                )
+            except Exception as exc:
+                logger.warning(
+                    "scanner_investigation_failed",
+                    trace_id=trace.get("trace_id"),
+                    error_type=type(exc).__name__,
+                )
+                results.append(
+                    ScanResult(
+                        trace_id=str(trace["trace_id"]),
+                        has_issues=False,
+                        error=f"investigation_failed:{type(exc).__name__}",
+                        retryable=True,
+                        scan_version=INVESTIGATION_SCAN_VERSION,
+                    )
+                )
+            finally:
+                self.total_cost_usd = provider.total_cost_usd
+                self.token_usage = dict(provider.token_usage)
         return results
+
+    @staticmethod
+    def _investigation_records(trace: dict) -> list[dict]:
+        """Preserve every captured span value, without duplicate nested payloads."""
+        records = []
+        pending = [(span, None) for span in reversed(trace.get("spans") or [])]
+        while pending:
+            span, parent = pending.pop()
+            value = {key: value for key, value in span.items() if key != "child_spans"}
+            value.setdefault("parent_span_id", parent)
+            records.append({"id": f"event:{len(records)}", "value": value})
+            pending.extend(
+                (child, span.get("span_id"))
+                for child in reversed(span.get("child_spans") or [])
+            )
+        return records
 
     def _scan_single_batch(self, traces: List[Dict[str, Any]]) -> List[ScanResult]:
         """Scan a single batch (1-3 traces) with one LLM call."""
@@ -462,7 +583,7 @@ class TraceScanner:
 
         # Map LLM output back to trace results
         results = []
-        for label, (trace_data, prefilter, prog_meta) in trace_map.items():
+        for label, (trace_data, _prefilter, prog_meta) in trace_map.items():
             trace_id = trace_data["trace_id"]
             trace_output = parsed.get(label, {})
 
