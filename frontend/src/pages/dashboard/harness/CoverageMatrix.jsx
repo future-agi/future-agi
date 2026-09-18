@@ -88,9 +88,36 @@ export default function CoverageMatrix({ scenarios, coverage }) {
 
   // Named gaps, not just empty squares. Scanning a grid for blanks is work; reading "nothing puts
   // prompt_injection against cancel_ride" is not.
-  const named = matrix.rowKeys
-    .flatMap((r) => matrix.colKeys.map((c) => ({ r, c, n: matrix.at(r, c) })))
-    .filter((cell) => cell.n === 0);
+  //
+  // Ordered by how much each one tells you. A level that appears nowhere in the pairing is a
+  // bigger finding than one missing cell, and it is also the one a reader would otherwise have to
+  // infer from a whole empty row. Single cells come last and are taken one per level, because six
+  // gaps that all name the same overlay read as one fact repeated rather than six.
+  const empties = matrix.rowKeys
+    .flatMap((r) => matrix.colKeys.map((c) => ({ r, c })))
+    .filter((cell) => !matrix.at(cell.r, cell.c));
+  const barrenRows = matrix.rowKeys.filter((r) => !matrix.colKeys.some((c) => matrix.at(r, c)));
+  const barrenCols = matrix.colKeys.filter((c) => !matrix.rowKeys.some((r) => matrix.at(r, c)));
+  const spread = [];
+  const seenRows = new Set();
+  const seenCols = new Set();
+  // First pass takes a gap whose level is new on both axes, so six lines name twelve things rather
+  // than one column six times over. The second fills up from whatever is left.
+  for (const pass of [0, 1]) {
+    for (const cell of empties) {
+      if (barrenRows.includes(cell.r) || barrenCols.includes(cell.c)) continue;
+      if (!pass && (seenRows.has(cell.r) || seenCols.has(cell.c))) continue;
+      if (spread.some((one) => one.r === cell.r && one.c === cell.c)) continue;
+      seenRows.add(cell.r);
+      seenCols.add(cell.c);
+      spread.push(cell);
+    }
+  }
+  const named = [
+    ...barrenRows.map((r) => ({ whole: true, axis: rowAxis, level: r })),
+    ...barrenCols.map((c) => ({ whole: true, axis: colAxis, level: c })),
+    ...spread,
+  ];
 
   return (
     <Stack spacing={2}>
@@ -105,10 +132,41 @@ export default function CoverageMatrix({ scenarios, coverage }) {
         </Typography>
       )}
 
+      {Boolean(named.length) && (
+        <Stack spacing={0.5}>
+          <Typography variant="caption" color="text.secondary">
+            Nothing covers these {empties.length} combinations
+          </Typography>
+          {named.slice(0, 6).map((gap) => (
+            <Typography
+              key={gap.whole ? `${gap.axis}:${gap.level}` : `${gap.r}|${gap.c}`}
+              variant="body2"
+              color="text.secondary"
+            >
+              {gap.whole ? (
+                <>
+                  • nothing tests {gap.axis} <strong>{gap.level}</strong> against any{" "}
+                  {gap.axis === rowAxis ? colAxis : rowAxis}
+                </>
+              ) : (
+                <>
+                  • {rowAxis} <strong>{gap.r}</strong> against {colAxis} <strong>{gap.c}</strong>
+                </>
+              )}
+            </Typography>
+          ))}
+          {named.length > 6 && (
+            <Typography variant="caption" color="text.secondary">
+              and {named.length - 6} more, shown as dashed cells below
+            </Typography>
+          )}
+        </Stack>
+      )}
+
       <Stack direction="row" alignItems="center" gap={1.5} flexWrap="wrap">
         <Typography variant="body2" sx={{ flex: 1, minWidth: 220 }}>
           {rows.length} scenarios across {matrix.rowKeys.length} x {matrix.colKeys.length}
-          {matrix.empty ? ` — ${matrix.empty} empty cells are the gaps` : " — every cell covered"}
+          {matrix.empty ? `, ${matrix.empty} of them empty` : ", every cell covered"}
         </Typography>
         <TextField
           select size="small" label="Rows" value={rowAxis}
@@ -128,7 +186,11 @@ export default function CoverageMatrix({ scenarios, coverage }) {
         </TextField>
       </Stack>
 
-      <Box sx={{ overflowX: "auto" }}>
+      {/* A plan with many levels makes a grid taller than the window, and this panel sits above
+          the suite: without a ceiling the list underneath becomes unreachable, which is the whole
+          reason coverage was moved to the top. Bounded and scrolled in place, with the labels
+          pinned so they survive the scroll in both directions. */}
+      <Box sx={{ overflow: "auto", maxHeight: 420, border: 1, borderColor: "divider", borderRadius: 1, p: 1 }}>
         <Box
           sx={{
             display: "grid",
@@ -137,12 +199,21 @@ export default function CoverageMatrix({ scenarios, coverage }) {
             minWidth: "max-content",
           }}
         >
-          <Box />
+          <Box sx={{ position: "sticky", top: 0, left: 0, zIndex: 3, bgcolor: "background.default" }} />
           {matrix.colKeys.map((col) => (
             <Typography
               key={col}
               variant="caption"
-              sx={{ fontWeight: 700, color: "text.secondary", textAlign: "center", pb: 0.5 }}
+              sx={{
+                fontWeight: 700,
+                color: "text.secondary",
+                textAlign: "center",
+                pb: 0.5,
+                position: "sticky",
+                top: 0,
+                zIndex: 2,
+                bgcolor: "background.default",
+              }}
             >
               {col}
             </Typography>
@@ -150,7 +221,18 @@ export default function CoverageMatrix({ scenarios, coverage }) {
 
           {matrix.rowKeys.map((row) => (
             <Box key={row} sx={{ display: "contents" }}>
-              <Typography variant="body2" sx={{ fontWeight: 600, alignSelf: "center", pr: 1.5 }}>
+              <Typography
+                variant="body2"
+                sx={{
+                  fontWeight: 600,
+                  alignSelf: "center",
+                  pr: 1.5,
+                  position: "sticky",
+                  left: 0,
+                  zIndex: 1,
+                  bgcolor: "background.default",
+                }}
+              >
                 {row}
               </Typography>
               {matrix.colKeys.map((col) => {
@@ -164,7 +246,7 @@ export default function CoverageMatrix({ scenarios, coverage }) {
                     title={
                       n
                         ? `${n} scenario${n === 1 ? "" : "s"} put ${row} against ${col}`
-                        : `Nothing puts ${row} against ${col} — worth generating some`
+                        : `Nothing puts ${row} against ${col}, so this combination is untested`
                     }
                   >
                     <Box
@@ -200,24 +282,6 @@ export default function CoverageMatrix({ scenarios, coverage }) {
           ))}
         </Box>
       </Box>
-
-      {Boolean(named.length) && (
-        <Stack spacing={0.5}>
-          <Typography variant="caption" color="text.secondary">
-            Nothing covers these {named.length} combinations
-          </Typography>
-          {named.slice(0, 6).map((cell) => (
-            <Typography key={`${cell.r}|${cell.c}`} variant="body2" color="text.secondary">
-              • {rowAxis} <strong>{cell.r}</strong> against {colAxis} <strong>{cell.c}</strong>
-            </Typography>
-          ))}
-          {named.length > 6 && (
-            <Typography variant="caption" color="text.secondary">
-              and {named.length - 6} more, shown as dashed cells below
-            </Typography>
-          )}
-        </Stack>
-      )}
 
       {Boolean(unused.length) && (
         <Stack direction="row" alignItems="center" gap={0.75} flexWrap="wrap">

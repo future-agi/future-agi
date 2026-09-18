@@ -1091,3 +1091,51 @@ def test_harness_job_adjustment_rejects_empty_instruction(user):
     )
 
     assert response.status_code == 400
+
+
+@pytest.mark.django_db
+@override_settings(HARNESS_PROVIDER="hosted")
+def test_amend_scenarios_refuses_an_unknown_job_in_the_common_envelope(user):
+    # The suite editor reads `detail`, and everything else on the platform reads `type` and `code`.
+    # The envelope carries all three, so the endpoint answers both without a second shape.
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.post(
+        "/simulate/api/harness-jobs/11111111-1111-1111-1111-111111111111/scenarios/amend/",
+        {"changes": [{"op": "drop", "scenario": "one"}]},
+        format="json",
+    )
+
+    assert response.status_code == 404
+    body = response.json()
+    assert body["type"] == "not_found"
+    assert body["detail"] == "Hosted harness job not found"
+
+
+@pytest.mark.django_db
+@override_settings(HARNESS_PROVIDER="hosted")
+def test_amend_scenarios_passes_the_harness_refusal_through(user):
+    # The harness names the offending op or field. That reason is the whole value of the reply, so
+    # it has to survive into `detail` rather than collapse into a generic 400.
+    client = APIClient()
+    client.force_authenticate(user=user)
+    job = SimpleNamespace(id="11111111-1111-1111-1111-111111111111")
+
+    with (
+        patch.object(HostedHarnessProvider, "_job", return_value=job),
+        patch(
+            "simulate.services.hosted_harness_gateway.amend_job_scenarios",
+            side_effect=ValueError("unknown field 'wingspan'"),
+        ),
+    ):
+        response = client.post(
+            f"/simulate/api/harness-jobs/{job.id}/scenarios/amend/",
+            {"changes": [{"op": "set_field", "scenario": "one", "field": "wingspan", "value": 2}]},
+            format="json",
+        )
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["code"] == "scenario_changes_invalid"
+    assert "wingspan" in body["detail"]
