@@ -33,3 +33,30 @@ export const transformColumnPayload = (columns = []) => {
       : [],
   }));
 };
+
+const normalizeSyntheticColumnProperty = (property) => {
+  if (Array.isArray(property)) {
+    return property.reduce((normalized, entry) => {
+      if (entry?.type) {
+        normalized[entry.type] = entry.value;
+      }
+      return normalized;
+    }, {});
+  }
+
+  return property && typeof property === "object" ? property : {};
+};
+
+export const buildSyntheticColumnPayload = (column, description) => ({
+  name: column?.name,
+  data_type: column?.data_type ?? column?.dataType,
+  description: description ?? column?.description ?? "",
+  property: normalizeSyntheticColumnProperty(column?.property),
+});
+
+export const buildSyntheticDatasetPayload = (data = {}) => ({
+  ...data,
+  ...(Array.isArray(data.columns) && {
+    columns: data.columns.map((column) => buildSyntheticColumnPayload(column)),
+  }),
+});
