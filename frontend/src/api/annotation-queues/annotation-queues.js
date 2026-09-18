@@ -5,7 +5,7 @@ import {
   useQueryClient,
   keepPreviousData,
 } from "@tanstack/react-query";
-import axios from "src/utils/axios";
+import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "notistack";
 import { apiPath } from "src/api/contracts/api-surface";
 import { scoreKeys } from "src/api/scores/scores";
@@ -1670,7 +1670,7 @@ export const useCustomEvalConfigList = ({ projectId, ...options } = {}) => {
   return useQuery({
     queryKey: ["custom-eval-configs", projectId],
     queryFn: () =>
-      axios.get("/tracer/custom-eval-config/list_custom_eval_configs/", {
+      axios.get(endpoints.project.getEvalTaskConfig(), {
         params: projectId ? { project_id: projectId } : undefined,
       }),
     select: (d) => d.data?.result ?? d.data?.results ?? d.data ?? [],
