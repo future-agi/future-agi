@@ -21,10 +21,13 @@ from django.db.models import (
     Min,
     Q,
     Sum,
+    TextField,
     Value,
 )
+from django.db.models.fields.json import KeyTextTransform
 from django.db.models.functions import (
     Coalesce,
+    NullIf,
     Substr,
     TruncDay,
     TruncHour,
@@ -34,6 +37,8 @@ from django.db.models.functions import (
 )
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
+
+from agentcc.models.request_log import RequestLogTag
 
 # ---------------------------------------------------------------------------
 # Time range utilities
@@ -58,6 +63,20 @@ GRANULARITY_DELTA = {
 ALLOWED_GRANULARITIES = set(TRUNC_MAP.keys())
 
 MAX_PERCENTILE_SAMPLE = 50_000
+
+UNKNOWN_GROUP = "unknown"
+OTHER_GROUP = "Other"
+TAG_GROUPS = {tag.value for tag in RequestLogTag}
+# Caller-set tags are unbounded; grouped usage keeps the busiest series.
+MAX_USAGE_TAG_GROUPS = 10
+USAGE_SUMMED_FIELDS = (
+    "request_count",
+    "total_tokens",
+    "input_tokens",
+    "output_tokens",
+    "total_cost",
+    "error_count",
+)
 
 
 def parse_time_range(query_params):
@@ -148,6 +167,54 @@ def _fill_empty_buckets(series, period_start, period_end, granularity, zero_row_
         current += delta
 
     return filled
+
+
+def _annotate_tag_group(queryset, group_by):
+    """Expose a metadata tag as a column named after it, so it can be grouped on."""
+    if group_by not in TAG_GROUPS:
+        return queryset
+    return queryset.annotate(
+        **{
+            group_by: Coalesce(
+                NullIf(KeyTextTransform(group_by, "metadata"), Value("")),
+                Value(UNKNOWN_GROUP),
+                output_field=TextField(),
+            )
+        }
+    )
+
+
+def _fold_small_usage_groups(rows, group_by):
+    """Keep the MAX_USAGE_TAG_GROUPS busiest groups; sum the rest per bucket."""
+    totals = defaultdict(int)
+    for row in rows:
+        totals[row[group_by]] += row["request_count"]
+    if len(totals) <= MAX_USAGE_TAG_GROUPS:
+        return rows
+
+    kept = set(sorted(totals, key=totals.get, reverse=True)[:MAX_USAGE_TAG_GROUPS])
+    folded, other = [], {}
+    for row in rows:
+        if row[group_by] in kept:
+            folded.append(row)
+            continue
+        acc = other.setdefault(
+            row["bucket"],
+            {
+                "bucket": row["bucket"],
+                group_by: OTHER_GROUP,
+                "avg_latency_ms": 0.0,
+                **dict.fromkeys(USAGE_SUMMED_FIELDS, 0),
+            },
+        )
+        for field in USAGE_SUMMED_FIELDS:
+            acc[field] += row[field]
+        acc["avg_latency_ms"] += row["avg_latency_ms"] * row["request_count"]
+
+    for acc in other.values():
+        if acc["request_count"]:
+            acc["avg_latency_ms"] /= acc["request_count"]
+    return folded + list(other.values())
 
 
 def _truncate_dt(dt, granularity):
@@ -317,18 +384,22 @@ def get_usage_timeseries(
         avg_latency_ms=Coalesce(Avg("latency_ms"), Value(0), output_field=FloatField()),
     )
 
-    annotated = filtered_qs.annotate(bucket=TruncClass("started_at"))
-
-    allowed_groups = {"model", "provider"}
+    allowed_groups = {"model", "provider", *TAG_GROUPS}
     if group_by and group_by in allowed_groups:
         values_fields = ["bucket", group_by]
     else:
         group_by = None
         values_fields = ["bucket"]
 
+    annotated = _annotate_tag_group(filtered_qs, group_by).annotate(
+        bucket=TruncClass("started_at")
+    )
+
     rows = list(
         annotated.values(*values_fields).annotate(**base_annotate).order_by("bucket")
     )
+    if group_by in TAG_GROUPS:
+        rows = _fold_small_usage_groups(rows, group_by)
 
     # Format decimal values
     for row in rows:
@@ -354,7 +425,7 @@ def get_usage_timeseries(
     else:
         groups = defaultdict(list)
         for row in rows:
-            key = row.pop(group_by, "unknown")
+            key = row.pop(group_by, UNKNOWN_GROUP)
             groups[key].append(row)
 
         # Fill each group
@@ -377,7 +448,14 @@ def get_usage_timeseries(
 
 def get_cost_breakdown(queryset, period_start, period_end, group_by="model", top_n=10):
     """Return cost breakdown by a categorical dimension."""
-    allowed_groups = {"model", "provider", "api_key_id", "user_id", "routing_strategy"}
+    allowed_groups = {
+        "model",
+        "provider",
+        "api_key_id",
+        "user_id",
+        "routing_strategy",
+        *TAG_GROUPS,
+    }
     if group_by not in allowed_groups:
         group_by = "model"
 
@@ -393,7 +471,8 @@ def get_cost_breakdown(queryset, period_start, period_end, group_by="model", top
 
     # Group and aggregate
     all_rows = list(
-        filtered_qs.values(group_by)
+        _annotate_tag_group(filtered_qs, group_by)
+        .values(group_by)
         .annotate(
             total_cost=Coalesce(Sum("cost"), Value(0), output_field=DecimalField()),
             request_count=Count("id"),
@@ -416,7 +495,7 @@ def get_cost_breakdown(queryset, period_start, period_end, group_by="model", top
 
         breakdown.append(
             {
-                "name": str(row[group_by] or "unknown"),
+                "name": str(row[group_by] or UNKNOWN_GROUP),
                 "total_cost": str(cost),
                 "percentage": round(pct, 2),
                 "request_count": count,
@@ -434,7 +513,7 @@ def get_cost_breakdown(queryset, period_start, period_end, group_by="model", top
 
         breakdown.append(
             {
-                "name": "Other",
+                "name": OTHER_GROUP,
                 "total_cost": str(other_cost),
                 "percentage": round(pct, 2),
                 "request_count": other_count,
@@ -563,7 +642,7 @@ def get_error_breakdown(
     """Return error analysis with breakdown and timeseries."""
     TruncClass = get_trunc_class(granularity)
 
-    allowed_groups = {"status_code", "model", "provider", "error_message"}
+    allowed_groups = {"status_code", "model", "provider", "error_message", *TAG_GROUPS}
     if group_by not in allowed_groups:
         group_by = "status_code"
 
@@ -583,7 +662,7 @@ def get_error_breakdown(
     )
 
     # Breakdown
-    error_qs = filtered_qs.filter(is_error=True)
+    error_qs = _annotate_tag_group(filtered_qs.filter(is_error=True), group_by)
 
     if group_by == "error_message":
         group_field = "error_truncated"
@@ -603,7 +682,7 @@ def get_error_breakdown(
 
     breakdown = []
     for row in breakdown_rows:
-        name = str(row[group_field] or "unknown")
+        name = str(row[group_field] or UNKNOWN_GROUP)
         error_count = row["error_count"]
         pct_of_errors = (error_count / total_errors * 100) if total_errors > 0 else 0.0
         err_rate = (error_count / total_requests * 100) if total_requests > 0 else 0.0

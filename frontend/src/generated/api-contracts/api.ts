@@ -161,6 +161,7 @@ import type {
   AgentccProviderCredentialsList200,
   AgentccProviderCredentialsListParams,
   AgentccRequestLogDetailApi,
+  AgentccRequestLogMetadataValuesResponseApi,
   AgentccRequestLogsExport200,
   AgentccRequestLogsExportParams,
   AgentccRequestLogsList200,
@@ -16407,6 +16408,55 @@ export const agentccRequestLogsExport = async (
 ): Promise<agentccRequestLogsExportResponse> => {
   return apiMutator<agentccRequestLogsExportResponse>(
     getAgentccRequestLogsExportUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type agentccRequestLogsMetadataValuesResponse200 = {
+  data: AgentccRequestLogMetadataValuesResponseApi;
+  status: 200;
+};
+
+export type agentccRequestLogsMetadataValuesResponse400 = {
+  data: AgentccErrorResponseApi;
+  status: 400;
+};
+
+export type agentccRequestLogsMetadataValuesResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400>;
+};
+
+export type agentccRequestLogsMetadataValuesResponseSuccess =
+  agentccRequestLogsMetadataValuesResponse200 & {
+    headers: Headers;
+  };
+export type agentccRequestLogsMetadataValuesResponseError = (
+  | agentccRequestLogsMetadataValuesResponse400
+  | agentccRequestLogsMetadataValuesResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type agentccRequestLogsMetadataValuesResponse =
+  | agentccRequestLogsMetadataValuesResponseSuccess
+  | agentccRequestLogsMetadataValuesResponseError;
+
+export const getAgentccRequestLogsMetadataValuesUrl = () => {
+  return `/agentcc/request-logs/metadata-values/`;
+};
+
+/**
+ * Application, service and custom tag values seen in recent requests.
+ */
+export const agentccRequestLogsMetadataValues = async (
+  options?: RequestInit,
+): Promise<agentccRequestLogsMetadataValuesResponse> => {
+  return apiMutator<agentccRequestLogsMetadataValuesResponse>(
+    getAgentccRequestLogsMetadataValuesUrl(),
     {
       ...options,
       method: "GET",
