@@ -2764,6 +2764,10 @@ def _authoring_archive_for(job: HostedHarnessJob) -> bytes | None:
         # The sub-goal catalogue. Without it an edit reloads an empty one, so a rework cannot write
         # the check body for a sub-goal it adds and the sub-goal ships ungradeable.
         "sub_goals.json",
+        # The suite's coverage report. Recomputable from the scenarios, since each carries its
+        # own coordinate, but packing it means a consumer reads the same numbers the run
+        # produced rather than recomputing and risking a different answer.
+        "coverage.json",
     ):
         path = bundle_dir / name
         if path.is_file() and not path.is_symlink():
@@ -2881,6 +2885,10 @@ def pack_authoring_archive(authoring_root: Path) -> bytes:
         # The sub-goal catalogue. Without it an edit reloads an empty one, so a rework cannot write
         # the check body for a sub-goal it adds and the sub-goal ships ungradeable.
         "sub_goals.json",
+        # The suite's coverage report. Recomputable from the scenarios, since each carries its
+        # own coordinate, but packing it means a consumer reads the same numbers the run
+        # produced rather than recomputing and risking a different answer.
+        "coverage.json",
     ):
         path = authoring_root / name
         if path.is_file() and not path.is_symlink():
