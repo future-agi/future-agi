@@ -14,6 +14,8 @@ export const DERIVING_LABEL = {
   scenarios: "Writing scenarios — proving each one solvable",
   loading: "Loading the editor for what we derived",
   idle: "Reading your agent…",
+  // Preflight already passed inline; this stage is the create call landing.
+  creating: "Creating your environment…",
 };
 
 // The tab rail on the building pane. It re-exports the workspace tabs so the

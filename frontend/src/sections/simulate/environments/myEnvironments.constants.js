@@ -17,6 +17,9 @@ export const STATUS_META = {
   passed: { label: "Passed", color: "#16A34A" },
   failed: { label: "Failed", color: "#DC2626" },
   completed: { label: "Completed", color: "#CA8A04" },
+  // Preflight checks that don't apply to the current source (e.g. a repo source
+  // has no hosted provider to reach). Same muted grey as an un-run row.
+  skipped: { label: "Skipped", color: "#9CA3AF" },
 };
 
 export const ROW_ACTION = { RUN: "run", DELETE: "delete" };

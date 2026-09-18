@@ -2,18 +2,21 @@ import PropTypes from "prop-types";
 import { useMemo, useState } from "react";
 import { DataTable } from "src/components/data-table";
 import DataTablePagination from "src/components/data-table/DataTablePagination";
-import {
-  EMPTY_MESSAGE,
-  ROW_HEIGHT,
-  DEFAULT_PAGE_SIZE,
-} from "./myEnvironments.constants";
+import { EMPTY_MESSAGE, ROW_HEIGHT } from "./myEnvironments.constants";
 import { buildEnvironmentColumns } from "./components/environmentTableColumns";
 import RowActionsMenu from "./components/RowActionsMenu";
 import DeleteEnvironmentDialog from "./components/DeleteEnvironmentDialog";
 
-// Same DataTable the platform uses on Evals, Datasets and Agents.
+// Same DataTable the platform uses on Evals, Datasets and Agents. `rows` is a
+// single server page; the pager is driven by the server `total`, not a
+// client-side slice, so it can walk past the first page of results.
 export default function MyEnvironmentsTable({
   rows = [],
+  total = 0,
+  page = 0,
+  pageSize = 25,
+  onPageChange,
+  onPageSizeChange,
   isLoading = false,
   onOpen,
   onRun,
@@ -30,35 +33,25 @@ export default function MyEnvironmentsTable({
     [],
   );
 
-  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
-  const [page, setPage] = useState(0);
-  const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
-  const currentPage = Math.min(page, pageCount - 1);
-  const start = currentPage * pageSize;
-  const pageRows = rows.slice(start, start + pageSize);
-
   return (
     <>
       <DataTable
         columns={columns}
-        data={pageRows}
+        data={rows}
         isLoading={isLoading}
-        rowCount={rows.length}
+        rowCount={total}
         getRowId={(row) => row.id}
         onRowClick={(row) => onOpen?.(row)}
         rowHeight={ROW_HEIGHT}
         emptyMessage={EMPTY_MESSAGE}
       />
-      {rows.length > 0 && (
+      {total > 0 && (
         <DataTablePagination
-          page={currentPage}
+          page={page}
           pageSize={pageSize}
-          total={rows.length}
-          onPageChange={setPage}
-          onPageSizeChange={(n) => {
-            setPageSize(n);
-            setPage(0);
-          }}
+          total={total}
+          onPageChange={onPageChange}
+          onPageSizeChange={onPageSizeChange}
         />
       )}
 
@@ -84,6 +77,11 @@ export default function MyEnvironmentsTable({
 
 MyEnvironmentsTable.propTypes = {
   rows: PropTypes.array,
+  total: PropTypes.number,
+  page: PropTypes.number,
+  pageSize: PropTypes.number,
+  onPageChange: PropTypes.func,
+  onPageSizeChange: PropTypes.func,
   isLoading: PropTypes.bool,
   onOpen: PropTypes.func,
   onRun: PropTypes.func,

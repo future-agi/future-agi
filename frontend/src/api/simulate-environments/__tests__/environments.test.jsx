@@ -3,9 +3,19 @@ import PropTypes from "prop-types";
 import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-vi.mock("src/api/harness/harness", () => ({ listHarnessJobs: vi.fn() }));
+vi.mock("src/api/harness/harness", () => ({
+  createHarnessJob: vi.fn(),
+  harnessIdempotencyKey: () => "idem-test",
+}));
+vi.mock("src/api/simulate-environments/harnessEnvironments", () => ({
+  listHarnessEnvironments: vi.fn(),
+  deleteHarnessEnvironment: vi.fn(),
+}));
 
-const { listHarnessJobs } = await import("src/api/harness/harness");
+const { createHarnessJob } = await import("src/api/harness/harness");
+const { listHarnessEnvironments, deleteHarnessEnvironment } = await import(
+  "src/api/simulate-environments/harnessEnvironments"
+);
 const {
   useMyEnvironments,
   useDeleteEnvironment,
@@ -13,22 +23,45 @@ const {
   useUploadSecretFile,
   useRunSimulation,
   useAdoptTemplate,
-  myEnvironmentsQueryKey,
+  SIMULATE_ENVIRONMENTS_KEY,
 } = await import("../environments");
 
-// The raw harness-jobs payload the hook maps into table rows.
-const HARNESS_JOBS = [
-  {
-    job: { job_id: "job-voice", metadata: { name: "Customer Support Line" } },
-    status: { stage: "completed", updated_at: "2026-09-15T09:00:00Z" },
-    credentials: { detected_connectors: ["livekit"] },
-  },
-  {
-    job: { job_id: "job-chat", metadata: { name: "Billing Chat Agent" } },
-    status: { stage: "running", updated_at: "2026-09-15T11:00:00Z" },
-    credentials: { detected_connectors: ["http"] },
-  },
-];
+// The paginated harness-environments payload the hook maps into table rows.
+const HARNESS_ENVS = {
+  count: 2,
+  next: null,
+  previous: null,
+  total_pages: 1,
+  current_page: 1,
+  results: [
+    {
+      id: "env-voice",
+      name: "Customer Support Line",
+      description: "Handles inbound billing calls",
+      source_kind: "provider",
+      agent_type: "voice",
+      status: "completed",
+      stage: "completed",
+      scenario_count: 12,
+      tools_count: 4,
+      last_updated: "2026-09-15T09:00:00Z",
+      created_at: "2026-09-10T09:00:00Z",
+    },
+    {
+      id: "env-chat",
+      name: "Billing Chat Agent",
+      description: null,
+      source_kind: "github",
+      agent_type: "chat",
+      status: "running",
+      stage: "running",
+      scenario_count: 0,
+      tools_count: null,
+      last_updated: null,
+      created_at: "2026-09-15T11:00:00Z",
+    },
+  ],
+};
 
 const makeWrapper = () => {
   const queryClient = new QueryClient({
@@ -42,46 +75,69 @@ const makeWrapper = () => {
 };
 
 beforeEach(() => {
-  listHarnessJobs.mockReset();
-  listHarnessJobs.mockResolvedValue(HARNESS_JOBS);
+  listHarnessEnvironments.mockReset();
+  listHarnessEnvironments.mockResolvedValue(HARNESS_ENVS);
+  deleteHarnessEnvironment.mockReset();
+  deleteHarnessEnvironment.mockResolvedValue(undefined);
+  createHarnessJob.mockReset();
+  createHarnessJob.mockResolvedValue({ job: { job_id: "job-real" } });
 });
 
 describe("useMyEnvironments", () => {
-  it("maps the harness-jobs list into flat table rows", async () => {
+  it("maps the harness-environments results into a page of flat rows + total", async () => {
     const { Wrapper } = makeWrapper();
-    const { result } = renderHook(() => useMyEnvironments(), {
+    const { result } = renderHook(() => useMyEnvironments({ page: 0, pageSize: 25 }), {
       wrapper: Wrapper,
     });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data).toHaveLength(2);
-    expect(result.current.data[0]).toMatchObject({
-      id: "job-voice",
+    // The endpoint is 1-indexed; the table pager is 0-indexed.
+    expect(listHarnessEnvironments).toHaveBeenCalledWith({ page: 1, limit: 25 });
+    expect(result.current.data.total).toBe(2);
+    expect(result.current.data.rows).toHaveLength(2);
+    expect(result.current.data.rows[0]).toMatchObject({
+      id: "env-voice",
       name: "Customer Support Line",
+      description: "Handles inbound billing calls",
       status: "completed",
       agentType: "voice",
+      tools: 4,
+      scenarios: 12,
       updatedAt: "2026-09-15T09:00:00Z",
     });
-    expect(result.current.data[1]).toMatchObject({
-      id: "job-chat",
+    // last_updated is null → fall back to created_at; chat → AGENT_TYPES text.
+    expect(result.current.data.rows[1]).toMatchObject({
+      id: "env-chat",
       status: "running",
       agentType: "text",
+      updatedAt: "2026-09-15T11:00:00Z",
     });
   });
 
-  it("maps a non-array payload to an empty list", async () => {
-    listHarnessJobs.mockResolvedValue(null);
+  it("requests the 1-indexed page for a later table page", async () => {
+    const { Wrapper } = makeWrapper();
+    renderHook(() => useMyEnvironments({ page: 2, pageSize: 10 }), {
+      wrapper: Wrapper,
+    });
+    await waitFor(() =>
+      expect(listHarnessEnvironments).toHaveBeenCalledWith({ page: 3, limit: 10 }),
+    );
+  });
+
+  it("maps a payload without results to an empty page", async () => {
+    listHarnessEnvironments.mockResolvedValue({});
     const { Wrapper } = makeWrapper();
     const { result } = renderHook(() => useMyEnvironments(), {
       wrapper: Wrapper,
     });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data).toEqual([]);
+    expect(result.current.data).toEqual({ rows: [], total: 0 });
   });
 });
 
 describe("useDeleteEnvironment", () => {
-  it("removes the matching raw job from the cached list", async () => {
+  it("deletes by id and invalidates the list so the page refetches", async () => {
     const { queryClient, Wrapper } = makeWrapper();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
     const { result } = renderHook(
       () => ({
         list: useMyEnvironments(),
@@ -91,23 +147,75 @@ describe("useDeleteEnvironment", () => {
     );
     await waitFor(() => expect(result.current.list.isSuccess).toBe(true));
 
-    await result.current.del.mutateAsync("job-chat");
+    await result.current.del.mutateAsync("env-chat");
 
-    // The cache holds the RAW { job, status } items, not the mapped rows.
-    const cached = queryClient.getQueryData(myEnvironmentsQueryKey());
-    expect(cached).toHaveLength(1);
-    expect(cached.some((item) => item?.job?.job_id === "job-chat")).toBe(false);
+    expect(deleteHarnessEnvironment).toHaveBeenCalledWith("env-chat");
+    // The visible page is refetched (rows shift up from later pages) rather than
+    // filtered in place.
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: [...SIMULATE_ENVIRONMENTS_KEY, "list"],
+    });
   });
 });
 
 describe("useBuildEnvironment", () => {
-  it("resolves an env id without echoing the (possibly secret-bearing) source", async () => {
+  it("creates a real job from a source-repo draft and returns its job id", async () => {
     const { Wrapper } = makeWrapper();
     const { result } = renderHook(() => useBuildEnvironment(), {
       wrapper: Wrapper,
     });
-    const source = { kind: "platform", apiKey: "sk-secret" };
-    const out = await result.current.mutateAsync(source);
+    const out = await result.current.mutateAsync({
+      kind: "repo",
+      value: "acme/agent",
+    });
+
+    expect(createHarnessJob).toHaveBeenCalledTimes(1);
+    const [body, idem] = createHarnessJob.mock.calls[0];
+    expect(body.source).toMatchObject({ kind: "github", repository: "acme/agent" });
+    expect(body.agent.connector).toBe("auto");
+    expect(idem).toBe("idem-test");
+    // The real job id is returned, never the raw draft.
+    expect(out.envId).toBe("job-real");
+    expect(out.source).toBeUndefined();
+  });
+
+  it("carries the exchanged hosted credential into the create body's secret_refs", async () => {
+    const { Wrapper } = makeWrapper();
+    const { result } = renderHook(() => useBuildEnvironment(), {
+      wrapper: Wrapper,
+    });
+    const secretRefs = {
+      VAPI_API_KEY: {
+        manager: "platform-vault",
+        key: "harness-vapi_api_key-abc",
+        version: "1",
+        purpose: "target_provider",
+      },
+    };
+    await result.current.mutateAsync({
+      kind: "platform",
+      provider: "vapi",
+      agentId: "asst_1",
+      secret_refs: secretRefs,
+    });
+
+    const [body] = createHarnessJob.mock.calls[0];
+    expect(body.agent.connector).toBe("vapi");
+    expect(body.agent.config).toMatchObject({ assistant_id: "asst_1" });
+    expect(body.agent.secret_refs).toEqual(secretRefs);
+  });
+
+  it("keeps the client-minted id and skips create for a non-buildable draft", async () => {
+    const { Wrapper } = makeWrapper();
+    const { result } = renderHook(() => useBuildEnvironment(), {
+      wrapper: Wrapper,
+    });
+    // A platform draft with no recognised provider cannot be built for real.
+    const out = await result.current.mutateAsync({
+      kind: "platform",
+      apiKey: "sk-secret",
+    });
+    expect(createHarnessJob).not.toHaveBeenCalled();
     expect(out.envId).toMatch(/^env-/);
     expect(out.source).toBeUndefined();
   });

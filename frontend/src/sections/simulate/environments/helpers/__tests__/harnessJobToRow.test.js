@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { harnessJobToRow } from "../harnessJobToRow";
+import { harnessJobToRow, harnessEnvToRow } from "../harnessJobToRow";
 import { ENV_STATUS } from "../../myEnvironments.constants";
 
 const item = ({ stage, connectors, metadata, jobId = "job-1", updatedAt } = {}) => ({
@@ -61,6 +61,68 @@ describe("harnessJobToRow", () => {
     expect(row.id).toBeUndefined();
     expect(row.status).toBe(ENV_STATUS.BUILDING);
     expect(row.agentType).toBe("text");
+    expect(row.updatedAt).toBeNull();
+  });
+});
+
+describe("harnessEnvToRow", () => {
+  const env = (over = {}) => ({
+    id: "env-1",
+    name: "Support Line",
+    description: "Handles inbound billing calls",
+    source_kind: "provider",
+    agent_type: "voice",
+    status: "completed",
+    stage: "completed",
+    scenario_count: 12,
+    tools_count: 4,
+    last_updated: "2026-09-15T09:00:00Z",
+    created_at: "2026-09-10T09:00:00Z",
+    ...over,
+  });
+
+  it("maps the real description, tool and scenario counts and the status pill", () => {
+    const row = harnessEnvToRow(env());
+    expect(row).toMatchObject({
+      id: "env-1",
+      name: "Support Line",
+      description: "Handles inbound billing calls",
+      status: ENV_STATUS.COMPLETED,
+      agentType: "voice",
+      tools: 4,
+      scenarios: 12,
+      updatedAt: "2026-09-15T09:00:00Z",
+    });
+  });
+
+  it("maps chat to the text agent type and falls back to created_at", () => {
+    const row = harnessEnvToRow(
+      env({ agent_type: "chat", last_updated: null }),
+    );
+    expect(row.agentType).toBe("text");
+    expect(row.updatedAt).toBe("2026-09-10T09:00:00Z");
+  });
+
+  it("keeps sub-goals and total runs null (absent from the list)", () => {
+    const row = harnessEnvToRow(env());
+    expect(row.subgoals).toBeNull();
+    expect(row.runsTotal).toBeNull();
+    expect(row.buildProgress).toBeNull();
+  });
+
+  it("passes a null description and tool count through unchanged", () => {
+    const row = harnessEnvToRow(env({ description: null, tools_count: null }));
+    expect(row.description).toBeNull();
+    expect(row.tools).toBeNull();
+  });
+
+  it("is null-safe on an empty item and invents nothing", () => {
+    const row = harnessEnvToRow(undefined);
+    expect(row.id).toBeUndefined();
+    // No fabricated status / agent type — a missing value passes through as
+    // undefined rather than a plausible-looking "building" / "chat".
+    expect(row.status).toBeUndefined();
+    expect(row.agentType).toBeUndefined();
     expect(row.updatedAt).toBeNull();
   });
 });

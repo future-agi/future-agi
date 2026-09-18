@@ -113,6 +113,12 @@ describe("draftToPreflightPayload — repo", () => {
     expect("security" in payload).toBe(false);
   });
 
+  it("carries exchanged credential refs into agent.secret_refs", () => {
+    const secretRefs = { OPENAI_API_KEY: "secret-value://ref-9" };
+    const { payload } = draftToPreflightPayload(repoDraft({ secret_refs: secretRefs }));
+    expect(payload.agent.secret_refs).toStrictEqual(secretRefs);
+  });
+
   it("skips an unparseable repo string", () => {
     const { payload, skipped } = draftToPreflightPayload(repoDraft({ value: "not a repo" }));
     expect(payload).toBeUndefined();
@@ -156,6 +162,21 @@ describe("draftToPreflightPayload — platform", () => {
     expect(payload).toBeUndefined();
     expect(skipped).toMatch(/bland/);
   });
+
+  it("carries an exchanged credential reference into agent.secret_refs", () => {
+    const secretRefs = {
+      VAPI_API_KEY: {
+        manager: "platform-vault",
+        key: "harness-vapi_api_key-abc",
+        version: "1",
+        purpose: "target_provider",
+      },
+    };
+    const { payload } = draftToPreflightPayload(
+      platformDraft({ secret_refs: secretRefs }),
+    );
+    expect(payload.agent.secret_refs).toStrictEqual(secretRefs);
+  });
 });
 
 describe("draftToPreflightPayload — upload", () => {
@@ -178,6 +199,18 @@ describe("draftToPreflightPayload — upload", () => {
     });
     expect(payload).toBeUndefined();
     expect(skipped).toBe("Code upload preflight needs the uploaded archive");
+  });
+
+  it("carries exchanged credential refs into agent.secret_refs", () => {
+    const secretRefs = { STRIPE_KEY: "secret-value://ref-3" };
+    const { payload } = draftToPreflightPayload({
+      kind: "upload",
+      archive_artifact_id: "art_1",
+      entry: "agent.py",
+      files: [{ name: "agent.py" }],
+      secret_refs: secretRefs,
+    });
+    expect(payload.agent.secret_refs).toStrictEqual(secretRefs);
   });
 });
 

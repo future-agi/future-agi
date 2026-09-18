@@ -58190,6 +58190,124 @@ export const simulateApiCallExecutionsList = async (
   );
 };
 
+export type simulateApiHarnessEnvironmentsListResponse200 = {
+  data: HarnessEnvironmentListResponseApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsListResponseSuccess =
+  simulateApiHarnessEnvironmentsListResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsListResponseError =
+  simulateApiHarnessEnvironmentsListResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsListResponse =
+  | simulateApiHarnessEnvironmentsListResponseSuccess
+  | simulateApiHarnessEnvironmentsListResponseError;
+
+export const getSimulateApiHarnessEnvironmentsListUrl = (
+  params?: SimulateApiHarnessEnvironmentsListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/harness-environments/?${stringifiedParams}`
+    : `/simulate/api/harness-environments/`;
+};
+
+/**
+ * An environment is the job that built it (the world itself lives in object
+storage, addressed from the job's metadata), so these endpoints project the
+same rows the harness-jobs API serves. They exist separately because the
+list needs a row, not a run: the jobs list returns every event, receipt and
+stage-output payload for up to a hundred jobs, which is a detail document
+repeated a hundred times.
+
+Running and grading a simulation are deliberately not here. ``run`` starts
+one and returns 202; progress is read from the job.
+ * @summary The environments surface: list, delete, and start a simulation.
+ */
+export const simulateApiHarnessEnvironmentsList = async (
+  params?: SimulateApiHarnessEnvironmentsListParams,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsListResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsListResponse>(
+    getSimulateApiHarnessEnvironmentsListUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsDeleteResponse204 = {
+  data: void;
+  status: 204;
+};
+
+export type simulateApiHarnessEnvironmentsDeleteResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 204>;
+};
+
+export type simulateApiHarnessEnvironmentsDeleteResponseSuccess =
+  simulateApiHarnessEnvironmentsDeleteResponse204 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsDeleteResponseError =
+  simulateApiHarnessEnvironmentsDeleteResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsDeleteResponse =
+  | simulateApiHarnessEnvironmentsDeleteResponseSuccess
+  | simulateApiHarnessEnvironmentsDeleteResponseError;
+
+export const getSimulateApiHarnessEnvironmentsDeleteUrl = (id: string) => {
+  return `/simulate/api/harness-environments/${id}/`;
+};
+
+/**
+ * Deleting while a sandbox is running would leave that sandbox billing
+against a row nobody can see, so cancellation is requested before the
+row disappears. The authoring archive and the organization's secrets are
+left in place: neither is owned by this row, and other environments may
+reference the same credentials.
+ * @summary Soft-delete an environment, cancelling its run first if one is live.
+ */
+export const simulateApiHarnessEnvironmentsDelete = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsDeleteResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsDeleteResponse>(
+    getSimulateApiHarnessEnvironmentsDeleteUrl(id),
+    {
+      ...options,
+      method: "DELETE",
+    },
+  );
+};
+
 export type simulateApiHarnessJobsListResponse200 = {
   data: HarnessJobReadApi[];
   status: 200;

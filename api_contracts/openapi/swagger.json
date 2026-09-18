@@ -50113,6 +50113,80 @@
             },
             "parameters": []
         },
+        "/simulate/api/harness-environments/": {
+            "get": {
+                "operationId": "simulate_api_harness-environments_list",
+                "summary": "The environments surface: list, delete, and start a simulation.",
+                "description": "An environment is the job that built it (the world itself lives in object\nstorage, addressed from the job's metadata), so these endpoints project the\nsame rows the harness-jobs API serves. They exist separately because the\nlist needs a row, not a run: the jobs list returns every event, receipt and\nstage-output payload for up to a hundred jobs, which is a detail document\nrepeated a hundred times.\n\nRunning and grading a simulation are deliberately not here. ``run`` starts\none and returns 202; progress is read from the job.",
+                "parameters": [
+                    {
+                        "name": "page",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "minimum": 1
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "maximum": 100,
+                        "minimum": 1
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentListResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/simulate/api/harness-environments/{id}/": {
+            "delete": {
+                "operationId": "simulate_api_harness-environments_delete",
+                "summary": "Soft-delete an environment, cancelling its run first if one is live.",
+                "description": "Deleting while a sandbox is running would leave that sandbox billing\nagainst a row nobody can see, so cancellation is requested before the\nrow disappears. The authoring archive and the organization's secrets are\nleft in place: neither is owned by this row, and other environments may\nreference the same credentials.",
+                "parameters": [],
+                "responses": {
+                    "204": {
+                        "description": "Deleted"
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-jobs/": {
             "get": {
                 "operationId": "simulate_api_harness-jobs_list",
@@ -149417,6 +149491,131 @@
                         "oss",
                         "enterprise"
                     ]
+                }
+            }
+        },
+        "HarnessEnvironment": {
+            "required": [
+                "id",
+                "name",
+                "description",
+                "source_kind",
+                "agent_type",
+                "status",
+                "stage",
+                "scenario_count",
+                "tools_count",
+                "last_updated",
+                "created_at"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "source_kind": {
+                    "title": "Source kind",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "agent_type": {
+                    "title": "Agent type",
+                    "type": "string",
+                    "enum": [
+                        "voice",
+                        "chat"
+                    ]
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "building",
+                        "running",
+                        "completed",
+                        "failed"
+                    ]
+                },
+                "stage": {
+                    "title": "Stage",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "scenario_count": {
+                    "title": "Scenario count",
+                    "type": "integer"
+                },
+                "tools_count": {
+                    "title": "Tools count",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "last_updated": {
+                    "title": "Last updated",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                }
+            }
+        },
+        "HarnessEnvironmentListResponse": {
+            "required": [
+                "count",
+                "next",
+                "previous",
+                "total_pages",
+                "current_page",
+                "results"
+            ],
+            "type": "object",
+            "properties": {
+                "count": {
+                    "title": "Count",
+                    "type": "integer"
+                },
+                "next": {
+                    "title": "Next",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "previous": {
+                    "title": "Previous",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "total_pages": {
+                    "title": "Total pages",
+                    "type": "integer"
+                },
+                "current_page": {
+                    "title": "Current page",
+                    "type": "integer"
+                },
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessEnvironment"
+                    }
                 }
             }
         }

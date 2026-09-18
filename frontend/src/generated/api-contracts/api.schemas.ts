@@ -16857,6 +16857,53 @@ export interface CallExecutionErrorResponseApi {
   details?: CallExecutionErrorResponseApiDetails;
 }
 
+export type HarnessEnvironmentApiAgentType =
+  (typeof HarnessEnvironmentApiAgentType)[keyof typeof HarnessEnvironmentApiAgentType];
+
+export const HarnessEnvironmentApiAgentType = {
+  voice: "voice",
+  chat: "chat",
+} as const;
+
+export type HarnessEnvironmentApiStatus =
+  (typeof HarnessEnvironmentApiStatus)[keyof typeof HarnessEnvironmentApiStatus];
+
+export const HarnessEnvironmentApiStatus = {
+  building: "building",
+  running: "running",
+  completed: "completed",
+  failed: "failed",
+} as const;
+
+export interface HarnessEnvironmentApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  description: string;
+  /** @minLength 1 */
+  source_kind: string;
+  agent_type: HarnessEnvironmentApiAgentType;
+  status: HarnessEnvironmentApiStatus;
+  /** @minLength 1 */
+  stage: string;
+  scenario_count: number;
+  tools_count: number;
+  last_updated: string;
+  created_at: string;
+}
+
+export interface HarnessEnvironmentListResponseApi {
+  count: number;
+  /** @minLength 1 */
+  next: string;
+  /** @minLength 1 */
+  previous: string;
+  total_pages: number;
+  current_page: number;
+  results: HarnessEnvironmentApi[];
+}
+
 export type HarnessJobReadApiReceiptsItem = { [key: string]: unknown };
 
 export type HarnessJobReadApiUsageLimit = { [key: string]: unknown };
@@ -31609,6 +31656,18 @@ export type SimulateApiCallExecutionsListParams = {
   page?: number;
   /**
    * @minimum 1
+   */
+  limit?: number;
+};
+
+export type SimulateApiHarnessEnvironmentsListParams = {
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 100
    */
   limit?: number;
 };

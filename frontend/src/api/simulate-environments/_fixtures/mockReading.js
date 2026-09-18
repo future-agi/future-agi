@@ -1,15 +1,14 @@
-// Designer failing-check fixtures (prototype f9201bb4d). The real backend
-// preflight returns happy-path only today, so preflightReadAudit overlays these
-// so the read-audit has content. MOCK_READING is the designer's buildReading
-// output for the derivedEnvironment fixture (BuildFromAgent.jsx:609–632 over
-// _mock/builder.js TOOLS/RULES/SEED); MOCK_QUESTIONS is buildQuestions capped at
-// two. TODO: delete this file when the response carries reading, questions and
-// section issues of its own.
+// MOCK_READING — the read-audit projection of the v1 customer-support world
+// (MOCK_WORLD, world.js). It truncates the rule strings for display and drops
+// tool descriptions/args; world.js reads the tool names off it at full fidelity
+// so a rename here fails the scenario tests loudly rather than drifting.
+//
+// This is the sole surviving fragment of the old designer read-audit fixtures
+// (preflightFails.js, since deleted with the mock read-audit UI). It is kept
+// only because MOCK_WORLD derives its tool set from it; the failing-check
+// questions/section-issues that lived alongside it are gone — the source panels
+// now render the real preflight `checks[]` inline.
 import { ORIGIN_ID } from "src/sections/simulate/environments/buildEnvironment/provenance.constants";
-import {
-  MOCK_SECTION_ISSUES as SECTION_ISSUES,
-  READ_AUDIT_COPY,
-} from "src/sections/simulate/environments/buildEnvironment/readAudit.constants";
 
 // 12 tools — the first four read from config, the rest from the call-graph.
 export const MOCK_READING = {
@@ -49,33 +48,3 @@ export const MOCK_READING = {
     { name: "escalate on 2× refusal", origin: ORIGIN_ID.INFERRED },
   ],
 };
-
-// buildQuestions for the derivedEnvironment, capped at 2 (the receipt is an
-// audit, not an intake form). The last tool drives the first question.
-export const MOCK_QUESTIONS = [
-  {
-    id: "tool-side-effects",
-    title: "Does escalate_to_human change data?",
-    why: "It's called from your code but never described in the prompt. Your answer decides whether a scenario may trigger real side-effects.",
-    kind: "choice",
-    options: [
-      { id: "read", label: "Read-only" },
-      { id: "write", label: "Writes to state" },
-      { id: "escalate", label: "Escalates externally" },
-    ],
-  },
-  {
-    id: "policy-enforcement",
-    title:
-      "Are the policy values enforced in your backend, or only stated in the prompt?",
-    why: "We can see the values, not where they're enforced. A rule we only infer is graded more softly than a hard one.",
-    kind: "boolean",
-  },
-];
-
-// The mock section gaps live in the constants module so ReadAudit's URL-forced
-// demo states and this overlay share one source. Re-exported for the overlay.
-export const MOCK_SECTION_ISSUES = SECTION_ISSUES;
-
-// Reason shown on the demo hard-fail page (the designer's default copy).
-export const MOCK_HARDFAIL_REASON = READ_AUDIT_COPY.hardfailDefault;

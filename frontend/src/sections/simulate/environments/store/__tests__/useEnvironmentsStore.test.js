@@ -60,7 +60,6 @@ describe("useEnvironmentsStore", () => {
       expect(s.buildStage).toBeNull();
       expect(s.envId).toBeNull();
       expect(s.readerAnswers).toBeNull();
-      expect(s.retriedSections).toEqual([]);
       expect(s.buildProgress).toEqual({
         done: [],
         running: false,
@@ -105,24 +104,6 @@ describe("useEnvironmentsStore", () => {
       expect(s.draft).toEqual({ kind: "repo" });
     });
 
-    it("retrySection() dedup-appends", () => {
-      useEnvironmentsStore.getState().retrySection("rules");
-      useEnvironmentsStore.getState().retrySection("rules");
-      expect(useEnvironmentsStore.getState().retriedSections).toEqual([
-        "rules",
-      ]);
-    });
-
-    it("retryAll() marks every section retried", () => {
-      useEnvironmentsStore.getState().retryAll();
-      expect(useEnvironmentsStore.getState().retriedSections).toEqual([
-        "tools",
-        "rules",
-        "data",
-        "behavior",
-      ]);
-    });
-
     it("setBuildProgress() merges the patch", () => {
       useEnvironmentsStore
         .getState()
@@ -139,7 +120,6 @@ describe("useEnvironmentsStore", () => {
       useEnvironmentsStore
         .getState()
         .acceptAudit({ envId: "env-1", answers: { q: {} } });
-      useEnvironmentsStore.getState().retryAll();
 
       useEnvironmentsStore.getState().reset();
 
@@ -148,7 +128,6 @@ describe("useEnvironmentsStore", () => {
       expect(s.buildStage).toBeNull();
       expect(s.envId).toBeNull();
       expect(s.readerAnswers).toBeNull();
-      expect(s.retriedSections).toEqual([]);
       expect(s.buildProgress).toEqual({
         done: [],
         running: false,
@@ -266,7 +245,6 @@ describe("useEnvironmentsStore", () => {
       useEnvironmentsStore
         .getState()
         .acceptAudit({ envId: "env-1", answers: { q: {} } });
-      useEnvironmentsStore.getState().retryAll();
       useEnvironmentsStore
         .getState()
         .adoptEnvironment({ id: "env-a", name: "A" }, "t0");
@@ -280,7 +258,6 @@ describe("useEnvironmentsStore", () => {
       expect(s.buildStage).toBeNull();
       expect(s.envId).toBeNull();
       expect(s.readerAnswers).toBeNull();
-      expect(s.retriedSections).toEqual([]);
       expect(s.buildProgress).toEqual({
         done: [],
         running: false,
@@ -322,6 +299,49 @@ describe("useEnvironmentsStore", () => {
       ]);
       expect(persisted.state.draft).toEqual({ kind: "repo" });
       expect(persisted.state.workspaceEnvs["env-a"].name).toBe("A");
+    });
+
+    it("never persists the one-shot build ticket", () => {
+      useEnvironmentsStore
+        .getState()
+        .beginBuild({ draft: { kind: "repo" }, preflight: { ready_to_submit: true } });
+
+      const persisted = JSON.parse(
+        sessionStorage.getItem("simulate-environments-draft"),
+      );
+      expect("pendingBuild" in persisted.state).toBe(false);
+    });
+  });
+
+  describe("build ticket (beginBuild / consumePendingBuild)", () => {
+    it("stages the ticket and mirrors the draft into the persisted slot", () => {
+      const draft = { kind: "repo", value: "acme/bot" };
+      const preflight = { ready_to_submit: true, state: "connected" };
+      useEnvironmentsStore.getState().beginBuild({ draft, preflight });
+
+      const s = useEnvironmentsStore.getState();
+      expect(s.pendingBuild).toEqual({ draft, preflight });
+      expect(s.draft).toBe(draft);
+    });
+
+    it("consumePendingBuild returns the ticket once, then null", () => {
+      const ticket = { draft: { kind: "repo" }, preflight: {} };
+      useEnvironmentsStore.getState().beginBuild(ticket);
+
+      expect(useEnvironmentsStore.getState().consumePendingBuild()).toMatchObject({
+        draft: { kind: "repo" },
+      });
+      // Cleared — a second read (a refresh/remount) finds nothing to build.
+      expect(useEnvironmentsStore.getState().pendingBuild).toBeNull();
+      expect(useEnvironmentsStore.getState().consumePendingBuild()).toBeNull();
+    });
+
+    it("resetEntryState clears a staged ticket", () => {
+      useEnvironmentsStore
+        .getState()
+        .beginBuild({ draft: { kind: "repo" }, preflight: {} });
+      useEnvironmentsStore.getState().resetEntryState();
+      expect(useEnvironmentsStore.getState().pendingBuild).toBeNull();
     });
   });
 

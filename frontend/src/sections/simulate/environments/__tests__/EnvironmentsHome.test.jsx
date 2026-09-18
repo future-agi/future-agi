@@ -13,20 +13,40 @@ import {
 
 vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
 
-vi.mock("src/api/harness/harness", () => ({ listHarnessJobs: vi.fn() }));
+vi.mock("src/api/simulate-environments/harnessEnvironments", () => ({
+  listHarnessEnvironments: vi.fn(),
+  deleteHarnessEnvironment: vi.fn(),
+}));
 
-const { listHarnessJobs } = await import("src/api/harness/harness");
+const { listHarnessEnvironments } = await import(
+  "src/api/simulate-environments/harnessEnvironments"
+);
 const { default: EnvironmentsHome } = await import("../EnvironmentsHome");
 
-// The My Environments tab now reads from the harness-jobs list; one job whose
-// name is a table-only value proves the list rendered.
-const HARNESS_JOBS = [
-  {
-    job: { job_id: "job-billing", metadata: { name: "Billing Chat Agent" } },
-    status: { stage: "running", updated_at: "2026-09-15T11:00:00Z" },
-    credentials: { detected_connectors: ["http"] },
-  },
-];
+// The My Environments tab reads from the harness-environments list; one row
+// whose name is a table-only value proves the list rendered.
+const HARNESS_ENVS = {
+  count: 1,
+  next: null,
+  previous: null,
+  total_pages: 1,
+  current_page: 1,
+  results: [
+    {
+      id: "job-billing",
+      name: "Billing Chat Agent",
+      description: null,
+      source_kind: "github",
+      agent_type: "chat",
+      status: "running",
+      stage: "running",
+      scenario_count: 0,
+      tools_count: null,
+      last_updated: "2026-09-15T11:00:00Z",
+      created_at: "2026-09-14T09:00:00Z",
+    },
+  ],
+};
 
 const theme = createTheme({
   palette: palette("light"),
@@ -64,8 +84,8 @@ describe("EnvironmentsHome", () => {
   beforeEach(() => {
     resetEnvironmentsStore();
     lastSearch = "";
-    listHarnessJobs.mockReset();
-    listHarnessJobs.mockResolvedValue(HARNESS_JOBS);
+    listHarnessEnvironments.mockReset();
+    listHarnessEnvironments.mockResolvedValue(HARNESS_ENVS);
   });
 
   it("defaults to the Build environment tab with the matrix", () => {

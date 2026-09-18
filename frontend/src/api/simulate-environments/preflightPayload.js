@@ -109,7 +109,14 @@ function repoPayload(draft, name) {
     payload: {
       ...envelope(draft, name),
       source,
-      agent: { connector: PREFLIGHT_CONNECTOR.AUTO, config: {}, secret_refs: {} },
+      // `auto` still lets ALK detect the connector from the source; the exchanged
+      // credential refs (env values + secret files) ride along so a detected
+      // provider's `credentials_present` check can pass.
+      agent: {
+        connector: PREFLIGHT_CONNECTOR.AUTO,
+        config: {},
+        secret_refs: draft.secret_refs || {},
+      },
     },
   };
 }
@@ -126,7 +133,10 @@ function platformPayload(draft, name) {
         connector,
         mode: "connect_only",
         config: { [idKey]: draft.agentId },
-        secret_refs: {},
+        // The plaintext key never reaches here — the handoff exchanges it for an
+        // opaque `{alias: reference}` map before the draft is persisted. Absent
+        // (a provider with no single-key exchange), the schema default applies.
+        secret_refs: draft.secret_refs || {},
       },
     },
   };
@@ -140,7 +150,14 @@ function uploadPayload(draft, name) {
     payload: {
       ...envelope(draft, name),
       source: { kind: "archive", archive_artifact_id: draft.archive_artifact_id },
-      agent: { connector: PREFLIGHT_CONNECTOR.AUTO, config: {}, secret_refs: {} },
+      // `auto` still lets ALK detect the connector from the source; the exchanged
+      // credential refs (env values + secret files) ride along so a detected
+      // provider's `credentials_present` check can pass.
+      agent: {
+        connector: PREFLIGHT_CONNECTOR.AUTO,
+        config: {},
+        secret_refs: draft.secret_refs || {},
+      },
     },
   };
 }
