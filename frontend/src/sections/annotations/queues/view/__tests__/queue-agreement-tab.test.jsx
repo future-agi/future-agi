@@ -36,6 +36,40 @@ describe("QueueAgreementTab — judge vs human section", () => {
     ).toBeInTheDocument();
   });
 
+  test("prompts to complete the queue when evaluator is linked but status is not completed", () => {
+    mockAgreement();
+
+    render(
+      <QueueAgreementTab
+        queueId="q-1"
+        queue={{ custom_eval_config: "cfg-1", status: "in_progress" }}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        "Mark the queue as completed to compare judge scores against human labels.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  test("prompts no comparable data when evaluator is linked and queue is completed", () => {
+    mockAgreement();
+
+    render(
+      <QueueAgreementTab
+        queueId="q-1"
+        queue={{ custom_eval_config: "cfg-1", status: "completed" }}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        "No comparable data yet: judge scores and human labels have no overlapping items to compare for this queue.",
+      ),
+    ).toBeInTheDocument();
+  });
+
   test("renders judge-vs-human overall agreement when data is present", () => {
     mockAgreement({
       judge_vs_human: {
