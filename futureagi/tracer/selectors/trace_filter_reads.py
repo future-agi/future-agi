@@ -1653,21 +1653,12 @@ def read_bounded_filter_page(
                     max_bytes_to_read_cap,
                 )
             if kind in {"root_time_discovery", "population_time_discovery"}:
-                if (
-                    kind == "population_time_discovery"
-                    and discovery_windows
-                    and active_end - active_start > timedelta(days=1)
-                ):
-                    # Thin indexed key proofs over a broad interval are CPU
-                    # work, not the small root/time-only metadata probes. An
-                    # explicit caller worker budget remains an upper bound.
-                    population_workers = _POPULATION_TIME_DISCOVERY_MAX_THREADS
-                    explicit_workers = (read_settings or {}).get("max_threads")
-                    if explicit_workers is not None and int(explicit_workers) > 0:
-                        population_workers = min(
-                            population_workers, int(explicit_workers)
-                        )
-                    settings["max_threads"] = population_workers
+                if kind == "population_time_discovery":
+                    # Indexed key-presence proofs are CPU work over pruned
+                    # granules, not the small root/time-only metadata probes.
+                    # The probe owns its worker budget: a caller's page-read
+                    # worker setting sizes hydration, not this proof.
+                    settings["max_threads"] = _POPULATION_TIME_DISCOVERY_MAX_THREADS
                 else:
                     settings["max_threads"] = min(int(settings["max_threads"]), 1)
                 if kind == "root_time_discovery":
