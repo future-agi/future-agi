@@ -6,8 +6,8 @@ so there is no write service.)
 
 Scope classes:
   [explicit]   — takes ``project_id`` and filters on it.
-  [transitive] — scoped via ``cluster_uuid`` / ``trace_uuids`` only. ErrorClusterTraces,
-                 EvalLogger and the TraceScanIssue rollups have NO project FK, so they
+  [transitive] — scoped via ``cluster_uuid`` / ``trace_uuids`` only. ErrorClusterTraces
+                 and EvalLogger have NO direct project FK, so they
                  are tenant-safe ONLY when the caller passes a project-validated
                  ``cluster_uuid`` (the agent validates ownership in
                  ``resolve_cluster_context`` / ``__init__``). An unvalidated id leaks
@@ -22,15 +22,86 @@ read FK *columns* (``*_id``), never PG ``Trace`` joins (collector traces have no
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
+from types import SimpleNamespace
 
-from django.db.models import Count, Q
+from django.db.models import Count, F, Q
+from django.db.models.functions import Coalesce
 
 from ee.agenthub.cluster_rca.types import CountBucket
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.observation_span import EvalLogger
 from tracer.models.project_version import ProjectVersion
 from tracer.models.trace_error_analysis import ErrorClusterTraces, TraceErrorGroup
-from tracer.models.trace_scan import TraceScanIssue
+from tracer.models.trace_investigation import TraceInvestigationFinding
+
+
+@dataclass(frozen=True)
+class InvestigationIssue:
+    """Expose a v2 finding through the RCA agent's existing issue tool shape."""
+
+    id: uuid.UUID
+    category: str | None
+    group: str | None
+    fix_layer: str | None
+    confidence: str | None
+    brief: str
+    scan_result: SimpleNamespace
+    cluster: TraceErrorGroup
+    cluster_id: uuid.UUID
+
+
+def _current_findings(cluster_uuid: str, trace_uuids: list[str] | None = None):
+    """Only grouped findings from the active report for this cluster."""
+    qs = TraceInvestigationFinding.objects.filter(
+        cluster_id=cluster_uuid,
+        cluster__deleted=False,
+        deleted=False,
+        report__deleted=False,
+        report__is_current=True,
+        report__project_id=F("cluster__project_id"),
+    )
+    if trace_uuids is not None:
+        qs = qs.filter(report__trace_id__in=trace_uuids)
+    return qs
+
+
+def _as_issue(finding: TraceInvestigationFinding) -> InvestigationIssue:
+    return InvestigationIssue(
+        id=finding.id,
+        category=finding.category or finding.kind,
+        group=finding.group_label or finding.cluster.issue_group,
+        fix_layer=finding.fix_layer or finding.cluster.fix_layer,
+        confidence=finding.confidence,
+        brief=finding.statement,
+        scan_result=SimpleNamespace(trace_id=finding.report.trace_id),
+        cluster=finding.cluster,
+        cluster_id=finding.cluster_id,
+    )
+
+
+_FINDING_FIELDS = {
+    "category": Coalesce("category", "kind"),
+    "group": Coalesce("group_label", "cluster__issue_group"),
+    "fix_layer": Coalesce("fix_layer", "cluster__fix_layer"),
+    "confidence": F("confidence"),
+}
+
+
+def current_finding_ids_by_trace(
+    cluster_uuid: str, trace_uuids: list[str]
+) -> dict[str, uuid.UUID]:
+    """One active v2 finding per member trace, for RCA provenance links."""
+    rows = (
+        _current_findings(cluster_uuid, trace_uuids)
+        .order_by("report__trace_id", "ordinal", "id")
+        .values_list("report__trace_id", "id")
+    )
+    result: dict[str, uuid.UUID] = {}
+    for trace_id, finding_id in rows:
+        result.setdefault(str(trace_id), finding_id)
+    return result
+
 
 # ── TraceErrorGroup (the cluster) ────────────────────────────────────────────
 
@@ -41,9 +112,9 @@ def resolve_cluster_context(cluster_ref: str, project_id: str) -> dict | None:
     enforced on BOTH branches (by id and by label), so a foreign-tenant cluster
     can't resolve and have the agent adopt that project."""
     ref = str(cluster_ref)
-    qs = TraceErrorGroup.objects.filter(
-        project_id=project_id, deleted=False
-    ).only("id", "cluster_id", "project_id")
+    qs = TraceErrorGroup.objects.filter(project_id=project_id, deleted=False).only(
+        "id", "cluster_id", "project_id"
+    )
     try:
         uuid.UUID(ref)
         row = qs.filter(id=ref).first()
@@ -64,13 +135,28 @@ def get_cluster_for_read(cluster_uuid: str, project_id: str) -> TraceErrorGroup 
     return (
         TraceErrorGroup.objects.select_related("eval_config")
         .only(
-            "id", "cluster_id", "source", "title", "status",
-            "issue_group", "issue_category", "fix_layer", "priority",
-            "error_count", "unique_traces", "total_events",
-            "first_seen", "last_seen", "combined_impact",
-            "combined_description", "trace_impact",
-            "external_issue_url", "external_issue_id",
-            "eval_config__id", "eval_config__name", "eval_target_type",
+            "id",
+            "cluster_id",
+            "source",
+            "title",
+            "status",
+            "issue_group",
+            "issue_category",
+            "fix_layer",
+            "priority",
+            "error_count",
+            "unique_traces",
+            "total_events",
+            "first_seen",
+            "last_seen",
+            "combined_impact",
+            "combined_description",
+            "trace_impact",
+            "external_issue_url",
+            "external_issue_id",
+            "eval_config__id",
+            "eval_config__name",
+            "eval_target_type",
             "success_trace_id",
         )
         .filter(id=cluster_uuid, project_id=project_id, deleted=False)
@@ -110,12 +196,12 @@ def cluster_memberships(
     cluster_uuid: str, trace_uuids: list[str]
 ) -> list[ErrorClusterTraces]:
     """[transitive] Junction rows for the given traces, newest-first, for
-    provenance. Caller reads trace_id / scan_issue_id / eval_logger_id / created_at."""
+    provenance. Caller reads trace_id / eval_logger_id / created_at."""
     return list(
         ErrorClusterTraces.objects.filter(
             cluster_id=cluster_uuid, trace_id__in=trace_uuids, deleted=False
         )
-        .only("trace_id", "scan_issue_id", "eval_logger_id", "created_at")
+        .only("trace_id", "eval_logger_id", "created_at")
         .order_by("-created_at")
     )
 
@@ -132,7 +218,7 @@ def count_cluster_eval_members(cluster_uuid: str) -> int:
     )
 
 
-# ── TraceScanIssue (scanner findings — transitive scope) ─────────────────────
+# ── Canonical investigation findings (Omega and backfilled legacy scans) ─────
 
 
 def count_scan_issue_traces_by(
@@ -141,13 +227,12 @@ def count_scan_issue_traces_by(
     """[transitive] DISTINCT-trace counts grouped by ``field_name`` (trace_count
     metric over scan issues)."""
     rows = (
-        TraceScanIssue.objects.filter(
-            cluster_id=cluster_uuid, deleted=False, scan_result__trace_id__in=trace_uuids
-        )
-        .values(field_name)
-        .annotate(c=Count("scan_result__trace_id", distinct=True))
+        _current_findings(cluster_uuid, trace_uuids)
+        .annotate(bucket_key=_FINDING_FIELDS[field_name])
+        .values("bucket_key")
+        .annotate(c=Count("report__trace_id", distinct=True))
     )
-    return [CountBucket(key=r[field_name], count=r["c"]) for r in rows]
+    return [CountBucket(key=r["bucket_key"], count=r["c"]) for r in rows]
 
 
 def count_scan_issues_by(
@@ -155,82 +240,74 @@ def count_scan_issues_by(
 ) -> tuple[list[CountBucket], int]:
     """[transitive] ISSUE counts grouped by ``field_name`` + the total issue count
     (scan_issue_count metric)."""
-    qs = TraceScanIssue.objects.filter(
-        cluster_id=cluster_uuid, deleted=False, scan_result__trace_id__in=trace_uuids
-    )
+    qs = _current_findings(cluster_uuid, trace_uuids)
     total = qs.count()
-    rows = qs.values(field_name).annotate(c=Count("id"))
-    return [CountBucket(key=r[field_name], count=r["c"]) for r in rows], total
+    rows = (
+        qs.annotate(bucket_key=_FINDING_FIELDS[field_name])
+        .values("bucket_key")
+        .annotate(c=Count("id"))
+    )
+    return [CountBucket(key=r["bucket_key"], count=r["c"]) for r in rows], total
 
 
 def list_cluster_scan_issues(
     cluster_uuid: str, trace_uuids: list[str], offset: int, limit: int
-) -> tuple[list[TraceScanIssue], int]:
-    """[transitive] A page of the cluster's scan issues (newest-first) + total.
-    select_related('scan_result') — caller reads ``i.scan_result.trace_id``."""
-    qs = TraceScanIssue.objects.filter(
-        cluster_id=cluster_uuid, scan_result__trace_id__in=trace_uuids, deleted=False
-    )
+) -> tuple[list[InvestigationIssue], int]:
+    """[transitive] A page of scanner findings (newest-first) + total.
+
+    Both Omega and backfilled legacy scans read the active normalized finding.
+    """
+    qs = _current_findings(cluster_uuid, trace_uuids)
     total = qs.count()
-    rows = list(
-        qs.select_related("scan_result")
-        .only(
-            "id", "category", "group", "fix_layer", "confidence", "brief",
-            "scan_result__id", "scan_result__trace_id",
-        )
-        .order_by("-created_at")[offset : offset + limit]
-    )
-    return rows, total
+    rows = qs.select_related("cluster", "report").order_by("-created_at", "-id")[
+        offset : offset + limit
+    ]
+    return [_as_issue(f) for f in rows], total
 
 
 def search_cluster_scan_issues(
     cluster_uuid: str, trace_uuids: list[str], query: str, limit: int
-) -> list[TraceScanIssue]:
+) -> list[InvestigationIssue]:
     """[transitive] Scan issues matching ``query`` (brief / category / group),
-    capped at ``limit + 1`` for has_more. select_related('scan_result')."""
-    q = (
-        Q(brief__icontains=query)
-        | Q(category__icontains=query)
-        | Q(group__icontains=query)
-    )
-    return list(
-        TraceScanIssue.objects.filter(
-            cluster_id=cluster_uuid,
-            scan_result__trace_id__in=trace_uuids,
-            deleted=False,
+    capped at ``limit + 1`` for has_more."""
+    rows = (
+        _current_findings(cluster_uuid, trace_uuids)
+        .filter(
+            Q(statement__icontains=query)
+            | Q(kind__icontains=query)
+            | Q(category__icontains=query)
+            | Q(group_label__icontains=query)
+            | Q(cluster__issue_group__icontains=query)
         )
-        .filter(q)
-        .select_related("scan_result")
-        .only(
-            "id", "category", "group", "fix_layer", "brief",
-            "scan_result__id", "scan_result__trace_id",
-        )[: limit + 1]
+        .select_related("cluster", "report")
+        .order_by("-created_at", "-id")[: limit + 1]
     )
+    return [_as_issue(f) for f in rows]
 
 
 def count_cluster_scan_issues(cluster_uuid: str, trace_uuids: list[str]) -> int:
     """[transitive] Total scan issues in the cluster scope (manifest count)."""
-    return TraceScanIssue.objects.filter(
-        cluster_id=cluster_uuid, deleted=False, scan_result__trace_id__in=trace_uuids
-    ).count()
+    return _current_findings(cluster_uuid, trace_uuids).count()
 
 
 def get_scan_issue_for_read(
     issue_uuid: str, project_id: str
-) -> TraceScanIssue | None:
-    """[explicit] One scan issue for ``read(scan_issue)``, project-scoped via
-    scan_result.project (TraceScanIssue has no direct project FK). ``None`` if absent.
-    select_related('scan_result','cluster')."""
-    return (
-        TraceScanIssue.objects.select_related("scan_result", "cluster")
-        .only(
-            "id", "category", "group", "fix_layer", "confidence", "brief",
-            "scan_result__id", "scan_result__trace_id",
-            "cluster__id", "cluster__cluster_id",
+) -> InvestigationIssue | None:
+    """[explicit] Read one finding by ID, with an explicit project guard."""
+    finding = (
+        TraceInvestigationFinding.objects.filter(
+            id=issue_uuid,
+            deleted=False,
+            cluster__deleted=False,
+            cluster__project_id=project_id,
+            report__project_id=project_id,
+            report__deleted=False,
+            report__is_current=True,
         )
-        .filter(id=issue_uuid, scan_result__project_id=project_id, deleted=False)
+        .select_related("cluster", "report")
         .first()
     )
+    return _as_issue(finding) if finding is not None else None
 
 
 # ── EvalLogger (eval results — no project FK; transitive via scope_q) ─────────
@@ -257,9 +334,16 @@ def list_cluster_eval_results(
     rows = list(
         qs.select_related("custom_eval_config")
         .only(
-            "id", "trace_id", "output_str", "output_float", "output_bool",
-            "output_str_list", "error", "eval_explanation",
-            "custom_eval_config__id", "custom_eval_config__name",
+            "id",
+            "trace_id",
+            "output_str",
+            "output_float",
+            "output_bool",
+            "output_str_list",
+            "error",
+            "eval_explanation",
+            "custom_eval_config__id",
+            "custom_eval_config__name",
         )
         .order_by("-created_at")[offset : offset + limit]
     )
@@ -277,9 +361,15 @@ def trace_eval_results(trace_uuid: str) -> list[EvalLogger]:
         EvalLogger.objects.filter(trace_id=trace_uuid, deleted=False)
         .select_related("custom_eval_config")
         .only(
-            "id", "output_str", "output_float", "output_bool", "output_str_list",
-            "eval_explanation", "error",
-            "custom_eval_config__id", "custom_eval_config__name",
+            "id",
+            "output_str",
+            "output_float",
+            "output_bool",
+            "output_str_list",
+            "eval_explanation",
+            "error",
+            "custom_eval_config__id",
+            "custom_eval_config__name",
         )
     )
 
@@ -292,11 +382,21 @@ def get_eval_result_for_read(scope_q: Q, eval_uuid: str) -> EvalLogger | None:
         EvalLogger.objects.filter(scope_q)
         .select_related("custom_eval_config")
         .only(
-            "id", "trace_id", "observation_span_id", "target_type",
-            "output_str", "output_float", "output_bool", "output_str_list",
-            "eval_explanation", "error", "error_message",
-            "results_tags", "eval_tags",
-            "custom_eval_config__id", "custom_eval_config__name",
+            "id",
+            "trace_id",
+            "observation_span_id",
+            "target_type",
+            "output_str",
+            "output_float",
+            "output_bool",
+            "output_str_list",
+            "eval_explanation",
+            "error",
+            "error_message",
+            "results_tags",
+            "eval_tags",
+            "custom_eval_config__id",
+            "custom_eval_config__name",
         )
         .filter(id=eval_uuid, deleted=False)
         .first()
@@ -306,16 +406,21 @@ def get_eval_result_for_read(scope_q: Q, eval_uuid: str) -> EvalLogger | None:
 # ── Single explicit-scope reads ──────────────────────────────────────────────
 
 
-def get_eval_config_for_read(
-    cfg_uuid: str, project_id: str
-) -> CustomEvalConfig | None:
+def get_eval_config_for_read(cfg_uuid: str, project_id: str) -> CustomEvalConfig | None:
     """[explicit] One eval config for ``read(eval_config)``. ``None`` if absent.
     select_related('eval_template')."""
     return (
         CustomEvalConfig.objects.select_related("eval_template")
         .only(
-            "id", "name", "model", "config", "mapping", "filters",
-            "error_localizer", "eval_template__id", "eval_template__name",
+            "id",
+            "name",
+            "model",
+            "config",
+            "mapping",
+            "filters",
+            "error_localizer",
+            "eval_template__id",
+            "eval_template__name",
         )
         .filter(id=cfg_uuid, project_id=project_id, deleted=False)
         .first()

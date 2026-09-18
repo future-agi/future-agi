@@ -40,7 +40,12 @@ from tracer.models.trace_error_analysis import (
     ErrorClusterTraces,
     TraceErrorGroup,
 )
-from tracer.models.trace_scan import TraceScanIssue, TraceScanResult, TraceScanStatus
+from tracer.models.trace_investigation import (
+    TraceInvestigationAttempt,
+    TraceInvestigationFinding,
+    TraceInvestigationJob,
+    TraceInvestigationReport,
+)
 
 
 @pytest.fixture
@@ -54,12 +59,18 @@ def tenants(db):
     def _project(name):
         org = Organization.objects.create(name=f"{name} Org")
         ws = Workspace.objects.create(
-            name=f"{name} WS", organization=org, is_default=True,
-            is_active=True, created_by=user,
+            name=f"{name} WS",
+            organization=org,
+            is_default=True,
+            is_active=True,
+            created_by=user,
         )
         return Project.objects.create(
-            name=f"{name} Project", organization=org, workspace=ws,
-            model_type=AIModel.ModelTypes.GENERATIVE_LLM, trace_type="observe",
+            name=f"{name} Project",
+            organization=org,
+            workspace=ws,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
         )
 
     home, foreign = _project("Home"), _project("Foreign")
@@ -70,20 +81,106 @@ def tenants(db):
 def _cluster(project, label):
     now = timezone.now()
     return TraceErrorGroup.objects.create(
-        project=project, cluster_id=label, error_type=f"{label}-err",
-        source=ClusterSource.SCANNER, title=f"{label} issue",
-        first_seen=now, last_seen=now, error_count=1, unique_traces=1,
+        project=project,
+        cluster_id=label,
+        error_type=f"{label}-err",
+        source=ClusterSource.SCANNER,
+        title=f"{label} issue",
+        first_seen=now,
+        last_seen=now,
+        error_count=1,
+        unique_traces=1,
     )
 
 
 def _scan_issue(project, cluster, *, group="Tool Failures"):
-    sr = TraceScanResult.objects.create(
-        trace_id=str(uuid.uuid4()), project_id=project.id,
-        status=TraceScanStatus.COMPLETED,
+    trace_id = uuid.uuid4()
+    report = TraceInvestigationReport.objects.create(
+        organization=project.organization,
+        workspace=project.workspace,
+        project=project,
+        trace_id=trace_id,
+        source="legacy_scan",
+        source_record_id=uuid.uuid4(),
+        recorded_at=timezone.now(),
+        is_current=True,
+        execution_status="completed",
+        grouping_status="completed",
+        has_issues=True,
     )
-    return TraceScanIssue.objects.create(
-        scan_result=sr, cluster=cluster, category="cat", group=group,
-        fix_layer="Tools", brief="b",
+    return TraceInvestigationFinding.objects.create(
+        id=uuid.uuid4(),
+        report=report,
+        finding_id="legacy-1",
+        ordinal=0,
+        cluster=cluster,
+        category="cat",
+        group_label=group,
+        fix_layer="Tools",
+        statement="b",
+    )
+
+
+def _investigation_finding(project, cluster, *, trace_id=None):
+    trace_id = trace_id or uuid.uuid4()
+    now = timezone.now()
+    job = TraceInvestigationJob.objects.create(
+        organization=project.organization,
+        workspace=project.workspace,
+        project=project,
+        trace_id=trace_id,
+        root_span_id="root",
+        root_end_time=now,
+        not_before=now,
+    )
+    attempt = TraceInvestigationAttempt.objects.create(
+        job=job,
+        generation=1,
+        worker_id="test",
+        engine_version="v2",
+        lease_token_digest="a" * 64,
+        lease_expires_at=now,
+        read_cutoff=now,
+        memory_snapshot_id="test",
+        memory_digest="sha256:" + "b" * 64,
+    )
+    report = TraceInvestigationReport.objects.create(
+        organization=project.organization,
+        workspace=project.workspace,
+        project=project,
+        trace_id=trace_id,
+        source="omega",
+        recorded_at=now,
+        is_current=True,
+        job=job,
+        attempt=attempt,
+        idempotency_key=str(uuid.uuid4()),
+        result_digest="sha256:" + "c" * 64,
+        contract_version="omega-investigation/v1",
+        evidence_digest="sha256:" + "d" * 64,
+        execution_status="completed",
+        outcome="failure",
+        coverage_scope="trace",
+        observed_span_count=1,
+        read_complete=True,
+        future_arrivals_known=False,
+        model_calls=1,
+        input_tokens=1,
+        output_tokens=1,
+        cost_status="known",
+        grouping_status="completed",
+    )
+    job.current_report = report
+    job.save(update_fields=["current_report"])
+    return TraceInvestigationFinding.objects.create(
+        id=uuid.uuid4(),
+        report=report,
+        finding_id="finding-1",
+        ordinal=0,
+        kind="unmet_requirement",
+        statement="Refund amount was wrong",
+        recovery="not_observed",
+        cluster=cluster,
     )
 
 
@@ -101,8 +198,12 @@ class TestExplicitScopeRejectsForeignProject:
         assert selectors.resolve_cluster_context("FOREIGN-1", str(home.id)) is None
         # Within its own project it resolves, both forms — proving the None
         # above is the project filter, not a broken lookup.
-        assert selectors.resolve_cluster_context(str(fc.id), str(foreign.id))["uuid"] == str(fc.id)
-        assert selectors.resolve_cluster_context("FOREIGN-1", str(foreign.id))["uuid"] == str(fc.id)
+        assert selectors.resolve_cluster_context(str(fc.id), str(foreign.id))[
+            "uuid"
+        ] == str(fc.id)
+        assert selectors.resolve_cluster_context("FOREIGN-1", str(foreign.id))[
+            "uuid"
+        ] == str(fc.id)
 
     def test_resolve_cluster_context_none_project_fails_closed(self, tenants):
         # project_id is now required; the cross-tenant None branch was deleted.
@@ -120,12 +221,14 @@ class TestExplicitScopeRejectsForeignProject:
         assert selectors.get_cluster_for_read(str(fc.id), str(foreign.id)).id == fc.id
 
     def test_get_scan_issue_for_read_foreign_project(self, tenants):
-        # [explicit] via scan_result__project_id (TraceScanIssue has no direct
-        # project FK) — nik13 flagged this one as untested.
+        # The normalized finding resolves only within its report's project.
         home, foreign = tenants
         issue = _scan_issue(foreign, _cluster(foreign, "FOREIGN-3"))
         assert selectors.get_scan_issue_for_read(str(issue.id), str(home.id)) is None
-        assert selectors.get_scan_issue_for_read(str(issue.id), str(foreign.id)).id == issue.id
+        assert (
+            selectors.get_scan_issue_for_read(str(issue.id), str(foreign.id)).id
+            == issue.id
+        )
 
     def test_get_version_for_read_foreign_project(self, tenants):
         home, foreign = tenants
@@ -162,7 +265,7 @@ class TestCountBucketContract:
         home, _ = tenants
         hc = _cluster(home, "HOME-2")
         issue = _scan_issue(home, hc, group="Tool Failures")
-        trace_id = str(issue.scan_result.trace_id)
+        trace_id = str(issue.report.trace_id)
         buckets, total = selectors.count_scan_issues_by(str(hc.id), [trace_id], "group")
         assert total == 1
         assert buckets == [{"key": "Tool Failures", "count": 1}]
@@ -170,6 +273,67 @@ class TestCountBucketContract:
             assert set(b) == {"key", "count"}
             assert isinstance(b["count"], int)
             assert b["key"] is None or isinstance(b["key"], str)
+
+
+@pytest.mark.django_db
+class TestInvestigationFindingAdapter:
+    def test_v2_findings_feed_rca_issue_tools(self, tenants):
+        home, foreign = tenants
+        cluster = _cluster(home, "V2-1")
+        cluster.issue_group = "Refunds"
+        cluster.fix_layer = "Tools"
+        cluster.save(update_fields=["issue_group", "fix_layer"])
+        finding = _investigation_finding(home, cluster)
+        trace_id = str(finding.report.job.trace_id)
+        foreign_finding = _investigation_finding(foreign, _cluster(foreign, "OTHER"))
+
+        rows, total = selectors.list_cluster_scan_issues(
+            str(cluster.id), [trace_id], 0, 10
+        )
+        assert total == 1
+        assert rows[0].id == finding.id
+        assert rows[0].brief == "Refund amount was wrong"
+        assert str(rows[0].scan_result.trace_id) == trace_id
+        assert selectors.count_cluster_scan_issues(str(cluster.id), [trace_id]) == 1
+        assert selectors.count_scan_issues_by(str(cluster.id), [trace_id], "group") == (
+            [{"key": "Refunds", "count": 1}],
+            1,
+        )
+        assert selectors.count_scan_issue_traces_by(
+            str(cluster.id), [trace_id], "category"
+        ) == [
+            {"key": "unmet_requirement", "count": 1},
+        ]
+        assert [
+            r.id
+            for r in selectors.search_cluster_scan_issues(
+                str(cluster.id), [trace_id], "amount", 10
+            )
+        ] == [finding.id]
+        assert (
+            selectors.get_scan_issue_for_read(str(finding.id), str(home.id)).id
+            == finding.id
+        )
+        assert (
+            selectors.get_scan_issue_for_read(str(finding.id), str(foreign.id)) is None
+        )
+        assert (
+            selectors.get_scan_issue_for_read(str(foreign_finding.id), str(home.id))
+            is None
+        )
+
+    def test_superseded_report_is_not_exposed(self, tenants):
+        home, _ = tenants
+        cluster = _cluster(home, "V2-2")
+        finding = _investigation_finding(home, cluster)
+        trace_id = str(finding.report.job.trace_id)
+        finding.report.is_current = False
+        finding.report.save(update_fields=["is_current"])
+
+        assert selectors.list_cluster_scan_issues(
+            str(cluster.id), [trace_id], 0, 10
+        ) == ([], 0)
+        assert selectors.get_scan_issue_for_read(str(finding.id), str(home.id)) is None
 
 
 @pytest.mark.django_db
