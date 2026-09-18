@@ -29,6 +29,30 @@ from tracer.utils.filter_operators import (
 _MAX_ATTRIBUTE_KEY_UTF8_BYTES = 4096
 _MAX_LEGACY_ASCII_BLOOM_VARIANTS = 256
 
+# ClickHouse parses at most ``max_query_size`` bytes of a statement (262144 by
+# default) and rejects the whole statement with SYNTAX_ERROR before it runs.
+# Every index companion writes the whole value into the statement again, so a
+# long filter value multiplies the text past that ceiling and nothing runs at
+# all. Companions are pruning hints and never membership truth, so a large
+# value simply declines them and keeps the authoritative comparison alone.
+_MAX_INDEX_COMPANION_VALUE_UTF8_BYTES = 16 * 1024
+
+
+def _values_fit_index_companion_budget(normalized_values: tuple[object, ...]) -> bool:
+    """Whether these values are small enough to inline a second and third time.
+
+    Raw bytes are the right measure here. Escaping can inflate a literal by a
+    third, but this budget sits an order of magnitude below the parser limit,
+    so it decides selectivity rather than whether a statement can be parsed.
+    """
+
+    return (
+        sum(
+            len(value.encode()) for value in normalized_values if isinstance(value, str)
+        )
+        <= _MAX_INDEX_COMPANION_VALUE_UTF8_BYTES
+    )
+
 
 def _legacy_ascii_lower_bloom_predicate(
     *,
@@ -588,7 +612,9 @@ def _attribute_plan(
             if map_column == "span_attr_str"
             else "mapValues(span_attr_num)"
         )
-        if operation == "equals":
+        if not _values_fit_index_companion_budget(normalized_values):
+            index_predicate = None
+        elif operation == "equals":
             index_predicate = f"has({indexed_values}, %(latest_filter_param_{index})s)"
         else:
             placeholders = []
@@ -597,7 +623,7 @@ def _attribute_plan(
                 params[index_param] = item_value
                 placeholders.append(f"%({index_param})s")
             index_predicate = f"hasAny({indexed_values}, [{', '.join(placeholders)}])"
-        if map_column == "span_attr_str":
+        if index_predicate is not None and map_column == "span_attr_str":
             legacy_predicate = _legacy_ascii_lower_bloom_predicate(
                 normalized_values=normalized_values,
                 params=params,
@@ -613,7 +639,8 @@ def _attribute_plan(
         # but do not re-evaluate/lower every Map value on each surviving row
         # (especially after FINAL, where mutable skip indexes are disabled).
         # indexHint is not membership truth; the exact comparison remains.
-        seed_predicate = f"({seed_predicate}) AND indexHint({index_predicate})"
+        if index_predicate is not None:
+            seed_predicate = f"({seed_predicate}) AND indexHint({index_predicate})"
 
     key_witness_predicate = (
         f"(indexHint(has(mapKeys({map_column}), {bound_key})) AND "
@@ -787,7 +814,11 @@ def _mixed_typed_attribute_plan(
             f"AND has({map_column}.keys, {bound_key}))"
         )
         typed_witness = f"(({key_witnesses[-1]}) AND ({seed_matches[-1]}))"
-        if operation == "in" and storage_type in {"string", "number"}:
+        if (
+            operation == "in"
+            and storage_type in {"string", "number"}
+            and _values_fit_index_companion_budget(normalized_values)
+        ):
             # Picker provenance changes parameter names, not the scalar IN
             # implication. Keep exact membership authoritative; these implied
             # hints only expose existing value indexes to raw acquisition.

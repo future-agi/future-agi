@@ -43,6 +43,38 @@ class BoundedUserResolution:
 MAX_USER_PHYSICAL_IDENTITIES_PER_PAGE = 4_096
 
 
+# The anchor is as long as the value it describes, and the seed writes it into
+# two statements, so an unbounded anchor is what pushes a long value past the
+# parser limit. Keep only as much of it as the statement can afford. Every row
+# holding the whole value holds every substring of it, so a subset of the runs,
+# kept in order, is still a necessary condition: a shorter anchor can only
+# widen the granule set, never hide a matching row. The runs are ASCII by
+# construction above, so a character is a byte here.
+_MAX_NGRAM_ANCHOR_BYTES = 4 * 1024
+
+
+def _runs_within_anchor_budget(runs: list[str]) -> list[str]:
+    """The most selective runs that fit the anchor's byte budget, in order.
+
+    ``ngrambf_v1`` indexes four-grams, so a longer run carries more distinct
+    four-grams for the bytes it costs; prefer the longest. A single run past
+    the whole budget keeps a prefix, which is still a substring of the value.
+    """
+
+    if sum(len(run) + 1 for run in runs) <= _MAX_NGRAM_ANCHOR_BYTES:
+        return runs
+    kept: set[int] = set()
+    spent = 0
+    for index, run in sorted(enumerate(runs), key=lambda pair: (-len(pair[1]), pair[0])):
+        if spent + len(run) + 1 > _MAX_NGRAM_ANCHOR_BYTES:
+            continue
+        kept.add(index)
+        spent += len(run) + 1
+    if not kept:
+        return [max(runs, key=len)[: _MAX_NGRAM_ANCHOR_BYTES]]
+    return [run for index, run in enumerate(runs) if index in kept]
+
+
 def _caseless_ascii_ngram_anchor(value: str) -> str | None:
     """A necessary literal substring compatible with the existing ASCII index.
 
@@ -68,10 +100,37 @@ def _caseless_ascii_ngram_anchor(value: str) -> str | None:
         "%"
         + "%".join(
             run.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-            for run in runs
+            for run in _runs_within_anchor_budget(runs)
         )
         + "%"
     )
+
+
+# ClickHouse parses at most ``max_query_size`` bytes of a statement (262144 by
+# default) and rejects the whole thing with SYNTAX_ERROR before it starts, so a
+# statement that carries its filter text inline has a hard size ceiling.
+_CLICKHOUSE_MAX_QUERY_SIZE_BYTES = 262_144
+
+# The candidate seed writes each value's exact witness and its index anchor
+# into the statement once apiece. Hold their sum inside a budget that leaves
+# the rest of the statement room under the ceiling above; a value past it keeps
+# the ordinary exact route, which carries the witness and no anchor.
+_LONG_TEXT_SEED_INLINE_BUDGET_BYTES = 232 * 1024
+
+
+# clickhouse-driver renders a string literal by expanding each of these to two
+# characters, so every occurrence costs a byte more than the value carries.
+# Counting only the backslash and the quote understates a value full of tabs or
+# newlines by a third, which is exactly the escaped-text shape this budget has
+# to hold. Pinned against the driver's own table by the unit tests.
+_ESCAPED_LITERAL_CHARS = "\\'\b\f\r\n\t\0\a\v"
+
+
+def _rendered_literal_bytes(value: str) -> int:
+    """What one string literal costs once clickhouse-driver has escaped it."""
+
+    expanded = sum(value.count(char) for char in _ESCAPED_LITERAL_CHARS)
+    return len(value.encode()) + expanded + 2
 
 
 class UserEnrichmentLimitExceeded(ReadDeadlineExceeded):
@@ -642,6 +701,17 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
             ):
                 anchors = [_caseless_ascii_ngram_anchor(value) for value in values]
                 if any(anchor is None for anchor in anchors):
+                    continue
+                # A value too large to inline this many times keeps the
+                # ordinary exact route, which carries it once. Acquisition is
+                # the only thing that changes: the exact route is the same
+                # necessary-and-sufficient membership test the seed defers to.
+                inlined = sum(
+                    _rendered_literal_bytes(literal)
+                    for literal in [*anchors, *values]
+                    if literal is not None
+                )
+                if inlined > _LONG_TEXT_SEED_INLINE_BUDGET_BYTES:
                     continue
                 params = dict(plan.params)
                 hints = []

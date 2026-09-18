@@ -1,18 +1,29 @@
 """Long text may change acquisition, never exact membership or child scope."""
 
+import re
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
+from clickhouse_driver.util.escape import escape_chars_map, escape_params
 
+from tracer.services.clickhouse.query_builders import latest_filter_predicates
 from tracer.services.clickhouse.query_builders.trace_list import TraceListQueryBuilder
 from tracer.services.clickhouse.v2.query_builders.trace_list import (
+    _CLICKHOUSE_MAX_QUERY_SIZE_BYTES,
+    _ESCAPED_LITERAL_CHARS,
+    _MAX_NGRAM_ANCHOR_BYTES,
+    TraceListQueryBuilderV2,
     _caseless_ascii_ngram_anchor,
+    _rendered_literal_bytes,
+    _runs_within_anchor_budget,
 )
 from tracer.tests.test_bounded_trace_filter_reads import (
     _attribute_filter,
     _render_driver_sql,
 )
-from tracer.tests.test_trace_indexed_coordinate_reads import END, builder
+from tracer.tests.test_bounded_trace_filter_reads import _time_filter
+from tracer.tests.test_trace_indexed_coordinate_reads import END, PROJECT, builder
 from tracer.tests.test_trace_root_physical_replay import assert_coherent_classifier
 
 pytestmark = pytest.mark.unit
@@ -278,3 +289,269 @@ def test_page_keyset_does_not_limit_the_necessary_child_witness():
     assert "filter_before" not in cte
     assert "filter_before_start_us" in roots
     assert params["filter_before_id"] == "previous"
+
+
+
+# No letter here is an i or a k, so every value below anchors whole: the worst
+# case for a statement that inlines the anchor beside the exact literal.
+_ANCHORABLE_UNIT = "a common message 000123 another response. "
+OVERSIZED_TEXT = _ANCHORABLE_UNIT * 2600
+# Past the seed's inline budget even on its own, so the seed must stand down.
+UNSEEDABLE_TEXT = _ANCHORABLE_UNIT * 5620
+ORDINARY_LONG_TEXT = _ANCHORABLE_UNIT * 60
+_WINDOW = dict(slice_start=END - timedelta(days=365), slice_end=END, limit=50)
+
+
+def _rendered_seed_statement(subject) -> str:
+    """The statement the route this builder chose actually hands the parser."""
+
+    if subject.supports_filter_candidate_seed_page():
+        sql, params = subject.build_filter_candidate_seed_page(**_WINDOW)
+    else:
+        sql, params = subject.build_filter_seed_page(**_WINDOW)
+    return _render_driver_sql(sql, params)
+
+
+@pytest.mark.parametrize("operation", ["equals", "in"])
+def test_oversized_text_keeps_the_statement_inside_the_parser_limit(operation):
+    """ClickHouse refuses an oversized statement before it runs, so never send one.
+
+    One oversized value still fits the seed once its anchor is bounded; two do
+    not, and fall back to the ordinary exact route. Either way the statement
+    the builder chooses must reach the parser intact.
+    """
+
+    value = (
+        [OVERSIZED_TEXT, OVERSIZED_TEXT + " tail"]
+        if operation == "in"
+        else OVERSIZED_TEXT
+    )
+    subject = builder(operation=operation, value=value)
+    assert _caseless_ascii_ngram_anchor(OVERSIZED_TEXT) is not None
+    # The bounded anchor is small enough that the seed lane survives here.
+    assert subject.supports_filter_candidate_seed_page()
+    rendered = _rendered_seed_statement(subject)
+    assert "indexHint(has(arrayMap" not in rendered
+    assert "indexHint(hasAny(arrayMap" not in rendered
+    assert len(rendered.encode()) < _CLICKHOUSE_MAX_QUERY_SIZE_BYTES
+
+
+@pytest.mark.parametrize("operation", ["equals", "in"])
+def test_ordinary_long_text_still_seeds_and_still_hints(operation):
+    """The size limits drop oversized values only; ordinary long text is untouched."""
+
+    value = (
+        [ORDINARY_LONG_TEXT, ORDINARY_LONG_TEXT + " tail"]
+        if operation == "in"
+        else ORDINARY_LONG_TEXT
+    )
+    subject = builder(operation=operation, value=value)
+    assert subject._public_long_text_candidate_seed_plan() is not None
+    assert subject.supports_filter_candidate_seed_page()
+    rendered = _rendered_seed_statement(subject)
+    assert "arrayMap(x -> lowerUTF8(x), mapValues(attrs_string))" in rendered
+    assert len(rendered.encode()) < _CLICKHOUSE_MAX_QUERY_SIZE_BYTES
+
+
+def test_oversized_mixed_typed_text_keeps_the_statement_parseable():
+    """The picker-provenance IN path inlines the same way and takes the same limit."""
+
+    subject = TraceListQueryBuilderV2(
+        project_id=PROJECT,
+        filters=[
+            _time_filter(END - timedelta(days=365), END),
+            {
+                "column_id": "attribute_0",
+                "filter_config": {
+                    "col_type": "SPAN_ATTRIBUTE",
+                    "filter_type": "text",
+                    "filter_op": "in",
+                    "filter_value": [OVERSIZED_TEXT, OVERSIZED_TEXT + " tail"],
+                    "attribute_value_types": ["string", "string"],
+                },
+            },
+        ],
+        page_size=25,
+    )
+    rendered = _rendered_seed_statement(subject)
+    assert "indexHint(hasAny(arrayMap" not in rendered
+    assert len(rendered.encode()) < _CLICKHOUSE_MAX_QUERY_SIZE_BYTES
+
+
+def _index_hint_spans(sql: str) -> list[str]:
+    """Every ``indexHint(...)`` subexpression, parentheses balanced.
+
+    Safe for the synthetic values in this module, which carry no parenthesis.
+    """
+
+    spans = []
+    start = sql.find("indexHint(")
+    while start >= 0:
+        cursor, depth = start + len("indexHint("), 1
+        while cursor < len(sql) and depth:
+            depth += {"(": 1, ")": -1}.get(sql[cursor], 0)
+            cursor += 1
+        spans.append(sql[start:cursor])
+        start = sql.find("indexHint(", cursor)
+    return spans
+
+
+def _outside_index_hints(sql: str) -> str:
+    for span in _index_hint_spans(sql):
+        sql = sql.replace(span, "")
+    return sql
+
+
+@pytest.mark.parametrize("operation", ["equals", "in"])
+def test_index_companions_exist_only_inside_index_hints(operation, monkeypatch):
+    """``indexHint`` is true for every row, so declining one cannot drop a row.
+
+    That is what makes the size limit safe rather than a semantic change, and
+    it holds only while the companions live nowhere but inside a hint.
+    """
+
+    value = (
+        [ORDINARY_LONG_TEXT, ORDINARY_LONG_TEXT + " tail"]
+        if operation == "in"
+        else ORDINARY_LONG_TEXT
+    )
+    with_sql, _ = builder(operation=operation, value=value).build_filter_seed_page(
+        **_WINDOW
+    )
+    monkeypatch.setattr(
+        latest_filter_predicates, "_MAX_INDEX_COMPANION_VALUE_UTF8_BYTES", 0
+    )
+    without_sql, _ = builder(operation=operation, value=value).build_filter_seed_page(
+        **_WINDOW
+    )
+
+    hints = _index_hint_spans(with_sql)
+    assert hints, "the companion-bearing statement must carry index hints"
+    for companion in (
+        "arrayMap(x -> lowerUTF8(x), mapValues(attrs_string))",
+        "arrayMap(x -> lower(x), mapValues(attrs_string))",
+    ):
+        assert with_sql.count(companion) == sum(
+            hint.count(companion) for hint in hints
+        )
+        assert companion not in _outside_index_hints(without_sql)
+
+    # Outside every hint the two statements are the same predicate, bound to
+    # the same parameters, so they select the same rows.
+    assert _outside_index_hints(with_sql).count("latest_filter_param_0") == (
+        _outside_index_hints(without_sql).count("latest_filter_param_0")
+    )
+    assert "latest_filter_legacy_index_" not in _outside_index_hints(with_sql)
+    assert "latest_filter_legacy_index_" not in without_sql
+    assert "latest_filter_index_" not in without_sql
+
+
+def _anchor_runs(anchor: str) -> list[str]:
+    return [run for run in anchor.split("%") if run]
+
+
+def _occurs_in_order(fragments: list[str], text: str) -> bool:
+    cursor = 0
+    for fragment in fragments:
+        found = text.find(fragment, cursor)
+        if found < 0:
+            return False
+        cursor = found + len(fragment)
+    return True
+
+
+# Units carrying an i split into many runs, so the anchor must choose among
+# them rather than truncate one.
+MANY_RUN_TEXT = "an indexed message 000123 with a distinct reply. " * 2400
+
+
+@pytest.mark.parametrize(
+    "value", [OVERSIZED_TEXT, MANY_RUN_TEXT], ids=["one-run", "many-runs"]
+)
+def test_bounded_anchor_stays_a_necessary_condition(value):
+    """Every kept fragment is a substring of the value, in the value's order.
+
+    A row holding the whole value holds every substring of it, so a shorter
+    anchor can only widen the granule set, never hide a matching row.
+
+    Stated as substring-in-order on purpose, not as a subset of the runs. A
+    value with no run boundary in it is a single run, and the budget then keeps
+    a prefix of that one run rather than a subset of several. A prefix is still
+    a substring in value order, so the necessity property holds either way and
+    this is the invariant that covers both shapes. Please do not narrow it back
+    to a subset check.
+    """
+
+    bounded = _caseless_ascii_ngram_anchor(value)
+    assert bounded is not None
+    assert len(bounded.encode()) <= _MAX_NGRAM_ANCHOR_BYTES + 2
+    kept = [fragment for fragment in bounded.split("%") if fragment]
+    assert kept
+    assert _occurs_in_order(kept, value.lower())
+
+
+def test_bounded_anchor_prefers_the_longest_runs_and_keeps_value_order():
+    """Longer runs carry more four-grams per byte, so they are taken first.
+
+    Whatever survives is emitted in the value's own order, because the LIKE
+    pattern requires its fragments in that order to stay a necessary condition.
+    """
+
+    runs = ["a" * 40, "b" * 4000, "c" * 40, "d" * 4000]
+    kept = _runs_within_anchor_budget(runs)
+    # The first 4000-run fits and the second no longer does; the short runs
+    # then fill the remainder, and the result stays in the original order.
+    assert kept == ["a" * 40, "b" * 4000, "c" * 40]
+    assert sum(len(run) + 1 for run in kept) <= _MAX_NGRAM_ANCHOR_BYTES
+    # An anchor that already fits is returned untouched.
+    assert _runs_within_anchor_budget(["e" * 40, "f" * 40]) == ["e" * 40, "f" * 40]
+
+
+def test_short_anchor_is_unbounded_and_unchanged():
+    """The budget must not touch anchors that already fit."""
+
+    assert _caseless_ascii_ngram_anchor("words 123456 words") == "%words 123456 words%"
+
+
+def test_seed_stands_down_when_even_one_value_will_not_fit():
+    """Past the inline budget the ordinary exact route carries the value alone."""
+
+    subject = builder(operation="equals", value=UNSEEDABLE_TEXT)
+    assert _caseless_ascii_ngram_anchor(UNSEEDABLE_TEXT) is not None
+    assert subject._public_long_text_candidate_seed_plan() is None
+    assert not subject.supports_filter_candidate_seed_page()
+    rendered = _rendered_seed_statement(subject)
+    assert "matching_scalar_trace_identities" not in rendered
+    assert len(rendered.encode()) < _CLICKHOUSE_MAX_QUERY_SIZE_BYTES
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "a common message 000123 another response. " * 40,
+        "escaped \\ and quoted ' text. " * 40,
+        "line\nline\n" * 200,
+        "tab\tcarriage\rbell\anull\0" * 150,
+    ],
+    ids=["plain", "backslash-and-quote", "newlines", "control-characters"],
+)
+def test_inline_budget_counts_what_the_driver_actually_renders(value):
+    """The budget guards a parser limit, so it must not understate the literal.
+
+    An escaped-text value is mostly characters the driver doubles. Counting
+    only the backslash and the quote understates a tab-heavy value by about a
+    third, which would let an oversized statement through the budget and fail
+    at the parser instead.
+    """
+
+    context = SimpleNamespace(
+        server_info=SimpleNamespace(get_timezone=lambda: "UTC")
+    )
+    rendered = escape_params({"v": value}, context)["v"]
+    assert _rendered_literal_bytes(value) == len(rendered.encode())
+
+
+def test_escaped_literal_chars_match_the_driver():
+    """If clickhouse-driver's escape table moves, this budget must move with it."""
+
+    assert set(_ESCAPED_LITERAL_CHARS) == set(escape_chars_map)
