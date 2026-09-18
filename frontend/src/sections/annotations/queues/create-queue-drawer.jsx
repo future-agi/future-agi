@@ -25,6 +25,7 @@ import {
   useCreateAnnotationQueue,
   useUpdateAnnotationQueue,
   useUpdateAnnotationQueueStatus,
+  useCustomEvalConfigList,
 } from "src/api/annotation-queues/annotation-queues";
 import LabelPicker from "./components/label-picker";
 import AnnotatorPicker from "./components/annotator-picker";
@@ -61,6 +62,9 @@ const DEFAULT_VALUES = {
   label_ids: [],
   annotators: [],
   status: "draft",
+  // Select options use value="" for "None", so the form state must too;
+  // null only appears in the submit payload (mapped in onSubmit).
+  custom_eval_config: "",
 };
 
 // ---------------------------------------------------------------------------
@@ -113,6 +117,7 @@ CreateQueueDrawer.propTypes = {
   onClose: PropTypes.func.isRequired,
   editQueue: PropTypes.object,
   onCreated: PropTypes.func,
+  projectId: PropTypes.string,
 };
 
 export default function CreateQueueDrawer({
@@ -120,6 +125,7 @@ export default function CreateQueueDrawer({
   onClose,
   editQueue,
   onCreated,
+  projectId,
 }) {
   const isEdit = editQueue && editQueue.id && !editQueue._isDuplicate;
   const { user } = useAuthContext();
@@ -142,6 +148,11 @@ export default function CreateQueueDrawer({
       opt.value === currentStatus ||
       (QUEUE_STATUS_TRANSITIONS[currentStatus] || []).includes(opt.value),
   );
+
+  const evaluatorProjectId = projectId || editQueue?.project;
+  const { data: evalConfigs = [] } = useCustomEvalConfigList({
+    projectId: evaluatorProjectId,
+  });
 
   const { control, handleSubmit, reset, setValue, watch, trigger } = useForm({
     defaultValues: DEFAULT_VALUES,
@@ -182,6 +193,7 @@ export default function CreateQueueDrawer({
         label_ids: qLabels,
         annotators: qAnnotators,
         status: editQueue.status || "draft",
+        custom_eval_config: editQueue.custom_eval_config || "",
       });
       setAdvancedOpen(false);
     } else if (open) {
@@ -222,6 +234,8 @@ export default function CreateQueueDrawer({
       annotator_roles: Object.fromEntries(
         formData.annotators.map((a) => [a.userId, a.roles || [a.role]]),
       ),
+      custom_eval_config: formData.custom_eval_config || null,
+      ...(evaluatorProjectId ? { project_id: evaluatorProjectId } : {}),
     };
 
     if (isEdit) {
@@ -380,6 +394,42 @@ export default function CreateQueueDrawer({
                     )}
                   />
                 )}
+
+                <Controller
+                  name="custom_eval_config"
+                  control={control}
+                  render={({ field }) => (
+                    <TextField
+                      {...field}
+                      select
+                      size="small"
+                      label="Evaluator (Judge)"
+                      fullWidth
+                      helperText="Link an evaluator to compare judge scores against human labels in the Agreement tab"
+                      FormHelperTextProps={{ sx: { ml: 0 } }}
+                      sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
+                      SelectProps={{
+                        displayEmpty: true,
+                        renderValue: (value) => {
+                          if (!value) return "None";
+                          const selected = (evalConfigs || []).find(
+                            (ec) => ec.id === value,
+                          );
+                          return selected?.name || value;
+                        },
+                      }}
+                    >
+                      <MenuItem value="">
+                        <em>None</em>
+                      </MenuItem>
+                      {(evalConfigs || []).map((ec) => (
+                        <MenuItem key={ec.id} value={ec.id}>
+                          {ec.name}
+                        </MenuItem>
+                      ))}
+                    </TextField>
+                  )}
+                />
               </Stack>
             </Section>
 
