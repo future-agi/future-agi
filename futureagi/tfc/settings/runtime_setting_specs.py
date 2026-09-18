@@ -190,6 +190,15 @@ INTERACTIVE_READ_SETTING_SPECS = {
         (
             ("INTERACTIVE_READ_DEFAULT_WALL_MS", 30_000, 100, 60_000),
             ("INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS", 30_000, 100, 60_000),
+            # Per-route acquisition wall for a cursor-capable list page: the
+            # walk that decides which rows are on the page stops here and
+            # publishes the rows found so far plus a resumable cursor.
+            # Numbered pages, hydration, navigation and pickers keep the
+            # interactive analytics wall above.
+            ("SPAN_LIST_PAGE_WALL_MS", 5_000, 100, 60_000),
+            ("TRACE_LIST_PAGE_WALL_MS", 5_000, 100, 60_000),
+            ("SESSION_LIST_PAGE_WALL_MS", 5_000, 100, 60_000),
+            ("USER_LIST_PAGE_WALL_MS", 5_000, 100, 60_000),
             ("INTERACTIVE_READ_DEFAULT_MAX_PAGE_SIZE", 100, 1, 500),
             ("ANALYTICS_DEFAULT_LOOKBACK_DAYS", 30, 1, 3_660),
             ("PG_CONNECT_TIMEOUT_SECONDS", 1, 1, 5),
@@ -357,9 +366,9 @@ INTERACTIVE_READ_SETTING_SPECS = {
             ("FILTER_VALUE_CURSOR_SCAN_LIMIT", 201, 2, 10_001),
             # A span-attribute-filtered Users page walks witnessed spans
             # newest-first in time slices, certifies each slice's users and
-            # stops on its own wall or statement budget with a cursor. The
-            # unfiltered Users page does not read these.
-            ("USER_LIST_PAGE_WALL_MS", 5_000, 100, 60_000),
+            # stops on its own wall (USER_LIST_PAGE_WALL_MS, defined with the
+            # other route walls above) or statement budget with a cursor. The
+            # unfiltered Users page does not read these four walk settings.
             ("USER_LIST_WALK_MAX_STATEMENTS", 24, 1, 256),
             ("USER_LIST_WALK_INITIAL_SLICE_SECONDS", 60 * 60, 1, 7 * 24 * 60 * 60),
             # Application reads carry no server deadline, so one dense slice

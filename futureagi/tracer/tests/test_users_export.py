@@ -139,6 +139,7 @@ class TestUsersExport:
         cursor_page.assert_called_once_with(
             page_size=USER_EXPORT_PAGE_SIZE,
             cursor=None,
+            page_wall=False,
         )
         export_csv.assert_called_once_with(cursor_read=cursor_read)
 
