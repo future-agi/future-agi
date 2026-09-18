@@ -4,7 +4,8 @@ from django.db import models
 
 from accounts.models import Organization, User
 from accounts.models.workspace import Workspace
-from model_hub.models.api_key import ApiKey, validate_model_provider_choice
+from integrations.services.credentials import CredentialManager
+from model_hub.models.api_key import validate_model_provider_choice
 from tfc.utils.base_model import BaseModel
 
 
@@ -59,15 +60,12 @@ class CustomAIModel(BaseModel):
         super().__init__(*args, **kwargs)
         self._actual_json = {}
         if self.key_config:
-            self._actual_json = ApiKey().decrypt_json(self.key_config)
+            self._actual_json = CredentialManager.decrypt_json(self.key_config)
 
     def save(self, *args, **kwargs):
-        # if self.key_config and not all(
-        #     [v.startswith(b"gAAAAA".decode()) for v in self.key_config.values()]
-        # ):
         if self.key_config:
-            self._actual_json = self.key_config
-            self.key_config = ApiKey().encrypt_json(self.key_config)
+            self._actual_json = CredentialManager.decrypt_json(self.key_config)
+            self.key_config = CredentialManager.encrypt_json(self.key_config)
         else:
             self._actual_json = {}
         self.full_clean()
