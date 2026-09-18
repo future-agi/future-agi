@@ -168,7 +168,11 @@ def test_scalar_witness_narrows_groups_not_activity_or_replacement(workspace):
     )
     assert "SELECT * FROM scalar_witness_identities" in population
     assert "eu_survivor_map" in population
-    assert "scalar_candidate_users" in cte(sql, "filtered_end_users")
+    # The witness population is bound ONCE. A CTE is inlined at every use, so a
+    # second binding on the curated dimension replays the whole witness scan
+    # again; the authoritative INNER JOIN on exact_usage already carries it.
+    assert "scalar_candidate_users" not in cte(sql, "filtered_end_users")
+    assert sql.count("FROM scalar_candidate_users") == 1
     aliases = cte(sql, "candidate_span_identities")
     assert aliases.count("FROM scalar_candidate_users") == 1
     assert "LEFT ALL JOIN" in aliases
@@ -744,7 +748,10 @@ def test_cursor_metadata_excludes_successful_attribute_split_and_resets_next_req
 
 
 def test_cursor_metadata_excludes_optional_witness_recovery():
-    m = manager([raw_filter("equals", "yes", "text", key="tag")])
+    # A non-ASCII exact-text value keeps the seeded page and its optional
+    # physical witness; a plain-ASCII value walks newest matching activity
+    # instead (test_users_matching_walk.py) and never reads that witness.
+    m = manager([raw_filter("equals", "yés", "text", key="tag")])
     rows = candidates(2)
     with (
         patch.object(m, "_read_dimension_candidates", side_effect=reader(rows)),

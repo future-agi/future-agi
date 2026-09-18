@@ -20,6 +20,25 @@ class UnsupportedBoundedUserListQuery(ValueError):
     """Raised when an exact user page cannot use the bounded query path."""
 
 
+# Execution shape of a SEEDED candidate page (a scalar attribute witness or a
+# finite candidate id set). In-order reads (``optimize_*_in_order``) stream a
+# DISTINCT or GROUP BY over the sorting key without a hash table, at the price
+# of one merged stream per selected part. For the UNSEEDED page that is the
+# right trade: its collapse spans the whole window, and a hash table over every
+# identity in it would be the unbounded structure. A seeded page replays only
+# the population its seed bounds, and there the per-part streams are the
+# footprint: measured on production, the seeded acquisition held most of its
+# peak memory in the in-order machinery alone and released it, with a third of
+# its wall, under hash execution - identical rows and bytes, since the
+# statement's DISTINCT and GROUP BY are unchanged. Stated on the statement so
+# the primary-key IN sets ClickHouse builds while planning run under it too;
+# the v2 boundary keeps an explicit aggregation choice.
+_SEEDED_PAGE_READ_SETTINGS = (
+    "SETTINGS optimize_aggregation_in_order = 0, "
+    "optimize_distinct_in_order = 0, optimize_read_in_order = 0"
+)
+
+
 def _touched_survivor_map_subquery(
     *, remap_table: str, candidate_cte: str, candidate_column: str
 ) -> str:
@@ -427,6 +446,25 @@ class UserListQueryBuilder(BaseQueryBuilder):
 
     def _positive_scalar_user_witness(self) -> tuple[str, dict[str, Any]]:
         """Reuse complete numeric or ordinary text witnesses for group acquisition."""
+        for _item, _text, witness, params in self._scalar_user_witnesses():
+            return witness, params
+        return "", {}
+
+    def matching_activity_witness(self) -> tuple[str, str, dict[str, Any]] | None:
+        """The first plain-text witness, with the attribute key it walks.
+
+        The matching-activity walk seeds on exactly the witness the seeded
+        candidate page would have used, so both paths admit the same raw
+        superset; it needs the key to read that filter's certified order key
+        back from the page enrichment. Numeric witnesses keep the seeded page.
+        """
+        for item, is_text, witness, params in self._scalar_user_witnesses():
+            if not is_text:
+                return None
+            return str(item.get("column_id") or item.get("columnId")), witness, params
+        return None
+
+    def _scalar_user_witnesses(self):
         from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
             compile_trace_filter_plans,
         )
@@ -491,8 +529,13 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 and "span_attr_bool" not in witness
                 and "JSONExtract" not in witness
             ):
-                return rewrite_v1_sql_to_v2(witness), dict(plan.params)
-        return "", {}
+                yield (
+                    item,
+                    text_witness,
+                    rewrite_v1_sql_to_v2(witness),
+                    dict(plan.params),
+                )
+                return
 
     def build_dimension_survivor_query(
         self,
@@ -513,6 +556,113 @@ class UserListQueryBuilder(BaseQueryBuilder):
             f"FROM ({remap})",
             {"dimension_candidate_ids": ids},
         )
+
+    def build_matching_activity_slice_query(
+        self,
+        *,
+        slice_start: Any,
+        slice_end: Any,
+        limit: int,
+        before: tuple[Any, str] | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """Newest-first witnessed users of one time slice, resolved and aliased.
+
+        ``before`` continues a truncated slice past its last returned user in
+        ``(newest_witness DESC, end_user_id DESC)`` order, so users tied on the
+        floor's timestamp cannot be re-served for ever; it filters groups after
+        aggregation and adds no scan.
+
+        One PREWHERE-bounded scan of ``[slice_start, slice_end)`` through the
+        deployed key and value blooms, grouped by the survivor-resolved user.
+        It carries no ``IN (subquery)`` over the sorting key, so ClickHouse
+        materialises nothing while planning, and its work is bounded by the
+        slice, never by the window. Rows are a raw superset (stale versions,
+        moved users, tombstones); the page certifies each user afterwards
+        against latest state over the whole window. ``newest_witness`` is only
+        the slice's coverage floor when the LIMIT truncates: every user with a
+        witnessed row newer than the last returned row is in the result.
+        The survivor map is built once and expanded once, so the remap table is
+        touched by one join and every alias of a returned user travels with it.
+        """
+        if limit <= 0:
+            raise ValueError("matching activity slice limit must be positive")
+        if slice_start is None or slice_end is None or slice_start >= slice_end:
+            raise ValueError("matching activity slice is invalid")
+        witness = self.matching_activity_witness()
+        if witness is None:
+            raise UnsupportedBoundedUserListQuery(
+                "user list filters carry no plain-text span attribute witness"
+            )
+        _key, witness_sql, witness_params = witness
+        params: dict[str, Any] = {
+            **witness_params,
+            "slice_start_date": slice_start,
+            "slice_end_date": slice_end,
+            "slice_start_us": _unix_microseconds(slice_start),
+            "slice_end_us": _unix_microseconds(slice_end),
+            "slice_user_limit": int(limit),
+        }
+        if self.project_ids is not None:
+            params["project_ids"] = tuple(self.project_ids)
+        else:
+            params["project_id"] = self.project_id
+        keyset = ""
+        if before is not None:
+            before_time, before_id = before
+            params["slice_before_us"] = _unix_microseconds(before_time)
+            params["slice_before_end_user_id"] = str(before_id)
+            keyset = """
+        HAVING newest_witness < fromUnixTimestamp64Micro(%(slice_before_us)s, 'UTC')
+            OR (
+                newest_witness = fromUnixTimestamp64Micro(%(slice_before_us)s, 'UTC')
+                AND end_user_id < %(slice_before_end_user_id)s
+            )
+            """
+        resolved = resolved_id_expr("witnessed.raw_end_user_id", "eu_alias")
+        query = f"""
+        WITH
+        eu_survivor_groups AS (
+            SELECT survivor_id, groupUniqArray(any_id) AS alias_ids
+            FROM ({survivor_map_subquery("end_user_id_remap")})
+            GROUP BY survivor_id
+        ),
+        eu_alias_rows AS (
+            SELECT any_id, survivor_id, alias_ids
+            FROM eu_survivor_groups
+            ARRAY JOIN alias_ids AS any_id
+        ),
+        witnessed AS (
+            SELECT end_user_id AS raw_end_user_id, max(start_time) AS raw_newest
+            FROM spans
+            PREWHERE {self._project_predicate("spans")}
+              AND toDate(start_time) BETWEEN toDate(%(slice_start_date)s) AND toDate(%(slice_end_date)s)
+              AND toStartOfHour(start_time) >= toStartOfHour(
+                  fromUnixTimestamp64Micro(%(slice_start_us)s, 'UTC')
+              )
+              AND toStartOfHour(start_time) < fromUnixTimestamp64Micro(%(slice_end_us)s, 'UTC')
+              AND start_time >= fromUnixTimestamp64Micro(%(slice_start_us)s, 'UTC')
+              AND start_time < fromUnixTimestamp64Micro(%(slice_end_us)s, 'UTC')
+              AND isNotNull(end_user_id)
+              {"AND 0 = 1" if self.empty_scope else ""}
+            WHERE {witness_sql}
+            GROUP BY raw_end_user_id
+        )
+        SELECT
+            toString({resolved}) AS end_user_id,
+            max(raw_newest) AS newest_witness,
+            arraySort(arrayDistinct(arrayConcat(
+                groupUniqArray(toString(raw_end_user_id)),
+                arrayFlatten(groupUniqArray(arrayMap(x -> toString(x), eu_alias.alias_ids)))
+            ))) AS alias_end_user_ids
+        FROM witnessed
+        LEFT JOIN eu_alias_rows AS eu_alias ON witnessed.raw_end_user_id = eu_alias.any_id
+        GROUP BY end_user_id
+        {keyset}
+        ORDER BY newest_witness DESC, end_user_id DESC
+        LIMIT %(slice_user_limit)s
+        {_SEEDED_PAGE_READ_SETTINGS}
+        """
+        return query, params
 
     def supports_candidate_first_page(self) -> bool:
         """Whether the request can page exactly from latest physical spans.
@@ -724,9 +874,16 @@ class UserListQueryBuilder(BaseQueryBuilder):
             WHERE isNotNull(witness.end_user_id)
         ),
             """
-            candidate_end_user_filter = (
-                "HAVING end_user_id IN (SELECT end_user_id FROM scalar_candidate_users)"
-            )
+            # The curated dimension carries no HAVING on the witness set. The
+            # acquisition already binds it once, in the span filter below, and
+            # ClickHouse inlines a CTE at every use: a second binding replays
+            # the whole witness scan a second time. Membership is unchanged
+            # because `base_rows` INNER JOINs `exact_usage`, whose users are
+            # exactly the resolved users of the spans that filter admits. A row
+            # that survives the join without belonging to the witness set is a
+            # user whose latest state carries no witnessed span at all, so it
+            # cannot match the request; the manager's exact per-batch check
+            # rejects it and it is never published.
             candidate_span_filter = """
               AND end_user_id IN (
                   SELECT arrayJoin(if(ifNull(aliases.present, 0) = 1,
@@ -996,6 +1153,8 @@ class UserListQueryBuilder(BaseQueryBuilder):
         FROM candidate_users
         {order_by}
         """
+        if self.candidate_end_user_ids or scalar_witness:
+            query = f"{query.rstrip()}\n        {_SEEDED_PAGE_READ_SETTINGS}"
         return query, params
 
     def build_relation_filter_user_query(

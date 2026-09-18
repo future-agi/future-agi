@@ -627,7 +627,13 @@ def test_attribute_filter_preserves_storage_type_provenance(
     assert not manager._row_matches_filters(row)
 
 
-def test_positive_text_attribute_filter_uses_larger_witness_candidate_batch():
+def test_positive_text_attribute_filter_walks_matching_activity_not_the_seed():
+    """A plain-text attribute filter never reads the whole-window candidate page.
+
+    The seeded 65-row witness batch is the shape that dies on the largest
+    tenants; the page walks witnessed spans newest-first instead and says so
+    in its provenance and ordering.
+    """
     manager = _manager(
         filters=[
             {
@@ -647,12 +653,27 @@ def test_positive_text_attribute_filter_uses_larger_witness_candidate_batch():
         captured_limits.append(kwargs["limit"])
         return []
 
-    with patch.object(manager, "_read_dimension_candidates", side_effect=no_candidates):
+    with (
+        patch.object(manager, "_read_dimension_candidates", side_effect=no_candidates),
+        patch(
+            "tracer.services.users_list_manager.V2AnalyticsQueryService"
+        ) as analytics_cls,
+    ):
+        analytics_cls.return_value.execute_ch_query.return_value = SimpleNamespace(
+            data=[], query_time_ms=1.0
+        )
         result = manager.list_cursor_payload(page_size=25)
 
     assert manager.attribute_exact_text_filters == {"call_id": ("call-a",)}
-    assert captured_limits == [USER_LIST_ATTRIBUTE_WITNESS_BATCH_SIZE + 1]
+    assert captured_limits == []
     assert result.payload["table"] == []
+    assert result.payload["query_provenance"] == "matching_activity_walk"
+    assert result.payload["ordering"] == "latest_matching_activity"
+    assert result.payload["has_more"] is False
+    for call in analytics_cls.return_value.execute_ch_query.call_args_list:
+        assert "witnessed AS" in call.args[0]
+        assert "scalar_witness_identities" not in call.args[0]
+    assert USER_LIST_ATTRIBUTE_WITNESS_BATCH_SIZE == 64
 
 
 def test_negative_attribute_filter_never_uses_positive_candidate_pruning():

@@ -890,10 +890,20 @@ class UsersResultSerializer(serializers.Serializer):
     )
     query_exact = serializers.BooleanField(required=False)
     query_provenance = serializers.ChoiceField(
-        choices=("span_user_rollup_end_users_candidate", "physical_latest_users"),
+        choices=(
+            "span_user_rollup_end_users_candidate",
+            "physical_latest_users",
+            "matching_activity_walk",
+        ),
         required=False,
     )
     ordering_exact = serializers.BooleanField(required=False)
+    # Present only on a span-attribute-filtered page: rows are ordered by each
+    # user's newest live span whose latest value matches the filter, newest
+    # first. Unfiltered pages keep their last-activity order and omit it.
+    ordering = serializers.ChoiceField(
+        choices=("latest_matching_activity",), required=False
+    )
     approximate_fields = serializers.ListField(
         child=serializers.ChoiceField(choices=("num_sessions",)),
         required=False,

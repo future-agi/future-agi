@@ -355,6 +355,25 @@ INTERACTIVE_READ_SETTING_SPECS = {
             ),
             ("FILTER_VALUE_CURSOR_MAX_QUERIES", 6, 1, 128),
             ("FILTER_VALUE_CURSOR_SCAN_LIMIT", 201, 2, 10_001),
+            # A span-attribute-filtered Users page walks witnessed spans
+            # newest-first in time slices, certifies each slice's users and
+            # stops on its own wall or statement budget with a cursor. The
+            # unfiltered Users page does not read these.
+            ("USER_LIST_PAGE_WALL_MS", 5_000, 100, 60_000),
+            ("USER_LIST_WALK_MAX_STATEMENTS", 24, 1, 256),
+            ("USER_LIST_WALK_INITIAL_SLICE_SECONDS", 60 * 60, 1, 7 * 24 * 60 * 60),
+            # Application reads carry no server deadline, so one dense slice
+            # is bounded only by its width: a one-day slice of a common value
+            # on the largest tenant measured about two seconds at eight
+            # threads. Wider slices trade that against the statements an
+            # empty result needs to prove itself.
+            (
+                "USER_LIST_WALK_MAX_SLICE_SECONDS",
+                24 * 60 * 60,
+                60,
+                366 * 24 * 60 * 60,
+            ),
+            ("USER_LIST_WALK_SLICE_USER_LIMIT", 200, 2, 10_001),
             ("FILTER_VALUE_READ_MAX_THREADS", 2, 1, 16),
             ("FILTER_SELECTOR_QUERY_TIMEOUT_MS", 2_500, 25, 10_000),
             ("FILTER_SELECTOR_MAX_OPT_IN_QUERY_TIMEOUT_MS", 3_000, 25, 30_000),
@@ -943,6 +962,16 @@ def validate_interactive_read_settings(values: Mapping[str, Numeric]) -> None:
         raise ValueError(
             "filter value cursor segment limits must satisfy minimum <= initial <= maximum"
         )
+    _require_at_most(
+        values["USER_LIST_PAGE_WALL_MS"],
+        values["INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS"],
+        "USER_LIST_PAGE_WALL_MS cannot exceed INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS",
+    )
+    _require_at_most(
+        values["USER_LIST_WALK_INITIAL_SLICE_SECONDS"],
+        values["USER_LIST_WALK_MAX_SLICE_SECONDS"],
+        "USER_LIST_WALK_INITIAL_SLICE_SECONDS cannot exceed USER_LIST_WALK_MAX_SLICE_SECONDS",
+    )
     _require_at_most(
         values["FILTER_SELECTOR_QUERY_TIMEOUT_MS"],
         values["FILTER_SELECTOR_MAX_OPT_IN_QUERY_TIMEOUT_MS"],
