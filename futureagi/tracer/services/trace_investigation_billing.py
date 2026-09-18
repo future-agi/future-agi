@@ -11,7 +11,10 @@ from tracer.ee_boundary import (
     emit_trace_investigation_usage,
     price_trace_investigation_usage,
 )
-from tracer.models.trace_investigation import TraceInvestigationReport
+from tracer.models.trace_investigation import (
+    TraceInvestigationReport,
+    TraceInvestigationSource,
+)
 
 logger = structlog.get_logger(__name__)
 _TOTAL_TOLERANCE = Decimal("0.000000001")
@@ -64,6 +67,8 @@ def charge_trace_investigation(report: TraceInvestigationReport) -> None:
     The shared emitter is fire-and-forget. A Redis failure is logged there, not
     retried here; this matches the existing scanner's billing behavior.
     """
+    if report.source != TraceInvestigationSource.OMEGA:
+        return
     calls = list(report.gateway_calls.all())
     validated = _validated_cost(
         {
