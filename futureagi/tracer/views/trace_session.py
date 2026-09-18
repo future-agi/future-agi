@@ -191,7 +191,6 @@ SESSION_LIST_READ_SETTINGS = {
     "timeout_overflow_mode": "throw",
 }
 SESSION_LIST_RESULT_BYTES = settings.SESSION_LIST_MAX_RESULT_BYTES
-SESSION_LIST_ATTRIBUTE_RESULT_ROWS = settings.SESSION_LIST_ATTRIBUTE_MAX_RESULT_ROWS
 SESSION_GRAPH_RETRYABLE_ERROR_CODES = {
     "deadline_exceeded",
     "read_budget_exceeded",
@@ -3202,18 +3201,10 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         # independent and candidate-scoped. Run those reads concurrently under
         # the one request wall deadline: endpoint time is selector + slowest
         # enrichment, never selector plus independent per-query allowances.
-        metrics_query = ""
-        metrics_params: dict = {}
-        content_query = ""
-        content_params: dict = {}
-        attrs_query = ""
-        attrs_params: dict = {}
+        hydration_query = ""
+        hydration_params: dict = {}
         if candidate_ids:
-            metrics_query, metrics_params = builder.build_page_metrics_query(
-                candidate_ids
-            )
-            content_query, content_params = builder.build_content_query(candidate_ids)
-            attrs_query, attrs_params = builder.build_span_attributes_query(
+            hydration_query, hydration_params = builder.build_page_hydration_query(
                 candidate_ids
             )
 
@@ -3239,24 +3230,10 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             )
 
         tasks: dict[str, tuple] = {}
-        if metrics_query:
-            tasks["metrics"] = (
+        if hydration_query:
+            tasks["hydration"] = (
                 _execute_page_query,
-                (metrics_query, metrics_params, max(1, len(candidate_ids))),
-            )
-        if content_query:
-            tasks["content"] = (
-                _execute_page_query,
-                (content_query, content_params, max(1, len(candidate_ids))),
-            )
-        if attrs_query:
-            tasks["attributes"] = (
-                _execute_page_query,
-                (
-                    attrs_query,
-                    attrs_params,
-                    SESSION_LIST_ATTRIBUTE_RESULT_ROWS,
-                ),
+                (hydration_query, hydration_params, max(1, len(candidate_ids))),
             )
         if count_query:
             tasks["count"] = (
@@ -3345,11 +3322,11 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             finally:
                 pool.shutdown(wait=False, cancel_futures=True)
 
-        metrics_result = completed.get("metrics")
-        metrics_by_id = {
-            str(row.get("session_id", "")): row
-            for row in (metrics_result.data if metrics_result is not None else [])
-        }
+        hydration_result = completed.get("hydration")
+        hydration_rows = list(
+            hydration_result.data if hydration_result is not None else []
+        )
+        metrics_by_id = {str(row.get("session_id", "")): row for row in hydration_rows}
         # Preserve the candidate selector's deterministic order rather than
         # depending on GROUP BY output order from the hydration query.
         actual_data = [
@@ -3367,16 +3344,6 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 code="service_unavailable",
             )
         session_ids_page = [str(row.get("session_id", "")) for row in actual_data]
-        content_result = completed.get("content")
-        content_map = {
-            str(row.get("session_id", "")): row
-            for row in (content_result.data if content_result is not None else [])
-        }
-        for row in actual_data:
-            session_id = str(row.get("session_id", ""))
-            content = content_map.get(session_id, {})
-            row["first_message"] = content.get("first_message", "")
-            row["last_message"] = content.get("last_message", "")
 
         if candidate_total_count is not None:
             total_count = candidate_total_count
@@ -3424,8 +3391,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         }
         name_map = completed.get("names") or {}
         end_user_map = completed.get("end_users") or {}
-        attr_result = completed.get("attributes")
-        attr_result_data = attr_result.data if attr_result is not None else []
+        attr_result_data = builder.expand_page_attribute_rows(hydration_rows)
         for entry in formatted:
             session_id = str(entry.get("session_id", ""))
             entry_project_id = project_id_by_session.get(session_id, "")
