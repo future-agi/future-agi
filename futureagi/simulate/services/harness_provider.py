@@ -282,7 +282,20 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
             (job.payload.get("metadata") or {}).get("adjustments") or []
         ),
         "platform": platform,
+        "scenario_editing": _scenario_editing(),
         "credentials": {"detected_connectors": detected_connectors},
+    }
+
+
+def _scenario_editing() -> dict[str, Any]:
+    """Describe the harness edit gate so a client need not restate it."""
+    try:
+        from fi.alk.harness.amend_scenarios import DESCRIPTIVE_FIELDS, EDITABLE_FIELDS
+    except Exception:  # noqa: BLE001 - nothing learned means nothing editable
+        return {"editable_fields": [], "applied_without_rework": []}
+    return {
+        "editable_fields": list(EDITABLE_FIELDS),
+        "applied_without_rework": list(DESCRIPTIVE_FIELDS),
     }
 
 
@@ -692,6 +705,10 @@ class HostedHarnessProvider:
         }
         pending = [one for one in changes if one.get("scenario") in deferred]
         if not pending:
+            return Response({**outcome, "receipts": receipts})
+
+        # Off by default: a change that would re-prove is reported refused rather than started.
+        if not bool(getattr(settings, "HARNESS_SCENARIO_REWORK_ENABLED", False)):
             return Response({**outcome, "receipts": receipts})
 
         from simulate.temporal.client import start_hosted_harness_amend

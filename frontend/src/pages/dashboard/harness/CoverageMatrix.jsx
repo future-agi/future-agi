@@ -3,18 +3,8 @@ import PropTypes from "prop-types";
 import { alpha } from "@mui/material/styles";
 import { Box, Chip, MenuItem, Stack, TextField, Tooltip, Typography } from "@mui/material";
 
-// Coverage.
-//
-// A scenario count is not coverage. This cross-tabulates the suite so an empty cell is the finding:
-// "nothing here puts a prompt injection against a guest caller" is the sentence worth putting in
-// front of someone, and a total of fifty never says it.
-//
-// The axes are the plan's own, read from each scenario's `coverage` coordinate, so a browser or
-// computer-use agent gets its own axes here without this file knowing their names.
-//
-// Two bands, following the studio design: covered cells sit on a green ramp from a soft tint at one
-// scenario to a saturated fill at the busiest cell, empty cells sit on a red tint with a dashed
-// border. Green gives "empty = red = gap" a natural opposite.
+// Cross-tabulates a suite over the axes the plan declared, so an empty cell reads as a gap.
+// Axis names come from each scenario's `coverage` coordinate and are never known here.
 
 const GREEN = "#16A34A";
 const RED = "#DC2626";
@@ -73,26 +63,16 @@ export default function CoverageMatrix({ scenarios, coverage }) {
     );
   }
 
-  // Levels the plan said it would cover and no scenario ever used. An empty cell is a gap you can
-  // see; an unused level is a gap the matrix cannot show, because the column is simply absent.
+  // A level no scenario used has no column, so the matrix cannot show it as a gap.
   const unused = Object.entries(coverage?.axes || {}).flatMap(([axis, body]) =>
     (body?.unused || []).map((level) => ({ axis, level })),
   );
 
-  // The weakest pair, straight from the report. A person opening this wants one sentence about
-  // whether the suite is thin, and "22 of 121 combinations" is that sentence; the matrix below is
-  // for working out which 99.
   const weakest = Object.entries(coverage?.pairs || {})
     .filter(([, body]) => body?.possible)
     .sort((a, b) => (a[1].share ?? 1) - (b[1].share ?? 1))[0];
 
-  // Named gaps, not just empty squares. Scanning a grid for blanks is work; reading "nothing puts
-  // prompt_injection against cancel_ride" is not.
-  //
-  // Ordered by how much each one tells you. A level that appears nowhere in the pairing is a
-  // bigger finding than one missing cell, and it is also the one a reader would otherwise have to
-  // infer from a whole empty row. Single cells come last and are taken one per level, because six
-  // gaps that all name the same overlay read as one fact repeated rather than six.
+  // Ranked: a level absent from the whole pairing outranks a single missing cell.
   const empties = matrix.rowKeys
     .flatMap((r) => matrix.colKeys.map((c) => ({ r, c })))
     .filter((cell) => !matrix.at(cell.r, cell.c));
@@ -101,8 +81,7 @@ export default function CoverageMatrix({ scenarios, coverage }) {
   const spread = [];
   const seenRows = new Set();
   const seenCols = new Set();
-  // First pass takes a gap whose level is new on both axes, so six lines name twelve things rather
-  // than one column six times over. The second fills up from whatever is left.
+  // First pass takes gaps new on both axes so the list does not repeat one level.
   for (const pass of [0, 1]) {
     for (const cell of empties) {
       if (barrenRows.includes(cell.r) || barrenCols.includes(cell.c)) continue;
@@ -186,10 +165,7 @@ export default function CoverageMatrix({ scenarios, coverage }) {
         </TextField>
       </Stack>
 
-      {/* A plan with many levels makes a grid taller than the window, and this panel sits above
-          the suite: without a ceiling the list underneath becomes unreachable, which is the whole
-          reason coverage was moved to the top. Bounded and scrolled in place, with the labels
-          pinned so they survive the scroll in both directions. */}
+      {/* Bounded: this panel sits above an unbounded list, so the grid may not grow without limit. */}
       <Box sx={{ overflow: "auto", maxHeight: 420, border: 1, borderColor: "divider", borderRadius: 1, p: 1 }}>
         <Box
           sx={{

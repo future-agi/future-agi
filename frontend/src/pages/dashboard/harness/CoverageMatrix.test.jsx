@@ -2,8 +2,6 @@ import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import CoverageMatrix from "./CoverageMatrix";
 
-// Built from a real hosted run of 50 scenarios against the ride voice agent, job 9e6ea728: the plan
-// dealt four task levels and the suite wrote three, and 47 of 110 overlay-by-task combinations exist.
 const coverage = {
   scenarios: 50,
   placed: 50,

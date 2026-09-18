@@ -166,9 +166,12 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
     # provider and model.  This also keeps the customer request unable to influence either one.
     backend = str(os.environ.get("ALK_HARNESS") or derived_backend).strip()
     authoring_model = str(os.environ.get("ALK_HARNESS_MODEL") or model).strip()
+    # Empty inherits the loop's own model.
+    writer_model = str(os.environ.get("ALK_HARNESS_WRITER_MODEL") or "").strip()
     values = {
         "ALK_HARNESS": backend,
         "ALK_HARNESS_MODEL": authoring_model,
+        "ALK_HARNESS_WRITER_MODEL": writer_model,
         "ALK_VERTEX_LOCATION": location,
         "GOOGLE_CLOUD_LOCATION": location,
         "GOOGLE_GENAI_USE_VERTEXAI": str(
@@ -1822,6 +1825,7 @@ class HostedHarnessGateway:
                 in {
                     "ALK_HARNESS",
                     "ALK_HARNESS_MODEL",
+                    "ALK_HARNESS_WRITER_MODEL",
                     "ALK_VERTEX_LOCATION",
                     # Authoring writes the scenarios, so the switch is exported here too.
                     "ALK_VOICEMAIL_SCENARIOS",
@@ -2764,9 +2768,8 @@ def _authoring_archive_for(job: HostedHarnessJob) -> bytes | None:
         # The sub-goal catalogue. Without it an edit reloads an empty one, so a rework cannot write
         # the check body for a sub-goal it adds and the sub-goal ships ungradeable.
         "sub_goals.json",
-        # The suite's coverage report. Recomputable from the scenarios, since each carries its
-        # own coordinate, but packing it means a consumer reads the same numbers the run
-        # produced rather than recomputing and risking a different answer.
+        # Derivable from the scenarios, but packed so a consumer reads the numbers the run
+        # produced rather than recomputing a different answer.
         "coverage.json",
     ):
         path = bundle_dir / name
@@ -2885,9 +2888,8 @@ def pack_authoring_archive(authoring_root: Path) -> bytes:
         # The sub-goal catalogue. Without it an edit reloads an empty one, so a rework cannot write
         # the check body for a sub-goal it adds and the sub-goal ships ungradeable.
         "sub_goals.json",
-        # The suite's coverage report. Recomputable from the scenarios, since each carries its
-        # own coordinate, but packing it means a consumer reads the same numbers the run
-        # produced rather than recomputing and risking a different answer.
+        # Derivable from the scenarios, but packed so a consumer reads the numbers the run
+        # produced rather than recomputing a different answer.
         "coverage.json",
     ):
         path = authoring_root / name
@@ -3250,9 +3252,7 @@ def authoring_stage_outputs(
                 "data": _secret_safe(scenarios),
             }
         )
-    # Its own snapshot rather than a field on the scenarios one: those rows are the scenarios, and
-    # this describes the set they form. Keeping it separate also means a suite authored before the
-    # report existed still renders, with this simply absent.
+    # Its own kind rather than a field on the scenarios output, whose data is an array of rows.
     if isinstance(coverage, dict) and coverage.get("axes"):
         axes = coverage.get("axes") or {}
         pairs = coverage.get("pairs") or {}
@@ -3425,12 +3425,35 @@ def store_authoring_archive(
     job.payload = payload
     update_fields = ["payload", "updated_at"]
     if advance_lifecycle:
-        job.stage_outputs = authoring_stage_outputs_from_archive(
+        # Merged, not assigned: the environment output comes from the runtime bundle manifest,
+        # which this archive never carries.
+        rebuilt = authoring_stage_outputs_from_archive(
             body, scenario_limit=job.scenario_count
         )
-        job.current_stage = "validating_scenarios"
-        job.state = HostedHarnessJob.State.ADMITTED
-        update_fields.extend(["stage_outputs", "current_stage", "state"])
+        produced = {one.get("kind") for one in rebuilt}
+        kept = [
+            one
+            for one in (job.stage_outputs or [])
+            if isinstance(one, dict) and one.get("kind") not in produced
+        ]
+        order = {"contract": 0, "environment": 1, "scenarios": 2, "coverage": 3}
+        job.stage_outputs = sorted(
+            rebuilt + kept, key=lambda one: order.get(one.get("kind"), len(order))
+        )
+        update_fields.append("stage_outputs")
+        # An edit is not a rerun, so a job past authoring keeps the state it had.
+        settled = {
+            HostedHarnessJob.State.RUNNING,
+            HostedHarnessJob.State.FINALIZING,
+            HostedHarnessJob.State.CLEANING_UP,
+            HostedHarnessJob.State.COMPLETED,
+            HostedHarnessJob.State.FAILED,
+            HostedHarnessJob.State.CANCELED,
+        }
+        if job.state not in settled:
+            job.current_stage = "validating_scenarios"
+            job.state = HostedHarnessJob.State.ADMITTED
+            update_fields.extend(["current_stage", "state"])
     job.save(update_fields=update_fields)
     return object_key
 

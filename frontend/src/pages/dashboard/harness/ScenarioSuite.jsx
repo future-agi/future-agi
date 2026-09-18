@@ -5,14 +5,15 @@ import {
   Chip,
   Drawer,
   IconButton,
+  MenuItem,
   Stack,
   Table,
-  TextField,
   TableBody,
   TableCell,
   TableContainer,
   TableHead,
   TableRow,
+  TextField,
   Tooltip,
   Typography,
 } from "@mui/material";
@@ -68,6 +69,35 @@ const byUseCase = (scenarios) => {
 const matches = (scenario, chosen) =>
   !chosen.size || (scenario.persona?.keywords || []).some((word) => chosen.has(word));
 
+// The axes a suite can be filtered by, taken from the scenarios' own coordinates. A level count of
+// one is dropped, since a filter every row matches is not one.
+const axesOf = (scenarios) => {
+  const levels = new Map();
+  scenarios.forEach((one) =>
+    Object.entries(one?.coverage || {}).forEach(([axis, level]) => {
+      const value = String(level ?? "").trim();
+      if (!value) return;
+      if (!levels.has(axis)) levels.set(axis, new Map());
+      const counts = levels.get(axis);
+      counts.set(value, (counts.get(value) || 0) + 1);
+    }),
+  );
+  return [...levels.entries()]
+    .filter(([, counts]) => counts.size > 1)
+    .map(([axis, counts]) => ({
+      axis,
+      levels: [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
+    }))
+    .sort((a, b) => a.axis.localeCompare(b.axis));
+};
+
+const onAxes = (scenario, picked) =>
+  Object.entries(picked).every(([axis, level]) => {
+    if (!level) return true;
+    const held = String((scenario?.coverage || {})[axis] ?? "").trim();
+    return !held || held === level;
+  });
+
 // Searched over what is on screen plus the situation, because a person looking for "refund" is as
 // likely to remember the wording of the task as the name it was filed under.
 const found = (scenario, query) => {
@@ -102,7 +132,7 @@ const summarise = (receipts) => {
   return parts.join(", ") || "nothing changed";
 };
 
-export default function ScenarioSuite({ scenarios, jobId, editable, onChanged }) {
+export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEditing, onChanged }) {
   const { enqueueSnackbar } = useSnackbar();
   const [selected, setSelected] = useState(() => new Set());
   const [editing, setEditing] = useState(null);
@@ -111,6 +141,9 @@ export default function ScenarioSuite({ scenarios, jobId, editable, onChanged })
 
   const [chosen, setChosen] = useState(() => new Set());
   const [query, setQuery] = useState("");
+  const [picked, setPicked] = useState({});
+
+  const axes = useMemo(() => axesOf(scenarios), [scenarios]);
 
   // Every keyword in the suite, most used first, so the row reads as the suite's own vocabulary.
   // Keywords are written onto each scenario at generation, so this list is the suite's, not a fixed
@@ -124,9 +157,26 @@ export default function ScenarioSuite({ scenarios, jobId, editable, onChanged })
     return [...seen.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   }, [scenarios]);
 
+  // Leads with the keywords that narrow the suite; a one-row chip is a note, not a filter.
+  const WORTH_CLICKING = 16;
+  const [allKeywords, setAllKeywords] = useState(false);
+  const visibleKeywords = useMemo(() => {
+    if (allKeywords || keywords.length <= WORTH_CLICKING) return keywords;
+    const filtering = keywords.filter(([, count]) => count > 1);
+    const head = (filtering.length >= WORTH_CLICKING ? filtering : keywords).slice(
+      0,
+      WORTH_CLICKING,
+    );
+    // A chosen keyword never hides, or clearing it becomes impossible.
+    return [...head, ...keywords.filter(([word]) => chosen.has(word) && !head.some(([one]) => one === word))];
+  }, [keywords, allKeywords, chosen]);
+
   const shown = useMemo(
-    () => scenarios.filter((one) => matches(one, chosen) && found(one, query)),
-    [scenarios, chosen, query],
+    () =>
+      scenarios.filter(
+        (one) => matches(one, chosen) && found(one, query) && onAxes(one, picked),
+      ),
+    [scenarios, chosen, query, picked],
   );
   const allSelected = shown.length > 0 && shown.every((one) => selected.has(one.name));
   const someSelected = !allSelected && shown.some((one) => selected.has(one.name));
@@ -219,7 +269,6 @@ export default function ScenarioSuite({ scenarios, jobId, editable, onChanged })
     const target = editing.name;
     const changes = [
       { op: "set_field", scenario: target, field: "tests", value: form.tests },
-      { op: "set_field", scenario: target, field: "branch", value: form.branch },
       { op: "set_field", scenario: target, field: "max_turns", value: form.max_turns },
       {
         op: "set_field",
@@ -295,9 +344,46 @@ export default function ScenarioSuite({ scenarios, jobId, editable, onChanged })
         </Typography>
       </Stack>
 
+      {axes.length > 0 && (
+        <Stack direction="row" gap={1} flexWrap="wrap" alignItems="center">
+          {axes.map(({ axis, levels }) => (
+            <TextField
+              key={axis}
+              select
+              size="small"
+              label={String(axis).replace(/[_-]+/g, " ")}
+              value={picked[axis] || ""}
+              onChange={(event) =>
+                setPicked((prev) => ({ ...prev, [axis]: event.target.value }))
+              }
+              sx={{ minWidth: 190 }}
+            >
+              <MenuItem value="">
+                Any {String(axis).replace(/[_-]+/g, " ")}
+              </MenuItem>
+              {levels.map(([level, count]) => (
+                <MenuItem key={level} value={level}>
+                  {level} ({count})
+                </MenuItem>
+              ))}
+            </TextField>
+          ))}
+          {Object.values(picked).some(Boolean) && (
+            <Chip
+              label="Any cell"
+              size="small"
+              variant="outlined"
+              onClick={() => setPicked({})}
+              onDelete={() => setPicked({})}
+              sx={{ fontSize: "11px", height: 26, cursor: "pointer" }}
+            />
+          )}
+        </Stack>
+      )}
+
       {keywords.length > 0 && (
         <Stack direction="row" gap={0.5} flexWrap="wrap" alignItems="center">
-          {keywords.map(([word, count]) => {
+          {visibleKeywords.map(([word, count]) => {
             const on = chosen.has(word);
             return (
               <Chip
@@ -319,6 +405,24 @@ export default function ScenarioSuite({ scenarios, jobId, editable, onChanged })
               />
             );
           })}
+          {keywords.length > visibleKeywords.length && (
+            <Chip
+              label={`${keywords.length - visibleKeywords.length} more`}
+              size="small"
+              variant="outlined"
+              onClick={() => setAllKeywords(true)}
+              sx={{ fontSize: "11px", height: 26, cursor: "pointer" }}
+            />
+          )}
+          {allKeywords && keywords.length > WORTH_CLICKING && (
+            <Chip
+              label="Show fewer"
+              size="small"
+              variant="outlined"
+              onClick={() => setAllKeywords(false)}
+              sx={{ fontSize: "11px", height: 26, cursor: "pointer" }}
+            />
+          )}
           {chosen.size > 0 && (
             <Chip
               label="Clear"
@@ -589,6 +693,7 @@ export default function ScenarioSuite({ scenarios, jobId, editable, onChanged })
           {editing && (
             <ScenarioEditForm
               scenario={editing}
+              editableFields={scenarioEditing?.editable_fields}
               busy={busy}
               onCancel={() => setEditing(null)}
               onSave={saveScenario}
@@ -673,5 +778,9 @@ ScenarioSuite.propTypes = {
   jobId: PropTypes.string,
   // A read-only suite is one with no job behind it, so there is nothing to save an edit to.
   editable: PropTypes.bool,
+  scenarioEditing: PropTypes.shape({
+    editable_fields: PropTypes.arrayOf(PropTypes.string),
+    applied_without_rework: PropTypes.arrayOf(PropTypes.string),
+  }),
   onChanged: PropTypes.func,
 };

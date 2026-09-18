@@ -256,18 +256,15 @@ export default function HarnessDetail() {
   const selectedOutputs = stageOutputs.filter((output) =>
     detailTab === "runs"
       ? !["contract", "environment", "scenarios", "coverage"].includes(output.kind)
-      : // Coverage describes the suite, so it belongs beside it rather than in a tab of its own.
-        output.kind === detailTab ||
+      : output.kind === detailTab ||
         (detailTab === "scenarios" && output.kind === "coverage"),
   );
-  // Coverage reads before the suite, not after it. It is a fixed-height summary of a list that has
-  // no bound: at a thousand scenarios, putting it underneath means scrolling the entire suite to
-  // reach the one panel that says whether the suite is any good.
+  // Coverage reads before the suite, which has no bound on its length.
   const orderedOutputs = [
     ...selectedOutputs.filter((one) => one.kind === "coverage"),
     ...selectedOutputs.filter((one) => one.kind !== "coverage"),
   ];
-  // The matrix cross-tabulates the suite, so it needs the rows the sibling output already carries.
+  const scenarioEditing = current?.scenario_editing || {};
   const suiteScenarios =
     selectedOutputs.find((one) => one.kind === "scenarios")?.data || [];
   const outputCounts = stageOutputs.reduce((counts, output) => {
@@ -870,6 +867,7 @@ export default function HarnessDetail() {
                         output={output}
                         jobId={jobId}
                         scenarios={suiteScenarios}
+                        scenarioEditing={scenarioEditing}
                         onChanged={() =>
                           queryClient.invalidateQueries({
                             queryKey: ["harness-job", jobId],
@@ -893,6 +891,7 @@ export default function HarnessDetail() {
                         output={output}
                         jobId={jobId}
                         scenarios={suiteScenarios}
+                        scenarioEditing={scenarioEditing}
                         onChanged={() =>
                           queryClient.invalidateQueries({
                             queryKey: ["harness-job", jobId],

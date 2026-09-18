@@ -10,18 +10,10 @@ vi.mock("src/api/harness/harness", () => ({
   amendHarnessScenarios: vi.fn(),
 }));
 
-// Suites written before today still have to open.
-//
-// The scenario document has grown four times: the oldest jobs in the database carry seven fields,
-// then eighteen once personas arrived, then twenty, and only jobs authored from 2026-09-17 carry a
-// `coverage` coordinate at all. Those older jobs are not migrated and never will be, because the
-// suite is the record of what was actually run.
-//
-// So each shape below is a real first scenario taken verbatim from a job of that vintage, and the
-// point of the file is that every one of them renders. A field added later must always be read as
-// absent, never assumed.
+// The scenario document has grown over time and older suites are never migrated, so every shape
+// still has to render. A field added later is read as absent, never assumed.
 
-const AUGUST = {
+const SEVEN_FIELDS = {
   name: "book_ride_saved_card_otp_noor",
   steps: 14,
   tests: "passes when the pickup and dropoff are confirmed and the saved card is charged",
@@ -31,8 +23,8 @@ const AUGUST = {
   instruction: "You are calling to book a ride to your office.",
 };
 
-const SEPTEMBER_11 = {
-  ...AUGUST,
+const WITH_PERSONA = {
+  ...SEVEN_FIELDS,
   folder: undefined,
   steps: undefined,
   scenario_id: "s-1",
@@ -50,10 +42,10 @@ const SEPTEMBER_11 = {
   persona: { name: "Noor", gender: "female", keywords: ["saved card"] },
 };
 
-const SEPTEMBER_17 = { ...SEPTEMBER_11, folder: "scenarios/x", steps: 14 };
+const NO_COVERAGE = { ...WITH_PERSONA, folder: "scenarios/x", steps: 14 };
 
-const TODAY = {
-  ...SEPTEMBER_17,
+const EVERY_FIELD = {
+  ...NO_COVERAGE,
   coverage: { task: "book_ride_saved_card", counterparty: "recognized_regular", overlay: "none" },
 };
 
@@ -66,10 +58,10 @@ const suite = (scenario) => ({
 });
 
 describe.each([
-  ["August, seven fields", AUGUST],
-  ["September 11, no folder or steps", SEPTEMBER_11],
-  ["September 17, no coverage", SEPTEMBER_17],
-  ["today, every field", TODAY],
+  ["seven fields", SEVEN_FIELDS],
+  ["no folder or steps", WITH_PERSONA],
+  ["no coverage", NO_COVERAGE],
+  ["every field", EVERY_FIELD],
 ])("a suite from %s", (_when, scenario) => {
   it("renders its rows", () => {
     render(<StageOutput output={suite(scenario)} jobId="job-1" scenarios={[scenario]} />);
@@ -80,25 +72,18 @@ describe.each([
     const user = userEvent.setup();
     render(<StageOutput output={suite(scenario)} jobId="job-1" scenarios={[scenario]} />);
     await user.click(screen.getByRole("button", { name: /edit scenario/i }));
-    // The panel writes every section it can offer, and a field the scenario never had has to come
-    // up blank rather than take the whole drawer down with it.
     expect(await screen.findByText("Directly editable")).toBeInTheDocument();
     expect(screen.getByDisplayValue(scenario.name)).toBeInTheDocument();
   });
 });
 
 describe("the coverage panel", () => {
-  // Every job authored before 2026-09-17 has no coverage output at all, so the tab is the three
-  // stages it always was. Nothing may appear in its place, and nothing may throw.
   it("is simply absent on a job that never produced one", () => {
-    render(<StageOutput output={suite(AUGUST)} jobId="job-1" scenarios={[AUGUST]} />);
+    render(<StageOutput output={suite(SEVEN_FIELDS)} jobId="job-1" scenarios={[SEVEN_FIELDS]} />);
     expect(screen.queryByText(/Thinnest pairing/)).not.toBeInTheDocument();
     expect(screen.queryByText(/cross-tabulate/)).not.toBeInTheDocument();
   });
 
-  // A job that produced the report but whose scenarios carry no coordinate is the in-between case:
-  // a run that upgraded mid-flight, or a plan that declared no grid. It says so rather than
-  // drawing an empty grid.
   it("says so when the report exists but no scenario was placed", () => {
     render(
       <StageOutput
@@ -110,7 +95,7 @@ describe("the coverage panel", () => {
           data: { scenarios: 1, placed: 0, axes: {}, pairs: {} },
         }}
         jobId="job-1"
-        scenarios={[SEPTEMBER_17]}
+        scenarios={[NO_COVERAGE]}
       />,
     );
     expect(screen.getByText(/nothing to cross-tabulate/i)).toBeInTheDocument();

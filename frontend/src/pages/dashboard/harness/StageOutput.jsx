@@ -66,7 +66,7 @@ RawDetails.propTypes = {
 // One artifact the runner produced during a stage. `kind` is a closed set from ALK —
 // contract, environment, scenarios, simulation — and anything else falls back to raw JSON
 // rather than rendering nothing, so a new kind is visible rather than silently dropped.
-export default function StageOutput({ output, jobId, scenarios, onChanged }) {
+export default function StageOutput({ output, jobId, scenarios, scenarioEditing, onChanged }) {
   const data = output.data || {};
   return (
     <Accordion
@@ -185,14 +185,13 @@ export default function StageOutput({ output, jobId, scenarios, onChanged }) {
             // on the persona hid editing entirely for a suite whose scenarios carry none; the panel
             // already leaves the caller section out when there is nobody on the other end.
             editable={Boolean(jobId)}
+            scenarioEditing={scenarioEditing}
             onChanged={onChanged}
           />
         )}
 
         {output.kind === "coverage" && (
           <Stack spacing={1}>
-            {/* The matrix needs the scenarios' own coordinates, which live on the sibling
-                output, so the page hands them down rather than this refetching them. */}
             <CoverageMatrix scenarios={scenarios} coverage={data} />
             <RawDetails data={data} />
           </Stack>
@@ -207,10 +206,13 @@ export default function StageOutput({ output, jobId, scenarios, onChanged }) {
 }
 
 StageOutput.propTypes = {
-  // The suite's own rows, handed down so the coverage matrix can read each scenario's coordinate.
   scenarios: PropTypes.arrayOf(PropTypes.object),
   // Editing a suite happens against a job, so the id is what turns a read-only list editable.
   jobId: PropTypes.string,
+  scenarioEditing: PropTypes.shape({
+    editable_fields: PropTypes.arrayOf(PropTypes.string),
+    applied_without_rework: PropTypes.arrayOf(PropTypes.string),
+  }),
   onChanged: PropTypes.func,
   output: PropTypes.shape({
     data: PropTypes.oneOfType([PropTypes.object, PropTypes.array]),

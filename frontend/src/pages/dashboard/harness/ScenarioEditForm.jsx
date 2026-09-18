@@ -67,7 +67,7 @@ const draftOf = (scenario) => {
   };
 };
 
-export default function ScenarioEditForm({ scenario, busy, onCancel, onSave }) {
+export default function ScenarioEditForm({ scenario, busy, onCancel, onSave, editableFields }) {
   const persona = scenario.persona || {};
   const initial = useMemo(() => draftOf(scenario), [scenario]);
   const [form, setForm] = useState(initial);
@@ -76,6 +76,9 @@ export default function ScenarioEditForm({ scenario, busy, onCancel, onSave }) {
   // A save re-checks the scenario, and a change the harness judges consequential costs a model call
   // and a fresh proof. Saving an untouched form would pay that for nothing.
   const dirty = JSON.stringify(form) !== JSON.stringify(initial);
+
+  // Absent list means nothing is editable.
+  const editable = (field) => (editableFields || []).includes(field);
 
   return (
     <Stack sx={{ height: "100%" }}>
@@ -117,14 +120,15 @@ export default function ScenarioEditForm({ scenario, busy, onCancel, onSave }) {
         />
         <Field
           label="Branch"
-          value={form.branch}
-          onChange={set("branch")}
-          help="What makes this one different from its siblings in the same use case."
+          value={scenario.branch}
+          readOnly
+          help="Read-only. The suite is checked for two scenarios sharing a use case and branch."
         />
         <Field
           label="Passes when"
-          value={form.tests}
-          onChange={set("tests")}
+          value={editable("tests") ? form.tests : scenario.tests}
+          onChange={editable("tests") ? set("tests") : undefined}
+          readOnly={!editable("tests")}
           rows={2}
           help="What a pass looks like. Shown in results."
         />

@@ -598,6 +598,51 @@ def test_fresh_authoring_archive_carries_the_sub_goal_catalogue(tmp_path):
         assert "sub_goals.json" in archive.getnames()
 
 
+def test_editing_a_suite_keeps_the_environment_the_archive_cannot_rebuild(tmp_path, monkeypatch):
+    """The archive carries no environment description, so that output must survive a rebuild."""
+    from simulate.services import hosted_harness_gateway as gateway
+
+    root = tmp_path / "authoring"
+    scenario = root / "scenarios" / "one"
+    scenario.mkdir(parents=True)
+    (root / "contract.json").write_text('{"agent":"ride"}', encoding="utf-8")
+    (scenario / "scenario.json").write_text('{"name":"one"}', encoding="utf-8")
+    body = pack_authoring_archive(root)
+
+    saved = {}
+
+    class _Job:
+        organization_id = "org"
+        id = "job"
+        payload = {}
+        scenario_count = 1
+        stage_outputs = [
+            {"kind": "contract", "title": "Agent contract", "data": {"agent": "stale"}},
+            {"kind": "environment", "title": "Execution environment", "data": {"services": ["db"]}},
+            {"kind": "scenarios", "title": "Generated scenarios", "data": []},
+        ]
+
+        def save(self, update_fields=None):
+            saved["outputs"] = self.stage_outputs
+
+    monkeypatch.setattr(gateway, "get_storage_client", lambda: SimpleNamespace(
+        put_object=lambda **kwargs: None,
+        bucket_exists=lambda name: True,
+        make_bucket=lambda name: None,
+    ))
+    monkeypatch.setattr(gateway, "ensure_bucket", lambda client, name: None)
+
+    gateway.store_authoring_archive(_Job(), body)
+
+    kinds = [one["kind"] for one in saved["outputs"]]
+    assert kinds == ["contract", "environment", "scenarios"]
+    environment = next(one for one in saved["outputs"] if one["kind"] == "environment")
+    assert environment["data"] == {"services": ["db"]}
+    # The kinds the archive does rebuild are replaced, never merged into the stale copy.
+    contract = next(one for one in saved["outputs"] if one["kind"] == "contract")
+    assert contract["data"]["agent"] == "ride"
+
+
 def test_fresh_authoring_archive_rejects_missing_scenarios(tmp_path):
     (tmp_path / "contract.json").write_text("{}", encoding="utf-8")
 
