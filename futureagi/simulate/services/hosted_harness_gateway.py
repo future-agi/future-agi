@@ -119,7 +119,7 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
             ) from exc
 
     provider = str(os.environ.get("SIMULATOR_LLM_PROVIDER") or "vertex").strip()
-    model = str(os.environ.get("SIMULATOR_LLM_MODEL") or "gemini-2.5-flash").strip()
+    model = str(os.environ.get("SIMULATOR_LLM_MODEL") or "gemini-3.7-flash").strip()
     location = str(os.environ.get("GOOGLE_CLOUD_LOCATION") or "global").strip()
     derived_backend = (
         "vertex-gemini"

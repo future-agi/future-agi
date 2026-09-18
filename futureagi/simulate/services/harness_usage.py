@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import logging
 import json
+import logging
 from uuid import UUID, uuid5
 
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db import transaction
-from django.utils.dateparse import parse_datetime
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 from simulate.models import HostedHarnessAttempt, HostedHarnessJob
 from simulate.services.hosted_harness import HostedHarnessError
@@ -74,13 +74,18 @@ def record_harness_usage(attempt: HostedHarnessAttempt, report: dict) -> dict:
         )
 
     with transaction.atomic():
-        job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
-            id=attempt.job_id
+        current = HostedHarnessAttempt.no_workspace_objects.select_for_update().get(
+            id=attempt.id
         )
-        metadata = dict(job.payload.get("metadata") or {})
-        reports = dict(metadata.get(_REPORT_KEY) or {})
-        old = reports.get(str(attempt.id))
-        if old:
+        old = current.usage_report
+        if old is None:
+            legacy_job = HostedHarnessJob.no_workspace_objects.only("payload").get(
+                id=current.job_id
+            )
+            old = (
+                (legacy_job.payload.get("metadata") or {}).get(_REPORT_KEY) or {}
+            ).get(str(current.id))
+        if old is not None:
             previous = {item["id"]: item for item in old["records"]}
             if any(
                 key in by_id and by_id[key] != item for key, item in previous.items()
@@ -98,11 +103,9 @@ def record_harness_usage(attempt: HostedHarnessAttempt, report: dict) -> dict:
                         status_code=409,
                     )
                 normalized = old
-        reports[str(attempt.id)] = normalized
-        metadata[_REPORT_KEY] = reports
-        job.payload = {**job.payload, "metadata": metadata}
-        job.save(update_fields=["payload", "updated_at"])
-        transaction.on_commit(lambda: emit_harness_usage(attempt, normalized))
+        current.usage_report = normalized
+        current.save(update_fields=["usage_report", "updated_at"])
+        transaction.on_commit(lambda: emit_harness_usage(current, normalized))
     return {"accepted": True}
 
 
@@ -111,19 +114,25 @@ def _billable_records(attempt: HostedHarnessAttempt, report: dict):
         receipt.scenario.scenario_key: receipt
         for receipt in attempt.result_receipts.select_related("scenario").all()
     }
+    history = attempt.receipt_history or {}
     for item in report["records"]:
         if not item["amount"]:
             continue
         if item["action"] == "text_call" and item["funding"] == "customer":
             continue
         receipt = receipts.get(item["scenario_key"])
-        if (
-            receipt is None
-            or receipt.status == "skipped"
-            or not receipt.body.get("call")
-        ):
+        if receipt is not None:
+            receipt_status = receipt.status
+            receipt_body = receipt.body
+        else:
+            historical = history.get(item["scenario_key"])
+            if historical is None:
+                continue
+            receipt_status = historical["status"]
+            receipt_body = historical["body"]
+        if receipt_status == "skipped" or not receipt_body.get("call"):
             continue
-        failure_domain = (receipt.body.get("failure") or {}).get("domain")
+        failure_domain = (receipt_body.get("failure") or {}).get("domain")
         if failure_domain in _NON_BILLABLE_FAILURE_DOMAINS:
             continue
         yield item
@@ -163,21 +172,9 @@ def _authoring_stage_record(item: dict) -> dict | None:
     from agentic_eval.core_evals.fi_utils.token_count_helper import (
         calculate_total_cost,
     )
+    from agentic_eval.core_evals.run_prompt.model_pricing import get_model_pricing
     from ee.usage.services.config import BillingConfig
 
-    stage = str(item.get("stage") or "").strip()
-    models = sorted(
-        {
-            str(model).strip()
-            for model in (item.get("models") or [])
-            if str(model).strip()
-        }
-    )
-    if not stage or len(stage) > 128 or len(models) != 1:
-        raise HostedHarnessError(
-            "authoring_usage_invalid",
-            "Each authoring stage must name exactly one priced model.",
-        )
     counts = {}
     for field in ("tokens_in", "tokens_out", "tokens_cached"):
         value = item.get(field, 0)
@@ -195,7 +192,34 @@ def _authoring_stage_record(item: dict) -> dict | None:
     if not counts["tokens_in"] and not counts["tokens_out"]:
         return None
 
+    stage = str(item.get("stage") or "").strip()
+    models = sorted(
+        {
+            str(model).strip()
+            for model in (item.get("models") or [])
+            if str(model).strip()
+        }
+    )
+    if not stage or len(stage) > 128 or len(models) != 1:
+        raise HostedHarnessError(
+            "authoring_usage_invalid",
+            "Each authoring stage must name exactly one priced model.",
+        )
+
     model = models[0]
+    pricing = get_model_pricing(model)
+    if (
+        not isinstance(pricing, dict)
+        or not {
+            "input_per_1M_tokens",
+            "output_per_1M_tokens",
+        }
+        <= pricing.keys()
+    ):
+        raise HostedHarnessError(
+            "authoring_model_unpriced",
+            f"Authoring model {model!r} has no token pricing in the platform catalog.",
+        )
     cost = calculate_total_cost(
         model,
         {
@@ -241,24 +265,27 @@ def record_harness_authoring_usage(attempt: HostedHarnessAttempt, spend: dict) -
         "records": records,
     }
     with transaction.atomic():
-        job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
-            id=attempt.job_id
+        current = HostedHarnessAttempt.no_workspace_objects.select_for_update().get(
+            id=attempt.id
         )
-        metadata = dict(job.payload.get("metadata") or {})
-        reports = dict(metadata.get(_AUTHORING_REPORT_KEY) or {})
-        key = str(attempt.id)
-        old = reports.get(key)
+        old = current.authoring_usage_report
+        if old is None:
+            legacy_job = HostedHarnessJob.no_workspace_objects.only("payload").get(
+                id=current.job_id
+            )
+            old = (
+                (legacy_job.payload.get("metadata") or {}).get(_AUTHORING_REPORT_KEY)
+                or {}
+            ).get(str(current.id))
         if old is not None and old != report:
             raise HostedHarnessError(
                 "authoring_usage_conflict",
                 "Finalized authoring usage cannot change.",
                 status_code=409,
             )
-        reports[key] = report
-        metadata[_AUTHORING_REPORT_KEY] = reports
-        job.payload = {**job.payload, "metadata": metadata}
-        job.save(update_fields=["payload", "updated_at"])
-        transaction.on_commit(lambda: emit_harness_authoring_usage(attempt, report))
+        current.authoring_usage_report = report
+        current.save(update_fields=["authoring_usage_report", "updated_at"])
+        transaction.on_commit(lambda: emit_harness_authoring_usage(current, report))
 
 
 def emit_harness_authoring_usage(attempt: HostedHarnessAttempt, report: dict) -> None:
@@ -301,40 +328,79 @@ def emit_harness_authoring_usage(attempt: HostedHarnessAttempt, report: dict) ->
 
 
 def replay_harness_usage(attempt: HostedHarnessAttempt) -> None:
-    job = HostedHarnessJob.no_workspace_objects.only("payload").get(id=attempt.job_id)
+    current = HostedHarnessAttempt.no_workspace_objects.get(id=attempt.id)
+    job = HostedHarnessJob.no_workspace_objects.only("payload").get(id=current.job_id)
     metadata = job.payload.get("metadata") or {}
-    report = (metadata.get(_REPORT_KEY) or {}).get(str(attempt.id))
+    report = current.usage_report
+    if report is None:
+        report = (metadata.get(_REPORT_KEY) or {}).get(str(current.id))
     if report is not None:
-        emit_harness_usage(attempt, report)
-    authoring = (metadata.get(_AUTHORING_REPORT_KEY) or {}).get(str(attempt.id))
+        emit_harness_usage(current, report)
+    authoring = current.authoring_usage_report
+    if authoring is None:
+        authoring = (metadata.get(_AUTHORING_REPORT_KEY) or {}).get(str(current.id))
     if authoring is not None:
-        emit_harness_authoring_usage(attempt, authoring)
-    elif attempt.cleanup_verified_at is not None:
-        spend = (
-            (metadata.get("harness_spend") or {}).get("attempts") or {}
-        ).get(str(attempt.attempt_number))
+        emit_harness_authoring_usage(current, authoring)
+    elif current.cleanup_verified_at is not None:
+        spend = ((metadata.get("harness_spend") or {}).get("attempts") or {}).get(
+            str(current.attempt_number)
+        )
         if spend is not None:
-            record_harness_authoring_usage(attempt, spend)
+            try:
+                record_harness_authoring_usage(current, spend)
+            except HostedHarnessError:
+                logger.exception(
+                    "Authoring usage could not be finalized for attempt %s",
+                    current.id,
+                )
 
 
 def harness_consumption(job: HostedHarnessJob) -> dict | None:
     metadata = job.payload.get("metadata") or {}
-    reports = metadata.get(_REPORT_KEY) or {}
-    authoring_reports = metadata.get(_AUTHORING_REPORT_KEY) or {}
-    runtimes = metadata.get("sandbox_runtime") or {}
+    legacy_reports = metadata.get(_REPORT_KEY) or {}
+    legacy_authoring_reports = metadata.get(_AUTHORING_REPORT_KEY) or {}
+    legacy_runtimes = metadata.get("sandbox_runtime") or {}
     authoring_spend = (metadata.get("harness_spend") or {}).get("attempts") or {}
-    if not reports and not authoring_reports and not runtimes and not authoring_spend:
-        return None
-
-    consumption = {"text_sim_tokens": 0, "voice_sim_minutes": 0, "ai_credits": 0}
     attempts = {
         str(attempt.id): attempt
         for attempt in job.attempts.prefetch_related("result_receipts__scenario")
     }
+    reports = {
+        attempt_id: (
+            attempt.usage_report
+            if attempt.usage_report is not None
+            else legacy_reports.get(attempt_id)
+        )
+        for attempt_id, attempt in attempts.items()
+        if attempt.usage_report is not None or attempt_id in legacy_reports
+    }
+    authoring_reports = {
+        attempt_id: (
+            attempt.authoring_usage_report
+            if attempt.authoring_usage_report is not None
+            else legacy_authoring_reports.get(attempt_id)
+        )
+        for attempt_id, attempt in attempts.items()
+        if (
+            attempt.authoring_usage_report is not None
+            or attempt_id in legacy_authoring_reports
+        )
+    }
+    runtimes = {
+        attempt_id: (
+            attempt.sandbox_runtime
+            if attempt.sandbox_runtime
+            else legacy_runtimes.get(attempt_id)
+        )
+        for attempt_id, attempt in attempts.items()
+        if attempt.sandbox_runtime or attempt_id in legacy_runtimes
+    }
+    if not reports and not authoring_reports and not runtimes and not authoring_spend:
+        return None
+
+    consumption = {"text_sim_tokens": 0, "voice_sim_minutes": 0, "ai_credits": 0}
     for attempt_id, report in reports.items():
-        attempt = attempts.get(attempt_id)
-        if attempt is None:
-            continue
+        attempt = attempts[attempt_id]
         for item in _billable_records(attempt, report):
             dimension = (
                 "text_sim_tokens"
@@ -347,6 +413,7 @@ def harness_consumption(job: HostedHarnessJob) -> dict | None:
         for report in authoring_reports.values()
         for record in report["records"]
     )
+    authoring_estimate_unavailable = False
     if authoring_spend and not is_oss():
         try:
             for attempt_id, attempt in attempts.items():
@@ -359,9 +426,13 @@ def harness_consumption(job: HostedHarnessJob) -> dict | None:
                         consumption["ai_credits"] += record["credits"]
         except HostedHarnessError:
             logger.warning(
-                "Authoring credit estimate unavailable for job %s", job.id, exc_info=True
+                "Authoring credit estimate unavailable for job %s",
+                job.id,
+                exc_info=True,
             )
-            consumption["ai_credits"] = None
+            authoring_estimate_unavailable = True
+    if authoring_estimate_unavailable:
+        consumption["ai_credits"] = None
     consumption["sandbox_seconds"] = sum(
         observation["seconds"] for observation in runtimes.values()
     )
@@ -373,13 +444,10 @@ def record_sandbox_runtime(
 ) -> None:
     """Observe provision-to-confirmed-teardown duration without billing it."""
     with transaction.atomic():
-        job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
-            id=attempt.job_id
+        current = HostedHarnessAttempt.no_workspace_objects.select_for_update().get(
+            id=attempt.id
         )
-        metadata = dict(job.payload.get("metadata") or {})
-        runtimes = dict(metadata.get("sandbox_runtime") or {})
-        key = str(attempt.id)
-        observation = dict(runtimes.get(key) or {})
+        observation = dict(current.sandbox_runtime or {})
         if observation.get("ended_at") or (not observation and not started):
             return
         now = timezone.now()
@@ -389,7 +457,5 @@ def record_sandbox_runtime(
         observation["observed_at"] = now.isoformat()
         if final:
             observation["ended_at"] = now.isoformat()
-        runtimes[key] = observation
-        metadata["sandbox_runtime"] = runtimes
-        job.payload = {**job.payload, "metadata": metadata}
-        job.save(update_fields=["payload", "updated_at"])
+        current.sandbox_runtime = observation
+        current.save(update_fields=["sandbox_runtime", "updated_at"])

@@ -19,15 +19,44 @@ from simulate.tests.test_hosted_harness_channels import BASE, _headers, _payload
 
 
 @pytest.fixture
-def metered_attempt(organization, monkeypatch, settings):
+def hosted_attempt(organization):
+    job, _ = create_hosted_job(organization, _payload(), idempotency_key=str(uuid4()))
+    return register_attempt(job.id, endpoint_base_url="https://platform.example")
+
+
+@pytest.fixture
+def metered_attempt(hosted_attempt, monkeypatch):
     from ee.usage.services import emitter
 
     events = []
     monkeypatch.setattr(harness_usage, "is_oss", lambda: False)
     monkeypatch.setattr(emitter, "emit", events.append)
-    job, _ = create_hosted_job(organization, _payload(), idempotency_key=str(uuid4()))
-    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
-    return capability, events
+    return hosted_attempt, events
+
+
+@pytest.mark.django_db
+def test_oss_hosted_authoring_usage_is_free(hosted_attempt, monkeypatch):
+    monkeypatch.setattr(harness_usage, "is_oss", lambda: True)
+
+    assert harness_usage.check_harness_action(
+        str(hosted_attempt.attempt.job.organization_id), "harness_authoring"
+    ) == {"allowed": True}
+    harness_usage.record_harness_authoring_usage(
+        hosted_attempt.attempt,
+        {
+            "stages": [
+                {
+                    "stage": "understand-agent",
+                    "models": ["gemini-3.7-flash"],
+                    "tokens_in": 1,
+                    "tokens_out": 1,
+                }
+            ]
+        },
+    )
+
+    hosted_attempt.attempt.refresh_from_db()
+    assert hosted_attempt.attempt.authoring_usage_report is None
 
 
 def _record(action="text_call", *, amount=1, funding="platform"):
@@ -84,6 +113,7 @@ def _provision(attempt):
 
 
 @pytest.mark.django_db
+@pytest.mark.requires_ee
 def test_authoring_tokens_become_deterministic_ai_credit_events(
     metered_attempt, django_capture_on_commit_callbacks
 ):
@@ -116,6 +146,7 @@ def test_authoring_tokens_become_deterministic_ai_credit_events(
 
 
 @pytest.mark.django_db
+@pytest.mark.requires_ee
 def test_live_authoring_estimates_refresh_without_charging_or_double_counting(
     metered_attempt, django_capture_on_commit_callbacks
 ):
@@ -143,15 +174,11 @@ def test_live_authoring_estimates_refresh_without_charging_or_double_counting(
     job.refresh_from_db()
     job.payload["metadata"]["harness_spend"]["attempts"]["2"] = second_spend
     job.save(update_fields=["payload"])
-    assert harness_usage.harness_consumption(job)["ai_credits"] == pytest.approx(
-        185.4
-    )
+    assert harness_usage.harness_consumption(job)["ai_credits"] == pytest.approx(185.4)
     assert events == []
 
     with django_capture_on_commit_callbacks(execute=True):
-        record_cleanup(
-            capability.attempt.id, provider_ref="", verified_absent=True
-        )
+        record_cleanup(capability.attempt.id, provider_ref="", verified_absent=True)
     job.refresh_from_db()
     consumption = harness_usage.harness_consumption(job)
     assert consumption["ai_credits"] == pytest.approx(185.4)
@@ -162,9 +189,24 @@ def test_live_authoring_estimates_refresh_without_charging_or_double_counting(
     consumption = harness_usage.harness_consumption(job)
     assert consumption["ai_credits"] == pytest.approx(185.4)
     assert sum(event.amount for event in events) == pytest.approx(185.4)
+    register_attempt(job.id, endpoint_base_url="https://platform.example")
+    job.refresh_from_db()
+    job.payload["metadata"]["harness_spend"]["attempts"]["3"] = {
+        "stages": [
+            {
+                "stage": "understand-agent",
+                "models": ["not-a-priced-model"],
+                "tokens_in": 1000,
+                "tokens_out": 100,
+            }
+        ]
+    }
+    job.save(update_fields=["payload"])
+    assert harness_usage.harness_consumption(job)["ai_credits"] is None
 
 
 @pytest.mark.django_db
+@pytest.mark.requires_ee
 def test_unpriceable_live_authoring_is_unavailable_not_zero(metered_attempt):
     capability, events = metered_attempt
     job = capability.attempt.job
@@ -172,12 +214,14 @@ def test_unpriceable_live_authoring_is_unavailable_not_zero(metered_attempt):
         "harness_spend": {
             "attempts": {
                 "1": {
-                    "stages": [{
-                        "stage": "understand-agent",
-                        "models": ["not-a-priced-model"],
-                        "tokens_in": 1000,
-                        "tokens_out": 100,
-                    }],
+                    "stages": [
+                        {
+                            "stage": "understand-agent",
+                            "models": ["not-a-priced-model"],
+                            "tokens_in": 1000,
+                            "tokens_out": 100,
+                        }
+                    ],
                 },
             },
         },
@@ -188,6 +232,43 @@ def test_unpriceable_live_authoring_is_unavailable_not_zero(metered_attempt):
 
 
 @pytest.mark.django_db
+@pytest.mark.requires_ee
+def test_cleanup_finalizes_when_live_authoring_is_unpriced(metered_attempt):
+    capability, events = metered_attempt
+    job = capability.attempt.job
+    job.payload["metadata"] = {
+        "harness_spend": {
+            "attempts": {
+                "1": {
+                    "stages": [
+                        {
+                            "stage": "understand-agent",
+                            "models": ["gemini-3.8-flash-unlisted"],
+                            "tokens_in": 1000,
+                            "tokens_out": 100,
+                        }
+                    ]
+                }
+            }
+        }
+    }
+    job.save(update_fields=["payload"])
+
+    record_cleanup(
+        capability.attempt.id,
+        provider_ref="",
+        verified_absent=True,
+    )
+
+    capability.attempt.refresh_from_db()
+    job.refresh_from_db()
+    assert capability.attempt.cleanup_verified_at is not None
+    assert job.state == job.State.FAILED
+    assert events == []
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
 def test_stale_snapshot_cannot_erase_or_change_finalized_usage(
     metered_attempt, django_capture_on_commit_callbacks
 ):
@@ -196,10 +277,8 @@ def test_stale_snapshot_cannot_erase_or_change_finalized_usage(
     with django_capture_on_commit_callbacks(execute=True):
         harness_usage.record_harness_usage(capability.attempt, _report([first, second]))
         harness_usage.record_harness_usage(capability.attempt, _report([first]))
-    capability.attempt.job.refresh_from_db()
-    stored = capability.attempt.job.payload["metadata"]["usage_reports"][
-        str(capability.attempt.id)
-    ]
+    capability.attempt.refresh_from_db()
+    stored = capability.attempt.usage_report
     assert stored["records"] == [first, second]
     with pytest.raises(HostedHarnessError, match="cannot change"):
         harness_usage.record_harness_usage(
@@ -208,6 +287,7 @@ def test_stale_snapshot_cannot_erase_or_change_finalized_usage(
 
 
 @pytest.mark.django_db
+@pytest.mark.requires_ee
 def test_receipt_replay_bills_platform_text_and_all_voice_minutes(
     metered_attempt, django_capture_on_commit_callbacks
 ):
@@ -242,6 +322,7 @@ def test_receipt_replay_bills_platform_text_and_all_voice_minutes(
 
 
 @pytest.mark.django_db
+@pytest.mark.requires_ee
 def test_infrastructure_receipt_does_not_bill_measured_call(
     metered_attempt, django_capture_on_commit_callbacks
 ):
@@ -262,10 +343,47 @@ def test_infrastructure_receipt_does_not_bill_measured_call(
 
 
 @pytest.mark.django_db
-def test_sandbox_runtime_stops_at_verified_teardown_without_billing(
-    metered_attempt, monkeypatch
+@pytest.mark.requires_ee
+def test_retried_receipt_history_keeps_prior_attempt_usage_billable(
+    metered_attempt, django_capture_on_commit_callbacks
 ):
     capability, events = metered_attempt
+    first = capability.attempt
+    _provision(first)
+    record = _record("voice_call", amount=2)
+    with django_capture_on_commit_callbacks(execute=True):
+        harness_usage.record_harness_usage(first, _report([record]))
+    receipt = _receipt(first)
+
+    second = register_attempt(
+        first.job_id, endpoint_base_url="https://platform.example"
+    )
+    first.refresh_from_db()
+    first.receipt_history = {
+        "case-one": {
+            "status": receipt.status,
+            "body": receipt.body,
+            "attempt_number": receipt.attempt_number,
+            "digest": receipt.digest,
+        }
+    }
+    first.save(update_fields=["receipt_history", "updated_at"])
+    receipt.attempt = second.attempt
+    receipt.attempt_number = second.attempt.attempt_number
+    receipt.save(update_fields=["attempt", "attempt_number", "updated_at"])
+
+    harness_usage.replay_harness_usage(first)
+
+    assert {(event.event_type, float(event.amount)) for event in events} == {
+        ("voice_call", 2.0)
+    }
+
+
+@pytest.mark.django_db
+def test_sandbox_runtime_stops_at_verified_teardown_without_billing(
+    hosted_attempt, monkeypatch
+):
+    capability, events = hosted_attempt, []
     started = datetime.now(UTC)
     moment = [started]
     monkeypatch.setattr(harness_usage.timezone, "now", lambda: moment[0])
@@ -286,6 +404,7 @@ def test_sandbox_runtime_stops_at_verified_teardown_without_billing(
 
 
 @pytest.mark.django_db
+@pytest.mark.requires_ee
 def test_usage_refusal_preserves_budget_dimension_without_starting_work(
     metered_attempt, monkeypatch
 ):
@@ -318,6 +437,7 @@ def test_usage_refusal_preserves_budget_dimension_without_starting_work(
 
 
 @pytest.mark.django_db
+@pytest.mark.requires_ee
 def test_successful_admission_clears_persisted_budget_refusal(
     metered_attempt, monkeypatch
 ):

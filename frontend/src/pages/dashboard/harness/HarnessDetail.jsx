@@ -137,15 +137,18 @@ export default function HarnessDetail() {
       terminalStages.has(query.state.data?.status?.stage) ? false : 2000,
     meta: { errorHandled: true },
   });
+  const usageLimit = current?.usage_limit;
   useEffect(() => {
-    if (current?.usage_limit) {
-      hadRemoteUsageLimit.current = true;
-      handleCreditError(current.usage_limit);
+    if (usageLimit) {
+      if (!hadRemoteUsageLimit.current) {
+        hadRemoteUsageLimit.current = true;
+        handleCreditError(usageLimit);
+      }
     } else if (hadRemoteUsageLimit.current) {
       hadRemoteUsageLimit.current = false;
       dismissCreditBanner();
     }
-  }, [current?.usage_limit, handleCreditError, dismissCreditBanner]);
+  }, [usageLimit, handleCreditError, dismissCreditBanner]);
 
   // Shares the list page's key, so arriving from the list reuses what is already cached
   // rather than issuing a second request for the same array.

@@ -45533,7 +45533,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         livekit_max_concurrency: {
           title: "Livekit max concurrency",
           type: "integer",
-          maximum: 5,
+          maximum: 25,
           minimum: 1,
           "x-nullable": true,
         },
@@ -45687,7 +45687,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         livekit_max_concurrency: {
           title: "Livekit max concurrency",
           type: "integer",
-          maximum: 5,
+          maximum: 25,
           minimum: 1,
           "x-nullable": true,
         },
@@ -46678,7 +46678,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         livekit_max_concurrency: {
           title: "Livekit max concurrency",
           type: "integer",
-          maximum: 5,
+          maximum: 25,
           minimum: 1,
         },
         commit_message: {

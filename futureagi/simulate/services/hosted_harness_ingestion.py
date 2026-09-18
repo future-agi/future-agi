@@ -204,6 +204,27 @@ def ingest_result_receipt(
                     "a different receipt is already accepted for this scenario",
                     status_code=409,
                 )
+            # Keep the prior attempt's sealed receipt facts on that attempt before the
+            # latest projection is reassigned.  Usage reports are immutable per attempt,
+            # so dropping this snapshot would make an already-measured call disappear
+            # from billing after a retry.
+            previous_attempt = (
+                HostedHarnessAttempt.no_workspace_objects.select_for_update().get(
+                    id=existing.attempt_id
+                )
+            )
+            receipt_history = dict(previous_attempt.receipt_history or {})
+            receipt_history.setdefault(
+                registration.scenario_key,
+                {
+                    "status": existing.status,
+                    "body": existing.body,
+                    "attempt_number": existing.attempt_number,
+                    "digest": existing.digest,
+                },
+            )
+            previous_attempt.receipt_history = receipt_history
+            previous_attempt.save(update_fields=["receipt_history", "updated_at"])
             # BaseModel.delete() is a soft delete, so delete-then-create still violates the
             # one-latest-receipt-per-job/scenario database constraint. Replace the older attempt
             # atomically in place instead.

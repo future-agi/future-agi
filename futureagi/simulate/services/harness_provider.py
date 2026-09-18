@@ -45,6 +45,19 @@ def get_harness_provider():
     return DaytonaHarnessProvider()
 
 
+def _usage_limit_response(exc: Exception) -> Response | None:
+    """Translate EE metering refusals into the standard structured 402 response."""
+    try:
+        from ee.usage.exceptions import UsageLimitExceeded
+    except ImportError:
+        return None
+    if not isinstance(exc, UsageLimitExceeded):
+        return None
+    from tfc.utils.general_methods import GeneralMethods
+
+    return GeneralMethods().usage_limit_response(exc.check_result)
+
+
 def _organization(request):
     return getattr(request, "organization", None) or getattr(
         request.user, "organization", None
@@ -486,7 +499,13 @@ class DaytonaHarnessProvider:
         payload = request.validated_data
         from simulate.services.harness_usage import require_harness_authoring
 
-        require_harness_authoring(str(organization.id))
+        try:
+            require_harness_authoring(str(organization.id))
+        except Exception as exc:
+            response = _usage_limit_response(exc)
+            if response is not None:
+                return response
+            raise
         base_url = (
             getattr(settings, "HARNESS_PUBLIC_BASE_URL", "")
             or request.build_absolute_uri("/")
@@ -885,6 +904,11 @@ class DaytonaHarnessProvider:
                 job.save(update_fields=["payload", "scenario_count", "updated_at"])
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
+        except Exception as exc:
+            response = _usage_limit_response(exc)
+            if response is not None:
+                return response
+            raise
 
         try:
             return Response(

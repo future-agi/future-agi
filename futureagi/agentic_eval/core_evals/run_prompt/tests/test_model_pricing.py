@@ -21,17 +21,16 @@ Run with:
 import pytest
 
 from agentic_eval.core_evals.fi_utils.token_count_helper import (
-    calculate_total_cost,
     DEFAULT_FALLBACK_PRICING,
     DEFAULT_IMAGE_COST_PER_IMAGE,
-)
-from agentic_eval.core_evals.run_prompt.model_pricing import (
-    get_model_pricing,
-    get_model_info,
-    list_available_models,
+    calculate_total_cost,
 )
 from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
-
+from agentic_eval.core_evals.run_prompt.model_pricing import (
+    get_model_info,
+    get_model_pricing,
+    list_available_models,
+)
 
 # =============================================================================
 # Pytest Configuration - Register Custom Markers
@@ -122,6 +121,20 @@ class TestTokenBasedPricing:
 
         assert result["prompt_cost"] == 0.00021
         assert result["completion_cost"] == 0.000375
+        assert result["total_cost"] == 0.000585
+        assert result["pricing_source"] == "available_models"
+
+
+    def test_calculate_cost_prices_gemini_38_flash(self):
+        result = calculate_total_cost(
+            "gemini-3.8-flash",
+            {
+                "prompt_tokens": 1000,
+                "cached_input_tokens": 800,
+                "completion_tokens": 100,
+            },
+        )
+
         assert result["total_cost"] == 0.000585
         assert result["pricing_source"] == "available_models"
 
