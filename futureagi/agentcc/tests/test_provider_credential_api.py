@@ -365,3 +365,50 @@ class TestAgentccProviderCredentialOrganizationIsolation:
         assert CredentialManager.decrypt(cred.encrypted_credentials) == {
             "api_key": raw_api_key
         }
+
+    def test_api_path_prefix_round_trips_through_credential_api(
+        self, secondary_org_context, secondary_org_client
+    ):
+        org_b, _ = secondary_org_context
+        with patch(
+            "agentcc.views.provider_credential.AgentccProviderCredentialViewSet._push_config_to_gateway",
+            return_value=True,
+        ):
+            response = secondary_org_client.post(
+                "/agentcc/provider-credentials/",
+                {
+                    "provider_name": "perplexity",
+                    "credentials": {"api_key": "sk-perplexity"},
+                    "api_format": "openai",
+                    "extra_config": {"api_path_prefix": ""},
+                },
+                format="json",
+            )
+
+        assert response.status_code == 201, response.json()
+        credential = AgentccProviderCredential.no_workspace_objects.get(
+            organization=org_b, provider_name="perplexity", deleted=False
+        )
+        assert credential.extra_config == {"api_path_prefix": ""}
+
+        read_response = secondary_org_client.get(
+            f"/agentcc/provider-credentials/{credential.id}/"
+        )
+        assert read_response.status_code == 200, read_response.json()
+        assert read_response.json()["result"]["extra_config"] == {
+            "api_path_prefix": ""
+        }
+
+        with patch(
+            "agentcc.views.provider_credential.AgentccProviderCredentialViewSet._push_config_to_gateway",
+            return_value=True,
+        ):
+            update_response = secondary_org_client.patch(
+                f"/agentcc/provider-credentials/{credential.id}/",
+                {"extra_config": {"api_path_prefix": "/v1"}},
+                format="json",
+            )
+
+        assert update_response.status_code == 200, update_response.json()
+        credential.refresh_from_db()
+        assert credential.extra_config == {"api_path_prefix": "/v1"}
