@@ -11,8 +11,12 @@ from clickhouse_driver.errors import ServerException
 from tracer.services.clickhouse.list_cursor import ListCursor, ListCursorError
 from tracer.services.clickhouse.query_builders.filters import EvalFilterMetadata
 from tracer.services.clickhouse.query_builders.user_list import UserListQueryBuilder
-from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
-from tracer.services.users_list_manager import USER_LIST_CURSOR_ORDER, UsersListManager
+from tracer.services.clickhouse.read_budget import ReadDeadline, ReadDeadlineExceeded
+from tracer.services.users_list_manager import (
+    USER_LIST_CURSOR_ORDER,
+    USER_LIST_PAGE_WALL_MS,
+    UsersListManager,
+)
 from tracer.tests.test_user_latest_window_replay import assert_window_replay, cte
 
 pytestmark = pytest.mark.unit
@@ -279,14 +283,20 @@ def test_native_filters_walk_exact_order_and_prove_exhaustion(
         ]
     )
     rows = candidates(253)
+    started: list[int] = []
+    real_start = ReadDeadline.start
     with (
         patch.object(m, "_read_dimension_candidates", side_effect=reader(rows)),
         patch(
             "tracer.services.users_list_manager.ReadDeadline.start",
-            side_effect=AssertionError("no admission wall"),
+            side_effect=lambda total_ms: (
+                started.append(total_ms) or real_start(total_ms)
+            ),
         ),
     ):
         page = m.list_cursor_payload(page_size=2)
+    # No admission wall: the only wall the walk starts is the route's page wall.
+    assert started == [USER_LIST_PAGE_WALL_MS]
     assert [row["total_cost"] for row in page.payload["table"]] == expected
     assert page.payload["query_exact"] is True
     assert page.payload["ordering_exact"] is True
@@ -338,21 +348,39 @@ def test_sparse_raw_numeric_walk_releases_rejected_caches_and_keeps_types():
     assert not m._native_filter_values_by_user
 
 
-@pytest.mark.parametrize(
-    "failure", [ReadDeadlineExceeded("memory"), MemoryError("memory")]
-)
-def test_resource_failure_after_rejected_prefix_never_returns_exact_empty(failure):
+def test_resource_failure_after_rejected_prefix_never_returns_exact_empty():
     m = manager()
     with (
         patch.object(
             m,
             "_read_dimension_candidates",
-            side_effect=[candidates(26), failure],
+            side_effect=[candidates(26), MemoryError("memory")],
         ),
         patch.object(m, "_read_exact_candidate_rows", return_value=[]),
     ):
-        with pytest.raises(type(failure)):
+        with pytest.raises(MemoryError):
             m.list_cursor_payload(page_size=25)
+
+
+def test_wall_stop_after_rejected_prefix_publishes_incomplete_page_not_exact_empty():
+    m = manager()
+    with (
+        patch.object(
+            m,
+            "_read_dimension_candidates",
+            side_effect=[candidates(26), ReadDeadlineExceeded("wall")],
+        ),
+        patch.object(m, "_read_exact_candidate_rows", return_value=[]),
+    ):
+        page = m.list_cursor_payload(page_size=25)
+    assert page.payload["table"] == []
+    assert page.has_more is True
+    assert page.payload["has_more"] is True
+    assert page.payload["count_is_lower_bound"] is True
+    assert page.payload["query_complete"] is False
+    assert page.payload["query_status"] == "degraded"
+    assert page.checkpoint_order is not None
+    assert page.checkpoint_order[0] == USER_LIST_CURSOR_ORDER
 
 
 def test_exact_page_does_not_replay_usage_twice_or_leak_private_state():

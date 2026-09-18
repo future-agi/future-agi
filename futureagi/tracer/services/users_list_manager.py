@@ -16,6 +16,7 @@ from decimal import Decimal
 from typing import Any
 
 import structlog
+from django.conf import settings
 
 from tracer.services.clickhouse.list_cursor import ListCursor, ListCursorError
 from tracer.services.clickhouse.query_builders.base import _unix_microseconds
@@ -84,6 +85,12 @@ USER_LIST_REFILL_MAX_CANDIDATES = 8
 USER_LIST_CURSOR_ORDER = "physical_latest_users_v1"
 USER_LIST_ATTRIBUTE_WITNESS_BATCH_SIZE = 64
 USER_LIST_ATTRIBUTE_SEED_TIMEOUT_MS = 1_500
+# A cursor page's refill walk stops at this wall and publishes the rows found
+# so far plus the last proven checkpoint, disclosed as a degraded page. The
+# first batch runs as before (it has no checkpoint to resume from yet); the
+# hydration after the walk carries no wall; numbered pages never start one and
+# the export opts out (``page_wall=False``) so it still fills its bounded page.
+USER_LIST_PAGE_WALL_MS = settings.USER_LIST_PAGE_WALL_MS
 
 _USER_LIST_READ_SETTINGS = {
     "max_threads": 1,
@@ -133,6 +140,25 @@ class UserCursorRead:
     seen_rows: int
     has_more: bool
     unseen_row_proven: bool
+
+
+def _page_wall_stopped(page_wall: ReadDeadline) -> bool:
+    """Return whether the cursor page wall has no budget left for a refill."""
+
+    try:
+        page_wall.remaining_ms()
+    except ReadDeadlineExceeded:
+        return True
+    return False
+
+
+def _is_page_wall_stop(exc: Exception) -> bool:
+    """Return whether *exc* is the page wall (or a read budget) ending a refill.
+
+    Only budget failures qualify; a programming error still fails closed.
+    """
+
+    return isinstance(exc, ReadDeadlineExceeded) or is_read_budget_error(exc)
 
 
 def _read_settings(*, max_result_rows: int) -> dict[str, int | str]:
@@ -230,9 +256,7 @@ def _users_attr_enrichment_query(
     candidate_user_filter = "end_user_id IN %(eu_scan_ids)s"
     if not finite_map:
         # Numbered pages have canonical IDs but no pre-expanded scan aliases.
-        candidate_user_filter = (
-            f"({candidate_user_filter} OR end_user_id IN (SELECT any_id FROM eu_survivor_map))"
-        )
+        candidate_user_filter = f"({candidate_user_filter} OR end_user_id IN (SELECT any_id FROM eu_survivor_map))"
     if (start_date is None) != (end_date is None):
         raise ValueError("attribute enrichment window must be provided together")
     time_filter = ""
@@ -1745,16 +1769,28 @@ class UsersListManager:
         *,
         page_size: int,
         cursor: ListCursor | None = None,
+        page_wall: bool = True,
     ) -> UserCursorRead:
         """Fill an exact activity-ordered page or prove population exhaustion.
 
         Finite batches bound memory, not traversal or accuracy. A resource
         failure propagates instead of publishing an exact-empty/complete page.
+        With ``page_wall`` the refill walk after the first proven checkpoint
+        stops at ``USER_LIST_PAGE_WALL_MS`` and the page is published as it
+        stands: exact rows in order, ``has_more`` and the checkpoint, with
+        ``query_status`` ``degraded``. ``page_wall=False`` (the export) keeps
+        the walk unbounded.
         """
 
         if type(page_size) is not int or page_size <= 0:
             raise ValueError("user page size must be a positive integer")
+        # Hydration after the walk carries no wall (``deadline``); the refill
+        # walk after the first batch runs at the page wall.
         deadline = None
+        page_wall_deadline = (
+            ReadDeadline.start(USER_LIST_PAGE_WALL_MS) if page_wall else None
+        )
+        wall_stopped = False
         self._attribute_witness_disabled = False
         self._unqualified_attribute_fallback_used = False
         self._attribute_values_by_user.clear()
@@ -1819,26 +1855,40 @@ class UsersListManager:
                 )
             else:
                 candidate_batch_size = USER_LIST_CANDIDATE_BATCH_SIZE
-            candidate_rows = self._read_dimension_candidates(
-                deadline=deadline,
-                limit=candidate_batch_size + 1,
-                before_first_seen=before_first_seen,
-                before_end_user_id=before_end_user_id,
-                window_start=window_start,
-                window_end=window_end,
-            )
-            if not candidate_rows:
-                has_more = False
-                page_or_exhaustion_proven = True
+            # Only a refill after a proven checkpoint can stop at the wall and
+            # still resume exactly; the first batch runs unbounded as before.
+            batch_deadline = page_wall_deadline if checkpoint is not None else None
+            if batch_deadline is not None and _page_wall_stopped(batch_deadline):
+                wall_stopped = True
                 break
+            try:
+                candidate_rows = self._read_dimension_candidates(
+                    deadline=batch_deadline,
+                    limit=candidate_batch_size + 1,
+                    before_first_seen=before_first_seen,
+                    before_end_user_id=before_end_user_id,
+                    window_start=window_start,
+                    window_end=window_end,
+                )
+                if not candidate_rows:
+                    has_more = False
+                    page_or_exhaustion_proven = True
+                    break
 
-            batch = candidate_rows[:candidate_batch_size]
-            batch = self._prune_attribute_candidate_batch(
-                batch,
-                deadline=deadline,
-                window_start=window_start,
-                window_end=window_end,
-            )
+                batch = candidate_rows[:candidate_batch_size]
+                batch = self._prune_attribute_candidate_batch(
+                    batch,
+                    deadline=batch_deadline,
+                    window_start=window_start,
+                    window_end=window_end,
+                )
+            except Exception as exc:
+                if batch_deadline is None or not _is_page_wall_stop(exc):
+                    raise
+                # The failed refill is re-read from the last proven checkpoint
+                # on resume: nothing published, nothing skipped.
+                wall_stopped = True
+                break
             dimension_has_more = len(candidate_rows) > len(batch)
             candidate_ids = [
                 str(row["end_user_id"])
@@ -1866,17 +1916,23 @@ class UsersListManager:
                     (str(row["end_user_id"]),),
                 )
             }
-            exact_rows = self._read_exact_candidate_rows(
-                candidate_ids=candidate_ids,
-                candidate_scan_ids=candidate_scan_ids,
-                candidate_end_user_id_map=candidate_end_user_id_map,
-                frozen_filters=frozen_filters,
-                window_start=window_start,
-                window_end=window_end,
-                deadline=deadline,
-                enrich_rows=self.filters_need_enrichment,
-                candidate_rows=batch,
-            )
+            try:
+                exact_rows = self._read_exact_candidate_rows(
+                    candidate_ids=candidate_ids,
+                    candidate_scan_ids=candidate_scan_ids,
+                    candidate_end_user_id_map=candidate_end_user_id_map,
+                    frozen_filters=frozen_filters,
+                    window_start=window_start,
+                    window_end=window_end,
+                    deadline=batch_deadline,
+                    enrich_rows=self.filters_need_enrichment,
+                    candidate_rows=batch,
+                )
+            except Exception as exc:
+                if batch_deadline is None or not _is_page_wall_stop(exc):
+                    raise
+                wall_stopped = True
+                break
             exact_by_id = {
                 str(row.get("end_user_id")): row
                 for row in exact_rows
@@ -1967,8 +2023,10 @@ class UsersListManager:
                 candidate_end_user_id_map=published_candidate_map,
             )
 
+        # A wall-stopped page proved every row it shows (exact matches, in
+        # order, up to the checkpoint); what it did not prove is completeness.
         qualified_exact = (
-            page_or_exhaustion_proven
+            (page_or_exhaustion_proven or wall_stopped)
             and not self.approximate_num_sessions
             and not self._attribute_witness_disabled
             and not self._unqualified_attribute_fallback_used
@@ -1984,8 +2042,10 @@ class UsersListManager:
             "has_more": has_more,
             # Only this qualified cursor chain has native latest-state proof;
             # completion does not qualify approximate or recovery variants.
-            "query_complete": True,
-            "query_status": "complete",
+            # A page cut short by its wall is published as degraded, never as
+            # a complete page that happens to be short.
+            "query_complete": not wall_stopped,
+            "query_status": "degraded" if wall_stopped else "complete",
             "query_exact": qualified_exact,
             "query_provenance": "physical_latest_users",
             "ordering_exact": qualified_exact,

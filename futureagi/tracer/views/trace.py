@@ -199,6 +199,11 @@ ERROR_RESPONSES = {
 TRACE_LIST_WALL_DEADLINE_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
 TRACE_LIST_CANDIDATE_DEADLINE_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
 TRACE_LIST_ENRICHMENT_TIMEOUT_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
+# A cursor page of the observe trace list stops acquiring rows here and
+# publishes the rows found so far plus a resumable checkpoint. Numbered pages,
+# the prototype list and voice lanes cannot resume, so they keep the candidate
+# deadline above; hydration stays under the request wall.
+TRACE_LIST_PAGE_WALL_MS = settings.TRACE_LIST_PAGE_WALL_MS
 # Page-local content/attribute hydration is exact but can still make ClickHouse
 # read a wide part when a caller requests the serializer's 500-row maximum.
 # High-volume qualification showed 100 identities remain below the locked
@@ -4691,8 +4696,12 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "Trace filter cannot be evaluated by the bounded list reader"
             )
         try:
+            # Only a cursor page can stop early and still resume exactly, so
+            # only a cursor page runs its acquisition at the page wall.
             candidate_deadline_ms = read_deadline.remaining_ms(
-                TRACE_LIST_CANDIDATE_DEADLINE_MS
+                TRACE_LIST_PAGE_WALL_MS
+                if cursor_enabled
+                else TRACE_LIST_CANDIDATE_DEADLINE_MS
             )
         except ReadDeadlineExceeded:
             return self._gm.custom_error_response(
@@ -7120,9 +7129,12 @@ class UsersView(APIView):
                 # Finish the finite cursor read before publishing HTTP 200.
                 # Read-budget/ClickHouse failures can then remain sanitized
                 # retryable responses instead of header-only CSV downloads.
+                # The export is not a list page: it keeps filling its bounded
+                # page instead of stopping at the cursor page wall.
                 cursor_read = manager.list_cursor_payload(
                     page_size=USER_EXPORT_PAGE_SIZE,
                     cursor=None,
+                    page_wall=False,
                 )
                 response = StreamingHttpResponse(
                     manager.iter_export_csv(cursor_read=cursor_read),

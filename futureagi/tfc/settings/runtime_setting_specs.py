@@ -190,6 +190,15 @@ INTERACTIVE_READ_SETTING_SPECS = {
         (
             ("INTERACTIVE_READ_DEFAULT_WALL_MS", 30_000, 100, 60_000),
             ("INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS", 30_000, 100, 60_000),
+            # Per-route acquisition wall for a cursor-capable list page: the
+            # walk that decides which rows are on the page stops here and
+            # publishes the rows found so far plus a resumable cursor.
+            # Numbered pages, hydration, navigation and pickers keep the
+            # interactive analytics wall above.
+            ("SPAN_LIST_PAGE_WALL_MS", 5_000, 100, 60_000),
+            ("TRACE_LIST_PAGE_WALL_MS", 5_000, 100, 60_000),
+            ("SESSION_LIST_PAGE_WALL_MS", 5_000, 100, 60_000),
+            ("USER_LIST_PAGE_WALL_MS", 5_000, 100, 60_000),
             ("INTERACTIVE_READ_DEFAULT_MAX_PAGE_SIZE", 100, 1, 500),
             ("ANALYTICS_DEFAULT_LOOKBACK_DAYS", 30, 1, 3_660),
             ("PG_CONNECT_TIMEOUT_SECONDS", 1, 1, 5),

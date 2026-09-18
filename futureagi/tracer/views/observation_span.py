@@ -200,6 +200,10 @@ logger = structlog.get_logger(__name__)
 SPAN_LIST_WALL_DEADLINE_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
 SPAN_LIST_CANDIDATE_DEADLINE_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
 SPAN_LIST_ENRICHMENT_TIMEOUT_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
+# A cursor page stops acquiring rows here and publishes the rows found so far
+# plus a resumable checkpoint. Numbered pages cannot resume, so they keep the
+# candidate deadline above; hydration stays under the request wall.
+SPAN_LIST_PAGE_WALL_MS = settings.SPAN_LIST_PAGE_WALL_MS
 SPAN_LIST_READ_SETTINGS = {
     "max_threads": 1,
     "max_block_size": settings.OBSERVABILITY_LIST_MAX_BLOCK_SIZE,
@@ -2136,8 +2140,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 "Span filter cannot be evaluated by the bounded list reader"
             )
         try:
+            # Only a cursor page can stop early and still resume exactly, so
+            # only a cursor page runs its acquisition at the page wall.
             candidate_deadline_ms = read_deadline.remaining_ms(
-                SPAN_LIST_CANDIDATE_DEADLINE_MS
+                SPAN_LIST_PAGE_WALL_MS
+                if cursor_enabled
+                else SPAN_LIST_CANDIDATE_DEADLINE_MS
             )
         except ReadDeadlineExceeded:
             return self._gm.custom_error_response(

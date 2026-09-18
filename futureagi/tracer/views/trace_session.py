@@ -181,6 +181,10 @@ SESSION_LIST_WALL_DEADLINE_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
 SESSION_LIST_QUERY_TIMEOUT_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
 SESSION_LIST_ENRICHMENT_TIMEOUT_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
 SESSION_FILTER_VALUE_WALL_DEADLINE_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
+# A cursor page stops acquiring rows here and publishes the rows found so far
+# plus a resumable checkpoint. Numbered pages cannot resume, so they keep the
+# query timeout above; hydration and the value picker stay under the request wall.
+SESSION_LIST_PAGE_WALL_MS = settings.SESSION_LIST_PAGE_WALL_MS
 SESSION_LIST_FILTER_MAX_CANDIDATES = settings.SESSION_LIST_FILTER_MAX_CANDIDATES
 SESSION_LIST_FILTER_MAX_SEED_ATTEMPTS = settings.SESSION_LIST_FILTER_MAX_SEED_ATTEMPTS
 SESSION_LIST_FILTER_MAX_QUERIES = settings.SESSION_LIST_FILTER_MAX_QUERIES
@@ -260,7 +264,13 @@ def _read_session_filter_page(
         key_field="session_id",
         page_number=builder.page_number,
         page_size=builder.page_size,
-        deadline_ms=deadline.remaining_ms(SESSION_LIST_QUERY_TIMEOUT_MS),
+        # Only a cursor page can stop early and still resume exactly, so only
+        # a cursor page runs its acquisition at the page wall.
+        deadline_ms=deadline.remaining_ms(
+            SESSION_LIST_PAGE_WALL_MS
+            if cursor_enabled
+            else SESSION_LIST_QUERY_TIMEOUT_MS
+        ),
         max_candidates=SESSION_LIST_FILTER_MAX_CANDIDATES,
         max_seed_attempts=SESSION_LIST_FILTER_MAX_SEED_ATTEMPTS,
         max_query_count=SESSION_LIST_FILTER_MAX_QUERIES,
