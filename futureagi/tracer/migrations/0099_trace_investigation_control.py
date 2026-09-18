@@ -395,4 +395,183 @@ class Migration(migrations.Migration):
             model_name='traceinvestigationverificationreceipt',
             constraint=models.UniqueConstraint(fields=('report', 'receipt_id'), name='unique_inv_verification_id'),
         ),
+        migrations.AddField(
+            model_name='traceinvestigationreport', name='trace_id', field=models.UUIDField(),
+        ),
+        migrations.AddField(
+            model_name='traceinvestigationreport', name='source',
+            field=models.CharField(choices=[('omega', 'Omega'), ('legacy_scan', 'Legacy Scan')], max_length=20),
+        ),
+        migrations.AddField(
+            model_name='traceinvestigationreport', name='source_record_id',
+            field=models.UUIDField(blank=True, null=True),
+        ),
+        migrations.AddField(
+            model_name='traceinvestigationreport', name='source_version',
+            field=models.CharField(blank=True, max_length=64, null=True),
+        ),
+        migrations.AddField(
+            model_name='traceinvestigationreport', name='recorded_at', field=models.DateTimeField(),
+        ),
+        migrations.AddField(
+            model_name='traceinvestigationreport', name='is_current',
+            field=models.BooleanField(default=False),
+        ),
+        migrations.AddField(
+            model_name='traceinvestigationreport', name='error_message',
+            field=models.TextField(blank=True, null=True),
+        ),
+        migrations.AddField(
+            model_name='traceinvestigationreport', name='turn_count',
+            field=models.PositiveIntegerField(blank=True, null=True),
+        ),
+        migrations.AlterField(
+            model_name='traceinvestigationreport', name='job',
+            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.CASCADE, related_name='reports', to='tracer.traceinvestigationjob'),
+        ),
+        migrations.AlterField(
+            model_name='traceinvestigationreport', name='attempt',
+            field=models.OneToOneField(blank=True, null=True, on_delete=django.db.models.deletion.CASCADE, related_name='report', to='tracer.traceinvestigationattempt'),
+        ),
+        migrations.AlterField(
+            model_name='traceinvestigationreport', name='idempotency_key',
+            field=models.CharField(blank=True, max_length=255, null=True),
+        ),
+        migrations.AlterField(
+            model_name='traceinvestigationreport', name='result_digest',
+            field=models.CharField(blank=True, max_length=71, null=True),
+        ),
+        migrations.AlterField(
+            model_name='traceinvestigationreport', name='contract_version',
+            field=models.CharField(blank=True, max_length=64, null=True),
+        ),
+        migrations.AlterField(
+            model_name='traceinvestigationreport', name='evidence_digest',
+            field=models.CharField(blank=True, max_length=71, null=True),
+        ),
+        migrations.AlterField(
+            model_name='traceinvestigationreport', name='outcome',
+            field=models.CharField(blank=True, max_length=20, null=True),
+        ),
+        migrations.AlterField(
+            model_name='traceinvestigationreport', name='coverage_scope',
+            field=models.CharField(blank=True, max_length=255, null=True),
+        ),
+        migrations.AlterField(
+            model_name='traceinvestigationreport', name='observed_span_count',
+            field=models.PositiveIntegerField(blank=True, null=True),
+        ),
+        migrations.AlterField(
+            model_name='traceinvestigationreport', name='read_complete',
+            field=models.BooleanField(blank=True, null=True),
+        ),
+        migrations.AlterField(
+            model_name='traceinvestigationreport', name='future_arrivals_known',
+            field=models.BooleanField(blank=True, null=True),
+        ),
+        migrations.AlterField(
+            model_name='traceinvestigationreport', name='model_calls',
+            field=models.PositiveIntegerField(blank=True, null=True),
+        ),
+        migrations.AlterField(
+            model_name='traceinvestigationreport', name='input_tokens',
+            field=models.PositiveBigIntegerField(blank=True, null=True),
+        ),
+        migrations.AlterField(
+            model_name='traceinvestigationreport', name='output_tokens',
+            field=models.PositiveBigIntegerField(blank=True, null=True),
+        ),
+        migrations.AlterField(
+            model_name='traceinvestigationreport', name='cost_status',
+            field=models.CharField(blank=True, max_length=64, null=True),
+        ),
+        migrations.AddConstraint(
+            model_name='traceinvestigationreport',
+            constraint=models.UniqueConstraint(condition=models.Q(source_record_id__isnull=False), fields=('source', 'source_record_id'), name='unique_inv_source_record'),
+        ),
+        migrations.AddConstraint(
+            model_name='traceinvestigationreport',
+            constraint=models.UniqueConstraint(condition=models.Q(is_current=True, deleted=False), fields=('project', 'trace_id'), name='unique_current_trace_investigation'),
+        ),
+        migrations.AddConstraint(
+            model_name='traceinvestigationreport',
+            constraint=models.CheckConstraint(
+                condition=(
+                    models.Q(source='legacy_scan', source_record_id__isnull=False, job__isnull=True, attempt__isnull=True)
+                    | models.Q(source='omega', source_record_id__isnull=True, job__isnull=False, attempt__isnull=False, idempotency_key__isnull=False, result_digest__isnull=False, contract_version__isnull=False, evidence_digest__isnull=False, outcome__isnull=False, coverage_scope__isnull=False, observed_span_count__isnull=False, read_complete__isnull=False, future_arrivals_known__isnull=False, model_calls__isnull=False, input_tokens__isnull=False, output_tokens__isnull=False, cost_status__isnull=False)
+                ),
+                name='valid_inv_report_source_fields',
+            ),
+        ),
+        migrations.AddField(
+            model_name='traceinvestigationfinding', name='source_finding_id',
+            field=models.UUIDField(blank=True, null=True, unique=True),
+        ),
+        migrations.AddField(
+            model_name='traceinvestigationfinding', name='category',
+            field=models.CharField(blank=True, max_length=100, null=True),
+        ),
+        migrations.AddField(
+            model_name='traceinvestigationfinding', name='group_label',
+            field=models.CharField(blank=True, max_length=100, null=True),
+        ),
+        migrations.AddField(
+            model_name='traceinvestigationfinding', name='fix_layer',
+            field=models.CharField(blank=True, max_length=50, null=True),
+        ),
+        migrations.AddField(
+            model_name='traceinvestigationfinding', name='confidence',
+            field=models.CharField(blank=True, max_length=2, null=True),
+        ),
+        migrations.AlterField(
+            model_name='traceinvestigationfinding', name='kind',
+            field=models.CharField(blank=True, max_length=64, null=True),
+        ),
+        migrations.AlterField(
+            model_name='traceinvestigationfinding', name='recovery',
+            field=models.CharField(blank=True, max_length=64, null=True),
+        ),
+        migrations.AddField(
+            model_name='errorclustertraces', name='finding',
+            field=models.ForeignKey(blank=True, help_text='Canonical scanner finding that caused membership', null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='cluster_memberships', to='tracer.traceinvestigationfinding'),
+        ),
+        migrations.AddIndex(
+            model_name='errorclustertraces',
+            index=models.Index(fields=['finding'], name='tracer_erro_finding_72b66f_idx'),
+        ),
+        migrations.CreateModel(
+            name='TraceInvestigationKeyMoment',
+            fields=[
+                ('created_at', models.DateTimeField(auto_now_add=True)),
+                ('updated_at', models.DateTimeField(auto_now=True)),
+                ('deleted', models.BooleanField(db_index=True, default=False)),
+                ('deleted_at', models.DateTimeField(blank=True, null=True)),
+                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('ordinal', models.PositiveIntegerField()),
+                ('kevinified', models.TextField(blank=True)),
+                ('verbatim', models.TextField(blank=True)),
+                ('role', models.CharField(blank=True, max_length=64)),
+                ('span_id', models.CharField(blank=True, max_length=64, null=True)),
+                ('status', models.CharField(blank=True, max_length=64)),
+                ('is_failure', models.BooleanField(default=False)),
+                ('report', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='key_moments', to='tracer.traceinvestigationreport')),
+            ],
+            options={'db_table': 'tracer_trace_investigation_key_moment', 'constraints': [models.UniqueConstraint(fields=('report', 'ordinal'), name='unique_inv_key_moment_ordinal')]},
+        ),
+        migrations.CreateModel(
+            name='TraceInvestigationTool',
+            fields=[
+                ('created_at', models.DateTimeField(auto_now_add=True)),
+                ('updated_at', models.DateTimeField(auto_now=True)),
+                ('deleted', models.BooleanField(db_index=True, default=False)),
+                ('deleted_at', models.DateTimeField(blank=True, null=True)),
+                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('ordinal', models.PositiveIntegerField()),
+                ('role', models.CharField(max_length=16)),
+                ('name', models.CharField(max_length=255)),
+                ('status', models.CharField(blank=True, max_length=64, null=True)),
+                ('report', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='tools', to='tracer.traceinvestigationreport')),
+            ],
+            options={'db_table': 'tracer_trace_investigation_tool', 'constraints': [models.UniqueConstraint(fields=('report', 'role', 'ordinal'), name='unique_inv_tool_ordinal')]},
+        ),
     ]

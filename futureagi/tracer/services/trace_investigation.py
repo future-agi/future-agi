@@ -30,6 +30,7 @@ from tracer.models.trace_investigation import (
     TraceInvestigationReport,
     TraceInvestigationRequirementCheck,
     TraceInvestigationRequirementEvidence,
+    TraceInvestigationSource,
     TraceInvestigationVerificationReceipt,
 )
 from tracer.models.trace_scan import TraceScanConfig
@@ -891,11 +892,21 @@ def publish_investigation(
         )
         coverage = result["coverage"]
         usage = result["usage"]
+        if active:
+            TraceInvestigationReport.no_workspace_objects.filter(
+                project_id=job.project_id,
+                trace_id=job.trace_id,
+                is_current=True,
+            ).update(is_current=False)
         report = TraceInvestigationReport.no_workspace_objects.create(
             id=report_id,
             organization_id=job.organization_id,
             workspace_id=job.workspace_id,
             project_id=job.project_id,
+            trace_id=job.trace_id,
+            source=TraceInvestigationSource.OMEGA,
+            recorded_at=now,
+            is_current=active,
             job=job,
             attempt=attempt,
             idempotency_key=idempotency_key,
