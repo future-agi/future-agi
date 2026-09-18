@@ -790,9 +790,13 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         ``user``/``user_id`` values are external identifiers, so resolve them
         through the existing curated end-user/remap expansion before probing
         the indexed span UUID. ``end_user_id`` is already a physical structural
-        UUID and can use the normal direct-column compiler. The returned
-        predicate is a necessary candidate condition only; the existing finite
-        latest-state classifier remains authoritative for publication.
+        UUID and uses the normal direct-column compiler. Whatever comparison
+        that compiler chooses, the predicate carries the membership envelope
+        here, because the CTE it seeds spans the whole table.
+
+        The returned predicate is a necessary candidate condition only; the
+        existing finite latest-state classifier remains authoritative for
+        publication.
         """
 
         filter_item = self._positive_exact_end_user_seed_filter()
@@ -837,7 +841,16 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                 operation,
                 value,
             )
-        return predicate or "", dict(filter_builder._params)
+        if not predicate:
+            return "", {}
+        # This predicate seeds a trace-membership CTE over the whole span
+        # table, so it needs the same event-time envelope every membership
+        # subquery ``translate`` compiles already carries. Without it the CTE
+        # is the one read in the statement that does not shrink with the
+        # request window: it rescans the project's entire span history for a
+        # one-day page exactly as it does for a year.
+        predicate += filter_builder._span_membership_date_filter()
+        return predicate, dict(filter_builder._params)
 
     def supports_filter_candidate_seed_page(self) -> bool:
         """Use necessary scalar or relational membership before ordered roots."""
