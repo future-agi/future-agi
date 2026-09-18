@@ -8233,10 +8233,16 @@ class TestWidgetQueryExecution:
         self, mock_get_client, mock_enabled, auth_client, dashboard, observe_project
     ):
         mock_client = MagicMock()
-        mock_client.execute_read.return_value = (
+        # Preview reads go through the measured transport, which reports native
+        # rows/bytes progress alongside the rows; this double leaves both
+        # unmeasured because the preview assertion is about the response, not
+        # about what the statement cost.
+        mock_client.execute_read_with_progress.return_value = (
             [(datetime(2025, 1, 1), 50.0)],
             [("time_bucket", "DateTime"), ("value", "Float64")],
             3.0,
+            None,
+            None,
         )
         mock_get_client.return_value = mock_client
 

@@ -76,6 +76,13 @@ from tracer.services.clickhouse.dashboard_action_deadline import (
     bounded_dashboard_action_request,
     start_dashboard_action_deadline,
 )
+from tracer.services.clickhouse.dashboard_read_density import (
+    density_scope_key,
+    estimated_rows_for,
+    exceeds_remaining_deadline,
+    observe_completed_read,
+    probe_candidate_estimates,
+)
 from tracer.services.clickhouse.filter_value_reads import (
     SYSTEM_FILTER_VALUE_METRICS,
     read_end_user_filter_value_cursor_page,
@@ -1250,6 +1257,7 @@ def _fetch_exact_dashboard_rows(
     params,
     timeout_ms,
     settings,
+    on_result=None,
 ):
     """Run one exact full-window statement without rewriting query semantics.
 
@@ -1267,6 +1275,8 @@ def _fetch_exact_dashboard_rows(
         timeout_ms=timeout_ms,
         settings=settings,
     )
+    if on_result is not None:
+        on_result(result)
     return list(result.data or [])
 
 
@@ -6947,6 +6957,8 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
         trace_builder = None
         trace_prepared = ()
         trace_query_groups = ()
+        trace_density_scope_key = None
+        trace_candidate_estimates = {}
         dataset_builder = None
         dataset_prepared = ()
         simulation_builder = None
@@ -6975,6 +6987,7 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
                 )
             trace_config["project_ids"] = [str(pid) for pid in project_ids]
             query_config["project_ids"] = trace_config["project_ids"]
+            trace_density_scope_key = density_scope_key(trace_config["project_ids"])
             trace_config["organization_id"] = str(workspace.organization_id)
             trace_config["workspace_id"] = str(workspace.id)
             trace_analytics = V2AnalyticsQueryService(
@@ -7036,6 +7049,41 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
             )
 
         if trace_prepared:
+            if not _exact_worker:
+                # Decide the lane before the statement, not after it fails.
+                # The probe reads part metadata only; charging its time to the
+                # same deadline keeps one request on one wall budget.
+                trace_candidate_estimates = probe_candidate_estimates(
+                    [
+                        (
+                            (trace_prepared[indices[0]][1], trace_prepared[indices[0]][2])
+                            if plan is None
+                            else (plan.sql, plan.params)
+                        )
+                        for indices, plan in trace_query_groups
+                    ],
+                    analytics=trace_analytics,
+                    deadline=read_deadline,
+                )
+                try:
+                    remaining_ms = read_deadline.remaining_ms(statement_timeout_ms)
+                except ReadDeadlineExceeded:
+                    remaining_ms = 0
+                if exceeds_remaining_deadline(
+                    trace_candidate_estimates,
+                    scope_key=trace_density_scope_key,
+                    remaining_ms=remaining_ms,
+                ):
+                    # Nothing ran in the foreground, so the exact worker is
+                    # the first and only execution of this statement.
+                    return _schedule_heavy_dashboard_read()
+
+            def _observe_trace_read(sql, params, result):
+                observe_completed_read(
+                    trace_density_scope_key,
+                    estimated_rows_for(trace_candidate_estimates, sql, params),
+                    result,
+                )
 
             def _fetch_trace_rows(sql, params):
                 return _fetch_exact_dashboard_rows(
@@ -7044,6 +7092,7 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
                     params=params,
                     timeout_ms=read_deadline.remaining_ms(statement_timeout_ms),
                     settings=read_settings,
+                    on_result=lambda result: _observe_trace_read(sql, params, result),
                 )
 
             def _exec_trace_group(item):
@@ -7054,7 +7103,6 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
                         max_workers=1,
                         prepared_queries=(trace_prepared[indices[0]],),
                     )
-                grouped_started = monotonic()
                 try:
                     grouped_rows = _fetch_trace_rows(plan.sql, plan.params)
                     _complete, results = trace_builder.metric_group_results(plan, grouped_rows)
@@ -7065,13 +7113,6 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
                         "dashboard metric group exceeded its read budget",
                         error_code="read_budget_exceeded",
                     ) from exc
-                grouped_elapsed_ms = (monotonic() - grouped_started) * 1000
-                if grouped_elapsed_ms > 10_000:
-                    logger.info(
-                        "dashboard_trace_metric_group_slow",
-                        elapsed_ms=round(grouped_elapsed_ms, 3),
-                        normal_slo_met=(grouped_elapsed_ms <= statement_timeout_ms),
-                    )
                 return results
 
             try:
