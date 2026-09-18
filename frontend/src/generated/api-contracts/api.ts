@@ -64868,11 +64868,6 @@ export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse400 = {
   status: 400;
 };
 
-export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse402 = {
-  data: ApiTextErrorResponseApi;
-  status: 402;
-};
-
 export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse404 = {
   data: ApiTextErrorResponseApi;
   status: 404;
@@ -64886,7 +64881,7 @@ export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse500 = {
 export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponseDefault =
   {
     data: ManagementAPIErrorResponseApi;
-    status: Exclude<HTTPStatusCodes, 200 | 400 | 402 | 404 | 500>;
+    status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>;
   };
 
 export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponseSuccess =
@@ -64896,7 +64891,6 @@ export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponseSuccess 
 export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponseError =
   (
     | simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse400
-    | simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse402
     | simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse404
     | simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse500
     | simulateTestExecutionsOptimiserAnalysisRefreshCreateResponseDefault

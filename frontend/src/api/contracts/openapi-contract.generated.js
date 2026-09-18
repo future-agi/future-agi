@@ -18419,6 +18419,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
+          created_at: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          status: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          dataset_id: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
           ordering: {
             required: false,
             schema: {
@@ -18579,6 +18597,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
+          created_at: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          status: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          dataset_id: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
           search: {
             required: false,
             schema: {
@@ -21269,6 +21305,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
+          optimize_type: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          status: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
           search: {
             required: false,
             schema: {
@@ -22770,6 +22818,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
+          name: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
           search: {
             required: false,
             schema: {
@@ -22983,6 +23037,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
+          template_name: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          template_version: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          created_at: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
           search: {
             required: false,
             schema: {
@@ -23048,6 +23120,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
+          template_name: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          template_version: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          created_at: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
           search: {
             required: false,
             schema: {
@@ -23655,6 +23745,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
+          name: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          version: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          created_at: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
           search: {
             required: false,
             schema: {
@@ -23866,6 +23974,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
+          name: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          version: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          created_at: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
           search: {
             required: false,
             schema: {
@@ -30582,9 +30708,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
               $ref: "#/definitions/OptimiserAnalysisRefreshResponse",
             },
             400: {
-              $ref: "#/definitions/ApiTextErrorResponse",
-            },
-            402: {
               $ref: "#/definitions/ApiTextErrorResponse",
             },
             404: {

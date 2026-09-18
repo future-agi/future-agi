@@ -30167,6 +30167,9 @@ export type ModelHubExperimentDetailList200 = {
 };
 
 export type ModelHubExperimentsDataListParams = {
+  created_at?: string;
+  status?: string;
+  dataset_id?: string;
   /**
    * Which field to use when ordering the results.
    */
@@ -30193,6 +30196,9 @@ export type ModelHubExperimentsDataList200 = {
 };
 
 export type ModelHubExperimentsV2ListListParams = {
+  created_at?: string;
+  status?: string;
+  dataset_id?: string;
   /**
    * A search term.
    */
@@ -30439,6 +30445,8 @@ export type ModelHubKbSupportedEmbeddingModelsParams = {
 };
 
 export type ModelHubOptimisationListParams = {
+  optimize_type?: string;
+  status?: string;
   /**
    * A search term.
    */
@@ -30616,6 +30624,7 @@ export type ModelHubPromptBaseTemplatesGetAllCategories200 = {
 };
 
 export type ModelHubPromptExecutionsListParams = {
+  name?: string;
   /**
    * A search term.
    */
@@ -30660,6 +30669,9 @@ export type ModelHubPromptFoldersList200 = {
 };
 
 export type ModelHubPromptHistoryExecutionsListParams = {
+  template_name?: string;
+  template_version?: string;
+  created_at?: string;
   /**
    * A search term.
    */
@@ -30686,6 +30698,9 @@ export type ModelHubPromptHistoryExecutionsList200 = {
 };
 
 export type ModelHubPromptHistoryExecutionsGetExecutionDetailsParams = {
+  template_name?: string;
+  template_version?: string;
+  created_at?: string;
   /**
    * A search term.
    */
@@ -30766,6 +30781,9 @@ export type ModelHubPromptLabelsTemplateLabels200 = {
 };
 
 export type ModelHubPromptTemplatesListParams = {
+  name?: string;
+  version?: string;
+  created_at?: string;
   /**
    * A search term.
    */
@@ -30792,6 +30810,9 @@ export type ModelHubPromptTemplatesList200 = {
 };
 
 export type ModelHubPromptTemplatesGetTemplateByNameParams = {
+  name?: string;
+  version?: string;
+  created_at?: string;
   /**
    * A search term.
    */
