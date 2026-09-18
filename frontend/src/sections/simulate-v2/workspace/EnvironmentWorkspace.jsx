@@ -687,6 +687,83 @@ export default function EnvironmentWorkspace() {
       </Stack>
 
       {/*
+        Template lock banner — inset card with a soft gradient and a
+        badge. Previous attempts were either loud (full purple wash)
+        or boring (neutral strip). This one has product shape: it
+        floats in with margins, the lock icon sits in a tinted badge,
+        a small TEMPLATE chip carries the state as a proper label,
+        and the whole thing fades from purple to paper so the eye
+        doesn't get parked on any single tone.
+      */}
+      {isSeededTemplate && (
+        <Box sx={{ px: 2, pt: 1.5, flexShrink: 0 }}>
+          <Stack
+            direction="row" alignItems="center" spacing={1.75}
+            sx={{
+              px: 2, py: 1.25, borderRadius: 1.5,
+              border: "1px solid",
+              borderColor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.32 : 0.22),
+              background: (t) => `linear-gradient(90deg, ${alpha("#7857FC", t.palette.mode === "dark" ? 0.18 : 0.09)} 0%, ${alpha("#7857FC", t.palette.mode === "dark" ? 0.06 : 0.03)} 45%, ${t.palette.background.paper} 100%)`,
+              boxShadow: (t) => `inset 0 0 0 1px ${alpha("#7857FC", t.palette.mode === "dark" ? 0.06 : 0.04)}`,
+            }}
+          >
+            {/* Lock in a tinted rounded-square badge — gives the banner
+                a visual anchor and lifts the icon off the gradient. */}
+            <Box
+              sx={{
+                width: 32, height: 32, borderRadius: 1, flexShrink: 0,
+                display: "grid", placeItems: "center",
+                bgcolor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.22 : 0.14),
+                border: (t) => `1px solid ${alpha("#7857FC", t.palette.mode === "dark" ? 0.35 : 0.24)}`,
+              }}
+            >
+              <Iconify icon="solar:lock-keyhole-bold" width={16} sx={{ color: "#7857FC" }} />
+            </Box>
+
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+              <Stack direction="row" alignItems="center" spacing={0.75} sx={{ mb: 0.25 }}>
+                <Typography sx={{ typography: "s2", fontWeight: 700, color: "text.primary" }}>
+                  You&apos;re viewing a template
+                </Typography>
+                <Box
+                  sx={{
+                    px: 0.75, py: 0.125, borderRadius: 0.75,
+                    typography: "s3", fontWeight: 700, letterSpacing: 0.5,
+                    color: "#7857FC",
+                    bgcolor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.2 : 0.12),
+                  }}
+                >
+                  TEMPLATE
+                </Box>
+              </Stack>
+              <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
+                Scenarios, evaluations, contract and agent are read-only. Run as-is, or fork to make changes.
+              </Typography>
+            </Box>
+
+            <Button
+              variant="contained"
+              size="small"
+              onClick={forkEnvironment}
+              startIcon={<Iconify icon="solar:copy-linear" width={13} sx={{ color: "common.black" }} />}
+              sx={{
+                typography: "s2", fontWeight: 700,
+                bgcolor: "common.white",
+                color: "common.black",
+                "&:hover": {
+                  bgcolor: (t) => alpha(t.palette.common.white, 0.9),
+                  color: "common.black",
+                },
+                flexShrink: 0,
+              }}
+            >
+              Fork to edit
+            </Button>
+          </Stack>
+        </Box>
+      )}
+
+      {/*
         System banners: things that change what any panel below means.
         Building = the derivation is still in flight; the panels show
         loading and this banner explains why. Off-latest = the user has
@@ -763,17 +840,17 @@ export default function EnvironmentWorkspace() {
           */}
           <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "auto" }}>
             {panel === "agent" ? (
-              <AgentsPanel env={env} envState={envState} patch={patch} onGo={go} />
+              <AgentsPanel env={env} envState={envState} patch={patch} onGo={go} locked={isSeededTemplate} onFork={forkEnvironment} />
             ) : panel === "scenarios" ? (
-              <ScenariosStep env={env} envState={envState} patch={patch} onGo={go} onBuilderPrompt={sendChat} />
+              <ScenariosStep env={env} envState={envState} patch={patch} onGo={go} onBuilderPrompt={sendChat} locked={isSeededTemplate} onFork={forkEnvironment} />
             ) : panel === "evals" ? (
-              <EvalsStep env={env} envState={envState} patch={patch} onGo={go} />
+              <EvalsStep env={env} envState={envState} patch={patch} onGo={go} locked={isSeededTemplate} onFork={forkEnvironment} />
             ) : panel === "runs" ? (
               <RunsPanel env={env} envState={envState} onGo={go} />
             ) : panel === "contract" ? (
-              <RlContractPanel env={env} envState={envState} patch={patch} onGo={go} />
+              <RlContractPanel env={env} envState={envState} patch={patch} onGo={go} locked={isSeededTemplate} onFork={forkEnvironment} />
             ) : panel === "settings" ? (
-              <SettingsPanel env={env} envState={envState} patch={patch} />
+              <SettingsPanel env={env} envState={envState} patch={patch} locked={isSeededTemplate} onFork={forkEnvironment} />
             ) : panel === "build" ? (
               <BuildRecordPanel env={env} envState={envState} patch={patch} />
             ) : (

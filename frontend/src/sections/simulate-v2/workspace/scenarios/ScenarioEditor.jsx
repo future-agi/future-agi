@@ -146,8 +146,8 @@ export default function ScenarioEditor({ open, onClose, row, env, envState, onSa
           />
           <TextField
             size="small" label="Branch" value={draft.branchCategory || ""}
-            onChange={(e) => set("branchCategory")(e.target.value)}
-            helperText="What makes this one different from its siblings — e.g. Verify Identity Path Rushed."
+            disabled
+            helperText="Read-only — the branch identifies which sibling this row is inside its use case. Move to a different pack to change it."
             InputProps={{ sx: { typography: "s2" } }}
           />
           <TextField

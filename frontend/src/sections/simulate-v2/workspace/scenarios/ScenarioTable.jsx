@@ -29,7 +29,7 @@ const selectableCheckboxSx = {
  * Same rows, same derivations as the coverage matrix — nothing here is a
  * second source of truth.
  */
-export default function ScenarioTable({ rows, groups, env, onEdit, onRemove, onHideGroup, selectedIds, onSelectionChange }) {
+export default function ScenarioTable({ rows, groups, env, onEdit, onRemove, onHideGroup, selectedIds, onSelectionChange, locked = false }) {
   /*
     Two shapes come in: pre-grouped (list view mirror) or a flat rows
     array (fallback). If groups are given, render section-header rows
@@ -147,6 +147,7 @@ export default function ScenarioTable({ rows, groups, env, onEdit, onRemove, onH
                       checked={allChecked}
                       indeterminate={someChecked}
                       onChange={toggleAll}
+                      disabled={locked}
                       sx={selectableCheckboxSx}
                     />
                   ) : h}
@@ -226,6 +227,7 @@ export default function ScenarioTable({ rows, groups, env, onEdit, onRemove, onH
                         size="small"
                         checked={selected.has(row.id)}
                         onChange={() => toggle(row.id)}
+                        disabled={locked}
                         sx={selectableCheckboxSx}
                       />
                     </TableCell>
@@ -334,15 +336,19 @@ export default function ScenarioTable({ rows, groups, env, onEdit, onRemove, onH
                     },
                   }}
                 >
-                  <Tooltip arrow title="Edit scenario">
-                    <IconButton size="small" onClick={() => onEdit(row)}>
-                      <Iconify icon="solar:pen-new-square-linear" width={15} sx={{ color: "text.subtitle" }} />
-                    </IconButton>
+                  <Tooltip arrow title={locked ? "Fork this environment to edit." : "Edit scenario"}>
+                    <span>
+                      <IconButton size="small" disabled={locked} onClick={() => onEdit(row)}>
+                        <Iconify icon="solar:pen-new-square-linear" width={15} sx={{ color: "text.subtitle" }} />
+                      </IconButton>
+                    </span>
                   </Tooltip>
-                  <Tooltip arrow title="Remove from this environment">
-                    <IconButton size="small" onClick={() => onRemove(row.id)}>
-                      <Iconify icon="solar:trash-bin-trash-linear" width={15} sx={{ color: "text.subtitle" }} />
-                    </IconButton>
+                  <Tooltip arrow title={locked ? "Fork this environment to edit." : "Remove from this environment"}>
+                    <span>
+                      <IconButton size="small" disabled={locked} onClick={() => onRemove(row.id)}>
+                        <Iconify icon="solar:trash-bin-trash-linear" width={15} sx={{ color: "text.subtitle" }} />
+                      </IconButton>
+                    </span>
                   </Tooltip>
                 </TableCell>
                   </TableRow>

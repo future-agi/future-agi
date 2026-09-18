@@ -28,7 +28,7 @@ export const BUILDER_MODES = [
   },
   {
     id: "guided",
-    label: "Guided",
+    label: "Manual",
     hint: "Ask me before major decisions",
     icon: "solar:question-circle-linear",
   },

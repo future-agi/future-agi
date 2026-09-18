@@ -50,7 +50,7 @@ const ACTIVE_ACCENT = "#16A34A";
  *    is a single "Contract summary" pill row linking to the Contract
  *    tab (where that content already lives).
  */
-export default function AgentsPanel({ env, envState, patch, onGo, buildMode, onBuilderTurn, onNestedDrawerChange }) {
+export default function AgentsPanel({ env, envState, patch, onGo, buildMode, onBuilderTurn, onNestedDrawerChange, locked = false, onFork }) {
   /*
     Every agent (source + additionals) is normalised so it carries a
     `versions[]` array and an `activeVersionId`. Agents that were
@@ -350,7 +350,8 @@ export default function AgentsPanel({ env, envState, patch, onGo, buildMode, onB
       {/* ── hero card: agent identity + primary "New version" CTA ── */}
       <AgentHeroCard
         agent={singleAgent}
-        onAddVersion={() => setAddingVersionFor(singleAgent)}
+        onAddVersion={locked ? undefined : () => setAddingVersionFor(singleAgent)}
+        locked={locked}
       />
 
       {/*
@@ -416,7 +417,7 @@ AgentsPanel.propTypes = {
   hero card means the user's eye lands on it the moment they open
   the tab.
 */
-function AgentHeroCard({ agent, onAddVersion }) {
+function AgentHeroCard({ agent, onAddVersion, locked = false }) {
   const type = getAgentType(agent.typeId);
   const name = deriveAgentName(agent, type);
   const typeLine = deriveTypeLine(agent, type);
@@ -483,14 +484,19 @@ function AgentHeroCard({ agent, onAddVersion }) {
           </Typography>
         </Box>
 
-        <Button
-          variant="contained" color="primary"
-          onClick={onAddVersion}
-          startIcon={<Iconify icon="solar:add-circle-linear" width={17} />}
-          sx={{ typography: "s2", fontWeight: 700, flexShrink: 0 }}
-        >
-          Add new version
-        </Button>
+        <Tooltip arrow title={locked ? "Fork this environment to add an agent version." : ""}>
+          <span>
+            <Button
+              variant="contained" color="primary"
+              disabled={locked}
+              onClick={onAddVersion}
+              startIcon={<Iconify icon="solar:add-circle-linear" width={17} />}
+              sx={{ typography: "s2", fontWeight: 700, flexShrink: 0 }}
+            >
+              Add new version
+            </Button>
+          </span>
+        </Tooltip>
       </Stack>
 
       <Box sx={{
@@ -506,7 +512,8 @@ function AgentHeroCard({ agent, onAddVersion }) {
 }
 AgentHeroCard.propTypes = {
   agent: PropTypes.object.isRequired,
-  onAddVersion: PropTypes.func.isRequired,
+  onAddVersion: PropTypes.func,
+  locked: PropTypes.bool,
 };
 
 /* ── env credentials card ─────────────────────────────────────────────────── */

@@ -37,7 +37,7 @@ import { FilterPanel } from "src/components/filter-panel";
  * by side on the derived axes, which is the view you want when the question is
  * what is in here rather than what is this.
  */
-export default function ScenariosStep({ env, envState, patch, buildMode, onBuilderPrompt }) {
+export default function ScenariosStep({ env, envState, patch, buildMode, onBuilderPrompt, locked = false, onFork }) {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState(null);
   const { enqueueSnackbar, closeSnackbar } = useSnackbar();
@@ -364,16 +364,21 @@ export default function ScenariosStep({ env, envState, patch, buildMode, onBuild
           uses).
         */}
         {selected.length > 0 && (
-          <Button
-            variant="contained"
-            color="primary"
-            size="small"
-            onClick={() => setAdding(true)}
-            startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
-            sx={{ typography: "s2", fontWeight: 700, flexShrink: 0 }}
-          >
-            Add scenarios
-          </Button>
+          <Tooltip arrow title={locked ? "Fork this environment to add scenarios." : ""}>
+            <span>
+              <Button
+                variant="contained"
+                color="primary"
+                size="small"
+                disabled={locked}
+                onClick={() => setAdding(true)}
+                startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
+                sx={{ typography: "s2", fontWeight: 700, flexShrink: 0 }}
+              >
+                Add scenarios
+              </Button>
+            </span>
+          </Tooltip>
         )}
       </Stack>
 
@@ -545,9 +550,9 @@ export default function ScenariosStep({ env, envState, patch, buildMode, onBuild
                   : "No scenarios match your search."}
               </Typography>
             </Box>
-          ) : view === "table" ? (
+          ) : (
             <>
-              {selectedIds.length > 0 && (
+              {!locked && selectedIds.length > 0 && (
                 <Box sx={{ px: 2, pt: 2 }}>
                   <SelectionBar
                     count={selectedIds.length}
@@ -556,27 +561,33 @@ export default function ScenariosStep({ env, envState, patch, buildMode, onBuild
                   />
                 </Box>
               )}
-              <ScenarioTable
-                rows={shown}
-                groups={shownGroups}
-                env={env}
-                onEdit={setEditing}
-                onRemove={removeScenario}
-                onHideGroup={toggleGroupHidden}
-                selectedIds={selectedIds}
-                onSelectionChange={handleSelectionChange}
-              />
+              {view === "table" ? (
+                <ScenarioTable
+                  rows={shown}
+                  groups={shownGroups}
+                  env={env}
+                  onEdit={setEditing}
+                  onRemove={removeScenario}
+                  onHideGroup={toggleGroupHidden}
+                  selectedIds={selectedIds}
+                  onSelectionChange={handleSelectionChange}
+                  locked={locked}
+                />
+              ) : (
+                <GroupedScenarioList
+                  groups={shownGroups}
+                  env={env}
+                  envState={envState}
+                  buildMode={buildMode}
+                  onEdit={setEditing}
+                  onRemove={removeScenario}
+                  onHideGroup={toggleGroupHidden}
+                  selectedIds={selectedIds}
+                  onSelectionChange={handleSelectionChange}
+                  locked={locked}
+                />
+              )}
             </>
-          ) : (
-            <GroupedScenarioList
-              groups={shownGroups}
-              env={env}
-              envState={envState}
-              buildMode={buildMode}
-              onEdit={setEditing}
-              onRemove={removeScenario}
-              onHideGroup={toggleGroupHidden}
-            />
           )}
         </SectionCard>
       )}
@@ -860,7 +871,21 @@ const groupScenarios = (rows, mode = "goal", env) => {
  * views. This renders each use-case section as a collapsible block
  * with a sticky header.
  */
-function GroupedScenarioList({ groups, env, envState, buildMode, onEdit, onRemove, onHideGroup }) {
+function GroupedScenarioList({ groups, env, envState, buildMode, onEdit, onRemove, onHideGroup, selectedIds = [], onSelectionChange, locked = false }) {
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const toggleRow = (id) => {
+    if (!onSelectionChange) return;
+    onSelectionChange(selectedSet.has(id)
+      ? selectedIds.filter((v) => v !== id)
+      : [...selectedIds, id]);
+  };
+  const toggleGroup = (groupRows, allSelected) => {
+    if (!onSelectionChange) return;
+    const ids = groupRows.map((r) => r.id);
+    onSelectionChange(allSelected
+      ? selectedIds.filter((id) => !ids.includes(id))
+      : [...new Set([...selectedIds, ...ids])]);
+  };
   return (
     <Box>
       {groups.map((g) => (
@@ -873,6 +898,11 @@ function GroupedScenarioList({ groups, env, envState, buildMode, onEdit, onRemov
           onEdit={onEdit}
           onRemove={onRemove}
           onHideGroup={onHideGroup}
+          selectedSet={selectedSet}
+          onToggleRow={toggleRow}
+          onToggleGroup={toggleGroup}
+          selectable={!!onSelectionChange && !locked}
+          locked={locked}
         />
       ))}
     </Box>
@@ -886,6 +916,8 @@ GroupedScenarioList.propTypes = {
   onEdit: PropTypes.func,
   onRemove: PropTypes.func,
   onHideGroup: PropTypes.func,
+  selectedIds: PropTypes.array,
+  onSelectionChange: PropTypes.func,
 };
 
 /**
@@ -894,8 +926,12 @@ GroupedScenarioList.propTypes = {
  * Chevron flips right → down on toggle. Header row is the whole click
  * target so there's no tiny hit area.
  */
-function CollapsibleGroup({ group, env, envState, buildMode, onEdit, onRemove, onHideGroup }) {
+function CollapsibleGroup({ group, env, envState, buildMode, onEdit, onRemove, onHideGroup, selectedSet, onToggleRow, onToggleGroup, selectable, locked = false }) {
   const [open, setOpen] = useState(true);
+
+  const selectedInGroup = group.rows.filter((r) => selectedSet?.has(r.id)).length;
+  const allSelected = selectable && selectedInGroup === group.rows.length && group.rows.length > 0;
+  const someSelected = selectable && selectedInGroup > 0 && !allSelected;
 
   return (
     <Box>
@@ -920,6 +956,21 @@ function CollapsibleGroup({ group, env, envState, buildMode, onEdit, onRemove, o
           },
         }}
       >
+        {selectable && (
+          <Checkbox
+            size="small"
+            checked={allSelected}
+            indeterminate={someSelected}
+            onClick={(e) => e.stopPropagation()}
+            onChange={() => onToggleGroup(group.rows, allSelected)}
+            sx={{
+              p: 0, flexShrink: 0,
+              color: "text.disabled",
+              "&.Mui-checked": { color: "text.primary" },
+              "&.MuiCheckbox-indeterminate": { color: "text.primary" },
+            }}
+          />
+        )}
         <Iconify
           icon={open ? "solar:alt-arrow-down-linear" : "solar:alt-arrow-right-linear"}
           width={15}
@@ -972,23 +1023,44 @@ function CollapsibleGroup({ group, env, envState, buildMode, onEdit, onRemove, o
               borderColor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.06),
             }}
           >
-            {group.rows.map((s) => (
-              <Stack key={s.id} direction="row" alignItems="flex-start">
-                <Box sx={{ flex: 1, minWidth: 0 }}>
-                  <ScenarioDetail row={s} env={env} envState={envState} buildMode={buildMode} />
-                </Box>
-                <Tooltip arrow title="Edit scenario">
-                  <IconButton size="small" onClick={() => onEdit(s)} sx={{ mt: 1, flexShrink: 0 }}>
-                    <Iconify icon="solar:pen-new-square-linear" width={15} sx={{ color: "text.subtitle" }} />
-                  </IconButton>
-                </Tooltip>
-                <Tooltip arrow title="Delete scenario">
-                  <IconButton size="small" onClick={() => onRemove(s.id)} sx={{ mt: 1, mr: 1.5, flexShrink: 0 }}>
-                    <Iconify icon="solar:trash-bin-trash-linear" width={16} sx={{ color: "text.subtitle" }} />
-                  </IconButton>
-                </Tooltip>
-              </Stack>
-            ))}
+            {group.rows.map((s) => {
+              const checked = !!selectedSet?.has(s.id);
+              return (
+                <Stack key={s.id} direction="row" alignItems="flex-start">
+                  {selectable && (
+                    <Box sx={{ pt: 1.75, pl: 1.75, flexShrink: 0 }}>
+                      <Checkbox
+                        size="small"
+                        checked={checked}
+                        onChange={() => onToggleRow(s.id)}
+                        sx={{
+                          p: 0,
+                          color: "text.disabled",
+                          "&.Mui-checked": { color: "text.primary" },
+                        }}
+                      />
+                    </Box>
+                  )}
+                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                    <ScenarioDetail row={s} env={env} envState={envState} buildMode={buildMode} />
+                  </Box>
+                  <Tooltip arrow title={locked ? "Fork this environment to edit." : "Edit scenario"}>
+                    <span>
+                      <IconButton size="small" disabled={locked} onClick={() => onEdit(s)} sx={{ mt: 1, flexShrink: 0 }}>
+                        <Iconify icon="solar:pen-new-square-linear" width={15} sx={{ color: "text.subtitle" }} />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                  <Tooltip arrow title={locked ? "Fork this environment to edit." : "Delete scenario"}>
+                    <span>
+                      <IconButton size="small" disabled={locked} onClick={() => onRemove(s.id)} sx={{ mt: 1, mr: 1.5, flexShrink: 0 }}>
+                        <Iconify icon="solar:trash-bin-trash-linear" width={16} sx={{ color: "text.subtitle" }} />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                </Stack>
+              );
+            })}
           </Stack>
         </Box>
       )}
@@ -1003,6 +1075,10 @@ CollapsibleGroup.propTypes = {
   onEdit: PropTypes.func,
   onRemove: PropTypes.func,
   onHideGroup: PropTypes.func,
+  selectedSet: PropTypes.object,
+  onToggleRow: PropTypes.func,
+  onToggleGroup: PropTypes.func,
+  selectable: PropTypes.bool,
 };
 
 /* ── filter popover ──────────────────────────────────────────────────────── */

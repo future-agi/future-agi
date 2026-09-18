@@ -17,13 +17,11 @@ import { injectComposerScaffold } from "../../_mock/composerScaffoldBus";
 /*
   Prompt suggestions surfaced next to the count. Handpicked to
   match the kind of instruction a user typically wants applied
-  across many scenarios at once. Not exhaustive — three is enough
-  to demo the pattern without wrapping in narrow panes.
+  across many scenarios at once. One is enough for the demo —
+  keeps the bar readable and lets the chip carry visual weight.
 */
 const SUGGESTIONS = [
   "Make callers more impatient",
-  "Add a sub-goal for delivery verification",
-  "Rewrite the tone to be firmer",
 ];
 
 export default function SelectionBar({ count, onDelete, onClear }) {
@@ -102,26 +100,43 @@ SelectionBar.propTypes = {
 };
 
 /**
- * One suggestion chip. Same visual weight as the "chips" row that
- * StudioConsole renders above an empty composer — subtle text-on-
- * divider pill that highlights on hover, so the reader recognises
- * both surfaces as "clickable prompt suggestions".
+ * One suggestion chip. Filled purple tint + sparkle icon so it reads
+ * as "an AI suggestion you can click", not a static tag. Trailing
+ * arrow reinforces the clickability. Hover deepens the fill and
+ * slides the arrow — small motion is what makes a button feel like
+ * a button.
  */
 function SuggestionChip({ label, onClick }) {
   return (
     <Button
       size="small"
       onClick={onClick}
+      startIcon={<Iconify icon="solar:magic-stick-3-bold" width={13} />}
+      endIcon={
+        <Iconify
+          icon="solar:arrow-right-linear"
+          width={12}
+          sx={{ transition: "transform 160ms ease" }}
+          className="chip-arrow"
+        />
+      }
       sx={{
-        typography: "s3", fontWeight: 500,
-        color: "text.secondary",
-        border: "1px solid", borderColor: "divider",
-        borderRadius: 999, px: 1.25, py: 0.25,
+        typography: "s3", fontWeight: 600,
+        color: "#7857FC",
+        border: "1px solid",
+        borderColor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.45 : 0.3),
+        bgcolor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.14 : 0.08),
+        borderRadius: 999,
+        px: 1.5, py: 0.35,
         minWidth: 0, textTransform: "none",
+        transition: "background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease",
+        "& .MuiButton-startIcon": { mr: 0.5 },
+        "& .MuiButton-endIcon": { ml: 0.5 },
         "&:hover": {
-          borderColor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.5 : 0.35),
-          color: "#7857FC",
-          bgcolor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.1 : 0.05),
+          borderColor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.7 : 0.55),
+          bgcolor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.22 : 0.14),
+          boxShadow: (t) => `0 0 0 3px ${alpha("#7857FC", t.palette.mode === "dark" ? 0.18 : 0.12)}`,
+          "& .chip-arrow": { transform: "translateX(2px)" },
         },
       }}
     >

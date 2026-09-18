@@ -218,14 +218,6 @@ export function useNavData() {
             path: paths.dashboard.simulate.environments,
             icon: ICONS.agentDefinition,
           },
-          // Improvements — hidden from nav for this push. The page and its
-          // route still exist; unhide by restoring this entry once the flow
-          // is ready to demo.
-          // {
-          //   title: "Improvements",
-          //   path: paths.dashboard.simulate.improvements,
-          //   icon: ICONS.agentDefinition,
-          // },
           // {
           //   title: "Agent Definition",
           //   path: paths.dashboard.simulate.agentDefinition,

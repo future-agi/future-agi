@@ -21,7 +21,7 @@ import TwinEvalEditor from "./evals/TwinEvalEditor";
  * matter for it, so the fastest correct set is one click, and the drawer is
  * there for everything else.
  */
-export default function EvalsStep({ env, envState, patch, onGo }) {
+export default function EvalsStep({ env, envState, patch, onGo, locked = false, onFork }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [twinEditorOpen, setTwinEditorOpen] = useState(false);
   const twinBacked = !!envState?.twinBacking;
@@ -100,12 +100,12 @@ export default function EvalsStep({ env, envState, patch, onGo }) {
         {appliedEvals.length > 0 && (
           <Stack direction="row" spacing={1}>
             {twinBacked && (
-              <Tooltip arrow title="Author a structured assertion against final clone state — deterministic, not a judge prompt.">
+              <Tooltip arrow title={locked ? "Fork this environment to author evals." : "Author a structured assertion against final clone state — deterministic, not a judge prompt."}>
                 <span>
                   <Button
                     variant="outlined"
                     size="small"
-                    disabled={needsScenarios}
+                    disabled={needsScenarios || locked}
                     onClick={() => setTwinEditorOpen(true)}
                     startIcon={<Iconify icon="solar:server-square-linear" width={14} />}
                     sx={{
@@ -120,13 +120,13 @@ export default function EvalsStep({ env, envState, patch, onGo }) {
                 </span>
               </Tooltip>
             )}
-            <Tooltip arrow title={needsScenarios ? "Add scenarios first" : ""}>
+            <Tooltip arrow title={locked ? "Fork this environment to add evaluations." : needsScenarios ? "Add scenarios first" : ""}>
               <span>
                 <Button
                   variant="contained"
                   color="primary"
                   size="small"
-                  disabled={needsScenarios}
+                  disabled={needsScenarios || locked}
                   onClick={() => setPickerOpen(true)}
                   startIcon={<Iconify icon="solar:add-circle-linear" width={15} />}
                   sx={{ typography: "s2", fontWeight: 700 }}
@@ -195,10 +195,16 @@ export default function EvalsStep({ env, envState, patch, onGo }) {
                 key={e.id}
                 item={e}
                 action={(
-                  /* No always-on evals. Every added row is removable. */
-                  <IconButton size="small" onClick={() => remove(e.id)}>
-                    <Iconify icon="solar:close-circle-linear" width={16} sx={{ color: "text.subtitle" }} />
-                  </IconButton>
+                  /* No always-on evals. Every added row is removable —
+                     except on a locked template, where every edit is
+                     gated behind a fork. */
+                  <Tooltip arrow title={locked ? "Fork this environment to edit." : "Remove"}>
+                    <span>
+                      <IconButton size="small" disabled={locked} onClick={() => remove(e.id)}>
+                        <Iconify icon="solar:trash-bin-trash-linear" width={16} sx={{ color: "text.subtitle" }} />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
                 )}
               />
             ))}

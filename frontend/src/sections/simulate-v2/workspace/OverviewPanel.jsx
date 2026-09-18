@@ -770,16 +770,7 @@ function AgentSummarySection({ env, envState, onGo, onManageVersions, agentConne
           </Typography>
         </Box>
         <Stack direction="row" spacing={1} sx={{ flexShrink: 0 }}>
-          {locked ? (
-            <Button
-              variant="outlined" size="small"
-              onClick={onFork}
-              startIcon={<Iconify icon="solar:copy-linear" width={14} />}
-              sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider" }}
-            >
-              Fork to edit
-            </Button>
-          ) : (
+          {locked ? null : (
             <Button
               variant="contained" size="small"
               onClick={onManageVersions}
