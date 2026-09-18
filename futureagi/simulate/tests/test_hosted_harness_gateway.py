@@ -569,7 +569,9 @@ def test_fresh_authoring_archive_rejects_missing_scenarios(tmp_path):
 
 
 @pytest.mark.django_db
-def test_unified_progress_freezes_authoring_for_saved_reruns(organization):
+def test_unified_progress_freezes_authoring_for_saved_reruns(
+    organization, monkeypatch
+):
     job, _ = create_hosted_job(
         organization, _payload(), idempotency_key="freeze-unified-authoring"
     )
@@ -588,6 +590,10 @@ def test_unified_progress_freezes_authoring_for_saved_reruns(organization):
         ),
     )
 
+    monkeypatch.setattr(
+        "simulate.services.harness_usage.record_sandbox_runtime",
+        lambda *args, **kwargs: None,
+    )
     with patch(
         "simulate.services.hosted_harness_gateway.store_authoring_archive"
     ) as store:
