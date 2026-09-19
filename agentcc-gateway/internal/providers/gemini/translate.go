@@ -1036,7 +1036,7 @@ func sanitizeToolSchema(raw json.RawMessage) json.RawMessage {
 	if !hasUnknownSchemaKey(decoded) {
 		return raw
 	}
-	cleaned, err := json.Marshal(cleanSchemaNode(decoded))
+	cleaned, err := json.Marshal(fillArrayItems(cleanSchemaNode(decoded)))
 	if err != nil {
 		return raw
 	}
@@ -1056,6 +1056,12 @@ func hasUnknownSchemaKey(node any) bool {
 				// even though the key itself is one Gemini knows.
 				if _, union := value.([]any); union {
 					return true
+				}
+				// So does an array that never said what it holds.
+				if named, _ := value.(string); named == "array" {
+					if _, present := shaped["items"]; !present {
+						return true
+					}
 				}
 			case "enum", "required", "propertyOrdering", "example", "default":
 				continue
@@ -1083,6 +1089,33 @@ func hasUnknownSchemaKey(node any) bool {
 		}
 	}
 	return false
+}
+
+// fillArrayItems gives every array an item schema, because Gemini requires one and JSON Schema
+// does not. A harness declaring a bare list, which is a legitimate way to say "some values", had
+// its entire tool list rejected with `properties[values].items: missing field`. String is the
+// permissive reading of an unconstrained list and is what the callers in question actually pass;
+// the alternative is refusing the whole request over a field the caller never had to write.
+func fillArrayItems(node any) any {
+	switch shaped := node.(type) {
+	case map[string]any:
+		for key, value := range shaped {
+			shaped[key] = fillArrayItems(value)
+		}
+		if named, _ := shaped["type"].(string); named == "array" {
+			if _, present := shaped["items"]; !present {
+				shaped["items"] = map[string]any{"type": "string"}
+			}
+		}
+		return shaped
+	case []any:
+		for i, one := range shaped {
+			shaped[i] = fillArrayItems(one)
+		}
+		return shaped
+	default:
+		return node
+	}
 }
 
 func cleanSchemaNode(node any) any {

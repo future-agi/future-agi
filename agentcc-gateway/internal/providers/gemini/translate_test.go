@@ -2161,3 +2161,39 @@ func TestSanitizeToolSchemaRewritesNullableUnionTypes(t *testing.T) {
 		t.Errorf("single-entry union = %v, want integer", count["type"])
 	}
 }
+
+func TestSanitizeToolSchemaGivesEveryArrayAnItemSchema(t *testing.T) {
+	// A harness declaring a bare list had its entire tool list rejected with
+	// `properties[values].items: missing field`. Gemini requires items; JSON Schema does not.
+	raw := json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"values": {"type": "array"},
+			"tags":   {"type": "array", "items": {"type": "integer"}},
+			"nested": {"type": "object", "properties": {"inner": {"type": "array"}}}
+		}
+	}`)
+	var got map[string]any
+	if err := json.Unmarshal(sanitizeToolSchema(raw), &got); err != nil {
+		t.Fatalf("sanitized schema does not parse: %v", err)
+	}
+	props, _ := got["properties"].(map[string]any)
+	values, _ := props["values"].(map[string]any)
+	items, _ := values["items"].(map[string]any)
+	if items["type"] != "string" {
+		t.Errorf("an item-less array got items = %v, want a permissive string", values["items"])
+	}
+	// An array that said what it holds keeps saying it.
+	tags, _ := props["tags"].(map[string]any)
+	kept, _ := tags["items"].(map[string]any)
+	if kept["type"] != "integer" {
+		t.Errorf("declared items = %v, want integer untouched", tags["items"])
+	}
+	// And it reaches arrays nested inside other schemas.
+	nested, _ := props["nested"].(map[string]any)
+	deep, _ := nested["properties"].(map[string]any)
+	inner, _ := deep["inner"].(map[string]any)
+	if inner["items"] == nil {
+		t.Error("an array nested one level down was left without items")
+	}
+}
