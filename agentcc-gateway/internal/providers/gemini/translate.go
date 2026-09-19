@@ -308,7 +308,7 @@ func translateRequest(req *models.ChatCompletionRequest) (*geminiRequest, string
 			decls = append(decls, geminiFuncDecl{
 				Name:        t.Function.Name,
 				Description: t.Function.Description,
-				Parameters:  t.Function.Parameters,
+				Parameters:  sanitizeToolSchema(t.Function.Parameters),
 			})
 		}
 		if len(decls) > 0 {
@@ -1002,5 +1002,144 @@ func audioMimeToFormat(mimeType string) string {
 		return "flac"
 	default:
 		return "pcm16" // Gemini default
+	}
+}
+
+// geminiSchemaFields are the only keys Gemini's functionDeclarations[].parameters accepts. It is
+// an OpenAPI Schema subset, not JSON Schema, and it rejects the whole request on the first key it
+// does not know rather than ignoring it. Clients that send real JSON Schema (the Anthropic
+// Messages API carries "$schema" on every tool) therefore fail with a 400 naming one field.
+var geminiSchemaFields = map[string]bool{
+	"type": true, "format": true, "title": true, "description": true,
+	"nullable": true, "enum": true, "items": true, "properties": true,
+	"required": true, "minItems": true, "maxItems": true,
+	"minProperties": true, "maxProperties": true,
+	"minimum": true, "maximum": true, "minLength": true, "maxLength": true,
+	"pattern": true, "example": true, "default": true,
+	"anyOf": true, "propertyOrdering": true,
+}
+
+// sanitizeToolSchema drops every key Gemini does not define, at every depth. Unknown keys are
+// removed rather than translated: a schema keyword Gemini has no equivalent for constrains
+// nothing once it is gone, whereas guessing at an equivalent changes what the tool accepts.
+func sanitizeToolSchema(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return raw
+	}
+	var decoded any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return raw
+	}
+	// A schema Gemini already accepts is returned byte for byte. Re-marshalling reorders keys,
+	// and a caller comparing what it sent against what went out should see no difference where
+	// nothing needed removing.
+	if !hasUnknownSchemaKey(decoded) {
+		return raw
+	}
+	cleaned, err := json.Marshal(cleanSchemaNode(decoded))
+	if err != nil {
+		return raw
+	}
+	return cleaned
+}
+
+func hasUnknownSchemaKey(node any) bool {
+	switch shaped := node.(type) {
+	case map[string]any:
+		for key, value := range shaped {
+			if !geminiSchemaFields[key] {
+				return true
+			}
+			switch key {
+			case "type":
+				// A union type is legal JSON Schema and not legal here, so it needs rewriting
+				// even though the key itself is one Gemini knows.
+				if _, union := value.([]any); union {
+					return true
+				}
+			case "enum", "required", "propertyOrdering", "example", "default":
+				continue
+			case "properties":
+				named, ok := value.(map[string]any)
+				if !ok {
+					continue
+				}
+				for _, schema := range named {
+					if hasUnknownSchemaKey(schema) {
+						return true
+					}
+				}
+			default:
+				if hasUnknownSchemaKey(value) {
+					return true
+				}
+			}
+		}
+	case []any:
+		for _, one := range shaped {
+			if hasUnknownSchemaKey(one) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func cleanSchemaNode(node any) any {
+	switch shaped := node.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(shaped))
+		for key, value := range shaped {
+			if !geminiSchemaFields[key] {
+				continue
+			}
+			switch key {
+			case "type":
+				// JSON Schema allows a union, `"type": ["string", "null"]`, and Gemini's Schema
+				// takes a single type plus a nullable flag. Sent through as an array it answers
+				// `Unknown name "type"` and the whole tool list is rejected, which is what a real
+				// harness with a nullable field hit. Rewritten rather than dropped: dropping the
+				// type of a parameter changes what the tool accepts.
+				if union, ok := value.([]any); ok {
+					for _, one := range union {
+						named, _ := one.(string)
+						if named == "null" {
+							out["nullable"] = true
+							continue
+						}
+						if _, taken := out["type"]; !taken && named != "" {
+							out["type"] = named
+						}
+					}
+					continue
+				}
+				out[key] = value
+			case "properties":
+				// The keys here are property names, not schema keywords, so only the values
+				// below them are schemas.
+				if named, ok := value.(map[string]any); ok {
+					sub := make(map[string]any, len(named))
+					for name, schema := range named {
+						sub[name] = cleanSchemaNode(schema)
+					}
+					out[key] = sub
+					continue
+				}
+				out[key] = value
+			case "enum", "required", "propertyOrdering", "example", "default":
+				// Values, not schemas. Descending into them would strip their contents.
+				out[key] = value
+			default:
+				out[key] = cleanSchemaNode(value)
+			}
+		}
+		return out
+	case []any:
+		for i, one := range shaped {
+			shaped[i] = cleanSchemaNode(one)
+		}
+		return shaped
+	default:
+		return node
 	}
 }

@@ -2062,3 +2062,102 @@ func TestTranslateResponse_FoldsThinkingTokensIntoCompletion(t *testing.T) {
 		t.Fatalf("PromptTokens = %d, want %d", got, want)
 	}
 }
+
+func TestSanitizeToolSchemaDropsWhatGeminiRejects(t *testing.T) {
+	// The Anthropic Messages API puts "$schema" on every tool and "additionalProperties" on most.
+	// Gemini answers 400 naming the first one it does not know, so the whole call dies.
+	raw := json.RawMessage(`{
+		"$schema": "http://json-schema.org/draft-07/schema#",
+		"type": "object",
+		"additionalProperties": false,
+		"properties": {
+			"word": {"type": "string", "$comment": "ignore me", "description": "a word"},
+			"nested": {
+				"type": "object",
+				"additionalProperties": true,
+				"properties": {"depth": {"type": "integer", "exclusiveMinimum": 0}}
+			},
+			"enum_field": {"type": "string", "enum": ["a", "b"]}
+		},
+		"required": ["word"]
+	}`)
+
+	var got map[string]any
+	if err := json.Unmarshal(sanitizeToolSchema(raw), &got); err != nil {
+		t.Fatalf("sanitized schema does not parse: %v", err)
+	}
+	for _, unwanted := range []string{"$schema", "additionalProperties"} {
+		if _, present := got[unwanted]; present {
+			t.Errorf("%q survived sanitizing", unwanted)
+		}
+	}
+	if got["type"] != "object" {
+		t.Errorf("type = %v, want object", got["type"])
+	}
+	props, _ := got["properties"].(map[string]any)
+	word, _ := props["word"].(map[string]any)
+	if _, present := word["$comment"]; present {
+		t.Error("$comment survived inside a property")
+	}
+	if word["description"] != "a word" {
+		t.Errorf("description = %v, want %q", word["description"], "a word")
+	}
+	nested, _ := props["nested"].(map[string]any)
+	if _, present := nested["additionalProperties"]; present {
+		t.Error("additionalProperties survived one level down")
+	}
+	deep, _ := nested["properties"].(map[string]any)
+	depth, _ := deep["depth"].(map[string]any)
+	if _, present := depth["exclusiveMinimum"]; present {
+		t.Error("exclusiveMinimum survived two levels down")
+	}
+	if depth["type"] != "integer" {
+		t.Errorf("nested type = %v, want integer", depth["type"])
+	}
+	// A property literally named like a keyword is a property, not a keyword.
+	enumField, _ := props["enum_field"].(map[string]any)
+	values, _ := enumField["enum"].([]any)
+	if len(values) != 2 {
+		t.Errorf("enum values = %v, want two of them", enumField["enum"])
+	}
+	required, _ := got["required"].([]any)
+	if len(required) != 1 || required[0] != "word" {
+		t.Errorf("required = %v, want [word]", got["required"])
+	}
+}
+
+func TestSanitizeToolSchemaRewritesNullableUnionTypes(t *testing.T) {
+	// A real harness tool list was rejected whole with `Unknown name "type"` because one field
+	// was declared `"type": ["string", "null"]`. Gemini takes a single type plus a nullable flag.
+	raw := json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"check": {"type": ["string", "null"]},
+			"name":  {"type": "string"},
+			"count": {"type": ["integer"]}
+		}
+	}`)
+	var got map[string]any
+	if err := json.Unmarshal(sanitizeToolSchema(raw), &got); err != nil {
+		t.Fatalf("sanitized schema does not parse: %v", err)
+	}
+	props, _ := got["properties"].(map[string]any)
+	check, _ := props["check"].(map[string]any)
+	if check["type"] != "string" {
+		t.Errorf("check type = %v, want the single type string", check["type"])
+	}
+	if check["nullable"] != true {
+		t.Errorf("check nullable = %v, want true", check["nullable"])
+	}
+	name, _ := props["name"].(map[string]any)
+	if name["type"] != "string" {
+		t.Errorf("a plain type must survive unchanged, got %v", name["type"])
+	}
+	if _, present := name["nullable"]; present {
+		t.Error("a non-union type must not gain a nullable flag")
+	}
+	count, _ := props["count"].(map[string]any)
+	if count["type"] != "integer" {
+		t.Errorf("single-entry union = %v, want integer", count["type"])
+	}
+}
