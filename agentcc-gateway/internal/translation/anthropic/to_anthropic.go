@@ -98,7 +98,7 @@ func (t *Translator) ResponseFromCanonical(resp *models.ChatCompletionResponse) 
 		}
 		contentBlocks = append(contentBlocks, ContentBlock{
 			Type:  "tool_use",
-			ID:    tc.ID,
+			ID:    toolUseID(tc.ID),
 			Name:  name,
 			Input: input,
 		})
@@ -191,7 +191,7 @@ func (t *Translator) ResponseFromCanonicalWithMapping(
 		}
 		contentBlocks = append(contentBlocks, ContentBlock{
 			Type:  "tool_use",
-			ID:    tc.ID,
+			ID:    toolUseID(tc.ID),
 			Name:  name,
 			Input: input,
 		})

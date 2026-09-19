@@ -246,7 +246,7 @@ func handleChunk(ctx context.Context, state *streamState, chunk models.StreamChu
 				Index: state.currentBlockIdx,
 				ContentBlock: ContentBlock{
 					Type:  "tool_use",
-					ID:    tc.ID,
+					ID:    toolUseID(tc.ID),
 					Name:  emittedName,
 					Input: json.RawMessage("{}"),
 				},

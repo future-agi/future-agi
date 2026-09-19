@@ -257,7 +257,7 @@ func convertUserMessage(blocks []ContentBlock) ([]models.Message, error) {
 	// Emit role:"tool" messages first.
 	for _, id := range toolResultOrder {
 		results := toolResultsByID[id]
-		toolMsg, err := buildToolMessage(id, results)
+		toolMsg, err := buildToolMessage(originalToolUseID(id), results)
 		if err != nil {
 			return nil, fmt.Errorf("tool_result tool_use_id=%q: %w", id, err)
 		}
@@ -361,7 +361,9 @@ func convertAssistantMessage(blocks []ContentBlock) ([]models.Message, error) {
 				return nil, fmt.Errorf("tool_use id=%q: marshal arguments: %w", b.ID, err)
 			}
 			toolCalls = append(toolCalls, models.ToolCall{
-				ID:   b.ID,
+				// Back to whatever the provider originally called it: the Gemini path keeps its
+				// thoughtSignature in this field, and the turn is refused without it.
+				ID:   originalToolUseID(b.ID),
 				Type: "function",
 				Function: models.FunctionCall{
 					Name:      b.Name,
