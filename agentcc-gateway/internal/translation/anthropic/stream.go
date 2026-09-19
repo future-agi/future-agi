@@ -152,11 +152,16 @@ func handleChunk(ctx context.Context, state *streamState, chunk models.StreamChu
 		emit(ctx, events, sseFrame("message_start", MessageStartEvent{
 			Type: "message_start",
 			Message: MessageStartMsg{
-				ID:    state.messageID,
-				Type:  "message",
-				Role:  "assistant",
-				Model: chunk.Model,
-				Usage: startUsage,
+				ID:   state.messageID,
+				Type: "message",
+				Role: "assistant",
+				// Empty rather than absent: the blocks arrive as their own events, and a client
+				// with no array here has nothing to append them to.
+				Content:      []ContentBlock{},
+				StopReason:   nil,
+				StopSequence: nil,
+				Model:        chunk.Model,
+				Usage:        startUsage,
 			},
 		}))
 	}
@@ -311,7 +316,7 @@ func flushPendingStop(ctx context.Context, state *streamState, events chan<- []b
 		Delta: MessageDelta{
 			StopReason: state.pendingStopReason,
 		},
-		Usage: ResponseUsage{OutputTokens: outputTokens},
+		Usage: DeltaUsage{OutputTokens: outputTokens},
 	}))
 
 	emit(ctx, events, sseFrame("message_stop", MessageStopEvent{Type: "message_stop"}))
