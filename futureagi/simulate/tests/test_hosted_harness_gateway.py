@@ -119,6 +119,27 @@ def test_platform_simulator_defaults_to_approved_vertex_model(monkeypatch):
     assert credential_bytes is None
 
 
+def test_validation_lane_count_travels_only_when_the_deployment_sets_it(monkeypatch):
+    """Runtime validation resets the agent's world once per scenario, so it is the wall clock of a
+    large suite. The guest can spread that across several copies of the runtime, and the count has
+    to reach it. Absent means one, so a deployment that configures nothing is unchanged."""
+    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+    monkeypatch.delenv("ALK_VALIDATION_INSTANCES", raising=False)
+
+    values, _credential_bytes = _platform_simulator_material()
+    assert "ALK_VALIDATION_INSTANCES" not in values
+
+    monkeypatch.setenv("ALK_VALIDATION_INSTANCES", "4")
+    values, _credential_bytes = _platform_simulator_material()
+    assert values["ALK_VALIDATION_INSTANCES"] == "4"
+
+    # Blank is the same as unset: an empty string would make the guest fall back to one anyway,
+    # and shipping it would only make the uploaded environment harder to read.
+    monkeypatch.setenv("ALK_VALIDATION_INSTANCES", "")
+    values, _credential_bytes = _platform_simulator_material()
+    assert "ALK_VALIDATION_INSTANCES" not in values
+
+
 def test_platform_authoring_backend_is_independent_from_simulated_caller(
     tmp_path, monkeypatch
 ):

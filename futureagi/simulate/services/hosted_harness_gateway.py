@@ -206,6 +206,9 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         "HARNESS_BACKGROUND_NOISE_VOLUME",
         # Off has to travel: decided here, enforced inside the sandbox.
         "ALK_VOICEMAIL_SCENARIOS",
+        # How many copies of the agent's runtime the guest validates scenario setups against.
+        # Unset means one, which is what it did before lanes existed.
+        "ALK_VALIDATION_INSTANCES",
     ):
         value = str(os.environ.get(name) or "").strip()
         if value:
@@ -1829,6 +1832,8 @@ class HostedHarnessGateway:
                     "ALK_VERTEX_LOCATION",
                     # Authoring writes the scenarios, so the switch is exported here too.
                     "ALK_VOICEMAIL_SCENARIOS",
+                    # Runtime validation runs inside authoring, so its lane count is needed here.
+                    "ALK_VALIDATION_INSTANCES",
                     "GOOGLE_APPLICATION_CREDENTIALS",
                     "GOOGLE_CLOUD_LOCATION",
                     "GOOGLE_CLOUD_PROJECT",
