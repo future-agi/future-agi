@@ -140,6 +140,30 @@ def test_validation_lane_count_travels_only_when_the_deployment_sets_it(monkeypa
     assert "ALK_VALIDATION_INSTANCES" not in values
 
 
+def test_gateway_address_travels_only_when_the_deployment_names_one(monkeypatch):
+    """The Claude Agent SDK talks to whatever serves Anthropic Messages, so the harness needs an
+    address. Ordinarily the guest starts its own on loopback and nothing has to travel; these two
+    exist so a run can be pointed at a gateway that already exists somewhere else instead."""
+    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+    for name in ("ALK_HARNESS_GATEWAY_URL", "ALK_HARNESS_GATEWAY_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+
+    values, _credential_bytes = _platform_simulator_material()
+    assert "ALK_HARNESS_GATEWAY_URL" not in values
+    assert "ALK_HARNESS_GATEWAY_TOKEN" not in values
+
+    monkeypatch.setenv("ALK_HARNESS_GATEWAY_URL", "http://gateway.internal:8090")
+    monkeypatch.setenv("ALK_HARNESS_GATEWAY_TOKEN", "not-a-real-token")
+    values, _credential_bytes = _platform_simulator_material()
+    assert values["ALK_HARNESS_GATEWAY_URL"] == "http://gateway.internal:8090"
+    assert values["ALK_HARNESS_GATEWAY_TOKEN"] == "not-a-real-token"
+
+    # Blank is the same as unset, so an empty setting never shadows the guest's own launcher.
+    monkeypatch.setenv("ALK_HARNESS_GATEWAY_URL", "")
+    values, _credential_bytes = _platform_simulator_material()
+    assert "ALK_HARNESS_GATEWAY_URL" not in values
+
+
 def test_platform_authoring_backend_is_independent_from_simulated_caller(
     tmp_path, monkeypatch
 ):

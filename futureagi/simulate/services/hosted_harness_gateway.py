@@ -209,6 +209,11 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         # How many copies of the agent's runtime the guest validates scenario setups against.
         # Unset means one, which is what it did before lanes existed.
         "ALK_VALIDATION_INSTANCES",
+        # Where the Claude Agent SDK backend finds an endpoint speaking Anthropic Messages. Left
+        # unset the guest starts its own on loopback, which is the ordinary case; set here only to
+        # point a run at a gateway that already exists somewhere else.
+        "ALK_HARNESS_GATEWAY_URL",
+        "ALK_HARNESS_GATEWAY_TOKEN",
     ):
         value = str(os.environ.get(name) or "").strip()
         if value:
@@ -1834,6 +1839,10 @@ class HostedHarnessGateway:
                     "ALK_VOICEMAIL_SCENARIOS",
                     # Runtime validation runs inside authoring, so its lane count is needed here.
                     "ALK_VALIDATION_INSTANCES",
+                    # Authoring is where the model calls happen, so the gateway address belongs
+                    # here too. Absent, the guest's own launcher supplies it.
+                    "ALK_HARNESS_GATEWAY_URL",
+                    "ALK_HARNESS_GATEWAY_TOKEN",
                     "GOOGLE_APPLICATION_CREDENTIALS",
                     "GOOGLE_CLOUD_LOCATION",
                     "GOOGLE_CLOUD_PROJECT",
@@ -1850,6 +1859,10 @@ class HostedHarnessGateway:
                 _ENTRYPOINT_SESSION,
                 SandboxCommandRequest(
                     command=(
+                        # Sourced so the authoring process inherits the address and the token it
+                        # exports. Returns immediately unless ALK_HARNESS names a backend that
+                        # needs a gateway, so the ADK path is untouched.
+                        ". /opt/alk/start-sandbox-gateway.sh; "
                         "if [ ! -f /work/authoring/contract.json ]; then "
                         "python -m fi.alk.harness.hosted_authoring_entrypoint "
                         "/work/job.json --source /work/source --output /work/authoring "
