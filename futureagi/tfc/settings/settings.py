@@ -997,8 +997,8 @@ ALK_E2B_TEMPLATE_DISK_GB = int(os.getenv("ALK_E2B_TEMPLATE_DISK_GB", "10"))
 ALK_E2B_MAX_TTL_SECONDS = int(os.getenv("ALK_E2B_MAX_TTL_SECONDS", "0"))
 
 # Scenario parallelism (W>1) admission belt (C4 §5, decisions D12/D23/D24).
-# W>1 is admitted only when this flag is truthy AND the registered guest snapshot
-# digest (ALK_DAYTONA_SNAPSHOT_DIGEST) is present in the allowlist below. Both
+# W>1 is admitted only when this flag is truthy AND the selected guest runtime
+# digest (Daytona snapshot digest or E2B template build ID) is certified. Both
 # default to the fail-closed state (disabled / empty) so an unset digest never
 # admits W>1. Production keeps the flag OFF until the deployed snapshot carries
 # the world-unique preflight guard and C1 port model; dev/E2E sets it ON. In the
@@ -1010,10 +1010,19 @@ HARNESS_PARALLELISM_ENABLED = os.getenv("HARNESS_PARALLELISM_ENABLED", "").lower
     "yes",
 )
 HARNESS_MAX_WORLD_SLOTS = int(os.getenv("HARNESS_MAX_WORLD_SLOTS", "8"))
+HARNESS_EXPERIMENTAL_TWO_SLOTS_ON_2CPU = os.getenv(
+    "HARNESS_EXPERIMENTAL_TWO_SLOTS_ON_2CPU", "false"
+).lower() in ("1", "true", "yes")
 # Each profile is an operator-certified size/connector/snapshot combination.
 HARNESS_RESOURCE_PROFILES = json.loads(os.getenv("HARNESS_RESOURCE_PROFILES", "[]"))
-# Comma-separated allowlist of guest snapshot digests certified for W>1. Empty
-# (the default) fails closed: every W>1 request clamps to 1 in the snapshot lane.
+# Comma-separated provider-neutral allowlist of guest runtime digests certified
+# for W>1. Empty (the default) fails closed for pinned runtimes.
+HARNESS_PARALLEL_RUNTIME_DIGESTS = [
+    digest.strip()
+    for digest in os.getenv("HARNESS_PARALLEL_RUNTIME_DIGESTS", "").split(",")
+    if digest.strip()
+]
+# Legacy Daytona setting remains accepted during migration.
 HARNESS_PARALLEL_SNAPSHOT_DIGESTS = [
     digest.strip()
     for digest in os.getenv("HARNESS_PARALLEL_SNAPSHOT_DIGESTS", "").split(",")

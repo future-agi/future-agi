@@ -99,6 +99,24 @@ def test_without_catalog_resources_are_not_automatically_increased():
     assert (result.cpu_units, result.memory_mb, result.parallelism) == (2, 4096, 1)
 
 
+def test_two_cpu_experiment_requires_explicit_opt_in():
+    runtime = {"parallelism": 2, "cpu_units": 2, "memory_mb": 4096}
+    result = select_capacity(
+        runtime,
+        scenario_count=2,
+        connector="chat",
+        profiles=[],
+        experimental_two_slots_on_2cpu=True,
+    )
+    assert result.parallelism == 2
+    assert (
+        select_capacity(
+            runtime, scenario_count=2, connector="chat", profiles=[]
+        ).parallelism
+        == 1
+    )
+
+
 @pytest.mark.parametrize(
     "runtime",
     [
@@ -152,6 +170,71 @@ def test_configured_selection_resolves_auto_from_secret_alias(settings):
     )
     assert result.name == "vapi"
     assert result.parallelism == 3
+
+
+def test_e2b_capacity_uses_template_resources_and_certified_build(settings):
+    from simulate.services.harness_capacity import configured_capacity
+
+    settings.HOSTED_SANDBOX_PROVIDER = "e2b"
+    settings.ALK_DAYTONA_DOCKERFILE = "/hosted/Dockerfile"
+    settings.ALK_E2B_TEMPLATE_REFERENCE = "alk-hosted-e2b:build-123"
+    settings.ALK_E2B_TEMPLATE_BUILD_ID = "build-123"
+    settings.ALK_E2B_TEMPLATE_CPU_UNITS = 4
+    settings.ALK_E2B_TEMPLATE_MEMORY_MB = 8192
+    settings.ALK_E2B_TEMPLATE_DISK_GB = 12
+    settings.HARNESS_PARALLELISM_ENABLED = True
+    settings.HARNESS_PARALLEL_RUNTIME_DIGESTS = ["build-123"]
+    settings.HARNESS_PARALLEL_SNAPSHOT_DIGESTS = []
+    settings.HARNESS_RESOURCE_PROFILES = []
+
+    payload = {
+        "runtime": {"parallelism": 4, "cpu_units": 4, "memory_mb": 8192},
+        "scenario_count": 4,
+        "agent": {"connector": "chat"},
+    }
+    assert configured_capacity(payload).parallelism == 4
+    defaulted = configured_capacity(
+        {
+            **payload,
+            "runtime": {"parallelism": 4},
+        }
+    )
+    assert (
+        defaulted.cpu_units,
+        defaulted.memory_mb,
+        defaulted.disk_gb,
+    ) == (4, 8192, 12)
+    with pytest.raises(ValueError, match="exceeds provider runtime resources"):
+        configured_capacity(
+            {**payload, "runtime": {**payload["runtime"], "cpu_units": 8}}
+        )
+    settings.HARNESS_RESOURCE_PROFILES = [
+        {
+            **profile("wrong-template", 2),
+            "cpu_units": 4,
+            "memory_mb": 8192,
+            "disk_gb": 10,
+        }
+    ]
+    with pytest.raises(ValueError, match="does not match provider runtime"):
+        configured_capacity(payload)
+
+
+def test_e2b_two_cpu_experiment_does_not_relax_daytona(settings):
+    from simulate.services.harness_capacity import configured_capacity
+
+    payload = {
+        "runtime": {"parallelism": 2, "cpu_units": 2, "memory_mb": 4096},
+        "scenario_count": 2,
+        "agent": {"connector": "chat"},
+    }
+    settings.HARNESS_PARALLELISM_ENABLED = True
+    settings.HARNESS_RESOURCE_PROFILES = []
+    settings.HARNESS_EXPERIMENTAL_TWO_SLOTS_ON_2CPU = True
+    settings.HOSTED_SANDBOX_PROVIDER = "e2b"
+    assert configured_capacity(payload).parallelism == 2
+    settings.HOSTED_SANDBOX_PROVIDER = "daytona"
+    assert configured_capacity(payload).parallelism == 1
 
 
 @pytest.mark.parametrize(

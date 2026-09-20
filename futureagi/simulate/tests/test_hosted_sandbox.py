@@ -289,8 +289,7 @@ def test_e2b_adapter_combines_domain_and_cidr_egress(settings, monkeypatch):
         "printf '#!/bin/sh\\nexec /opt/alk-venv/bin/python \"$@\"\\n' "
         "> /usr/local/bin/python && chmod 0755 /usr/local/bin/python && "
         "ln -sfn /opt/alk-venv/bin/pip /usr/local/bin/pip && "
-        "ln -sfn /opt/alk-venv/bin/uv /usr/local/bin/uv && "
-        "ln -sfn /opt/alk-venv/bin/uvx /usr/local/bin/uvx"
+        "test -x /usr/local/bin/uv && test -x /usr/local/bin/uvx"
     )
     assert bootstrap_options["user"] == "root"
     with pytest.raises(SandboxProviderError, match="bounded no-header callback"):

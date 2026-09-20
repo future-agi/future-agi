@@ -11,12 +11,17 @@ from typing import Any
 def configured_capacity(payload: Mapping[str, Any]) -> SandboxCapacity:
     from django.conf import settings
 
+    from simulate.services.hosted_sandbox import sandbox_runtime_policy
+
     runtime = dict(payload.get("runtime") or {})
+    policy = sandbox_runtime_policy()
+    if policy.fixed_resources:
+        cpu_units, memory_mb, disk_gb = policy.fixed_resources
+        runtime.setdefault("cpu_units", cpu_units)
+        runtime.setdefault("memory_mb", memory_mb)
+        runtime.setdefault("disk_gb", disk_gb)
     enabled = getattr(settings, "HARNESS_PARALLELISM_ENABLED", False)
-    dockerfile = bool(
-        getattr(settings, "HOSTED_SANDBOX_PROVIDER", "daytona") == "daytona"
-        and getattr(settings, "ALK_DAYTONA_DOCKERFILE", "")
-    )
+    unpinned = policy.permits_unpinned_parallelism
     if not enabled:
         runtime["parallelism"] = 1
     profiles = getattr(settings, "HARNESS_RESOURCE_PROFILES", [])
@@ -24,8 +29,10 @@ def configured_capacity(payload: Mapping[str, Any]) -> SandboxCapacity:
         not isinstance(p, Mapping) for p in profiles
     ):
         raise ValueError("resource profiles must be a JSON array of objects")
-    allowed_digests = getattr(settings, "HARNESS_PARALLEL_SNAPSHOT_DIGESTS", [])
-    if profiles and not dockerfile:
+    allowed_digests = set(
+        getattr(settings, "HARNESS_PARALLEL_RUNTIME_DIGESTS", ()) or ()
+    ) | set(getattr(settings, "HARNESS_PARALLEL_SNAPSHOT_DIGESTS", ()) or ())
+    if profiles and not unpinned:
         # An unqualified image can only offer one slot, even if its hardware fits more.
         profiles = [
             {**profile, "max_parallelism": 1}
@@ -49,14 +56,30 @@ def configured_capacity(payload: Mapping[str, Any]) -> SandboxCapacity:
             connector = "vapi"
         elif "RETELL_API_KEY" in aliases:
             connector = "retell"
-    return select_capacity(
+    capacity = select_capacity(
         runtime,
         scenario_count=int(payload.get("scenario_count") or 1),
         connector=connector,
         profiles=profiles,
         ceiling=getattr(settings, "HARNESS_MAX_WORLD_SLOTS", 8),
-        dockerfile=dockerfile,
+        dockerfile=unpinned,
+        experimental_two_slots_on_2cpu=policy.experimental_two_slots_on_2cpu,
     )
+    if not policy.supports_runtime_selection and (
+        (capacity.snapshot_name and capacity.snapshot_name != policy.name)
+        or (capacity.snapshot_digest and capacity.snapshot_digest != policy.digest)
+    ):
+        raise ValueError("selected sandbox profile does not match provider runtime")
+    if policy.fixed_resources and any(
+        required > available
+        for required, available in zip(
+            (capacity.cpu_units, capacity.memory_mb, capacity.disk_gb),
+            policy.fixed_resources,
+            strict=True,
+        )
+    ):
+        raise ValueError("selected sandbox capacity exceeds provider runtime resources")
+    return capacity
 
 
 @dataclass(frozen=True)
@@ -70,10 +93,13 @@ class SandboxCapacity:
     snapshot_digest: str | None = None
 
 
-def _resource_slots(cpu_units: int, memory_mb: int) -> int:
+def _resource_slots(
+    cpu_units: int, memory_mb: int, *, experimental_two_slots_on_2cpu: bool = False
+) -> int:
     """Match guest admission's control-process reserve and per-world budget."""
+    cpu_reserve = 0.4 if experimental_two_slots_on_2cpu and cpu_units == 2 else 0.5
     return min(
-        math.floor((cpu_units - 0.5) / 0.8),
+        math.floor((cpu_units - cpu_reserve) / 0.8),
         math.floor((memory_mb / 1024 - 1) / 0.95),
     )
 
@@ -86,6 +112,7 @@ def select_capacity(
     profiles: Sequence[Mapping[str, Any]],
     ceiling: int = 8,
     dockerfile: bool = False,
+    experimental_two_slots_on_2cpu: bool = False,
 ) -> SandboxCapacity:
     """Profiles bound resource spending; no catalog means fixed-size execution."""
     requested = int(runtime.get("parallelism", 1))
@@ -96,10 +123,18 @@ def select_capacity(
         # Preserve the existing fixed-size lane until measured profiles are supplied.
         cpu = int(runtime.get("cpu_units", 4))
         memory = int(runtime.get("memory_mb", 8192))
-        width = min(target, _resource_slots(cpu, memory))
+        width = min(
+            target,
+            _resource_slots(
+                cpu,
+                memory,
+                experimental_two_slots_on_2cpu=experimental_two_slots_on_2cpu,
+            ),
+        )
         if width < 1:
             raise ValueError("insufficient sandbox resources")
-        return SandboxCapacity("fixed", cpu, memory, 10, width)
+        disk = int(runtime.get("disk_gb", 10))
+        return SandboxCapacity("fixed", cpu, memory, disk, width)
 
     candidates: list[SandboxCapacity] = []
     for profile in profiles:
@@ -121,7 +156,11 @@ def select_capacity(
                 raise ValueError
             if memory < 1024 or width > min(cpu, 8):
                 raise ValueError
-            resource_slots = _resource_slots(cpu, memory)
+            resource_slots = _resource_slots(
+                cpu,
+                memory,
+                experimental_two_slots_on_2cpu=experimental_two_slots_on_2cpu,
+            )
             if resource_slots < 1:
                 raise ValueError
             name = profile["name"]

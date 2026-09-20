@@ -88,8 +88,9 @@ def parallelism_w_gt_1_enabled(snapshot_digest: str | None) -> bool:
     """The ONE shared W>1 admission predicate (C4 §5, decisions D12/D23/D24).
 
     W>1 is admitted only when the ``HARNESS_PARALLELISM_ENABLED`` flag is truthy
-    AND the registered guest snapshot digest is in
-    ``HARNESS_PARALLEL_SNAPSHOT_DIGESTS``. In the dockerfile-mode dev lane
+    AND the selected guest runtime digest is certified by
+    ``HARNESS_PARALLEL_RUNTIME_DIGESTS`` (or its legacy snapshot alias). In the
+    dockerfile-mode dev lane
     (``ALK_DAYTONA_DOCKERFILE`` set) the digest half is skipped — that lane
     carries no meaningful registered digest — so W>1 needs the FLAG only. In the
     production snapshot lane an empty/unset digest FAILS CLOSED (never matches
@@ -98,15 +99,17 @@ def parallelism_w_gt_1_enabled(snapshot_digest: str | None) -> bool:
     """
     if not getattr(settings, "HARNESS_PARALLELISM_ENABLED", False):
         return False
-    if getattr(settings, "HOSTED_SANDBOX_PROVIDER", "daytona") == "daytona" and getattr(
-        settings, "ALK_DAYTONA_DOCKERFILE", ""
-    ):
+    from simulate.services.hosted_sandbox import sandbox_runtime_policy
+
+    if sandbox_runtime_policy().permits_unpinned_parallelism:
         return True
     digest = (snapshot_digest or "").strip()
     if not digest:
         return False
-    allowlist = getattr(settings, "HARNESS_PARALLEL_SNAPSHOT_DIGESTS", ()) or ()
-    return digest in set(allowlist)
+    allowlist = set(
+        getattr(settings, "HARNESS_PARALLEL_RUNTIME_DIGESTS", ()) or ()
+    ) | set(getattr(settings, "HARNESS_PARALLEL_SNAPSHOT_DIGESTS", ()) or ())
+    return digest in allowlist
 
 
 def clamp_parallelism(

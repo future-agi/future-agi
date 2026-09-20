@@ -569,6 +569,40 @@ def test_clamp_predicate_matrix():
         assert parallelism_w_gt_1_enabled("e2b-build") is False
 
 
+def test_e2b_build_id_is_certified_without_daytona_dockerfile_bypass():
+    with override_settings(
+        HOSTED_SANDBOX_PROVIDER="e2b",
+        ALK_DAYTONA_DOCKERFILE="/hosted/Dockerfile",
+        HARNESS_PARALLELISM_ENABLED=True,
+        HARNESS_PARALLEL_RUNTIME_DIGESTS=["e2b-build"],
+        HARNESS_PARALLEL_SNAPSHOT_DIGESTS=[],
+    ):
+        assert clamp_parallelism(4, "e2b-build") == (4, False)
+        assert clamp_parallelism(4, "other-build") == (1, True)
+
+
+def test_e2b_create_time_admission_uses_template_build_id():
+    with override_settings(
+        HOSTED_SANDBOX_PROVIDER="e2b",
+        ALK_DAYTONA_DOCKERFILE="/hosted/Dockerfile",
+        ALK_DAYTONA_SNAPSHOT_DIGEST="sha256:daytona-only",
+        ALK_E2B_TEMPLATE_REFERENCE="alk-hosted-e2b:build-123",
+        ALK_E2B_TEMPLATE_BUILD_ID="build-123",
+        ALK_E2B_TEMPLATE_CPU_UNITS=4,
+        ALK_E2B_TEMPLATE_MEMORY_MB=8192,
+        ALK_E2B_TEMPLATE_DISK_GB=12,
+        HARNESS_RESOURCE_PROFILES=[],
+        HARNESS_PARALLELISM_ENABLED=True,
+        HARNESS_PARALLEL_RUNTIME_DIGESTS=["build-123"],
+        HARNESS_PARALLEL_SNAPSHOT_DIGESTS=[],
+    ):
+        data = _create_data(parallelism=4)
+        data["runtime"].update(cpu_units=4, memory_mb=8192)
+        serializer = HarnessJobCreateSerializer(data=data)
+        assert serializer.is_valid(), serializer.errors
+        assert "parallelism_clamped" not in serializer.validated_data["metadata"]
+
+
 # ── Create-time serializer belt + surfacing (C4 §5/§6/§7) ───────────────────
 
 

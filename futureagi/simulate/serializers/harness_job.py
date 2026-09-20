@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from django.conf import settings
 from rest_framework import serializers
@@ -335,6 +336,7 @@ class HarnessJobCreateSerializer(serializers.Serializer):
             runtime["max_duration_seconds"] = max(
                 runtime["max_duration_seconds"], attrs["scenario_count"] * 360
             )
+        self._apply_sandbox_runtime_limits(runtime)
         if attrs["source"]["kind"] == "remote" and agent["secret_refs"]:
             raise serializers.ValidationError(
                 {"agent": "remote sources must own their target credentials"}
@@ -365,6 +367,47 @@ class HarnessJobCreateSerializer(serializers.Serializer):
         self._apply_parallelism_belt(attrs, runtime)
         return attrs
 
+    @staticmethod
+    def _apply_sandbox_runtime_limits(runtime: dict[str, Any]) -> None:
+        """Resolve provider-owned limits before admission and persistence."""
+        from simulate.services.hosted_sandbox import sandbox_runtime_policy
+
+        policy = sandbox_runtime_policy()
+        if policy.fixed_resources:
+            cpu_units, memory_mb, _disk_gb = policy.fixed_resources
+            runtime["cpu_units"] = cpu_units
+            runtime["memory_mb"] = memory_mb
+        if policy.max_ttl_seconds is None:
+            return
+        if policy.max_ttl_seconds <= 0:
+            raise serializers.ValidationError(
+                {"runtime": "sandbox provider maximum lifetime is not configured"}
+            )
+        authoring_ttl = int(getattr(settings, "ALK_HOSTED_AUTHORING_TIMEOUT", 3900))
+        configured_ttl = int(getattr(settings, "ALK_HOSTED_SANDBOX_TTL_SECONDS", 7200))
+        if max(authoring_ttl, configured_ttl) > policy.max_ttl_seconds:
+            raise serializers.ValidationError(
+                {"runtime": "configured sandbox lifetime exceeds the provider limit"}
+            )
+        authoring_seconds = max(
+            0,
+            int(
+                getattr(
+                    settings,
+                    "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS",
+                    3600,
+                )
+            ),
+        )
+        execution_limit = policy.max_ttl_seconds - authoring_seconds - 120
+        if execution_limit < 60:
+            raise serializers.ValidationError(
+                {"runtime": "sandbox lifetime leaves no supported execution window"}
+            )
+        runtime["max_duration_seconds"] = min(
+            runtime["max_duration_seconds"], execution_limit
+        )
+
     def _apply_parallelism_belt(self, attrs, runtime):
         """Create-time W>1 admission belt (C4 §5 / §7 Channel 1, Track E).
 
@@ -389,9 +432,9 @@ class HarnessJobCreateSerializer(serializers.Serializer):
             capacity = configured_capacity(attrs)
         except ValueError as exc:
             raise serializers.ValidationError({"runtime": str(exc)}) from exc
-        digest = capacity.snapshot_digest or getattr(
-            settings, "ALK_DAYTONA_SNAPSHOT_DIGEST", ""
-        )
+        from simulate.services.hosted_sandbox import sandbox_runtime_policy
+
+        digest = capacity.snapshot_digest or sandbox_runtime_policy().digest
         admitted, _ = clamp_parallelism(requested, digest)
         admitted = min(admitted, capacity.parallelism)
         if admitted != requested:

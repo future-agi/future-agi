@@ -389,7 +389,7 @@ export default function HarnessCreate() {
       isolation: "dedicated_vm",
       parallelism: parallelismEnabled ? Number(parallelism) || 1 : 1,
       concurrency_weight: 1,
-      max_duration_seconds: Math.max(3600, Number(scenarioCount) * 360),
+      max_duration_seconds: Math.max(600, Number(scenarioCount) * 360),
       network_policy: "live",
     },
     security: {

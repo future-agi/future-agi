@@ -1371,8 +1371,9 @@ class HostedHarnessGateway:
         simulator_env, simulator_vertex_credentials = _platform_simulator_material()
         project_id = str(simulator_env.get("GOOGLE_CLOUD_PROJECT") or "")
 
-        # Authoring reaches only the source host and the authoring model provider (Vertex/Claude).
-        # Daytona caps the domain allow list at 20 entries, so this stays focused and excludes the
+        # Authoring reaches the source host, the authoring model provider (Vertex/Claude), and
+        # package indexes needed when real-runtime validation builds the generated environment.
+        # Daytona caps the domain allow list at 20 entries, so this stays focused and excludes
         # call-time media domains (LiveKit/Deepgram) that only the execution sandbox needs.
         default_authoring_egress = [
             "github.com",
@@ -1380,6 +1381,8 @@ class HostedHarnessGateway:
             "api.github.com",
             "objects.githubusercontent.com",
             "raw.githubusercontent.com",
+            "pypi.org",
+            "files.pythonhosted.org",
             "oauth2.googleapis.com",
             "www.googleapis.com",
             "sts.googleapis.com",
@@ -1857,6 +1860,10 @@ class HostedHarnessGateway:
                     "GOOGLE_GENAI_USE_VERTEXAI",
                 }
             }
+            from simulate.services.hosted_sandbox import sandbox_runtime_policy
+
+            if sandbox_runtime_policy().experimental_two_slots_on_2cpu:
+                authoring_exports["ALK_EXPERIMENTAL_TWO_SLOTS_ON_2CPU"] = "1"
             provider_profile_args = (
                 f"--target-secrets {authoring_secrets_path} "
                 "--provider-profile-cache /work/provider-import-profile.json "

@@ -111,6 +111,7 @@ def _validate_known_hosted_egress(payload: dict[str, Any], callback_url: str) ->
         SandboxProviderConfigurationError,
         sandbox_egress_domain_limit,
         sandbox_provider_name,
+        sandbox_runtime_policy,
         validate_sandbox_requirements,
     )
 
@@ -133,6 +134,8 @@ def _validate_known_hosted_egress(payload: dict[str, Any], callback_url: str) ->
         domains, max_domains=sandbox_egress_domain_limit()
     )
     runtime = payload["runtime"]
+    policy = sandbox_runtime_policy()
+    disk_gb = policy.fixed_resources[2] if policy.fixed_resources else 10
     max_ttl_seconds = max(
         _authoring_ttl_seconds(sandbox_provider_name()),
         _execution_ttl_seconds(runtime),
@@ -141,7 +144,7 @@ def _validate_known_hosted_egress(payload: dict[str, Any], callback_url: str) ->
         validate_sandbox_requirements(
             runtime["cpu_units"],
             runtime["memory_mb"],
-            10,
+            disk_gb,
             max_ttl_seconds,
         )
     except SandboxProviderConfigurationError as exc:

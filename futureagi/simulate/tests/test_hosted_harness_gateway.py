@@ -962,6 +962,7 @@ def test_authoring_launch_uses_requested_resources(monkeypatch):
 
     def capture_launch(spec, **_kwargs):
         assert (spec.cpu_units, spec.memory_mb, spec.disk_gb) == (2, 4096, 10)
+        assert {"pypi.org", "files.pythonhosted.org"} <= set(spec.allowed_domains)
         raise RuntimeError("stop after resource admission")
 
     client.create = capture_launch
@@ -1157,7 +1158,9 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
     }
 
 
-def _launch_and_read_job_json(organization, settings, *, requested_parallelism):
+def _launch_and_read_job_json(
+    organization, settings, *, requested_parallelism, provider_name="daytona"
+):
     payload = _payload()
     payload["source"] = {
         "kind": "remote",
@@ -1166,12 +1169,21 @@ def _launch_and_read_job_json(organization, settings, *, requested_parallelism):
     }
     payload["runtime"]["parallelism"] = requested_parallelism
     payload["scenario_count"] = requested_parallelism
-    payload["runtime"].update(cpu_units=8, memory_mb=8192)
+    payload["runtime"].update(
+        cpu_units=2 if provider_name == "e2b" else 8,
+        memory_mb=4096 if provider_name == "e2b" else 8192,
+    )
     job, _ = create_hosted_job(
         organization, payload, idempotency_key=f"parallelism-{requested_parallelism}"
     )
     client = _Daytona()
-    client.runtime_digest = "sha256:good"
+    if provider_name == "e2b":
+        client.name = "e2b"
+        client.runtime_name = settings.ALK_E2B_TEMPLATE_REFERENCE
+        client.runtime_digest = settings.ALK_E2B_TEMPLATE_BUILD_ID
+        client.max_egress_domains = None
+    else:
+        client.runtime_digest = "sha256:good"
     gateway = object.__new__(HostedHarnessGateway)
     gateway.client = client
     gateway.snapshot = "alk-hosted-v1"
@@ -1199,7 +1211,7 @@ def _launch_and_read_job_json(organization, settings, *, requested_parallelism):
 
     job.refresh_from_db()
     dispatched = json.loads(client.sandbox.fs.uploads["/work/job.json"])
-    return job, dispatched
+    return job, dispatched, client
 
 
 @pytest.mark.django_db
@@ -1211,7 +1223,7 @@ def test_daytona_launch_clamps_guest_parallelism_when_disabled(organization, set
     settings.HARNESS_PARALLEL_SNAPSHOT_DIGESTS = ["sha256:good"]
     settings.ALK_DAYTONA_DOCKERFILE = ""
 
-    job, dispatched = _launch_and_read_job_json(
+    job, dispatched, _client = _launch_and_read_job_json(
         organization, settings, requested_parallelism=4
     )
 
@@ -1229,12 +1241,38 @@ def test_daytona_launch_passes_admitted_parallelism_when_enabled(
     settings.HARNESS_PARALLEL_SNAPSHOT_DIGESTS = ["sha256:good"]
     settings.ALK_DAYTONA_DOCKERFILE = ""
 
-    job, dispatched = _launch_and_read_job_json(
+    job, dispatched, _client = _launch_and_read_job_json(
         organization, settings, requested_parallelism=4
     )
 
     assert dispatched["runtime"]["parallelism"] == 4
     assert job.payload["runtime"]["parallelism"] == 4
+
+
+@pytest.mark.django_db
+def test_e2b_two_cpu_experiment_reaches_guest_admission(organization, settings):
+    settings.HOSTED_SANDBOX_PROVIDER = "e2b"
+    settings.HARNESS_PARALLELISM_ENABLED = True
+    settings.HARNESS_EXPERIMENTAL_TWO_SLOTS_ON_2CPU = True
+    settings.HARNESS_RESOURCE_PROFILES = []
+    settings.HARNESS_PARALLEL_RUNTIME_DIGESTS = ["build-123"]
+    settings.HARNESS_PARALLEL_SNAPSHOT_DIGESTS = []
+    settings.ALK_E2B_TEMPLATE_REFERENCE = "alk-hosted-e2b:build-123"
+    settings.ALK_E2B_TEMPLATE_BUILD_ID = "build-123"
+    settings.ALK_E2B_TEMPLATE_CPU_UNITS = 2
+    settings.ALK_E2B_TEMPLATE_MEMORY_MB = 4096
+    settings.ALK_E2B_TEMPLATE_DISK_GB = 10
+
+    job, dispatched, client = _launch_and_read_job_json(
+        organization, settings, requested_parallelism=2, provider_name="e2b"
+    )
+
+    assert job.payload["runtime"]["parallelism"] == 2
+    assert dispatched["runtime"]["parallelism"] == 2
+    assert (
+        client.sandbox.process.session_request.env["ALK_EXPERIMENTAL_TWO_SLOTS_ON_2CPU"]
+        == "1"
+    )
 
 
 @pytest.mark.django_db
