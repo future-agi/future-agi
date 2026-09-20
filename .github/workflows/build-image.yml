@@ -52,7 +52,7 @@ jobs:
           RAW_VERSION: ${{ inputs.version }}
         run: |
           set -eu
-          # Read the caller input from env (never ${{ }}-inlined into this script)
+          # Read the caller input from env, never inlined into this script,
           # and match with a whole-string bash regex: a crafted version can then
           # neither inject shell here nor smuggle a newline into GITHUB_OUTPUT.
           v="$RAW_VERSION"

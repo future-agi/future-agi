@@ -774,7 +774,7 @@ export default function HarnessCreate() {
   return (
     <>
       <Helmet>
-        <title>Create RL Environment | Future AGI</title>
+        <title>Create Environment | Future AGI</title>
       </Helmet>
 
       <Box sx={{ height: "100vh", overflow: "auto", p: 2 }}>
@@ -806,7 +806,7 @@ export default function HarnessCreate() {
               />
             </Stack>
             <Typography typography="m2" fontWeight={600}>
-              Create RL environment
+              Create environment
             </Typography>
             <Typography typography="s1" color="text.secondary">
               Point ALK at your agent, check what it needs, then run the whole
