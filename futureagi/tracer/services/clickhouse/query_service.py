@@ -16,6 +16,10 @@ from typing import Any, Protocol
 import structlog
 from django.conf import settings
 
+from tracer.services.clickhouse.application_read_policy import (
+    application_read_context,
+    application_read_settings,
+)
 from tracer.services.clickhouse.attribute_reads import (
     AttributeKeyInventory,
     AttributeReadSelector,
@@ -175,6 +179,13 @@ class AnalyticsQueryService:
         return self._ch_client
 
     @property
+    def supports_bounded_speculative_reads(self) -> bool:
+        # Application policy intentionally removes statement timeout/scan caps.
+        # Optional optimizer probes must not claim their tighter abort budgets
+        # are enforced merely because memory/other query settings are accepted.
+        return False
+
+    @property
     def supports_per_query_read_settings(self) -> bool:
         """Whether query-local resource ceilings reach ClickHouse.
 
@@ -201,36 +212,20 @@ class AnalyticsQueryService:
         timeout_ms: int | None = APPLICATION_READ_TIMEOUT_MS,
         settings: dict | None = None,
     ) -> QueryResult:
-        """Execute a query on ClickHouse and return QueryResult."""
-        # Normalize the ordinary application read lane even for older callers
-        # that omit settings. Row-count ceilings reject healthy high-volume
-        # reads before their finite byte/time/result budgets are reached.
-        requested_timeout_ms = (
-            self.read_timeout_ceiling_ms if timeout_ms is None else int(timeout_ms)
-        )
-        timeout_ms = min(
-            self.read_timeout_ceiling_ms,
-            max(1, requested_timeout_ms),
-        )
+        """Execute analytics without a per-statement time/row/byte abort cap.
+
+        ``timeout_ms`` is retained for legacy selector compatibility; it is no
+        longer a statement deadline. Request/continuation admission and transport
+        failure detection are separate from server query execution limits.
+        """
         if self.supports_per_query_read_settings:
-            settings = dict(settings or {})
-            settings.pop("max_rows_to_read", None)
-
-            def finite_ceiling(name: str, ceiling: int) -> int:
-                requested = int(settings.get(name, 0) or 0)
-                return ceiling if requested <= 0 else min(requested, ceiling)
-
-            settings["max_memory_usage"] = finite_ceiling(
-                "max_memory_usage", APPLICATION_READ_MAX_MEMORY_USAGE
-            )
-            settings["max_bytes_to_read"] = finite_ceiling(
-                "max_bytes_to_read", APPLICATION_READ_MAX_BYTES_TO_READ
-            )
+            settings = application_read_settings(settings)
         start = time.monotonic()
         try:
-            rows, columns, qt = self.ch_client.execute_read(
-                query, params or {}, timeout_ms=timeout_ms, settings=settings
-            )
+            with application_read_context():
+                rows, columns, qt = self.ch_client.execute_read(
+                    query, params or {}, timeout_ms=None, settings=settings
+                )
         except TimeoutError as exc:
             # Some native-driver wrappers surface socket/read deadlines as the
             # built-in timeout type. Normalize only at this ClickHouse boundary;

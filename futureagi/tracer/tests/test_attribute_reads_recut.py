@@ -6,7 +6,6 @@ import base64
 import hashlib
 import json
 import uuid
-from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -3147,8 +3146,8 @@ def test_filter_value_cursor_unpinned_nested_string_avoids_wide_json_replay():
 def test_filter_value_cursor_unpinned_recuts_baseline_before_exact_hydration():
     candidate = _candidate(
         PROJECT_A,
-        "whatfix-style-value",
-        trace_id="trace-whatfix-style-value",
+        "tertiary-fixture-style-value",
+        trace_id="trace-tertiary-fixture-style-value",
         start_time=NOW - timedelta(seconds=1),
         candidate_version=7,
     )
@@ -3191,7 +3190,7 @@ def test_filter_value_cursor_unpinned_recuts_baseline_before_exact_hydration():
         json_attribute_mode="arrays",
     ).read_value_cursor_page(
         [PROJECT_A],
-        "whatfix.ent_id",
+        "tertiary-fixture.ent_id",
         page_size=1,
         attribute_type=None,
         window_start=NOW - ATTRIBUTE_READ_EXPLICIT_SEGMENT,
@@ -12362,43 +12361,34 @@ def test_span_attribute_key_workspace_cursor_is_signed_to_workspace(monkeypatch)
     assert calls == [(PROJECT_A,)]
 
 
-def test_span_attribute_workspace_project_read_sets_remaining_pg_timeout(
+def test_span_attribute_workspace_project_read_is_uncapped_and_restored(
     monkeypatch,
 ):
+    from tracer.tests.test_postgres_application_read_policy import FakePostgres
     from tracer.views import span_attributes as span_attribute_view
 
-    cursor = MagicMock()
-    cursor_context = MagicMock()
-    cursor_context.__enter__.return_value = cursor
-    cursor_context.__exit__.return_value = False
-    connection = SimpleNamespace(
-        vendor="postgresql",
-        in_atomic_block=False,
-        cursor=lambda: cursor_context,
-    )
+    connection = FakePostgres(outer=True)
     deadline = MagicMock()
-    deadline.remaining_ms.side_effect = [1_234, 900]
+    deadline.remaining_ms.return_value = 1_234
     monkeypatch.setattr(span_attribute_view, "connection", connection)
     monkeypatch.setattr(
         span_attribute_view,
         "transaction",
-        SimpleNamespace(atomic=lambda: nullcontext()),
+        SimpleNamespace(atomic=connection.atomic),
     )
 
     result = span_attribute_view._run_span_attribute_pg_read(
         deadline,
-        lambda: (PROJECT_A,),
+        lambda: connection.execute("SELECT owned_project") and (PROJECT_A,),
     )
 
     assert result == (PROJECT_A,)
-    assert deadline.remaining_ms.call_args_list == [
-        mock_call(ATTRIBUTE_PROPERTY_PICKER_WALL_TIMEOUT_MS),
-        mock_call(floor_ms=1),
-    ]
-    assert cursor.execute.call_args_list == [
-        mock_call("SET TRANSACTION READ ONLY"),
-        mock_call("SELECT set_config('statement_timeout', %s, true)", ["1234"]),
-    ]
+    assert deadline.remaining_ms.call_args_list
+    assert all(
+        call == mock_call(ATTRIBUTE_PROPERTY_PICKER_WALL_TIMEOUT_MS)
+        for call in deadline.remaining_ms.call_args_list
+    )
+    assert connection.query_timeouts == ["0"] and connection.timeout == "750ms"
 
 
 def test_span_attribute_key_api_tracking_limit_is_terminal(monkeypatch):

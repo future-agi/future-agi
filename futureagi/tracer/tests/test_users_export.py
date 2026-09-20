@@ -18,8 +18,6 @@ from tracer.services.clickhouse.query_service import AnalyticsQueryService
 from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
 from tracer.services.users_list_manager import (
     USER_EXPORT_PAGE_SIZE,
-    USER_LIST_QUERY_TIMEOUT_MS,
-    USER_LIST_WALL_DEADLINE_MS,
     USERS_EXPORT_COLUMNS,
     UserCursorRead,
     UsersListManager,
@@ -112,15 +110,18 @@ class TestUsersExport:
     ):
         cursor_read = MagicMock(spec=UserCursorRead)
         cursor_read.payload = {"table": [{"user_id": "user-1"}]}
-        with patch.object(
-            UsersListManager,
-            "iter_export_csv",
-            return_value=iter(["User ID\r\n", "user-1\r\n"]),
-        ) as export_csv, patch.object(
-            UsersListManager,
-            "list_cursor_payload",
-            return_value=cursor_read,
-        ) as cursor_page:
+        with (
+            patch.object(
+                UsersListManager,
+                "iter_export_csv",
+                return_value=iter(["User ID\r\n", "user-1\r\n"]),
+            ) as export_csv,
+            patch.object(
+                UsersListManager,
+                "list_cursor_payload",
+                return_value=cursor_read,
+            ) as cursor_page,
+        ):
             response = auth_client.get(
                 "/tracer/users/",
                 {
@@ -144,11 +145,14 @@ class TestUsersExport:
     def test_export_read_failure_is_a_typed_503_before_csv_starts(
         self, auth_client, organization, workspace, observe_project
     ):
-        with patch.object(
-            UsersListManager,
-            "list_cursor_payload",
-            side_effect=ReadDeadlineExceeded("read deadline exceeded"),
-        ), patch.object(UsersListManager, "iter_export_csv") as export_csv:
+        with (
+            patch.object(
+                UsersListManager,
+                "list_cursor_payload",
+                side_effect=ReadDeadlineExceeded("read deadline exceeded"),
+            ),
+            patch.object(UsersListManager, "iter_export_csv") as export_csv,
+        ):
             response = auth_client.get(
                 "/tracer/users/",
                 {
@@ -261,11 +265,15 @@ class TestUsersExport:
         assert response.json()["code"] == "cursor_sort_unsupported"
         execute_query.assert_not_called()
 
-    def test_users_endpoint_documents_bounded_failures(self):
+    @pytest.mark.parametrize("method", ["get", "post"])
+    def test_users_endpoint_documents_bounded_failures(self, method):
+        from tfc.utils.api_serializers import ApiErrorResponseSerializer
         from tracer.views.trace import UsersView
 
-        responses = UsersView.get._swagger_auto_schema["responses"]
+        responses = UsersView.get._swagger_auto_schema[method]["responses"]
         assert {422, 503} <= responses.keys()
+        assert responses[422] is ApiErrorResponseSerializer
+        assert responses[503] is ApiErrorResponseSerializer
 
 
 class TestUserListQueryBuilderUnpaginated:
@@ -402,14 +410,14 @@ class TestUsersExportStreaming:
     def test_export_keeps_formula_guard_and_fixed_columns(self):
         manager = self._manager()
         cursor_read = self._cursor_read(
-            rows=[{"user_id": "=HYPERLINK(\"https://invalid\")"}]
+            rows=[{"user_id": '=HYPERLINK("https://invalid")'}]
         )
 
         body = "".join(manager.iter_export_csv(cursor_read=cursor_read))
         rows = list(csv.reader(io.StringIO(body)))
 
         assert rows[0] == [header for header, _ in USERS_EXPORT_COLUMNS]
-        assert rows[1][0] == "'=HYPERLINK(\"https://invalid\")"
+        assert rows[1][0] == '\'=HYPERLINK("https://invalid")'
         assert len(rows[1]) == len(USERS_EXPORT_COLUMNS)
 
     def test_list_enrichment_programming_defect_is_not_hidden(self):
@@ -433,7 +441,12 @@ class TestUsersExportStreaming:
             with pytest.raises(RuntimeError, match="attr query down"):
                 manager.list_payload(page_size=30, current_page=0)
 
-    def test_list_clickhouse_reads_share_deadline_and_have_hard_caps(self):
+    def test_list_reads_keep_memory_policy_without_latency_abort_caps(self):
+        from tracer.services.clickhouse.application_read_policy import (
+            UNLIMITED_STATEMENT_SETTINGS,
+            application_read_settings,
+        )
+
         manager = self._manager()
         base_row = _row(user_id="u1", end_user_id=uuid.uuid4(), total_count=1)
 
@@ -455,17 +468,13 @@ class TestUsersExportStreaming:
         assert payload["table"][0]["user_id"] == "u1"
         # With no optional projection only the conservative physical-span
         # presence proof and exact base page run. Optional metric/attribute/eval
-        # reads are demand-driven and must not consume the shared deadline.
+        # reads are demand-driven. Targets must not become admission deadlines.
         assert execute_mock.call_count == 2
         for call in execute_mock.call_args_list:
-            assert 0 < call.kwargs["timeout_ms"] <= USER_LIST_QUERY_TIMEOUT_MS
-            assert call.kwargs["timeout_ms"] <= USER_LIST_WALL_DEADLINE_MS
-            settings = call.kwargs["settings"]
-            assert "max_rows_to_read" not in settings
-            assert settings["max_bytes_to_read"] == 36 * 1024 * 1024 * 1024
+            assert call.kwargs["timeout_ms"] is None
+            settings = application_read_settings(call.kwargs["settings"])
+            assert all(settings[name] == 0 for name in UNLIMITED_STATEMENT_SETTINGS)
             assert settings["max_memory_usage"] == 36 * 1024 * 1024 * 1024
-            assert settings["max_result_rows"] > 0
-            assert settings["max_result_bytes"] == 32 * 1024 * 1024
             assert settings["result_overflow_mode"] == "throw"
 
     def test_export_columns_match_serializer_fields(self):

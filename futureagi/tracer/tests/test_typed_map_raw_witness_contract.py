@@ -150,6 +150,12 @@ def test_text_and_numeric_positive_witnesses_keep_only_safe_index_companions(
     assert plan.raw_witness_predicate is not None
     assert index_expression in plan.seed_predicate
     assert index_expression in plan.raw_witness_predicate
+    semantic, index_only = plan.seed_predicate.split(" AND indexHint(", 1)
+    assert f"mapContains({map_column}, %(latest_filter_key_0)s)" in semantic
+    assert f"{map_column}[%(latest_filter_key_0)s]" in semantic
+    assert "mapValues(" not in semantic
+    assert index_expression in index_only
+    assert index_only.endswith(")")
     if operation == "in":
         assert "%(latest_filter_index_0_0)s" in plan.raw_witness_predicate
         assert "%(latest_filter_index_0_1)s" in plan.raw_witness_predicate
@@ -248,7 +254,7 @@ def test_other_positive_typed_map_witnesses_remain_key_only(
         ("boolean", "is_null", None),
     ],
 )
-def test_negative_typed_map_filters_have_no_raw_witness(
+def test_negative_typed_map_value_filters_use_only_necessary_presence(
     filter_type: str,
     operation: str,
     value: object,
@@ -260,6 +266,77 @@ def test_negative_typed_map_filters_have_no_raw_witness(
         value=value,
     )
 
-    assert plan.raw_witness_predicate is None
-    assert plan.raw_key_witness_predicate is None
-    assert plan.raw_witness_rank is None
+    if operation == "is_null":
+        assert plan.raw_witness_predicate is None
+        assert plan.raw_key_witness_predicate is None
+        assert plan.raw_witness_rank is None
+    else:
+        map_column = {
+            "text": "span_attr_str",
+            "number": "span_attr_num",
+            "boolean": "span_attr_bool",
+        }[filter_type]
+        witness = (
+            f"(indexHint(has(mapKeys({map_column}), %(latest_filter_key_0)s)) AND "
+            f"has({map_column}.keys, %(latest_filter_key_0)s))"
+        )
+        assert plan.raw_witness_predicate == plan.raw_key_witness_predicate == witness
+        assert plan.raw_witness_rank == 10
+        assert "latest_attr_exists_0 AND" in plan.predicate
+    assert plan.raw_graph_value_witness_predicate is None
+
+
+@pytest.mark.parametrize("compiler", [compile_trace_filter_plans, compile_span_filter_plans])
+@pytest.mark.parametrize(
+    ("values", "types", "indexed_maps"),
+    [
+        (["K", "Approved"], ["string", "string"], ["span_attr_str"]),
+        (["İstanbul"], ["string"], ["span_attr_str"]),
+        ([7, 9], ["number", "number"], ["span_attr_num"]),
+        (["K", 7, True], ["string", "number", "boolean"], ["span_attr_str", "span_attr_num"]),
+    ],
+)
+def test_picker_in_reuses_value_indexes_without_changing_typed_membership(
+    compiler, values, types, indexed_maps,
+) -> None:
+    leaf = _attribute_filter(filter_type="text", operation="in", value=values)
+    leaf["filter_config"]["attribute_value_types"] = types
+    plan, = compiler([leaf])
+    raw = plan.raw_witness_predicate
+    assert raw is not None
+    for map_column in indexed_maps:
+        assert f"mapValues({map_column})" in raw
+        assert f"mapContains({map_column}, %(latest_filter_key_0)s)" in raw
+    assert "mapValues(span_attr_bool)" not in raw
+    assert "mapValues(" not in plan.seed_predicate
+    assert "indexHint(" not in plan.predicate
+    assert plan.raw_graph_value_witness_predicate == raw
+    for storage_type in set(types):
+        assert f"latest_filter_param_0_{storage_type}" in plan.params
+        assert f"latest_attr_exists_0_{storage_type}" in plan.predicate
+    legacy = {v for k, v in plan.params.items() if k.startswith("latest_filter_legacy_index_")}
+    if "K" in values:
+        assert {"k", "\N{KELVIN SIGN}"} <= legacy
+    else:
+        assert not legacy
+
+
+@pytest.mark.parametrize("compiler", [compile_trace_filter_plans, compile_span_filter_plans])
+@pytest.mark.parametrize(("value", "storage_type"), [(0, "number"), (False, "boolean")])
+def test_picker_default_values_keep_graph_key_presence(compiler, value, storage_type):
+    leaf = _attribute_filter(filter_type="text", operation="in", value=[value])
+    leaf["filter_config"]["attribute_value_types"] = [storage_type]
+    plan, = compiler([leaf])
+    assert plan.raw_graph_value_witness_predicate == plan.raw_key_witness_predicate
+    assert "mapValues(" not in plan.raw_graph_value_witness_predicate
+    assert "latest_filter_param_0" in plan.seed_predicate
+
+
+def test_picker_not_in_does_not_use_positive_value_index_hints():
+    leaf = _attribute_filter(filter_type="text", operation="not_in", value=["K", 7, False])
+    leaf["filter_config"]["attribute_value_types"] = ["string", "number", "boolean"]
+    plan, = compile_span_filter_plans([leaf])
+    assert plan.raw_witness_predicate == plan.raw_key_witness_predicate
+    assert "mapValues(" not in plan.raw_witness_predicate
+    assert plan.raw_graph_value_witness_predicate is None
+    assert not any("index_" in key for key in plan.params)

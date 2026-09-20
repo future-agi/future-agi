@@ -36,6 +36,10 @@ from rest_framework.utils.urls import replace_query_param
 from rest_framework.viewsets import ModelViewSet
 
 from model_hub.models.evals_metric import EvalTemplate
+from model_hub.utils.eval_input_validation import (
+    PARTIAL_INPUT_MESSAGE,
+    PARTIAL_INPUT_WARNING_TYPE,
+)
 from tfc.temporal.eval_tasks.client import (
     signal_pause_eval_task_workflow,
     start_eval_task_workflow_sync,
@@ -67,10 +71,6 @@ from tracer.serializers.eval_task import (
     EvalTaskUsageQuerySerializer,
     EvalTaskUsageResponseSerializer,
 )
-from model_hub.utils.eval_input_validation import (
-    PARTIAL_INPUT_MESSAGE,
-    PARTIAL_INPUT_WARNING_TYPE,
-)
 from tracer.services.clickhouse.read_budget import ReadDeadline, ReadDeadlineExceeded
 from tracer.services.eval_tasks.edit_options import validate_edit_action
 from tracer.services.eval_tasks.entries import soft_delete_live
@@ -78,6 +78,7 @@ from tracer.services.filter_principal_context import (
     FilterPrincipalContextError,
     bind_request_my_annotations_principal,
 )
+from tracer.services.postgres_read_policy import application_postgres_reads
 from tracer.utils.eval import (
     GROUND_TRUTH_NOT_APPLIED_MESSAGE,
     GROUND_TRUTH_NOT_APPLIED_WARNING_TYPE,
@@ -315,44 +316,15 @@ def _bounded_eval_task_compatibility_rows(queryset):
     return rows
 
 
-def _execute_eval_task_query_with_deadline(
-    deadline, execute, sql, params, many, context
-):
-    """Execute one query after shrinking its PostgreSQL statement timeout."""
-
-    remaining_ms = deadline.remaining_ms(floor_ms=1)
-    context["cursor"].cursor.execute(
-        "SELECT set_config('statement_timeout', %s, true)",
-        (f"{remaining_ms}ms",),
-    )
-    result = execute(sql, params, many, context)
-    deadline.remaining_ms(floor_ms=1)
-    return result
-
-
 @contextmanager
 def _bounded_eval_task_read_transaction(deadline):
-    """Apply the one request deadline to every PostgreSQL statement.
-
-    Django's ``statement_timeout`` is per statement.  Updating it from an
-    execute wrapper before each query makes the timeout shrink with the one
-    monotonic request wall instead of granting every count/prefetch/page query
-    a fresh 8.5 seconds.  The raw driver cursor deliberately bypasses the
-    wrapper for the ``SET LOCAL`` itself.
-    """
-
-    def execute_with_remaining_timeout(execute, sql, params, many, context):
-        return _execute_eval_task_query_with_deadline(
-            deadline, execute, sql, params, many, context
-        )
-
-    with transaction.atomic():
-        if connection.vendor != "postgresql":
-            yield
-            deadline.remaining_ms(floor_ms=1)
-            return
-        with connection.execute_wrapper(execute_with_remaining_timeout):
-            yield
+    """Keep request checks separate from uncapped PostgreSQL statements."""
+    with application_postgres_reads(
+        connection=connection,
+        atomic=transaction.atomic,
+        check_request=lambda: deadline.remaining_ms(floor_ms=1),
+    ):
+        yield
 
 
 def _bounded_eval_task_read(view_method):
@@ -363,9 +335,7 @@ def _bounded_eval_task_read(view_method):
         deadline = ReadDeadline.start(_EVAL_TASK_LIST_WALL_MS)
         try:
             with _bounded_eval_task_read_transaction(deadline):
-                response = view_method(view, request, *args, **kwargs)
-                deadline.remaining_ms(floor_ms=1)
-                return response
+                return view_method(view, request, *args, **kwargs)
         except (ReadDeadlineExceeded, DatabaseError) as exc:
             logger.warning(
                 "eval_task.read_unavailable",

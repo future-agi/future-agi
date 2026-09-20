@@ -97,6 +97,8 @@ def test_score_filter_sql_keeps_cdc_tombstone_on_every_surface(surface: str) -> 
                     "trace_id": TRACE_ID,
                     "id": SPAN_ID,
                     "start_time": STARTED_AT,
+                    "observation_type": "span",
+                    "service_name": "fixture-service",
                 }
             ]
         )
@@ -150,6 +152,7 @@ def score_filter_tables(ch_client):
         CREATE TABLE {spans_table} (
             id String,
             project_id UUID,
+            project_version_id Nullable(UUID),
             trace_id String,
             parent_span_id Nullable(String),
             trace_name String,
@@ -301,6 +304,8 @@ def _surface_query(
                     "trace_id": TRACE_ID,
                     "id": SPAN_ID,
                     "start_time": STARTED_AT,
+                    "observation_type": "agent",
+                    "service_name": "",
                 }
             ]
         )

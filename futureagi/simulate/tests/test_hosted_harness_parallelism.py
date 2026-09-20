@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 import pytest
 from django.test import override_settings
 
-from simulate.models import HostedHarnessAttempt, HostedHarnessEvent
+from simulate.models import HostedHarnessEvent, HostedHarnessJob, HostedHarnessReceipt
 from simulate.serializers.harness_job import HarnessJobCreateSerializer
 from simulate.services.harness_provider import serialize_job
 from simulate.services.hosted_harness import (
@@ -27,6 +27,7 @@ from simulate.services.hosted_harness import (
     clamp_parallelism,
     create_hosted_job,
     parallelism_w_gt_1_enabled,
+    provision_scenarios,
     register_attempt,
 )
 from simulate.services.hosted_harness_ingestion import ingest_event_batch
@@ -49,12 +50,12 @@ def _payload(parallelism=1, **overrides):
             "visibility": "public",
         },
         "agent": {"connector": "vapi", "config": {}, "secret_refs": {}},
-        "scenario_count": 1,
+        "scenario_count": max(1, parallelism),
         "seed": 7,
         "runtime": {
             "isolation": "dedicated_vm",
             "cpu_units": 8,
-            "memory_mb": 4096,
+            "memory_mb": 8192,
             "parallelism": parallelism,
             "concurrency_weight": 1,
             "max_duration_seconds": 600,
@@ -85,7 +86,9 @@ def _payload(parallelism=1, **overrides):
     return value
 
 
-def _event(attempt, seq, event_type, payload, *, event_id=None, stage="building_environment"):
+def _event(
+    attempt, seq, event_type, payload, *, event_id=None, stage="building_environment"
+):
     return {
         "event_id": event_id or f"event-{seq}",
         "job_id": str(attempt.job_id),
@@ -147,7 +150,15 @@ def test_port_not_consumable_is_rejected_and_never_touches_attempt(organization)
     capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
     result = ingest_event_batch(
         capability.attempt,
-        [_degrade(capability.attempt, 1, requested=4, effective=1, reason="port_not_consumable")],
+        [
+            _degrade(
+                capability.attempt,
+                1,
+                requested=4,
+                effective=1,
+                reason="port_not_consumable",
+            )
+        ],
     )
     assert result["rejected"][0]["code"] == "event_payload_invalid"
     stored = HostedHarnessEvent.no_workspace_objects.get(event_id="event-1")
@@ -166,7 +177,11 @@ def test_unknown_reason_rejected(organization):
     capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
     result = ingest_event_batch(
         capability.attempt,
-        [_degrade(capability.attempt, 1, requested=4, effective=1, reason="made_up_reason")],
+        [
+            _degrade(
+                capability.attempt, 1, requested=4, effective=1, reason="made_up_reason"
+            )
+        ],
     )
     assert result["rejected"][0]["code"] == "event_payload_invalid"
     capability.attempt.refresh_from_db()
@@ -181,12 +196,26 @@ def test_degrade_survives_event_window_eviction(organization):
     capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
     ingest_event_batch(
         capability.attempt,
-        [_degrade(capability.attempt, 1, requested=4, effective=2, reason="resource_limited")],
+        [
+            _degrade(
+                capability.attempt,
+                1,
+                requested=4,
+                effective=2,
+                reason="resource_limited",
+            )
+        ],
     )
     # Plant >100 subsequent accepted events so the degrade event falls out of the
     # last-100 feed window.
     logs = [
-        _event(capability.attempt, seq, "log", {"level": "info", "message": f"tick {seq}"}, stage="running")
+        _event(
+            capability.attempt,
+            seq,
+            "log",
+            {"level": "info", "message": f"tick {seq}"},
+            stage="running",
+        )
         for seq in range(2, 108)
     ]
     ingest_event_batch(capability.attempt, logs)
@@ -207,7 +236,11 @@ def test_projection_is_attempt_level_and_new_attempt_starts_cleared(organization
     first = register_attempt(job.id, endpoint_base_url="https://platform.example")
     ingest_event_batch(
         first.attempt,
-        [_degrade(first.attempt, 1, requested=4, effective=2, reason="resource_limited")],
+        [
+            _degrade(
+                first.attempt, 1, requested=4, effective=2, reason="resource_limited"
+            )
+        ],
     )
     assert serialize_job(job)["parallelism"]["effective"] == 2
 
@@ -243,8 +276,20 @@ def test_multiple_reasons_accumulate_min_monotone(organization):
     ingest_event_batch(
         capability.attempt,
         [
-            _degrade(capability.attempt, 1, requested=4, effective=2, reason="resource_limited"),
-            _degrade(capability.attempt, 2, requested=4, effective=1, reason="world_start_failed"),
+            _degrade(
+                capability.attempt,
+                1,
+                requested=4,
+                effective=2,
+                reason="resource_limited",
+            ),
+            _degrade(
+                capability.attempt,
+                2,
+                requested=4,
+                effective=1,
+                reason="world_start_failed",
+            ),
         ],
     )
     dto = serialize_job(job)
@@ -265,12 +310,28 @@ def test_redelivery_and_out_of_order_cannot_raise_effective_or_double_append(
     capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
     ingest_event_batch(
         capability.attempt,
-        [_degrade(capability.attempt, 1, requested=4, effective=2, reason="resource_limited")],
+        [
+            _degrade(
+                capability.attempt,
+                1,
+                requested=4,
+                effective=2,
+                reason="resource_limited",
+            )
+        ],
     )
     # Re-deliver the identical event (same event_id) — dedup suppresses the store.
     ingest_event_batch(
         capability.attempt,
-        [_degrade(capability.attempt, 1, requested=4, effective=2, reason="resource_limited")],
+        [
+            _degrade(
+                capability.attempt,
+                1,
+                requested=4,
+                effective=2,
+                reason="resource_limited",
+            )
+        ],
     )
     # Out-of-order duplicate carrying a HIGHER effective (same reason, new id).
     ingest_event_batch(
@@ -306,7 +367,15 @@ def test_cross_event_invariant_violation_warns_without_rejecting_or_changing_pro
     capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
     ingest_event_batch(
         capability.attempt,
-        [_degrade(capability.attempt, 1, requested=4, effective=2, reason="resource_limited")],
+        [
+            _degrade(
+                capability.attempt,
+                1,
+                requested=4,
+                effective=2,
+                reason="resource_limited",
+            )
+        ],
     )
     with caplog.at_level(
         logging.WARNING, logger="simulate.services.hosted_harness_ingestion"
@@ -374,14 +443,15 @@ def test_register_attempt_clamps_w_gt_1_when_flag_off(organization):
     job, _ = create_hosted_job(
         organization, _payload(parallelism=4), idempotency_key="clamp-off"
     )
-    capability = register_attempt(
-        job.id, endpoint_base_url="https://platform.example"
-    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
     job.refresh_from_db()
     # register_attempt is the single admission source of truth: it RETURNS the
     # admitted W so the gateway never re-derives it.
     assert capability.admitted_parallelism == 1
-    assert job.payload["metadata"]["parallelism_clamped"] == {"requested": 4}
+    assert job.payload["metadata"]["parallelism_clamped"] == {
+        "requested": 4,
+        "admitted": 1,
+    }
     # Requested value preserved for an honest later re-evaluation.
     assert job.payload["runtime"]["parallelism"] == 4
 
@@ -421,7 +491,10 @@ def test_register_attempt_fails_closed_on_empty_digest(organization):
         job.id, endpoint_base_url="https://platform.example", snapshot_digest=""
     )
     job.refresh_from_db()
-    assert job.payload["metadata"]["parallelism_clamped"] == {"requested": 4}
+    assert job.payload["metadata"]["parallelism_clamped"] == {
+        "requested": 4,
+        "admitted": 1,
+    }
 
 
 @override_settings(
@@ -454,7 +527,10 @@ def test_saved_w4_job_reruns_at_w1_and_clears_when_it_requalifies(organization):
     )
     register_attempt(job.id, endpoint_base_url="https://platform.example")
     job.refresh_from_db()
-    assert job.payload["metadata"]["parallelism_clamped"] == {"requested": 4}
+    assert job.payload["metadata"]["parallelism_clamped"] == {
+        "requested": 4,
+        "admitted": 1,
+    }
 
     # ...and the SAME saved job re-admits at W=4 (clamp cleared) once the flag +
     # digest qualify at the next register_attempt — the requested value was never
@@ -484,6 +560,13 @@ def test_clamp_predicate_matrix():
         assert clamp_parallelism(4, "sha256:x") == (4, False)
         assert clamp_parallelism(4, "") == (1, True)
         assert clamp_parallelism(1, "") == (1, False)
+    with override_settings(
+        HARNESS_PARALLELISM_ENABLED=True,
+        HARNESS_PARALLEL_SNAPSHOT_DIGESTS=[],
+        HOSTED_SANDBOX_PROVIDER="e2b",
+        ALK_DAYTONA_DOCKERFILE="/hosted/Dockerfile",
+    ):
+        assert parallelism_w_gt_1_enabled("e2b-build") is False
 
 
 # ── Create-time serializer belt + surfacing (C4 §5/§6/§7) ───────────────────
@@ -501,7 +584,7 @@ def _create_data(parallelism=4, environment_values=None):
         "schema_version": "futureagi.harness-job.v1",
         "source": source,
         "agent": {"connector": "vapi", "config": {}, "secret_refs": {}},
-        "scenario_count": 1,
+        "scenario_count": max(1, parallelism),
         "runtime": {
             "isolation": "dedicated_vm",
             "cpu_units": 8,
@@ -522,9 +605,18 @@ def test_serializer_clamps_not_rejects_and_preserves_requested():
     serializer = HarnessJobCreateSerializer(data=_create_data(parallelism=4))
     assert serializer.is_valid(), serializer.errors
     data = serializer.validated_data
-    assert data["metadata"]["parallelism_clamped"] == {"requested": 4}
+    assert data["metadata"]["parallelism_clamped"] == {
+        "requested": 4,
+        "admitted": 1,
+    }
     # Requested value preserved so register_attempt re-evaluates honestly.
     assert data["runtime"]["parallelism"] == 4
+
+
+def test_serializer_rejects_parallelism_above_maximum():
+    serializer = HarnessJobCreateSerializer(data=_create_data(parallelism=9))
+    assert not serializer.is_valid()
+    assert "parallelism" in serializer.errors["runtime"]
 
 
 @override_settings(
@@ -534,6 +626,32 @@ def test_serializer_clamps_not_rejects_and_preserves_requested():
     ALK_DAYTONA_DOCKERFILE="",
 )
 def test_serializer_admits_when_enabled():
+    data = _create_data(parallelism=4)
+    data["runtime"]["memory_mb"] = 8192
+    serializer = HarnessJobCreateSerializer(data=data)
+    assert serializer.is_valid(), serializer.errors
+    assert "parallelism_clamped" not in serializer.validated_data["metadata"]
+
+
+@override_settings(
+    HARNESS_PARALLELISM_ENABLED=True,
+    HARNESS_PARALLEL_SNAPSHOT_DIGESTS=["sha256:profile"],
+    ALK_DAYTONA_SNAPSHOT_DIGEST="",
+    ALK_DAYTONA_DOCKERFILE="",
+    HARNESS_RESOURCE_PROFILES=[
+        {
+            "name": "profile",
+            "cpu_units": 4,
+            "memory_mb": 8192,
+            "disk_gb": 20,
+            "max_parallelism": 4,
+            "connectors": ["vapi"],
+            "snapshot_name": "profile",
+            "snapshot_digest": "sha256:profile",
+        }
+    ],
+)
+def test_serializer_uses_selected_profile_digest_for_admission():
     serializer = HarnessJobCreateSerializer(data=_create_data(parallelism=4))
     assert serializer.is_valid(), serializer.errors
     assert "parallelism_clamped" not in serializer.validated_data["metadata"]
@@ -622,7 +740,7 @@ def _preflight(payload):
     from types import SimpleNamespace
     from unittest.mock import patch
 
-    from simulate.services.harness_provider import DaytonaHarnessProvider
+    from simulate.services.harness_provider import HostedHarnessProvider
 
     request = SimpleNamespace(
         validated_data=payload,
@@ -630,14 +748,17 @@ def _preflight(payload):
     )
     # The advisory under test is the parallelism echo; source scanning and the
     # credential probe are upstream concerns with their own tests.
-    with patch(
-        "simulate.services.harness_provider._preflight_source_connectors",
-        return_value=(["vapi"], 1),
-    ), patch(
-        "simulate.services.harness_provider._preflight_credential_probe",
-        return_value=[],
+    with (
+        patch(
+            "simulate.services.harness_provider._preflight_source_connectors",
+            return_value=(["vapi"], 1),
+        ),
+        patch(
+            "simulate.services.harness_provider._preflight_credential_probe",
+            return_value=[],
+        ),
     ):
-        return DaytonaHarnessProvider().preflight(request)
+        return HostedHarnessProvider().preflight(request)
 
 
 def test_preflight_advisory_reflects_flag_and_no_stale_echo():
@@ -671,6 +792,224 @@ def test_serialize_job_exposes_runtime_and_default_effective(organization):
     # No degrade event yet -> effective == requested.
     assert dto["parallelism"] == {
         "requested": 4,
+        "admitted": 4,
         "effective": 4,
         "degrade_reasons": [],
     }
+
+
+@pytest.mark.django_db
+def test_slot_counts_use_current_attempt_beyond_recent_event_window(organization):
+    job, _ = create_hosted_job(
+        organization,
+        _payload(parallelism=4, scenario_count=10),
+        idempotency_key="queue-counts",
+    )
+    first = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    provision_scenarios(
+        first.attempt,
+        {
+            "operation": "provision",
+            "name": "Queue counts",
+            "personas": [
+                {"scenario_key": f"scenario-{i}", "name": f"Caller {i}"}
+                for i in range(1, 11)
+            ],
+        },
+    )
+    for sequence in range(1, 104):
+        HostedHarnessEvent.no_workspace_objects.create(
+            attempt=first.attempt,
+            event_id=f"count-{sequence}",
+            sequence=sequence,
+            stage="running",
+            event_type="scenario_started" if sequence <= 2 else "heartbeat",
+            payload={"scenario_key": f"scenario-{sequence}"} if sequence <= 2 else {},
+            digest="sha256:" + "a" * 64,
+            emitted_at=datetime.now(UTC),
+        )
+    dto = serialize_job(job)
+    assert len(dto["events"]) == 100
+    assert dto["status"]["active_scenarios"] == 2
+    assert dto["status"]["queued_scenarios"] == 8
+    register_attempt(job.id, endpoint_base_url="https://platform.example")
+    assert serialize_job(job)["status"]["active_scenarios"] == 0
+    assert serialize_job(job)["status"]["queued_scenarios"] == 10
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("terminal", [False, True])
+def test_counts_ignore_malformed_and_unregistered_historical_events(
+    organization, terminal
+):
+    job, _ = create_hosted_job(
+        organization, _payload(parallelism=2), idempotency_key="legacy-event-keys"
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    provision_scenarios(
+        capability.attempt,
+        {
+            "operation": "provision",
+            "name": "Known keys",
+            "personas": [
+                {"scenario_key": "known", "name": "Caller"},
+                {"scenario_key": "queued", "name": "Waiting caller"},
+            ],
+        },
+    )
+    for sequence, key in enumerate(
+        [[], {}, None, False, 42, "", "unknown", "known", "known"], start=1
+    ):
+        HostedHarnessEvent.no_workspace_objects.create(
+            attempt=capability.attempt,
+            event_id=f"legacy-key-{sequence}",
+            sequence=sequence,
+            stage="running",
+            event_type="scenario_started",
+            payload={"scenario_key": key},
+            digest="sha256:" + "a" * 64,
+            emitted_at=datetime.now(UTC),
+        )
+    if terminal:
+        job.state = HostedHarnessJob.State.COMPLETED
+    status = serialize_job(job)["status"]
+    assert status["active_scenarios"] == (0 if terminal else 1)
+    assert status["queued_scenarios"] == (0 if terminal else job.scenario_count - 1)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("new_cycle", [False, True])
+def test_slot_counts_distinguish_saved_reruns_from_infrastructure_retries(
+    organization, new_cycle
+):
+    job, _ = create_hosted_job(
+        organization,
+        _payload(parallelism=2),
+        idempotency_key=f"receipt-cycle-{new_cycle}",
+    )
+    first = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    provision_scenarios(
+        first.attempt,
+        {
+            "operation": "provision",
+            "name": "Receipt cycle",
+            "personas": [
+                {"scenario_key": "scenario-1", "name": "First", "description": "First"},
+                {
+                    "scenario_key": "scenario-2",
+                    "name": "Second",
+                    "description": "Second",
+                },
+            ],
+        },
+    )
+    registration = job.scenario_registrations.get(scenario_key="scenario-1")
+    HostedHarnessReceipt.no_workspace_objects.create(
+        job=job,
+        attempt=first.attempt,
+        scenario=registration,
+        attempt_number=1,
+        digest="sha256:" + "a" * 64,
+        status="passed",
+        body={"scenario_key": "scenario-1"},
+    )
+    if new_cycle:
+        job.payload["metadata"]["attempt_cycle_start"] = 2
+        job.save(update_fields=["payload"])
+    second = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    HostedHarnessEvent.no_workspace_objects.create(
+        attempt=second.attempt,
+        event_id=f"cycle-start-{new_cycle}",
+        sequence=1,
+        stage="running",
+        event_type="scenario_started",
+        payload={"scenario_key": "scenario-1"},
+        digest="sha256:" + "b" * 64,
+        emitted_at=datetime.now(UTC),
+    )
+    status = serialize_job(job)["status"]
+    assert status["active_scenarios"] == 1
+    assert status["queued_scenarios"] == 1
+
+
+@pytest.mark.django_db
+def test_queued_rerun_ignores_previous_attempt_start_events(organization):
+    job, _ = create_hosted_job(
+        organization, _payload(parallelism=2), idempotency_key="queued-rerun-counts"
+    )
+    first = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    for sequence in (1, 2):
+        HostedHarnessEvent.no_workspace_objects.create(
+            attempt=first.attempt,
+            event_id=f"old-start-{sequence}",
+            sequence=sequence,
+            stage="running",
+            event_type="scenario_started",
+            payload={"scenario_key": f"scenario-{sequence}"},
+            digest="sha256:" + "a" * 64,
+            emitted_at=datetime.now(UTC),
+        )
+    job.payload["metadata"]["attempt_cycle_start"] = 2
+    job.state = "queued"
+    job.save(update_fields=["payload", "state"])
+    status = serialize_job(job)["status"]
+    assert status["active_scenarios"] == 0
+    assert status["queued_scenarios"] == 2
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"attempt_cycle_start": "custom-label"},
+        {"attempt_cycle_start": 100},
+        {"parallelism_clamped": True},
+        {"parallelism_clamped": {"admitted": "invalid"}},
+        {"parallelism_warnings": True},
+    ],
+)
+def test_create_rejects_reserved_execution_metadata(metadata):
+    serializer = HarnessJobCreateSerializer(data=_payload(metadata=metadata))
+    assert not serializer.is_valid()
+    assert "metadata" in serializer.errors
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"attempt_cycle_start": "custom-label"},
+        {"attempt_cycle_start": []},
+        {"parallelism_clamped": True},
+        {"parallelism_clamped": {"admitted": "invalid"}},
+        {"parallelism_clamped": {"admitted": -1}},
+    ],
+)
+def test_read_tolerates_legacy_malformed_execution_metadata(organization, metadata):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="legacy-execution-metadata"
+    )
+    job.payload["metadata"] = metadata
+    job.save(update_fields=["payload"])
+    dto = serialize_job(job)
+    assert dto["parallelism"]["admitted"] == 1
+    assert dto["status"]["active_scenarios"] == 0
+    assert dto["status"]["queued_scenarios"] == job.scenario_count
+
+
+def test_preflight_keeps_parallel_input_available_when_larger_profile_is_qualified(
+    settings,
+):
+    from simulate.tests.test_harness_capacity import profile
+
+    small = profile("sequential", 1)
+    large = {**profile("parallel", 4), "snapshot_digest": "sha256:" + "b" * 64}
+    settings.HARNESS_RESOURCE_PROFILES = [small, large]
+    settings.HARNESS_PARALLELISM_ENABLED = True
+    settings.HARNESS_PARALLEL_SNAPSHOT_DIGESTS = [large["snapshot_digest"]]
+    settings.ALK_DAYTONA_DOCKERFILE = ""
+    response = _preflight(_payload(parallelism=1, scenario_count=10))
+    assert response.status_code == 200
+    assert response.data["effective_parallelism"] == 1
+    assert response.data["parallelism_enabled"] is True
+    response = _preflight(_payload(parallelism=4, scenario_count=10))
+    assert response.data["effective_parallelism"] == 4

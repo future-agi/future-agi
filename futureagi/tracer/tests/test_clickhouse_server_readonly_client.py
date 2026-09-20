@@ -115,14 +115,38 @@ def test_read_timeout_ceiling_rejects_unreviewed_values(ceiling_ms):
         )
 
 
-def test_server_locked_client_sends_no_connection_settings(monkeypatch):
+@pytest.mark.parametrize("locked", [False, True])
+@pytest.mark.parametrize("timeout", [None, 7.5])
+def test_native_compression_preserves_connection_settings(monkeypatch, locked, timeout):
     driver = Mock(return_value=Mock())
     monkeypatch.setattr(client_module, "CHDriver", driver)
     monkeypatch.setattr(client_module, "CLICKHOUSE_AVAILABLE", True)
 
-    _client(server_enforced_readonly=True)._create_client()
+    client = _client(server_enforced_readonly=locked)
+    client._create_client(send_receive_timeout_seconds=timeout)
 
-    assert driver.call_args.kwargs["settings"] is None
+    assert driver.call_args.kwargs == {
+        "host": client.host,
+        "port": client.port,
+        "user": client.user,
+        "password": client.password,
+        "database": client.database,
+        "connect_timeout": client.connect_timeout,
+        "send_receive_timeout": max(client.send_timeout, client.receive_timeout)
+        if timeout is None
+        else timeout,
+        "settings": None if locked else {"use_numpy": False, "max_block_size": 100000},
+        "compression": "lz4",
+    }
+
+
+def test_native_compression_dependency_failure_does_not_retry(monkeypatch):
+    driver = Mock(side_effect=RuntimeError("missing codec"))
+    monkeypatch.setattr(client_module, "CHDriver", driver)
+    monkeypatch.setattr(client_module, "CLICKHOUSE_AVAILABLE", True)
+    with pytest.raises(RuntimeError, match="missing codec"):
+        _client(server_enforced_readonly=True)._create_client()
+    driver.assert_called_once()
 
 
 def test_server_locked_read_sends_no_query_setting_overrides(monkeypatch):
@@ -770,6 +794,7 @@ def test_server_locked_stream_adapter_discards_settings(monkeypatch):
     core.execute_read_block_stream.return_value = managed
     proxy = object.__new__(ServerEnforcedReadOnlyNativeClient)
     proxy._client = core
+    proxy._application_read = False
 
     stream = proxy.query_row_block_stream(
         "SELECT 1 SETTINGS max_threads = 8",

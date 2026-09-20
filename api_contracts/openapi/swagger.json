@@ -1686,6 +1686,138 @@
             },
             "parameters": []
         },
+        "/accounts/gcp-marketplace/signup/": {
+            "post": {
+                "operationId": "accounts_gcp-marketplace_signup_create",
+                "description": "Complete sign-up for a GCP Marketplace customer.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/GCPMarketplaceSignupRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GCPMarketplaceSignupResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AccountsErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AccountsErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AccountsErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AccountsErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AccountsErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "accounts"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/accounts/gcp-marketplace/verify-token/": {
+            "post": {
+                "operationId": "accounts_gcp-marketplace_verify-token_create",
+                "summary": "Landing endpoint for the Producer Portal Sign up URL.",
+                "description": "Google posts the signed marketplace token here as form data and expects a\nredirect. Registered in Producer Portal, not called by our own frontend.",
+                "parameters": [
+                    {
+                        "name": "x-gcp-marketplace-token",
+                        "in": "formData",
+                        "required": true,
+                        "type": "string"
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": ""
+                    },
+                    "302": {
+                        "description": "Redirects to the Future AGI frontend."
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AccountsErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AccountsErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AccountsErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AccountsErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AccountsErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "consumes": [
+                    "application/x-www-form-urlencoded"
+                ],
+                "tags": [
+                    "accounts"
+                ]
+            },
+            "parameters": []
+        },
         "/accounts/get-user-profile-details/": {
             "get": {
                 "operationId": "accounts_get-user-profile-details_list",
@@ -33710,6 +33842,27 @@
                 "description": "",
                 "parameters": [
                     {
+                        "name": "created_at",
+                        "in": "query",
+                        "description": "",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "status",
+                        "in": "query",
+                        "description": "",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "dataset_id",
+                        "in": "query",
+                        "description": "",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
                         "name": "ordering",
                         "in": "query",
                         "description": "Which field to use when ordering the results.",
@@ -33964,6 +34117,27 @@
                 "operationId": "model-hub_experiments_v2_list_list",
                 "description": "V2 experiment list with filtering, search, and pagination.",
                 "parameters": [
+                    {
+                        "name": "created_at",
+                        "in": "query",
+                        "description": "",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "status",
+                        "in": "query",
+                        "description": "",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "dataset_id",
+                        "in": "query",
+                        "description": "",
+                        "required": false,
+                        "type": "string"
+                    },
                     {
                         "name": "search",
                         "in": "query",
@@ -38783,6 +38957,20 @@
                 "description": "",
                 "parameters": [
                     {
+                        "name": "optimize_type",
+                        "in": "query",
+                        "description": "",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "status",
+                        "in": "query",
+                        "description": "",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
                         "name": "search",
                         "in": "query",
                         "description": "A search term.",
@@ -41395,6 +41583,13 @@
                 "description": "",
                 "parameters": [
                     {
+                        "name": "name",
+                        "in": "query",
+                        "description": "",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
                         "name": "search",
                         "in": "query",
                         "description": "A search term.",
@@ -41717,6 +41912,27 @@
                 "description": "",
                 "parameters": [
                     {
+                        "name": "template_name",
+                        "in": "query",
+                        "description": "",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "template_version",
+                        "in": "query",
+                        "description": "",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "created_at",
+                        "in": "query",
+                        "description": "",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
                         "name": "search",
                         "in": "query",
                         "description": "A search term.",
@@ -41795,6 +42011,27 @@
                 "operationId": "model-hub_prompt-history-executions_get_execution_details",
                 "description": "Get detailed information about a specific PromptVersion",
                 "parameters": [
+                    {
+                        "name": "template_name",
+                        "in": "query",
+                        "description": "",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "template_version",
+                        "in": "query",
+                        "description": "",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "created_at",
+                        "in": "query",
+                        "description": "",
+                        "required": false,
+                        "type": "string"
+                    },
                     {
                         "name": "search",
                         "in": "query",
@@ -42829,6 +43066,27 @@
                 "description": "",
                 "parameters": [
                     {
+                        "name": "name",
+                        "in": "query",
+                        "description": "",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "version",
+                        "in": "query",
+                        "description": "",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "created_at",
+                        "in": "query",
+                        "description": "",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
                         "name": "search",
                         "in": "query",
                         "description": "A search term.",
@@ -43176,6 +43434,27 @@
                 "operationId": "model-hub_prompt-templates_get_template_by_name",
                 "description": "Retrieve a prompt template by name.\nIf no version is specified, returns the default version (is_default=True).\nIf a version is specified, returns that specific version.",
                 "parameters": [
+                    {
+                        "name": "name",
+                        "in": "query",
+                        "description": "",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "version",
+                        "in": "query",
+                        "description": "",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "created_at",
+                        "in": "query",
+                        "description": "",
+                        "required": false,
+                        "type": "string"
+                    },
                     {
                         "name": "search",
                         "in": "query",
@@ -46330,6 +46609,12 @@
                         "in": "query",
                         "required": false,
                         "type": "string"
+                    },
+                    {
+                        "name": "state",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
                     }
                 ],
                 "responses": {
@@ -46364,6 +46649,12 @@
                 "parameters": [
                     {
                         "name": "code",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "state",
                         "in": "query",
                         "required": false,
                         "type": "string"
@@ -46411,6 +46702,12 @@
                         "in": "query",
                         "required": false,
                         "type": "string"
+                    },
+                    {
+                        "name": "state",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
                     }
                 ],
                 "responses": {
@@ -46445,6 +46742,12 @@
                 "parameters": [
                     {
                         "name": "code",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "state",
                         "in": "query",
                         "required": false,
                         "type": "string"
@@ -46824,6 +47127,12 @@
                             "github",
                             "microsoft"
                         ]
+                    },
+                    {
+                        "name": "onboarding_token",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
                     }
                 ],
                 "responses": {
@@ -46869,6 +47178,12 @@
                             "github",
                             "microsoft"
                         ]
+                    },
+                    {
+                        "name": "onboarding_token",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
                     }
                 ],
                 "responses": {
@@ -46916,6 +47231,12 @@
                         "in": "query",
                         "required": false,
                         "type": "string"
+                    },
+                    {
+                        "name": "state",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
                     }
                 ],
                 "responses": {
@@ -46950,6 +47271,12 @@
                 "parameters": [
                     {
                         "name": "code",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "state",
                         "in": "query",
                         "required": false,
                         "type": "string"
@@ -49758,7 +50085,7 @@
             "get": {
                 "operationId": "simulate_api_harness-jobs_list",
                 "summary": "Provider-neutral control plane for hosted ALK harness jobs.",
-                "description": "Validates the v1.6 request contract and delegates execution to the backend\nselected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or\n``sandbox``). See ``simulate.services.harness_provider``.",
+                "description": "Validates the v1.6 request contract and delegates execution to the public backend selected by\n``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently\nselects its managed sandbox runtime.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -49784,7 +50111,7 @@
             "post": {
                 "operationId": "simulate_api_harness-jobs_create",
                 "summary": "Provider-neutral control plane for hosted ALK harness jobs.",
-                "description": "Validates the v1.6 request contract and delegates execution to the backend\nselected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or\n``sandbox``). See ``simulate.services.harness_provider``.",
+                "description": "Validates the v1.6 request contract and delegates execution to the public backend selected by\n``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently\nselects its managed sandbox runtime.",
                 "parameters": [
                     {
                         "name": "data",
@@ -49821,7 +50148,7 @@
             "get": {
                 "operationId": "simulate_api_harness-jobs_health",
                 "summary": "Provider-neutral control plane for hosted ALK harness jobs.",
-                "description": "Validates the v1.6 request contract and delegates execution to the backend\nselected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or\n``sandbox``). See ``simulate.services.harness_provider``.",
+                "description": "Validates the v1.6 request contract and delegates execution to the public backend selected by\n``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently\nselects its managed sandbox runtime.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -49844,7 +50171,7 @@
             "post": {
                 "operationId": "simulate_api_harness-jobs_preflight",
                 "summary": "Provider-neutral control plane for hosted ALK harness jobs.",
-                "description": "Validates the v1.6 request contract and delegates execution to the backend\nselected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or\n``sandbox``). See ``simulate.services.harness_provider``.",
+                "description": "Validates the v1.6 request contract and delegates execution to the public backend selected by\n``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently\nselects its managed sandbox runtime.",
                 "parameters": [
                     {
                         "name": "data",
@@ -49880,7 +50207,7 @@
             "post": {
                 "operationId": "simulate_api_harness-jobs_secret_file_upload",
                 "summary": "Provider-neutral control plane for hosted ALK harness jobs.",
-                "description": "Validates the v1.6 request contract and delegates execution to the backend\nselected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or\n``sandbox``). See ``simulate.services.harness_provider``.",
+                "description": "Validates the v1.6 request contract and delegates execution to the public backend selected by\n``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently\nselects its managed sandbox runtime.",
                 "parameters": [
                     {
                         "name": "file",
@@ -49960,7 +50287,7 @@
             "post": {
                 "operationId": "simulate_api_harness-jobs_source_upload",
                 "summary": "Provider-neutral control plane for hosted ALK harness jobs.",
-                "description": "Validates the v1.6 request contract and delegates execution to the backend\nselected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or\n``sandbox``). See ``simulate.services.harness_provider``.",
+                "description": "Validates the v1.6 request contract and delegates execution to the public backend selected by\n``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently\nselects its managed sandbox runtime.",
                 "parameters": [
                     {
                         "name": "files",
@@ -50010,7 +50337,7 @@
             "get": {
                 "operationId": "simulate_api_harness-jobs_read",
                 "summary": "Provider-neutral control plane for hosted ALK harness jobs.",
-                "description": "Validates the v1.6 request contract and delegates execution to the backend\nselected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or\n``sandbox``). See ``simulate.services.harness_provider``.",
+                "description": "Validates the v1.6 request contract and delegates execution to the public backend selected by\n``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently\nselects its managed sandbox runtime.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -50043,7 +50370,7 @@
             "post": {
                 "operationId": "simulate_api_harness-jobs_adjust",
                 "summary": "Provider-neutral control plane for hosted ALK harness jobs.",
-                "description": "Validates the v1.6 request contract and delegates execution to the backend\nselected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or\n``sandbox``). See ``simulate.services.harness_provider``.",
+                "description": "Validates the v1.6 request contract and delegates execution to the public backend selected by\n``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently\nselects its managed sandbox runtime.",
                 "parameters": [
                     {
                         "name": "data",
@@ -50086,7 +50413,7 @@
             "post": {
                 "operationId": "simulate_api_harness-jobs_cancel",
                 "summary": "Provider-neutral control plane for hosted ALK harness jobs.",
-                "description": "Validates the v1.6 request contract and delegates execution to the backend\nselected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or\n``sandbox``). See ``simulate.services.harness_provider``.",
+                "description": "Validates the v1.6 request contract and delegates execution to the public backend selected by\n``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently\nselects its managed sandbox runtime.",
                 "parameters": [
                     {
                         "name": "data",
@@ -50130,7 +50457,7 @@
             "post": {
                 "operationId": "simulate_api_harness-jobs_extend",
                 "summary": "Provider-neutral control plane for hosted ALK harness jobs.",
-                "description": "Validates the v1.6 request contract and delegates execution to the backend\nselected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or\n``sandbox``). See ``simulate.services.harness_provider``.",
+                "description": "Validates the v1.6 request contract and delegates execution to the public backend selected by\n``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently\nselects its managed sandbox runtime.",
                 "parameters": [
                     {
                         "name": "data",
@@ -50313,7 +50640,7 @@
         "/simulate/api/harness/attempts/{id}/ingress/": {
             "post": {
                 "operationId": "simulate_api_harness_attempts_ingress",
-                "summary": "Mint a short-lived, no-header Daytona URL for one guest-selected HTTP port.",
+                "summary": "Mint a short-lived, no-header URL for one guest-selected HTTP port.",
                 "description": "The attempt capability authenticates the trusted ALK guest. Customer processes never\nreceive that bearer and therefore cannot expose arbitrary sandbox ports themselves.",
                 "parameters": [
                     {
@@ -60641,6 +60968,9 @@
                         }
                     }
                 },
+                "produces": [
+                    "text/csv"
+                ],
                 "tags": [
                     "tracer"
                 ],
@@ -60695,32 +61025,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "required": [
-                                "count",
-                                "results"
-                            ],
-                            "type": "object",
-                            "properties": {
-                                "count": {
-                                    "type": "integer"
-                                },
-                                "next": {
-                                    "type": "string",
-                                    "format": "uri",
-                                    "x-nullable": true
-                                },
-                                "previous": {
-                                    "type": "string",
-                                    "format": "uri",
-                                    "x-nullable": true
-                                },
-                                "results": {
-                                    "type": "array",
-                                    "items": {
-                                        "$ref": "#/definitions/ObservationSpan"
-                                    }
-                                }
-                            }
+                            "$ref": "#/definitions/TraceNavigationResponse"
                         }
                     },
                     "default": {
@@ -60733,7 +61038,42 @@
                 "tags": [
                     "tracer"
                 ],
-                "x-runtime-request-validation": true
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "tracer_observation-span_get_trace_id_by_index_spans_as_base_create",
+                "description": "Get the previous and next span id by index for non-observe projects.\nMirrors the query/filter logic of list_spans.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SpanIndexQuery"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/TraceNavigationResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true,
+                "x-read-query-post": true
             },
             "parameters": []
         },
@@ -60789,32 +61129,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "required": [
-                                "count",
-                                "results"
-                            ],
-                            "type": "object",
-                            "properties": {
-                                "count": {
-                                    "type": "integer"
-                                },
-                                "next": {
-                                    "type": "string",
-                                    "format": "uri",
-                                    "x-nullable": true
-                                },
-                                "previous": {
-                                    "type": "string",
-                                    "format": "uri",
-                                    "x-nullable": true
-                                },
-                                "results": {
-                                    "type": "array",
-                                    "items": {
-                                        "$ref": "#/definitions/ObservationSpan"
-                                    }
-                                }
-                            }
+                            "$ref": "#/definitions/TraceNavigationResponse"
                         }
                     },
                     "default": {
@@ -60827,7 +61142,42 @@
                 "tags": [
                     "tracer"
                 ],
-                "x-runtime-request-validation": true
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "tracer_observation-span_get_trace_id_by_index_spans_as_observe_create",
+                "description": "Get the previous and next trace id by index for observe projects.\nMirrors the query/filter logic of list_spans_as_observe.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SpanObserveIndexQuery"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/TraceNavigationResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true,
+                "x-read-query-post": true
             },
             "parameters": []
         },
@@ -60934,6 +61284,64 @@
                 ],
                 "x-runtime-request-validation": true,
                 "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "tracer_observation-span_list_spans_create",
+                "description": "List spans filtered by project ID and project version ID with optimized queries.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SpanListQuery"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SpanPrototypeListResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/PageDepthExceededError"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true,
+                "x-read-query-post": true
             },
             "parameters": []
         },
@@ -61063,6 +61471,64 @@
                 ],
                 "x-runtime-request-validation": true,
                 "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "tracer_observation-span_list_spans_observe_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SpanObserveListQuery"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SpanObserveListResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/PageDepthExceededError"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true,
+                "x-read-query-post": true
             },
             "parameters": []
         },
@@ -61299,15 +61765,75 @@
             "get": {
                 "operationId": "tracer_observation-span_read",
                 "description": "",
-                "parameters": [],
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "trace_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    {
+                        "name": "start_hour",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    {
+                        "name": "observation_type",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "service_name",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "expected_start_time",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    {
+                        "name": "expected_version",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "minLength": 1
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ObservationSpan"
+                            "$ref": "#/definitions/ObservationSpanDetailResponse"
                         }
                     },
                     "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiErrorResponse"
@@ -61335,6 +61861,7 @@
                 "tags": [
                     "tracer"
                 ],
+                "x-runtime-request-validation": true,
                 "x-runtime-response-validation": true
             },
             "put": {
@@ -64321,6 +64848,9 @@
                         }
                     }
                 },
+                "produces": [
+                    "text/csv"
+                ],
                 "tags": [
                     "tracer"
                 ],
@@ -64476,6 +65006,64 @@
                 "x-runtime-request-validation": true,
                 "x-runtime-response-validation": true
             },
+            "post": {
+                "operationId": "tracer_trace-session_list_sessions_create",
+                "description": "List traces filtered by project ID and project version ID with optimized queries.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/TraceSessionListQuery"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/TraceSessionListResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/PageDepthExceededError"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true,
+                "x-read-query-post": true
+            },
             "parameters": []
         },
         "/tracer/trace-session/{id}/": {
@@ -64614,6 +65202,132 @@
                 "tags": [
                     "tracer"
                 ]
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/trace-session/{id}/query/": {
+            "get": {
+                "operationId": "tracer_trace-session_query",
+                "description": "Read the same authorized detail without putting filters in the URL.",
+                "parameters": [
+                    {
+                        "name": "navigation_context",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "user_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "filters",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "default": "[]",
+                        "minLength": 1
+                    },
+                    {
+                        "name": "sort_params",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "default": "[]",
+                        "minLength": 1
+                    },
+                    {
+                        "name": "page_number",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 0,
+                        "minimum": 0
+                    },
+                    {
+                        "name": "page_size",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 30,
+                        "maximum": 500,
+                        "minimum": 1
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/TraceSessionDetailResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "tracer_trace-session_query_create",
+                "description": "Read the same authorized detail without putting filters in the URL.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/TraceSessionRetrieveQuery"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/TraceSessionDetailResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true,
+                "x-read-query-post": true
             },
             "parameters": [
                 {
@@ -64801,6 +65515,59 @@
                 ],
                 "x-runtime-request-validation": true,
                 "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "tracer_trace_agent_graph_create",
+                "summary": "Return one cached exact Agent Graph.",
+                "description": "``path_edges`` remains an empty compatibility field until telemetry\nrecords authoritative chronological execution transitions.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/TraceAgentGraphQuery"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/TraceAgentGraphResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true,
+                "x-read-query-post": true
             },
             "parameters": []
         },
@@ -65126,6 +65893,9 @@
                         }
                     }
                 },
+                "produces": [
+                    "text/csv"
+                ],
                 "tags": [
                     "tracer"
                 ],
@@ -65180,32 +65950,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "required": [
-                                "count",
-                                "results"
-                            ],
-                            "type": "object",
-                            "properties": {
-                                "count": {
-                                    "type": "integer"
-                                },
-                                "next": {
-                                    "type": "string",
-                                    "format": "uri",
-                                    "x-nullable": true
-                                },
-                                "previous": {
-                                    "type": "string",
-                                    "format": "uri",
-                                    "x-nullable": true
-                                },
-                                "results": {
-                                    "type": "array",
-                                    "items": {
-                                        "$ref": "#/definitions/Trace"
-                                    }
-                                }
-                            }
+                            "$ref": "#/definitions/TraceNavigationResponse"
                         }
                     },
                     "default": {
@@ -65218,7 +65963,42 @@
                 "tags": [
                     "tracer"
                 ],
-                "x-runtime-request-validation": true
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "tracer_trace_get_trace_id_by_index_create",
+                "description": "Get the previous and next trace id by index using efficient database queries.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/TraceIndexQuery"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/TraceNavigationResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true,
+                "x-read-query-post": true
             },
             "parameters": []
         },
@@ -65268,32 +66048,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "required": [
-                                "count",
-                                "results"
-                            ],
-                            "type": "object",
-                            "properties": {
-                                "count": {
-                                    "type": "integer"
-                                },
-                                "next": {
-                                    "type": "string",
-                                    "format": "uri",
-                                    "x-nullable": true
-                                },
-                                "previous": {
-                                    "type": "string",
-                                    "format": "uri",
-                                    "x-nullable": true
-                                },
-                                "results": {
-                                    "type": "array",
-                                    "items": {
-                                        "$ref": "#/definitions/Trace"
-                                    }
-                                }
-                            }
+                            "$ref": "#/definitions/TraceNavigationResponse"
                         }
                     },
                     "default": {
@@ -65306,7 +66061,42 @@
                 "tags": [
                     "tracer"
                 ],
-                "x-runtime-request-validation": true
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "tracer_trace_get_trace_id_by_index_observe_create",
+                "description": "Get the previous and next trace id by index.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/TraceObserveIndexQuery"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/TraceNavigationResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true,
+                "x-read-query-post": true
             },
             "parameters": []
         },
@@ -65428,6 +66218,64 @@
                 ],
                 "x-runtime-request-validation": true,
                 "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "tracer_trace_list_traces_create",
+                "description": "List traces filtered by project ID and project version ID with optimized queries.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/TraceListQuery"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/TracePrototypeListResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/PageDepthExceededError"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true,
+                "x-read-query-post": true
             },
             "parameters": []
         },
@@ -65578,6 +66426,64 @@
                 "x-runtime-request-validation": true,
                 "x-runtime-response-validation": true
             },
+            "post": {
+                "operationId": "tracer_trace_list_traces_of_session_create",
+                "description": "List traces filtered by project ID with optimized queries.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/TraceObserveListQuery"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/TraceObserveListResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/PageDepthExceededError"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true,
+                "x-read-query-post": true
+            },
             "parameters": []
         },
         "/tracer/trace/list_voice_calls/": {
@@ -65705,6 +66611,70 @@
                 ],
                 "x-runtime-request-validation": true,
                 "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "tracer_trace_list_voice_calls_create",
+                "description": "List voice/conversation traces for a project in an optimized way and\nreturn a response similar to the provided call object schema.\n\nQuery params:\n- project_id (required)\n- page (1-based, optional, default 1)\n- page_size (optional, default 30)",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/TraceVoiceCallListQuery"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/TraceVoiceCallListResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/PageDepthExceededError"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true,
+                "x-read-query-post": true
             },
             "parameters": []
         },
@@ -67023,11 +67993,77 @@
                         }
                     }
                 },
+                "produces": [
+                    "application/json",
+                    "text/csv"
+                ],
                 "tags": [
                     "tracer"
                 ],
                 "x-runtime-request-validation": true,
                 "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "tracer_users_create",
+                "description": "List traces filtered by project ID with optimized queries.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/UsersQuery"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/UsersResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "produces": [
+                    "application/json",
+                    "text/csv"
+                ],
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true,
+                "x-read-query-post": true
             },
             "parameters": []
         },
@@ -67613,7 +68649,8 @@
         "/usage/admin/invoice/preview/": {
             "post": {
                 "operationId": "usage_admin_invoice_preview_create",
-                "description": "Preview invoice for an org+period (no side effects).",
+                "summary": "Preview invoice for an org+period.",
+                "description": "Creates no invoice and deducts no credits, but does backfill missing\n``UsageSummary`` rows for the usage period. Open to staff so the admin's\nread-only Generate Invoice page can show what would be billed.",
                 "parameters": [
                     {
                         "name": "data",
@@ -76610,6 +77647,68 @@
                 },
                 "result": {
                     "$ref": "#/definitions/UserChecksResult"
+                }
+            }
+        },
+        "GCPMarketplaceSignupRequest": {
+            "required": [
+                "onboarding_token",
+                "email",
+                "full_name"
+            ],
+            "type": "object",
+            "properties": {
+                "onboarding_token": {
+                    "title": "Onboarding token",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "email": {
+                    "title": "Email",
+                    "type": "string",
+                    "format": "email",
+                    "minLength": 1
+                },
+                "full_name": {
+                    "title": "Full name",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "GCPMarketplaceSignupResult": {
+            "required": [
+                "message",
+                "user_email"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "user_email": {
+                    "title": "User email",
+                    "type": "string",
+                    "format": "email",
+                    "minLength": 1
+                }
+            }
+        },
+        "GCPMarketplaceSignupResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/GCPMarketplaceSignupResult"
                 }
             }
         },
@@ -113901,7 +115000,7 @@
                 "livekit_max_concurrency": {
                     "title": "Livekit max concurrency",
                     "type": "integer",
-                    "maximum": 5,
+                    "maximum": 25,
                     "minimum": 1,
                     "x-nullable": true
                 }
@@ -114320,7 +115419,7 @@
                 "livekit_max_concurrency": {
                     "title": "Livekit max concurrency",
                     "type": "integer",
-                    "maximum": 5,
+                    "maximum": 25,
                     "minimum": 1,
                     "x-nullable": true
                 }
@@ -114557,7 +115656,7 @@
                 "livekit_max_concurrency": {
                     "title": "Livekit max concurrency",
                     "type": "integer",
-                    "maximum": 5,
+                    "maximum": 25,
                     "minimum": 1
                 },
                 "commit_message": {
@@ -117327,6 +118426,14 @@
                         "x-nullable": true
                     }
                 },
+                "runtime": {
+                    "title": "Runtime",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
                 "run_test_id": {
                     "title": "Run test id",
                     "type": "string",
@@ -117380,6 +118487,14 @@
                 },
                 "failed_scenarios": {
                     "title": "Failed scenarios",
+                    "type": "integer"
+                },
+                "active_scenarios": {
+                    "title": "Active scenarios",
+                    "type": "integer"
+                },
+                "queued_scenarios": {
+                    "title": "Queued scenarios",
                     "type": "integer"
                 },
                 "total_scenarios": {
@@ -117549,6 +118664,86 @@
                 }
             }
         },
+        "HarnessDiagnostics": {
+            "required": [
+                "size",
+                "final",
+                "error"
+            ],
+            "type": "object",
+            "properties": {
+                "object_key": {
+                    "title": "Object key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "sha256": {
+                    "title": "Sha256",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "size": {
+                    "title": "Size",
+                    "type": "integer"
+                },
+                "captured_at": {
+                    "title": "Captured at",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "final": {
+                    "title": "Final",
+                    "type": "boolean"
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string"
+                }
+            }
+        },
+        "HarnessRuntimeRead": {
+            "type": "object",
+            "properties": {
+                "sandbox_id": {
+                    "title": "Sandbox id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "diagnostics": {
+                    "$ref": "#/definitions/HarnessDiagnostics"
+                }
+            }
+        },
+        "HarnessParallelism": {
+            "required": [
+                "requested",
+                "admitted",
+                "effective",
+                "degrade_reasons"
+            ],
+            "type": "object",
+            "properties": {
+                "requested": {
+                    "title": "Requested",
+                    "type": "integer"
+                },
+                "admitted": {
+                    "title": "Admitted",
+                    "type": "integer"
+                },
+                "effective": {
+                    "title": "Effective",
+                    "type": "integer"
+                },
+                "degrade_reasons": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
         "HarnessJobRead": {
             "required": [
                 "job",
@@ -117593,6 +118788,12 @@
                 },
                 "platform": {
                     "$ref": "#/definitions/HarnessPlatform"
+                },
+                "runtime": {
+                    "$ref": "#/definitions/HarnessRuntimeRead"
+                },
+                "parallelism": {
+                    "$ref": "#/definitions/HarnessParallelism"
                 }
             }
         },
@@ -117608,7 +118809,8 @@
                     "enum": [
                         "github",
                         "archive",
-                        "remote"
+                        "remote",
+                        "provider"
                     ]
                 },
                 "repository": {
@@ -117660,6 +118862,15 @@
                         "private"
                     ],
                     "default": "public"
+                },
+                "environment_values": {
+                    "title": "Environment values",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "maxLength": 65536,
+                        "minLength": 1
+                    }
                 }
             }
         },
@@ -117716,6 +118927,7 @@
                         "livekit",
                         "vapi",
                         "retell",
+                        "retell_chat",
                         "auto"
                     ]
                 },
@@ -117940,7 +119152,6 @@
         },
         "HarnessJobCreate": {
             "required": [
-                "source",
                 "agent",
                 "artifacts"
             ],
@@ -118009,7 +119220,6 @@
         },
         "HarnessPreflight": {
             "required": [
-                "source",
                 "agent",
                 "artifacts"
             ],
@@ -118596,6 +119806,13 @@
                         "minLength": 1
                     },
                     "default": []
+                },
+                "stop_reason": {
+                    "title": "Stop reason",
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "x-nullable": true
                 }
             },
             "x-nullable": true
@@ -132499,6 +133716,99 @@
                 }
             }
         },
+        "TraceNavigationResult": {
+            "required": [
+                "next_trace_id",
+                "previous_trace_id"
+            ],
+            "type": "object",
+            "properties": {
+                "next_trace_id": {
+                    "title": "Next trace id",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "previous_trace_id": {
+                    "title": "Previous trace id",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "TraceNavigationResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/TraceNavigationResult"
+                }
+            }
+        },
+        "SpanIndexQuery": {
+            "required": [
+                "span_id",
+                "project_version_id"
+            ],
+            "type": "object",
+            "properties": {
+                "span_id": {
+                    "title": "Span id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "project_version_id": {
+                    "title": "Project version id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "filters": {
+                    "title": "Filters",
+                    "type": "string",
+                    "default": "[]",
+                    "minLength": 1,
+                    "description": "JSON-encoded canonical filter list."
+                }
+            }
+        },
+        "SpanObserveIndexQuery": {
+            "required": [
+                "span_id",
+                "project_id"
+            ],
+            "type": "object",
+            "properties": {
+                "span_id": {
+                    "title": "Span id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "user_id": {
+                    "title": "User id",
+                    "type": "string"
+                },
+                "filters": {
+                    "title": "Filters",
+                    "type": "string",
+                    "default": "[]",
+                    "minLength": 1,
+                    "description": "JSON-encoded canonical filter list."
+                }
+            }
+        },
         "SpanListColumnConfig": {
             "required": [
                 "id",
@@ -132831,6 +134141,57 @@
                 }
             }
         },
+        "SpanListQuery": {
+            "required": [
+                "project_version_id"
+            ],
+            "type": "object",
+            "properties": {
+                "project_version_id": {
+                    "title": "Project version id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "filters": {
+                    "title": "Filters",
+                    "type": "string",
+                    "default": "[]",
+                    "minLength": 1,
+                    "description": "JSON-encoded canonical filter list. On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result.",
+                    "x-boundedDatetimeOperators": [
+                        "between",
+                        "equals",
+                        "greater_than",
+                        "greater_than_or_equal",
+                        "is_not_null",
+                        "is_null",
+                        "less_than",
+                        "less_than_or_equal",
+                        "not_between",
+                        "not_equals"
+                    ]
+                },
+                "page_number": {
+                    "title": "Page number",
+                    "description": "Zero-based numbered page. Pages whose required ordered work exceeds the finite read contract return HTTP 422 with code page_depth_exceeded; request an earlier page or narrow the time range.",
+                    "type": "integer",
+                    "default": 0,
+                    "minimum": 0
+                },
+                "page_size": {
+                    "title": "Page size",
+                    "type": "integer",
+                    "default": 30,
+                    "maximum": 500,
+                    "minimum": 1
+                },
+                "allow_sampled": {
+                    "title": "Allow sampled",
+                    "description": "Omit for backward-compatible complete bounded pages, which may label total_rows as a lower bound. Send false to require an exact total, or true to opt in explicitly to lower-bound totals.",
+                    "type": "boolean"
+                }
+            }
+        },
         "SpanObserveListResult": {
             "required": [
                 "metadata",
@@ -132878,6 +134239,71 @@
                 }
             }
         },
+        "SpanObserveListQuery": {
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "user_id": {
+                    "title": "User id",
+                    "type": "string"
+                },
+                "filters": {
+                    "title": "Filters",
+                    "type": "string",
+                    "default": "[]",
+                    "minLength": 1,
+                    "description": "JSON-encoded canonical filter list. On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result.",
+                    "x-boundedDatetimeOperators": [
+                        "between",
+                        "equals",
+                        "greater_than",
+                        "greater_than_or_equal",
+                        "is_not_null",
+                        "is_null",
+                        "less_than",
+                        "less_than_or_equal",
+                        "not_between",
+                        "not_equals"
+                    ]
+                },
+                "page_number": {
+                    "title": "Page number",
+                    "description": "Zero-based numbered page. Pages whose required ordered work exceeds the finite read contract return HTTP 422 with code page_depth_exceeded; request an earlier page or narrow the time range.",
+                    "type": "integer",
+                    "default": 0,
+                    "minimum": 0
+                },
+                "page_size": {
+                    "title": "Page size",
+                    "type": "integer",
+                    "default": 30,
+                    "maximum": 500,
+                    "minimum": 1
+                },
+                "cursor": {
+                    "title": "Cursor",
+                    "description": "Opaque continuation token returned by the previous page. When supplied, do not also send the numbered-page parameter.",
+                    "type": "string",
+                    "maxLength": 4096,
+                    "minLength": 1
+                },
+                "cursor_mode": {
+                    "title": "Cursor mode",
+                    "type": "boolean",
+                    "default": false
+                },
+                "allow_sampled": {
+                    "title": "Allow sampled",
+                    "description": "Omit for backward-compatible complete bounded pages, which may label total_rows as a lower bound. Send false to require an exact total, or true to opt in explicitly to lower-bound totals.",
+                    "type": "boolean"
+                }
+            }
+        },
         "RootSpansResponse": {
             "required": [
                 "result"
@@ -132896,6 +134322,62 @@
                         "type": "string",
                         "minLength": 1
                     }
+                }
+            }
+        },
+        "ObservationSpanDetailResult": {
+            "required": [
+                "observation_span",
+                "evals_metrics"
+            ],
+            "type": "object",
+            "properties": {
+                "observation_span": {
+                    "title": "Observation span",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "x-nullable": true,
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
+                    }
+                },
+                "evals_metrics": {
+                    "title": "Evals metrics",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "x-nullable": true,
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
+                    },
+                    "x-nullable": true
+                },
+                "enrichment": {
+                    "title": "Enrichment",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "x-nullable": true,
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
+                    }
+                }
+            }
+        },
+        "ObservationSpanDetailResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/ObservationSpanDetailResult"
                 }
             }
         },
@@ -136258,6 +137740,169 @@
                 }
             }
         },
+        "TraceSessionListQuery": {
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "user_id": {
+                    "title": "User id",
+                    "type": "string"
+                },
+                "bookmarked": {
+                    "title": "Bookmarked",
+                    "type": "boolean",
+                    "x-nullable": true
+                },
+                "filters": {
+                    "title": "Filters",
+                    "type": "string",
+                    "default": "[]",
+                    "minLength": 1,
+                    "description": "JSON-encoded canonical filter list. On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result.",
+                    "x-boundedDatetimeOperators": [
+                        "between",
+                        "equals",
+                        "greater_than",
+                        "greater_than_or_equal",
+                        "is_not_null",
+                        "is_null",
+                        "less_than",
+                        "less_than_or_equal",
+                        "not_between",
+                        "not_equals"
+                    ]
+                },
+                "sort_params": {
+                    "title": "Sort params",
+                    "type": "string",
+                    "default": "[]",
+                    "minLength": 1,
+                    "description": "JSON-encoded list of sort params."
+                },
+                "page_number": {
+                    "title": "Page number",
+                    "description": "Zero-based numbered page. Pages whose required ordered work exceeds the finite read contract return HTTP 422 with code page_depth_exceeded; request an earlier page or narrow the time range.",
+                    "type": "integer",
+                    "default": 0,
+                    "minimum": 0
+                },
+                "page_size": {
+                    "title": "Page size",
+                    "type": "integer",
+                    "default": 30,
+                    "maximum": 500,
+                    "minimum": 1
+                },
+                "cursor": {
+                    "title": "Cursor",
+                    "description": "Opaque continuation token returned by the previous page. When supplied, do not also send the numbered-page parameter.",
+                    "type": "string",
+                    "maxLength": 4096,
+                    "minLength": 1
+                },
+                "cursor_mode": {
+                    "title": "Cursor mode",
+                    "type": "boolean",
+                    "default": false
+                },
+                "interval": {
+                    "title": "Interval",
+                    "type": "string"
+                },
+                "allow_sampled": {
+                    "title": "Allow sampled",
+                    "description": "Omit for backward-compatible complete bounded pages, which may label total_rows as a lower bound. Send false to require an exact total, or true to opt in explicitly to lower-bound totals.",
+                    "type": "boolean"
+                }
+            }
+        },
+        "TraceSessionDetailResult": {
+            "required": [
+                "session_metadata",
+                "response",
+                "next"
+            ],
+            "type": "object",
+            "properties": {
+                "session_metadata": {
+                    "title": "Session metadata",
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "response": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": true
+                    }
+                },
+                "next": {
+                    "title": "Next",
+                    "type": "boolean"
+                }
+            }
+        },
+        "TraceSessionDetailResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/TraceSessionDetailResult"
+                }
+            }
+        },
+        "TraceSessionRetrieveQuery": {
+            "type": "object",
+            "properties": {
+                "navigation_context": {
+                    "title": "Navigation context",
+                    "type": "string",
+                    "description": "JSON-encoded object."
+                },
+                "user_id": {
+                    "title": "User id",
+                    "type": "string"
+                },
+                "filters": {
+                    "title": "Filters",
+                    "type": "string",
+                    "default": "[]",
+                    "minLength": 1,
+                    "description": "JSON-encoded canonical filter list."
+                },
+                "sort_params": {
+                    "title": "Sort params",
+                    "type": "string",
+                    "default": "[]",
+                    "minLength": 1,
+                    "description": "JSON-encoded list of sort params."
+                },
+                "page_number": {
+                    "title": "Page number",
+                    "type": "integer",
+                    "default": 0,
+                    "minimum": 0
+                },
+                "page_size": {
+                    "title": "Page size",
+                    "type": "integer",
+                    "default": 30,
+                    "maximum": 500,
+                    "minimum": 1
+                }
+            }
+        },
         "Trace": {
             "required": [
                 "project"
@@ -136575,6 +138220,32 @@
                 }
             }
         },
+        "TraceAgentGraphQuery": {
+            "required": [
+                "project_id"
+            ],
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "filters": {
+                    "title": "Filters",
+                    "type": "string",
+                    "default": "[]",
+                    "minLength": 1,
+                    "description": "JSON-encoded canonical filter list."
+                },
+                "refresh": {
+                    "title": "Refresh",
+                    "description": "Recompute and atomically replace the last exact graph snapshot.",
+                    "type": "boolean",
+                    "default": false
+                }
+            }
+        },
         "TracePropertiesResponse": {
             "required": [
                 "result"
@@ -136592,6 +138263,58 @@
                         "type": "string",
                         "minLength": 1
                     }
+                }
+            }
+        },
+        "TraceIndexQuery": {
+            "required": [
+                "trace_id",
+                "project_version_id"
+            ],
+            "type": "object",
+            "properties": {
+                "trace_id": {
+                    "title": "Trace id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "project_version_id": {
+                    "title": "Project version id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "filters": {
+                    "title": "Filters",
+                    "type": "string",
+                    "default": "[]",
+                    "minLength": 1,
+                    "description": "JSON-encoded canonical filter list."
+                }
+            }
+        },
+        "TraceObserveIndexQuery": {
+            "required": [
+                "trace_id",
+                "project_id"
+            ],
+            "type": "object",
+            "properties": {
+                "trace_id": {
+                    "title": "Trace id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "filters": {
+                    "title": "Filters",
+                    "type": "string",
+                    "default": "[]",
+                    "minLength": 1,
+                    "description": "JSON-encoded canonical filter list."
                 }
             }
         },
@@ -136735,6 +138458,69 @@
                 }
             }
         },
+        "TraceListQuery": {
+            "required": [
+                "project_version_id"
+            ],
+            "type": "object",
+            "properties": {
+                "project_version_id": {
+                    "title": "Project version id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "trace_ids": {
+                    "title": "Trace ids",
+                    "type": "string",
+                    "default": []
+                },
+                "filters": {
+                    "title": "Filters",
+                    "type": "string",
+                    "default": "[]",
+                    "minLength": 1,
+                    "description": "JSON-encoded canonical filter list. On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result.",
+                    "x-boundedDatetimeOperators": [
+                        "between",
+                        "equals",
+                        "greater_than",
+                        "greater_than_or_equal",
+                        "is_not_null",
+                        "is_null",
+                        "less_than",
+                        "less_than_or_equal",
+                        "not_between",
+                        "not_equals"
+                    ]
+                },
+                "sort_params": {
+                    "title": "Sort params",
+                    "type": "string",
+                    "default": "[]",
+                    "minLength": 1,
+                    "description": "JSON-encoded list of sort params."
+                },
+                "page_number": {
+                    "title": "Page number",
+                    "description": "Zero-based numbered page. Pages whose required ordered work exceeds the finite read contract return HTTP 422 with code page_depth_exceeded; request an earlier page or narrow the time range.",
+                    "type": "integer",
+                    "default": 0,
+                    "minimum": 0
+                },
+                "page_size": {
+                    "title": "Page size",
+                    "type": "integer",
+                    "default": 30,
+                    "maximum": 500,
+                    "minimum": 1
+                },
+                "allow_sampled": {
+                    "title": "Allow sampled",
+                    "description": "Omit for backward-compatible complete bounded pages, which may label total_rows as a lower bound. Send false to require an exact total, or true to opt in explicitly to lower-bound totals.",
+                    "type": "boolean"
+                }
+            }
+        },
         "TraceObserveListResult": {
             "required": [
                 "metadata",
@@ -136779,6 +138565,85 @@
                 },
                 "result": {
                     "$ref": "#/definitions/TraceObserveListResult"
+                }
+            }
+        },
+        "TraceObserveListQuery": {
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "project_version_id": {
+                    "title": "Project version id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "session_id": {
+                    "title": "Session id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "filters": {
+                    "title": "Filters",
+                    "type": "string",
+                    "default": "[]",
+                    "minLength": 1,
+                    "description": "JSON-encoded canonical filter list. On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result.",
+                    "x-boundedDatetimeOperators": [
+                        "between",
+                        "equals",
+                        "greater_than",
+                        "greater_than_or_equal",
+                        "is_not_null",
+                        "is_null",
+                        "less_than",
+                        "less_than_or_equal",
+                        "not_between",
+                        "not_equals"
+                    ]
+                },
+                "page_number": {
+                    "title": "Page number",
+                    "description": "Zero-based numbered page. Pages whose required ordered work exceeds the finite read contract return HTTP 422 with code page_depth_exceeded; request an earlier page or narrow the time range.",
+                    "type": "integer",
+                    "default": 0,
+                    "minimum": 0
+                },
+                "page_size": {
+                    "title": "Page size",
+                    "type": "integer",
+                    "default": 30,
+                    "maximum": 500,
+                    "minimum": 1
+                },
+                "cursor": {
+                    "title": "Cursor",
+                    "description": "Opaque continuation token returned by the previous page. When supplied, do not also send the numbered-page parameter.",
+                    "type": "string",
+                    "maxLength": 4096,
+                    "minLength": 1
+                },
+                "cursor_mode": {
+                    "title": "Cursor mode",
+                    "type": "boolean",
+                    "default": false
+                },
+                "attribute_keys": {
+                    "title": "Attribute keys",
+                    "description": "JSON-encoded list of custom attribute keys to hydrate; only requested keys are returned. Each key resolves to its latest live span value by (start_time, span_id). Comma-separated simple keys remain supported.",
+                    "type": "string"
+                },
+                "allow_sampled": {
+                    "title": "Allow sampled",
+                    "description": "Omit for backward-compatible complete bounded pages, which may label total_rows as a lower bound. Send false to require an exact total. Send true to opt in explicitly to lower-bound totals and, on the first page, a clearly labelled bounded partial result when the full ordered prefix cannot be proven inside the read budget.",
+                    "type": "boolean"
+                },
+                "interval": {
+                    "title": "Interval",
+                    "type": "string"
                 }
             }
         },
@@ -136898,6 +138763,67 @@
                     "title": "Query applied filter count",
                     "type": "integer",
                     "minimum": 0
+                }
+            }
+        },
+        "TraceVoiceCallListQuery": {
+            "required": [
+                "project_id"
+            ],
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "filters": {
+                    "title": "Filters",
+                    "type": "string",
+                    "default": "[]",
+                    "minLength": 1,
+                    "description": "JSON-encoded canonical filter list."
+                },
+                "attribute_keys": {
+                    "title": "Attribute keys",
+                    "description": "JSON-encoded list of custom attribute keys to include as CSV columns. Comma-separated simple keys remain supported.",
+                    "type": "string"
+                },
+                "page": {
+                    "title": "Page",
+                    "description": "One-based numbered page. Pages whose required ordered work exceeds the finite read contract return HTTP 422 with code page_depth_exceeded; request an earlier page, use the additive continuation cursor, or narrow the time range.",
+                    "type": "integer",
+                    "default": 1,
+                    "minimum": 1
+                },
+                "page_size": {
+                    "title": "Page size",
+                    "type": "integer",
+                    "default": 30,
+                    "maximum": 500,
+                    "minimum": 1
+                },
+                "remove_simulation_calls": {
+                    "title": "Remove simulation calls",
+                    "type": "boolean",
+                    "default": false
+                },
+                "cursor": {
+                    "title": "Cursor",
+                    "description": "Opaque continuation token returned by the previous page. When supplied, do not also send the numbered-page parameter.",
+                    "type": "string",
+                    "maxLength": 4096,
+                    "minLength": 1
+                },
+                "cursor_mode": {
+                    "title": "Cursor mode",
+                    "type": "boolean",
+                    "default": false
+                },
+                "allow_sampled": {
+                    "title": "Allow sampled",
+                    "description": "Omit for backward-compatible complete bounded pages, which may label count as a lower bound. Send false to require an exact total. Send true to opt in explicitly to lower-bound totals and, on the first page, a clearly labelled bounded partial result when the full ordered prefix cannot be proven inside the read budget.",
+                    "type": "boolean"
                 }
             }
         },
@@ -138405,7 +140331,8 @@
                     "title": "Query provenance",
                     "type": "string",
                     "enum": [
-                        "span_user_rollup_end_users_candidate"
+                        "span_user_rollup_end_users_candidate",
+                        "physical_latest_users"
                     ]
                 },
                 "ordering_exact": {
@@ -138436,6 +140363,74 @@
                 },
                 "result": {
                     "$ref": "#/definitions/UsersResult"
+                }
+            }
+        },
+        "UsersQuery": {
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "search": {
+                    "title": "Search",
+                    "type": "string"
+                },
+                "page_size": {
+                    "title": "Page size",
+                    "type": "integer",
+                    "maximum": 500,
+                    "minimum": 1
+                },
+                "current_page_index": {
+                    "title": "Current page index",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "sort_params": {
+                    "title": "Sort params",
+                    "type": "string",
+                    "default": "[]",
+                    "minLength": 1,
+                    "description": "JSON-encoded list of sort params."
+                },
+                "filters": {
+                    "title": "Filters",
+                    "type": "string",
+                    "default": "[]",
+                    "minLength": 1,
+                    "description": "JSON-encoded canonical filter list."
+                },
+                "export": {
+                    "title": "Export",
+                    "type": "boolean",
+                    "default": false
+                },
+                "cursor": {
+                    "title": "Cursor",
+                    "description": "Opaque continuation token returned by the previous page. When supplied, do not also send the numbered-page parameter.",
+                    "type": "string",
+                    "maxLength": 4096,
+                    "minLength": 1
+                },
+                "cursor_mode": {
+                    "title": "Cursor mode",
+                    "type": "boolean",
+                    "default": false
+                },
+                "requested_columns": {
+                    "title": "Requested columns",
+                    "description": "JSON-encoded list of visible Users-table fields. Raw-derived metrics are hydrated only when explicitly requested.",
+                    "type": "string",
+                    "default": []
+                },
+                "attribute_keys": {
+                    "title": "Attribute keys",
+                    "description": "JSON-encoded list of visible custom user attribute keys. Only these keys (plus keys required by filters) are hydrated.",
+                    "type": "string",
+                    "default": []
                 }
             }
         },
@@ -141987,6 +143982,14 @@
                 },
                 "customDetails": {
                     "$ref": "#/definitions/UsageCustomPlanDetails"
+                },
+                "plan_change_locked": {
+                    "title": "Plan change locked",
+                    "type": "boolean"
+                },
+                "plan_change_locked_reason": {
+                    "title": "Plan change locked reason",
+                    "type": "string"
                 },
                 "pending_cancel": {
                     "title": "Pending cancel",

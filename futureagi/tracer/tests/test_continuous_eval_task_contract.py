@@ -1225,7 +1225,18 @@ def test_continuous_builder_requires_every_configured_annotation_label(
     )
 
     assert builder._annotation_label_set_known is True
-    assert "uniqExact(s.label_id) >= 2" in sql
+    if builder_class is SpanListQueryBuilderV2:
+        # Resolved span membership checks every label independently across its
+        # three Score arms, then ANDs the labels. A root-only label and a
+        # span-backed label can jointly establish completeness; requiring two
+        # labels within one arm would incorrectly reject that combination.
+        normalized = " ".join(sql.split())
+        assert "))) AND (ifNull(toString(id), '') != '' AND" in normalized
+        for label_id in label_ids:
+            parameter = next(key for key, value in params.items() if value == label_id)
+            assert sql.count(f"s.label_id = toUUID(%({parameter})s)") == 3
+    else:
+        assert "uniqExact(s.label_id) >= 2" in sql
     assert all(label_id in params.values() for label_id in label_ids)
 
 
@@ -1636,10 +1647,18 @@ def test_cursor_null_continuous_proof_cannot_be_sliced(
 
 
 @pytest.mark.unit
-def test_irreducibly_dense_candidate_window_remains_deterministic_rejection(
+def test_dense_window_workflow_budget_exhaustion_remains_transient(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def overflow(*_args, **_kwargs):
+    calls = 0
+
+    def overflow(*_args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if kwargs.get("workflow_budget") is not None:
+            raise continuous_candidates.ContinuousCandidateReadError(
+                "workflow exhausted"
+            )
         raise continuous_candidates.ContinuousCandidateOverflow("too dense")
 
     monkeypatch.setattr(
@@ -1649,14 +1668,16 @@ def test_irreducibly_dense_candidate_window_remains_deterministic_rejection(
     )
 
     with pytest.raises(
-        row_resolver.EvalTaskSelectionRejected,
-        match="too large for safe row selection",
-    ):
+        row_resolver.EvalTaskReadBudgetExceeded,
+        match="exceeded its read budget",
+    ) as captured:
         row_resolver._resolve_continuous_rows(
             _continuous_trace_task_for_filter(_attribute_filter()),
             ceiling=datetime(2026, 8, 8, 12, 0, tzinfo=UTC),
             sampling_rate=100.0,
         )
+    assert type(captured.value) is row_resolver.EvalTaskReadBudgetExceeded
+    assert calls == 2
 
 
 @pytest.mark.unit
@@ -1693,7 +1714,7 @@ def test_adaptive_overflow_probe_pressure_remains_transient(
 
 
 @pytest.mark.unit
-def test_continuous_classifier_query_cap_fails_before_first_read(
+def test_continuous_classifier_query_cap_escalates_to_workflow_budget(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     ids = tuple(f"trace-{index:05d}" for index in range(10_000))
@@ -1716,11 +1737,26 @@ def test_continuous_classifier_query_cap_fails_before_first_read(
         def recommended_filter_classify_read_settings():
             return None
 
+        @staticmethod
+        def build_filter_match_query(batch, *, candidate_full_state):
+            assert candidate_full_state is True
+            return "classifier", {"candidate_ids": batch}
+
     class Analytics:
         def execute_ch_query(self, query, params, *, timeout_ms, settings):
             nonlocal calls
             calls += 1
-            raise AssertionError("preflight must reject before the first query")
+            assert timeout_ms == 3_000
+            assert settings["max_result_rows"] == 5
+            return _FakeQueryResult(
+                [
+                    {
+                        "trace_id": trace_id,
+                        "filter_witness_0": ("child-" + trace_id, datetime(2026, 8, 8)),
+                    }
+                    for trace_id in params["candidate_ids"]
+                ]
+            )
 
     monkeypatch.setattr(
         continuous_candidates,
@@ -1736,21 +1772,18 @@ def test_continuous_classifier_query_cap_fails_before_first_read(
         lambda _query_type: Builder,
     )
 
-    with pytest.raises(
-        row_resolver.EvalTaskSelectionRejected,
-        match="exceeded its read budget",
-    ):
-        row_resolver._resolve_continuous_rows(
-            _continuous_trace_task_for_filter(_attribute_filter()),
-            ceiling=datetime(2026, 8, 8, 12, 0, tzinfo=UTC),
-            sampling_rate=100.0,
-        )
-
-    assert calls == 0
+    result = row_resolver._resolve_continuous_rows(
+        _continuous_trace_task_for_filter(_attribute_filter()),
+        ceiling=datetime(2026, 8, 8, 12, 0, tzinfo=UTC),
+        sampling_rate=100.0,
+    )
+    assert result.matched_ids == ids
+    assert len(result.trace_filter_witnesses) == len(ids)
+    assert calls == 2_000
 
 
 @pytest.mark.unit
-def test_continuous_candidate_query_cap_is_deterministic_rejection(
+def test_continuous_candidate_query_cap_uses_workflow_budget(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     budget = continuous_candidates._ReadBudget(
@@ -1758,7 +1791,13 @@ def test_continuous_candidate_query_cap_is_deterministic_rejection(
         attempts=continuous_candidates._MAX_QUERY_ATTEMPTS,
     )
 
-    def discover(*_args, **_kwargs):
+    calls = 0
+
+    def discover(*_args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if kwargs.get("workflow_budget") is not None:
+            return continuous_candidates.ContinuousCandidates((), ())
         # Exercise the same cap classification through the public resolver.
         budget.timeout_ms()
 
@@ -1768,15 +1807,13 @@ def test_continuous_candidate_query_cap_is_deterministic_rejection(
         discover,
     )
 
-    with pytest.raises(
-        row_resolver.EvalTaskSelectionRejected,
-        match="exceeded its read budget",
-    ):
-        row_resolver._resolve_continuous_rows(
-            _continuous_trace_task_for_filter(_attribute_filter()),
-            ceiling=datetime(2026, 8, 8, 12, 0, tzinfo=UTC),
-            sampling_rate=100.0,
-        )
+    result = row_resolver._resolve_continuous_rows(
+        _continuous_trace_task_for_filter(_attribute_filter()),
+        ceiling=datetime(2026, 8, 8, 12, 0, tzinfo=UTC),
+        sampling_rate=100.0,
+    )
+    assert result.matched_ids == ()
+    assert calls == 2
 
 
 @pytest.mark.unit

@@ -37,8 +37,6 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import clickhouse_connect
-
 from tracer.services.clickhouse.v2.id_remap_sql import (
     remap_left_join,
     resolved_id_expr,
@@ -525,15 +523,20 @@ class CHSpanReader:
                 username=username,
                 password=password,
                 database=database,
+                application_read=True,
             )
         else:
-            self._client = clickhouse_connect.get_client(
+            from tracer.services.clickhouse.application_read_transport import (
+                create_application_read_http_client,
+            )
+
+            self._client = create_application_read_http_client(
                 host=host,
                 port=port,
                 username=username,
                 password=password,
                 database=database,
-                send_receive_timeout=timeout_sec,
+                send_receive_timeout=timeout_sec,  # Finite initialization only.
                 settings=current_settings() or None,
             )
 

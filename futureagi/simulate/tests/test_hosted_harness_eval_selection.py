@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from unittest.mock import patch
+
 import pytest
 from rest_framework.test import APIClient
 
@@ -90,31 +94,23 @@ def test_the_catalogue_offers_the_family_and_the_numbered_voice_evals(
     organization, workspace
 ):
     _template("customer_agent_loop_detection", ["conversation"])
-    _template("dead_air_detection", ["conversation"], eval_id=201)
     _template("no_misselling", ["conversation"], eval_id=202)
     _template("some_unrelated_eval", ["conversation"], eval_id=12)
 
     offered = {item["name"] for item in offered_evals(organization, workspace, "voice")}
     assert "customer_agent_loop_detection" in offered
-    assert "dead_air_detection" in offered
     assert "no_misselling" in offered
     assert "some_unrelated_eval" not in offered
 
 
 @pytest.mark.django_db
-def test_an_audio_eval_is_offered_on_voice_and_withheld_from_text(organization, workspace):
-    """`dead_air_detection` asks for the recording itself, not a transcript of it.
-
-    Its required key had no source, so `resolve_eval_mapping` refused it and the catalogue
-    dropped it silently on every run, voice included.
-    """
+def test_dead_air_is_never_offered(organization, workspace):
+    """Withheld on both modalities, not just filtered out of text."""
     _template("dead_air_detection", ["input_audio"], eval_id=201)
 
-    voice = {item["name"] for item in offered_evals(organization, workspace, "voice")}
-    assert "dead_air_detection" in voice
-
-    text = {item["name"] for item in offered_evals(organization, workspace, "text")}
-    assert "dead_air_detection" not in text
+    for modality in ("voice", "text"):
+        offered = {item["name"] for item in offered_evals(organization, workspace, modality)}
+        assert "dead_air_detection" not in offered
 
 
 @pytest.mark.django_db
@@ -128,6 +124,78 @@ def test_a_chat_run_is_not_offered_the_voice_only_evals(organization, workspace)
 
 
 @pytest.mark.django_db
+def test_the_manifest_decides_three_ways(organization, workspace):
+    """Absent, visible true and visible false are three different answers."""
+    from simulate.services.harness_evals import harness_evals_manifest
+
+    body = json.loads(harness_evals_manifest().read_text(encoding="utf-8"))
+    by_name = {entry["name"]: entry for entry in body["evals"]}
+
+    assert by_name["customer_agent_query_handling"]["visible"] is True
+    assert by_name["dead_air_detection"]["visible"] is False
+    assert by_name["dead_air_detection"]["why"]
+    assert "customer_agent_single_choice" not in by_name
+
+    _template("customer_agent_query_handling", ["conversation"])
+    _template("dead_air_detection", ["conversation"])
+    _template("customer_agent_single_choice", ["conversation"])
+
+    offered = {item["name"] for item in offered_evals(organization, workspace, "voice")}
+    assert offered == {"customer_agent_query_handling"}
+
+
+@pytest.mark.django_db
+def test_flipping_a_withheld_eval_to_visible_offers_it(organization, workspace):
+    """Pins that withholding is what excludes it, not something else in the path."""
+    _template("dead_air_detection", ["conversation"])
+
+    assert not offered_evals(organization, workspace, "voice")
+
+    with patch(
+        "simulate.services.harness_evals.offerable_eval_names",
+        return_value=frozenset({"dead_air_detection"}),
+    ):
+        offered = {
+            item["name"] for item in offered_evals(organization, workspace, "voice")
+        }
+    assert offered == {"dead_air_detection"}
+
+
+@pytest.mark.django_db
+def test_a_row_absent_from_the_manifest_is_never_offered(organization, workspace):
+    """A name with no manifest entry is never offered, whatever the database holds."""
+    fixtures = [
+        "customer_agent_single_choice",
+        "customer_agent_multi_choices",
+        "customer_agent_score_with_choices",
+    ]
+    for name in fixtures:
+        _template(name, ["conversation"])
+    _template("customer_agent_query_handling", ["conversation"])
+
+    offered = {item["name"] for item in offered_evals(organization, workspace, "voice")}
+    assert offered == {"customer_agent_query_handling"}
+
+
+@pytest.mark.django_db
+def test_a_row_absent_from_the_manifest_cannot_be_selected_either(organization, workspace):
+    """The catalogue is not the only way in: a name the guest sends is checked against the manifest."""
+    from simulate.services.alk_simulate_ingestion import provision_alk_sim_run_test
+
+    _template("customer_agent_single_choice", ["conversation"])
+    run_test, _scenarios, _agent = provision_alk_sim_run_test(
+        organization,
+        workspace=workspace,
+        name="undefined-pick",
+        personas=[{"name": "Customer", "situation": "Asks", "outcome": "Answered"}],
+        modality="voice",
+    )
+
+    with pytest.raises(UnknownEvalSelection):
+        create_selected_eval_configs(run_test, ["customer_agent_single_choice"], "voice")
+
+
+@pytest.mark.django_db
 def test_another_tenants_template_is_never_offered(organization, workspace, django_user_model):
     from accounts.models import Organization
 
@@ -135,7 +203,14 @@ def test_another_tenants_template_is_never_offered(organization, workspace, djan
     _template("customer_agent_private", ["conversation"], organization=other)
     _template("customer_agent_shared", ["conversation"])
 
-    offered = {item["name"] for item in offered_evals(organization, workspace, "voice")}
+    # Synthetic names, so the manifest is stubbed: this test is about tenant scope.
+    with patch(
+        "simulate.services.harness_evals.offerable_eval_names",
+        return_value=frozenset({"customer_agent_private", "customer_agent_shared"}),
+    ):
+        offered = {
+            item["name"] for item in offered_evals(organization, workspace, "voice")
+        }
     assert offered == {"customer_agent_shared"}
 
 
@@ -178,10 +253,16 @@ def test_selection_is_capped_and_idempotent(organization, workspace):
         personas=[{"name": "Customer", "situation": "Asks", "outcome": "Answered"}],
         modality="voice",
     )
-    first = create_selected_eval_configs(run_test, names, "voice")
-    assert len(first) == MOST_SELECTED_EVALS
-    again = create_selected_eval_configs(run_test, names, "voice")
-    assert {config.id for config in again} == {config.id for config in first}
+    # Synthetic names again; this test is about the cap, not the manifest.
+    gate = patch(
+        "simulate.services.harness_evals.offerable_eval_names",
+        return_value=frozenset(names),
+    )
+    with gate:
+        first = create_selected_eval_configs(run_test, names, "voice")
+        assert len(first) == MOST_SELECTED_EVALS
+        again = create_selected_eval_configs(run_test, names, "voice")
+        assert {config.id for config in again} == {config.id for config in first}
     assert (
         SimulateEvalConfig.objects.filter(run_test=run_test).count()
         == MOST_SELECTED_EVALS
@@ -389,3 +470,17 @@ def test_a_template_with_no_model_still_gets_one(organization, workspace):
     )
     assert configs, "the template is mappable, so it must produce a config"
     assert configs[0].model == FALLBACK_EVAL_MODEL
+
+
+def test_every_manifest_name_is_a_real_eval_definition():
+    """A typo drops an eval silently: a name matching no template just never appears."""
+    from simulate.services.harness_evals import harness_evals_manifest
+
+    root = Path(__file__).resolve().parents[2] / "model_hub" / "system_evals"
+    defined = {path.stem for path in root.rglob("*.yaml")}
+    manifest = json.loads(harness_evals_manifest().read_text(encoding="utf-8"))
+    entries = manifest["evals"] if isinstance(manifest, dict) else manifest
+    named = {str(entry["name"]) for entry in entries}
+
+    missing = sorted(named - defined)
+    assert not missing, f"manifest names with no YAML definition: {missing}"

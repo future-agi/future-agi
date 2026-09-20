@@ -549,6 +549,37 @@ def test_empty_year_uses_one_bounded_occupancy_select_not_hourly_n_plus_one() ->
     assert params["catalog_project_limit"] == 3
 
 
+@pytest.mark.parametrize("project_count", (178, 257, 1024))
+def test_large_span_scope_resumes_without_materializing_project_hour_product(
+    monkeypatch, project_count
+):
+    projects = tuple(f"00000000-0000-4000-8000-{i:012x}" for i in range(project_count))
+    since = datetime(2025, 8, 15, 10, tzinfo=UTC)
+    until = since + timedelta(hours=RUNTIME_LIMITS.canonical_span_max_windows)
+    frozen = FrozenSpanSource(projects, since, until, 7)
+
+    def forbid_units(_self):
+        raise AssertionError("read_page must not allocate all project-hour units")
+
+    monkeypatch.setattr(FrozenSpanSource, "units", property(forbid_units))
+    client = _SpanSourceClient(occupied={})
+    reader = _reader(client)
+    cursor = SpanScanCursor(
+        (project_count - 1) * RUNTIME_LIMITS.canonical_span_max_windows
+    ).encode()
+    page = reader.read_page(frozen, cursor=cursor)
+    assert page.terminal and not page.spans
+    assert len(client.calls) == 1
+    assert client.calls[0][1]["catalog_project_ids"] == projects
+    assert client.calls[0][1]["catalog_project_limit"] == project_count + 1
+    past_end = SpanScanCursor(
+        project_count * RUNTIME_LIMITS.canonical_span_max_windows
+    ).encode()
+    with pytest.raises(PropertyCatalogSpanSourceError, match="cursor exceeds source"):
+        reader.read_page(frozen, cursor=past_end)
+    assert len(client.calls) == 1
+
+
 def test_sparse_hours_share_one_bounded_weekly_window() -> None:
     since = datetime(2026, 8, 15, 10, tzinfo=UTC)
     occupied_hour = since + timedelta(hours=2)

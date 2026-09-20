@@ -81,6 +81,9 @@ class HarnessCallSerializer(serializers.Serializer):
     recording_artifacts = serializers.ListField(
         child=serializers.RegexField(_SHA256), default=list
     )
+    stop_reason = serializers.CharField(
+        required=False, allow_null=True, allow_blank=False, max_length=128
+    )
 
 
 class HarnessFailureSerializer(serializers.Serializer):

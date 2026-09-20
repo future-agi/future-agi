@@ -923,9 +923,30 @@ def verify_catalog_schema(
         raise CatalogDevSchemaError(
             "target database does not contain the pinned catalog schema"
         )
-    _validate_exact_catalog_tables(target)
-    pinned_schema_sha256 = _validate_pinned_create_queries(target, statements)
-    _validate_unified_property_schema(target)
+    if deployment == "prod":
+        from tracer.services.clickhouse.v2 import catalog_prod_schema
+
+        # The separate control identity owns this table. The lifecycle writer
+        # normally cannot see it; do not require broader grants to verify itself.
+        target = tuple(
+            table
+            for table in target
+            if table.name != "property_catalog_activation_control_events"
+        )
+        try:
+            pinned_schema_sha256 = catalog_prod_schema.verify_runtime_catalog_tables(
+                tuple(
+                    catalog_prod_schema.ReplicaTable(host="local", **table.as_dict())
+                    for table in target
+                ),
+                target_database=target_database,
+            )
+        except catalog_prod_schema.CatalogProdSchemaError as exc:
+            raise CatalogDevSchemaError(str(exc)) from exc
+    else:
+        _validate_exact_catalog_tables(target)
+        pinned_schema_sha256 = _validate_pinned_create_queries(target, statements)
+        _validate_unified_property_schema(target)
     evidence = {
         "clickhouse_version": version,
         "deployment": deployment,

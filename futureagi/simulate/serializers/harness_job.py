@@ -5,7 +5,6 @@ import re
 from django.conf import settings
 from rest_framework import serializers
 
-
 # Port-generic loopback pattern for the C4 §7 Channel-1 literal-endpoint scan.
 # The declared fixed port is unknowable platform-side (the bundle is authored
 # in-sandbox), so the match is any port on localhost / 127.0.0.1 / [::1].
@@ -36,7 +35,7 @@ class SecretReferenceSerializer(serializers.Serializer):
 
 
 class HarnessSourceSerializer(serializers.Serializer):
-    kind = serializers.ChoiceField(choices=("github", "archive", "remote"))
+    kind = serializers.ChoiceField(choices=("github", "archive", "remote", "provider"))
     repository = serializers.RegexField(
         r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", required=False, allow_null=True
     )
@@ -115,7 +114,8 @@ class HarnessAgentSerializer(serializers.Serializer):
                 invalid.append(str(key))
         if invalid:
             raise serializers.ValidationError(
-                "config must contain scalar non-secret values; use secret_refs"
+                "config must contain scalar non-secret values; move "
+                f"{', '.join(sorted(invalid))} to credential values/secret_refs"
             )
         return value
 
@@ -267,7 +267,7 @@ class HarnessJobCreateSerializer(serializers.Serializer):
         default="futureagi.harness-job.v1",
     )
     run_id = serializers.UUIDField(required=False)
-    source = HarnessSourceSerializer()
+    source = HarnessSourceSerializer(required=False)
     agent = HarnessAgentSerializer()
     scenario_count = serializers.IntegerField(default=10, min_value=1, max_value=200)
     seed = serializers.IntegerField(required=False, allow_null=True)
@@ -280,6 +280,18 @@ class HarnessJobCreateSerializer(serializers.Serializer):
     )
     metadata = serializers.DictField(default=dict)
 
+    def validate_metadata(self, value):
+        reserved = {
+            "attempt_cycle_start",
+            "parallelism_clamped",
+            "parallelism_warnings",
+        }
+        if reserved.intersection(value):
+            raise serializers.ValidationError(
+                "metadata contains reserved execution-control keys"
+            )
+        return value
+
     def validate(self, attrs):
         # ``default=dict`` stores a literal ``{}`` for omitted nested objects,
         # which skips the child field defaults. Re-run the child serializer so
@@ -288,19 +300,48 @@ class HarnessJobCreateSerializer(serializers.Serializer):
             if not attrs.get(name):
                 attrs[name] = self.fields[name].run_validation({})
         runtime = attrs["runtime"]
-        connector = attrs["agent"]["connector"]
-        if connector in {"livekit", "vapi", "retell", "auto"} and (
-            runtime["parallelism"] > runtime["cpu_units"]
+        agent = attrs["agent"]
+        source = attrs.get("source")
+        provider_target_mode = agent.get("mode") in {
+            "connect_only",
+            "provider_import",
+        }
+        if source is None:
+            if (
+                agent["connector"] not in {"vapi", "retell", "retell_chat"}
+                or not provider_target_mode
+            ):
+                raise serializers.ValidationError(
+                    {
+                        "source": "required unless an existing provider agent ID is connected"
+                    }
+                )
+            attrs["source"] = {"kind": "provider", "visibility": "public"}
+        elif source["kind"] == "provider" and (
+            agent["connector"] not in {"vapi", "retell", "retell_chat"}
+            or not provider_target_mode
         ):
             raise serializers.ValidationError(
-                {"runtime": "voice parallelism must not exceed cpu_units"}
+                {
+                    "source": "provider sources require a connected Vapi or Retell agent ID"
+                }
             )
-        if attrs["source"]["kind"] == "remote" and attrs["agent"]["secret_refs"]:
+        # Voice scenarios are intentionally sequential by default and may each consume the
+        # full conversation plus teardown/retry allowance.  A fixed one-hour ceiling made
+        # otherwise healthy large runs expire partway through (typically around scenario
+        # 20-30).  Enforce the same conservative per-scenario budget server-side so older
+        # UIs and direct API clients cannot reintroduce that failure mode.
+        if attrs["scenario_count"] > 10:
+            runtime["max_duration_seconds"] = max(
+                runtime["max_duration_seconds"], attrs["scenario_count"] * 360
+            )
+        if attrs["source"]["kind"] == "remote" and agent["secret_refs"]:
             raise serializers.ValidationError(
                 {"agent": "remote sources must own their target credentials"}
             )
         if self.reject_missing_credentials and attrs["source"]["kind"] != "remote":
-            missing = missing_provider_credentials(attrs["agent"])
+            connector = agent["connector"]
+            missing = missing_provider_credentials(agent)
             if missing:
                 raise serializers.ValidationError(
                     {
@@ -340,12 +381,24 @@ class HarnessJobCreateSerializer(serializers.Serializer):
         if requested <= 1:
             return
         # Lazy import keeps the serializer module import-cycle-free.
-        from simulate.services.hosted_harness import parallelism_w_gt_1_enabled
+        from simulate.services.harness_capacity import configured_capacity
+        from simulate.services.hosted_harness import clamp_parallelism
 
         metadata = dict(attrs.get("metadata") or {})
-        digest = getattr(settings, "ALK_DAYTONA_SNAPSHOT_DIGEST", "")
-        if not parallelism_w_gt_1_enabled(digest):
-            metadata["parallelism_clamped"] = {"requested": requested}
+        try:
+            capacity = configured_capacity(attrs)
+        except ValueError as exc:
+            raise serializers.ValidationError({"runtime": str(exc)}) from exc
+        digest = capacity.snapshot_digest or getattr(
+            settings, "ALK_DAYTONA_SNAPSHOT_DIGEST", ""
+        )
+        admitted, _ = clamp_parallelism(requested, digest)
+        admitted = min(admitted, capacity.parallelism)
+        if admitted != requested:
+            metadata["parallelism_clamped"] = {
+                "requested": requested,
+                "admitted": admitted,
+            }
         environment_values = attrs["source"].get("environment_values") or {}
         flagged = sorted(
             alias
@@ -526,6 +579,7 @@ class HarnessJobInfoSerializer(serializers.Serializer):
     run_id = serializers.UUIDField()
     source = serializers.DictField()
     metadata = serializers.DictField()
+    runtime = serializers.DictField(required=False)
     run_test_id = serializers.UUIDField(allow_null=True)
     test_execution_id = serializers.UUIDField(allow_null=True)
 
@@ -537,6 +591,8 @@ class HarnessJobStatusSerializer(serializers.Serializer):
     attempt = serializers.IntegerField()
     completed_scenarios = serializers.IntegerField()
     failed_scenarios = serializers.IntegerField()
+    active_scenarios = serializers.IntegerField(required=False)
+    queued_scenarios = serializers.IntegerField(required=False)
     total_scenarios = serializers.IntegerField()
     deadline_at = serializers.CharField()
     failure = serializers.JSONField(allow_null=True)
@@ -577,6 +633,27 @@ class HarnessPlatformSerializer(serializers.Serializer):
     url = serializers.CharField(allow_null=True)
 
 
+class HarnessDiagnosticsSerializer(serializers.Serializer):
+    object_key = serializers.CharField(required=False)
+    sha256 = serializers.CharField(required=False)
+    size = serializers.IntegerField()
+    captured_at = serializers.CharField(required=False)
+    final = serializers.BooleanField()
+    error = serializers.CharField(allow_blank=True)
+
+
+class HarnessRuntimeReadSerializer(serializers.Serializer):
+    sandbox_id = serializers.CharField(required=False)
+    diagnostics = HarnessDiagnosticsSerializer(required=False)
+
+
+class HarnessParallelismSerializer(serializers.Serializer):
+    requested = serializers.IntegerField()
+    admitted = serializers.IntegerField()
+    effective = serializers.IntegerField()
+    degrade_reasons = serializers.ListField(child=serializers.CharField())
+
+
 class HarnessJobReadSerializer(serializers.Serializer):
     """Consolidated public read DTO for list/create/retrieve/cancel/poll."""
 
@@ -587,3 +664,5 @@ class HarnessJobReadSerializer(serializers.Serializer):
     scenarios = HarnessScenarioSerializer(many=True)
     receipts = serializers.ListField(child=serializers.JSONField())
     platform = HarnessPlatformSerializer()
+    runtime = HarnessRuntimeReadSerializer(required=False)
+    parallelism = HarnessParallelismSerializer(required=False)

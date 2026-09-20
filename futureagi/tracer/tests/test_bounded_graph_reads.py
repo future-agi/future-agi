@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import re
 from dataclasses import replace
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
@@ -20,6 +21,7 @@ from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     UnsupportedFilterShapeError,
 )
 from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
+from tracer.tests.test_trace_root_physical_replay import assert_coherent_classifier
 
 PROJECT_ID = "00000000-0000-4000-8000-000000000901"
 EVAL_ID = "00000000-0000-4000-8000-000000000902"
@@ -110,10 +112,33 @@ class _Result(SimpleNamespace):
         super().__init__(data=rows, columns=list(rows[0]) if rows else [])
 
 
+def _span_wire_row(row):
+    """Supply actual V2 projected fields, preserving explicit empty/invalid values."""
+    return {
+        "project_id": PROJECT_ID,
+        "observation_type": "SPAN",
+        "service_name": "graph-fixture",
+        **row,
+    }
+
+
+def _span_physical_key(row):
+    return (
+        row["project_id"],
+        row["trace_id"],
+        row["id"],
+        row["start_time"].replace(minute=0, second=0, microsecond=0),
+        row["observation_type"],
+        row["service_name"],
+    )
+
+
 class _CandidateAnalytics:
     def __init__(self, *, observe_type: str, rows: list[dict]):
         self.observe_type = observe_type
-        self.rows = rows
+        self.rows = (
+            [_span_wire_row(row) for row in rows] if observe_type == "span" else rows
+        )
         self.calls = []
 
     def execute_ch_query(self, query, params, *, timeout_ms, settings):
@@ -143,20 +168,18 @@ class _CandidateAnalytics:
                 seen = set()
                 rows = []
                 for row in anchor_rows:
-                    identity = (
-                        str(row.get("trace_id") or ""),
-                        str(row.get("id") or ""),
-                        row.get("start_time"),
-                    )
+                    identity = _span_physical_key(row)
                     if identity in seen:
                         continue
                     seen.add(identity)
                     rows.append(
                         {
-                            "project_id": PROJECT_ID,
-                            "trace_id": identity[0],
-                            "id": identity[1],
-                            "start_time": identity[2],
+                            "project_id": row["project_id"],
+                            "trace_id": row["trace_id"],
+                            "id": row["id"],
+                            "start_time": row["start_time"],
+                            "observation_type": row["observation_type"],
+                            "service_name": row["service_name"],
                         }
                     )
                     if len(rows) >= params["filter_anchor_limit"]:
@@ -201,7 +224,17 @@ class _CandidateAnalytics:
                     "start_time": row["start_time"],
                 }
                 if self.observe_type == "span":
-                    seed_row["trace_id"] = row["trace_id"]
+                    seed_row.update(
+                        {
+                            field: row[field]
+                            for field in (
+                                "project_id",
+                                "trace_id",
+                                "observation_type",
+                                "service_name",
+                            )
+                        }
+                    )
                 if self.observe_type == "trace" and row.get("root_span_id"):
                     seed_row["root_span_id"] = row["root_span_id"]
                 seed_rows.append(seed_row)
@@ -348,7 +381,7 @@ def test_filtered_graph_candidates_are_finite_latest_state_samples(
         observe_type=observe_type,
     )
 
-    assert sample.rows == (row,)
+    assert sample.rows == ((_span_wire_row(row) if observe_type == "span" else row),)
     # Scalar typed Maps are authoritative. JSON/map/array filter types are
     # rejected before a query, so an exhausted scalar range is exact.
     assert sample.query_complete is True
@@ -377,9 +410,25 @@ def test_filtered_graph_candidates_are_finite_latest_state_samples(
     else:
         assert "LIMIT %(filter_anchor_limit)s" in seed_query
         assert seed_params["filter_anchor_limit"] == 513
-        assert "LIMIT 1 BY project_id, trace_id, id, start_time" in seed_query
+        assert (
+            "LIMIT 1 BY project_id, trace_id, id, toStartOfHour(start_time), observation_type, service_name"
+            in " ".join(seed_query.split())
+        )
     assert "argMax(" in classify_query
-    assert "FINAL" not in classify_query
+    if observe_type == "trace":
+        assert "FINAL" not in classify_query
+    else:
+        # V2 span replay resolves one physical row before the compiler's
+        # aggregates. Only immutable six-part keys may restrict that source;
+        # producer-time and deletion predicates belong after replacement.
+        source = classify_query.split("FROM spans FINAL", 1)[1].split(
+            ") AS latest_candidate_spans", 1
+        )[0]
+        assert "IN %(candidate_span_identities)s" in source
+        assert "candidate_start_date" not in source
+        assert "is_deleted" not in source
+        assert len(classify_params["candidate_span_identities"][0]) == 6
+        assert "latest_is_deleted = 0" in classify_query
     assert classify_params[candidate_param] in {("trace-1",), ("span-1",)}
     assert seed_timeout <= bounded_graph_reads.GRAPH_CANDIDATE_DEADLINE_MS
     assert classify_timeout <= bounded_graph_reads.GRAPH_CANDIDATE_DEADLINE_MS
@@ -414,7 +463,7 @@ def test_short_graph_map_filter_is_candidate_scoped(observe_type: str) -> None:
         observe_type=observe_type,
     )
 
-    assert sample.rows == (row,)
+    assert sample.rows == ((_span_wire_row(row) if observe_type == "span" else row),)
     seed_query = analytics.calls[0][0]
     classify_query, classify_params, _, _ = next(
         call
@@ -604,7 +653,7 @@ def test_long_graph_map_filter_uses_bounded_strata_and_candidate_classifiers() -
         deadline_ms=8_000,
     )
 
-    assert sample.rows == (row,)
+    assert sample.rows == (_span_wire_row(row),)
     assert sample.query_complete is False
     assert sample.query_status == "sampled"
     assert all(
@@ -906,7 +955,7 @@ def test_mixed_annotation_graph_reuses_candidate_scoped_list_classifier(
     )
 
     assert sample.query_complete is True
-    assert sample.rows == (row,)
+    assert sample.rows == ((_span_wire_row(row) if observe_type == "span" else row),)
     classify_query, classify_params, _, _ = analytics.calls[1]
     candidate_param = (
         "candidate_trace_ids" if observe_type == "trace" else "candidate_span_ids"
@@ -1637,6 +1686,7 @@ def test_sparse_span_anchor_replays_trace_scoped_ids_and_latest_tombstones():
             "start_time": START + timedelta(minutes=3),
         },
     ]
+    anchor_rows = [_span_wire_row(row) for row in anchor_rows]
     latest_live = {
         **anchor_rows[1],
         "latency_ms": 11,
@@ -1773,6 +1823,8 @@ def test_stale_saturated_span_anchor_uses_bounded_ordered_fallback(monkeypatch):
                     "project_id": PROJECT_ID,
                     "trace_id": f"trace-live-{stratum_index}",
                     "id": f"span-live-{stratum_index}",
+                    "observation_type": "SPAN",
+                    "service_name": "graph-fixture",
                     "start_time": START + timedelta(hours=stratum_index),
                 }
             ],
@@ -1859,6 +1911,8 @@ def test_span_text_map_anchor_stays_optional_for_lists_but_graphs_sample():
                     "project_id": PROJECT_ID,
                     "trace_id": "trace-1",
                     "id": "span-1",
+                    "observation_type": "SPAN",
+                    "service_name": "graph-fixture",
                     "start_time": END - timedelta(minutes=1),
                 }
             ]
@@ -1913,6 +1967,8 @@ def test_span_unindexed_structured_filter_uses_ordered_candidate_only_seed(
                 "project_id": PROJECT_ID,
                 "trace_id": "trace-1",
                 "id": "span-1",
+                "observation_type": "SPAN",
+                "service_name": "graph-fixture",
                 "start_time": END - timedelta(minutes=1),
             }
         ]
@@ -1949,9 +2005,7 @@ def test_span_mixed_structured_anchor_uses_only_the_indexed_typed_map_leaf():
     )
     assert "has(attrs_string.keys, %(latest_filter_key_0)s)" in anchor_query
     assert anchor_params["latest_filter_key_0"] == "final_status"
-    assert (
-        "arrayMap(x -> lowerUTF8(x), mapValues(attrs_string))" in anchor_query
-    )
+    assert "arrayMap(x -> lowerUTF8(x), mapValues(attrs_string))" in anchor_query
     assert "arrayMap(x -> lower(x), mapValues(attrs_string))" in anchor_query
     assert (
         "lowerUTF8(toString(attrs_string[%(latest_filter_key_0)s])) = "
@@ -2048,9 +2102,7 @@ def test_text_map_key_subcolumn_is_only_an_optional_list_anchor(
     )
     assert "has(attrs_string.keys, %(latest_filter_key_0)s)" in anchor_query
     assert anchor_params["latest_filter_key_0"] == "final_status"
-    assert (
-        "arrayMap(x -> lowerUTF8(x), mapValues(attrs_string))" in anchor_query
-    )
+    assert "arrayMap(x -> lowerUTF8(x), mapValues(attrs_string))" in anchor_query
     assert "arrayMap(x -> lower(x), mapValues(attrs_string))" in anchor_query
     assert anchor_params["latest_filter_param_0"] == (
         "rejected" if filter_op == "equals" else ("rejected", "approved")
@@ -2066,11 +2118,7 @@ def test_text_map_key_subcolumn_is_only_an_optional_list_anchor(
         item
         for key, item in anchor_params.items()
         if key.startswith("latest_filter_legacy_index_0_")
-    } == (
-        {"rejected"}
-        if filter_op == "equals"
-        else {"rejected", "approved"}
-    )
+    } == ({"rejected"} if filter_op == "equals" else {"rejected", "approved"})
     assert "Rejected" not in anchor_params.values()
     assert "Approved" not in anchor_params.values()
 
@@ -2584,7 +2632,9 @@ def test_identity_only_session_classifier_projects_the_proven_session_id() -> No
     # filter. Reusing that alias keeps candidate discovery identity-only;
     # metric graphs may then hydrate only those proven canonical roots.
     assert "latest_column_value_0 AS trace_session_id" in query
-    assert query.count("argMax(tuple(trace_session_id), _version).1") == 1
+    assert_coherent_classifier(query)
+    assert re.search(r"_physical_winner\.\d+\.1 AS latest_column_value_0", query)
+    assert query.count("tuple(trace_session_id)") == 1
     assert "latest_trace_name" not in query
 
 
@@ -3511,6 +3561,8 @@ def test_locked_span_graph_retries_dense_temporal_slice_without_skipping_stratum
                     "project_id": PROJECT_ID,
                     "trace_id": f"trace-{index}",
                     "id": f"span-{index}",
+                    "observation_type": "SPAN",
+                    "service_name": "graph-fixture",
                     "start_time": slice_end - timedelta(seconds=1),
                 }
             ],
@@ -3927,9 +3979,9 @@ def test_bounded_high_cardinality_long_window_is_sampled_and_distributed(
     expected_limit_by = (
         "LIMIT 1 BY trace_id"
         if observe_type == "trace"
-        else "LIMIT 1 BY project_id, trace_id, id, start_time"
+        else "LIMIT 1 BY project_id, trace_id, id, toStartOfHour(start_time), observation_type, service_name"
     )
-    assert all(expected_limit_by in query for query in anchor_queries)
+    assert all(expected_limit_by in " ".join(query.split()) for query in anchor_queries)
     assert len(first_analytics.calls) <= (stratum_count * 2)
     if observe_type == "trace":
         classifier_calls = [
@@ -4021,11 +4073,26 @@ def test_dense_long_window_stratum_overflow_remains_explicitly_incomplete(
 
 
 @pytest.mark.unit
-def test_distributed_span_sample_keeps_reused_ids_trace_scoped(monkeypatch):
-    window_end = START + timedelta(days=7)
+@pytest.mark.parametrize("days", [7, 30, 365])
+@pytest.mark.parametrize("service_name", ["graph-fixture", ""])
+def test_distributed_span_sample_keeps_reused_ids_trace_scoped(
+    monkeypatch, days, service_name
+):
+    window_end = START + timedelta(days=days)
+    base = _span_wire_row(
+        {
+            "trace_id": "trace-a",
+            "id": "shared",
+            "start_time": START,
+            "service_name": service_name,
+        }
+    )
     rows = (
-        {"trace_id": "trace-a", "id": "shared", "start_time": START},
-        {"trace_id": "trace-b", "id": "shared", "start_time": START},
+        base,
+        {**base, "trace_id": "trace-b"},
+        {**base, "service_name": "other-service"},
+        {**base, "observation_type": "GENERATION"},
+        {**base, "start_time": START + timedelta(hours=1)},
     )
     monkeypatch.setattr(
         bounded_graph_reads,
@@ -4036,10 +4103,10 @@ def test_distributed_span_sample_keeps_reused_ids_trace_scoped(monkeypatch):
             complete=True,
             status="complete",
             error_code=None,
-            total_rows_lower_bound=2,
+            total_rows_lower_bound=len(rows),
             elapsed_ms=1,
             query_count=2,
-            rows_returned=2,
+            rows_returned=len(rows),
             result_payload_bytes=20,
             attempts=(),
         ),
@@ -4055,10 +4122,13 @@ def test_distributed_span_sample_keeps_reused_ids_trace_scoped(monkeypatch):
         observe_type="span",
     )
 
-    assert {(row["trace_id"], row["id"]) for row in sample.rows} == {
-        ("trace-a", "shared"),
-        ("trace-b", "shared"),
+    # service_name='' is the real storage default, not an invalid identity.
+    # Preserve each physical key once even when every stratum returns it.
+    assert len(sample.rows) == len(rows)
+    assert {_span_physical_key(row) for row in sample.rows} == {
+        _span_physical_key(row) for row in rows
     }
+    assert sample.query_complete is True
 
 
 @pytest.mark.unit

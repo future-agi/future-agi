@@ -66,6 +66,12 @@ type drainProofDocument struct {
 	Proofs  []DrainProof `json:"proofs"`
 }
 
+// Only drain-safety evidence may retain expired assignments. Authorization and
+// retirement continue to use the provider's current-revision methods.
+type retainedRevisionFenceLister interface {
+	retainedRevisionFences(context.Context) ([]RevisionFence, error)
+}
+
 func (r *HotRuntime) DrainProofPath() string {
 	if r == nil {
 		return ""
@@ -80,7 +86,13 @@ func (r *HotRuntime) DrainProofs(ctx context.Context) ([]DrainProof, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	fences, err := r.revisionList.CurrentRevisions(ctx)
+	var fences []RevisionFence
+	var err error
+	if retained, ok := r.revisionList.(retainedRevisionFenceLister); ok {
+		fences, err = retained.retainedRevisionFences(ctx)
+	} else {
+		fences, err = r.revisionList.CurrentRevisions(ctx)
+	}
 	if err != nil {
 		return nil, err
 	}

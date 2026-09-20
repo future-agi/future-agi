@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import PropTypes from "prop-types";
 import {
   Alert,
   Box,
@@ -118,22 +119,37 @@ function ParallelismNotice({ parallelism, clamped, warnings }) {
       )}
       {!degraded && clampedRequested ? (
         <Alert severity="info" variant="outlined">
-          Requested {clampedRequested}, admitted 1 — parallel execution is not
-          enabled for this deployment.
+          Requested {clampedRequested}, admitted {clamped?.admitted ?? 1} —
+          deployment, scenario-count, or sandbox capacity limits apply.
         </Alert>
       ) : null}
       {warningList.map((warning, index) => (
         <Alert key={index} severity="warning" variant="outlined">
           An environment value points at a fixed local address
-          {warning?.aliases?.length
-            ? ` (${warning.aliases.join(", ")})`
-            : ""}
-          , which can prevent scenarios from running in parallel.
+          {warning?.aliases?.length ? ` (${warning.aliases.join(", ")})` : ""},
+          which can prevent scenarios from running in parallel.
         </Alert>
       ))}
     </Stack>
   );
 }
+
+ParallelismNotice.propTypes = {
+  parallelism: PropTypes.shape({
+    requested: PropTypes.number,
+    effective: PropTypes.number,
+    degrade_reasons: PropTypes.arrayOf(PropTypes.string),
+  }),
+  clamped: PropTypes.shape({
+    requested: PropTypes.number,
+    admitted: PropTypes.number,
+  }),
+  warnings: PropTypes.arrayOf(
+    PropTypes.shape({
+      aliases: PropTypes.arrayOf(PropTypes.string),
+    }),
+  ),
+};
 
 export default function HarnessDetail() {
   const { jobId } = useParams();
@@ -441,7 +457,7 @@ export default function HarnessDetail() {
     return (
       <>
         <Helmet>
-          <title>RL Environment | Future AGI</title>
+          <title>Environment | Future AGI</title>
         </Helmet>
         <Box sx={{ p: 2 }}>
           <Alert
@@ -483,7 +499,7 @@ export default function HarnessDetail() {
     <>
       <Helmet>
         <title>
-          {environmentName(current.job, "RL Environment")} | Future AGI
+          {environmentName(current.job, "Environment")} | Future AGI
         </title>
       </Helmet>
 
@@ -598,6 +614,20 @@ export default function HarnessDetail() {
             clamped={current.job?.metadata?.parallelism_clamped}
             warnings={current.job?.metadata?.parallelism_warnings}
           />
+          {current.parallelism && (
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+              World slots: {current.parallelism.effective} effective /{" "}
+              {current.parallelism.admitted ?? current.parallelism.effective}{" "}
+              admitted / {current.parallelism.requested} requested
+              {Number.isInteger(status?.active_scenarios) && (
+                <>
+                  {" "}
+                  · {status.active_scenarios} active · {status.queued_scenarios}{" "}
+                  queued
+                </>
+              )}
+            </Typography>
+          )}
         </Box>
 
         <Box
@@ -621,9 +651,7 @@ export default function HarnessDetail() {
               borderColor: "divider",
             }}
           >
-            <Typography variant="h6">
-              {environmentName(current.job)}
-            </Typography>
+            <Typography variant="h6">{environmentName(current.job)}</Typography>
             <Stack direction="row" alignItems="center" spacing={0.5}>
               <Typography variant="caption" color="text.secondary" noWrap>
                 {shortRunId(current.job?.run_id)}
@@ -1150,15 +1178,24 @@ export default function HarnessDetail() {
                         <Stack
                           direction="row"
                           alignItems="center"
-                          sx={{ border: 1, borderColor: "divider", borderRadius: 1 }}
+                          sx={{
+                            border: 1,
+                            borderColor: "divider",
+                            borderRadius: 1,
+                          }}
                         >
                           <IconButton
                             size="small"
                             aria-label="Fewer scenarios"
                             disabled={extending || addCount <= 1}
-                            onClick={() => setAddCount((n) => Math.max(1, n - 1))}
+                            onClick={() =>
+                              setAddCount((n) => Math.max(1, n - 1))
+                            }
                           >
-                            <Iconify icon="solar:minus-square-linear" width={15} />
+                            <Iconify
+                              icon="solar:minus-square-linear"
+                              width={15}
+                            />
                           </IconButton>
                           <Typography
                             variant="body2"
@@ -1170,9 +1207,14 @@ export default function HarnessDetail() {
                             size="small"
                             aria-label="More scenarios"
                             disabled={extending || addCount >= 20}
-                            onClick={() => setAddCount((n) => Math.min(20, n + 1))}
+                            onClick={() =>
+                              setAddCount((n) => Math.min(20, n + 1))
+                            }
                           >
-                            <Iconify icon="solar:add-square-linear" width={15} />
+                            <Iconify
+                              icon="solar:add-square-linear"
+                              width={15}
+                            />
                           </IconButton>
                         </Stack>
                         <Button
@@ -1184,13 +1226,19 @@ export default function HarnessDetail() {
                             extending ? (
                               <CircularProgress size={14} color="inherit" />
                             ) : (
-                              <Iconify icon="solar:add-circle-linear" width={15} />
+                              <Iconify
+                                icon="solar:add-circle-linear"
+                                width={15}
+                              />
                             )
                           }
                           sx={{
                             bgcolor: "accent.brand",
                             color: "common.white",
-                            "&:hover": { bgcolor: "accent.brand", opacity: 0.88 },
+                            "&:hover": {
+                              bgcolor: "accent.brand",
+                              opacity: 0.88,
+                            },
                           }}
                         >
                           Add scenarios

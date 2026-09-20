@@ -62,9 +62,11 @@ x-backend-env: &backend-env
   # accepted as hosted from silently falling back to the local sandbox path.
   HARNESS_PUBLIC_BASE_URL: ${HARNESS_PUBLIC_BASE_URL:-}
   HARNESS_PROVIDER: ${HARNESS_PROVIDER:-daytona}
+  HOSTED_SANDBOX_PROVIDER: ${HOSTED_SANDBOX_PROVIDER:-daytona}
   ALK_HOSTED_BASE_EGRESS_DOMAINS: ${ALK_HOSTED_BASE_EGRESS_DOMAINS:-}
   ALK_HOSTED_EGRESS_UNRESTRICTED: ${ALK_HOSTED_EGRESS_UNRESTRICTED:-false}
   ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS: ${ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS:-3600}
+  ALK_HOSTED_AUTHORING_TIMEOUT: ${ALK_HOSTED_AUTHORING_TIMEOUT:-}
   ALK_HOSTED_SANDBOX_TTL_SECONDS: ${ALK_HOSTED_SANDBOX_TTL_SECONDS:-7200}
   ALK_HOSTED_WEBRTC_EGRESS_CIDRS: ${ALK_HOSTED_WEBRTC_EGRESS_CIDRS:-}
   ALK_HOSTED_BUNDLE_DIR: ${ALK_HOSTED_BUNDLE_DIR:-}
@@ -73,12 +75,22 @@ x-backend-env: &backend-env
   # platform-owned caller on Vertex Gemini.
   ALK_HARNESS: ${ALK_HARNESS:-}
   ALK_HARNESS_MODEL: ${ALK_HARNESS_MODEL:-}
+  SIMULATOR_LLM_PROVIDER: ${SIMULATOR_LLM_PROVIDER:-vertex}
+  SIMULATOR_LLM_MODEL: ${SIMULATOR_LLM_MODEL:-gemini-3.7-flash}
   DAYTONA_API_KEY: ${DAYTONA_API_KEY:-}
   DAYTONA_API_URL: ${DAYTONA_API_URL:-}
   DAYTONA_TARGET: ${DAYTONA_TARGET:-}
   DAYTONA_ORGANIZATION_ID: ${DAYTONA_ORGANIZATION_ID:-}
   ALK_DAYTONA_SNAPSHOT: ${ALK_DAYTONA_SNAPSHOT:-}
   ALK_DAYTONA_SNAPSHOT_DIGEST: ${ALK_DAYTONA_SNAPSHOT_DIGEST:-}
+  ALK_DAYTONA_DOCKERFILE: ${ALK_DAYTONA_DOCKERFILE:-}
+  E2B_API_KEY: ${E2B_API_KEY:-}
+  ALK_E2B_TEMPLATE_REFERENCE: ${ALK_E2B_TEMPLATE_REFERENCE:-}
+  ALK_E2B_TEMPLATE_BUILD_ID: ${ALK_E2B_TEMPLATE_BUILD_ID:-}
+  ALK_E2B_TEMPLATE_CPU_UNITS: ${ALK_E2B_TEMPLATE_CPU_UNITS:-4}
+  ALK_E2B_TEMPLATE_MEMORY_MB: ${ALK_E2B_TEMPLATE_MEMORY_MB:-8192}
+  ALK_E2B_TEMPLATE_DISK_GB: ${ALK_E2B_TEMPLATE_DISK_GB:-10}
+  ALK_E2B_MAX_TTL_SECONDS: ${ALK_E2B_MAX_TTL_SECONDS:-0}
 
   # LLM gateway + code sandbox + embedding service
   AGENTCC_INTERNAL_URL: ${AGENTCC_INTERNAL_URL:-http://agentcc-gateway:8080}
@@ -373,6 +385,11 @@ services:
       ALK_SIM_SLOT_LEASE_SCRIPT: ${ALK_SIM_SLOT_LEASE_SCRIPT:-}
       TEMPORAL_MAX_CONCURRENT_ACTIVITIES: ${ALK_RUNNER_MAX_CONCURRENCY:-4}
       TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS: ${TEMPORAL_SIMRUNNER_MAX_WORKFLOWS:-8}
+      # A stop must let a phone call in flight finish: the worker drains for
+      # this long, and stop_grace_period below must exceed it, or Docker
+      # force-kills the child mid-call and the leased number stays taken until
+      # its TTL. Raise both together for long phone runs (the prod chart: 4200).
+      TEMPORAL_GRACEFUL_SHUTDOWN_TIMEOUT: ${SIMULATION_RUNNER_GRACEFUL_SHUTDOWN_TIMEOUT:-300}
       # Absolute so the SDK child (runs from a mkdtemp cwd) resolves the key.
       GOOGLE_APPLICATION_CREDENTIALS: /app/backend/Vertex_AI_Creds.json
       # gemini-3.1 is 404 in regional endpoints; only served on `global`.
@@ -385,6 +402,7 @@ services:
       # (_voice_simulator_config): English -> Deepgram aura-2-andromeda-en,
       # other/unknown -> streaming Gemini (multilingual). Set
       # SIMULATOR_TTS_PROVIDER / SIMULATOR_TTS_MODEL here to force one engine.
+    stop_grace_period: ${SIMULATION_RUNNER_STOP_GRACE_PERIOD:-330s}
     volumes:
       # Runner image lacks the key (only the backend image has it); mount it.
       - ${GOOGLE_APPLICATION_CREDENTIALS:-/dev/null}:/app/backend/Vertex_AI_Creds.json:ro
@@ -941,7 +959,7 @@ services:
     restart: unless-stopped
 
   minio:
-    image: minio/minio:RELEASE.2025-02-07T23-21-09Z
+    image: quay.io/minio/minio:RELEASE.2025-02-07T23-21-09Z
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-futureagi}
@@ -1062,7 +1080,7 @@ services:
     restart: unless-stopped
 
   peerdb-minio:
-    image: minio/minio:latest
+    image: quay.io/minio/minio:latest
     profiles: ["peerdb", "full"]
     environment:
       MINIO_ROOT_USER: _peerdb_minioadmin

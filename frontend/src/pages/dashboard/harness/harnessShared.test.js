@@ -129,7 +129,12 @@ describe("stageState", () => {
     expect(stageState(status, at("validating_environment"))).toBe(
       STAGE_STATE.FAILED,
     );
-    expect(stageState(status, at("generating_data"))).toBe(STAGE_STATE.PENDING);
+    // Environment validation runs after the scenarios exist, so data generation and scenario
+    // writing precede the failure rather than following it.
+    expect(stageState(status, at("generating_data"))).toBe(STAGE_STATE.DONE);
+    expect(stageState(status, at("validating_scenarios"))).toBe(
+      STAGE_STATE.PENDING,
+    );
   });
 
   it("completes every stage once the run completes", () => {
@@ -188,16 +193,17 @@ describe("canceledProgress", () => {
     [
       "generating_environment",
       "building_environment",
-      "validating_environment",
       "generating_data",
     ].forEach((stage) => expect(doneStages.has(stage)).toBe(true));
+    // validating_environment belongs to the scenarios group now, so the environment
+    // group completing does not credit it.
+    expect(doneStages.has("validating_environment")).toBe(false);
   });
 
   it("never credits a group that only started", () => {
     const { doneStages } = canceledProgress([started("environment")]);
     [
       "building_environment",
-      "validating_environment",
       "generating_data",
     ].forEach((stage) => expect(doneStages.has(stage)).toBe(false));
   });
@@ -481,6 +487,17 @@ describe("tabState", () => {
     );
   });
 
+  // The runner reaches validating_environment AFTER generating_scenarios, so filing it under
+  // environment sent the working tab backwards into a tab that had already finished.
+  it("keeps Scenarios working through validating_environment", () => {
+    expect(tabState("scenarios", at("validating_environment"))).toBe(
+      TAB_STATE.WORKING,
+    );
+    expect(tabState("environment", at("validating_environment"))).not.toBe(
+      TAB_STATE.WORKING,
+    );
+  });
+
   it("ticks a tab the run has moved past", () => {
     expect(tabState("contract", at("generating_scenarios"))).toBe(
       TAB_STATE.DONE,
@@ -538,7 +555,7 @@ describe("environmentName", () => {
   });
 
   it("lets a caller supply its own fallback for slots that cannot be blank", () => {
-    expect(environmentName({ metadata: {} }, "RL Environment")).toBe("RL Environment");
+    expect(environmentName({ metadata: {} }, "Environment")).toBe("Environment");
   });
 
   // The regression #2427 reintroduced: github jobs submitted without

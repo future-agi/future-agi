@@ -3,7 +3,6 @@ import difflib
 import json
 import time
 from collections import Counter
-from threading import Lock
 from typing import Literal
 
 import litellm
@@ -12,7 +11,6 @@ import requests
 import structlog
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
-from datasets import load_dataset
 from django.core.cache import cache
 from huggingface_hub.errors import HfHubHTTPError
 from litellm.llms.custom_llm import CustomLLM, ModelResponse
@@ -688,6 +686,9 @@ def load_hf_dataset_with_retries(
                 response.raise_for_status()
                 return response.json()
             else:
+                from tfc.utils.lazy_extras import load_extra
+
+                load_dataset = load_extra("datasets", "ml").load_dataset
                 hf_dataset = load_dataset(
                     dataset_name,
                     name=config_name,
@@ -985,25 +986,7 @@ class AnnotationCorpusBuilder:
         return vocab, top_20, min_sen_len, max_sen_len, avg_len
 
 
-class _LazyAnnotationCorpusBuilder:
-    """Avoid downloading NLTK corpora while unrelated workers import this module."""
-
-    def __init__(self):
-        self._instance = None
-        self._lock = Lock()
-
-    def _get_instance(self):
-        if self._instance is None:
-            with self._lock:
-                if self._instance is None:
-                    self._instance = AnnotationCorpusBuilder()
-        return self._instance
-
-    def build_annotation_corpus(self, sentences):
-        return self._get_instance().build_annotation_corpus(sentences)
-
-
-corpus_builder = _LazyAnnotationCorpusBuilder()
+corpus_builder = AnnotationCorpusBuilder()
 
 
 def get_model_mode(model_name: str) -> str:

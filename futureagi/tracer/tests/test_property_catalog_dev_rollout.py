@@ -1221,6 +1221,39 @@ def test_project_tenant_authorization_is_canonical_bound_and_redacted() -> None:
     )
 
 
+@pytest.mark.parametrize("project_count", (178, 257, 1024))
+def test_large_runtime_scope_keeps_exact_project_tenant_authorization(project_count):
+    projects = tuple(f"00000000-0000-4000-8000-{i:012x}" for i in range(project_count))
+    config = replace(_unit_runtime_config(), project_ids=projects)
+    request = _request(execute=True)
+    bindings = _project_bindings(projects)
+    authorization = _authorize_project_tenant_bindings(
+        request=request,
+        config=config,
+        observation=_provenance_observation(),
+        bindings=tuple(reversed(bindings)),
+        authorized_at=ATTESTED_AT,
+    )
+    assert authorization.project_ids == projects
+    assert authorization.as_dict()["project_count"] == project_count
+    for invalid in (
+        bindings[:-1],
+        bindings + (bindings[-1],),
+        bindings[:-1]
+        + _project_bindings((projects[-1],), workspace_id=OTHER_WORKSPACE),
+    ):
+        with pytest.raises(PropertyCatalogDevRuntimeError):
+            _authorize_project_tenant_bindings(
+                request=request,
+                config=config,
+                observation=_provenance_observation(),
+                bindings=invalid,
+                authorized_at=ATTESTED_AT,
+            )
+    with pytest.raises(PropertyCatalogDevRuntimeError, match="unique canonical"):
+        replace(config, project_ids=projects + (projects[-1],))
+
+
 def test_foreign_allowlisted_project_with_spans_is_rejected_before_target_or_stage(
     tmp_path: Any,
 ) -> None:

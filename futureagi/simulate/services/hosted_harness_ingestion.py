@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from uuid import UUID
 import hashlib
 import json
 import logging
 import tempfile
 from datetime import timedelta
 from typing import Any, BinaryIO
+from uuid import UUID
 
 from django.db import IntegrityError, transaction
 from django.utils import timezone
@@ -23,6 +23,7 @@ from simulate.models import (
     HostedHarnessReceipt,
     HostedHarnessScenario,
 )
+from simulate.models.chat_message import ChatMessageModel
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     _resolve_scenario_modality,
@@ -332,15 +333,20 @@ def ingest_artifact(
     )
     temporary.seek(0)
     object_key = f"alk-harness/{attempt.job.organization_id}/{attempt.job_id}/{digest}"
-    get_storage_client().put_object(
-        bucket_name=UPLOAD_BUCKET_NAME,
-        object_name=object_key,
-        data=temporary,
-        length=size,
-        content_type=content_type,
-    )
-    temporary.close()
+    try:
+        get_storage_client().put_object(
+            bucket_name=UPLOAD_BUCKET_NAME,
+            object_name=object_key,
+            data=temporary,
+            length=size,
+            content_type=content_type,
+        )
+    finally:
+        # Every scenario can upload artifacts concurrently; do not retain a spooled file when
+        # storage is unavailable or rejects the object.
+        temporary.close()
 
+    budget_exceeded = False
     with transaction.atomic():
         job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
             id=attempt.job_id
@@ -360,9 +366,35 @@ def ingest_artifact(
                 job=job, sha256=digest
             )
             return artifact, False
-        job.uploaded_artifact_bytes += size
-        job.save(update_fields=["uploaded_artifact_bytes", "updated_at"])
-        return artifact, True
+        # The first budget check is only an early rejection. Other scenario uploads can finish
+        # while this artifact is being streamed to object storage, so repeat the decision while
+        # holding the job row lock immediately before accounting bytes.
+        absolute_budget = int(job.max_artifact_bytes * 1.1)
+        if job.uploaded_artifact_bytes + size > absolute_budget:
+            budget_exceeded = True
+        else:
+            job.uploaded_artifact_bytes += size
+            job.save(update_fields=["uploaded_artifact_bytes", "updated_at"])
+            return artifact, True
+
+    # The object was uploaded before the final accounting lock. Remove a rejected unique object
+    # so a losing concurrent upload does not leave untracked storage behind. Cleanup is best effort
+    # because the budget rejection itself must remain authoritative if storage is degraded.
+    if budget_exceeded:
+        try:
+            get_storage_client().remove_object(UPLOAD_BUCKET_NAME, object_key)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "failed to remove over-budget harness artifact", exc_info=True
+            )
+        raise HostedHarnessError(
+            "artifact_budget_exceeded",
+            "artifact exceeds the remaining job upload budget",
+            status_code=413,
+        )
+    raise HostedHarnessError(
+        "artifact_ingest_failed", "artifact could not be accounted", status_code=500
+    )
 
 
 def ingest_manifest(
@@ -476,6 +508,14 @@ def _validate_event(
     )
     if payload_error:
         return reject("event_payload_invalid", payload_error)
+    if event["type"] == "scenario_started":
+        if not HostedHarnessScenario.no_workspace_objects.filter(
+            job_id=attempt.job_id,
+            scenario_key=event["payload"]["scenario_key"],
+        ).exists():
+            return reject(
+                "scenario_unknown", "scenario key is not registered for this job"
+            )
     existing_id = HostedHarnessEvent.no_workspace_objects.filter(
         event_id=event["event_id"]
     ).first()
@@ -653,6 +693,10 @@ def _event_payload_error(event_type: str, stage: str, payload: object) -> str | 
     if event_type == "stage_changed":
         if set(payload) != {"from", "to"} or payload["to"] != stage:
             return "stage_changed requires exactly from/to and stage == to"
+    elif event_type == "scenario_started":
+        key = payload.get("scenario_key")
+        if not isinstance(key, str) or not key.strip() or len(key) > 255:
+            return "scenario_started requires a nonempty scenario key"
     elif event_type == "parallelism_degraded":
         if set(payload) != {"requested", "effective", "reason"}:
             return "parallelism_degraded requires requested/effective/reason"
@@ -750,6 +794,7 @@ def _apply_receipt_to_call(
         call.ended_at = call_data["ended_at"]
         call.completed_at = call_data["ended_at"]
         call.duration_seconds = round(call_data["duration_ms"] / 1000)
+        call.ended_reason = call_data.get("stop_reason") or ""
     elif body["status"] == "skipped":
         call.completed_at = timezone.now()
     metadata = dict(call.call_metadata or {})
@@ -775,6 +820,7 @@ def _apply_receipt_to_call(
         "ended_at",
         "completed_at",
         "duration_seconds",
+        "ended_reason",
         "call_metadata",
         "error_message",
         "updated_at",
@@ -910,7 +956,9 @@ def _apply_receipt_to_call(
                 else []
             )
         except Exception:  # noqa: BLE001 - a receipt is never lost over what it schedules next
-            logger.exception("harness_eval_selection_lookup_failed", call_id=str(call_id))
+            logger.exception(
+                "harness_eval_selection_lookup_failed", call_id=str(call_id)
+            )
             selected = []
         if selected:
             transaction.on_commit(
@@ -985,11 +1033,15 @@ def _receipt_evaluations(body: dict[str, Any]) -> list[dict[str, Any]]:
     for goal in body.get("sub_goals") or []:
         if not isinstance(goal, dict) or not goal.get("name"):
             continue
+        # Nothing decided this sub-goal, which is not the same as deciding against it.
+        # Coercing it would publish a failed, reasonless eval. Coverage carries the count.
+        if goal.get("held") is None:
+            continue
         results.append(
             {
                 "name": str(goal["name"]),
                 "kind": "judge" if goal.get("judged") else "checkpoint",
-                "passed": bool(goal.get("held")),
+                "passed": bool(goal["held"]),
                 "reason": str(goal.get("reason") or ""),
             }
         )
@@ -1061,6 +1113,55 @@ def _ingest_hosted_transcript(
         except json.JSONDecodeError:
             payload = {"transcript": raw, "messages": []}
         messages = payload.get("messages") if isinstance(payload, dict) else []
+        # Guests predating the structured transcript contract uploaded the
+        # rendered `customer: ...` / `agent: ...` text. Preserve visibility for
+        # those in-flight and retained runs while all new guests emit JSON.
+        if (
+            call.simulation_call_type == CallExecution.SimulationCallType.TEXT
+            and not messages
+            and isinstance(payload, dict)
+            and payload.get("transcript")
+        ):
+            messages = []
+            for line in str(payload["transcript"]).splitlines():
+                speaker, separator, content = line.partition(":")
+                if separator and speaker.strip().lower() in {"customer", "agent"}:
+                    messages.append(
+                        {
+                            "role": (
+                                "user"
+                                if speaker.strip().lower() == "customer"
+                                else "assistant"
+                            ),
+                            "content": content.strip(),
+                        }
+                    )
+        if (
+            call.simulation_call_type == CallExecution.SimulationCallType.TEXT
+            and isinstance(messages, list)
+        ):
+            from simulate.services.alk_simulate_ingestion import (
+                _store_alk_chat_messages,
+            )
+
+            segments = [
+                {
+                    "speaker_role": str(message.get("role") or "unknown"),
+                    "content": str(message.get("content") or ""),
+                    **(
+                        {"tool_calls": message["tool_calls"]}
+                        if message.get("tool_calls")
+                        else {}
+                    ),
+                }
+                for message in messages
+                if isinstance(message, dict) and message.get("content") is not None
+            ]
+            ChatMessageModel.objects.filter(call_execution=call).delete()
+            CallTranscript.objects.filter(call_execution=call).delete()
+            if segments:
+                _store_alk_chat_messages(call, segments)
+            return
         rows: list[CallTranscript] = []
         if isinstance(messages, list):
             # The v2 transcript carries absolute speech timing

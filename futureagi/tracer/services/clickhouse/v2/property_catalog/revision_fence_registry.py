@@ -24,7 +24,6 @@ from .coordinator import ProducerRevisionAssignment
 REVISION_FENCE_FORMAT = "futureagi.property-catalog-revision-fence"
 REVISION_FENCE_VERSION = 2
 MAX_REVISION_FENCE_BYTES = 64 << 20
-MAX_REVISION_FENCE_PROJECTS = 256
 
 _FENCE_SHA_DOMAIN = "futureagi.property-catalog.revision-fence.v2"
 # Keep the structural protocol bound aligned with Go's maxRevisionLease and the
@@ -491,11 +490,9 @@ def _validated_fence_document(
     _positive_uint(document["projection_version"], 16, "projection_version")
     _lower_sha256(document["build_lease_sha256"], "build_lease_sha256")
     project_ids = document["project_ids"]
-    if type(project_ids) is not list or not 1 <= len(project_ids) <= (
-        MAX_REVISION_FENCE_PROJECTS
-    ):
+    if type(project_ids) is not list or not project_ids:
         raise RevisionFenceRegistryError(
-            "revision fence project inventory must contain 1..256 entries"
+            "revision fence project inventory must contain at least one entry"
         )
     if any(type(project_id) is not str for project_id in project_ids):
         raise RevisionFenceRegistryError("revision fence project inventory is invalid")

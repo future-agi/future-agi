@@ -21,6 +21,7 @@ from tracer.serializers.filters import (
     filter_list_query_param_field,
 )
 from tracer.services.user_attribute_contract import unsupported_user_attribute_keys
+from tracer.services.user_filter_capabilities import validate_users_filter_capabilities
 
 
 class TraceSerializer(serializers.ModelSerializer):
@@ -341,6 +342,16 @@ class TraceObserveListResultSerializer(serializers.Serializer):
 class TraceObserveListResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField()
     result = TraceObserveListResultSerializer()
+
+
+class TraceNavigationResultSerializer(serializers.Serializer):
+    next_trace_id = serializers.CharField(allow_null=True)
+    previous_trace_id = serializers.CharField(allow_null=True)
+
+
+class TraceNavigationResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = TraceNavigationResultSerializer()
 
 
 class TracePropertiesResponseSerializer(serializers.Serializer):
@@ -772,6 +783,9 @@ class UsersQuerySerializer(StrictInputSerializer):
         ),
     )
 
+    def validate_filters(self, value):
+        return validate_users_filter_capabilities(value)
+
     def validate(self, attrs):
         attrs = super().validate(attrs)
         requested_columns = tuple(dict.fromkeys(attrs.get("requested_columns") or ()))
@@ -876,7 +890,8 @@ class UsersResultSerializer(serializers.Serializer):
     )
     query_exact = serializers.BooleanField(required=False)
     query_provenance = serializers.ChoiceField(
-        choices=("span_user_rollup_end_users_candidate",), required=False
+        choices=("span_user_rollup_end_users_candidate", "physical_latest_users"),
+        required=False,
     )
     ordering_exact = serializers.BooleanField(required=False)
     approximate_fields = serializers.ListField(

@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import requests
 
@@ -209,3 +209,88 @@ def probe_all(values: Mapping[str, str]) -> list[ProbeResult]:
         for name, spec in PROVIDER_PROBES.items()
         if spec.applies(values)
     ]
+
+
+def probe_provider_target(
+    connector: str, target_id: str, values: Mapping[str, str]
+) -> ProbeResult | None:
+    """Verify that a connected provider target exists and belongs to this key.
+
+    A list endpoint only proves that the credential is valid. It says nothing
+    about the assistant/agent ID the user entered, which otherwise fails much
+    later inside the guest runtime. Keep this read-only and provider-generic:
+    each supported connector contributes only its target lookup endpoint.
+    """
+    connector = str(connector or "").strip().lower()
+    target_id = str(target_id or "").strip()
+    if not target_id:
+        return None
+
+    escaped_id = quote(target_id, safe="")
+    if connector == "vapi":
+        label = "Vapi assistant"
+        alias = "VAPI_API_KEY"
+        url = f"https://api.vapi.ai/assistant/{escaped_id}"
+    elif connector == "retell":
+        label = "Retell voice agent"
+        alias = "RETELL_API_KEY"
+        url = f"https://api.retellai.com/get-agent/{escaped_id}"
+    elif connector == "retell_chat":
+        label = "Retell chat agent"
+        alias = "RETELL_API_KEY"
+        url = f"https://api.retellai.com/get-chat-agent/{escaped_id}"
+    else:
+        return None
+
+    api_key = str(values.get(alias) or "").strip()
+    if not api_key:
+        return None
+
+    aliases = (alias,)
+    provider = f"{connector}_target"
+    try:
+        response = requests.get(
+            url,
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=PROBE_TIMEOUT_SECONDS,
+        )
+    except requests.RequestException as exc:
+        return ProbeResult(
+            provider,
+            label,
+            aliases,
+            False,
+            f"{label} lookup is unreachable ({type(exc).__name__}); retry Preflight",
+        )
+
+    if response.status_code == 404:
+        return ProbeResult(
+            provider,
+            label,
+            aliases,
+            False,
+            f"{label} ID was not found or is not accessible with {alias}",
+        )
+    if response.status_code in {401, 403}:
+        return ProbeResult(
+            provider,
+            label,
+            aliases,
+            False,
+            f"{label} lookup rejected {alias} (HTTP {response.status_code})",
+        )
+    if response.status_code >= 400:
+        return ProbeResult(
+            provider,
+            label,
+            aliases,
+            False,
+            f"{label} ID could not be validated (HTTP {response.status_code})",
+        )
+    return ProbeResult(
+        provider,
+        label,
+        aliases,
+        True,
+        f"{label} ID exists and is accessible with {alias}",
+    )

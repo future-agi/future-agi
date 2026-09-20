@@ -67,7 +67,6 @@ def _specs(
 PROPERTY_CATALOG_RUNTIME_SETTING_SPECS = {
     **_specs(
         (
-            ("MAX_PROJECTS", 64, 1, 256),
             ("MAX_PAGE_SIZE", 50, 1, 200),
             ("MAX_SEARCH_BYTES", 512, 1, 4096),
             ("QUERY_WALL_MS", 10_000, 100, 30_000),
@@ -361,6 +360,9 @@ INTERACTIVE_READ_SETTING_SPECS = {
             ("FILTER_SELECTOR_MAX_OPT_IN_QUERY_TIMEOUT_MS", 3_000, 25, 30_000),
             ("FILTER_SELECTOR_MAX_BUILDER_QUERY_TIMEOUT_MS", 30_000, 25, 120_000),
             ("FILTER_SELECTOR_MAX_THREADS", 1, 1, 8),
+            # Broad key-only span population proofs read thin raw columns;
+            # their CPU budget is separate from the normal seed/classifier.
+            ("FILTER_SELECTOR_POPULATION_MAX_THREADS", 2, 1, 4),
             ("FILTER_SELECTOR_MAX_NUMBERED_PAGE_WORK_ROWS", 5_000, 1, 100_000),
             ("OBSERVABILITY_NAVIGATION_CANDIDATE_LIMIT", 4_095, 1, 65_535),
             ("OBSERVABILITY_NAVIGATION_SCAN_PAGE_SIZE", 200, 1, 1_000),

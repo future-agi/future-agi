@@ -109,6 +109,27 @@ describe("HarnessDetail run checklist", () => {
     expect(screen.queryByText("Queued")).not.toBeInTheDocument();
   });
 
+  it("shows requested, admitted, effective slots and actual queue counts", async () => {
+    const value = job({ stage: "running" });
+    value.parallelism = {
+      requested: 10,
+      admitted: 4,
+      effective: 2,
+      degrade_reasons: [],
+    };
+    value.status.active_scenarios = 1;
+    value.status.queued_scenarios = 8;
+    value.job.metadata.parallelism_clamped = { requested: 10, admitted: 4 };
+    getHarnessJob.mockResolvedValue(value);
+    renderDetail();
+    expect(
+      await screen.findByText(
+        "World slots: 2 effective / 4 admitted / 10 requested · 1 active · 8 queued",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Requested 10, admitted 4/)).toBeInTheDocument();
+  });
+
   it("reveals the whole list when the summary row is opened", async () => {
     getHarnessJob.mockResolvedValue(
       job({
@@ -135,8 +156,8 @@ describe("HarnessDetail run checklist", () => {
     renderDetail();
 
     expect(await screen.findByText("Validating environment")).toBeInTheDocument();
-    // Five stages preceded it, so they fold away rather than padding the column.
-    expect(screen.getByText("5 stages complete")).toBeInTheDocument();
+    // Seven stages preceded it, so they fold away rather than padding the column.
+    expect(screen.getByText("7 stages complete")).toBeInTheDocument();
     expect(screen.queryByText("Queued")).not.toBeInTheDocument();
   });
 

@@ -75,7 +75,7 @@ urlpatterns = [
     # Agent graph — explicit path because @action doesn't register reliably with Granian reload
     path(
         "trace/agent_graph/",
-        TraceView.as_view({"get": "agent_graph"}),
+        TraceView.as_view({"get": "agent_graph", "post": "agent_graph"}),
         name="trace-agent-graph",
     ),
     # Legacy OTLP endpoints — fi-collector is the primary OTLP ingestion path (June 2026; root-level routes in tfc/urls.py also migrated)

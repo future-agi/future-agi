@@ -4,7 +4,10 @@ import { STATUS_TYPES } from "src/utils/statusUtils";
 
 export const terminalStages = new Set(["completed", "failed", "canceled"]);
 
-// The ordered pipeline, mirroring HarnessStage in the ALK wheel (fi/alk/harness/job.py).
+// The ordered pipeline, by when the runner reaches each stage rather than by the declaration
+// order of HarnessStage in the ALK wheel (fi/alk/harness/job.py): validating_environment runs
+// after the scenarios exist, because it proves their reference solutions. In enum order the
+// checklist rewinds. Same divergence as cleaning_up and uploading_artifacts below.
 // "failed" and "canceled" are outcomes rather than positions, so they stay out: a stage
 // missing from this list indexes to -1, which strands the checklist showing nothing reached
 // and pins the progress bar at its 2% floor.
@@ -14,9 +17,9 @@ export const stages = [
   "understanding_agent",
   "generating_environment",
   "building_environment",
-  "validating_environment",
   "generating_data",
   "generating_scenarios",
+  "validating_environment",
   "validating_scenarios",
   "connecting_agent",
   "running",
@@ -39,15 +42,20 @@ export const eventTime = (value) => {
 // event covers four UI stages. Six stages (building/validating environment, generating data,
 // validating scenarios, connecting agent, grading) are never emitted at all, so they can only
 // be credited through the group they belong to.
+// `validating_environment` is grouped with scenarios, not environment: its failures name
+// scenarios, and grouping it under environment sends the working tab backwards mid-run.
 const EVENT_STAGE_GROUPS = {
   understand: ["understanding_agent"],
   environment: [
     "generating_environment",
     "building_environment",
-    "validating_environment",
     "generating_data",
   ],
-  scenarios: ["generating_scenarios", "validating_scenarios"],
+  scenarios: [
+    "generating_scenarios",
+    "validating_environment",
+    "validating_scenarios",
+  ],
   calls: ["connecting_agent", "running", "grading"],
   cleaning_up: ["cleaning_up"],
   uploading_artifacts: ["uploading_artifacts"],
@@ -254,10 +262,13 @@ const TAB_STAGES = {
   environment: [
     "generating_environment",
     "building_environment",
-    "validating_environment",
     "generating_data",
   ],
-  scenarios: ["generating_scenarios", "validating_scenarios"],
+  scenarios: [
+    "generating_scenarios",
+    "validating_environment",
+    "validating_scenarios",
+  ],
   runs: [
     "connecting_agent",
     "running",

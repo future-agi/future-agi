@@ -64,6 +64,7 @@ def ch_client():
         user=CH_USER,
         password=CH_PASSWORD,
         connect_timeout=3,
+        settings={"optimize_on_insert": 0},
     )
     try:
         client.execute("SELECT 1")
@@ -107,7 +108,7 @@ def bounded_span_table(ch_client):
             project_version_id Nullable(UUID),
             name String,
             service_name String DEFAULT '',
-            observation_type String,
+            observation_type String DEFAULT 'span',
             status Nullable(String),
             start_time DateTime64(6, 'UTC'),
             end_time Nullable(DateTime64(6, 'UTC')),
@@ -127,7 +128,7 @@ def bounded_span_table(ch_client):
             attrs_bool Map(String, UInt8),
             attributes_extra String
         )
-        ENGINE = MergeTree
+        ENGINE = ReplacingMergeTree(_version, is_deleted)
         ORDER BY (
             project_id,
             observation_type,
@@ -138,6 +139,7 @@ def bounded_span_table(ch_client):
         )
         """
     )
+    ch_client.execute(f"SYSTEM STOP MERGES {table}")
     try:
         yield table
     finally:
@@ -907,7 +909,7 @@ def test_attribute_detail_executes_latest_state_and_tombstones_on_ch25(
                 1,
                 "Rejected",
                 trace_id="trace-shared-a",
-                started_at=shared_start + timedelta(minutes=1),
+                started_at=shared_start - timedelta(hours=1),
             ),
         ],
     )
@@ -938,6 +940,7 @@ def test_attribute_detail_executes_latest_state_and_tombstones_on_ch25(
     ).read_detail([project_id], key, horizon_days=7)
 
     assert read.attribute_type == "string"
+    # A different storage hour is a distinct physical span with the same bare ID.
     assert [(item.value, item.count) for item in read.rows] == [("Rejected", 4)]
     assert read.metadata.query_complete is True
     # Typed values use a light version certificate between candidate discovery
@@ -1408,10 +1411,9 @@ def test_bounded_reader_handles_duplicates_tombstone_and_latest_updates(
 
     assert page.complete is True
     assert [item["id"] for item in page.rows] == ["duplicate", "stable", "moved"]
-    # A selective typed-Map equality now uses the bounded raw-witness anchor
-    # before exact latest-state classification.
+    # The selective anchor resolves latest versions before returning identities.
     assert page.attempts[0].kind == "anchor"
-    assert page.attempts[0].rows_returned == 5
+    assert page.attempts[0].rows_returned == 3
 
 
 def test_bounded_span_reader_isolates_reused_ids_by_trace_on_ch25(
@@ -3153,6 +3155,8 @@ def test_candidate_scoped_annotation_residual_executes_on_ch25(
                 "trace_id": trace_id,
                 "id": "annotated-span",
                 "start_time": started_at,
+                "observation_type": "span",
+                "service_name": "",
             }
         ]
     )
@@ -3264,6 +3268,8 @@ def test_span_annotation_filter_rejects_same_id_score_from_other_project_ch25(
                 "trace_id": trace_id,
                 "id": shared_span_id,
                 "start_time": started_at,
+                "observation_type": "span",
+                "service_name": "",
             }
         ]
     )

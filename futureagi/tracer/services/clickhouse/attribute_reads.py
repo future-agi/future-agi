@@ -3,7 +3,7 @@
 The picker surfaces in this module are discovery aids, not accounting reads.
 Non-cursor compatibility reads walk a fixed one-year horizon in adjacent
 half-open bands. Cursor callers can freeze a broader retained-data window;
-every physical read remains capped and every selected span is replayed through
+every selected span is replayed through
 ``argMax(_version)`` before accepting a key or value.  That keeps tombstones
 and cleared attributes from leaking stale data even when span ids are reused.
 
@@ -29,6 +29,10 @@ from typing import Any, Literal
 import structlog
 from django.conf import settings
 
+from tracer.services.clickhouse.application_read_policy import (
+    application_read_context,
+    application_read_settings,
+)
 from tracer.services.clickhouse.attribute_cursor_state import (
     ATTRIBUTE_CURSOR_STATE_MAX_DIGESTS,
 )
@@ -58,9 +62,10 @@ AttributeValue = str | int | float | bool | tuple[JsonScalar, ...]
 
 ATTRIBUTE_READ_HORIZON_DAYS = (7, 14, 30, 180, 365)
 # Attribute inventory and value reads share the reviewed, environment-backed
-# filter-value wall. Every statement receives only the operation's
-# remaining time; finite query-count, candidate, byte, memory, and result caps
-# continue to bound the work independently of source-row volume.
+# filter-value wall for admission between statements. Public application reads
+# normalize statement abort caps at the executor; standalone diagnostics retain
+# the supplied bounds. Query-count, candidate, memory and pagination controls
+# remain independent of statement execution time.
 ATTRIBUTE_READ_WALL_TIMEOUT_MS = settings.FILTER_VALUE_READ_TIMEOUT_MS
 ATTRIBUTE_READ_QUERY_TIMEOUT_MS = settings.FILTER_VALUE_READ_TIMEOUT_MS
 ATTRIBUTE_READ_EXACT_KEY_QUERY_TIMEOUT_MS = settings.FILTER_VALUE_READ_TIMEOUT_MS
@@ -163,7 +168,7 @@ ATTRIBUTE_VALUE_CURSOR_PROOF_MAX_RESULT_ROWS = (
 ATTRIBUTE_VALUE_CURSOR_CANDIDATE_LIMIT = 64
 ATTRIBUTE_VALUE_CURSOR_MAX_CANDIDATE_LIMIT = 512
 # Only ``call_id`` has representative production evidence for a larger first
-# prefix: 960 exact identities yielded 40 values in 2.49s on Colektia, while
+# prefix: 960 exact identities yielded 40 values in 2.49s on the reference project, while
 # 512 yielded 11. Every other key starts at 64 and grows only after a completed
 # batch proves that its current prefix produced no new values.
 ATTRIBUTE_VALUE_CURSOR_DENSE_CANDIDATE_LIMIT = 960
@@ -199,7 +204,7 @@ ATTRIBUTE_VALUE_CURSOR_SPECULATIVE_TIMEOUT_MS = 750
 # successful proofs under the bounded speculative policy below.
 # Start at the production-qualified floor: a failed five-minute probe can consume the
 # request's whole read-volume allowance before the selector gets a chance to
-# retry the same frontier at five seconds.  Coletia contains individual
+# retry the same frontier at five seconds.  the reference project contains individual
 # 30-second intervals above the bounded 1 GiB read-volume envelope.
 ATTRIBUTE_VALUE_CURSOR_DISTINCT_INITIAL_SEGMENT = timedelta(seconds=5)
 ATTRIBUTE_VALUE_CURSOR_DISTINCT_MIN_SEGMENT = timedelta(seconds=5)
@@ -369,7 +374,7 @@ _ATTRIBUTE_VALUE_PROOF_MAP_SETTINGS: dict[str, Any] = {
 }
 
 # The ordered fallback stops at a 65-row sentinel, but ClickHouse may have to
-# admit one whole physical granule before LIMIT can fire.  Coletia has a
+# admit one whole physical granule before LIMIT can fire.  the reference project has a
 # very large granule before LIMIT can stop. This candidate-only byte allowance
 # lets that finite keyset seed complete; latest-version replay remains bounded
 # to the returned identities and the memory/byte limits are unchanged.
@@ -681,9 +686,16 @@ def _attribute_window_bounds(
 
 
 class V2AttributeQueryExecutor:
-    """Read-only native-driver executor bound explicitly to ``CLICKHOUSE_V2``."""
+    """CH25 read executor; direct diagnostic callers stay bounded by default."""
 
-    def __init__(self, client: ClickHouseClient | None = None):
+    def __init__(
+        self,
+        client: ClickHouseClient | None = None,
+        *,
+        application_read: bool = False,
+    ):
+        if not isinstance(application_read, bool):
+            raise TypeError("Application read mode must be bool")
         if client is None:
             # Lazy to avoid a query_service -> attribute_reads import cycle.
             from tracer.services.clickhouse.v2.query_service import (
@@ -692,6 +704,7 @@ class V2AttributeQueryExecutor:
 
             client = get_v2_query_client()
         self._client = client
+        self._application_read = application_read
 
     @property
     def client(self) -> ClickHouseClient:
@@ -705,33 +718,39 @@ class V2AttributeQueryExecutor:
         timeout_ms: int,
         settings: dict[str, Any],
     ) -> AttributeQueryPage:
+        if self._application_read:
+            timeout_ms = None
+            settings = application_read_settings(settings)
         try:
             progress_execute = getattr(
                 type(self._client), "execute_read_with_progress", None
             )
-            if callable(progress_execute):
-                (
-                    rows,
-                    columns,
-                    query_time_ms,
-                    read_rows,
-                    read_bytes,
-                ) = progress_execute(
-                    self._client,
-                    query,
-                    params,
-                    timeout_ms=timeout_ms,
-                    settings=settings,
-                )
-            else:
-                rows, columns, query_time_ms = self._client.execute_read(
-                    query,
-                    params,
-                    timeout_ms=timeout_ms,
-                    settings=settings,
-                )
-                read_rows = None
-                read_bytes = None
+            # Explicit False also isolates diagnostics inside an application
+            # request; the pooled client must never inherit a caller's mode.
+            with application_read_context(self._application_read):
+                if callable(progress_execute):
+                    (
+                        rows,
+                        columns,
+                        query_time_ms,
+                        read_rows,
+                        read_bytes,
+                    ) = progress_execute(
+                        self._client,
+                        query,
+                        params,
+                        timeout_ms=timeout_ms,
+                        settings=settings,
+                    )
+                else:
+                    rows, columns, query_time_ms = self._client.execute_read(
+                        query,
+                        params,
+                        timeout_ms=timeout_ms,
+                        settings=settings,
+                    )
+                    read_rows = None
+                    read_bytes = None
         except TimeoutError as exc:
             # Some native-driver wrappers surface socket/read deadlines as the
             # built-in timeout type. Normalize only at this CH25 read boundary;
@@ -1234,9 +1253,9 @@ class AttributeReadSelector:
     dense typed reads stop after one candidate/replay pair and explicitly
     report a sample. Reusing a
     selector for a second public operation starts a fresh operation budget;
-    authoritative statements receive the remaining operation wall. Optional
-    speculative accelerators retain shorter fail-open budgets so they cannot
-    consume the exact fallback's deadline.
+    the wall governs admission between public statements, not statement aborts.
+    Standalone diagnostics and benchmarks can explicitly opt out of application
+    policy; an injected executor retains its own execution policy.
     """
 
     def __init__(
@@ -1248,8 +1267,13 @@ class AttributeReadSelector:
         clock: Callable[[], float] = time.monotonic,
         typed_only: bool = False,
         json_attribute_mode: JsonAttributeMode | None = None,
+        application_read: bool = True,
     ):
-        self._executor = executor or V2AttributeQueryExecutor()
+        if not isinstance(application_read, bool):
+            raise TypeError("Application read mode must be bool")
+        self._executor = executor or V2AttributeQueryExecutor(
+            application_read=application_read
+        )
         self._clock = clock
         self._wall_timeout_seconds = max(int(wall_timeout_ms), 1) / 1000
         self._deadline: float | None = None
@@ -5740,7 +5764,7 @@ class AttributeReadSelector:
                     # A searched proof with no relevant raw value is an exact
                     # empty slice. Keep walking adjacent safe slices; handing
                     # this frontier to the geometrically widened physical path
-                    # would reintroduce the known Coletia byte failures.
+                    # would reintroduce the known the reference project byte failures.
                     empty_segment_width = proven_width
                     last_successful_segment_width = proven_width
                 # A completed proof advances this exact half-open slice before

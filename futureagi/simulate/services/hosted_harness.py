@@ -98,7 +98,9 @@ def parallelism_w_gt_1_enabled(snapshot_digest: str | None) -> bool:
     """
     if not getattr(settings, "HARNESS_PARALLELISM_ENABLED", False):
         return False
-    if getattr(settings, "ALK_DAYTONA_DOCKERFILE", ""):
+    if getattr(settings, "HOSTED_SANDBOX_PROVIDER", "daytona") == "daytona" and getattr(
+        settings, "ALK_DAYTONA_DOCKERFILE", ""
+    ):
         return True
     digest = (snapshot_digest or "").strip()
     if not digest:
@@ -120,7 +122,8 @@ def clamp_parallelism(
     value = requested or 1
     if value > 1 and not parallelism_w_gt_1_enabled(snapshot_digest):
         return 1, True
-    return value, False
+    admitted = min(value, getattr(settings, "HARNESS_MAX_WORLD_SLOTS", 8), 8)
+    return admitted, admitted != value
 
 
 def create_hosted_job(
@@ -211,10 +214,15 @@ def _apply_parallelism_admission(
     runtime = job.payload.get("runtime") or {}
     requested = runtime.get("parallelism") or 1
     admitted, clamped = clamp_parallelism(requested, snapshot_digest)
+    from simulate.services.harness_capacity import configured_capacity
+
+    capacity = configured_capacity(job.payload)
+    admitted = min(admitted, capacity.parallelism)
+    clamped = admitted != requested
     metadata = dict(job.payload.get("metadata") or {})
     changed = False
     if clamped:
-        marker = {"requested": requested}
+        marker = {"requested": requested, "admitted": admitted}
         if metadata.get("parallelism_clamped") != marker:
             metadata["parallelism_clamped"] = marker
             changed = True
@@ -869,33 +877,44 @@ def record_cleanup(
 
 
 def update_execution_counts(job: HostedHarnessJob) -> None:
-    if not job.test_execution_id:
-        return
-    receipts = HostedHarnessReceipt.no_workspace_objects.filter(job=job)
-    # Harness receipt outcomes answer "did the scenario satisfy its checks?";
-    # TestExecution counters answer "did the call transport complete?".  Keep
-    # those dimensions separate so a completed, playable call with a failed
-    # behavioural/evidence verdict is not reported as a failed call.
-    scenario_completed = receipts.filter(status="passed").count()
-    scenario_failed = receipts.filter(status__in=("failed", "errored")).count()
-    calls = CallExecution.no_workspace_objects.filter(
-        test_execution_id=job.test_execution_id
-    )
-    calls_completed = calls.filter(status=CallExecution.CallStatus.COMPLETED).count()
-    calls_failed = calls.filter(
-        status__in=(
-            CallExecution.CallStatus.FAILED,
-            CallExecution.CallStatus.CANCELLED,
+    # Receipt deliveries for parallel scenarios arrive independently. Lock the job projection
+    # while taking the snapshot so a slower request cannot overwrite counters with an older view
+    # after a faster request has already accounted a later receipt.
+    with transaction.atomic():
+        locked_job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+            id=job.id
         )
-    ).count()
-    TestExecution.no_workspace_objects.filter(id=job.test_execution_id).update(
-        completed_calls=calls_completed,
-        failed_calls=calls_failed,
-    )
-    HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
-        completed_count=scenario_completed,
-        failed_count=scenario_failed,
-    )
+        if not locked_job.test_execution_id:
+            return
+        receipts = HostedHarnessReceipt.no_workspace_objects.filter(job=locked_job)
+        # Harness receipt outcomes answer "did the scenario satisfy its checks?"; TestExecution
+        # counters answer "did the call transport complete?". Keep those dimensions separate so a
+        # completed, playable call with a failed behavioural/evidence verdict is not reported as a
+        # failed call.
+        scenario_completed = receipts.filter(status="passed").count()
+        scenario_failed = receipts.filter(status__in=("failed", "errored")).count()
+        calls = CallExecution.no_workspace_objects.filter(
+            test_execution_id=locked_job.test_execution_id
+        )
+        calls_completed = calls.filter(
+            status=CallExecution.CallStatus.COMPLETED
+        ).count()
+        calls_failed = calls.filter(
+            status__in=(
+                CallExecution.CallStatus.FAILED,
+                CallExecution.CallStatus.CANCELLED,
+            )
+        ).count()
+        TestExecution.no_workspace_objects.filter(
+            id=locked_job.test_execution_id
+        ).update(
+            completed_calls=calls_completed,
+            failed_calls=calls_failed,
+        )
+        HostedHarnessJob.no_workspace_objects.filter(id=locked_job.id).update(
+            completed_count=scenario_completed,
+            failed_count=scenario_failed,
+        )
 
 
 def _attempt_terminal_state(attempt: HostedHarnessAttempt) -> str:

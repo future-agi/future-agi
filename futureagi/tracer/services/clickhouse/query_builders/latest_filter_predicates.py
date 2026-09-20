@@ -9,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any
 
+from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.filters import (
     ClickHouseFilterBuilder,
     build_literal_text_predicate,
@@ -246,6 +247,10 @@ class LatestFilterPredicate:
     # ``is_null`` is the one inverse shape: its predicate identifies key
     # presence, and the target trace matches only when the group has none.
     exclude_group_matches: bool = False
+    # Exact row comparison for ordinary CH25 seeds only AFTER full-key FINAL.
+    # This is not a raw-population witness; native/grouped/structured plans
+    # deliberately leave it unset. Raw acquisition metadata stays independent.
+    post_final_scalar_seed_predicate: str | None = None
 
     def grouped_match_predicate(self, row_scope: str | None = None) -> str:
         """Compile this latest-span predicate at its enclosing target grain."""
@@ -464,6 +469,7 @@ def _attribute_plan(
     index: int,
     scope: str,
     group_nulls: bool = False,
+    allow_negative_presence_witness: bool = False,
 ) -> LatestFilterPredicate:
     raw_key, config = _parts(item)
     key = _validate_attribute_key(raw_key)
@@ -518,6 +524,7 @@ def _attribute_plan(
             attribute_value_types=attribute_value_types,
             index=index,
             scope=scope,
+            allow_negative_presence_witness=allow_negative_presence_witness,
         )
     if filter_type == "array":
         return _json_array_attribute_plan(
@@ -601,19 +608,33 @@ def _attribute_plan(
                 # The legacy companion is only a redundant exhaustive witness
                 # for the deployed ASCII-value bloom.
                 index_predicate = f"({index_predicate}) AND ({legacy_predicate})"
-        seed_predicate = f"({seed_predicate}) AND {index_predicate}"
+        # The complete typed key/value comparison already implies these
+        # index companions. Keep them available for safe raw index pruning,
+        # but do not re-evaluate/lower every Map value on each surviving row
+        # (especially after FINAL, where mutable skip indexes are disabled).
+        # indexHint is not membership truth; the exact comparison remains.
+        seed_predicate = f"({seed_predicate}) AND indexHint({index_predicate})"
 
     key_witness_predicate = (
         f"(indexHint(has(mapKeys({map_column}), {bound_key})) AND "
         f"has({map_column}.keys, {bound_key}))"
     )
-    # Negative/is-null shapes need absence semantics and JSON filters do not
-    # reach this compiler. Keep the graph key probe limited to positive value
-    # shapes (including is-not-null) for which key presence is a superset.
+    # Scalar value negatives require this typed Map key in _comparison too.
+    # Opt in only for ordinary explicit span attributes: grouped absence and
+    # native aliases retain their existing acquisition contract. This witness
+    # never compares a negative value or prunes versions from latest replay.
+    negative_presence_witness = allow_negative_presence_witness and operation in {
+        "not_equals",
+        "not_in",
+        "not_contains",
+        "not_between",
+    }
     raw_key_witness_predicate = (
-        key_witness_predicate if operation in _POSITIVE_RAW_WITNESS_OPS else None
+        key_witness_predicate
+        if operation in _POSITIVE_RAW_WITNESS_OPS or negative_presence_witness
+        else None
     )
-    raw_witness_predicate = None
+    raw_witness_predicate = key_witness_predicate if negative_presence_witness else None
     raw_graph_value_witness_predicate = None
     if operation in _POSITIVE_RAW_WITNESS_OPS:
         raw_witness_predicate = key_witness_predicate
@@ -650,7 +671,7 @@ def _attribute_plan(
         raw_graph_value_witness_predicate=raw_graph_value_witness_predicate,
         raw_witness_rank=(
             {"equals": 0, "in": 0}.get(operation, 10)
-            if operation in _POSITIVE_RAW_WITNESS_OPS
+            if operation in _POSITIVE_RAW_WITNESS_OPS or negative_presence_witness
             else None
         ),
     )
@@ -664,6 +685,7 @@ def _mixed_typed_attribute_plan(
     attribute_value_types: object,
     index: int,
     scope: str,
+    allow_negative_presence_witness: bool = False,
 ) -> LatestFilterPredicate:
     """Preserve picker storage provenance in bounded latest-state reads."""
 
@@ -764,7 +786,29 @@ def _mixed_typed_attribute_plan(
             f"(indexHint(has(mapKeys({map_column}), {bound_key})) "
             f"AND has({map_column}.keys, {bound_key}))"
         )
-        typed_raw_witnesses.append(f"(({key_witnesses[-1]}) AND ({seed_matches[-1]}))")
+        typed_witness = f"(({key_witnesses[-1]}) AND ({seed_matches[-1]}))"
+        if operation == "in" and storage_type in {"string", "number"}:
+            # Picker provenance changes parameter names, not the scalar IN
+            # implication. Keep exact membership authoritative; these implied
+            # hints only expose existing value indexes to raw acquisition.
+            indexed_values = (
+                "arrayMap(x -> lowerUTF8(x), mapValues(span_attr_str))"
+                if case_insensitive else "mapValues(span_attr_num)"
+            )
+            placeholders = []
+            for value_index, value in enumerate(normalized_values):
+                index_param = f"latest_filter_index_{suffix}_{value_index}"
+                params[index_param] = value
+                placeholders.append(f"%({index_param})s")
+            index_predicate = f"hasAny({indexed_values}, [{', '.join(placeholders)}])"
+            if case_insensitive:
+                legacy = _legacy_ascii_lower_bloom_predicate(
+                    normalized_values=normalized_values, params=params, index=index,
+                )
+                if legacy:
+                    index_predicate = f"({index_predicate}) AND ({legacy})"
+            typed_witness = f"({typed_witness}) AND indexHint({index_predicate})"
+        typed_raw_witnesses.append(typed_witness)
         if operation == "in":
             typed_graph_witnesses.append(
                 key_witnesses[-1]
@@ -808,12 +852,17 @@ def _mixed_typed_attribute_plan(
     else:
         predicate = f"(({' OR '.join(latest_exists)}) AND NOT ({latest_positive}))"
         seed_predicate = f"(({' OR '.join(seed_exists)}) AND NOT ({seed_positive}))"
-        # Negative membership requires absence knowledge and therefore cannot
-        # use a raw-row witness without risking an incomplete latest replay.
-        raw_witness_predicate = None
-        raw_key_witness_predicate = None
+        # NOT IN requires at least one selected typed domain, then excludes
+        # every selected positive on the latest row. Only the union of domain
+        # keys is necessary on raw rows; absence/value truth stays in replay.
+        raw_key_witness_predicate = (
+            f"({' OR '.join(key_witnesses)})"
+            if allow_negative_presence_witness
+            else None
+        )
+        raw_witness_predicate = raw_key_witness_predicate
         raw_graph_value_witness_predicate = None
-        raw_witness_rank = None
+        raw_witness_rank = 10 if allow_negative_presence_witness else None
 
     return LatestFilterPredicate(
         aggregates=tuple(aggregates),
@@ -1351,18 +1400,44 @@ def compile_exact_graph_filter_predicates(
             row_clause = f"""
             trace_id IN (
                 SELECT DISTINCT trace_id
-                FROM spans FINAL
-                PREWHERE project_id = toUUID(%(project_id)s)
-                  AND start_time >= %(snapshot_start_date)s
-                  AND start_time < %(snapshot_end_date)s
-                WHERE is_deleted = 0
-                  AND {row_clause}
+                FROM ({latest_span_membership_source_sql(predicate=row_clause)})
+                WHERE matched
             )
             """
         clauses.append(row_clause)
         params.update(row_params)
 
     return " AND ".join(f"({clause})" for clause in clauses), params
+
+
+def latest_span_membership_source_sql(
+    *, predicate: str = "1", identity_scope: str = ""
+) -> str:
+    """Stream live, in-window physical winners for internal graph membership.
+
+    Only immutable identity predicates may enter ``identity_scope``. Complete
+    boundary hours preserve all six-key replacements. The singleton ARRAY JOIN
+    keeps mutable time, deletion and the compiled match together after FINAL;
+    a plain FINAL/WHERE or optimizer setting alone can revive an older part.
+    This buffers one tuple per row, not the complete window in groupArray.
+    """
+    return f"""
+        SELECT winner.1 AS trace_id, winner.2 AS id, winner.5 AS matched
+        FROM (
+            SELECT tuple(trace_id, id, start_time, is_deleted,
+                         toUInt8({predicate})) AS membership_state
+            FROM spans FINAL
+            PREWHERE project_id = toUUID(%(project_id)s)
+              AND toStartOfHour(start_time) >=
+                  toStartOfHour(toDateTime64(%(snapshot_start_date)s, 6, 'UTC'))
+              AND toStartOfHour(start_time) <
+                  toDateTime64(%(snapshot_end_date)s, 6, 'UTC')
+              {identity_scope}
+        )
+        ARRAY JOIN [membership_state] AS winner
+        WHERE winner.3 >= %(snapshot_start_date)s
+          AND winner.3 < %(snapshot_end_date)s AND winner.4 = 0
+    """
 
 
 def _column_plan(
@@ -1664,11 +1739,17 @@ def compile_trace_filter_plans(
     plans: list[LatestFilterPredicate] = []
     for item in filters:
         key, config = _parts(item)
-        if key in {"created_at", "start_time"}:
+        if BaseQueryBuilder.is_datetime_filter(item):
             continue
         col_type = str(config.get("col_type") or config.get("colType") or "").upper()
         index = len(plans)
-        if (
+        if col_type == "SPAN_ATTRIBUTE":
+            # Explicit source family precedes every native-name alias. Each
+            # trace leaf may still be witnessed by a different latest child.
+            plans.append(
+                _attribute_plan(item, index=index, scope="any", group_nulls=True)
+            )
+        elif (
             col_type == _INTERNAL_ROOT_METRIC_TYPE
             and key == "observation_type"
             and item.get("_eval_task_trace_root") is True
@@ -1719,17 +1800,6 @@ def compile_trace_filter_plans(
                     filter_builder_cls=filter_builder_cls,
                 )
             )
-        elif col_type == "SPAN_ATTRIBUTE":
-            # Trace attribute filters retain their documented any-span
-            # semantics: separate child spans may satisfy separate filters.
-            plans.append(
-                _attribute_plan(
-                    item,
-                    index=index,
-                    scope="any",
-                    group_nulls=True,
-                )
-            )
         elif col_type in {"SYSTEM_METRIC", "TRACE_END_USER"}:
             plans.append(
                 _system_metric_plan(
@@ -1752,11 +1822,32 @@ def compile_span_filter_plans(
     plans: list[LatestFilterPredicate] = []
     for item in filters:
         key, config = _parts(item)
-        if key in {"created_at", "start_time"}:
+        if BaseQueryBuilder.is_datetime_filter(item):
             continue
         col_type = str(config.get("col_type") or config.get("colType") or "").upper()
         index = len(plans)
-        if key in _SPAN_COLUMNS:
+        if col_type == "SPAN_ATTRIBUTE":
+            plan = _attribute_plan(
+                item,
+                index=index,
+                scope="span",
+                group_nulls=group_attribute_nulls,
+                allow_negative_presence_witness=not group_attribute_nulls,
+            )
+            if (
+                not group_attribute_nulls
+                and not plan.exclude_group_matches
+                and plan.raw_key_witness_predicate
+                and plan.raw_witness_predicate == plan.raw_key_witness_predicate
+            ):
+                # Only key-only scalar acquisition changes. Equality/IN value
+                # witnesses retain their existing route, and JSON/native map
+                # aliases cannot opt in merely by resembling an attribute plan.
+                plan = replace(
+                    plan, post_final_scalar_seed_predicate=plan.seed_predicate
+                )
+            plans.append(plan)
+        elif key in _SPAN_COLUMNS:
             column, value_type, nullable = _SPAN_COLUMNS[key]
             plans.append(
                 _column_plan(
@@ -1773,15 +1864,6 @@ def compile_span_filter_plans(
             *ClickHouseFilterBuilder.VOICE_PUBLIC_ROOT_SYSTEM_METRIC_EXPRS,
         } and col_type in {"", "NORMAL"}:
             plans.append(_system_metric_plan(item, index=index, trace_mode=False))
-        elif col_type == "SPAN_ATTRIBUTE":
-            plans.append(
-                _attribute_plan(
-                    item,
-                    index=index,
-                    scope="span",
-                    group_nulls=group_attribute_nulls,
-                )
-            )
         elif col_type in {"SYSTEM_METRIC", "TRACE_END_USER"}:
             plans.append(_system_metric_plan(item, index=index, trace_mode=False))
         else:
@@ -1803,11 +1885,12 @@ _CANDIDATE_RESIDUAL_TYPES = {"ANNOTATION", "EVAL_METRIC"}
 def _is_candidate_residual_filter(item: dict[str, Any]) -> bool:
     key, config = _parts(item)
     col_type = str(config.get("col_type") or config.get("colType") or "").upper()
-    if col_type == "SPAN_ATTRIBUTE" and key in {
-        *ClickHouseFilterBuilder._ENDUSER_STRING_COLUMNS,
-        "end_user_id",
-    }:
+    if col_type == "SPAN_ATTRIBUTE":
         return False
+    if key == "tags" and col_type in {"", "NORMAL", "SYSTEM_METRIC"}:
+        # Native tags are a mutable trace dimension, not a per-span aggregate.
+        # The relational compiler replays the candidate trace records exactly.
+        return True
     return key in _CANDIDATE_RESIDUAL_KEYS or col_type in _CANDIDATE_RESIDUAL_TYPES
 
 
@@ -1822,7 +1905,7 @@ def partition_trace_filter_plans(
     residual: list[dict[str, Any]] = []
     for item in filters:
         key, _ = _parts(item)
-        if key in {"created_at", "start_time"}:
+        if BaseQueryBuilder.is_datetime_filter(item):
             supported.append(item)
         elif _is_candidate_residual_filter(item):
             residual.append(item)
@@ -1848,7 +1931,7 @@ def partition_span_filter_plans(
     residual: list[dict[str, Any]] = []
     for item in filters:
         key, _ = _parts(item)
-        if key in {"created_at", "start_time"}:
+        if BaseQueryBuilder.is_datetime_filter(item):
             supported.append(item)
         elif _is_candidate_residual_filter(item):
             residual.append(item)
@@ -1891,7 +1974,7 @@ def targets_trace_filter_domain(filters: list[dict[str, Any]]) -> bool:
             key, config = _parts(item)
         except (TypeError, ValueError):
             continue
-        if key in {"created_at", "start_time"}:
+        if BaseQueryBuilder.is_datetime_filter(item):
             continue
         col_type = str(config.get("col_type") or config.get("colType") or "").upper()
         if (
@@ -1924,7 +2007,7 @@ def targets_span_filter_domain(filters: list[dict[str, Any]]) -> bool:
             key, config = _parts(item)
         except (TypeError, ValueError):
             continue
-        if key in {"created_at", "start_time"}:
+        if BaseQueryBuilder.is_datetime_filter(item):
             continue
         col_type = str(config.get("col_type") or config.get("colType") or "").upper()
         if (

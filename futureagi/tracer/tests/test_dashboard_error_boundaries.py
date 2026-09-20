@@ -575,9 +575,11 @@ def test_dashboard_query_uses_direct_write_backend_independent_of_routing(
 
     assert response.status_code == 200
     assert response.json()["result"]["query_status"] == "complete"
-    assert response.json()["result"]["query_provenance"] == "materialized_rollup"
+    assert response.json()["result"]["query_provenance"] == "exact_snapshot"
     assert v2_client.execute_read.call_count == 1
-    v2_builder.assert_called_once()
+    # Cache planning and execution build separate configs; only execution reads CH.
+    assert v2_builder.call_count == 2
+    assert v2_builder.call_args_list[0].args[0]["require_versioned_snapshot"] is True
     exact_snapshot.assert_called_once()
     assert exact_snapshot.call_args.kwargs["schedule_on_miss"] is False
     dispatch.assert_not_called()
@@ -650,9 +652,11 @@ def test_widget_trace_queries_use_direct_write_backend_independent_of_routing(
 
     assert response.status_code == 200
     assert response.json()["result"]["query_status"] == "complete"
-    assert response.json()["result"]["query_provenance"] == "materialized_rollup"
+    assert response.json()["result"]["query_provenance"] == "exact_snapshot"
     assert v2_client.execute_read.call_count == 1
-    v2_builder.assert_called_once()
+    # Cache planning and execution build separate configs; only execution reads CH.
+    assert v2_builder.call_count == 2
+    assert v2_builder.call_args_list[0].args[0]["require_versioned_snapshot"] is True
     exact_snapshot.assert_called_once()
     assert exact_snapshot.call_args.kwargs["schedule_on_miss"] is False
     dispatch.assert_not_called()

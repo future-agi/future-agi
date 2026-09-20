@@ -164,6 +164,10 @@ SYSTEM_METRICS: dict[str, tuple[str, str]] = {
 # anti-membership over the authoritative eval/annotation stores.
 PRESENCE_SYSTEM_METRIC_FILTERS = frozenset({"has_eval", "has_annotation"})
 
+# Eval-row dimensions answered from ``usage_apicalllog`` itself, not from spans.
+EVAL_SOURCE_DIMENSIONS = frozenset({"source", "eval_source"})
+EVAL_DATASET_DIMENSION = "dataset"
+
 METRIC_UNITS: dict[str, str] = {
     "latency": "ms",
     "error_rate": "%",
@@ -1867,11 +1871,13 @@ class DashboardQueryBuilder:
         # Scope to workspace when available, otherwise org
         if self.workspace_id:
             _scope_filter = "e.workspace_id = toUUID(%(workspace_id)s)"
+            _dataset_scope = "workspace_id = toUUID(%(workspace_id)s)"
             _usage_main_scope = (
                 "usage_main_scan.workspace_id = toUUID(%(workspace_id)s)"
             )
         else:
             _scope_filter = "e.organization_id = toUUID(%(organization_id)s)"
+            _dataset_scope = "organization_id = toUUID(%(organization_id)s)"
             _usage_main_scope = (
                 "usage_main_scan.organization_id = toUUID(%(organization_id)s)"
             )
@@ -1944,10 +1950,10 @@ class DashboardQueryBuilder:
             bd_name = (bd.get("name") or bd.get("id") or "").lower()
             bd_type = bd.get("type", "system_metric")
 
-            if bd_name in ("source", "eval_source"):
+            if bd_name in EVAL_SOURCE_DIMENSIONS:
                 bd_expr = "if(e.source = '', '(not set)', e.source)"
 
-            elif bd_name == "dataset":
+            elif bd_name == EVAL_DATASET_DIMENSION:
                 bd_expr = (
                     "if(e.eval_dataset_id != '', e.eval_dataset_id, "
                     + _eval_source_bucket_expr(exclude="dataset")
@@ -2127,6 +2133,28 @@ class DashboardQueryBuilder:
                     if string_expression is not None
                     else _coerce_filter_value(val, op)
                 )
+
+            elif (
+                f_type == "system_metric"
+                and f_name.lower() in EVAL_SOURCE_DIMENSIONS
+            ):
+                where_parts.append(f"e.source {op_symbol} %({val_key})s")
+                params[val_key] = _coerce_string_filter_value(val, op)
+
+            elif (
+                f_type == "system_metric"
+                and f_name.lower() == EVAL_DATASET_DIMENSION
+            ):
+                positive_op = _NEGATED_TO_POSITIVE_OPERATORS.get(op, op)
+                membership = "IN" if positive_op == op else "NOT IN"
+                # Deleted datasets stay matchable: their eval rows outlive them.
+                where_parts.append(
+                    f"e.eval_dataset_id {membership} ("
+                    "SELECT toString(id) FROM model_hub_dataset FINAL "
+                    f"WHERE {_dataset_scope} "
+                    f"AND name {_get_operator_symbol(positive_op)} %({val_key})s)"
+                )
+                params[val_key] = _coerce_string_filter_value(val, positive_op)
 
             elif f_type == "system_metric":
                 self._reject_unknown_cataloged_system_dimension(
@@ -2925,17 +2953,15 @@ class DashboardQueryBuilder:
             if not series_data:
                 series_data["total"] = {}
 
-            # Keep the highest-volume series first; the frontend still limits
-            # the initially visible chart series.
-            MAX_SERIES = 100
+            # Rank all returned series; presentation limits belong to the UI.
+            # The executor's throwing row/byte caps bound this result. Dropping
+            # series here would publish a truncated payload as an exact result.
             if "total" not in series_data:
                 ranked = sorted(
                     series_data.items(),
                     key=lambda kv: sum(v for v in kv[1].values() if v is not None),
                     reverse=True,
                 )
-                if len(ranked) > MAX_SERIES:
-                    ranked = ranked[:MAX_SERIES]
                 series_data = dict(ranked)
 
             # Preserve volume order from ``series_data``.
@@ -3698,6 +3724,12 @@ _OPERATOR_SYMBOLS: dict[str, str] = {
     "not_contains": "NOT IN",
     "str_contains": "LIKE",
     "str_not_contains": "NOT LIKE",
+}
+
+_NEGATED_TO_POSITIVE_OPERATORS: dict[str, str] = {
+    "not_equal_to": "equal_to",
+    "not_contains": "contains",
+    "str_not_contains": "str_contains",
 }
 
 

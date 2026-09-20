@@ -4,6 +4,7 @@ from datetime import timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
+from temporalio.exceptions import ActivityError, CancelledError
 
 from simulate.temporal.constants import QUEUE_RUNNER
 from simulate.temporal.types.hosted_harness_gateway import (
@@ -32,7 +33,7 @@ class HostedHarnessGatewayWorkflow:
                 "launch_hosted_harness_job",
                 input,
                 task_queue=QUEUE_RUNNER,
-                # A cold image build can exceed twenty minutes; a short bound cancels and restarts it.
+                # A cold runtime build can exceed twenty minutes; a short bound cancels and restarts it.
                 start_to_close_timeout=timedelta(minutes=45),
                 retry_policy=RetryPolicy(
                     maximum_attempts=input.max_infrastructure_attempts,
@@ -55,18 +56,37 @@ class HostedHarnessGatewayWorkflow:
                     return HostedHarnessGatewayOutput(
                         job_id=input.job_id, state=outcome.state
                     )
-                outcome = await workflow.execute_activity(
-                    "poll_hosted_harness_attempt",
-                    attempt_input,
-                    task_queue=QUEUE_RUNNER,
-                    start_to_close_timeout=timedelta(minutes=2),
-                    retry_policy=RetryPolicy(
-                        maximum_attempts=3,
-                        initial_interval=timedelta(seconds=1),
-                        maximum_interval=timedelta(seconds=15),
-                    ),
-                    result_type=HostedHarnessPollOutput,
-                )
+                try:
+                    outcome = await workflow.execute_activity(
+                        "poll_hosted_harness_attempt",
+                        attempt_input,
+                        task_queue=QUEUE_RUNNER,
+                        # Reconciliation can include a managed sandbox deletion whose own timeout
+                        # is two minutes. Keep the activity envelope comfortably outside that
+                        # provider deadline.
+                        start_to_close_timeout=timedelta(minutes=5),
+                        retry_policy=RetryPolicy(
+                            maximum_attempts=3,
+                            initial_interval=timedelta(seconds=1),
+                            maximum_interval=timedelta(seconds=15),
+                        ),
+                        result_type=HostedHarnessPollOutput,
+                    )
+                except ActivityError as exc:
+                    # Polling only observes/reconciles durable provider state.
+                    # A temporarily slow sandbox API must not kill the workflow
+                    # while the guest is still running. Temporal already applied
+                    # the bounded activity retry policy; wait, then observe again.
+                    # Cancellation remains terminal and is handled by Temporal.
+                    if isinstance(exc.cause, CancelledError):
+                        raise
+                    workflow.logger.warning(
+                        "Hosted harness poll temporarily unavailable for attempt %s: %s",
+                        launched.attempt_id,
+                        exc,
+                    )
+                    await workflow.sleep(timedelta(seconds=15))
+                    continue
                 if outcome.done:
                     return HostedHarnessGatewayOutput(
                         job_id=input.job_id, state=outcome.state

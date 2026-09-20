@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   credentialCount,
   credentialValue,
+  isSecretCredentialName,
   mergePastedCredentials,
+  partitionConfigurationValues,
   updateCredential,
 } from "./credentialValues";
 
@@ -41,6 +43,53 @@ describe("harness credential synchronization", () => {
     ).toEqual({
       environmentValues: { REGION: "edited" },
       configurationValues: {},
+    });
+  });
+
+  it.each([
+    "LIVEKIT_API_KEY",
+    "LIVEKIT_API_SECRET",
+    "ACCESS_TOKEN",
+    "DATABASE_PASSWORD",
+    "GOOGLE_PRIVATE_KEY",
+  ])("recognizes %s as a secret even when source inspection does not", (name) => {
+    expect(isSecretCredentialName(name)).toBe(true);
+  });
+
+  it("routes a misclassified discovered API key to ephemeral credentials", () => {
+    expect(
+      updateCredential(
+        {},
+        {},
+        {
+          name: "LIVEKIT_API_KEY",
+          value: "entered-in-requirement-field",
+          kind: "configuration",
+        },
+      ),
+    ).toEqual({
+      environmentValues: {
+        LIVEKIT_API_KEY: "entered-in-requirement-field",
+      },
+      configurationValues: {},
+    });
+  });
+
+  it("repairs stale mixed state again when constructing a request", () => {
+    expect(
+      partitionConfigurationValues({
+        LIVEKIT_URL: "wss://example.livekit.cloud",
+        LIVEKIT_API_KEY: "key",
+        LIVEKIT_API_SECRET: "secret",
+      }),
+    ).toEqual({
+      configurationValues: {
+        LIVEKIT_URL: "wss://example.livekit.cloud",
+      },
+      environmentValues: {
+        LIVEKIT_API_KEY: "key",
+        LIVEKIT_API_SECRET: "secret",
+      },
     });
   });
 

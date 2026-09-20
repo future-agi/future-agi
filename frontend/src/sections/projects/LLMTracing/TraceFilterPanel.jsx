@@ -54,6 +54,7 @@ import { FILTER_INPUT_TYPES } from "src/utils/constants";
 import { QueryInput } from "src/components/filter-panel";
 import {
   FILTER_STRING_MAX_UTF8_BYTES,
+  isNativeColumnType,
   getUtf8ByteLength,
   TYPED_ATTRIBUTE_STRING_FILTER_MAX_UTF8_BYTES,
 } from "src/api/contracts/filter-contract";
@@ -117,8 +118,22 @@ function useSingleFlightPageRequest({ identity, enabled, request }) {
   }, [enabled, identity, request]);
 }
 
-const filterValueAdapterMetricName = (source, propertyId) =>
-  source === "sessions" && propertyId === "session_id" ? "session" : propertyId;
+const filterValueAdapterMetricName = (source, propertyId, metricType) => {
+  if (
+    metricType !== "system_metric" ||
+    !["traces", "spans", "sessions", "users"].includes(source)
+  ) {
+    return propertyId;
+  }
+  // Registry identities use these canonical dimension names. Keep the native
+  // filter column spelling in the row, and never rename same-name attributes.
+  if (source === "traces" && propertyId === "name") return "trace_name";
+  return (
+    { project_id: "project", session_id: "session", user_id: "user" }[
+      propertyId
+    ] || propertyId
+  );
+};
 
 const filterValueTransportSource = (source, metricType) =>
   source === "sessions" && metricType === "custom_attribute"
@@ -387,6 +402,7 @@ function attachPropertyRegistryIdentity(
   const metricName = filterValueAdapterMetricName(
     source,
     property.id || property.value || "",
+    metricType,
   );
   return {
     ...property,
@@ -656,8 +672,14 @@ const getOperators = (fieldType) => {
 // Wrapper that special-cases ID-only fields. Use from FilterRow + apply
 // validation; keep `getOperators` as the pure type → ops mapping (Query
 // tab + AI filter schema rely on the type-only behavior).
+const isNativeIdField = (id, colType) =>
+  ID_ONLY_FIELDS.has(id) && isNativeColumnType(colType);
+
 const getOperatorsForFilter = (filter, property) => {
-  if (filter?.field && ID_ONLY_FIELDS.has(filter.field)) return ID_ONLY_OPS;
+  if (isNativeIdField(
+    filter?.field,
+    filter?.apiColType || filter?.fieldCategory || property?.apiColType || property?.category,
+  )) return ID_ONLY_OPS;
   const ops = getOperators(filter?.fieldType);
   // A property may narrow its own operators — e.g. span type, where the API
   // takes a value list and has nowhere to put an operator, so anything but
@@ -821,6 +843,9 @@ const EXCLUDED_METRICS = new Set([
   "project",
   "session_count",
   "user_count",
+  "active_users",
+  "avg_cost_per_user",
+  "avg_traces_per_user",
   "trace_count",
   "span_count",
   "dataset",
@@ -1315,8 +1340,13 @@ export function buildTraceFilterProperties(
         (sourceScope === "spans" && sourceTokens.has("traces")) ||
         voiceCallTraceFamily;
 
-      // Always exclude blacklisted metrics
-      if (EXCLUDED_METRICS.has(name)) return false;
+      // Population metrics are graph outputs, not row predicates. Restrict
+      // this exclusion to system definitions: raw attributes may share names.
+      if (
+        (cat === "system_metric" || cat === "systemMetric") &&
+        EXCLUDED_METRICS.has(name)
+      )
+        return false;
 
       // Exclude dataset-only metrics
       if (src === "datasets") return false;
@@ -2753,6 +2783,7 @@ function ValuePicker({
   const filterValueMetricName = filterValueAdapterMetricName(
     filterValueSource,
     propertyId,
+    metricType,
   );
   const filterValuePropertyId = buildPropertyRegistryId({
     propertyId: property?.registryId,
@@ -2761,7 +2792,8 @@ function ValuePicker({
     source: filterValueSource,
   });
 
-  const isIdOnlyField = !hasStaticChoices && ID_ONLY_FIELDS.has(propertyId);
+  const isIdOnlyField = !hasStaticChoices &&
+    isNativeIdField(propertyId, property?.apiColType || propertyCategory);
 
   // Backend search: every non-static cursor-backed vocabulary. A real
   // annotation, annotator, or dynamic eval value outside page one cannot be
@@ -3525,10 +3557,10 @@ function FilterRow({
         prop.type === "annotator"
           ? prop.type
           : normalizeFieldType(prop.type);
-      // ID-only fields only support "is"; fallback would render blank.
+      // Native identifiers default to exact membership; raw keys keep their type.
       // defaultOperatorForType: optional per-flow { type: op } override.
-      const defaultOp = ID_ONLY_FIELDS.has(prop.id)
-        ? "is"
+      const defaultOp = isNativeIdField(prop.id, prop.apiColType || prop.category)
+        ? "in"
         : defaultOperatorForType?.[nt] || DEFAULT_OP_FOR_TYPE[nt] || "equals";
       let defaultValue;
       if (nt === "number" || nt === "date" || nt === "map") defaultValue = "";
@@ -4571,6 +4603,7 @@ const TraceFilterPanel = ({
   const queryValueMetricName = filterValueAdapterMetricName(
     queryValueSource,
     queryFieldProp?.id || activeQueryField || "",
+    queryMetricType,
   );
   const isQuerySessionFreeTextField =
     queryValueSource === "sessions" &&
@@ -4682,13 +4715,10 @@ const TraceFilterPanel = ({
         const enriched = currentFilters.map((f) => {
           const prop = findTraceFilterProperty(properties, f);
           const fieldType = f.fieldType || prop?.type || "string";
-          // ID-only fields (trace_id / span_id) bypass the string-op
-          // rewrite — ID_ONLY_OPS = [{ value: "is" }] so anything other
-          // than "is" renders blank in the operator Select.
-          const hydratedOp = ID_ONLY_FIELDS.has(f.field)
-            ? "is"
-            : (fieldType === "string" || fieldType === "text") &&
-                HYDRATE_STRING_OP[f.operator]
+          // Preserve valid operators, including negative native ID membership.
+          const hydratedOp =
+            (fieldType === "string" || fieldType === "text") &&
+            HYDRATE_STRING_OP[f.operator]
               ? HYDRATE_STRING_OP[f.operator]
               : f.operator;
           // Scalar legacy `equals` value → array for the multi-select picker.
@@ -4791,10 +4821,10 @@ const TraceFilterPanel = ({
 
   const queryGetOperators = useCallback(
     (type, field) => {
-      const ops = getOperatorsForFilter({
-        field: queryPropertyById[field]?.id || field,
-        fieldType: type,
-      });
+      const ops = getOperatorsForFilter(
+        { field: queryPropertyById[field]?.id || field, fieldType: type },
+        queryPropertyById[field],
+      );
       const allowed = operatorFilter ? ops.filter(operatorFilter) : ops;
       return allowed.map((op) =>
         NO_VALUE_OPS.has(op.value) ? { ...op, noValue: true } : op,

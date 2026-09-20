@@ -47,11 +47,25 @@ from simulate.services.hosted_harness_gateway import (
     authoring_stage_outputs_from_archive,
 )
 
-
 _LIVEKIT_REFS = {
-    "LIVEKIT_URL": {"key": "harness-livekit_url", "manager": "platform-vault", "purpose": "target_provider", "version": "1"},
-    "LIVEKIT_API_KEY": {"key": "harness-livekit_api_key", "manager": "platform-vault", "purpose": "target_provider", "version": "1"},
-    "LIVEKIT_API_SECRET": {"key": "harness-livekit_api_secret", "manager": "platform-vault", "purpose": "target_provider", "version": "1"},
+    "LIVEKIT_URL": {
+        "key": "harness-livekit_url",
+        "manager": "platform-vault",
+        "purpose": "target_provider",
+        "version": "1",
+    },
+    "LIVEKIT_API_KEY": {
+        "key": "harness-livekit_api_key",
+        "manager": "platform-vault",
+        "purpose": "target_provider",
+        "version": "1",
+    },
+    "LIVEKIT_API_SECRET": {
+        "key": "harness-livekit_api_secret",
+        "manager": "platform-vault",
+        "purpose": "target_provider",
+        "version": "1",
+    },
 }
 
 
@@ -113,8 +127,8 @@ def _v1_payload(**overrides):
 def test_serialize_job_returns_full_dto_shape(organization):
     job, _ = create_hosted_job(organization, _v1_payload(), idempotency_key="dto-shape")
     result = serialize_job(job)
-    # Top-level keys
-    assert set(result.keys()) == {
+    # Required top-level keys; additive response fields remain backward compatible.
+    assert {
         "job",
         "status",
         "events",
@@ -125,7 +139,8 @@ def test_serialize_job_returns_full_dto_shape(organization):
         "parallelism",
         "adjustments",
         "credentials",
-    }
+        "runtime",
+    } <= set(result)
     # Job sub-keys
     assert "job_id" in result["job"]
     assert "run_id" in result["job"]
@@ -135,7 +150,12 @@ def test_serialize_job_returns_full_dto_shape(organization):
     assert "metadata" in result["job"]
     assert "runtime" in result["job"]
     # Parallelism projection (C4 §6): requested + attempt-level effective/reasons.
-    assert set(result["parallelism"]) == {"requested", "effective", "degrade_reasons"}
+    assert set(result["parallelism"]) == {
+        "requested",
+        "admitted",
+        "effective",
+        "degrade_reasons",
+    }
     # Status sub-keys
     assert "state" in result["status"]
     assert "stage" in result["status"]
@@ -151,6 +171,7 @@ def test_serialize_job_returns_full_dto_shape(organization):
         "test_execution_id": None,
         "url": None,
     }
+    assert result["runtime"] == {}
 
 
 @pytest.mark.django_db
@@ -556,20 +577,25 @@ def test_provision_rejects_duplicate_keys(organization):
 @pytest.mark.django_db
 @override_settings(HARNESS_PROVIDER="daytona")
 def test_create_rejects_non_platform_vault_secret_ref(user):
-    """Even if the serializer allowed it, admission rejects non-platform-vault."""
+    """Vault references are accepted; other managers are rejected before launch."""
     client = APIClient()
     client.force_authenticate(user=user)
     payload = _v1_payload()
     payload["agent"]["secret_refs"] = {
+        **_LIVEKIT_REFS,
         "GOOGLE_CREDS": {
             "manager": "platform-vault",
             "key": "gcp-sa",
             "purpose": "target_provider",
-        }
+        },
     }
 
     # Valid platform-vault ref should not hit the secret_manager_unsupported error
     with (
+        patch(
+            "simulate.services.harness_provider._preflight_source_connectors",
+            return_value=([], [], 0),
+        ),
         patch(
             "simulate.services.hosted_harness.create_hosted_job",
             return_value=(
@@ -588,6 +614,9 @@ def test_create_rejects_non_platform_vault_secret_ref(user):
         ),
         patch("simulate.temporal.client.start_hosted_harness_gateway_workflow"),
         patch(
+            "simulate.services.harness_provider._validate_required_credential_files"
+        ),
+        patch(
             "simulate.services.harness_provider.serialize_job",
             return_value={"job": {}, "status": {}},
         ),
@@ -598,4 +627,14 @@ def test_create_rejects_non_platform_vault_secret_ref(user):
             format="json",
             HTTP_IDEMPOTENCY_KEY="secret-ok",
         )
-    assert response.status_code == 202
+    assert response.status_code == 202, response.data
+    payload["agent"]["secret_refs"]["GOOGLE_CREDS"]["manager"] = "platform-config"
+    response = client.post(
+        "/simulate/api/harness-jobs/",
+        payload,
+        format="json",
+        HTTP_IDEMPOTENCY_KEY="secret-rejected",
+    )
+    assert response.status_code == 400
+    assert response.data["code"] == "invalid"
+    assert "only accept manager platform-vault" in response.data["detail"]

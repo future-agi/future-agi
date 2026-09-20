@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import hashlib
-import sys
+import io
+import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -11,6 +12,7 @@ from django.utils import timezone as django_timezone
 from rest_framework.test import APIClient
 
 from simulate.models import CallExecution, HostedHarnessJob, HostedHarnessReceipt
+from simulate.models.chat_message import ChatMessageModel
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     canonical_digest,
@@ -21,10 +23,12 @@ from simulate.services.hosted_harness import (
 from simulate.services.hosted_harness_ingestion import (
     _apply_receipt_to_call,
     _call_lifecycle_status,
+    _ingest_hosted_transcript,
     _normalized_artifact_content_type,
     _read_hosted_tool_trace,
     _receipt_evaluation_coverage,
     _receipt_evaluations,
+    ingest_artifact,
     ingest_result_receipt,
 )
 
@@ -240,6 +244,25 @@ def test_receipt_evaluations_preserve_deterministic_and_judged_checks():
     ]
 
 
+def test_receipt_evaluations_omit_a_sub_goal_nothing_decided():
+    body = {
+        "sub_goals": [
+            {"name": "booking_created", "held": True, "judged": False, "reason": None},
+            {"name": "explained_refusal", "held": None, "judged": True, "reason": None},
+        ],
+        "evaluations": [],
+    }
+
+    assert _receipt_evaluations(body) == [
+        {
+            "name": "booking_created",
+            "kind": "checkpoint",
+            "passed": True,
+            "reason": "",
+        },
+    ]
+
+
 def test_receipt_coverage_distinguishes_missing_grading_from_agent_failure():
     assert _receipt_evaluation_coverage(
         {
@@ -253,18 +276,22 @@ def test_receipt_coverage_distinguishes_missing_grading_from_agent_failure():
 
 
 def test_errored_scenario_with_completed_call_keeps_completed_lifecycle():
-    assert _call_lifecycle_status(
-        {
-            "status": "errored",
-            "call": {
-                "started_at": "2026-08-27T10:00:00Z",
-                "ended_at": "2026-08-27T10:05:00Z",
-            },
-        }
-    ) == CallExecution.CallStatus.COMPLETED
-    assert _call_lifecycle_status(
-        {"status": "errored", "call": None}
-    ) == CallExecution.CallStatus.FAILED
+    assert (
+        _call_lifecycle_status(
+            {
+                "status": "errored",
+                "call": {
+                    "started_at": "2026-08-27T10:00:00Z",
+                    "ended_at": "2026-08-27T10:05:00Z",
+                },
+            }
+        )
+        == CallExecution.CallStatus.COMPLETED
+    )
+    assert (
+        _call_lifecycle_status({"status": "errored", "call": None})
+        == CallExecution.CallStatus.FAILED
+    )
 
 
 def test_receipt_projects_actual_call_end_time_and_duration():
@@ -279,16 +306,18 @@ def test_receipt_projects_actual_call_end_time_and_duration():
             "ended_at": "2026-08-27T10:01:22Z",
             "duration_ms": 82_000,
             "recording_artifacts": [],
+            "stop_reason": "simulator_end_call",
         },
         "sub_goals": [],
         "evaluations": [],
     }
 
-    with patch(
-        "simulate.services.hosted_harness_ingestion."
-        "HostedHarnessArtifact.no_workspace_objects"
-    ) as artifacts, patch(
-        "simulate.services.hosted_harness_ingestion.transaction.on_commit"
+    with (
+        patch(
+            "simulate.services.hosted_harness_ingestion."
+            "HostedHarnessArtifact.no_workspace_objects"
+        ) as artifacts,
+        patch("simulate.services.hosted_harness_ingestion.transaction.on_commit"),
     ):
         artifacts.filter.return_value.order_by.return_value.last.return_value = None
         _apply_receipt_to_call(registration, body)
@@ -297,6 +326,7 @@ def test_receipt_projects_actual_call_end_time_and_duration():
     assert call.ended_at == "2026-08-27T10:01:22Z"
     assert call.completed_at == "2026-08-27T10:01:22Z"
     assert call.duration_seconds == 82
+    assert call.ended_reason == "simulator_end_call"
     assert call.error_message == ""
     call.save.assert_called_once()
 
@@ -374,6 +404,75 @@ def _headers(capability):
         "HTTP_AUTHORIZATION": f"Bearer {capability.token}",
         "HTTP_X_HARNESS_FENCE": capability.fence,
     }
+
+
+@pytest.mark.django_db
+def test_hosted_text_transcript_is_materialized_for_chat_ui(organization, workspace):
+    job, _ = create_hosted_job(
+        organization,
+        _payload(),
+        idempotency_key="hosted-chat-transcript",
+        workspace=workspace,
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    client = APIClient()
+    provision = client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "provision",
+            "name": "Chat transcript",
+            "modality": "text",
+            "personas": [
+                {
+                    "scenario_key": "chat-one",
+                    "name": "Customer",
+                    "situation": "Needs billing help",
+                    "outcome": "Gets an answer",
+                }
+            ],
+        },
+        format="json",
+        **_headers(capability),
+    )
+    result = provision.json()["result"]
+    client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "begin",
+            "run_test_id": result["run_test_id"],
+            "scenario_keys": ["chat-one"],
+        },
+        format="json",
+        **_headers(capability),
+    )
+    call = CallExecution.objects.get(hosted_registration__scenario_key="chat-one")
+    call.simulation_call_type = CallExecution.SimulationCallType.TEXT
+    call.save(update_fields=["simulation_call_type"])
+    response = MagicMock()
+    response.read.return_value = json.dumps(
+        {
+            "messages": [
+                {"role": "user", "content": "Where is my invoice?"},
+                {"role": "assistant", "content": "I can look that up."},
+            ]
+        }
+    ).encode()
+    storage = MagicMock()
+    storage.get_object.return_value = response
+
+    with patch(
+        "simulate.services.hosted_harness_ingestion.get_storage_client",
+        return_value=storage,
+    ):
+        _ingest_hosted_transcript(call, SimpleNamespace(object_key="transcript.json"))
+
+    assert list(
+        ChatMessageModel.objects.filter(call_execution=call)
+        .order_by("created_at", "role")
+        .values_list("role", flat=True)
+    ) == ["user", "assistant"]
+    response.close.assert_called_once_with()
+    response.release_conn.assert_called_once_with()
 
 
 def _upload_required_artifacts(client, capability, headers):
@@ -582,19 +681,16 @@ def test_attempt_can_mint_bounded_signed_ingress_url(organization, settings):
     capability.attempt.save(update_fields=["provider_ref", "updated_at"])
 
     sandbox = MagicMock()
-    sandbox.create_signed_preview_url.return_value = SimpleNamespace(
+    provider = MagicMock()
+    provider.get.return_value = sandbox
+    provider.create_preview_url.return_value = SimpleNamespace(
         url="https://signed-preview.example/provider-callback"
     )
-    daytona_client = MagicMock()
-    daytona_client.get.return_value = sandbox
-    daytona_class = MagicMock(return_value=daytona_client)
-    fake_daytona = SimpleNamespace(
-        Daytona=daytona_class,
-        DaytonaConfig=MagicMock(return_value=object()),
-    )
-    settings.DAYTONA_API_KEY = "configured"
 
-    with patch.dict(sys.modules, {"daytona": fake_daytona}):
+    with patch(
+        "simulate.services.hosted_sandbox.get_sandbox_provider",
+        return_value=provider,
+    ):
         response = APIClient().post(
             f"{BASE}/{capability.attempt.id}/ingress/",
             {"port": 8080, "expires_in_seconds": 7200},
@@ -606,21 +702,27 @@ def test_attempt_can_mint_bounded_signed_ingress_url(organization, settings):
     assert response.json()["url"] == (
         "https://signed-preview.example/provider-callback"
     )
-    daytona_client.get.assert_called_once_with("sandbox-provider-id")
-    sandbox.create_signed_preview_url.assert_called_once()
+    expires_in_seconds = response.json()["expires_in_seconds"]
+    assert 60 <= expires_in_seconds <= 7200
+    provider.get.assert_called_once_with("sandbox-provider-id")
+    provider.create_preview_url.assert_called_once_with(
+        sandbox, 8080, expires_in_seconds=expires_in_seconds
+    )
 
 
 @pytest.mark.django_db
-def test_ingress_without_daytona_sdk_is_a_typed_502(organization, settings):
+def test_ingress_without_selected_provider_sdk_is_a_typed_502(organization):
     job, _ = create_hosted_job(
         organization, _payload(), idempotency_key="attempt-ingress-no-sdk-key"
     )
     capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
     capability.attempt.provider_ref = "sandbox-provider-id"
     capability.attempt.save(update_fields=["provider_ref", "updated_at"])
-    settings.DAYTONA_API_KEY = "configured"
 
-    with patch.dict(sys.modules, {"daytona": None}):
+    with patch(
+        "simulate.services.hosted_sandbox.get_sandbox_provider",
+        side_effect=ImportError("provider SDK is unavailable"),
+    ):
         response = APIClient().post(
             f"{BASE}/{capability.attempt.id}/ingress/",
             {"port": 8080, "expires_in_seconds": 7200},
@@ -896,6 +998,77 @@ def test_scenario_started_event_marks_preallocated_call_ongoing(organization):
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("key", [[], {}, None, False, 42, "", "   ", "x" * 256])
+def test_scenario_started_rejects_invalid_keys_without_breaking_job_reads(
+    organization, key
+):
+    from simulate.services.harness_provider import serialize_job
+    from simulate.services.hosted_harness_ingestion import ingest_event_batch
+
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="invalid-event-key"
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    payload = {"scenario_key": key, "world_index": 0, "scenario_attempt": 1}
+    event = {
+        "event_id": "invalid-scenario-start",
+        "job_id": str(job.id),
+        "attempt_id": str(capability.attempt.id),
+        "attempt_number": 1,
+        "sequence": 1,
+        "emitted_at": datetime.now(UTC),
+        "stage": "running",
+        "type": "scenario_started",
+        "payload": payload,
+        "digest": canonical_digest(payload),
+    }
+    response = ingest_event_batch(capability.attempt, [event])
+    assert response["rejected"][0]["code"] == "event_payload_invalid"
+    assert response["acked_through_sequence"] == 1
+    assert serialize_job(job)["status"]["active_scenarios"] == 0
+
+
+@pytest.mark.django_db
+def test_scenario_started_rejects_another_jobs_registered_key(organization):
+    from simulate.services.hosted_harness import provision_scenarios
+    from simulate.services.hosted_harness_ingestion import ingest_event_batch
+
+    owner, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="event-key-owner"
+    )
+    owner_capability = register_attempt(
+        owner.id, endpoint_base_url="https://platform.example"
+    )
+    provision_scenarios(
+        owner_capability.attempt,
+        {
+            "operation": "provision",
+            "name": "Owned scenario",
+            "personas": [{"scenario_key": "owned-key", "name": "Caller"}],
+        },
+    )
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="event-key-other-job"
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    payload = {"scenario_key": "owned-key", "world_index": 0, "scenario_attempt": 1}
+    event = {
+        "event_id": "other-job-scenario-start",
+        "job_id": str(job.id),
+        "attempt_id": str(capability.attempt.id),
+        "attempt_number": 1,
+        "sequence": 1,
+        "emitted_at": datetime.now(UTC),
+        "stage": "running",
+        "type": "scenario_started",
+        "payload": payload,
+        "digest": canonical_digest(payload),
+    }
+    response = ingest_event_batch(capability.attempt, [event])
+    assert response["rejected"][0]["code"] == "scenario_unknown"
+
+
+@pytest.mark.django_db
 def test_event_gap_is_released_and_recorded_after_sixty_seconds(organization):
     job, _ = create_hosted_job(
         organization, _payload(), idempotency_key="event-gap-key"
@@ -1012,6 +1185,84 @@ def test_artifact_upload_is_content_addressed_and_manifest_is_acked(organization
 
 
 @pytest.mark.django_db
+def test_artifact_budget_is_rechecked_after_concurrent_upload(organization):
+    payload = _payload(
+        artifacts={
+            "level": "full",
+            "retention_days": 30,
+            "allow_bundle_download": False,
+            "max_artifact_bytes": 10,
+        }
+    )
+    job, _ = create_hosted_job(organization, payload, idempotency_key="artifact-race")
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    content = b"12345678"
+    digest = hashlib.sha256(content).hexdigest()
+    storage = MagicMock()
+
+    def account_competing_upload(*args, **kwargs):
+        # Simulate another scenario finishing its upload between this request's early check and
+        # final accounting lock.  The second check must reject the object and clean it up.
+        HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
+            uploaded_artifact_bytes=8
+        )
+
+    storage.put_object.side_effect = account_competing_upload
+    with patch(
+        "simulate.services.hosted_harness_ingestion.get_storage_client",
+        return_value=storage,
+    ):
+        response = APIClient().generic(
+            "PUT",
+            f"{BASE}/{capability.attempt.id}/artifacts/{digest}/",
+            content,
+            content_type="application/octet-stream",
+            HTTP_X_ARTIFACT_KIND="result",
+            HTTP_X_ARTIFACT_SIZE=str(len(content)),
+            **_headers(capability),
+        )
+
+    assert response.status_code == 413
+    storage.remove_object.assert_called_once()
+    job.refresh_from_db()
+    assert job.uploaded_artifact_bytes == 8
+
+
+@pytest.mark.django_db
+def test_artifact_upload_closes_spool_when_storage_fails(organization):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="artifact-close"
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    content = b"result-artifact"
+    digest = hashlib.sha256(content).hexdigest()
+    spool = MagicMock()
+    storage = MagicMock()
+    storage.put_object.side_effect = RuntimeError("storage unavailable")
+    with (
+        patch(
+            "simulate.services.hosted_harness_ingestion.tempfile.SpooledTemporaryFile",
+            return_value=spool,
+        ),
+        patch(
+            "simulate.services.hosted_harness_ingestion.get_storage_client",
+            return_value=storage,
+        ),
+        pytest.raises(RuntimeError, match="storage unavailable"),
+    ):
+        ingest_artifact(
+            capability.attempt,
+            digest=digest,
+            kind="result",
+            size=len(content),
+            content_type="application/octet-stream",
+            scenario_key=None,
+            stream=io.BytesIO(content),
+        )
+    spool.close.assert_called_once()
+
+
+@pytest.mark.django_db
 def test_public_job_api_persists_before_scheduling(user):
     client = APIClient()
     client.force_authenticate(user=user)
@@ -1033,19 +1284,22 @@ def test_public_job_api_persists_before_scheduling(user):
 
 
 @pytest.mark.django_db
-def test_job_api_rejects_voice_parallelism_above_cpu(user):
+def test_job_api_preserves_requested_width_above_fixed_cpu_for_admission(user):
     client = APIClient()
     client.force_authenticate(user=user)
     payload = _payload()
     payload["runtime"]["parallelism"] = 3
     payload["runtime"]["cpu_units"] = 2
-    response = client.post(
-        "/simulate/api/harness-jobs/",
-        payload,
-        format="json",
-        HTTP_IDEMPOTENCY_KEY="parallel-key",
-    )
-    assert response.status_code == 400
+    with patch("simulate.temporal.client.start_hosted_harness_gateway_workflow"):
+        response = client.post(
+            "/simulate/api/harness-jobs/",
+            payload,
+            format="json",
+            HTTP_IDEMPOTENCY_KEY="parallel-key",
+        )
+    assert response.status_code == 202
+    job = HostedHarnessJob.no_workspace_objects.get(id=response.json()["job"]["job_id"])
+    assert job.payload["runtime"]["parallelism"] == 3
 
 
 @pytest.mark.django_db

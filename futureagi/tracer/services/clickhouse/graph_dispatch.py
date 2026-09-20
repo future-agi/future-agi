@@ -82,8 +82,8 @@ _TRACE_ROLLUP_RESULT_COLUMNS = frozenset(
 # Optional raw trace-ID pruning is worthwhile only for genuinely selective
 # positive scalar witnesses. EXPLAIN ESTIMATE is metadata-only and bounded so
 # a missing/old ClickHouse capability simply retains the ordinary one-pass
-# graph query. The thresholds are intentionally conservative: the production
-# Colly benchmark completed below four seconds at 1.6M estimated rows / 259
+# graph query. The thresholds are intentionally conservative: a selective
+# benchmark completed below four seconds at 1.6M estimated rows / 259
 # marks, while a 106M-row / 14.6K-mark string witness was slower than one-pass.
 _GRAPH_SEED_ESTIMATE_WALL_MS = 2_500
 _GRAPH_SEED_ESTIMATE_QUERY_MS = 1_500
@@ -94,7 +94,7 @@ _GRAPH_SEED_SCALAR_FILTER_TYPES = frozenset({"boolean", "number", "string", "tex
 _GRAPH_BASE_READ_SETTINGS = {
     # The retained hourly rollup is already row-reduced. Four workers keep the
     # interactive scan parallel without leaving concurrency unbounded on the
-    # largest Coletia/Whatfix projects.
+    # largest reference projects.
     "max_threads": settings.DASHBOARD_TRACE_READ_MAX_THREADS,
     "max_block_size": settings.OBSERVABILITY_LIST_MAX_BLOCK_SIZE,
     "max_memory_usage": settings.OBSERVABILITY_LIST_MAX_MEMORY_BYTES,
@@ -142,8 +142,7 @@ def _active_filters(filters: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         item
         for item in filters
-        if (item.get("column_id") or item.get("columnId"))
-        not in {"created_at", "start_time"}
+        if not BaseQueryBuilder.is_datetime_filter(item)
         or BaseQueryBuilder.is_datetime_complement_filter(item)
     ]
 
@@ -382,6 +381,17 @@ class _DeadlineBoundGraphAnalytics:
         self.supports_per_query_read_settings = bool(
             getattr(delegate, "supports_per_query_read_settings", True)
         )
+        from tracer.services.clickhouse.application_read_policy import (
+            supports_bounded_speculative_reads,
+        )
+
+        self.supports_bounded_speculative_reads = supports_bounded_speculative_reads(
+            delegate
+        )
+
+    def remaining_read_ms(self, cap_ms: int) -> int:
+        """Share the original request wall with non-ClickHouse reads too."""
+        return self._deadline.remaining_ms(cap_ms)
 
     def execute_ch_query(
         self,
@@ -394,7 +404,7 @@ class _DeadlineBoundGraphAnalytics:
         return self._delegate.execute_ch_query(
             query,
             params or {},
-            timeout_ms=self._deadline.remaining_ms(requested_timeout_ms),
+            timeout_ms=self.remaining_read_ms(requested_timeout_ms),
             settings=_bounded_interactive_read_settings(settings),
         )
 

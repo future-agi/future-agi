@@ -1,41 +1,57 @@
 from __future__ import annotations
 
+import gzip
 import io
 import json
 import tarfile
 from contextlib import nullcontext
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from django.utils import timezone
 
 from simulate.models import HostedHarnessAttempt, HostedHarnessJob
+from simulate.services.harness_capacity import SandboxCapacity
+from simulate.services.harness_provider import serialize_job
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     create_hosted_job,
+    record_cleanup,
+    register_attempt,
     request_cancellation,
 )
 from simulate.services.hosted_harness_gateway import (
     _ADJUSTMENTS_PATH,
     _SIMULATOR_SECRETS_PATH,
     _SIMULATOR_VERTEX_CREDENTIALS_PATH,
-    DaytonaHostedGateway,
+    HostedHarnessGateway,
     HostedSourceAcquirer,
     _authoring_archive_for,
+    _authoring_ttl_seconds,
     _connector_egress_domains,
+    _execution_ttl_seconds,
     _normalize_egress_domains,
     _platform_simulator_material,
     _provider_egress_domains,
     _provider_import_authoring_material,
     _resolved_egress_domains,
     _validate_resolved_egress_domains,
+    _webrtc_egress_cidrs,
     attach_platform_simulator_secret_refs,
     detect_source_connectors,
     detect_source_credentials,
+    guest_failure_cause,
     pack_authoring_archive,
     prepare_dispatch_payload,
     resolve_authored_connector,
     resolve_platform_simulator_secrets,
+)
+from simulate.services.hosted_sandbox import (
+    SandboxConflictError,
+    SandboxNotFoundError,
+    SandboxProviderError,
 )
 
 
@@ -43,6 +59,17 @@ from simulate.services.hosted_harness_gateway import (
 def _isolate_platform_simulator_environment(settings):
     """Tests opt in explicitly instead of reading the developer machine's provider keys."""
     settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {}
+
+
+def test_guest_failure_cause_preserves_legacy_runnable_entrypoint_blocker() -> None:
+    assert guest_failure_cause(
+        "runtime validation: attempt 5/5\n"
+        "  - lookup_account: no runnable shipped entrypoint was identified; "
+        "expose the real implementation as an importable callable or an HTTP service\n"
+    ) == (
+        "lookup_account: no runnable shipped entrypoint was identified; "
+        "expose the real implementation as an importable callable or an HTTP service"
+    )
 
 
 def test_platform_simulator_material_uses_deployment_credentials_only(
@@ -55,7 +82,7 @@ def test_platform_simulator_material_uses_deployment_credentials_only(
     monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", str(credentials))
     monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
     monkeypatch.setenv("SIMULATOR_LLM_PROVIDER", "vertex")
-    monkeypatch.setenv("SIMULATOR_LLM_MODEL", "gemini-2.5-flash")
+    monkeypatch.setenv("SIMULATOR_LLM_MODEL", "gemini-3.7-flash")
     monkeypatch.delenv("ALK_HARNESS", raising=False)
     monkeypatch.delenv("ALK_HARNESS_MODEL", raising=False)
     monkeypatch.setenv("DEEPGRAM_API_KEY", "platform-deepgram-secret")
@@ -77,6 +104,22 @@ def test_platform_simulator_material_uses_deployment_credentials_only(
     assert credential_bytes == credentials.read_bytes()
 
 
+def test_platform_simulator_defaults_to_approved_vertex_model(monkeypatch):
+    monkeypatch.delenv("SIMULATOR_LLM_PROVIDER", raising=False)
+    monkeypatch.delenv("SIMULATOR_LLM_MODEL", raising=False)
+    monkeypatch.delenv("ALK_HARNESS", raising=False)
+    monkeypatch.delenv("ALK_HARNESS_MODEL", raising=False)
+    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+
+    values, credential_bytes = _platform_simulator_material()
+
+    assert values["SIMULATOR_LLM_PROVIDER"] == "vertex"
+    assert values["SIMULATOR_LLM_MODEL"] == "gemini-3.7-flash"
+    assert values["ALK_HARNESS"] == "vertex-gemini"
+    assert values["ALK_HARNESS_MODEL"] == "gemini-3.7-flash"
+    assert credential_bytes is None
+
+
 def test_platform_authoring_backend_is_independent_from_simulated_caller(
     tmp_path, monkeypatch
 ):
@@ -84,16 +127,16 @@ def test_platform_authoring_backend_is_independent_from_simulated_caller(
     credentials.write_text('{"project_id":"platform-project"}', encoding="utf-8")
     monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", str(credentials))
     monkeypatch.setenv("SIMULATOR_LLM_PROVIDER", "vertex")
-    monkeypatch.setenv("SIMULATOR_LLM_MODEL", "gemini-3.1-flash-lite")
-    monkeypatch.setenv("ALK_HARNESS", "claude")
-    monkeypatch.setenv("ALK_HARNESS_MODEL", "claude-sonnet-4-6")
+    monkeypatch.setenv("SIMULATOR_LLM_MODEL", "gemini-3.8-flash")
+    monkeypatch.setenv("ALK_HARNESS", "vertex-gemini")
+    monkeypatch.setenv("ALK_HARNESS_MODEL", "gemini-3.7-flash")
 
     values, _credential_bytes = _platform_simulator_material()
 
-    assert values["ALK_HARNESS"] == "claude"
-    assert values["ALK_HARNESS_MODEL"] == "claude-sonnet-4-6"
+    assert values["ALK_HARNESS"] == "vertex-gemini"
+    assert values["ALK_HARNESS_MODEL"] == "gemini-3.7-flash"
     assert values["SIMULATOR_LLM_PROVIDER"] == "vertex"
-    assert values["SIMULATOR_LLM_MODEL"] == "gemini-3.1-flash-lite"
+    assert values["SIMULATOR_LLM_MODEL"] == "gemini-3.8-flash"
 
 
 def test_provider_egress_includes_vertex_auth_and_both_model_regions():
@@ -114,8 +157,36 @@ def test_provider_egress_includes_vertex_auth_and_both_model_regions():
 
 def test_provider_egress_includes_vapi_and_retell_call_hosts():
     assert _provider_egress_domains({"VAPI_API_KEY": "opaque"}) == {
-        "api.vapi.ai",
+        "*.vapi.ai",
     }
+
+
+def test_webrtc_cidrs_apply_only_to_voice_connectors(settings):
+    settings.ALK_HOSTED_WEBRTC_EGRESS_CIDRS = [
+        "143.223.88.0/21",
+        "216.39.248.0/21",
+    ]
+
+    assert _webrtc_egress_cidrs({"agent": {"connector": "retell"}}, {}) == (
+        "143.223.88.0/21",
+        "216.39.248.0/21",
+    )
+    assert _webrtc_egress_cidrs({"agent": {"connector": "retell_chat"}}, {}) == ()
+
+
+def test_execution_ttl_preserves_authoring_and_call_budget(settings):
+    settings.ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = 3600
+    settings.ALK_HOSTED_SANDBOX_TTL_SECONDS = 7200
+
+    assert _execution_ttl_seconds({"max_duration_seconds": 600}) == 7200
+    assert _execution_ttl_seconds({"max_duration_seconds": 5000}) == 8720
+
+
+def test_daytona_authoring_ttl_preserves_legacy_forty_minute_envelope(settings):
+    settings.ALK_HOSTED_AUTHORING_TIMEOUT = 11_100
+
+    assert _authoring_ttl_seconds("daytona") == 2400
+    assert _authoring_ttl_seconds("e2b") == 11_100
 
 
 def test_provider_import_authoring_gets_only_the_matching_target_key():
@@ -199,7 +270,9 @@ def test_platform_simulator_refs_are_ephemeral_value_free_and_do_not_mutate_payl
 
 
 def test_resolved_egress_rejects_daytona_domain_overflow():
-    with pytest.raises(HostedHarnessError, match="Daytona supports at most 20"):
+    with pytest.raises(
+        HostedHarnessError, match="selected sandbox provider supports at most 20"
+    ):
         _validate_resolved_egress_domains(
             {f"provider-{index}.example.com" for index in range(21)}
         )
@@ -312,10 +385,30 @@ def test_vapi_connector_adds_static_and_configured_endpoint_hosts():
     }
 
     assert _connector_egress_domains(payload, {}) == {
-        "api.vapi.ai",
+        "*.vapi.ai",
         "call.example.test",
         "proxy.example.test",
     }
+
+
+@pytest.mark.parametrize("connector", ["vapi", "livekit"])
+def test_vapi_call_control_hosts_survive_resolved_restricted_egress(
+    settings, connector
+):
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = []
+    payload = {
+        "agent": {"connector": connector, "config": {}},
+        "security": {"allowed_egress_domains": ["api.vapi.ai"]},
+    }
+    domains = _resolved_egress_domains(payload, {"VAPI_API_KEY": "opaque"})
+    assert domains == {"*.vapi.ai"}
+    _validate_resolved_egress_domains(domains)
+    control_host = "aws-us-west-2-production1-phone-call-websocket.vapi.ai"
+    assert any(
+        domain.startswith("*.") and control_host.endswith(domain[1:])
+        for domain in domains
+    )
+    assert "*" not in domains
 
 
 def test_livekit_futureagi_eu_connector_adds_coturn_host():
@@ -522,7 +615,7 @@ def test_unified_progress_freezes_authoring_for_saved_reruns(organization):
     job, _ = create_hosted_job(
         organization, _payload(), idempotency_key="freeze-unified-authoring"
     )
-    attempt = SimpleNamespace(id="attempt-1", job_id=job.id)
+    attempt = SimpleNamespace(id="attempt-1", job_id=job.id, attempt_number=1)
     files = {
         "/work/authoring/contract.json": b'{"modality":"voice"}',
         "/work/authoring/environment-bundle/environment-plan.json": b'{"runtime":{}}',
@@ -531,7 +624,7 @@ def test_unified_progress_freezes_authoring_for_saved_reruns(organization):
         "/tmp/authoring-rerun.tar.gz": b"frozen-authoring",
     }
     sandbox = SimpleNamespace(
-        fs=SimpleNamespace(download_file=lambda path: files[path]),
+        fs=SimpleNamespace(download_file=lambda path, timeout=None: files[path]),
         process=SimpleNamespace(
             exec=lambda command, **kwargs: SimpleNamespace(exit_code=0, result="")
         ),
@@ -540,7 +633,7 @@ def test_unified_progress_freezes_authoring_for_saved_reruns(organization):
     with patch(
         "simulate.services.hosted_harness_gateway.store_authoring_archive"
     ) as store:
-        DaytonaHostedGateway._sync_authoring_progress(attempt, sandbox)
+        HostedHarnessGateway._sync_authoring_progress(attempt, sandbox)
 
     store.assert_called_once_with(job, b"frozen-authoring", advance_lifecycle=False)
 
@@ -664,8 +757,36 @@ def test_dispatch_payload_mirrors_only_livekit_url():
     assert dispatched["agent"]["config"] == {
         "livekit_url": "wss://customer.livekit.cloud"
     }
+    assert dispatched["metadata"]["environment_value_names"] == [
+        "LIVEKIT_API_KEY",
+        "LIVEKIT_API_SECRET",
+        "LIVEKIT_URL",
+    ]
     assert payload["agent"]["config"] == {}
     assert "must-not-be-copied" not in json.dumps(dispatched)
+
+
+def test_dispatch_payload_declares_resolved_adc_names_without_values():
+    payload = {
+        "agent": {"connector": "auto", "config": {}},
+        "metadata": {"environment_value_names": ["MODEL_NAME"]},
+    }
+
+    dispatched = prepare_dispatch_payload(
+        payload,
+        {
+            "GOOGLE_APPLICATION_CREDENTIALS_JSON": "must-not-be-copied",
+            "GOOGLE_CLOUD_PROJECT": "futureagi",
+        },
+    )
+
+    assert dispatched["metadata"]["environment_value_names"] == [
+        "GOOGLE_APPLICATION_CREDENTIALS_JSON",
+        "GOOGLE_CLOUD_PROJECT",
+        "MODEL_NAME",
+    ]
+    assert "must-not-be-copied" not in json.dumps(dispatched)
+    assert payload["metadata"] == {"environment_value_names": ["MODEL_NAME"]}
 
 
 @pytest.mark.parametrize("connector", ["vapi", "retell"])
@@ -742,7 +863,7 @@ class _Filesystem:
     def upload_file(self, content, path):
         self.uploads[path] = content
 
-    def download_file(self, path):
+    def download_file(self, path, timeout=None):
         return b"command-1"
 
 
@@ -750,10 +871,15 @@ class _Process:
     def __init__(self):
         self.exec_calls = []
         self.sessions = []
+        self.command_exit_code = None
+        self.command_status = "running"
+        self.entrypoint_output = ""
+        self.process_output = ""
 
     def exec(self, command, **kwargs):
         self.exec_calls.append(command)
-        return SimpleNamespace(exit_code=0, result="")
+        result = self.process_output if "find /work/authoring" in command else ""
+        return SimpleNamespace(exit_code=0, result=result)
 
     def create_session(self, session_id):
         self.sessions.append(session_id)
@@ -762,8 +888,14 @@ class _Process:
         self.session_request = request
         return SimpleNamespace(cmd_id="command-1")
 
-    def get_session_command(self, session_id, command_id):
-        return SimpleNamespace(exit_code=None, status="running")
+    def get_session_command(self, session_id, command_id, request_timeout=None):
+        return SimpleNamespace(
+            exit_code=self.command_exit_code,
+            status=self.command_status,
+        )
+
+    def get_session_command_logs(self, session_id, command_id, request_timeout=None):
+        return SimpleNamespace(output=self.entrypoint_output)
 
 
 class _Sandbox:
@@ -774,20 +906,67 @@ class _Sandbox:
 
 
 class _Daytona:
+    name = "daytona"
+    runtime_name = "alk-hosted-v1"
+    runtime_digest = ""
+    max_egress_domains = 20
+    create_timeout_seconds = 300
+    supports_adjustments = True
+
     def __init__(self):
         self.sandbox = _Sandbox()
         self.params = None
         self.deleted = False
+        self.lifecycle = []
 
     def create(self, params, **kwargs):
         self.params = params
         return self.sandbox
 
-    def get(self, sandbox_id):
+    def get(self, sandbox_id, request_timeout=None):
+        if self.deleted:
+            raise SandboxNotFoundError("sandbox not found", status_code=404)
         return self.sandbox
 
     def delete(self, sandbox, **kwargs):
+        self.lifecycle.append("delete")
         self.deleted = True
+
+
+def test_authoring_launch_uses_requested_resources(monkeypatch):
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job = SimpleNamespace(id="job-1", payload=payload)
+    client = _Daytona()
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = client
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway._mark_stage", lambda *_: None
+    )
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        lambda *_: (b"source", None),
+    )
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway._provider_import_authoring_material",
+        lambda *_: ({}, ""),
+    )
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway._platform_simulator_material",
+        lambda: ({}, None),
+    )
+
+    def capture_launch(spec, **_kwargs):
+        assert (spec.cpu_units, spec.memory_mb, spec.disk_gb) == (2, 4096, 10)
+        raise RuntimeError("stop after resource admission")
+
+    client.create = capture_launch
+    with pytest.raises(RuntimeError, match="stop after resource admission"):
+        gateway.author(job)
 
 
 class _FailingDaytonaCreate(_Daytona):
@@ -817,7 +996,7 @@ def test_daytona_launch_failure_enters_durable_retry_wait(organization):
     job, _ = create_hosted_job(
         organization, payload, idempotency_key="launch-timeout-retry"
     )
-    gateway = object.__new__(DaytonaHostedGateway)
+    gateway = object.__new__(HostedHarnessGateway)
     gateway.client = _FailingDaytonaCreate()
     gateway.snapshot = "alk-hosted-v1"
     gateway.snapshot_digest = ""
@@ -857,7 +1036,7 @@ def test_daytona_permanent_provider_rejection_fails_without_retry(organization):
     job, _ = create_hosted_job(
         organization, payload, idempotency_key="launch-provider-rejection"
     )
-    gateway = object.__new__(DaytonaHostedGateway)
+    gateway = object.__new__(HostedHarnessGateway)
     gateway.client = _ForbiddenDaytonaCreate()
     gateway.snapshot = "alk-hosted-v1"
     gateway.snapshot_digest = ""
@@ -894,7 +1073,7 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
     }
     job, _ = create_hosted_job(organization, payload, idempotency_key="launch-gateway")
     client = _Daytona()
-    gateway = object.__new__(DaytonaHostedGateway)
+    gateway = object.__new__(HostedHarnessGateway)
     gateway.client = client
     gateway.snapshot = "alk-hosted-v1"
     gateway.snapshot_digest = "sha256:" + "b" * 64
@@ -903,7 +1082,7 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
     settings.ALK_HOSTED_SANDBOX_TTL_SECONDS = 7200
     simulator_values = {
         "ALK_HARNESS": "vertex-gemini",
-        "ALK_HARNESS_MODEL": "gemini-2.5-flash",
+        "ALK_HARNESS_MODEL": "gemini-3.7-flash",
         "DEEPGRAM_API_KEY": "platform-simulator-deepgram",
         "GOOGLE_APPLICATION_CREDENTIALS": _SIMULATOR_VERTEX_CREDENTIALS_PATH,
         "GOOGLE_CLOUD_PROJECT": "platform-simulator-project",
@@ -914,10 +1093,27 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         lambda: (simulator_values, b'{"project_id":"platform-simulator-project"}'),
     )
 
-    attempt = gateway.launch(job, endpoint_base_url="https://platform.example.com")
+    selected_capacity = SandboxCapacity("selected", 6, 12_288, 20, 1)
+    with patch(
+        "simulate.services.harness_capacity.configured_capacity",
+        return_value=selected_capacity,
+    ):
+        attempt = gateway.launch(job, endpoint_base_url="https://platform.example.com")
 
     assert attempt.state == HostedHarnessAttempt.State.RUNNING
     assert attempt.provider_ref == "sandbox-1"
+    assert (
+        client.params.cpu_units,
+        client.params.memory_mb,
+        client.params.disk_gb,
+    ) == (
+        6,
+        12_288,
+        20,
+    )
+    dispatched = json.loads(client.sandbox.fs.uploads["/work/job.json"])
+    assert dispatched["runtime"]["cpu_units"] == client.params.cpu_units
+    assert dispatched["runtime"]["memory_mb"] == client.params.memory_mb
     assert set(client.sandbox.fs.uploads) >= {
         "/work/source.tar.gz",
         "/work/job.json",
@@ -940,23 +1136,19 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
     )
     # Authoring and call execution are distinct bounded phases. The sandbox must survive the
     # former rather than using only the 10-minute call-runtime budget plus two minutes.
-    assert client.params.ttl_minutes == 120
+    assert client.params.ttl_seconds == 7200
     prepare_command = client.sandbox.process.exec_calls[0]
     assert not prepare_command.startswith("mkdir -p /work/authoring")
     assert (
         "if [ -f /work/authoring.tar.gz ]; then mkdir -p /work/authoring"
         in prepare_command
     )
-    # Egress domains present -> allowlist-only egress: block_all is False and the
-    # domain_allow_list is the deny-by-default. block_all True is mutually
-    # exclusive with an allow-list in Daytona (verified live), so the allow-list
-    # itself enforces the boundary.
-    assert client.params.network_block_all is False
-    assert set(client.params.domain_allow_list.split(",")) == {
+    assert client.params.unrestricted_egress is False
+    assert set(client.params.allowed_domains) == {
         "aiplatform.googleapis.com",
         "agent.example.com",
         "api.deepgram.com",
-        "api.vapi.ai",
+        "*.vapi.ai",
         "global-aiplatform.googleapis.com",
         "ingest.example.com",
         "oauth2.googleapis.com",
@@ -973,11 +1165,14 @@ def _launch_and_read_job_json(organization, settings, *, requested_parallelism):
         "visibility": "public",
     }
     payload["runtime"]["parallelism"] = requested_parallelism
+    payload["scenario_count"] = requested_parallelism
+    payload["runtime"].update(cpu_units=8, memory_mb=8192)
     job, _ = create_hosted_job(
         organization, payload, idempotency_key=f"parallelism-{requested_parallelism}"
     )
     client = _Daytona()
-    gateway = object.__new__(DaytonaHostedGateway)
+    client.runtime_digest = "sha256:good"
+    gateway = object.__new__(HostedHarnessGateway)
     gateway.client = client
     gateway.snapshot = "alk-hosted-v1"
     gateway.snapshot_digest = "sha256:good"
@@ -1062,7 +1257,7 @@ def test_unified_provider_import_authoring_receives_one_shot_target_key(
         organization, payload, idempotency_key="unified-provider-import-authoring"
     )
     client = _Daytona()
-    gateway = object.__new__(DaytonaHostedGateway)
+    gateway = object.__new__(HostedHarnessGateway)
     gateway.client = client
     gateway.snapshot = "alk-hosted-v1"
     gateway.snapshot_digest = ""
@@ -1109,7 +1304,7 @@ def test_daytona_adjustment_is_persisted_and_delivered_to_active_authoring(
     }
     job, _ = create_hosted_job(organization, payload, idempotency_key="adjust-gateway")
     client = _Daytona()
-    gateway = object.__new__(DaytonaHostedGateway)
+    gateway = object.__new__(HostedHarnessGateway)
     gateway.client = client
     gateway.snapshot = "alk-hosted-v1"
     gateway.snapshot_digest = ""
@@ -1126,7 +1321,7 @@ def test_daytona_adjustment_is_persisted_and_delivered_to_active_authoring(
     attempt = HostedHarnessAttempt.no_workspace_objects.get(
         job=job, attempt_number=job.current_attempt_number
     )
-    assert attempt.snapshot_name == "direct-image-adjustments-v1"
+    assert attempt.snapshot_name == "alk-hosted-v1"
 
     adjusted = gateway.adjust(
         job,
@@ -1176,7 +1371,7 @@ def test_daytona_retry_replays_persisted_adjustments_before_authoring(
         organization, payload, idempotency_key="retry-adjustment-replay"
     )
     client = _Daytona()
-    gateway = object.__new__(DaytonaHostedGateway)
+    gateway = object.__new__(HostedHarnessGateway)
     gateway.client = client
     gateway.snapshot = "alk-hosted-v1"
     gateway.snapshot_digest = ""
@@ -1211,7 +1406,7 @@ def test_daytona_adjustment_accepts_natural_language_number(
         organization, payload, idempotency_key="adjust-word-number"
     )
     client = _Daytona()
-    gateway = object.__new__(DaytonaHostedGateway)
+    gateway = object.__new__(HostedHarnessGateway)
     gateway.client = client
     gateway.snapshot = "alk-hosted-v1"
     gateway.snapshot_digest = ""
@@ -1254,7 +1449,7 @@ def test_daytona_livekit_launch_uses_coturn_domain_allowlist(
         organization, payload, idempotency_key="launch-livekit-webrtc"
     )
     client = _Daytona()
-    gateway = object.__new__(DaytonaHostedGateway)
+    gateway = object.__new__(HostedHarnessGateway)
     gateway.client = client
     gateway.snapshot = "alk-hosted-v1"
     gateway.snapshot_digest = "sha256:" + "b" * 64
@@ -1269,8 +1464,8 @@ def test_daytona_livekit_launch_uses_coturn_domain_allowlist(
 
     gateway.launch(job, endpoint_base_url="https://platform.example.com")
 
-    assert client.params.network_allow_list is None
-    assert set(client.params.domain_allow_list.split(",")) == {
+    assert client.params.allowed_cidrs == ()
+    assert set(client.params.allowed_domains) == {
         "agent.example.com",
         "coturn.turn-eu.futureagi.com",
         "ingest.example.com",
@@ -1279,9 +1474,99 @@ def test_daytona_livekit_launch_uses_coturn_domain_allowlist(
 
 
 @pytest.mark.django_db
-def test_cancel_writes_reason_signals_guest_and_holds_before_delete(
+def test_gateway_polls_diagnostics_to_s3_and_finalizes_before_cleanup(
     organization, monkeypatch
 ):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="polled-diagnostics"
+    )
+    attempt = register_attempt(
+        job.id,
+        endpoint_base_url="https://platform.example.com",
+        provider_ref="sandbox-1",
+        snapshot_name="alk-hosted-v1",
+    ).attempt
+    client = _Daytona()
+    process = client.sandbox.process
+    process.entrypoint_output = (
+        "\x01\x02\x1b[31mproduction prod true 13 target-secret "
+        "custom-secret-value\x1b[0m\nwaiting"
+    )
+    process.process_output = "worker simulator-secret\nready"
+    uploaded = []
+
+    class _Storage:
+        def put_object(self, **kwargs):
+            client.lifecycle.append("upload")
+            uploaded.append(kwargs["data"].read())
+
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_diagnostics.get_storage_client",
+        lambda: _Storage(),
+    )
+    resolver_calls = []
+
+    def _resolve_target_secrets(_resolver, _job):
+        resolver_calls.append(_job.id)
+        return {
+            "TARGET_API_KEY": "target-secret",
+            "SHORT_API_KEY": "prod",
+            "FEATURE_FLAG": "true",
+            "STRIPE_SK": "custom-secret-value",
+        }
+
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway.PlatformSecretResolver.resolve",
+        _resolve_target_secrets,
+    )
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway.resolve_platform_simulator_secrets",
+        lambda: {"SIMULATOR_API_KEY": "simulator-secret"},
+    )
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = client
+
+    assert gateway.reconcile_completed(attempt) is None
+    attempt.refresh_from_db()
+    running = json.loads(gzip.decompress(uploaded[-1]))
+    assert running["final"] is False
+    assert running["entrypoint_log"] == (
+        "production prod true 13 [REDACTED] [REDACTED]\nwaiting"
+    )
+    assert running["process_logs"] == "worker [REDACTED]\nready"
+    assert attempt.diagnostics_final is False
+    assert attempt.diagnostics_object_key.endswith(f"/{attempt.id}.json.gz")
+    assert client.deleted is False
+
+    process.command_exit_code = 2
+    process.command_status = "finished"
+    process.entrypoint_output += "\nfatal"
+    gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    final = json.loads(gzip.decompress(uploaded[-1]))
+    assert final["final"] is True
+    assert final["exit_code"] == 2
+    assert final["entrypoint_log"].endswith("fatal")
+    assert attempt.diagnostics_final is True
+    assert attempt.diagnostics_size == len(uploaded[-1])
+    assert client.lifecycle[-2:] == ["upload", "delete"]
+    assert resolver_calls == [job.id]
+    assert serialize_job(job)["runtime"] == {
+        "sandbox_id": "sandbox-1",
+        "diagnostics": {
+            "object_key": attempt.diagnostics_object_key,
+            "sha256": attempt.diagnostics_sha256,
+            "size": attempt.diagnostics_size,
+            "captured_at": attempt.diagnostics_captured_at.isoformat(),
+            "final": True,
+            "error": "",
+        },
+    }
+
+
+@pytest.mark.django_db
+def test_cancel_signals_guest_before_provider_delete(organization, monkeypatch):
     payload = _payload()
     payload["source"] = {
         "kind": "remote",
@@ -1290,7 +1575,7 @@ def test_cancel_writes_reason_signals_guest_and_holds_before_delete(
     }
     job, _ = create_hosted_job(organization, payload, idempotency_key="cancel-gateway")
     client = _Daytona()
-    gateway = object.__new__(DaytonaHostedGateway)
+    gateway = object.__new__(HostedHarnessGateway)
     gateway.client = client
     gateway.snapshot = "alk-hosted-v1"
     gateway.snapshot_digest = ""
@@ -1299,11 +1584,6 @@ def test_cancel_writes_reason_signals_guest_and_holds_before_delete(
         return_value=(b"archive", ""),
     ):
         gateway.launch(job, endpoint_base_url="https://platform.example.com")
-    observations = iter(({"exit_code": None}, {"exit_code": 0}))
-    monkeypatch.setattr(gateway, "inspect", lambda _: next(observations))
-    monkeypatch.setattr(
-        "simulate.services.hosted_harness_gateway.time.sleep", lambda _: None
-    )
     monkeypatch.setattr(gateway, "_delete_and_record", lambda _: job)
 
     gateway.cancel(job, reason="user_canceled")
@@ -1347,7 +1627,7 @@ def test_reconcile_relaunches_infra_failure_until_budget_then_fails(
         "visibility": "public",
     }
     job, _ = create_hosted_job(organization, payload, idempotency_key="retry-gateway")
-    gateway = object.__new__(DaytonaHostedGateway)
+    gateway = object.__new__(HostedHarnessGateway)
     gateway.client = _Daytona()
     gateway.snapshot = "alk-hosted-v1"
     gateway.snapshot_digest = ""
@@ -1385,6 +1665,126 @@ def test_reconcile_relaunches_infra_failure_until_budget_then_fails(
 
 
 @pytest.mark.django_db
+def test_reconcile_tolerates_brief_daytona_toolbox_outage(organization, monkeypatch):
+
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="brief-toolbox-outage"
+    )
+    attempt = register_attempt(
+        job.id,
+        endpoint_base_url="https://platform.example.com",
+        provider_ref="sandbox-1",
+    ).attempt
+    attempt.heartbeat_at = timezone.now()
+    attempt.save(update_fields=["heartbeat_at", "updated_at"])
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = _Daytona()
+    monkeypatch.setattr(
+        gateway,
+        "inspect",
+        lambda _: (_ for _ in ()).throw(
+            SandboxProviderError("toolbox unavailable", status_code=502)
+        ),
+    )
+    monkeypatch.setattr(
+        gateway,
+        "_delete_and_record",
+        lambda *args, **kwargs: pytest.fail("recent outage must not delete sandbox"),
+    )
+
+    assert gateway.reconcile_completed(attempt) is None
+    attempt.refresh_from_db()
+    assert attempt.state == HostedHarnessAttempt.State.REGISTERED
+    assert attempt.terminal_failure is None
+
+
+@pytest.mark.django_db
+def test_reconcile_replaces_daytona_sandbox_after_toolbox_grace(
+    organization, monkeypatch
+):
+
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="stale-toolbox-outage"
+    )
+    attempt = register_attempt(
+        job.id,
+        endpoint_base_url="https://platform.example.com",
+        provider_ref="sandbox-1",
+    ).attempt
+    attempt.heartbeat_at = timezone.now() - timedelta(minutes=4)
+    attempt.save(update_fields=["heartbeat_at", "updated_at"])
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = _Daytona()
+    monkeypatch.setattr(
+        gateway,
+        "inspect",
+        lambda _: (_ for _ in ()).throw(
+            SandboxProviderError("toolbox unavailable", status_code=502)
+        ),
+    )
+    captured = {}
+
+    def _fake_delete(stale_attempt, *, retry_pending=False):
+        captured["retry_pending"] = retry_pending
+        return record_cleanup(
+            stale_attempt.id,
+            provider_ref=str(stale_attempt.provider_ref),
+            verified_absent=True,
+            retry_pending=retry_pending,
+            details={"provider": "test"},
+        )
+
+    monkeypatch.setattr(gateway, "_delete_and_record", _fake_delete)
+
+    reconciled = gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    assert attempt.state == HostedHarnessAttempt.State.FAILED
+    assert attempt.terminal_failure["domain"] == "infrastructure"
+    assert attempt.terminal_failure["code"] == "sandbox_unreachable"
+    assert captured["retry_pending"] is True
+    assert reconciled.state == HostedHarnessJob.State.RETRY_WAIT
+
+
+@pytest.mark.django_db
+def test_reconcile_waits_when_daytona_deletion_is_already_in_progress(
+    organization, monkeypatch
+):
+
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="toolbox-delete-in-progress"
+    )
+    attempt = register_attempt(
+        job.id,
+        endpoint_base_url="https://platform.example.com",
+        provider_ref="sandbox-1",
+    ).attempt
+    attempt.heartbeat_at = timezone.now() - timedelta(minutes=4)
+    attempt.save(update_fields=["heartbeat_at", "updated_at"])
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = _Daytona()
+    monkeypatch.setattr(
+        gateway,
+        "inspect",
+        lambda _: (_ for _ in ()).throw(
+            SandboxProviderError("toolbox unavailable", status_code=502)
+        ),
+    )
+    monkeypatch.setattr(
+        gateway,
+        "_delete_and_record",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            SandboxConflictError("sandbox state change in progress", status_code=409)
+        ),
+    )
+
+    assert gateway.reconcile_completed(attempt) is None
+    attempt.refresh_from_db()
+    assert attempt.state == HostedHarnessAttempt.State.FAILED
+    assert attempt.terminal_failure["code"] == "sandbox_unreachable"
+
+
+@pytest.mark.django_db
 @pytest.mark.parametrize("exit_code", [0, 3, 78])
 def test_reconcile_terminal_and_authoring_exits_never_retry(
     organization, monkeypatch, exit_code
@@ -1398,7 +1798,7 @@ def test_reconcile_terminal_and_authoring_exits_never_retry(
         "visibility": "public",
     }
     job, _ = create_hosted_job(organization, payload, idempotency_key="noretry-gateway")
-    gateway = object.__new__(DaytonaHostedGateway)
+    gateway = object.__new__(HostedHarnessGateway)
     gateway.client = _Daytona()
     gateway.snapshot = "alk-hosted-v1"
     gateway.snapshot_digest = ""
@@ -1451,7 +1851,7 @@ def test_reconcile_legacy_authoring_exit_is_not_reported_as_guest_crash(
     job, _ = create_hosted_job(
         organization, payload, idempotency_key="authoring-exit1-gateway"
     )
-    gateway = object.__new__(DaytonaHostedGateway)
+    gateway = object.__new__(HostedHarnessGateway)
     gateway.client = _Daytona()
     gateway.snapshot = "alk-hosted-v1"
     gateway.snapshot_digest = ""
@@ -1503,7 +1903,7 @@ def test_reconcile_exit0_refreshes_terminal_delivery_flags(organization, monkeyp
     job, _ = create_hosted_job(
         organization, payload, idempotency_key="terminal-refresh-gateway"
     )
-    gateway = object.__new__(DaytonaHostedGateway)
+    gateway = object.__new__(HostedHarnessGateway)
     gateway.client = _Daytona()
     gateway.snapshot = "alk-hosted-v1"
     gateway.snapshot_digest = ""
