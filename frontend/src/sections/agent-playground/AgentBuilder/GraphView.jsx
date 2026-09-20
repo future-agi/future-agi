@@ -57,6 +57,54 @@ const MAX_ZOOM = 2;
 // Initial viewport
 const DEFAULT_VIEWPORT = { x: 40, y: 400, zoom: 0.8 };
 
+export async function persistNodePositions({
+  nodes: draggedNodes,
+  ensureDraft,
+  getCurrentAgent,
+  onNodesChange,
+  originalPositions,
+  updateNode = updateNodeApi,
+}) {
+  const draftResult = await ensureDraft();
+
+  if (draftResult === false) {
+    onNodesChange(
+      draggedNodes.map((node) => ({
+        type: "position",
+        id: node.id,
+        position: originalPositions[node.id],
+      })),
+    );
+    return;
+  }
+
+  if (draftResult === "created") return;
+
+  const currentAgent = getCurrentAgent();
+  try {
+    await Promise.all(
+      draggedNodes.map((node) =>
+        updateNode({
+          graphId: currentAgent?.id,
+          versionId: currentAgent?.version_id,
+          nodeId: node.id,
+          data: { position: node.position },
+        }),
+      ),
+    );
+  } catch (error) {
+    logger.error("[GraphView] updateNodeApi position failed", error);
+    onNodesChange(
+      draggedNodes.map((node) => ({
+        type: "position",
+        id: node.id,
+        position: originalPositions[node.id],
+      })),
+    );
+    enqueueSnackbar("Failed to save positions", { variant: "error" });
+  }
+}
+
 export default function GraphView() {
   const { screenToFlowPosition } = useReactFlow();
   const queryClient = useQueryClient();
@@ -352,41 +400,18 @@ export default function GraphView() {
       }
 
       positionDebounceRef.current[debounceKey] = setTimeout(async () => {
-        const { currentAgent, _isDraftCreating } =
-          useAgentPlaygroundStore.getState();
-
-        // Don't persist positions if not a draft, or if a draft creation is
-        // in-flight (the version ID hasn't switched to the new draft yet).
-        if (!currentAgent?.is_draft || _isDraftCreating) {
-          delete positionDebounceRef.current[debounceKey];
-          return;
-        }
-
-        // Already a draft — fire individual PATCH for each node position
-        Promise.all(
-          nodes.map((n) =>
-            updateNodeApi({
-              graphId: currentAgent?.id,
-              versionId: currentAgent?.version_id,
-              nodeId: n.id,
-              data: { position: n.position },
-            }),
-          ),
-        ).catch((error) => {
-          logger.error("[GraphView] updateNodeApi position failed", error);
-          onNodesChange(
-            nodes.map((n) => ({
-              type: "position",
-              id: n.id,
-              position: dragStartPositionRef.current[n.id],
-            })),
-          );
-          enqueueSnackbar("Failed to save positions", { variant: "error" });
+        await persistNodePositions({
+          nodes,
+          ensureDraft,
+          getCurrentAgent: () =>
+            useAgentPlaygroundStore.getState().currentAgent,
+          onNodesChange,
+          originalPositions: dragStartPositionRef.current,
         });
         delete positionDebounceRef.current[debounceKey];
       }, 500);
     },
-    [onNodesChange],
+    [ensureDraft, onNodesChange],
   );
 
   const onDragOver = useCallback((event) => {

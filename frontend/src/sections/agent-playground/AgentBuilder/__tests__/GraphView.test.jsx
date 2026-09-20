@@ -1,6 +1,7 @@
 /* eslint-disable react/prop-types */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useAgentPlaygroundStore } from "../../store";
+import { persistNodePositions } from "../GraphView";
 
 // Since GraphView uses ReactFlow internally (which requires a DOM provider),
 // we test the callback logic extracted from GraphViewInner via the store
@@ -213,9 +214,55 @@ describe("GraphView – callback logic", () => {
 
   // ---- onNodeDragStop ----
   describe("onNodeDragStop logic", () => {
-    it("calls saveDraft on node drag stop", () => {
-      mockSaveDraft();
-      expect(mockSaveDraft).toHaveBeenCalled();
+    it("promotes an active agent before saving dragged positions", async () => {
+      const ensureDraft = vi.fn().mockResolvedValue("created");
+      const updateNode = vi.fn();
+
+      await persistNodePositions({
+        nodes: [{ id: "n1", position: { x: 100, y: 200 } }],
+        ensureDraft,
+        getCurrentAgent: () => ({ id: "agent-1", version_id: "version-1" }),
+        onNodesChange: vi.fn(),
+        originalPositions: { n1: { x: 0, y: 0 } },
+        updateNode,
+      });
+
+      expect(ensureDraft).toHaveBeenCalledOnce();
+      expect(updateNode).not.toHaveBeenCalled();
+    });
+
+    it("rolls back positions when draft creation fails", async () => {
+      const onNodesChange = vi.fn();
+
+      await persistNodePositions({
+        nodes: [{ id: "n1", position: { x: 100, y: 200 } }],
+        ensureDraft: vi.fn().mockResolvedValue(false),
+        getCurrentAgent: vi.fn(),
+        onNodesChange,
+        originalPositions: { n1: { x: 0, y: 0 } },
+      });
+
+      expect(onNodesChange).toHaveBeenCalledWith([
+        { type: "position", id: "n1", position: { x: 0, y: 0 } },
+      ]);
+    });
+
+    it("rolls back positions when an existing draft save fails", async () => {
+      const onNodesChange = vi.fn();
+      const updateNode = vi.fn().mockRejectedValue(new Error("save failed"));
+
+      await persistNodePositions({
+        nodes: [{ id: "n1", position: { x: 100, y: 200 } }],
+        ensureDraft: vi.fn().mockResolvedValue(true),
+        getCurrentAgent: () => ({ id: "agent-1", version_id: "version-1" }),
+        onNodesChange,
+        originalPositions: { n1: { x: 0, y: 0 } },
+        updateNode,
+      });
+
+      expect(onNodesChange).toHaveBeenCalledWith([
+        { type: "position", id: "n1", position: { x: 0, y: 0 } },
+      ]);
     });
   });
 
