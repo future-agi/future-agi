@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1004,
+  endpointCount: 1005,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -7402,6 +7402,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 },
               },
             },
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/agentcc/request-logs/metadata-values/": {
+      get: {
+        operationId: "agentcc_request-logs_metadata_values",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentccRequestLogMetadataValuesResponse",
+          },
+          400: {
+            $ref: "#/definitions/AgentccErrorResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -47542,6 +47562,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    AgentccRequestLogMetadataValuesResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/AgentccRequestLogMetadataValues",
+        },
+      },
+    },
     AgentccRoutingPolicy: {
       required: ["name"],
       type: "object",
@@ -79308,6 +79341,35 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/AgentPromptOptimiserColumnConfig",
           },
           readOnly: true,
+        },
+      },
+    },
+    AgentccRequestLogMetadataValues: {
+      required: ["application", "service", "tags"],
+      type: "object",
+      properties: {
+        application: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        service: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        tags: {
+          description:
+            "key:value pairs, for keys declared as custom properties.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
       },
     },

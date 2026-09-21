@@ -1,8 +1,7 @@
 """Unit tests for WorkspaceAccessGate (TH-5944 SRP follow-up).
 
 The whole point of pulling this out of PromptStreamConsumer is that these
-rules are testable without the consumer, though the gate itself still runs
-through Channels' database_sync_to_async — no mocked
+rules are testable with zero Channels/consumer machinery — no mocked
 `send_json`/`close`, no `_make_consumer()` scaffolding. Just user + workspace
 id in, a plain result out.
 """
@@ -11,6 +10,7 @@ import asyncio
 from unittest.mock import MagicMock
 
 import pytest
+from asgiref.sync import sync_to_async
 
 from sockets.workspace_access import (
     NOT_FOUND,
@@ -18,12 +18,10 @@ from sockets.workspace_access import (
     WorkspaceAccessGate,
 )
 
-# Every path through WorkspaceAccessGate enters channels' database_sync_to_async,
-# whose thread handler calls close_old_connections() on the shared worker
-# thread. pytest-django blocks that for unmarked tests once an earlier
-# django_db test has opened a connection there, so the ORM monkeypatches
-# below are not enough: the modules need database access declared.
-pytestmark = pytest.mark.django_db
+@pytest.fixture(autouse=True)
+def bypass_database_connection_management(monkeypatch):
+    """Keep these mocked unit tests independent of Django's database wrapper."""
+    monkeypatch.setattr("sockets.workspace_access.database_sync_to_async", sync_to_async)
 
 
 def test_resolve_denies_with_not_found_when_workspace_id_missing():

@@ -20,7 +20,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
+from asgiref.sync import sync_to_async
 from django.core.exceptions import ValidationError
 
 from sockets.prompt_stream_consumer import (
@@ -30,12 +30,11 @@ from sockets.prompt_stream_consumer import (
     PromptStreamConsumer,
 )
 
-# Every path through WorkspaceAccessGate enters channels' database_sync_to_async,
-# whose thread handler calls close_old_connections() on the shared worker
-# thread. pytest-django blocks that for unmarked tests once an earlier
-# django_db test has opened a connection there, so the ORM monkeypatches
-# below are not enough: the modules need database access declared.
-pytestmark = pytest.mark.django_db
+@pytest.fixture(autouse=True)
+def bypass_database_connection_management(monkeypatch):
+    """The Workspace ORM calls are mocked; no real DB connection is needed."""
+    monkeypatch.setattr("sockets.workspace_access.database_sync_to_async", sync_to_async)
+    monkeypatch.setattr("sockets.prompt_stream_consumer.database_sync_to_async", sync_to_async)
 
 
 def _make_consumer(workspace_id=None, user=None):

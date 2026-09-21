@@ -13299,6 +13299,38 @@
             },
             "parameters": []
         },
+        "/agentcc/request-logs/metadata-values/": {
+            "get": {
+                "operationId": "agentcc_request-logs_metadata_values",
+                "description": "Application, service and custom tag values seen in recent requests.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentccRequestLogMetadataValuesResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentccErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "agentcc"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
         "/agentcc/request-logs/search/": {
             "get": {
                 "operationId": "agentcc_request-logs_search",
@@ -85431,6 +85463,54 @@
                     "type": "string",
                     "format": "date-time",
                     "readOnly": true
+                }
+            }
+        },
+        "AgentccRequestLogMetadataValues": {
+            "required": [
+                "application",
+                "service",
+                "tags"
+            ],
+            "type": "object",
+            "properties": {
+                "application": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "service": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "tags": {
+                    "description": "key:value pairs, for keys declared as custom properties.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "AgentccRequestLogMetadataValuesResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/AgentccRequestLogMetadataValues"
                 }
             }
         },
