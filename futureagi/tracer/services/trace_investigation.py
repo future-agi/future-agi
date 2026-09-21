@@ -908,6 +908,12 @@ def publish_investigation(
         )
         coverage = result["coverage"]
         usage = result["usage"]
+        has_issues = None
+        if result["execution_status"] == "completed":
+            if result["outcome"] == "failure":
+                has_issues = True
+            elif result["outcome"] == "success" and not findings:
+                has_issues = False
         if active:
             TraceInvestigationReport.no_workspace_objects.filter(
                 project_id=job.project_id,
@@ -923,12 +929,7 @@ def publish_investigation(
             source=TraceInvestigationSource.OMEGA,
             recorded_at=now,
             is_current=active,
-            has_issues=(
-                bool(result["findings"])
-                if result["execution_status"] == "completed"
-                and result["outcome"] != "unknown"
-                else None
-            ),
+            has_issues=has_issues,
             job=job,
             attempt=attempt,
             idempotency_key=idempotency_key,
