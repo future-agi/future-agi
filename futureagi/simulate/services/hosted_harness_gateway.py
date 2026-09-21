@@ -214,6 +214,9 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         # Whether a validation reset reseals the store underneath the running processes instead of
         # stopping and respawning them. Unset means it respawns, exactly as before.
         "ALK_VALIDATION_RESET_IN_PLACE",
+        # How many scenario writers the orchestrator may run at once. Authoring is the expensive
+        # half of a run, so this is the lever that decides whether a large suite fits the hour.
+        "ALK_HARNESS_WORKERS_AT_ONCE",
         # Where the Claude Agent SDK backend finds an endpoint speaking Anthropic Messages. Left
         # unset the guest starts its own on loopback, which is the ordinary case; set here only to
         # point a run at a gateway that already exists somewhere else.
@@ -1846,6 +1849,8 @@ class HostedHarnessGateway:
                     # and so is how it resets between scenarios.
                     "ALK_VALIDATION_INSTANCES",
                     "ALK_VALIDATION_RESET_IN_PLACE",
+                    # Authoring is where the writers fan out, so the concurrency cap belongs here.
+                    "ALK_HARNESS_WORKERS_AT_ONCE",
                     # Authoring is where the model calls happen, so the gateway address belongs
                     # here too. Absent, the guest's own launcher supplies it.
                     "ALK_HARNESS_GATEWAY_URL",
