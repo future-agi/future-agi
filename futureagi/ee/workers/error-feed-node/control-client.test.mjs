@@ -10,6 +10,8 @@ test('grouping routes use authenticated existing internal API without changing i
   }});
   for(const path of ['/notifications/','/claims/','/reports/',`/attempts/${id}/`,
     '/grouping/feature-claims/','/grouping/claims/',`/grouping/feature-attempts/${id}/complete/`,
+    '/grouping/severity/claims/',`/grouping/severity/attempts/${id}/`,
+    ...['reserve','settle','publish'].map(part=>`/grouping/severity/attempts/${id}/${part}/`),
     ...['checkpoint','reserve','settle','publish'].map(part=>`/grouping/attempts/${id}/${part}/`)]) {
     assert.deepEqual(await client(path,{}),{ok:true});
   }

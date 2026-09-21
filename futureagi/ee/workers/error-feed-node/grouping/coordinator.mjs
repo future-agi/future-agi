@@ -6,6 +6,7 @@ import {runGrouping} from './engine.mjs';
 import {F6_MINILM_POLICY} from './policy.mjs';
 import {createGroupingInvestigator} from './gateway.mjs';
 import {validateEmbeddingModel} from './embedding-client.mjs';
+import {assessSeverity} from './severity.mjs';
 
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 
@@ -176,6 +177,18 @@ export async function processGroupingClaim(claim, options) {
   });
 }
 
+export async function processSeverityClaim(claim, options) {
+  if (!UUID.test(claim.attempt_id ?? '')) throw new Error('Invalid severity attempt');
+  const path = `/grouping/severity/attempts/${claim.attempt_id}/`;
+  return withLease(claim,path,options,async signal => {
+    const gateway = await (options.createInvestigator ?? createGroupingInvestigator)({
+      claim,control:options.control,config:options.gatewayConfig,reserveUsd:options.reserveUsd,
+      signal,purpose:'severity',maxCalls:1,
+    });
+    return assessSeverity(claim,{gateway,control:options.control,signal});
+  });
+}
+
 // Separate pools ensure a long LLM run never prevents immediate feature work.
 // Kafka only wakes durable work; polling remains the recovery path.
 export async function runGroupingCoordinator({control,workerId,signal,pollMs=1000,
@@ -189,6 +202,7 @@ export async function runGroupingCoordinator({control,workerId,signal,pollMs=100
   const pools = [
     {path:'/grouping/feature-claims/',capacity:featureConcurrency,key:'feature_attempt_id',process:processFeatureClaim,active:new Map()},
     {path:'/grouping/claims/',capacity:groupingConcurrency,key:'attempt_id',process:processGroupingClaim,active:new Map()},
+    {path:'/grouping/severity/claims/',capacity:1,key:'attempt_id',process:processSeverityClaim,active:new Map()},
   ];
   try {
     while (!signal.aborted) {

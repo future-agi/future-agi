@@ -4,7 +4,7 @@ export function createControlClient({baseUrl, token, fetchImpl = fetch}) {
   if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password || base.search || base.hash
       || !token || /[\r\n]/.test(token)) throw new Error('Invalid control-plane configuration');
   return async function request(path, body, {method = 'POST', signal} = {}) {
-    const grouping = /^\/grouping\/(?:feature-claims|claims|outbox)\/$|^\/grouping\/outbox\/[a-f0-9-]{36}\/ack\/$|^\/grouping\/feature-attempts\/[a-f0-9-]{36}\/(?:complete\/)?$|^\/grouping\/attempts\/[a-f0-9-]{36}\/(?:checkpoint\/|reserve\/|settle\/|publish\/)?$/.test(path);
+    const grouping = /^\/grouping\/(?:feature-claims|claims|outbox)\/$|^\/grouping\/outbox\/[a-f0-9-]{36}\/ack\/$|^\/grouping\/feature-attempts\/[a-f0-9-]{36}\/(?:complete\/)?$|^\/grouping\/attempts\/[a-f0-9-]{36}\/(?:checkpoint\/|reserve\/|settle\/|publish\/)?$|^\/grouping\/severity\/claims\/$|^\/grouping\/severity\/attempts\/[a-f0-9-]{36}\/(?:reserve\/|settle\/|publish\/)?$/.test(path);
     if (!grouping && !/^\/(?:notifications|claims|reports)\/$|^\/attempts\/[a-f0-9-]{36}\/$/.test(path)) throw new Error('Unsupported control operation');
     const payload = JSON.stringify(body);
     const limit = grouping ? 8 * 1024 * 1024 : 2 * 1024 * 1024;

@@ -6,6 +6,24 @@ const claim={attempt_id:'11111111-1111-4111-8111-111111111111',lease_token:'leas
   snapshot:{snapshot_digest:'sha256:source'},policy_version:'f6-minilm/v1',registry_revision:0,
   candidate_digest:'sha256:'+'a'.repeat(64)};
 const config={model:'google/gemini-3.8-flash',baseUrl:'http://gateway/v1',apiKey:'fixture'};
+test('severity uses its own request namespace and the shared receipt transport',async()=>{
+  const f=fixture();
+  const gateway=await createGroupingInvestigator({claim,config,reserveUsd:1,...f,purpose:'severity'});
+  await gateway.investigate({task:'assess severity'},{type:'object'});
+  assert.equal(f.events[0].path,`/grouping/severity/attempts/${claim.attempt_id}/reserve/`);
+  assert.ok(f.events[0].payload.request_key.startsWith(`severity:${claim.attempt_id}:`));
+  assert.equal(f.events[1].payload.request_key,f.events[0].payload.request_key);
+  assert.match(f.body().messages[0].content,/user impact/);
+});
+test('Vertex wire schema preserves nullable targets without array-valued types',async()=>{
+  const f=fixture();
+  const gateway=await createGroupingInvestigator({claim,config:{...config,model:'vertex_ai/gemini-3.8-flash'},reserveUsd:1,...f});
+  const schema={type:'object',properties:{groups:{type:'array',items:{type:'object',properties:{target_issue_id:{type:['string','null']}},required:['target_issue_id']}}}};
+  await gateway.investigate({question:'compare'},schema);
+  const target=f.body().response_format.json_schema.schema.properties.groups.items.properties.target_issue_id;
+  assert.deepEqual(target,{type:'string',nullable:true});
+  assert.deepEqual(schema.properties.groups.items.properties.target_issue_id,{type:['string','null']});
+});
 function fixture({prior=false,unknown=false,invalid=false,unverifiedModel=false,badUsage=false}={}) {
   const events=[],calls=[];let body;
   const control=async(path,payload)=>{
@@ -23,6 +41,16 @@ function fixture({prior=false,unknown=false,invalid=false,unverifiedModel=false,
     body=JSON.parse(init.body);return new Response('{}');
   },body:()=>body};
 }
+
+test('wire escaping may exceed evidence limit but oversized evidence still fails before reservation',async()=>{
+  const f=fixture();
+  const gateway=await createGroupingInvestigator({claim,config,reserveUsd:1,...f});
+  await gateway.investigate({evidence:'"'.repeat(90000)},{type:'object'});
+  assert.ok(Buffer.byteLength(JSON.stringify(f.body()))>240000);
+  const count=f.events.length;
+  await assert.rejects(()=>gateway.investigate({evidence:'a'.repeat(240000)},{type:'object'}),/context exceeds/);
+  assert.equal(f.events.length,count);
+});
 
 test('reserves before inference, enforces F6 wire settings, persists receipt before returning',async()=>{
   const f=fixture();const gateway=await createGroupingInvestigator({claim,config,reserveUsd:1,...f});

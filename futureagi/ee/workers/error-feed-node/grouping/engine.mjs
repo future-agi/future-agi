@@ -5,6 +5,7 @@ import {emptyRegistry} from './f6/registry.mjs';
 import {runPipeline} from './f6/pipeline.mjs';
 import {addCompanionEvidence} from './f6/companion-context.mjs';
 import {F6_MINILM_POLICY, validateF6Policy} from './policy.mjs';
+import {migrateContextBudget} from './context-budget.mjs';
 
 const MAX_PENDING = 100;
 const MAX_ISSUES = 20;
@@ -201,6 +202,13 @@ export async function runGrouping({rows, pendingIds, features, candidateWindow,
     preparedFeatures.rows[row.id].source_digest = row.source_digest;
     preparedFeatures.rows[row.id].evidence_revision = row.evidence_revision;
   }
+  const inputs = {rows: preparedRows, pendingIds, features: preparedFeatures, cannotLinks, policy,
+    pairRelease: null, initialRegistry,
+    inputBinding: {registry_revision: candidateWindow.registry_revision,
+      omitted_candidates: candidateWindow.omitted_candidates}};
+  const checkpoint = await store.read('checkpoint.json');
+  const migrated = migrateContextBudget(checkpoint, inputs);
+  if (migrated !== checkpoint) await store.save('checkpoint.json', migrated);
   const result = await runPipeline({rows: preparedRows, pendingIds, features: preparedFeatures, cannotLinks, policy,
     pairRelease: null, investigate, store, initialRegistry,
     inputBinding: {registry_revision: candidateWindow.registry_revision,

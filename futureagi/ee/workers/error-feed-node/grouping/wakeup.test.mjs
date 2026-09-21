@@ -29,5 +29,7 @@ test('grouping daemon has explicit model/cost and conservative pool settings',()
   const config=groupingConfig(env);
   assert.equal(config.groupingConcurrency,1);
   assert.equal(config.featureConcurrency,2);
+  assert.equal(groupingConfig({...env,GROUPING_MODEL_ID:'vertex_ai/gemini-3.8-flash'}).groupingConcurrency,1);
+  assert.throws(()=>groupingConfig({...env,GROUPING_MODEL_ID:'vertex_ai/different-model'}),/model/);
   assert.throws(()=>groupingConfig({...env,GROUPING_CONCURRENCY:'100'}),/concurrency/);
 });

@@ -22,7 +22,7 @@ export function groupingConfig(env) {
   for(const count of [featureConcurrency,groupingConcurrency]) {
     if(!Number.isSafeInteger(count)||count<1||count>10) throw new Error('Invalid grouping concurrency');
   }
-  if(env.GROUPING_MODEL_ID!=='google/gemini-3.8-flash') throw new Error('Explicit F6 model required');
+  if(!['google/gemini-3.8-flash','vertex_ai/gemini-3.8-flash'].includes(env.GROUPING_MODEL_ID)) throw new Error('Explicit F6 model required');
   return {reserveUsd,featureConcurrency,groupingConcurrency,
     model:{name:'all-MiniLM-L6-v2',dimension:384,servingRelease:env.GROUPING_EMBEDDING_SERVING_RELEASE}};
 }
@@ -92,7 +92,13 @@ export async function runGroupingDaemon(env=process.env,signal) {
   const stop=new AbortController();
   const combined=AbortSignal.any([signal,stop.signal]);
   const wakeup=createWakeup();
-  const log=(event,attemptId)=>process.stderr.write(JSON.stringify({event,attempt_id:attemptId??null})+'\n');
+  const log=(event,attemptId,error)=>{
+    // Emit code locations only, never exception messages/provider bodies or data.
+    const locations=String(error?.stack??'').split('\n').slice(1)
+      .map(line=>line.match(/(?:file:\/\/)?\/app\/worker\/([a-zA-Z0-9_./-]+:\d+:\d+)/)?.[1])
+      .filter(Boolean).slice(0,5);
+    process.stderr.write(JSON.stringify({event,attempt_id:attemptId??null,...(locations.length?{locations}:{})})+'\n');
+  };
   // Kafka failure never erases durable jobs or stops polling recovery.
   const hints=env.OMEGA_KAFKA_BROKERS
     ? consumeHints(env,wakeup,combined,()=>log('grouping_kafka_unavailable'))
@@ -104,7 +110,7 @@ export async function runGroupingDaemon(env=process.env,signal) {
     : Promise.resolve();
   try {
     await runGroupingCoordinator({...config,control,embedBatch,gatewayConfig:gateway,wakeup,signal:combined,
-      workerId:env.GROUPING_WORKER_ID||hostname(),onError:(_error,id)=>log('grouping_work_failed',id)});
+      workerId:env.GROUPING_WORKER_ID||hostname(),onError:(error,id)=>log('grouping_work_failed',id,error)});
   } finally {stop.abort();await Promise.all([hints,outbox]);}
 }
 

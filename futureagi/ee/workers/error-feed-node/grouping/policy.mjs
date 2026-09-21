@@ -41,7 +41,8 @@ const SETTINGS = Object.freeze({
   max_revisits: 2,
   max_reconcile_members: 16,
   max_reconcile_candidates: 20,
-  max_input_bytes: 60000,
+  // Temporary local E2E allowance approved by Atharva; not benchmark parity.
+  max_input_bytes: 240000,
   max_output_tokens: 8192,
   timeout_ms: 120000,
 });
