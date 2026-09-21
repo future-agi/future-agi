@@ -797,12 +797,14 @@ def _set_cluster_update_fields(
             update_fields.append("status")
 
     if payload.severity is not None:
-        cluster.severity_source = "manual"
-        cluster.severity_assessment_status = "manual"
-        cluster.severity_reason = "Set by a user."
-        update_fields.extend(
-            ["severity_source", "severity_assessment_status", "severity_reason"]
-        )
+        for field, value in (
+            ("severity_source", "manual"),
+            ("severity_assessment_status", "manual"),
+            ("severity_reason", "Set by a user."),
+        ):
+            if not changed_only or getattr(cluster, field) != value:
+                setattr(cluster, field, value)
+                update_fields.append(field)
         priority = severity_to_priority(payload.severity)
         if not changed_only or cluster.priority != priority:
             cluster.priority = priority
