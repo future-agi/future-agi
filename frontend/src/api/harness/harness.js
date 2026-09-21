@@ -15,6 +15,8 @@ const secretValuesPath = () =>
   apiPath("/simulate/api/harness-jobs/secret-values/");
 const extendPath = (id) =>
   apiPath("/simulate/api/harness-jobs/{id}/extend/", { id });
+const amendScenariosPath = (id) =>
+  apiPath("/simulate/api/harness-jobs/{id}/scenarios/amend/", { id });
 
 export const listHarnessJobs = async () => (await axios.get(jobsPath())).data;
 
@@ -81,3 +83,10 @@ export const adjustHarnessJob = async (id, payload) =>
 // just reruns the saved suite.
 export const extendHarnessJob = async (id, payload) =>
   (await axios.post(extendPath(id), payload)).data;
+
+// Edit a finished run's authored suite. `changes` is a batch, and the reply is one receipt per
+// change saying what happened to it (applied, reworked, or refused, and why) rather than a
+// job that merely looks saved. `rework: false` applies only what cannot affect the suite's
+// correctness and refuses the rest, which is how a caller declines to pay for a re-proof.
+export const amendHarnessScenarios = async (id, changes, { rework = true } = {}) =>
+  (await axios.post(amendScenariosPath(id), { changes, rework })).data;
