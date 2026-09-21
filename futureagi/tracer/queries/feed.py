@@ -501,6 +501,9 @@ def _row_from_cluster(
         ),
         status=cluster.status,
         severity=priority_to_severity(cluster.priority),
+        severity_assessment_status=cluster.severity_assessment_status,
+        severity_source=cluster.severity_source,
+        severity_reason=cluster.severity_reason,
         occurrences=cluster.error_count or 0,
         trace_count=cluster.unique_traces or 0,
         fix_layer=cluster.fix_layer.lower() if cluster.fix_layer else None,
@@ -794,6 +797,12 @@ def _set_cluster_update_fields(
             update_fields.append("status")
 
     if payload.severity is not None:
+        cluster.severity_source = "manual"
+        cluster.severity_assessment_status = "manual"
+        cluster.severity_reason = "Set by a user."
+        update_fields.extend(
+            ["severity_source", "severity_assessment_status", "severity_reason"]
+        )
         priority = severity_to_priority(payload.severity)
         if not changed_only or cluster.priority != priority:
             cluster.priority = priority

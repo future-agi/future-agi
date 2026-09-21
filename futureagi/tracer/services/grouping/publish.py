@@ -598,6 +598,7 @@ def _new_issue(
         title=mechanism["mechanism"][:1000],
         combined_description=mechanism["mechanism"],
         error_count=0,
+        severity_source="default",
     )
     return TraceGroupingIssueState.no_workspace_objects.create(
         scope=scope,
@@ -730,6 +731,9 @@ def publish_grouping(
             raise GroupingControlError("grouping proposal exceeds bound")
     except (TypeError, ValueError) as exc:
         raise GroupingControlError("grouping proposal is not JSON") from exc
+    # DRF UUIDField supplies UUID objects; direct callers may supply strings.
+    # Canonicalize validated receipt IDs so both paths share one JSON digest.
+    receipt_ids = [str(_uuid(value, "receipt ID")) for value in receipt_ids]
     proposal_digest = _digest(
         {
             "snapshot_digest": snapshot_digest,
@@ -1301,6 +1305,9 @@ def publish_grouping(
                 "cluster"
             ).get(cluster_id=_uuid(key, "issue ID"))
             _recount(state)
+            from tracer.services.grouping.severity import enqueue_severity
+
+            enqueue_severity(issue=state, attempt=attempt)
         for work in works:
             work.state = GroupingWorkState.COMPLETED
             work.save(update_fields=["state", "updated_at"])

@@ -78,4 +78,20 @@ def edit_grouping_issue(
             state.save(update_fields=["protected", "revision", "updated_at"])
             scope.registry_revision = F("registry_revision") + 1
             scope.save(update_fields=["registry_revision", "updated_at"])
+            # A status/assignee edit fences an in-flight assessment too, but
+            # must not leave severity pending forever at the previous revision.
+            if cluster.severity_source != "manual":
+                from tracer.models.trace_grouping import TraceGroupingSeverityJob
+                from tracer.services.grouping.severity import enqueue_severity
+
+                previous = (
+                    TraceGroupingSeverityJob.no_workspace_objects.filter(issue=state)
+                    .select_related("source_attempt")
+                    .order_by("-created_at")
+                    .first()
+                )
+                if previous is not None:
+                    state.refresh_from_db(fields=["revision"])
+                    state.cluster = cluster
+                    enqueue_severity(issue=state, attempt=previous.source_attempt)
         return cluster
