@@ -209,6 +209,9 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         "HARNESS_BACKGROUND_NOISE_VOLUME",
         # Off has to travel: decided here, enforced inside the sandbox.
         "ALK_VOICEMAIL_SCENARIOS",
+        # How many scenario writers the orchestrator may run at once. Authoring is the expensive
+        # half of a run, so this is the lever that decides whether a large suite fits the hour.
+        "ALK_HARNESS_WORKERS_AT_ONCE",
     ):
         value = str(os.environ.get(name) or "").strip()
         if value:
@@ -1865,6 +1868,8 @@ class HostedHarnessGateway:
                     "ALK_VERTEX_LOCATION",
                     # Authoring writes the scenarios, so the switch is exported here too.
                     "ALK_VOICEMAIL_SCENARIOS",
+                    # Authoring is where the writers fan out, so the ceiling belongs here.
+                    "ALK_HARNESS_WORKERS_AT_ONCE",
                     "GOOGLE_APPLICATION_CREDENTIALS",
                     "GOOGLE_CLOUD_LOCATION",
                     "GOOGLE_CLOUD_PROJECT",
