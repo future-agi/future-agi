@@ -1078,7 +1078,9 @@ class HostedHarnessProvider:
             "configured": configured,
             "provider": provider,
             "sandbox_provider": provider,
-            "public_ingress": provider == "daytona",
+            # Both managed providers now expose callbacks through the platform relay;
+            # the provider-specific traffic credential never reaches the guest.
+            "public_ingress": True,
         }
 
     def _job(self, request, pk):

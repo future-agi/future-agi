@@ -213,6 +213,7 @@ class _E2BCommands:
 
 class _E2BSandbox:
     sandbox_id = "e2b-sandbox"
+    traffic_access_token = "traffic-token"
 
     def __init__(self):
         self.files = _E2BFiles()
@@ -292,8 +293,9 @@ def test_e2b_adapter_combines_domain_and_cidr_egress(settings, monkeypatch):
         "test -x /usr/local/bin/uv && test -x /usr/local/bin/uvx"
     )
     assert bootstrap_options["user"] == "root"
-    with pytest.raises(SandboxProviderError, match="bounded no-header callback"):
-        provider.create_preview_url(sandbox, 8080, expires_in_seconds=600)
+    preview = provider.create_preview_url(sandbox, 8080, expires_in_seconds=600)
+    assert preview.url == "https://8080-e2b-sandbox.e2b.app"
+    assert preview.headers == {"E2B-Traffic-Access-Token": "traffic-token"}
 
     assert provider.delete(sandbox, timeout=1, wait=True) is True
     assert sandbox._sandbox.killed is True

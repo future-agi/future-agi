@@ -216,6 +216,9 @@ class E2BSandbox:
     def __init__(self, sandbox: Any, os_user: str) -> None:
         self._sandbox = sandbox
         self.id = str(sandbox.sandbox_id)
+        self.traffic_access_token = str(
+            getattr(sandbox, "traffic_access_token", "") or ""
+        )
         self.fs = E2BFilesystem(sandbox, os_user)
         self.process = E2BProcess(sandbox, os_user)
 
@@ -227,7 +230,7 @@ class E2BSandboxRuntimeProvider(SandboxRuntimeProvider):
     name = "e2b"
     max_egress_domains = None
     supports_adjustments = True
-    supports_public_ingress = False
+    supports_public_ingress = True
 
     def __init__(self) -> None:
         self.api_key = str(getattr(settings, "E2B_API_KEY", "") or "")
@@ -367,12 +370,16 @@ class E2BSandboxRuntimeProvider(SandboxRuntimeProvider):
     def create_preview_url(
         self, sandbox: E2BSandbox, port: int, *, expires_in_seconds: int
     ) -> SandboxPreview:
-        del sandbox, port, expires_in_seconds
-        raise SandboxProviderError(
-            "E2B public URLs require a traffic-access-token header; the hosted ingress "
-            "contract requires a bounded no-header callback URL, so E2B ingress is disabled "
-            "until a platform relay is configured",
-            status_code=501,
+        del expires_in_seconds
+        host = str(_call(sandbox._sandbox.get_host, port) or "").strip()
+        if not host or not sandbox.traffic_access_token:
+            raise SandboxProviderError(
+                "E2B sandbox did not return a traffic access token for its public host",
+                status_code=502,
+            )
+        return SandboxPreview(
+            url=f"https://{host}",
+            headers={"E2B-Traffic-Access-Token": sandbox.traffic_access_token},
         )
 
 
