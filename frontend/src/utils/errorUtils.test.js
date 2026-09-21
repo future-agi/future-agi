@@ -27,4 +27,24 @@ describe("getRequestErrorMessage", () => {
       ),
     ).toBe("A dataset with this name already exists.");
   });
+
+  it("adds retry guidance after sanitizing technical field errors", () => {
+    expect(
+      getRequestErrorMessage(
+        {
+          response: {
+            status: 429,
+            data: { error: "status: Unknown field." },
+          },
+        },
+        "We couldn't regenerate the synthetic dataset. Please try again.",
+        {
+          retryAction: "regenerating this synthetic dataset",
+          sanitizeTechnicalFieldErrors: true,
+        },
+      ),
+    ).toBe(
+      "We couldn't regenerate the synthetic dataset. Please try again. Please try regenerating this synthetic dataset again in a few minutes.",
+    );
+  });
 });

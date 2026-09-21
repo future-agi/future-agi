@@ -29,6 +29,7 @@ import { useKnowledgeBaseList } from "src/api/knowledge-base/files";
 import { useDatasetOriginStore } from "../../../develop-detail/states";
 import CustomDialog from "../../../develop-detail/Common/CustomDialog/CustomDialog";
 import { getDatasetQueryOptions } from "src/api/develop/develop-detail";
+import { getRequestErrorMessage } from "src/utils/errorUtils";
 
 const titleProps = {
   variant: "s1",
@@ -288,6 +289,19 @@ export default function SyntheticSummaryDrawer() {
           },
         );
       }, 0);
+    },
+    onError: (error) => {
+      enqueueSnackbar(
+        getRequestErrorMessage(
+          error,
+          "We couldn't regenerate the synthetic dataset. Please try again.",
+          {
+            retryAction: "regenerating this synthetic dataset",
+            sanitizeTechnicalFieldErrors: true,
+          },
+        ),
+        { variant: "error" },
+      );
     },
   });
 
