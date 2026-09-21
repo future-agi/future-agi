@@ -19,6 +19,8 @@ pytest env without depending on the pytest-asyncio plugin registration.
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from django.core.exceptions import ValidationError
 
 from sockets.prompt_stream_consumer import (
@@ -27,6 +29,13 @@ from sockets.prompt_stream_consumer import (
     WS_CLOSE_CODE_UNAUTHENTICATED,
     PromptStreamConsumer,
 )
+
+# Every path through WorkspaceAccessGate enters channels' database_sync_to_async,
+# whose thread handler calls close_old_connections() on the shared worker
+# thread. pytest-django blocks that for unmarked tests once an earlier
+# django_db test has opened a connection there, so the ORM monkeypatches
+# below are not enough: the modules need database access declared.
+pytestmark = pytest.mark.django_db
 
 
 def _make_consumer(workspace_id=None, user=None):

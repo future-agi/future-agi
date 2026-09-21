@@ -544,16 +544,25 @@ class DistributedEvaluationTracker(DistributedStateManager):
         cleaned = 0
         cutoff = datetime.utcnow().timestamp() - (max_age_hours * 3600)
 
-        for info in self.get_all_running():
-            try:
-                started = datetime.fromisoformat(info.started_at).timestamp()
-                if started < cutoff:
-                    self.delete(info.task_id)
-                    cleaned += 1
-                    logger.warning(f"Cleaned up stale evaluation: {info.task_id}")
-            except (ValueError, AttributeError):
-                pass
+        try:
+            for info in self.get_all_running():
+                try:
+                    started = datetime.fromisoformat(info.started_at).timestamp()
+                    if started < cutoff:
+                        self.delete(info.task_id)
+                        cleaned += 1
+                        logger.warning(f"Cleaned up stale evaluation: {info.task_id}")
+                except (ValueError, AttributeError):
+                    pass
 
+        except Exception as exc:
+            # A safety sweep must never raise: a Redis scan failure here is
+            # reported and the caller sees nothing cleaned, matching the
+            # sibling methods' contract.
+            logger.exception(
+                "cleanup_stale failed", extra={"error": str(exc), "cleaned": cleaned}
+            )
+            return 0
         return cleaned
 
     def register_cancel_callback(

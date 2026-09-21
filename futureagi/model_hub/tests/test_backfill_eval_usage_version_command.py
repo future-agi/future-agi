@@ -19,6 +19,10 @@ pytestmark = pytest.mark.requires_ee
 
 @pytest.mark.django_db(databases=["default", "default_direct"])
 class TestBackfillUsageLogsCommand:
+    # The command defaults to the PgBouncer-bypass alias; under the test settings
+    # that alias is a mirror with its own connection, so its raw UPDATE cannot see
+    # rows written inside the test transaction. Run it on the test connection.
+
     def test_stamps_version_id_on_logs_without_it(self, organization, workspace):
         from ee.usage.models.usage import APICallLog, APICallStatusChoices
         from model_hub.models.choices import OwnerChoices, SourceChoices
@@ -50,7 +54,7 @@ class TestBackfillUsageLogsCommand:
             config={"output": {"output": 1.0}},
         )
 
-        result = backfill_usage_logs(only_template=str(template.id))
+        result = backfill_usage_logs(only_template=str(template.id), database="default")
 
         log.refresh_from_db()
         assert log.config.get("version_id") == str(version.id)
@@ -86,7 +90,7 @@ class TestBackfillUsageLogsCommand:
             config={"output": {"output": 1.0}, "version_id": existing_version_id},
         )
 
-        backfill_usage_logs(only_template=str(template.id))
+        backfill_usage_logs(only_template=str(template.id), database="default")
 
         log.refresh_from_db()
         assert log.config["version_id"] == existing_version_id
@@ -116,7 +120,7 @@ class TestBackfillUsageLogsCommand:
         log.refresh_from_db()
         assert isinstance(log.config, str), "Precondition: config should be a string"
 
-        backfill_usage_logs(only_template=str(template.id))
+        backfill_usage_logs(only_template=str(template.id), database="default")
 
         log.refresh_from_db()
         assert isinstance(log.config, dict)
@@ -147,7 +151,7 @@ class TestBackfillUsageLogsCommand:
             config={"output": {"output": 1.0}},
         )
 
-        backfill_usage_logs(only_template=str(template.id))
+        backfill_usage_logs(only_template=str(template.id), database="default")
 
         created = EvalTemplateVersion.objects.filter(
             eval_template=template, deleted=False
@@ -198,7 +202,7 @@ class TestBackfillUsageLogsCommand:
                 )
             )
 
-        result = backfill_usage_logs()
+        result = backfill_usage_logs(database="default")
 
         assert result["updated"] >= 3
         for log in logs:
@@ -251,7 +255,7 @@ class TestBackfillUsageLogsCommand:
             config=json.dumps({"output": {"output": 0.7}}),  # double-encoded
         )
 
-        backfill_usage_logs()
+        backfill_usage_logs(database="default")
 
         stamped_log.refresh_from_db()
         assert isinstance(stamped_log.config, dict)

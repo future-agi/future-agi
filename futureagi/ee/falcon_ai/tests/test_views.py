@@ -592,6 +592,8 @@ class TestSkillListView:
     URL = "/falcon-ai/skills/"
 
     def test_create_rejects_unknown_fields(self, auth_client):
+        # Builtin skills are seeded into every database, so the table is never
+        # empty; assert the rejected payload itself was not persisted.
         resp = auth_client.post(
             self.URL,
             {
@@ -605,4 +607,4 @@ class TestSkillListView:
         )
 
         assert resp.status_code == 400
-        assert Skill.objects.count() == 0
+        assert not Skill.objects.filter(name="Custom Skill").exists()

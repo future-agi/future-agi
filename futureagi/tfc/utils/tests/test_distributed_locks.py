@@ -520,10 +520,11 @@ class TestDistributedStateErrorHandling:
         if tracker.is_available:
             with patch.object(
                 tracker, "get_all_running", side_effect=Exception("Redis error")
-            ):
+            ) as mock_get_all_running:
                 # Should return 0 instead of raising
                 result = tracker.cleanup_stale()
                 assert result == 0
+                mock_get_all_running.assert_called_once()
 
 
 class TestLocalFallback:
