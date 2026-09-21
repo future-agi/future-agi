@@ -308,7 +308,7 @@ func translateRequest(req *models.ChatCompletionRequest) (*geminiRequest, string
 			decls = append(decls, geminiFuncDecl{
 				Name:        t.Function.Name,
 				Description: t.Function.Description,
-				Parameters:  t.Function.Parameters,
+				Parameters:  normalizeToolSchema(t.Function.Parameters),
 			})
 		}
 		if len(decls) > 0 {

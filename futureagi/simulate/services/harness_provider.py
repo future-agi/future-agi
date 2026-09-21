@@ -9,6 +9,8 @@ The hosted gateway independently selects Daytona or E2B through
 from __future__ import annotations
 
 import copy
+import os
+import re
 from typing import Any
 
 from django.conf import settings
@@ -24,6 +26,36 @@ from simulate.models import (
     HostedHarnessStageOutput,
     TestExecution,
 )
+
+_E164_PHONE = re.compile(r"^\+[1-9]\d{1,14}$")
+
+
+def _validate_phone_connectivity(payload) -> None:
+    """A phone-only target uses platform telephony, never customer SIP credentials."""
+    if payload["agent"]["connector"] != "phone":
+        return
+    from simulate.services.hosted_harness import HostedHarnessError
+
+    required = (
+        "LIVEKIT_URL",
+        "LIVEKIT_API_KEY",
+        "LIVEKIT_API_SECRET",
+        "SIP_OUTBOUND_TRUNK_ID",
+        "SIP_OUTBOUND_FROM_NUMBER",
+    )
+    missing = [name for name in required if not os.environ.get(name, "").strip()]
+    if missing:
+        raise HostedHarnessError(
+            "phone_dialer_not_configured",
+            "Platform outbound calling is not configured: " + ", ".join(missing),
+            status_code=503,
+        )
+    if not _E164_PHONE.fullmatch(os.environ["SIP_OUTBOUND_FROM_NUMBER"].strip()):
+        raise HostedHarnessError(
+            "phone_dialer_caller_id_invalid",
+            "Platform SIP_OUTBOUND_FROM_NUMBER must be an E.164 caller ID",
+            status_code=503,
+        )
 
 
 def get_harness_provider():
@@ -527,7 +559,9 @@ def _preflight_credential_probe(payload) -> list[dict[str, Any]]:
     agent = payload["agent"]
     connector = str(agent.get("connector") or "").strip().lower()
     mode = str(agent.get("mode") or "").strip().lower()
-    if mode in {"connect_only", "provider_import"}:
+    if connector in {"vapi", "retell", "retell_chat"} and mode in {
+        "connect_only", "provider_import"
+    }:
         target_field = "assistant_id" if connector == "vapi" else "agent_id"
         target = probe_provider_target(
             connector,
@@ -572,6 +606,7 @@ class HostedHarnessProvider:
         # Definitive launch validation runs again after vault resolution.
         try:
             _validate_secret_refs_hosted(payload["agent"]["secret_refs"])
+            _validate_phone_connectivity(payload)
             _validate_known_hosted_egress(payload, base_url)
             _validate_required_credential_files(request, payload)
         except HostedHarnessError as exc:
@@ -623,6 +658,7 @@ class HostedHarnessProvider:
         ).rstrip("/")
         try:
             _validate_secret_refs_hosted(payload["agent"]["secret_refs"])
+            _validate_phone_connectivity(payload)
             _validate_known_hosted_egress(payload, base_url)
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)

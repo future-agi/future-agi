@@ -430,6 +430,54 @@ class TestAgentccGatewayAPI:
         ).exists()
 
     @patch("agentcc.views.gateway.push_org_config", return_value=True)
+    @patch("agentcc.views.gateway._prepare_vertex_provider_config")
+    def test_update_vertex_provider_encrypts_pasted_json(
+        self, mock_prepare, mock_push, auth_client, gateway_id, organization
+    ):
+        mock_prepare.return_value = {
+            "base_url": (
+                "https://us-central1-aiplatform.googleapis.com/v1beta1/"
+                "projects/demo-project/locations/us-central1"
+            ),
+            "api_format": "gemini",
+            "models": ["gemini-3.7-flash"],
+            "service_account_json": '{"type":"service_account"}',
+        }
+        response = auth_client.post(
+            f"/agentcc/gateways/{gateway_id}/update-provider/",
+            {"name": "vertex", "config": {"gcp_project": "demo-project"}},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        credential = AgentccProviderCredential.no_workspace_objects.get(
+            organization=organization, provider_name="vertex", deleted=False
+        )
+        assert CredentialManager.decrypt(bytes(credential.encrypted_credentials)) == {
+            "service_account_json": '{"type":"service_account"}'
+        }
+        assert "service_account_json" not in credential.extra_config
+
+    def test_update_vertex_provider_rejects_invalid_pasted_json(
+        self, auth_client, gateway_id, organization
+    ):
+        response = auth_client.post(
+            f"/agentcc/gateways/{gateway_id}/update-provider/",
+            {
+                "name": "vertex",
+                "config": {
+                    "gcp_project": "demo-project",
+                    "gcp_location": "us-central1",
+                    "service_account_json": "not-json",
+                },
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert not AgentccProviderCredential.no_workspace_objects.filter(
+            organization=organization, provider_name="vertex", deleted=False
+        ).exists()
+
+    @patch("agentcc.views.gateway.push_org_config", return_value=True)
     def test_remove_provider_standalone_soft_deletes(
         self, mock_push, auth_client, gateway_id, organization
     ):

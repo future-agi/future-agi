@@ -290,6 +290,10 @@ def test_e2b_adapter_combines_domain_and_cidr_egress(settings, monkeypatch):
         "printf '#!/bin/sh\\nexec /opt/alk-venv/bin/python \"$@\"\\n' "
         "> /usr/local/bin/python && chmod 0755 /usr/local/bin/python && "
         "ln -sfn /opt/alk-venv/bin/pip /usr/local/bin/pip && "
+        "if [ -x /opt/alk-venv/bin/uv ]; then "
+        "ln -sfn /opt/alk-venv/bin/uv /usr/local/bin/uv; fi && "
+        "if [ -x /opt/alk-venv/bin/uvx ]; then "
+        "ln -sfn /opt/alk-venv/bin/uvx /usr/local/bin/uvx; fi && "
         "test -x /usr/local/bin/uv && test -x /usr/local/bin/uvx"
     )
     assert bootstrap_options["user"] == "root"

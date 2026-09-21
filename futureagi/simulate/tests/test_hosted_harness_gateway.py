@@ -127,16 +127,38 @@ def test_platform_authoring_backend_is_independent_from_simulated_caller(
     credentials.write_text('{"project_id":"platform-project"}', encoding="utf-8")
     monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", str(credentials))
     monkeypatch.setenv("SIMULATOR_LLM_PROVIDER", "vertex")
-    monkeypatch.setenv("SIMULATOR_LLM_MODEL", "gemini-3.8-flash")
-    monkeypatch.setenv("ALK_HARNESS", "vertex-gemini")
-    monkeypatch.setenv("ALK_HARNESS_MODEL", "gemini-3.7-flash")
+    monkeypatch.setenv("SIMULATOR_LLM_MODEL", "gemini-3.1-flash-lite")
+    monkeypatch.setenv("ALK_HARNESS", "claude")
+    monkeypatch.setenv("ALK_HARNESS_MODEL", "claude-sonnet-4-6")
+    monkeypatch.setenv("AGENTCC_INTERNAL_API_KEY", "platform-gateway-key")
+    monkeypatch.setenv("AGENTCC_BASE_URL", "https://gateway.example.test")
 
     values, _credential_bytes = _platform_simulator_material()
 
-    assert values["ALK_HARNESS"] == "vertex-gemini"
-    assert values["ALK_HARNESS_MODEL"] == "gemini-3.7-flash"
+    assert values["ALK_HARNESS"] == "claude"
+    assert values["ALK_HARNESS_MODEL"] == "claude-sonnet-4-6"
     assert values["SIMULATOR_LLM_PROVIDER"] == "vertex"
-    assert values["SIMULATOR_LLM_MODEL"] == "gemini-3.8-flash"
+    assert values["SIMULATOR_LLM_MODEL"] == "gemini-3.1-flash-lite"
+
+
+def test_claude_authoring_uses_platform_gateway_only(monkeypatch):
+    monkeypatch.setenv("ALK_HARNESS", "claude")
+    monkeypatch.setenv("ALK_HARNESS_MODEL", "vertex_ai/gemini-3.7-flash")
+    monkeypatch.setenv("AGENTCC_INTERNAL_API_KEY", "platform-gateway-key")
+    monkeypatch.setenv("AGENTCC_BASE_URL", "https://gateway.example.test")
+
+    values, _ = _platform_simulator_material()
+
+    assert values["AGENTCC_API_KEY"] == "platform-gateway-key"
+    assert values["AGENTCC_BASE_URL"] == "https://gateway.example.test"
+    assert values["ALK_HARNESS"] == "claude"
+    assert values["ALK_HARNESS_MODEL"] == "vertex_ai/gemini-3.7-flash"
+    assert "gateway.example.test" in _resolved_egress_domains(
+        {"agent": {"connector": "auto"}, "security": {"allowed_egress_domains": []}},
+        {},
+        values,
+        None,
+    )
 
 
 def test_provider_egress_includes_vertex_auth_and_both_model_regions():
@@ -603,6 +625,58 @@ def test_fresh_authoring_archive_contains_contract_and_scenarios_only(tmp_path):
         ]
 
 
+def test_fresh_authoring_archive_carries_generic_certification_sidecars(tmp_path):
+    scenario = tmp_path / "scenarios" / "one"
+    scenario.mkdir(parents=True)
+    (tmp_path / "contract.json").write_text('{"agent":"ride"}', encoding="utf-8")
+    (scenario / "scenario.json").write_text('{"name":"one"}', encoding="utf-8")
+    (tmp_path / "runtime-validation.json").write_text(
+        '{"status":"certified"}', encoding="utf-8"
+    )
+    evidence = tmp_path / "generic-harness"
+    evidence.mkdir()
+    (evidence / "certification.json").write_text(
+        '{"status":"certified"}', encoding="utf-8"
+    )
+
+    body = pack_authoring_archive(tmp_path)
+
+    with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
+        assert "runtime-validation.json" in archive.getnames()
+        assert "generic-harness/certification.json" in archive.getnames()
+
+
+def test_authoring_stage_outputs_exposes_generic_certification_evidence():
+    from simulate.services.hosted_harness_gateway import (
+        authoring_stage_outputs_from_archive,
+    )
+
+    body = io.BytesIO()
+    with tarfile.open(fileobj=body, mode="w:gz") as archive:
+        for name, value in {
+            "generic-harness/certification.json": {
+                "status": "certified",
+                "fingerprint": "sha256:test",
+            },
+            "generic-harness/repair-history.json": {
+                "results": [{"outcome": "applied"}]
+            },
+            "generic-harness/action-certification.json": {
+                "actions": [{"action": "lookup", "status": "passed"}]
+            },
+        }.items():
+            payload = json.dumps(value).encode()
+            member = tarfile.TarInfo(name)
+            member.size = len(payload)
+            archive.addfile(member, io.BytesIO(payload))
+
+    outputs = authoring_stage_outputs_from_archive(body.getvalue())
+
+    certification = next(item for item in outputs if item["kind"] == "certification")
+    assert certification["summary"] == "certified · 1 repairs · 1 action probes"
+    assert certification["data"]["certificate"]["fingerprint"] == "sha256:test"
+
+
 def test_fresh_authoring_archive_rejects_missing_scenarios(tmp_path):
     (tmp_path / "contract.json").write_text("{}", encoding="utf-8")
 
@@ -762,6 +836,7 @@ def test_dispatch_payload_mirrors_only_livekit_url():
         "LIVEKIT_API_SECRET",
         "LIVEKIT_URL",
     ]
+    assert dispatched["metadata"]["generic_harness_v1"] is True
     assert payload["agent"]["config"] == {}
     assert "must-not-be-copied" not in json.dumps(dispatched)
 
@@ -785,6 +860,7 @@ def test_dispatch_payload_declares_resolved_adc_names_without_values():
         "GOOGLE_CLOUD_PROJECT",
         "MODEL_NAME",
     ]
+    assert dispatched["metadata"]["generic_harness_v1"] is True
     assert "must-not-be-copied" not in json.dumps(dispatched)
     assert payload["metadata"] == {"environment_value_names": ["MODEL_NAME"]}
 
@@ -984,6 +1060,118 @@ class _ForbiddenDaytonaCreate(_Daytona):
         )
         error.status_code = 403
         raise error
+
+
+def test_offline_delivery_replays_durable_guest_spool(monkeypatch):
+    artifact = b"result body"
+    digest = __import__("hashlib").sha256(artifact).hexdigest()
+    files = {
+        f"outbound-spool/artifacts/{digest}.bin": artifact,
+        f"outbound-spool/artifacts/{digest}.json": json.dumps(
+            {
+                "digest": digest,
+                "kind": "result",
+                "size": len(artifact),
+                "content_type": "application/json",
+                "scenario_key": "one",
+            }
+        ).encode(),
+        "outbound-spool/events.spool.jsonl": (
+            b'{"sequence":1,"type":"terminal","stage":"completed"}\n'
+        ),
+        "outbound-spool/receipts/receipt.json": b'{"digest":"receipt"}',
+        "outbound-spool/manifest.json": b'{"digest":"manifest"}',
+    }
+    archive_body = io.BytesIO()
+    with tarfile.open(fileobj=archive_body, mode="w:gz") as archive:
+        for name, body in files.items():
+            member = tarfile.TarInfo(name)
+            member.size = len(body)
+            archive.addfile(member, io.BytesIO(body))
+
+    sandbox = _Sandbox()
+    sandbox.fs.download_file = lambda path, timeout=None: archive_body.getvalue()
+    gateway = object.__new__(DaytonaHostedGateway)
+    gateway.client = SimpleNamespace(get=lambda *args, **kwargs: sandbox)
+    attempt = SimpleNamespace(
+        id="attempt-1",
+        provider_ref="sandbox-1",
+        job=SimpleNamespace(max_artifact_bytes=1024 * 1024),
+    )
+    replayed = []
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_ingestion.ingest_artifact",
+        lambda *args, **kwargs: replayed.append(("artifact", kwargs)),
+    )
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_ingestion.ingest_event_batch",
+        lambda *args, **kwargs: replayed.append(("events", args[1])),
+    )
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_ingestion.ingest_result_receipt",
+        lambda *args, **kwargs: replayed.append(("receipt", args[1])),
+    )
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_ingestion.ingest_manifest",
+        lambda *args, **kwargs: replayed.append(("manifest", args[1])),
+    )
+
+    assert gateway._recover_offline_delivery(attempt) is True
+    assert [kind for kind, _ in replayed] == [
+        "artifact",
+        "events",
+        "receipt",
+        "manifest",
+    ]
+    assert replayed[0][1]["stream"].read() == artifact
+
+
+def test_offline_control_processes_scenario_registration(monkeypatch):
+    request_path = "/work/outbound-spool/control/one.request.json"
+    response_path = "/work/outbound-spool/control/one.response.json"
+    request = {
+        "job_id": "job-1",
+        "attempt_id": "attempt-1",
+        "attempt_number": 1,
+        "payload": {"operation": "provision", "personas": [{"scenario_key": "a"}]},
+    }
+    uploads = {}
+
+    def download(path, timeout=None):
+        if path == request_path:
+            return json.dumps(request).encode()
+        raise FileNotFoundError(path)
+
+    sandbox = SimpleNamespace(
+        process=SimpleNamespace(
+            exec=lambda *args, **kwargs: SimpleNamespace(
+                exit_code=0, result=request_path
+            )
+        ),
+        fs=SimpleNamespace(
+            download_file=download,
+            upload_file=lambda body, path: uploads.__setitem__(path, body),
+        ),
+    )
+    attempt = SimpleNamespace(id="attempt-1", job_id="job-1", attempt_number=1)
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness.provision_scenarios",
+        lambda actual_attempt, payload: {
+            "result": {
+                "run_test_id": "run-test-1",
+                "scenarios": [{"scenario_key": "a", "scenario_id": "scenario-1"}],
+            }
+        },
+    )
+
+    DaytonaHostedGateway._sync_offline_control(attempt, sandbox)
+
+    assert json.loads(uploads[response_path]) == {
+        "result": {
+            "run_test_id": "run-test-1",
+            "scenarios": [{"scenario_key": "a", "scenario_id": "scenario-1"}],
+        }
+    }
 
 
 @pytest.mark.django_db

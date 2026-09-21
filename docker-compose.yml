@@ -96,6 +96,7 @@ x-backend-env: &backend-env
   AGENTCC_INTERNAL_URL: ${AGENTCC_INTERNAL_URL:-http://agentcc-gateway:8080}
   AGENTCC_GATEWAY_INTERNAL_URL: ${AGENTCC_GATEWAY_INTERNAL_URL:-http://agentcc-gateway:8080}
   AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:-local-dev-only-shared-secret-replace-me}
+  AGENTCC_BASE_URL: ${AGENTCC_BASE_URL:-}
   AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:-local-dev-only-admin-token-replace-me}
   RECAPTCHA_ENABLED: ${RECAPTCHA_ENABLED:-false}
   RECAPTCHA_SECRET_KEY: ${RECAPTCHA_SECRET_KEY:-}
@@ -226,6 +227,13 @@ services:
     environment:
       <<: *backend-env
       SERVICE_TYPE: backend
+      # Platform-owned phone dialer; never supplied by a customer harness job.
+      LIVEKIT_URL: ${LIVEKIT_URL:-}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-}
+      DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
+      SIP_OUTBOUND_TRUNK_ID: ${SIP_OUTBOUND_TRUNK_ID:-}
+      SIP_OUTBOUND_FROM_NUMBER: ${SIP_OUTBOUND_FROM_NUMBER:-}
       GRANIAN_WORKERS: ${GRANIAN_WORKERS:-1}
       GRANIAN_THREADS: ${GRANIAN_THREADS:-2}
       ENABLE_HTTP: ${ENABLE_HTTP:-true}
@@ -373,6 +381,12 @@ services:
     environment:
       <<: *backend-env
       SERVICE_TYPE: temporal-worker
+      LIVEKIT_URL: ${LIVEKIT_URL:-}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-}
+      DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
+      SIP_OUTBOUND_TRUNK_ID: ${SIP_OUTBOUND_TRUNK_ID:-}
+      SIP_OUTBOUND_FROM_NUMBER: ${SIP_OUTBOUND_FROM_NUMBER:-}
       TEMPORAL_TASK_QUEUE: simulation_runner
       TEMPORAL_ALL_QUEUES: "false"
       ALK_RUNNER_PYTHON: ${ALK_RUNNER_PYTHON:-/opt/alk-venv/bin/python}
