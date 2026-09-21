@@ -633,6 +633,9 @@ ScenariosStep.propTypes = {
   envState: PropTypes.object.isRequired,
   patch: PropTypes.func.isRequired,
   buildMode: PropTypes.bool,
+  onBuilderPrompt: PropTypes.func,
+  locked: PropTypes.bool,
+  onFork: PropTypes.func,
 };
 
 

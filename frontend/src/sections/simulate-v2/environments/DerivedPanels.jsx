@@ -117,6 +117,17 @@ export default function DerivedPanels({
     setTab(firstReadyTab(done));
   }, [done, touched, isLoading]);
 
+  /* If the currently-selected tab has been removed from TABS (e.g.
+     Contract is hidden for the demo), snap back to the first ready
+     tab so the user doesn't get stranded on a tab whose entry point
+     no longer exists in the nav. */
+  useEffect(() => {
+    if (!TABS.some((t) => t.id === tab)) {
+      setTab(firstReadyTab(done));
+      setTouched(false);
+    }
+  }, [tab, done]);
+
   const current = TABS.find((t) => t.id === tab) || TABS[0];
 
   /*

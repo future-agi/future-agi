@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { alpha } from "@mui/material/styles";
 import {
@@ -10,6 +10,7 @@ import { Upload } from "src/components/upload";
 import { formatFileSize } from "src/utils/utils";
 import { paths } from "src/routes/paths";
 import { pipelineStatus, pipelineSummary } from "../_mock/buildPipeline";
+import { subscribeScenarioSelection, getScenarioSelection } from "../_mock/scenarioSelectionBus";
 import { setupGaps, gapCounts } from "../_mock/setupGaps";
 import { useSimStore, useEnvState } from "../store";
 import { SectionCard } from "../components/primitives";
@@ -211,10 +212,12 @@ export default function BuildFromAgent() {
     if (answers?.difficulty) setDifficulty(answers.difficulty);
     setIntake({ ...answers, at: new Date().toISOString() });
     setTurns([]);
-    /* Receipt-first: don't stream `understand` yet. Show the audit
-       + open questions, and only after the user hits Build the world
-       do we fire the full derivation chain. */
-    setAwaitReadAck(true);
+    /* Receipt-first was the previous behaviour — show the audit +
+       open questions before streaming `understand`. Hidden for the
+       demo cut; flip this back to `setAwaitReadAck(true)` (and drop
+       the direct startDerivationAfterAck call) once the ingestion
+       story is presentable again. */
+    startDerivationAfterAck();
   };
 
   const startDerivationAfterAck = () => {
@@ -279,7 +282,7 @@ export default function BuildFromAgent() {
   */
   /* Stages advance from the chat, which is where the builder offers them.
      The header carries the one thing the chat cannot do: leave. */
-  const runNow = () => adopt({ ...env, name: name.trim(), difficulty }, "run");
+  const runNow = (scenarioIds) => adopt({ ...env, name: name.trim(), difficulty }, "run", scenarioIds);
 
   const onSend = (text) => {
     setTurns((prev) => [...prev, { id: `u-${Date.now()}`, role: "user", text }]);
@@ -331,13 +334,18 @@ export default function BuildFromAgent() {
     }
   };
 
-  const adopt = (confirmed, mode = "open") => {
+  const adopt = (confirmed, mode = "open", scenarioIds) => {
     prime(confirmed);
-    navigate(
-      mode === "run"
-        ? paths.dashboard.simulate.simulationRun(confirmed.id, `run-${Date.now().toString(36)}`)
-        : paths.dashboard.simulate.environmentDetail(confirmed.id),
-    );
+    let target;
+    if (mode === "run") {
+      target = paths.dashboard.simulate.simulationRun(confirmed.id, `run-${Date.now().toString(36)}`);
+      if (Array.isArray(scenarioIds) && scenarioIds.length > 0) {
+        target += `?only=${encodeURIComponent(scenarioIds.join(","))}`;
+      }
+    } else {
+      target = paths.dashboard.simulate.environmentDetail(confirmed.id);
+    }
+    navigate(target);
   };
 
   /* Live envState for whichever env has been primed. Feeds the panels below. */
@@ -568,11 +576,15 @@ export default function BuildFromAgent() {
             runtimeTypeId={runtimeTypeId} setRuntimeTypeId={setRuntimeTypeId}
             onStart={start}
           />
-        ) : !intake ? (
+        ) : (!intake && !presetSource) ? (
           /*
             Intake: chat is full-width and the questionnaire card sits
             right above the input, Claude-style. Nothing derives yet;
             submit fires the builder and hands off to <Deriving/>.
+            Skipped entirely when a presetSource is present — the
+            useEffect below auto-fires beginBuild in that path, and
+            rendering IntakeStage for the single frame between source
+            landing and intake settling produced a visible flash.
           */
           <IntakeStage
             turns={turns} running={running}
@@ -923,23 +935,45 @@ function Header({
           The path out of setup is running the simulation; the environment gets
           filed under My environments the moment the first run lands.
         */
-        <Tooltip arrow title={canGo ? "" : (blockedReason || "")}>
-          <span>
-            <Button
-              variant="contained" color="primary"
-              disabled={!canGo}
-              onClick={onRun}
-              startIcon={<Iconify icon="solar:play-bold" width={14} />}
-              sx={{ flexShrink: 0, typography: "s2", fontWeight: 700 }}
-            >
-              Run simulation
-            </Button>
-          </span>
-        </Tooltip>
+        <RunButton onRun={onRun} canGo={canGo} blockedReason={blockedReason} />
       )}
     </Stack>
   );
 }
+
+/* Header's Run button — subscribes to the scenario selection bus via
+   useSyncExternalStore so its label + click payload reflect whatever
+   the Scenarios tab has currently checked. Kept as a small sibling
+   component so the effect only re-runs the button when the selection
+   changes, not the whole Header. */
+function RunButton({ onRun, canGo, blockedReason }) {
+  const selection = useSyncExternalStore(
+    subscribeScenarioSelection,
+    getScenarioSelection,
+    getScenarioSelection,
+  );
+  const count = selection.ids.length;
+  return (
+    <Tooltip arrow title={canGo ? "" : (blockedReason || "")}>
+      <span>
+        <Button
+          variant="contained" color="primary"
+          disabled={!canGo}
+          onClick={() => onRun(count > 0 ? selection.ids : undefined)}
+          startIcon={<Iconify icon="solar:play-bold" width={14} />}
+          sx={{ flexShrink: 0, typography: "s2", fontWeight: 700 }}
+        >
+          {count > 0 ? `Run ${count} selected` : "Run simulation"}
+        </Button>
+      </span>
+    </Tooltip>
+  );
+}
+RunButton.propTypes = {
+  onRun: PropTypes.func.isRequired,
+  canGo: PropTypes.bool,
+  blockedReason: PropTypes.string,
+};
 
 Header.propTypes = {
   onBack: PropTypes.func, backLabel: PropTypes.string,

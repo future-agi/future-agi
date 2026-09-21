@@ -683,6 +683,10 @@ function PanelHostedPlatform() {
   const [contactNumber, setContactNumber] = useState("");
   const [inboundCalls, setInboundCalls] = useState(true);
   const [agentSpeaksFirst, setAgentSpeaksFirst] = useState(false);
+  /* Others-only: builders describe their agent by pasting a system
+     prompt. The scenario generator seeds from it and the LLM runs
+     against the prompt directly — no external endpoint to invoke. */
+  const [otherPrompt, setOtherPrompt] = useState("");
 
   /* When agent type flips, the current platform selection is likely
      stale. Snap to the first platform of the new type and clear the
@@ -694,11 +698,18 @@ function PanelHostedPlatform() {
     setId("");
     setKey("");
     setRepoUrl("");
+    setOtherPrompt("");
   };
 
   const chosen = platforms.find((p) => p.id === platform) || platforms[0];
-  const phoneOk = agentType !== "voice" || simMode !== "phone" || !!contactNumber.trim();
-  const canGo = !!chosen && !!id.trim() && !!key.trim() && phoneOk;
+  const isOther = !!chosen?.isOther;
+  /* Others has no WebRTC path, so the contact number is required in
+     that branch regardless of simMode. Non-Others voice envs only
+     require it when the user picked Phone mode. */
+  const phoneRequired = agentType === "voice" && (isOther || simMode === "phone");
+  const phoneOk = !phoneRequired || !!contactNumber.trim();
+  const credsOk = isOther ? !!otherPrompt.trim() : (!!id.trim() && !!key.trim());
+  const canGo = !!chosen && credsOk && phoneOk;
 
   return (
     <Stack spacing={1.75} sx={{ p: 2.5 }}>
@@ -728,7 +739,10 @@ function PanelHostedPlatform() {
             {platforms.map((p) => (
               <ChipCard
                 key={p.id}
-                logo={<PlatformLogo id={p.id} name={p.name} brand={p.brand} />}
+                /* "Others" has no brand logo; render the Solar icon instead
+                   so it doesn't collapse to a coloured monogram tile. */
+                icon={p.isOther ? p.icon : undefined}
+                logo={p.isOther ? undefined : <PlatformLogo id={p.id} name={p.name} brand={p.brand} />}
                 /* Wordmark logos already spell the name — don't repeat it. */
                 label={PLATFORM_LOGOS[p.id]?.type === "wordmark" ? null : p.name}
                 on={platform === p.id}
@@ -740,22 +754,35 @@ function PanelHostedPlatform() {
       </Box>
       {chosen && (
         <>
-          <Field
-            label={chosen.idLabel || "Agent ID"}
-            required
-            placeholder={chosen.idPlaceholder}
-            value={id} onChange={setId}
-            mono
-          />
-          <Field
-            label={chosen.keyLabel || "API key"}
-            required
-            placeholder="sk-…"
-            value={key} onChange={setKey}
-            type="password"
-            mono
-            helper="Stored encrypted; used only to invoke the agent on your behalf."
-          />
+          {isOther ? (
+            <Field
+              label="System prompt"
+              required
+              placeholder="You are a friendly returns agent for Acme…"
+              value={otherPrompt} onChange={setOtherPrompt}
+              multiline
+              helper="We seed matching scenarios from the prompt and run it against the LLM directly — no external endpoint or API key needed."
+            />
+          ) : (
+            <>
+              <Field
+                label={chosen.idLabel || "Agent ID"}
+                required
+                placeholder={chosen.idPlaceholder}
+                value={id} onChange={setId}
+                mono
+              />
+              <Field
+                label={chosen.keyLabel || "API key"}
+                required
+                placeholder="sk-…"
+                value={key} onChange={setKey}
+                type="password"
+                mono
+                helper="Stored encrypted; used only to invoke the agent on your behalf."
+              />
+            </>
+          )}
           {agentType === "voice" && (
             <ContactInformation
               mode={simMode} onMode={setSimMode}
@@ -763,6 +790,7 @@ function PanelHostedPlatform() {
               contactNumber={contactNumber} onContactNumber={setContactNumber}
               inboundCalls={inboundCalls} onInboundCalls={setInboundCalls}
               agentSpeaksFirst={agentSpeaksFirst} onAgentSpeaksFirst={setAgentSpeaksFirst}
+              phoneOnly={isOther}
             />
           )}
           <Field
@@ -779,28 +807,34 @@ function PanelHostedPlatform() {
         hint={
           !chosen ? "Pick a supported path above"
           : !phoneOk ? "Add a contact number for telephony simulation"
+          : isOther ? "Paste the agent's system prompt"
           : "Fill both fields"
         }
         onClick={() => build({
           kind: "platform",
           agentType,
           provider: chosen?.id,
-          agentId: id.trim(),
-          apiKey: key.trim(),
+          ...(isOther
+            ? { agentMode: "prompt", prompt: otherPrompt.trim() }
+            : { agentId: id.trim(), apiKey: key.trim() }
+          ),
           ...(repoUrl.trim() ? { repoUrl: repoUrl.trim() } : {}),
-          ...(agentType === "voice" ? {
-            callDirection: inboundCalls ? "inbound" : "outbound",
-            contact: {
-              mode: simMode,
-              inboundCalls,
-              agentSpeaksFirst,
-              ...(simMode === "phone" ? {
-                countryIso,
-                countryCode: COUNTRY_BY_ISO[countryIso]?.dial || "",
-                number: contactNumber.trim(),
-              } : {}),
-            },
-          } : {}),
+          ...(agentType === "voice" ? (() => {
+            const contactMode = isOther ? "phone" : simMode;
+            return {
+              callDirection: inboundCalls ? "inbound" : "outbound",
+              contact: {
+                mode: contactMode,
+                inboundCalls,
+                agentSpeaksFirst,
+                ...(contactMode === "phone" ? {
+                  countryIso,
+                  countryCode: COUNTRY_BY_ISO[countryIso]?.dial || "",
+                  number: contactNumber.trim(),
+                } : {}),
+              },
+            };
+          })() : {}),
         })}
       />
     </Stack>
@@ -1303,39 +1337,48 @@ function ContactInformation({
   contactNumber, onContactNumber,
   inboundCalls, onInboundCalls,
   agentSpeaksFirst, onAgentSpeaksFirst,
+  phoneOnly = false,
 }) {
-  const header = mode === "phone"
+  /* Others agents have no in-browser WebRTC target to fall back on
+     (there's no live agent to connect to), so the mode picker
+     collapses to phone-only and we skip the header card entirely —
+     the user just types the number to dial. */
+  const effectiveMode = phoneOnly ? "phone" : mode;
+  const header = effectiveMode === "phone"
     ? { title: "Telephony simulation (PSTN)", body: "A real phone call is placed over PSTN — requires a configured telephony provider." }
     : { title: "Web simulation (WebRTC)", body: "No phone call is placed and no telephony provider is needed." };
   const selected = COUNTRY_BY_ISO[countryIso] || COUNTRY_BY_ISO.US;
 
   return (
     <Stack spacing={1}>
-      {/* mode header card + segmented toggle */}
-      <Stack
-        direction="row" alignItems="center" spacing={1.5}
-        sx={{
-          px: 1.75, py: 1.25, borderRadius: 1,
-          border: "1px solid", borderColor: "divider",
-        }}
-      >
-        <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Typography sx={{ typography: "s2", fontWeight: 700 }}>{header.title}</Typography>
-          <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>
-            {header.body}
-          </Typography>
-        </Box>
-        <SegmentedToggle
-          value={mode} onChange={onMode}
-          options={[
-            { value: "web",   label: "Web" },
-            { value: "phone", label: "Phone" },
-          ]}
-        />
-      </Stack>
+      {/* mode header card + segmented toggle — hidden when the caller
+          forces phone-only (Others has no WebRTC path). */}
+      {!phoneOnly && (
+        <Stack
+          direction="row" alignItems="center" spacing={1.5}
+          sx={{
+            px: 1.75, py: 1.25, borderRadius: 1,
+            border: "1px solid", borderColor: "divider",
+          }}
+        >
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Typography sx={{ typography: "s2", fontWeight: 700 }}>{header.title}</Typography>
+            <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>
+              {header.body}
+            </Typography>
+          </Box>
+          <SegmentedToggle
+            value={mode} onChange={onMode}
+            options={[
+              { value: "web",   label: "Web" },
+              { value: "phone", label: "Phone" },
+            ]}
+          />
+        </Stack>
+      )}
 
-      {/* phone-only fields */}
-      {mode === "phone" && (
+      {/* phone fields — always visible when phoneOnly, otherwise gated on mode */}
+      {effectiveMode === "phone" && (
         <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
           <Box sx={{ width: { xs: "100%", sm: 180 } }}>
             <Typography sx={{ typography: "s3", fontWeight: 600, mb: 0.5 }}>Country Code</Typography>
@@ -1418,6 +1461,7 @@ ContactInformation.propTypes = {
   onInboundCalls: PropTypes.func,
   agentSpeaksFirst: PropTypes.bool,
   onAgentSpeaksFirst: PropTypes.func,
+  phoneOnly: PropTypes.bool,
 };
 
 /* Two-value segmented control — active pill uses the same tinted
@@ -1428,6 +1472,7 @@ function SegmentedToggle({ value, onChange, options }) {
     <Stack
       direction="row"
       sx={{
+        display: "inline-flex", alignSelf: "flex-start",
         p: 0.375, borderRadius: 1,
         border: "1px solid", borderColor: "divider",
         bgcolor: (th) => alpha(th.palette.text.primary, th.palette.mode === "dark" ? 0.03 : 0.02),
@@ -1756,6 +1801,11 @@ const HOSTED_PLATFORMS_BY_TYPE = {
     { id: "bland", name: "Bland.ai", icon: "solar:phone-linear", brand: "#F26D5B", idLabel: "Pathway ID", idPlaceholder: "pathway_9f2c…", keyLabel: "Bland API key" },
     { id: "elevenlabs", name: "ElevenLabs", icon: "solar:soundwave-linear", brand: "#111111", idLabel: "Agent ID", idPlaceholder: "agent_9f2c…", keyLabel: "ElevenLabs API key" },
     { id: "livekit", name: "LiveKit", icon: "solar:server-minimalistic-linear", brand: "#1FD5F9", idLabel: "Agent name", idPlaceholder: "returns-line-agent", keyLabel: "LiveKit API key" },
+    /* Bring-your-own — no fixed platform contract. The panel switches
+       to a mode picker so builders can either paste API creds against
+       a custom endpoint, or describe the agent via a system prompt
+       (agent-less; the scenario generator seeds from the prompt). */
+    { id: "other", name: "Others", icon: "solar:menu-dots-linear", idLabel: "Endpoint URL", idPlaceholder: "https://your-agent.example.com", keyLabel: "API key", isOther: true },
   ],
   chat: [
     { id: "openai_assistants", name: "OpenAI Assistants", icon: "solar:magic-stick-3-linear", idLabel: "Assistant ID", idPlaceholder: "asst_9f2c…", keyLabel: "OpenAI API key" },

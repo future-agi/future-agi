@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { alpha } from "@mui/material/styles";
 import PropTypes from "prop-types";
@@ -13,7 +13,7 @@ import { BOOT_STEPS } from "../_mock/runStream";
 import { useSimStore, useEnvState } from "../store";
 import { setupGaps } from "../_mock/setupGaps";
 import { subscribeBuilderPrompt } from "../_mock/builderPromptBus";
-import { subscribeScenarioSelection, clearScenarioSelection } from "../_mock/scenarioSelectionBus";
+import { subscribeScenarioSelection, clearScenarioSelection, getScenarioSelection } from "../_mock/scenarioSelectionBus";
 import { subscribeBuilderMode } from "../_mock/builderModeBus";
 import { environmentVersions } from "../_mock/versions";
 import { getAgentType } from "../_mock/agentTypes";
@@ -153,8 +153,15 @@ export default function EnvironmentWorkspace() {
     against those rows: the reply names them and the selection
     clears on submit so the next message starts fresh.
   */
-  const [scenarioSelection, setScenarioSelection] = useState({ ids: [], rows: [] });
-  useEffect(() => subscribeScenarioSelection(setScenarioSelection), []);
+  /* Subscribe via useSyncExternalStore so React guarantees the header
+     button re-renders whenever ScenariosStep publishes a new
+     selection — the previous useState + useEffect wire sometimes lost
+     the subscription across HMR module swaps. */
+  const scenarioSelection = useSyncExternalStore(
+    subscribeScenarioSelection,
+    getScenarioSelection,
+    getScenarioSelection,
+  );
   /*
     Builder mode — Auto (default) or Guided. In Guided, the builder
     pauses at decisions and asks Claude-style AskUserQuestion cards
@@ -282,8 +289,19 @@ export default function EnvironmentWorkspace() {
     Pre-flight and history stay on the Runs step for when they are the thing
     you came for.
   */
-  const startRun = () =>
-    navigate(paths.dashboard.simulate.simulationRun(envId, protoRunId(envId, Date.now().toString(36))));
+  /* startRun mints a fresh runId and navigates to the live-run view.
+     When called with a non-empty scenarioIds array, the ids are
+     tacked on as `?only=` (matching the existing subset convention
+     LiveRunView already reads) so the run only exercises that
+     subset — otherwise the run covers every scenario in the env. */
+  const startRun = (scenarioIds) => {
+    const runId = protoRunId(envId, Date.now().toString(36));
+    let url = paths.dashboard.simulate.simulationRun(envId, runId);
+    if (Array.isArray(scenarioIds) && scenarioIds.length > 0) {
+      url += `?only=${encodeURIComponent(scenarioIds.join(","))}`;
+    }
+    navigate(url);
+  };
 
   // Unknown steps render Overview, and the rail highlights it, so the URL and
   // the highlighted item never disagree.
@@ -647,11 +665,13 @@ export default function EnvironmentWorkspace() {
               color="primary"
               size="small"
               disabled={!canRun}
-              onClick={startRun}
+              onClick={() => startRun(scenarioSelection.ids.length > 0 ? scenarioSelection.ids : undefined)}
               startIcon={<Iconify icon="solar:play-bold" width={15} />}
               sx={{ typography: "s2", fontWeight: 700 }}
             >
-              Run simulation
+              {scenarioSelection.ids.length > 0
+                ? `Run ${scenarioSelection.ids.length} selected`
+                : "Run simulation"}
             </Button>
           </span>
         </Tooltip>

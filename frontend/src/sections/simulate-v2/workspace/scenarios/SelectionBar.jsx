@@ -90,6 +90,7 @@ export default function SelectionBar({ count, onDelete, onClear }) {
       >
         Delete
       </Button>
+
     </Stack>
   );
 }
