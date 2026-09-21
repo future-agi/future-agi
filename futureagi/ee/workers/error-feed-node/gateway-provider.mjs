@@ -1,4 +1,5 @@
 import {readFile} from 'node:fs/promises';
+import {setTimeout as sleep} from 'node:timers/promises';
 import {ChatCompletionsCompatibleProvider} from '@future-agi/omega-runtime';
 
 // AgentCC owns rates, aliases and tenant pricing. Its response header is USD
@@ -28,6 +29,17 @@ export async function gatewayConfig(env = process.env) {
 
 class InputContextBudgetError extends Error {}
 
+class GatewayHttpError extends Error {
+  constructor(status, retryAfter) {
+    super('Gateway request failed with HTTP ' + status);
+    this.status = status;
+    const value = retryAfter?.trim();
+    const milliseconds = /^\d+(?:\.\d+)?$/.test(value ?? '')
+      ? Number(value) * 1000 : value ? Date.parse(value) - Date.now() : 0;
+    this.retryAfterMs = Number.isNaN(milliseconds) ? 0 : Math.max(0, milliseconds);
+  }
+}
+
 function serializedRequestBytes(body) {
   if (typeof body === 'string') return Buffer.byteLength(body);
   if (body instanceof Uint8Array) return body.byteLength;
@@ -36,7 +48,7 @@ function serializedRequestBytes(body) {
 }
 
 export function createGatewayProvider({baseUrl, model, apiKey, signal, maxCalls = 12,
-  maxInputBytesTotal, fetchImpl = fetch}) {
+  maxInputBytesTotal, fetchImpl = fetch, retrySleep = sleep, retryRandom = Math.random}) {
   if (!Number.isInteger(maxCalls) || maxCalls < 1 || maxCalls > 100) throw new Error('Invalid model-call budget');
   if (maxInputBytesTotal !== undefined
       && (!Number.isSafeInteger(maxInputBytesTotal) || maxInputBytesTotal < 1)) throw new Error('Invalid input byte budget');
@@ -53,7 +65,7 @@ export function createGatewayProvider({baseUrl, model, apiKey, signal, maxCalls 
       }
       requestBytes += bytes;
       const call = {call_number: calls.length + 1, requested_model: model, status: 'started',
-        cost_microusd: null, cost_status: 'unknown', usage: null};
+        cost_microusd: null, cost_status: 'unknown', usage: null, request_bytes: bytes};
       calls.push(call);
       const started = Date.now();
       try {
@@ -68,7 +80,7 @@ export function createGatewayProvider({baseUrl, model, apiKey, signal, maxCalls 
         if (!response.ok) {
           await response.body?.cancel();
           // Do not surface upstream response bodies: they can echo credentials or customer data.
-          throw new Error('Gateway request failed with HTTP ' + response.status);
+          throw new GatewayHttpError(response.status, response.headers.get('retry-after'));
         }
         call.status = 'received';
         return response;
@@ -85,22 +97,41 @@ export function createGatewayProvider({baseUrl, model, apiKey, signal, maxCalls 
   const provider = {
     id: transport.id, supports: transport.supports,
     async generate(request) {
-      const before = calls.length;
-      try {
-        const response = await transport.generate(request);
-        const call = calls[before];
-        if (call) {
-          call.status = 'completed';
-          call.usage = response.raw?.usage ?? null;
-          call.response_id = response.raw?.id ?? null;
+      const firstCall = calls.length + 1;
+      let waitedMs = 0;
+      // Retry only explicit rejections. An ambiguous timeout or 5xx may
+      // already have completed upstream and must not be replayed blindly.
+      for (let retry = 0; ; retry++) {
+        const before = calls.length;
+        try {
+          const response = await transport.generate(request);
+          const call = calls[before];
+          if (call) {
+            call.status = 'completed';
+            call.usage = response.raw?.usage ?? null;
+            call.response_id = response.raw?.id ?? null;
+          }
+          return response;
+        } catch (error) {
+          const call = calls[before];
+          if (call && call.status === 'received') call.status = 'invalid_response';
+          if (error instanceof GatewayHttpError && error.status === 429 && retry < 2 && !signal?.aborted) {
+            const waitMs = Math.ceil(Math.max(error.retryAfterMs, 1000 * 2 ** retry) + retryRandom() * 1000);
+            if (calls.length < maxCalls && waitedMs + waitMs <= 30000
+                && (maxInputBytesTotal === undefined || requestBytes + call.request_bytes <= maxInputBytesTotal)) {
+              call.retry_delay_ms = waitMs;
+              waitedMs += waitMs;
+              try { await retrySleep(waitMs, undefined, {signal}); }
+              catch { throw new Error('Gateway request aborted'); }
+              continue;
+            }
+          }
+          if (error instanceof InputContextBudgetError) throw error;
+          if (/^(Gateway|Model-call)/.test(error.message)) throw error;
+          throw new Error('Gateway response could not be processed');
+        } finally {
+          if (retry && calls[before]) calls[before].retry_of = firstCall;
         }
-        return response;
-      } catch (error) {
-        const call = calls[before];
-        if (call && call.status === 'received') call.status = 'invalid_response';
-        if (error instanceof InputContextBudgetError) throw error;
-        if (/^(Gateway|Model-call)/.test(error.message)) throw error;
-        throw new Error('Gateway response could not be processed');
       }
     }
   };
