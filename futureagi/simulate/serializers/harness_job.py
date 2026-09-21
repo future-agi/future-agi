@@ -6,6 +6,8 @@ from typing import Any
 from django.conf import settings
 from rest_framework import serializers
 
+from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
+
 # Port-generic loopback pattern for the C4 §7 Channel-1 literal-endpoint scan.
 # The declared fixed port is unknowable platform-side (the bundle is authored
 # in-sandbox), so the match is any port on localhost / 127.0.0.1 / [::1].
@@ -299,7 +301,15 @@ class HarnessJobCreateSerializer(serializers.Serializer):
     run_id = serializers.UUIDField(required=False)
     source = HarnessSourceSerializer(required=False)
     agent = HarnessAgentSerializer()
-    scenario_count = serializers.IntegerField(default=10, min_value=1, max_value=200)
+    scenario_count = serializers.IntegerField(
+        default=10,
+        min_value=1,
+        # The admission ceiling is deployment-settable and never above what the database allows.
+        max_value=min(
+            int(getattr(settings, "ALK_MAX_SCENARIOS_PER_REQUEST", 1000)),
+            MAX_SCENARIOS_PER_JOB,
+        ),
+    )
     seed = serializers.IntegerField(required=False, allow_null=True)
     runtime = HarnessRuntimeSerializer(default=dict)
     security = HarnessSecuritySerializer(default=dict)
