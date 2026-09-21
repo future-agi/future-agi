@@ -1,11 +1,42 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createGroupingInvestigator} from './gateway.mjs';
+import {measureRequest} from './request-limits.mjs';
 
 const claim={attempt_id:'11111111-1111-4111-8111-111111111111',lease_token:'lease',
   snapshot:{snapshot_digest:'sha256:source'},policy_version:'f6-minilm/v1',registry_revision:0,
   candidate_digest:'sha256:'+'a'.repeat(64)};
 const config={model:'google/gemini-3.8-flash',baseUrl:'http://gateway/v1',apiKey:'fixture'};
+test('native preflight rejects before reservation or inference and emits only numeric diagnostics',async()=>{
+  const f=fixture();const diagnostics=[];
+  const gateway=await createGroupingInvestigator({claim,config,reserveUsd:0.1,...f,
+    countRequest:measureRequest,onDiagnostic:event=>diagnostics.push(event),
+    fetchImpl:async()=>Response.json({totalTokens:1_000_001})});
+  await assert.rejects(gateway.investigate({secret_evidence:'not logged'},{}),/token limit/);
+  assert.equal(f.events.length,0);
+  assert.equal(f.calls.length,0);
+  assert.equal(diagnostics[0].input_tokens,1_000_001);
+  assert.ok(!JSON.stringify(diagnostics).includes('not logged'));
+});
+test('large measured requests reserve their uncached maximum instead of the fixed floor',async()=>{
+  const f=fixture();
+  const gateway=await createGroupingInvestigator({claim,config,reserveUsd:0.1,...f,
+    countRequest:async()=>({input_tokens:1_000_000,request_bytes:2_000_000})});
+  await gateway.investigate({},{});
+  assert.equal(f.events[0].payload.max_cost_usd,'1.561440000');
+});
+test('token counting holds the serial-call guard and releases it after completion',async()=>{
+  const f=fixture();let release;
+  const gateway=await createGroupingInvestigator({claim,config,reserveUsd:1,...f,
+    countRequest:()=>new Promise(resolve=>{release=resolve;})});
+  const first=gateway.investigate({},{});
+  await assert.rejects(gateway.investigate({},{}),/serial/);
+  release({input_tokens:100,request_bytes:1000});
+  await first;
+  const second=gateway.investigate({},{});
+  release({input_tokens:100,request_bytes:1000});
+  await second;
+});
 test('severity uses its own request namespace and the shared receipt transport',async()=>{
   const f=fixture();
   const gateway=await createGroupingInvestigator({claim,config,reserveUsd:1,...f,purpose:'severity'});
@@ -37,19 +68,19 @@ function fixture({prior=false,unknown=false,invalid=false,unverifiedModel=false,
       routed_model:unverifiedModel?null:config.model});
     return {content:invalid?'invalid':JSON.stringify({groups:[]}),raw:{choices:[{finish_reason:'stop'}]}};
   }}});
-  return{events,calls,control,createProvider,fetchImpl:async(_url,init)=>{
+  return{events,calls,control,createProvider,onDiagnostic:()=>{},
+    countRequest:async()=>({input_tokens:100,request_bytes:1000}),fetchImpl:async(_url,init)=>{
     body=JSON.parse(init.body);return new Response('{}');
   },body:()=>body};
 }
 
-test('wire escaping may exceed evidence limit but oversized evidence still fails before reservation',async()=>{
+test('evidence exceeding the old byte cap is admitted using native token measurement',async()=>{
   const f=fixture();
   const gateway=await createGroupingInvestigator({claim,config,reserveUsd:1,...f});
   await gateway.investigate({evidence:'"'.repeat(90000)},{type:'object'});
   assert.ok(Buffer.byteLength(JSON.stringify(f.body()))>240000);
-  const count=f.events.length;
-  await assert.rejects(()=>gateway.investigate({evidence:'a'.repeat(240000)},{type:'object'}),/context exceeds/);
-  assert.equal(f.events.length,count);
+  await gateway.investigate({evidence:'a'.repeat(240000)},{type:'object'});
+  assert.equal(f.calls.length,2);
 });
 
 test('reserves before inference, enforces F6 wire settings, persists receipt before returning',async()=>{
@@ -142,7 +173,8 @@ test('a settled model result is reused after a later checkpoint write fails',asy
     paidCalls++;
     return {content:JSON.stringify({groups:[]}),raw:{choices:[{finish_reason:'stop'}]}};
   }}});
-  const options={claim,config,reserveUsd:1,control,createProvider};
+  const options={claim,config,reserveUsd:1,control,createProvider,
+    countRequest:async()=>({input_tokens:100,request_bytes:1000}),onDiagnostic:()=>{}};
   const first=await createGroupingInvestigator(options);
   assert.deepEqual(await first.investigate({same:'prompt'},{type:'object'}),{groups:[]});
   await assert.rejects(async()=>{throw new Error('Grouping checkpoint exceeds bound');},

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {digest} from './f6/common.mjs';
+import {MAX_EVIDENCE_BYTES} from './request-limits.mjs';
 
 // Decision settings retain the sealed F6 run's actual overrides. Production
 // features use MiniLM and the separately versioned chunk-pooling recipe, and
@@ -41,8 +42,8 @@ const SETTINGS = Object.freeze({
   max_revisits: 2,
   max_reconcile_members: 16,
   max_reconcile_candidates: 20,
-  // Temporary local E2E allowance approved by Atharva; not benchmark parity.
-  max_input_bytes: 240000,
+  // Lossless packing's transport ceiling; the gateway checks native tokens.
+  max_input_bytes: MAX_EVIDENCE_BYTES,
   max_output_tokens: 8192,
   timeout_ms: 120000,
 });

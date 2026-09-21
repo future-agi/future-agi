@@ -135,7 +135,8 @@ test('after a failed checkpoint, a settled receipt resumes without another paid 
   };
   const options={control,model,reserveUsd:1,
     gatewayConfig:{model:'google/gemini-3.8-flash'},
-    createInvestigator:args=>createGroupingInvestigator({...args,createProvider}),
+    createInvestigator:args=>createGroupingInvestigator({...args,createProvider,
+      countRequest:async()=>({input_tokens:100,request_bytes:1000}),onDiagnostic:()=>{}}),
     engine:async({investigate,store})=>{
       await investigate({same:'proposal'},{type:'object'});
       await store.save('checkpoint.json',failCheckpoint
