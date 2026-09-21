@@ -35,12 +35,28 @@ export async function saveReport(spool, claim, result) {
 }
 
 export async function publishSavedReport(path, control, signal) {
-  if ((await stat(path)).size > 2 * 1024 * 1024) throw new Error('Invalid saved report size');
-  const payload = JSON.parse(await readFile(path, 'utf8'));
+  if ((await stat(path)).size > 2 * 1024 * 1024) {
+    const error = new Error('Invalid saved report size');
+    error.terminal = true;
+    throw error;
+  }
+  let payload;
+  try { payload = JSON.parse(await readFile(path, 'utf8')); }
+  catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    error.terminal = true;
+    throw error;
+  }
   const reply = await control('/reports/', payload, {signal});
   if (!['accepted', 'duplicate'].includes(reply.status)) throw new Error('Report was not durably acknowledged');
   await unlink(path);
   return reply;
+}
+
+async function quarantineRejectedReport(spool, name) {
+  const rejected = join(spool, 'rejected');
+  await mkdir(rejected, {recursive: true, mode: 0o700});
+  await rename(join(spool, name), join(rejected, name));
 }
 
 // Model execution and publication have separate retry boundaries. A finished
@@ -86,14 +102,23 @@ export async function runCoordinator({control, investigate, spool, workerId, eng
       try {
         // Bounded spool; stop admission if publication is unhealthy. No trace payloads in it.
         const files = (await readdir(spool)).filter(name => /^[a-f0-9-]{36}\.json$/.test(name));
+        const rejectedCount = (await readdir(join(spool, 'rejected')).catch(error => {
+          if (error.code === 'ENOENT') return [];
+          throw error;
+        })).length;
         for (const name of files.slice(0, 50)) {
           const attemptId = name.slice(0, -5);
           if (active.has(attemptId) || publishing.has(name)) continue;
           publishing.add(name);
           try { await publishSavedReport(join(spool, name), control, signal); }
+          catch (error) {
+            if (!error.terminal && ![400, 404, 409, 422].includes(error.status)) throw error;
+            await quarantineRejectedReport(spool, name);
+            onError(error, attemptId);
+          }
           finally { publishing.delete(name); }
         }
-        if (files.length + active.size < maxSpoolFiles && active.size < concurrency) {
+        if (files.length + rejectedCount + active.size < maxSpoolFiles && active.size < concurrency) {
           const {claims} = await control('/claims/', {worker_id: workerId, engine_version: engineVersion, limit: concurrency - active.size}, {signal});
           if (!Array.isArray(claims) || claims.length > concurrency - active.size) throw new Error('Invalid claim response');
           for (const claim of claims) {
