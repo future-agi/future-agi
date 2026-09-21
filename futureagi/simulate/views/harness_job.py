@@ -21,6 +21,7 @@ from simulate.serializers.harness_job import (
     HarnessSecretFileUploadResponseSerializer,
     HarnessSecretValuesResponseSerializer,
     HarnessSecretValuesSerializer,
+    HarnessScenarioAmendSerializer,
     HarnessSourceUploadResponseSerializer,
 )
 from simulate.services.harness_credentials import (
@@ -281,6 +282,22 @@ class HarnessJobViewSet(viewsets.ViewSet):
     @action(detail=True, methods=["post"])
     def extend(self, request, pk=None):
         return get_harness_provider().extend(request, pk)
+
+    @validated_request(
+        request_serializer=HarnessScenarioAmendSerializer,
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path="scenarios/amend")
+    def amend_scenarios(self, request, pk=None):
+        return get_harness_provider().amend_scenarios(request, pk)
+
+    @action(detail=True, methods=["get", "post"], url_path="chat")
+    def chat(self, request, pk=None):
+        """Talk to a run that is still up: POST to say something, GET to read what it said."""
+        provider = get_harness_provider()
+        if request.method == "POST":
+            return provider.chat_send(request, pk)
+        return provider.chat_read(request, pk)
 
     @action(detail=False, methods=["get"])
     def health(self, request):

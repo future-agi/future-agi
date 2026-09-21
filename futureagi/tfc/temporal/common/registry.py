@@ -433,6 +433,7 @@ def _ensure_workflows_registered() -> None:
     try:
         from simulate.temporal.constants import QUEUE_RUNNER
         from simulate.temporal.workflows.hosted_harness_gateway_workflow import (
+            HostedHarnessAmendWorkflow,
             HostedHarnessGatewayWorkflow,
         )
         from simulate.temporal.workflows.simulation_runner_workflow import (
@@ -444,6 +445,7 @@ def _ensure_workflows_registered() -> None:
             workflows=[
                 SimulationRunnerWorkflow,
                 HostedHarnessGatewayWorkflow,
+                HostedHarnessAmendWorkflow,
             ],
         )
     except ImportError as e:
@@ -731,6 +733,7 @@ def _ensure_activities_registered() -> None:
     # native voice queues.
     try:
         from simulate.temporal.activities.hosted_harness_gateway import (
+            amend_hosted_harness_scenarios,
             author_hosted_harness_job,
             cancel_hosted_harness_attempt,
             launch_hosted_harness_job,
@@ -753,9 +756,10 @@ def _ensure_activities_registered() -> None:
                 launch_hosted_harness_job,
                 poll_hosted_harness_attempt,
                 cancel_hosted_harness_attempt,
+                amend_hosted_harness_scenarios,
             ],
         )
-        log.info("registered_hosted_runner_activities", count=7)
+        log.info("registered_hosted_runner_activities", count=8)
     except ImportError as e:
         log.warning("could_not_load_hosted_runner_activities", error=str(e))
 

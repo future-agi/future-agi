@@ -26,6 +26,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from simulate.models import (
+    MAX_SCENARIOS_PER_JOB,
     HostedHarnessAttempt,
     HostedHarnessJob,
     HostedHarnessSecret,
@@ -89,6 +90,8 @@ _SCENARIO_DIRECTORY_COUNT_COMMAND = (
     "find /work/authoring/scenarios -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l"
 )
 _ADJUSTMENTS_PATH = "/run/futureagi/adjustments.jsonl"
+_CHAT_INBOX_PATH = "/run/futureagi/chat/inbox.jsonl"
+_CHAT_OUTBOX_PATH = "/run/futureagi/chat/outbox.jsonl"
 _ADJUSTMENT_STATUS_PATH = "/run/futureagi/adjustment-status.jsonl"
 _SIMULATOR_SECRETS_PATH = "/run/futureagi/simulator-secrets.json"
 _SIMULATOR_VERTEX_CREDENTIALS_PATH = "/run/futureagi/simulator-vertex-sa.json"
@@ -165,9 +168,12 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
     # provider and model.  This also keeps the customer request unable to influence either one.
     backend = str(os.environ.get("ALK_HARNESS") or derived_backend).strip()
     authoring_model = str(os.environ.get("ALK_HARNESS_MODEL") or model).strip()
+    # Empty inherits the loop's own model.
+    writer_model = str(os.environ.get("ALK_HARNESS_WRITER_MODEL") or "").strip()
     values = {
         "ALK_HARNESS": backend,
         "ALK_HARNESS_MODEL": authoring_model,
+        "ALK_HARNESS_WRITER_MODEL": writer_model,
         "ALK_VERTEX_LOCATION": location,
         "GOOGLE_CLOUD_LOCATION": location,
         "GOOGLE_GENAI_USE_VERTEXAI": str(
@@ -202,6 +208,20 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         "HARNESS_BACKGROUND_NOISE_VOLUME",
         # Off has to travel: decided here, enforced inside the sandbox.
         "ALK_VOICEMAIL_SCENARIOS",
+        # How many copies of the agent's runtime the guest validates scenario setups against.
+        # Unset means one, which is what it did before lanes existed.
+        "ALK_VALIDATION_INSTANCES",
+        # Whether a validation reset reseals the store underneath the running processes instead of
+        # stopping and respawning them. Unset means it respawns, exactly as before.
+        "ALK_VALIDATION_RESET_IN_PLACE",
+        # How many scenario writers the orchestrator may run at once. Authoring is the expensive
+        # half of a run, so this is the lever that decides whether a large suite fits the hour.
+        "ALK_HARNESS_WORKERS_AT_ONCE",
+        # Where the Claude Agent SDK backend finds an endpoint speaking Anthropic Messages. Left
+        # unset the guest starts its own on loopback, which is the ordinary case; set here only to
+        # point a run at a gateway that already exists somewhere else.
+        "ALK_HARNESS_GATEWAY_URL",
+        "ALK_HARNESS_GATEWAY_TOKEN",
     ):
         value = str(os.environ.get(name) or "").strip()
         if value:
@@ -1390,6 +1410,12 @@ class HostedHarnessGateway:
             "us-east5-aiplatform.googleapis.com",
             "us-central1-aiplatform.googleapis.com",
         ]
+        # A provider tier that restricts network access rejects any domain allow list outright, so
+        # the same switch the run path uses has to reach this launch too. Authoring runs first, so
+        # without it a job fails before it produces anything.
+        authoring_unrestricted = bool(
+            getattr(settings, "ALK_HOSTED_EGRESS_UNRESTRICTED", False)
+        )
         allowed_domains = list(
             dict.fromkeys(
                 getattr(
@@ -1815,9 +1841,20 @@ class HostedHarnessGateway:
                 in {
                     "ALK_HARNESS",
                     "ALK_HARNESS_MODEL",
+                    "ALK_HARNESS_WRITER_MODEL",
                     "ALK_VERTEX_LOCATION",
                     # Authoring writes the scenarios, so the switch is exported here too.
                     "ALK_VOICEMAIL_SCENARIOS",
+                    # Runtime validation runs inside authoring, so its lane count is needed here,
+                    # and so is how it resets between scenarios.
+                    "ALK_VALIDATION_INSTANCES",
+                    "ALK_VALIDATION_RESET_IN_PLACE",
+                    # Authoring is where the writers fan out, so the concurrency cap belongs here.
+                    "ALK_HARNESS_WORKERS_AT_ONCE",
+                    # Authoring is where the model calls happen, so the gateway address belongs
+                    # here too. Absent, the guest's own launcher supplies it.
+                    "ALK_HARNESS_GATEWAY_URL",
+                    "ALK_HARNESS_GATEWAY_TOKEN",
                     "GOOGLE_APPLICATION_CREDENTIALS",
                     "GOOGLE_CLOUD_LOCATION",
                     "GOOGLE_CLOUD_PROJECT",
@@ -1834,6 +1871,18 @@ class HostedHarnessGateway:
                 _ENTRYPOINT_SESSION,
                 SandboxCommandRequest(
                     command=(
+                        # Sourced so the authoring process inherits the address and the token it
+                        # exports. Returns immediately unless ALK_HARNESS names a backend that
+                        # needs a gateway, so the ADK path is untouched.
+                        ". /opt/alk/start-sandbox-gateway.sh; "
+                        # The conversation outlives the pipeline on purpose: it answers while
+                        # authoring runs, between stages, and long after the last one ended. Its
+                        # own process, backgrounded, because the pipeline chain below finishes and
+                        # a chat that finishes with it could only ever be talked to mid-stage.
+                        "export ALK_HARNESS_CHAT_DIR=/run/futureagi/chat; "
+                        "mkdir -p /run/futureagi/chat; "
+                        "nohup python -m fi.alk.harness.converse_service /work/authoring "
+                        ">/run/futureagi/chat/service.log 2>&1 & "
                         "if [ ! -f /work/authoring/contract.json ]; then "
                         "python -m fi.alk.harness.hosted_authoring_entrypoint "
                         "/work/job.json --source /work/source --output /work/authoring "
@@ -2123,10 +2172,10 @@ class HostedHarnessGateway:
                     return locked
 
             delta = _scenario_delta(instruction)
-            if delta and locked.scenario_count + delta > 200:
+            if delta and locked.scenario_count + delta > MAX_SCENARIOS_PER_JOB:
                 raise HostedHarnessError(
                     "scenario_limit_exceeded",
-                    "a hosted run can contain at most 200 scenarios",
+                    f"a hosted run can contain at most {MAX_SCENARIOS_PER_JOB} scenarios",
                     status_code=422,
                 )
             record = {
@@ -2169,6 +2218,97 @@ class HostedHarnessGateway:
                 ) from exc
         return locked
 
+    def _live_sandbox(self, job: HostedHarnessJob):
+        """The sandbox of the attempt running right now, or a reason it cannot be reached."""
+        if job.state in {
+            HostedHarnessJob.State.COMPLETED,
+            HostedHarnessJob.State.FAILED,
+            HostedHarnessJob.State.CANCELED,
+        }:
+            raise HostedHarnessError(
+                "chat_run_finished",
+                "this run has finished; bring it back up before talking to it",
+                status_code=409,
+            )
+        attempt = (
+            HostedHarnessAttempt.no_workspace_objects.filter(
+                job=job, attempt_number=job.current_attempt_number
+            )
+            .exclude(provider_ref__isnull=True)
+            .first()
+        )
+        if attempt is None or not attempt.provider_ref:
+            raise HostedHarnessError(
+                "chat_not_ready",
+                "the hosted sandbox is not up yet; retry in a few seconds",
+                status_code=409,
+                retryable=True,
+            )
+        return self.client.get(
+            str(attempt.provider_ref), request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS
+        )
+
+    def chat_send(self, job: HostedHarnessJob, text: str) -> dict[str, Any]:
+        """Say one thing to the run while it is running.
+
+        Appended rather than rewritten, and read by the harness at its next turn rather than at
+        the next stage, which is the whole difference between a conversation and a queue. Not an
+        adjustment: an adjustment is a durable control-plane record that moves the plan, this is
+        somebody talking.
+        """
+        said = (text or "").strip()
+        if not said:
+            raise HostedHarnessError(
+                "chat_empty", "there is nothing to say", status_code=400
+            )
+        sandbox = self._live_sandbox(job)
+        record = {
+            "at": timezone.now().isoformat(),
+            "text": said,
+        }
+        try:
+            existing = sandbox.fs.download_file(
+                _CHAT_INBOX_PATH, _PROGRESS_FILE_TIMEOUT_SECONDS
+            )
+        except Exception:  # noqa: BLE001 - nothing said yet is the ordinary first case
+            existing = b""
+        body = existing + json.dumps(record, separators=(",", ":")).encode("utf-8") + b"\n"
+        try:
+            sandbox.fs.upload_file(body, _CHAT_INBOX_PATH)
+        except Exception as exc:
+            raise HostedHarnessError(
+                "chat_delivery_failed",
+                "the message could not be delivered to the hosted run; retry",
+                status_code=503,
+                retryable=True,
+            ) from exc
+        return record
+
+    def chat_read(self, job: HostedHarnessJob, *, after: int = 0) -> dict[str, Any]:
+        """Everything the run has emitted, from line ``after`` on.
+
+        A cursor of lines rather than a stream, because the channel is a file: the caller holds
+        the cursor and asks again, which survives a dropped socket without replaying the whole
+        transcript.
+        """
+        sandbox = self._live_sandbox(job)
+        try:
+            raw = sandbox.fs.download_file(
+                _CHAT_OUTBOX_PATH, _PROGRESS_FILE_TIMEOUT_SECONDS
+            )
+        except Exception:  # noqa: BLE001 - absent until the first turn emits something
+            return {"events": [], "cursor": after}
+        lines = raw.decode("utf-8", errors="replace").splitlines()
+        events = []
+        for line in lines[max(after, 0) :]:
+            try:
+                parsed = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(parsed, dict):
+                events.append(parsed)
+        return {"events": events, "cursor": len(lines)}
+
     @staticmethod
     def _sync_authoring_progress(attempt: HostedHarnessAttempt, sandbox) -> None:
         """Expose safe in-sandbox authoring outputs while the unified command is running."""
@@ -2198,6 +2338,9 @@ class HostedHarnessGateway:
         bundle = _json("/work/bundle/manifest.json")
         # Read on every poll, so a sandbox deleted later still leaves its last known total.
         spend = _json("/work/authoring/cost.json")
+        # Written by save_scenarios, so its presence is what marks the suite saved rather than
+        # merely complete. The count reaches its target on the last submit, seconds earlier.
+        coverage = _json("/work/authoring/coverage.json")
         job = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id)
         _record_harness_spend(job, spend, attempt.attempt_number)
 
@@ -2210,10 +2353,15 @@ class HostedHarnessGateway:
         # re-freeze even though a key already exists — gated on its one-shot marker.
         # store_authoring_archive clears that marker in the same save.
         metadata = (job.payload or {}).get("metadata") or {}
+        # Either manifest means the suite is sealed enough to freeze. The unified pipeline writes
+        # only the authoring one, so gating on the legacy path alone left every run that used it
+        # with no archive, and therefore no suite to rerun or edit.
+        sealed = bundle if isinstance(bundle, dict) else authored_bundle
         if (
-            isinstance(bundle, dict)
+            isinstance(sealed, dict)
             and isinstance(scenarios, list)
             and len(scenarios) == job.scenario_count
+            and isinstance(coverage, dict)
             and (
                 not metadata.get("authoring_object_key")
                 or metadata.get("scenario_extend")
@@ -2273,6 +2421,16 @@ class HostedHarnessGateway:
             for item in (job.stage_outputs or [])
             if isinstance(item, dict) and item.get("kind")
         }
+        # Once the suite is sealed, the archive is the truth and this poll is not. `/work/authoring`
+        # is rewritten from scratch when an attempt relaunches, so a heartbeat landing mid-rewrite
+        # reads a partial `scenarios.json` and, merged in, replaces a complete suite with it. That
+        # is how a job whose sealed archive held 60 placed scenarios across nine overlay levels came
+        # to show a coverage grid summing to 30: half the rows had no coverage at all.
+        sealed_now = (job.payload or {}).get("metadata") or {}
+        if sealed_now.get("authoring_object_key") and not sealed_now.get("scenario_extend"):
+            outputs = [
+                item for item in outputs if item.get("kind") not in {"scenarios", "coverage"}
+            ]
         merged.update({item["kind"]: item for item in outputs})
         order = {"contract": 0, "environment": 1, "scenarios": 2}
         job.stage_outputs = sorted(
@@ -2748,6 +2906,18 @@ def _authoring_archive_for(job: HostedHarnessJob) -> bytes | None:
         "collections.json",
         "contract.json",
         "simulator_prompt.md",
+        # The world's own manifest. Without it the archive carries every part of a world and no
+        # way to restore it, so nothing downstream can re-prove a scenario against the world it
+        # was proved against. Not synthesised when missing: it records whether the handlers came
+        # from the submitted source, and inventing that would forge the provenance the check
+        # exists to protect.
+        "manifest.json",
+        # The sub-goal catalogue. Without it an edit reloads an empty one, so a rework cannot write
+        # the check body for a sub-goal it adds and the sub-goal ships ungradeable.
+        "sub_goals.json",
+        # Derivable from the scenarios, but packed so a consumer reads the numbers the run
+        # produced rather than recomputing a different answer.
+        "coverage.json",
     ):
         path = bundle_dir / name
         if path.is_file() and not path.is_symlink():
@@ -2856,6 +3026,18 @@ def pack_authoring_archive(authoring_root: Path) -> bytes:
         "collections.json",
         "contract.json",
         "simulator_prompt.md",
+        # The world's own manifest. Without it the archive holds every part of a world and no way
+        # to restore one, so nothing downstream can re-prove a scenario against the world it was
+        # proved against. Never synthesised when absent: it records whether the handlers came from
+        # the submitted source, and inventing that forges the provenance the check exists to
+        # protect.
+        "manifest.json",
+        # The sub-goal catalogue. Without it an edit reloads an empty one, so a rework cannot write
+        # the check body for a sub-goal it adds and the sub-goal ships ungradeable.
+        "sub_goals.json",
+        # Derivable from the scenarios, but packed so a consumer reads the numbers the run
+        # produced rather than recomputing a different answer.
+        "coverage.json",
     ):
         path = authoring_root / name
         if path.is_file() and not path.is_symlink():
@@ -3172,7 +3354,11 @@ def _record_harness_spend(
 
 
 def authoring_stage_outputs(
-    contract: Any, environment: Any, scenarios: Any, bundle: Any = None
+    contract: Any,
+    environment: Any,
+    scenarios: Any,
+    bundle: Any = None,
+    coverage: Any = None,
 ) -> list[dict[str, Any]]:
     """Build the complete, secret-safe snapshots shown by the hosted-run UI."""
     outputs: list[dict[str, Any]] = []
@@ -3213,6 +3399,22 @@ def authoring_stage_outputs(
                 "data": _secret_safe(scenarios),
             }
         )
+    # Its own kind rather than a field on the scenarios output, whose data is an array of rows.
+    if isinstance(coverage, dict) and coverage.get("axes"):
+        axes = coverage.get("axes") or {}
+        pairs = coverage.get("pairs") or {}
+        outputs.append(
+            {
+                "id": "00000000-0000-0000-0000-000000000004",
+                "kind": "coverage",
+                "title": "Coverage",
+                "summary": (
+                    f"{coverage.get('placed', 0)} of {coverage.get('scenarios', 0)} placed · "
+                    f"{len(axes)} axes · {len(pairs)} pairs"
+                ),
+                "data": _secret_safe(coverage),
+            }
+        )
     return outputs
 
 
@@ -3222,7 +3424,7 @@ def authoring_stage_outputs_from_archive(
     """Read only the bounded JSON snapshots from a sealed authoring archive."""
     documents: dict[str, Any] = {}
     scenario_documents: list[dict[str, Any]] = []
-    wanted = {"contract.json", "environment.json", "scenarios.json"}
+    wanted = {"contract.json", "environment.json", "scenarios.json", "coverage.json"}
     with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
         for member in archive.getmembers():
             path = Path(member.name)
@@ -3251,19 +3453,98 @@ def authoring_stage_outputs_from_archive(
                 scenario_documents.append(value)
             else:
                 documents[name] = value
-    scenarios = documents.get("scenarios.json")
-    if not isinstance(scenarios, list) and scenario_documents:
+    index = documents.get("scenarios.json")
+    # A scenario's own folder is the source of truth; the index is regenerated from it. Older
+    # archives carry an index that summarised each scenario and dropped the caller, the branch, the
+    # seeded data and the known-good solution, so prefer the folders and keep only the index's
+    # ordering, which is the suite's own.
+    if scenario_documents:
+        order = (
+            [str(one.get("name") or "") for one in index if isinstance(one, dict)]
+            if isinstance(index, list)
+            else []
+        )
         scenarios = sorted(
             scenario_documents,
-            key=lambda scenario: str(scenario.get("scenario_key") or ""),
+            key=lambda scenario: (
+                order.index(str(scenario.get("name") or ""))
+                if str(scenario.get("name") or "") in order
+                else len(order),
+                str(scenario.get("scenario_key") or ""),
+            ),
         )
+    else:
+        scenarios = index
     if isinstance(scenarios, list) and scenario_limit is not None:
         scenarios = scenarios[: max(0, scenario_limit)]
     return authoring_stage_outputs(
         documents.get("contract.json"),
         documents.get("environment.json"),
         scenarios,
+        coverage=documents.get("coverage.json"),
     )
+
+
+def amend_authoring_archive(
+    body: bytes, document: dict, *, rework: bool = True
+) -> tuple[bytes, dict]:
+    """Apply a scenario change-set to a sealed authoring archive, returning the new archive.
+
+    The archive is the only source of truth for a suite: ``stage_outputs`` is derived from it and a
+    rerun reads it back, so an edit that does not reach it is an edit that disappears. Everything
+    needed is inside (the world, the contract and the scenarios), so this runs wherever the
+    harness package is importable and needs no sandbox.
+
+    Unpacked, amended and repacked as one step because a half-written archive is worse than an
+    unchanged one: the caller either gets bytes to store or an exception, never a partial suite.
+
+    The harness is **invoked, not imported**. Its own CLI is the contract every other stage is
+    launched through, and for a good reason: reworking a scenario needs the harness's model
+    dependencies, which live in the runner's own virtualenv and not in whichever interpreter is
+    serving this call. Importing it worked for nothing and failed in both real callers.
+    """
+    python = os.getenv("ALK_RUNNER_PYTHON", "python")
+
+    with tempfile.TemporaryDirectory() as scratch:
+        root = Path(scratch) / "authoring"
+        root.mkdir(parents=True)
+        with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
+            archive.extractall(root, filter="data")
+        command = [
+            python,
+            "-m",
+            "fi.alk.harness.cli",
+            "amend",
+            "--out",
+            str(root),
+            "--changes",
+            "-",
+        ]
+        if not rework:
+            command.append("--no-rework")
+        # The interpreter's own environment, so a deployment needs nothing set: a released wheel
+        # already carries the `amend` command. A checkout mounted for development puts itself on
+        # PYTHONPATH and wins over the installed copy, which is how an unreleased change is tested
+        # without rebuilding the image.
+        finished = subprocess.run(
+            command,
+            input=json.dumps(document),
+            capture_output=True,
+            text=True,
+            env={**os.environ},
+            # A rework is a model session and a proof for every scenario it touches.
+            timeout=int(getattr(settings, "ALK_AMEND_TIMEOUT_SECONDS", 1800)),
+        )
+        if finished.returncode != 0:
+            # Exit 2 is the harness refusing the change-set itself, and its message names the
+            # offending op or field, so it is worth surfacing rather than burying.
+            detail = (finished.stderr or finished.stdout or "").strip()[:600]
+            raise HostedHarnessError(
+                "scenario_changes_refused" if finished.returncode == 2 else "scenario_amend_failed",
+                detail or "the harness could not apply these changes",
+                status_code=400 if finished.returncode == 2 else 500,
+            )
+        return pack_authoring_archive(root), json.loads(finished.stdout or "{}")
 
 
 def store_authoring_archive(
@@ -3290,15 +3571,60 @@ def store_authoring_archive(
     payload["metadata"] = metadata
     job.payload = payload
     update_fields = ["payload", "updated_at"]
+    # Refreshed whichever path stored the archive. The lifecycle is what `advance_lifecycle` gates,
+    # not what the job shows: a suite that reached object storage has a coverage report to surface.
+    rebuilt = authoring_stage_outputs_from_archive(body, scenario_limit=job.scenario_count)
+    produced = {one.get("kind") for one in rebuilt}
+    kept = [
+        one
+        for one in (job.stage_outputs or [])
+        if isinstance(one, dict) and one.get("kind") not in produced
+    ]
+    order = {"contract": 0, "environment": 1, "scenarios": 2, "coverage": 3}
+    job.stage_outputs = sorted(
+        rebuilt + kept, key=lambda one: order.get(one.get("kind"), len(order))
+    )
+    update_fields.append("stage_outputs")
     if advance_lifecycle:
-        job.stage_outputs = authoring_stage_outputs_from_archive(
-            body, scenario_limit=job.scenario_count
-        )
-        job.current_stage = "validating_scenarios"
-        job.state = HostedHarnessJob.State.ADMITTED
-        update_fields.extend(["stage_outputs", "current_stage", "state"])
+        settled = {
+            HostedHarnessJob.State.RUNNING,
+            HostedHarnessJob.State.FINALIZING,
+            HostedHarnessJob.State.CLEANING_UP,
+            HostedHarnessJob.State.COMPLETED,
+            HostedHarnessJob.State.FAILED,
+            HostedHarnessJob.State.CANCELED,
+        }
+        if job.state not in settled:
+            job.current_stage = "validating_scenarios"
+            job.state = HostedHarnessJob.State.ADMITTED
+            update_fields.extend(["current_stage", "state"])
     job.save(update_fields=update_fields)
     return object_key
+
+
+def amend_job_scenarios(
+    job: HostedHarnessJob, document: dict, *, rework: bool = True
+) -> dict:
+    """Edit a finished job's suite, and leave the archive and the read-model agreeing.
+
+    The whole operation is three existing pieces: read the archive this job was authored into,
+    apply the change-set to it, store it back under the same key. Storing already recomputes
+    ``stage_outputs``, so the tab shows the edit without a second path that could disagree with
+    the archive it came from.
+
+    Refused before anything is fetched when there is nothing to edit, because a job that never
+    authored has no suite and saying so is more useful than an empty change-set.
+    """
+    body = _authoring_archive_for(job)
+    if not body:
+        raise HostedHarnessError(
+            "authoring_artifacts_not_found",
+            "this run has no authored suite to edit",
+            status_code=409,
+        )
+    amended, receipts = amend_authoring_archive(body, document, rework=rework)
+    store_authoring_archive(job, amended)
+    return receipts
 
 
 def store_source_archive(organization, files, paths, name: str) -> dict[str, Any]:

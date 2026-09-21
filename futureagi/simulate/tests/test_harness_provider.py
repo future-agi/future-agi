@@ -11,6 +11,7 @@ from rest_framework.response import Response
 from rest_framework.test import APIClient
 
 from simulate.models import RunTest, TestExecution
+from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
 from simulate.serializers.harness_job import (
     HarnessJobCreateSerializer,
     HarnessPreflightSerializer,
@@ -129,12 +130,20 @@ def test_daytona_health_preserves_public_provider_name(settings):
     }
 
 
-def test_hosted_job_scenario_count_is_bounded_at_two_hundred():
-    accepted = HarnessJobCreateSerializer(data=_v1_payload(scenario_count=200))
+def test_hosted_job_scenario_count_is_bounded_at_the_shared_ceiling():
+    """The bound is whatever MAX_SCENARIOS_PER_JOB says, not a literal repeated in a test."""
+    accepted = HarnessJobCreateSerializer(
+        data=_v1_payload(scenario_count=MAX_SCENARIOS_PER_JOB)
+    )
     assert accepted.is_valid(), accepted.errors
-    assert accepted.validated_data["runtime"]["max_duration_seconds"] == 72_000
+    assert (
+        accepted.validated_data["runtime"]["max_duration_seconds"]
+        == MAX_SCENARIOS_PER_JOB * 360
+    )
 
-    rejected = HarnessJobCreateSerializer(data=_v1_payload(scenario_count=201))
+    rejected = HarnessJobCreateSerializer(
+        data=_v1_payload(scenario_count=MAX_SCENARIOS_PER_JOB + 1)
+    )
     assert not rejected.is_valid()
     assert "scenario_count" in rejected.errors
 
@@ -1082,3 +1091,47 @@ def test_harness_job_adjustment_rejects_empty_instruction(user):
     )
 
     assert response.status_code == 400
+
+
+@pytest.mark.django_db
+@override_settings(HARNESS_PROVIDER="hosted")
+def test_amend_scenarios_refuses_an_unknown_job_in_the_common_envelope(user):
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.post(
+        "/simulate/api/harness-jobs/11111111-1111-1111-1111-111111111111/scenarios/amend/",
+        {"changes": [{"op": "drop", "scenario": "one"}]},
+        format="json",
+    )
+
+    assert response.status_code == 404
+    body = response.json()
+    assert body["type"] == "not_found"
+    assert body["detail"] == "Hosted harness job not found"
+
+
+@pytest.mark.django_db
+@override_settings(HARNESS_PROVIDER="hosted")
+def test_amend_scenarios_passes_the_harness_refusal_through(user):
+    client = APIClient()
+    client.force_authenticate(user=user)
+    job = SimpleNamespace(id="11111111-1111-1111-1111-111111111111")
+
+    with (
+        patch.object(HostedHarnessProvider, "_job", return_value=job),
+        patch(
+            "simulate.services.hosted_harness_gateway.amend_job_scenarios",
+            side_effect=ValueError("unknown field 'wingspan'"),
+        ),
+    ):
+        response = client.post(
+            f"/simulate/api/harness-jobs/{job.id}/scenarios/amend/",
+            {"changes": [{"op": "set_field", "scenario": "one", "field": "wingspan", "value": 2}]},
+            format="json",
+        )
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["code"] == "scenario_changes_invalid"
+    assert "wingspan" in body["detail"]

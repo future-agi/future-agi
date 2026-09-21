@@ -7,6 +7,8 @@ from temporalio import activity
 
 from simulate.temporal.activities.hosted_runner import _run_db
 from simulate.temporal.types.hosted_harness_gateway import (
+    HostedHarnessAmendInput,
+    HostedHarnessAmendOutput,
     HostedHarnessAttemptInput,
     HostedHarnessAuthoringOutput,
     HostedHarnessGatewayInput,
@@ -162,3 +164,35 @@ async def cancel_hosted_harness_attempt(
 
     state = await _run_db(_cancel)
     return HostedHarnessPollOutput(done=True, state=state)
+
+@activity.defn(name="amend_hosted_harness_scenarios")
+async def amend_hosted_harness_scenarios(
+    input: HostedHarnessAmendInput,
+) -> HostedHarnessAmendOutput:
+    """Apply a change-set that needs the harness to re-prove what it touched.
+
+    Runs here rather than in the API because reworking a scenario means opening a model session and
+    replaying its solution against the world: the runner carries the harness and its model
+    dependencies, the API image does not and should not. Cosmetic edits never reach this activity:
+    the API applies those itself, so a delete or an accent change costs no queue hop.
+
+    No sandbox is involved. Everything the rework needs, the world included, travels inside the
+    authoring archive.
+    """
+    from simulate.models import HostedHarnessJob
+    from simulate.services.hosted_harness_gateway import amend_job_scenarios
+
+    def _amend() -> list[dict]:
+        job = HostedHarnessJob.no_workspace_objects.select_related("organization").get(
+            id=input.job_id
+        )
+        document = {
+            "schema": "futureagi.scenario-changes.v1",
+            "changes": list(input.changes),
+        }
+        return (amend_job_scenarios(job, document, rework=True) or {}).get(
+            "receipts", []
+        )
+
+    receipts = await _run_db(_amend)
+    return HostedHarnessAmendOutput(job_id=input.job_id, receipts=receipts)

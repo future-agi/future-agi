@@ -17174,7 +17174,7 @@ export interface HarnessJobCreateApi {
   agent: HarnessAgentApi;
   /**
    * @minimum 1
-   * @maximum 200
+   * @maximum 1000
    */
   scenario_count?: number;
   seed?: number;
@@ -17211,7 +17211,7 @@ export interface HarnessPreflightApi {
   agent: HarnessAgentApi;
   /**
    * @minimum 1
-   * @maximum 200
+   * @maximum 1000
    */
   scenario_count?: number;
   seed?: number;
@@ -17297,6 +17297,41 @@ export interface HarnessJobExtendApi {
    * @maxLength 128
    */
   client_request_id?: string;
+}
+
+export type HarnessScenarioChangeApiOp =
+  (typeof HarnessScenarioChangeApiOp)[keyof typeof HarnessScenarioChangeApiOp];
+
+export const HarnessScenarioChangeApiOp = {
+  set_persona: "set_persona",
+  set_field: "set_field",
+  drop: "drop",
+} as const;
+
+export type HarnessScenarioChangeApiPersona = { [key: string]: string };
+
+export type HarnessScenarioChangeApiValue = { [key: string]: unknown };
+
+export interface HarnessScenarioChangeApi {
+  op: HarnessScenarioChangeApiOp;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  scenario: string;
+  persona?: HarnessScenarioChangeApiPersona;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  field?: string;
+  value?: HarnessScenarioChangeApiValue;
+}
+
+export interface HarnessScenarioAmendApi {
+  /** @maxItems 200 */
+  changes: HarnessScenarioChangeApi[];
+  rework?: boolean;
 }
 
 export type HarnessManifestApiSchemaVersion =

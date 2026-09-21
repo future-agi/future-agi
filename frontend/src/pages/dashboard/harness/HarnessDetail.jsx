@@ -25,6 +25,7 @@ import ScenarioOutcome from "./ScenarioOutcome";
 import CustomTooltip from "src/components/tooltip";
 
 import StageOutput from "./StageOutput";
+import HarnessConversation from "src/sections/simulate-v2/assistant/HarnessConversation";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import EnvironmentSwitcher from "src/components/harness/EnvironmentSwitcher";
 import { compactActivityEvents } from "./activityEvents";
@@ -255,9 +256,18 @@ export default function HarnessDetail() {
   const stageOutputs = current?.stage_outputs || [];
   const selectedOutputs = stageOutputs.filter((output) =>
     detailTab === "runs"
-      ? !["contract", "environment", "scenarios"].includes(output.kind)
-      : output.kind === detailTab,
+      ? !["contract", "environment", "scenarios", "coverage"].includes(output.kind)
+      : output.kind === detailTab ||
+        (detailTab === "scenarios" && output.kind === "coverage"),
   );
+  // Coverage reads before the suite, which has no bound on its length.
+  const orderedOutputs = [
+    ...selectedOutputs.filter((one) => one.kind === "coverage"),
+    ...selectedOutputs.filter((one) => one.kind !== "coverage"),
+  ];
+  const scenarioEditing = current?.scenario_editing || {};
+  const suiteScenarios =
+    selectedOutputs.find((one) => one.kind === "scenarios")?.data || [];
   const outputCounts = stageOutputs.reduce((counts, output) => {
     const key = ["contract", "environment", "scenarios"].includes(output.kind)
       ? output.kind
@@ -555,6 +565,9 @@ export default function HarnessDetail() {
               // A fr-based left column grew to a third of a wide viewport around ~200px of
               // content, which is what read as skewed. Fixed width; the feed takes the slack.
               md: "264px minmax(0, 1fr)",
+              // The conversation sits beside the work rather than over it, at the width the
+              // studio design uses for it.
+              lg: "264px minmax(0, 1fr) minmax(340px, 400px)",
             },
           }}
         >
@@ -749,6 +762,9 @@ export default function HarnessDetail() {
               display: "flex",
               flexDirection: "column",
               minHeight: 0,
+              // Without this the pane is sized by its widest child rather than by the space it has,
+              // so a wide table pushes the whole page sideways instead of scrolling inside itself.
+              minWidth: 0,
               overflow: "hidden",
             }}
           >
@@ -848,9 +864,20 @@ export default function HarnessDetail() {
             >
               {detailTab !== "runs" ? (
                 <Stack spacing={1.5}>
-                  {selectedOutputs.length ? (
-                    selectedOutputs.map((output) => (
-                      <StageOutput key={output.id} output={output} />
+                  {orderedOutputs.length ? (
+                    orderedOutputs.map((output) => (
+                      <StageOutput
+                        key={output.id}
+                        output={output}
+                        jobId={jobId}
+                        scenarios={suiteScenarios}
+                        scenarioEditing={scenarioEditing}
+                        onChanged={() =>
+                          queryClient.invalidateQueries({
+                            queryKey: ["harness-job", jobId],
+                          })
+                        }
+                      />
                     ))
                   ) : (
                     <Typography variant="body2" color="text.secondary">
@@ -862,8 +889,19 @@ export default function HarnessDetail() {
                 </Stack>
               ) : (
                 <Stack spacing={1.5}>
-                  {selectedOutputs.map((output) => (
-                    <StageOutput key={output.id} output={output} />
+                  {orderedOutputs.map((output) => (
+                    <StageOutput
+                        key={output.id}
+                        output={output}
+                        jobId={jobId}
+                        scenarios={suiteScenarios}
+                        scenarioEditing={scenarioEditing}
+                        onChanged={() =>
+                          queryClient.invalidateQueries({
+                            queryKey: ["harness-job", jobId],
+                          })
+                        }
+                      />
                   ))}
                   {current.credentials && (
                     <Paper
@@ -1181,6 +1219,19 @@ export default function HarnessDetail() {
                 )}
               </Box>
             )}
+          </Box>
+
+          <Box
+            sx={{
+              display: { xs: "none", lg: "flex" },
+              flexDirection: "column",
+              minHeight: 0,
+              minWidth: 0,
+              p: 2,
+              pl: 0,
+            }}
+          >
+            <HarnessConversation jobId={String(jobId)} />
           </Box>
         </Box>
       </Box>

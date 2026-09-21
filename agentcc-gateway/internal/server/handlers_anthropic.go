@@ -733,9 +733,13 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 
 		case event, ok := <-eventCh:
 			if !ok {
-				// Event channel closed — translator is done.
+				// Event channel closed — translator is done. `break` rather than `continue`,
+				// because `continue` skips the drained check at the foot of this loop: once the
+				// last channel is nil the select has nothing left to receive on and blocks for
+				// ever, so the response never ends and the client waits on a stream that is
+				// already complete. That is what hung a second Anthropic session on this path.
 				eventCh = nil
-				continue
+				break
 			}
 			if _, writeErr := w.Write(event); writeErr != nil {
 				slog.Warn("error writing translated anthropic stream", "request_id", rc.RequestID, "error", writeErr)
@@ -752,7 +756,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 				// without this guard the handler would exit before draining
 				// them).
 				translatorErrCh = nil
-				continue
+				break
 			}
 			if err != nil {
 				slog.Warn("translator stream error", "request_id", rc.RequestID, "error", err)
@@ -764,7 +768,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 		case err, ok := <-errCh:
 			if !ok {
 				errCh = nil
-				continue
+				break
 			}
 			if err != nil {
 				slog.Warn("provider stream error", "request_id", rc.RequestID, "error", err)

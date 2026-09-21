@@ -27,6 +27,7 @@ const PersonaCreateEditForm = ({
   onCancel,
   editPersona,
   type = AGENT_TYPES.VOICE,
+  onSave,
 }) => {
   const isEditMode = Boolean(editPersona);
   const form = useForm({
@@ -89,6 +90,15 @@ const PersonaCreateEditForm = ({
       tone: data.tone,
       verbosity: data.verbosity,
     };
+
+    // A persona does not always live in the persona table. The RL environment keeps one inside
+    // the scenario it belongs to, so a caller that owns the persistence passes `onSave` and the
+    // form stops at building the payload. Without it nothing changes: the persona endpoints are
+    // still the default.
+    if (onSave) {
+      onSave({ ...payload, languages: data?.language });
+      return;
+    }
 
     if (isEditMode) {
       const updatePayload = {
@@ -209,6 +219,8 @@ PersonaCreateEditForm.propTypes = {
   onCancel: PropTypes.func,
   editPersona: PropTypes.object,
   type: PropTypes.string,
+  // Takes the built payload when the caller, not the persona table, owns where it is saved.
+  onSave: PropTypes.func,
 };
 
 export default PersonaCreateEditForm;

@@ -8,6 +8,8 @@ from temporalio.exceptions import ActivityError, CancelledError
 
 from simulate.temporal.constants import QUEUE_RUNNER
 from simulate.temporal.types.hosted_harness_gateway import (
+    HostedHarnessAmendInput,
+    HostedHarnessAmendOutput,
     HostedHarnessAttemptInput,
     HostedHarnessGatewayInput,
     HostedHarnessGatewayOutput,
@@ -99,3 +101,32 @@ class HostedHarnessGatewayWorkflow:
                 await workflow.sleep(timedelta(seconds=15))
             await workflow.sleep(timedelta(seconds=backoff))
             backoff = min(backoff * 2, input.max_backoff_seconds)
+
+
+@workflow.defn
+class HostedHarnessAmendWorkflow:
+    """One change-set, applied where the harness lives.
+
+    Thin on purpose: a client starts workflows rather than bare activities, so this exists to put
+    the rework on the runner's queue and hand its receipts back. The work itself is the activity's,
+    and the change-set is the whole input, so a retry re-applies the same changes rather than
+    resuming a half-finished edit.
+    """
+
+    @workflow.run
+    async def run(self, input: HostedHarnessAmendInput) -> HostedHarnessAmendOutput:
+        return await workflow.execute_activity(
+            "amend_hosted_harness_scenarios",
+            input,
+            task_queue=QUEUE_RUNNER,
+            # Reworking a scenario is a model session plus a proof per touched scenario, and a
+            # batch can hold several. Generous, because the cost of cancelling a rework partway is
+            # a suite nobody can reason about.
+            start_to_close_timeout=timedelta(minutes=30),
+            retry_policy=RetryPolicy(
+                # Not retried. A rework that failed halfway has already written what it proved, so
+                # a second attempt would reason about a suite the first one moved.
+                maximum_attempts=1,
+            ),
+            result_type=HostedHarnessAmendOutput,
+        )

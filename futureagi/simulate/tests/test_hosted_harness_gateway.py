@@ -119,6 +119,51 @@ def test_platform_simulator_defaults_to_approved_vertex_model(monkeypatch):
     assert credential_bytes is None
 
 
+def test_validation_lane_count_travels_only_when_the_deployment_sets_it(monkeypatch):
+    """Runtime validation resets the agent's world once per scenario, so it is the wall clock of a
+    large suite. The guest can spread that across several copies of the runtime, and the count has
+    to reach it. Absent means one, so a deployment that configures nothing is unchanged."""
+    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+    monkeypatch.delenv("ALK_VALIDATION_INSTANCES", raising=False)
+
+    values, _credential_bytes = _platform_simulator_material()
+    assert "ALK_VALIDATION_INSTANCES" not in values
+
+    monkeypatch.setenv("ALK_VALIDATION_INSTANCES", "4")
+    values, _credential_bytes = _platform_simulator_material()
+    assert values["ALK_VALIDATION_INSTANCES"] == "4"
+
+    # Blank is the same as unset: an empty string would make the guest fall back to one anyway,
+    # and shipping it would only make the uploaded environment harder to read.
+    monkeypatch.setenv("ALK_VALIDATION_INSTANCES", "")
+    values, _credential_bytes = _platform_simulator_material()
+    assert "ALK_VALIDATION_INSTANCES" not in values
+
+
+def test_gateway_address_travels_only_when_the_deployment_names_one(monkeypatch):
+    """The Claude Agent SDK talks to whatever serves Anthropic Messages, so the harness needs an
+    address. Ordinarily the guest starts its own on loopback and nothing has to travel; these two
+    exist so a run can be pointed at a gateway that already exists somewhere else instead."""
+    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+    for name in ("ALK_HARNESS_GATEWAY_URL", "ALK_HARNESS_GATEWAY_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+
+    values, _credential_bytes = _platform_simulator_material()
+    assert "ALK_HARNESS_GATEWAY_URL" not in values
+    assert "ALK_HARNESS_GATEWAY_TOKEN" not in values
+
+    monkeypatch.setenv("ALK_HARNESS_GATEWAY_URL", "http://gateway.internal:8090")
+    monkeypatch.setenv("ALK_HARNESS_GATEWAY_TOKEN", "not-a-real-token")
+    values, _credential_bytes = _platform_simulator_material()
+    assert values["ALK_HARNESS_GATEWAY_URL"] == "http://gateway.internal:8090"
+    assert values["ALK_HARNESS_GATEWAY_TOKEN"] == "not-a-real-token"
+
+    # Blank is the same as unset, so an empty setting never shadows the guest's own launcher.
+    monkeypatch.setenv("ALK_HARNESS_GATEWAY_URL", "")
+    values, _credential_bytes = _platform_simulator_material()
+    assert "ALK_HARNESS_GATEWAY_URL" not in values
+
+
 def test_platform_authoring_backend_is_independent_from_simulated_caller(
     tmp_path, monkeypatch
 ):
@@ -580,6 +625,67 @@ def test_fresh_authoring_archive_contains_contract_and_scenarios_only(tmp_path):
             "contract.json",
             "scenarios/one/scenario.json",
         ]
+
+
+def test_fresh_authoring_archive_carries_the_sub_goal_catalogue(tmp_path):
+    """The catalogue travels with the bundle. Without it an edit reloads an empty one, so a rework
+    cannot write the check body for a sub-goal it adds and the sub-goal ships ungradeable."""
+    root = tmp_path / "authoring"
+    scenario = root / "scenarios" / "one"
+    scenario.mkdir(parents=True)
+    (root / "contract.json").write_text('{"agent":"ride"}', encoding="utf-8")
+    (root / "sub_goals.json").write_text('{"sub_goals":[]}', encoding="utf-8")
+    (scenario / "scenario.json").write_text('{"name":"one"}', encoding="utf-8")
+
+    body = pack_authoring_archive(root)
+
+    with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
+        assert "sub_goals.json" in archive.getnames()
+
+
+def test_editing_a_suite_keeps_the_environment_the_archive_cannot_rebuild(tmp_path, monkeypatch):
+    """The archive carries no environment description, so that output must survive a rebuild."""
+    from simulate.services import hosted_harness_gateway as gateway
+
+    root = tmp_path / "authoring"
+    scenario = root / "scenarios" / "one"
+    scenario.mkdir(parents=True)
+    (root / "contract.json").write_text('{"agent":"ride"}', encoding="utf-8")
+    (scenario / "scenario.json").write_text('{"name":"one"}', encoding="utf-8")
+    body = pack_authoring_archive(root)
+
+    saved = {}
+
+    class _Job:
+        organization_id = "org"
+        id = "job"
+        payload = {}
+        scenario_count = 1
+        stage_outputs = [
+            {"kind": "contract", "title": "Agent contract", "data": {"agent": "stale"}},
+            {"kind": "environment", "title": "Execution environment", "data": {"services": ["db"]}},
+            {"kind": "scenarios", "title": "Generated scenarios", "data": []},
+        ]
+
+        def save(self, update_fields=None):
+            saved["outputs"] = self.stage_outputs
+
+    monkeypatch.setattr(gateway, "get_storage_client", lambda: SimpleNamespace(
+        put_object=lambda **kwargs: None,
+        bucket_exists=lambda name: True,
+        make_bucket=lambda name: None,
+    ))
+    monkeypatch.setattr(gateway, "ensure_bucket", lambda client, name: None)
+
+    gateway.store_authoring_archive(_Job(), body)
+
+    kinds = [one["kind"] for one in saved["outputs"]]
+    assert kinds == ["contract", "environment", "scenarios"]
+    environment = next(one for one in saved["outputs"] if one["kind"] == "environment")
+    assert environment["data"] == {"services": ["db"]}
+    # The kinds the archive does rebuild are replaced, never merged into the stale copy.
+    contract = next(one for one in saved["outputs"] if one["kind"] == "contract")
+    assert contract["data"]["agent"] == "ride"
 
 
 def test_fresh_authoring_archive_rejects_missing_scenarios(tmp_path):

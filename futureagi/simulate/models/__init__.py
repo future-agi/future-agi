@@ -14,6 +14,7 @@ from .harness_environment_credentials import (
 )
 from .eval_config import SimulateEvalConfig
 from .hosted_harness import (
+    MAX_SCENARIOS_PER_JOB,
     HostedHarnessArtifact,
     HostedHarnessAttempt,
     HostedHarnessCleanupReceipt,
@@ -74,6 +75,7 @@ __all__ = [
     "HostedHarnessCleanupReceipt",
     "HostedHarnessEvent",
     "HostedHarnessJob",
+    "MAX_SCENARIOS_PER_JOB",
     "HostedHarnessManifest",
     "HostedHarnessReceipt",
     "HostedHarnessSecret",

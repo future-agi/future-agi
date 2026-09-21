@@ -5,15 +5,15 @@ import {
   Box,
   Button,
   Chip,
-  Paper,
   Stack,
   Typography,
 } from "@mui/material";
 import PropTypes from "prop-types";
 
 import Iconify from "src/components/iconify";
+import ScenarioSuite from "./ScenarioSuite";
+import CoverageMatrix from "./CoverageMatrix";
 
-import { readable } from "./harnessShared";
 
 function RawDetails({ data }) {
   return (
@@ -66,13 +66,14 @@ RawDetails.propTypes = {
 // One artifact the runner produced during a stage. `kind` is a closed set from ALK —
 // contract, environment, scenarios, simulation — and anything else falls back to raw JSON
 // rather than rendering nothing, so a new kind is visible rather than silently dropped.
-export default function StageOutput({ output }) {
+export default function StageOutput({ output, jobId, scenarios, scenarioEditing, onChanged }) {
   const data = output.data || {};
   return (
     <Accordion
       variant="outlined"
-      // Scenarios can be long; the others are short enough to read at a glance.
-      defaultExpanded={output.kind !== "scenarios"}
+      // Every stage opens on arrival. The suite is the thing people came to read, so making them
+      // click to see it put the whole point of the tab one interaction away.
+      defaultExpanded
       disableGutters
       // The theme leaves a collapsed accordion transparent and paints it only once
       // expanded, so the two states sit on different surfaces. Pin both to the darker
@@ -95,7 +96,7 @@ export default function StageOutput({ output }) {
         </Box>
       </AccordionSummary>
 
-      <AccordionDetails>
+      <AccordionDetails sx={{ minWidth: 0, overflowX: "hidden" }}>
         {output.kind === "simulation" && (
           <Stack spacing={1.25} alignItems="flex-start">
             <Typography variant="body2" color="text.secondary">
@@ -177,26 +178,26 @@ export default function StageOutput({ output }) {
         )}
 
         {output.kind === "scenarios" && (
+          <ScenarioSuite
+            scenarios={Array.isArray(data) ? data : []}
+            jobId={jobId}
+            // The job id is the whole condition. Every scenario has something editable, and gating
+            // on the persona hid editing entirely for a suite whose scenarios carry none; the panel
+            // already leaves the caller section out when there is nobody on the other end.
+            editable={Boolean(jobId)}
+            scenarioEditing={scenarioEditing}
+            onChanged={onChanged}
+          />
+        )}
+
+        {output.kind === "coverage" && (
           <Stack spacing={1}>
-            {(Array.isArray(data) ? data : []).map((scenario) => (
-              <Paper
-                key={scenario.name}
-                variant="outlined"
-                sx={{ p: 1.25, bgcolor: "background.default" }}
-              >
-                <Typography variant="subtitle2">
-                  {readable(scenario.name)}
-                </Typography>
-                <Typography variant="body2">{scenario.instruction}</Typography>
-                <Typography variant="caption" color="text.secondary">
-                  {scenario.use_case || "Generated test case"}
-                </Typography>
-              </Paper>
-            ))}
+            <CoverageMatrix scenarios={scenarios} coverage={data} />
+            <RawDetails data={data} />
           </Stack>
         )}
 
-        {!["contract", "environment", "scenarios", "simulation"].includes(
+        {!["contract", "environment", "scenarios", "simulation", "coverage"].includes(
           output.kind,
         ) && <RawDetails data={data} />}
       </AccordionDetails>
@@ -205,6 +206,14 @@ export default function StageOutput({ output }) {
 }
 
 StageOutput.propTypes = {
+  scenarios: PropTypes.arrayOf(PropTypes.object),
+  // Editing a suite happens against a job, so the id is what turns a read-only list editable.
+  jobId: PropTypes.string,
+  scenarioEditing: PropTypes.shape({
+    editable_fields: PropTypes.arrayOf(PropTypes.string),
+    applied_without_rework: PropTypes.arrayOf(PropTypes.string),
+  }),
+  onChanged: PropTypes.func,
   output: PropTypes.shape({
     data: PropTypes.oneOfType([PropTypes.object, PropTypes.array]),
     kind: PropTypes.string.isRequired,

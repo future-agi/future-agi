@@ -149,12 +149,21 @@ type MessageStartEvent struct {
 }
 
 // MessageStartMsg is the partial message in message_start.
+//
+// Content, StopReason and StopSequence are always present, never omitted. A client builds its
+// running assistant message out of this object and appends the content blocks that follow, and
+// one that arrives without a content array leaves it nothing to append to. Measured against a
+// reference implementation that sends all three: with them absent, a session completes its first
+// tool call and then never sends the turn that follows the tool result.
 type MessageStartMsg struct {
-	ID    string        `json:"id"`
-	Type  string        `json:"type"` // "message"
-	Role  string        `json:"role"` // "assistant"
-	Model string        `json:"model,omitempty"`
-	Usage ResponseUsage `json:"usage"`
+	ID           string         `json:"id"`
+	Type         string         `json:"type"` // "message"
+	Role         string         `json:"role"` // "assistant"
+	Model        string         `json:"model,omitempty"`
+	Content      []ContentBlock `json:"content"`
+	StopReason   *string        `json:"stop_reason"`
+	StopSequence *string        `json:"stop_sequence"`
+	Usage        ResponseUsage  `json:"usage"`
 }
 
 // ContentBlockStartEvent announces a new content block.
@@ -186,16 +195,34 @@ type ContentDelta struct {
 }
 
 // MessageDeltaEvent carries final stop-reason and output usage.
+//
+// Usage here is cumulative OUTPUT only. A client has already recorded the input count from
+// message_start, and a delta that also carries input_tokens overwrites it — with zero, on a path
+// that does not recount the prompt. StopSequence is always present rather than omitted, the way
+// the reference implementation sends it.
 type MessageDeltaEvent struct {
-	Type  string        `json:"type"` // "message_delta"
-	Delta MessageDelta  `json:"delta"`
-	Usage ResponseUsage `json:"usage"`
+	Type  string       `json:"type"` // "message_delta"
+	Delta MessageDelta `json:"delta"`
+	Usage DeltaUsage   `json:"usage"`
+}
+
+// DeltaUsage is what a message_delta reports: what the model has written so far, and the prompt
+// count only once it is actually known.
+//
+// InputTokens is omitted unless non-zero, which is the whole point. A provider that reports usage
+// only at the end of its stream leaves message_start with nothing to say, and a client that took
+// that zero as final reports a stage that sent no prompt at all. Sending the real count here
+// corrects it; sending a zero here would overwrite a good count with a bad one, so it is never
+// serialised.
+type DeltaUsage struct {
+	OutputTokens int `json:"output_tokens"`
+	InputTokens  int `json:"input_tokens,omitempty"`
 }
 
 // MessageDelta is the payload inside MessageDeltaEvent.
 type MessageDelta struct {
 	StopReason   string  `json:"stop_reason"`
-	StopSequence *string `json:"stop_sequence,omitempty"`
+	StopSequence *string `json:"stop_sequence"`
 }
 
 // MessageStopEvent terminates the stream.

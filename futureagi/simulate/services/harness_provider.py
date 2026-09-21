@@ -282,7 +282,20 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
             (job.payload.get("metadata") or {}).get("adjustments") or []
         ),
         "platform": platform,
+        "scenario_editing": _scenario_editing(),
         "credentials": {"detected_connectors": detected_connectors},
+    }
+
+
+def _scenario_editing() -> dict[str, Any]:
+    """Describe the harness edit gate so a client need not restate it."""
+    try:
+        from fi.alk.harness.amend_scenarios import DESCRIPTIVE_FIELDS, EDITABLE_FIELDS
+    except Exception:  # noqa: BLE001 - nothing learned means nothing editable
+        return {"editable_fields": [], "applied_without_rework": []}
+    return {
+        "editable_fields": list(EDITABLE_FIELDS),
+        "applied_without_rework": list(DESCRIPTIVE_FIELDS),
     }
 
 
@@ -638,6 +651,127 @@ class HostedHarnessProvider:
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
         return Response(serialize_job(job))
+
+    def chat_send(self, request, pk) -> Response:
+        """Say one thing to a run that is still up."""
+        from simulate.services.hosted_harness import HostedHarnessError
+        from simulate.services.hosted_harness_gateway import HostedHarnessGateway
+
+        job = self._job(request, pk)
+        if job is None:
+            return Response(
+                {"detail": "Hosted harness job not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        try:
+            said = HostedHarnessGateway().chat_send(
+                job, str(request.data.get("text") or "")
+            )
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
+        return Response(said)
+
+    def chat_read(self, request, pk) -> Response:
+        """Everything the run has said since the caller's cursor."""
+        from simulate.services.hosted_harness import HostedHarnessError
+        from simulate.services.hosted_harness_gateway import HostedHarnessGateway
+
+        job = self._job(request, pk)
+        if job is None:
+            return Response(
+                {"detail": "Hosted harness job not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        try:
+            after = int(request.query_params.get("after") or 0)
+        except (TypeError, ValueError):
+            after = 0
+        try:
+            seen = HostedHarnessGateway().chat_read(job, after=after)
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
+        return Response(seen)
+
+    def amend_scenarios(self, request, pk) -> Response:
+        """Edit a finished job's authored suite: personas, fields, deletions.
+
+        The reply is the receipts, not the job. A caller needs to know what happened to each change
+        it sent, and "reworked, and these files moved" is the part it cannot infer from a job that
+        merely looks saved.
+        """
+        from simulate.services.hosted_harness import HostedHarnessError
+        from simulate.services.hosted_harness_gateway import amend_job_scenarios
+        from tfc.utils.api_errors import build_error_envelope
+
+        job = self._job(request, pk)
+        if job is None:
+            return Response(
+                build_error_envelope(
+                    "Hosted harness job not found",
+                    status_code=status.HTTP_404_NOT_FOUND,
+                ),
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        payload = request.validated_data
+        changes = list(payload["changes"])
+        document = {"schema": "futureagi.scenario-changes.v1", "changes": changes}
+
+        # Applied here first, without a reworker. Everything that cannot affect what the world
+        # holds or what a correct agent does lands immediately: a delete, an accent, a use case.
+        # Whatever comes back refused for needing judgement is what actually costs a model, and
+        # only that is handed to the runner, which is the only place the harness can run.
+        try:
+            outcome = amend_job_scenarios(job, document, rework=False)
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
+        except ValueError as exc:
+            # The harness validates the document again before touching anything, and its refusal
+            # names the offending op or field. Passing it through beats a generic 400.
+            return Response(
+                build_error_envelope(
+                    str(exc),
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    code="scenario_changes_invalid",
+                ),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        receipts = list(outcome.get("receipts") or [])
+        if not bool(payload.get("rework", True)):
+            return Response({**outcome, "receipts": receipts})
+
+        deferred = {
+            one["scenario"] for one in receipts if one.get("outcome") == "refused"
+        }
+        pending = [one for one in changes if one.get("scenario") in deferred]
+        if not pending:
+            return Response({**outcome, "receipts": receipts})
+
+        # Off by default: a change that would re-prove is reported refused rather than started.
+        if not bool(getattr(settings, "HARNESS_SCENARIO_REWORK_ENABLED", False)):
+            return Response({**outcome, "receipts": receipts})
+
+        from simulate.temporal.client import start_hosted_harness_amend
+
+        start_hosted_harness_amend(str(job.id), pending)
+        # The dispatched ones are reported as queued rather than as refused, because refused is
+        # final and this is not: the caller polls the job and sees the suite change.
+        queued = {
+            one["scenario"]: {
+                **one,
+                "outcome": "queued",
+                "why": "the harness is working out whether the world, the solution and the "
+                "checks still hold",
+            }
+            for one in receipts
+            if one["scenario"] in deferred
+        }
+        return Response(
+            {
+                **outcome,
+                "receipts": [queued.get(one["scenario"], one) for one in receipts],
+            }
+        )
 
     def rerun_saved(
         self,

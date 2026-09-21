@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from django.conf import settings
 from rest_framework import serializers
+
+from simulate.models import MAX_SCENARIOS_PER_JOB
 
 RUNNER_RESERVED_ENVIRONMENT = {
     "DOCKER_HOST",
@@ -246,6 +249,32 @@ class HarnessArtifactSerializer(serializers.Serializer):
     max_artifact_bytes = serializers.IntegerField(default=1_073_741_824, min_value=0)
 
 
+class HarnessScenarioChangeSerializer(serializers.Serializer):
+    """One edit. The vocabulary is the harness's own, so a change-set built here is the same
+    document the harness validates again before it touches anything."""
+
+    op = serializers.ChoiceField(choices=("set_persona", "set_field", "drop"))
+    scenario = serializers.CharField(max_length=255)
+    persona = serializers.DictField(required=False)
+    field = serializers.CharField(required=False, max_length=64)
+    value = serializers.JSONField(required=False, allow_null=True)
+
+
+class HarnessScenarioAmendSerializer(serializers.Serializer):
+    """A batch of edits against one job's authored suite.
+
+    ``rework`` is what a caller sets when it is willing to pay for the harness to work out whether
+    a change moves the world, the reference solution or the checks. With it off, anything that
+    could matter is refused rather than applied, so a cheap edit stays cheap and an incoherent
+    suite is never the quiet outcome.
+    """
+
+    changes = serializers.ListField(
+        child=HarnessScenarioChangeSerializer(), allow_empty=False, max_length=200
+    )
+    rework = serializers.BooleanField(default=True)
+
+
 class HarnessJobCreateSerializer(serializers.Serializer):
     # Create refuses a job whose connector has no credentials; preflight reports them as
     # unmet requirements instead, so the readiness panel can tell the user what to add.
@@ -257,7 +286,9 @@ class HarnessJobCreateSerializer(serializers.Serializer):
     run_id = serializers.UUIDField(required=False)
     source = HarnessSourceSerializer(required=False)
     agent = HarnessAgentSerializer()
-    scenario_count = serializers.IntegerField(default=10, min_value=1, max_value=200)
+    scenario_count = serializers.IntegerField(
+        default=10, min_value=1, max_value=MAX_SCENARIOS_PER_JOB
+    )
     seed = serializers.IntegerField(required=False, allow_null=True)
     runtime = HarnessRuntimeSerializer(default=dict)
     security = HarnessSecuritySerializer(default=dict)
@@ -308,8 +339,20 @@ class HarnessJobCreateSerializer(serializers.Serializer):
         # 20-30).  Enforce the same conservative per-scenario budget server-side so older
         # UIs and direct API clients cannot reintroduce that failure mode.
         if attrs["scenario_count"] > 10:
+            floor = attrs["scenario_count"] * 360
+            # A floor larger than the sandbox provider will ever grant does not protect the run, it
+            # guarantees the launch is refused before a single scenario is written. Cap it at what
+            # the provider can actually live for, minus the authoring budget and the same slack the
+            # gateway adds.
+            ceiling = int(getattr(settings, "ALK_E2B_MAX_TTL_SECONDS", 0) or 0)
+            provider = str(getattr(settings, "HOSTED_SANDBOX_PROVIDER", "") or "")
+            if provider == "e2b" and ceiling > 0:
+                authoring = int(
+                    getattr(settings, "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS", 3600)
+                )
+                floor = min(floor, max(60, ceiling - authoring - 120))
             runtime["max_duration_seconds"] = max(
-                runtime["max_duration_seconds"], attrs["scenario_count"] * 360
+                runtime["max_duration_seconds"], floor
             )
         connector = agent["connector"]
         if connector in {"livekit", "vapi", "retell", "auto"} and (

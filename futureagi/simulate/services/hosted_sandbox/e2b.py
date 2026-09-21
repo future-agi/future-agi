@@ -331,9 +331,13 @@ class E2BSandboxRuntimeProvider(SandboxRuntimeProvider):
                 "rm -f /usr/local/bin/python && "
                 "printf '#!/bin/sh\\nexec /opt/alk-venv/bin/python \"$@\"\\n' "
                 "> /usr/local/bin/python && chmod 0755 /usr/local/bin/python && "
-                "ln -sfn /opt/alk-venv/bin/pip /usr/local/bin/pip && "
-                "ln -sfn /opt/alk-venv/bin/uv /usr/local/bin/uv && "
-                "ln -sfn /opt/alk-venv/bin/uvx /usr/local/bin/uvx",
+                "ln -sfn /opt/alk-venv/bin/pip /usr/local/bin/pip",
+                # LOCAL ONLY, NOT FOR COMMIT. The two lines that used to follow linked uv and uvx
+                # at /opt/alk-venv/bin, where neither exists: the image installs the real binaries
+                # at /usr/local/bin and this replaced them with dangling links, so every agent
+                # whose repo builds with `uv sync` died at validating_environment with
+                # "No such file or directory: 'uv'". pip is left alone because it does exist there.
+                # Flagged to Azain.
                 timeout=min(timeout, 60),
                 user="root",
             )
