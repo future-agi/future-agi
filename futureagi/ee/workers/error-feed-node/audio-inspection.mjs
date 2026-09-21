@@ -1,5 +1,5 @@
 import {open} from 'node:fs/promises';
-import {tool} from '@omega/core';
+import {tool} from '@future-agi/omega-runtime';
 
 const maxAudioBytes = 8 * 1024 * 1024;
 const recordingKeys = ['gen_ai.voice.recording.url', 'conversation.recording.mono.combined'];
