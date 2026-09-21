@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   adaptGroupingSnapshot,
+  canonicalGroupingSourceDigest,
   canonicalSnapshotDigest,
 } from './snapshot.mjs';
 import {makeGroupingSnapshotFixture} from './snapshot-fixture.mjs';
@@ -18,7 +19,9 @@ test('adapts normalized snapshot to deterministic F6 statement and task rows', (
   const [row] = adaptGroupingSnapshot(snapshot);
 
   assert.equal(row.id, snapshot.occurrences[0].occurrence_id);
-  assert.equal(row.source_digest, snapshot.snapshot_digest);
+  assert.equal(row.source_digest, canonicalGroupingSourceDigest(snapshot));
+  assert.equal(row.source_digest,
+    'sha256:28d4fd92c5b661ff265b0c92ebc243914f5f19e8646c5914a98c3fcb20651123');
   assert.equal(row.scan_version, `7:${snapshot.report.attempt_id}`);
   assert.deepEqual(row.views, {semantics: 'Only 10 was refunded instead of 100.', task: 'Refund café customer'});
   assert.deepEqual(row.supporting_refs, ['report', 'receipt:evidence-1']);
@@ -33,6 +36,25 @@ test('adapts normalized snapshot to deterministic F6 statement and task rows', (
   assert.deepEqual(row.investigation_report_ref,
     {report_id: snapshot.report.id, result_digest: snapshot.report.result_digest});
   assert.deepEqual(adaptGroupingSnapshot(structuredClone(snapshot)), [row]);
+});
+
+test('grouping status changes full envelope integrity but not accepted source identity', () => {
+  const pending = makeGroupingSnapshotFixture();
+  const completed = structuredClone(pending);
+  completed.report.grouping_status = 'completed';
+  redigest(completed);
+  assert.notEqual(completed.snapshot_digest, pending.snapshot_digest);
+  assert.equal(canonicalGroupingSourceDigest(completed), canonicalGroupingSourceDigest(pending));
+  assert.equal(adaptGroupingSnapshot(completed)[0].source_digest,
+    adaptGroupingSnapshot(pending)[0].source_digest);
+
+  const changedEvidence = structuredClone(completed);
+  changedEvidence.report.findings[0].statement = 'A different accepted finding';
+  redigest(changedEvidence);
+  assert.notEqual(canonicalGroupingSourceDigest(changedEvidence),
+    canonicalGroupingSourceDigest(pending));
+  assert.notEqual(adaptGroupingSnapshot(changedEvidence)[0].source_digest,
+    adaptGroupingSnapshot(pending)[0].source_digest);
 });
 
 test('strictly rejects stale, malformed-scope, gold and digest fields', () => {

@@ -1,10 +1,8 @@
-const CAPABILITY = 'grouping-features/v1';
 const MODEL = 'all-MiniLM-L6-v2';
-const REVISION = /^[a-f0-9]{40}$/;
 
 export class EmbeddingInputTooLongError extends Error {
   constructor() {
-    super('Embedding input exceeds the pinned model token limit');
+    super('Embedding input exceeds the serving input limit');
     this.name = 'EmbeddingInputTooLongError';
     this.code = 'embedding_input_too_long';
   }
@@ -21,13 +19,12 @@ export function validateEmbeddingModel(model) {
   const keys = model && typeof model === 'object' && !Array.isArray(model)
     ? Object.keys(model).sort() : [];
   if (JSON.stringify(keys) !== JSON.stringify([
-    'capability', 'dimension', 'maxSequenceLength', 'name', 'revision',
-  ]) || model.capability !== CAPABILITY || model.name !== MODEL
-      || !REVISION.test(model.revision ?? '') || model.dimension !== 384) {
-    throw new Error('Unsupported or mutable embedding model identity');
+    'dimension', 'name', 'servingRelease',
+  ]) || model.name !== MODEL || model.dimension !== 384
+      || !/^[a-zA-Z0-9_.:-]{1,128}$/.test(model.servingRelease ?? '')) {
+    throw new Error('Unsupported model or missing serving cache release');
   }
   positiveInteger(model.dimension, 'embedding dimension', 4096);
-  positiveInteger(model.maxSequenceLength, 'embedding sequence length', 8192);
   return Object.freeze({...model});
 }
 
@@ -128,5 +125,4 @@ export function createEmbeddingClient({endpoint, model: rawModel, timeoutMs,
   };
 }
 
-export const GROUPING_EMBEDDING_CAPABILITY = CAPABILITY;
 export const GROUPING_EMBEDDING_MODEL = MODEL;

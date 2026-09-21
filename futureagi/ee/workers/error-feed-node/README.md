@@ -169,3 +169,52 @@ pricing is read after gateway completion.
 Local HTTP mock tests exercise protocol and accounting; they are not live-model
 quality evaluations. Gateway error bodies are excluded from worker error logs.
 No model calls happen during package building or image healthcheck.
+
+## F6 grouping worker (separate process)
+
+The image also contains `worker/grouping-daemon.mjs`. Run it as a separate
+deployment by overriding the image command; the existing investigation command
+and model-serving API are unchanged. This code is not enabled by building it.
+
+The grouping process uses the existing `OMEGA_DJANGO_URL`,
+`OMEGA_INTERNAL_API_SECRET[_FILE]`, `AGENTCC_BASE_URL`, and
+`AGENTCC_API_KEY[_FILE]` settings. It additionally requires:
+
+- `GROUPING_MODEL_ID=google/gemini-3.8-flash`.
+- `GROUPING_CALL_RESERVATION_USD`: explicit worst-case per-call reservation.
+  Django independently enforces cumulative work, project and tenant caps;
+  unknown charges retain their reservations. A reservation is not a provider
+  price guarantee.
+- `GROUPING_EMBEDDING_URL`: the existing serving `/model/v1/embed` endpoint.
+- `GROUPING_EMBEDDING_SERVING_RELEASE`: an operator-managed cache namespace.
+  This is **not** a verified model-weights revision. The serving API does not
+  supply a weights digest or token-coverage proof.
+
+Optional concurrency settings are `GROUPING_FEATURE_CONCURRENCY` (default 2)
+and `GROUPING_CONCURRENCY` (default 1). Feature work and LLM work use separate
+pools. The worker has no PostgreSQL or ClickHouse credentials; Django owns
+feature persistence, scoped snapshots and atomic Feed publication.
+
+With `OMEGA_KAFKA_BROKERS` configured, the process reuses existing Kafka
+TLS/SASL settings to publish durable outbox notifications and consume hints.
+`GROUPING_KAFKA_TOPIC` defaults to `error-feed.grouping-ready.v1`; provision
+the topic explicitly and grant producer/consumer permissions. Auto-topic
+creation is disabled. `GROUPING_KAFKA_GROUP` defaults to `omega-grouping-v1`.
+Broker acknowledgement precedes outbox acknowledgement. Lost acknowledgements
+may duplicate hints, not memberships. Polling continues if Kafka is unavailable;
+restart the process after a terminal Kafka connection failure to restore hints.
+
+Before enabling Django grouping, provision its versioned feature/bucket tables
+through the operator migration path and set all three explicit budget caps.
+Do not enable it merely because mocked tests pass. This production adaptation
+uses MiniLM and bounded, lossless-input chunk pooling rather than the historical
+Gemini embeddings, so historical benchmark scores are not production scores.
+
+Review limits remain explicit: existing issues above 16 members, or beyond the
+64-member candidate-window budget, are omitted rather than partially validated.
+These are review-window limits, not permission to delete existing memberships.
+Deferred findings are retained, but automatic reconsideration when a later
+report arrives is not yet wired. An oversized checkpoint fails closed without
+Feed publication. Paid-call receipts survive a checkpoint failure; exact received
+results are reused on retry instead of automatically spending again. These
+limits need capacity testing before broad rollout.

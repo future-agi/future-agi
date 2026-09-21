@@ -3,8 +3,23 @@ import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {copyFile, mkdir, mkdtemp, readFile, rm, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {join,dirname} from 'node:path';
+import {workerFiles} from './image-files.mjs';
 import {execFileSync, spawnSync} from 'node:child_process';
+
+test('deployment manifest includes every local runtime import and no test data',async()=>{
+  const allowed=new Set(workerFiles);
+  for(const name of workerFiles) {
+    assert.ok(!/test|fixture/.test(name));
+    const source=await readFile(new URL(name,import.meta.url),'utf8');
+    for(const match of source.matchAll(/(?:from\s*|import\s*\()['"](\.[^'"]+)['"]/g)) {
+      const target=new URL(match[1],new URL(name,import.meta.url));
+      const root=new URL('.',import.meta.url);
+      assert.ok(target.href.startsWith(root.href));
+      assert.ok(allowed.has(target.href.slice(root.href.length)),`${name} missing ${match[1]}`);
+    }
+  }
+});
 
 test('image preparation reuses verified Kafka and Snappy artifacts offline and rejects tampering', async () => {
   const root = await mkdtemp(join(tmpdir(), 'omega-image-test-'));
@@ -14,8 +29,9 @@ test('image preparation reuses verified Kafka and Snappy artifacts offline and r
     const source = join(root, 'fixture/package');
     for (const path of [worker, join(context, 'packages'), source]) await mkdir(path, {recursive: true});
     await copyFile(new URL('./prepare-image.mjs', import.meta.url), join(worker, 'prepare-image.mjs'));
-    for (const name of ['gateway-provider.mjs', 'worker.mjs', 'daemon.mjs', 'control-client.mjs',
-      'coordinator.mjs', 'evidence-store.mjs', 'investigation.mjs', 'audio-inspection.mjs', 'Dockerfile']) {
+    await copyFile(new URL('./image-files.mjs', import.meta.url), join(worker, 'image-files.mjs'));
+    for (const name of [...workerFiles,'Dockerfile']) {
+      await mkdir(dirname(join(worker,name)),{recursive:true});
       await writeFile(join(worker, name), '// fixture\n');
     }
     const externalPackages = [];

@@ -85,6 +85,15 @@ export function canonicalSnapshotDigest(value) {
   return `sha256:${createHash('sha256').update(canonicalSnapshotJson(value), 'utf8').digest('hex')}`;
 }
 
+// The full envelope digest fences each live snapshot. Feature and membership
+// identity excludes only the mutable grouping projection state, so publishing
+// pending -> completed cannot make the same accepted report appear rewritten.
+export function canonicalGroupingSourceDigest(snapshot) {
+  const {grouping_status: _status, ...report} = snapshot.report;
+  return canonicalSnapshotDigest({contract_version: snapshot.contract_version,
+    report, occurrences: snapshot.occurrences});
+}
+
 function contentDigest(value) {
   return createHash('sha256').update(canonicalSnapshotJson(value), 'utf8').digest('hex');
 }
@@ -267,7 +276,7 @@ export function adaptGroupingSnapshot(snapshot) {
       engine_version: report.engine_version,
       scan_version: `${report.generation}:${report.attempt_id}`,
       evidence_revision: report.evidence_digest,
-      source_digest: snapshot.snapshot_digest,
+      source_digest: canonicalGroupingSourceDigest(snapshot),
       kind: finding.kind,
       summary: finding.statement,
       recovery: finding.recovery,

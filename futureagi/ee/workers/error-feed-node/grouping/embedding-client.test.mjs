@@ -3,16 +3,13 @@ import assert from 'node:assert/strict';
 import {
   createEmbeddingClient,
   EmbeddingInputTooLongError,
-  GROUPING_EMBEDDING_CAPABILITY,
   GROUPING_EMBEDDING_MODEL,
 } from './embedding-client.mjs';
 
 const model = Object.freeze({
-  capability: GROUPING_EMBEDDING_CAPABILITY,
   name: GROUPING_EMBEDDING_MODEL,
-  revision: 'a'.repeat(40),
+  servingRelease: 'test-deployment-1',
   dimension: 384,
-  maxSequenceLength: 256,
 });
 
 function responseFor(texts, overrides = {}) {
@@ -91,13 +88,13 @@ test('batch and byte limits reject locally before transport', async () => {
   assert.equal(calls, 0);
 });
 
-test('configuration requires the approved model and immutable revision', () => {
+test('configuration requires a deployment cache namespace, not a fake weights revision', () => {
   assert.throws(() => createEmbeddingClient({
     endpoint: 'http://serving:8080/model/v1/embed',
-    model: {...model, revision: 'latest'},
+    model: {...model, servingRelease: ''},
     timeoutMs: 1000,
     maxRequestBytes: 1024,
     maxResponseBytes: 1024,
     maxBatchSize: 1,
-  }), /mutable/);
+  }), /cache release/);
 });

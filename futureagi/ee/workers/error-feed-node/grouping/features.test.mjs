@@ -1,198 +1,85 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {EmbeddingInputTooLongError} from './embedding-client.mjs';
-import {buildFeatures, featureDigest} from './features.mjs';
+import {buildFeatures, featureDigest, splitFeatureText, FEATURE_LIMITS} from './features.mjs';
 import {adaptGroupingSnapshot} from './snapshot.mjs';
 import {makeGroupingSnapshotFixture} from './snapshot-fixture.mjs';
 
-const model = Object.freeze({
-  capability: 'grouping-features/v1',
-  name: 'all-MiniLM-L6-v2',
-  revision: 'c'.repeat(40),
-  dimension: 384,
-  maxSequenceLength: 256,
+const model = {name:'all-MiniLM-L6-v2',dimension:384,servingRelease:'test-deployment-1'};
+const vector = () => Array.from({length:384}, (_, i) => i === 0 ? 1 : 0);
+const row = (extra={}) => ({id:'one',source_digest:'source',evidence_revision:'evidence',
+  views:{semantics:'faulty action',task:'expected action'},...extra});
+const embed = async texts => ({vectors:texts.map(vector), model:null,tokenCounts:null,coverageVerified:false});
+
+test('existing serving response prepares features without inventing revision or token coverage', async () => {
+  const result = await buildFeatures([row()], {model,embedBatch:embed});
+  assert.equal(result.version,'f6-minilm-features/v2');
+  assert.equal(result.model_revision,null);
+  assert.equal(result.serving_release,model.servingRelease);
+  const feature=result.rows.one.views.semantics;
+  assert.equal(feature.text_digest,featureDigest('faulty action'));
+  assert.equal(feature.coverage.input_complete,true);
+  assert.equal(feature.coverage.model_token_coverage,'unknown');
+  assert.equal(feature.coverage.truncated,null);
+  assert.equal(feature.chunks[0].token_count,null);
 });
 
-test('unverified serving output cannot be cached as complete features', async () => {
-  const cache = new Map();
-  await assert.rejects(() => buildFeatures([row()], {
-    model, cache,
-    embedBatch: async () => ({vectors: [vector(0)], model: null,
-      tokenCounts: null, coverageVerified: false}),
-  }), /integration is pending/);
-  assert.equal(cache.size, 0);
+test('snapshot adapter feeds feature builder without changing source identities', async () => {
+  const rows=adaptGroupingSnapshot(makeGroupingSnapshotFixture());
+  const result=await buildFeatures(rows,{model,embedBatch:embed});
+  assert.equal(result.rows[rows[0].id].source_digest,rows[0].source_digest);
+  assert.equal(result.rows[rows[0].id].evidence_revision,rows[0].evidence_revision);
 });
 
-function vector(axis) {
-  return Array.from({length: model.dimension}, (_, index) => index === axis ? 1 : 0);
-}
+test('Unicode chunks preserve every code point and obey byte limits', () => {
+  const text='a'.repeat(127)+'🙂界'.repeat(100);
+  const chunks=splitFeatureText(text);
+  assert.equal(chunks.map(c=>c.text).join(''),text);
+  for(const chunk of chunks){
+    assert.ok(Buffer.byteLength(chunk.text)<=FEATURE_LIMITS.chunkBytes);
+    assert.ok(chunk.text.isWellFormed());
+    assert.equal(text.slice(chunk.start,chunk.end),chunk.text);
+  }
+  assert.throws(()=>splitFeatureText('\ud800'),/Invalid feature text/);
+});
 
-function row(overrides = {}) {
-  return {
-    id: 'finding-1',
-    source_digest: 'source-a',
-    evidence_revision: 'evidence-a',
-    views: {semantics: 'statement text', task: 'task requirement'},
-    ...overrides,
-  };
-}
+test('cache is bound to source, view, text and deployment release and detects corruption', async () => {
+  const cache=new Map(); let calls=0;
+  const embedBatch=async texts=>{calls++;return embed(texts);};
+  const first=await buildFeatures([row()],{model,embedBatch,cache});
+  assert.equal(calls,1);
+  assert.deepEqual(await buildFeatures([row()],{model,embedBatch,cache}),first);
+  assert.equal(calls,1);
+  await buildFeatures([row({source_digest:'changed'})],{model,embedBatch,cache});
+  assert.equal(calls,2);
+  await buildFeatures([row()],{model:{...model,servingRelease:'next'},embedBatch,cache});
+  assert.equal(calls,3);
+  cache.values().next().value.feature.vector[0]=2;
+  await assert.rejects(()=>buildFeatures([row()],{model,embedBatch,cache}),/cache binding/);
+});
 
-function mockEmbed(calls) {
-  return async texts => {
-    calls.push(texts);
-    return {
-      vectors: texts.map((_text, index) => vector(index)),
-      tokenCounts: texts.map(text => text.trim().split(/\s+/).length),
-      model,
-    };
-  };
-}
+test('size and duplicate limits reject before external calls', async () => {
+  const never=async()=>{throw new Error('unexpected network');};
+  await assert.rejects(()=>buildFeatures([row(),row()],{model,embedBatch:never}),/duplicate/);
+  await assert.rejects(()=>buildFeatures([row({views:{semantics:'x'.repeat(256*1024+1)}})],
+    {model,embedBatch:never}),/byte limit/);
+  await assert.rejects(()=>buildFeatures([row({views:{semantics:'x'.repeat(128*513)}})],
+    {model,embedBatch:never}),/chunk limit/);
+});
 
-test('feature builder embeds statement/task with complete strict-serving coverage', async () => {
-  const calls = [];
-  const result = await buildFeatures([row()], {embedBatch: mockEmbed(calls), model, cache: new Map()});
-  assert.equal(calls.length, 1);
-  assert.deepEqual(new Set(calls[0]), new Set(['statement text', 'task requirement']));
-  assert.equal(result.model_revision, model.revision);
-  assert.equal(result.dimension, 384);
-  const statement = result.rows['finding-1'].views.semantics;
-  assert.deepEqual(statement.coverage, {
-    unit: 'utf16_code_units', start: 0, end: 14, complete: true, proof: 'strict-serving',
+test('bad count, zero and non-finite vectors fail and do not cache', async () => {
+  for(const vectors of [[],[Array(384).fill(0),vector()],[Array(384).fill(NaN),vector()]]){
+    const cache=new Map();
+    await assert.rejects(()=>buildFeatures([row()],{model,cache,embedBatch:async()=>({vectors})}),/Embedding|embedding/);
+    assert.equal(cache.size,0);
+  }
+});
+
+test('whitespace-only chunks retain source coverage without sending empty requests', async () => {
+  const text='x'+' '.repeat(400)+'y';
+  const result=await buildFeatures([row({views:{semantics:text}})],{
+    model,embedBatch:async texts=>{assert.ok(texts.every(t=>t.trim()));return embed(texts);},
   });
-  assert.deepEqual(statement.chunks, [{
-    start: 0, end: 14, text_digest: featureDigest('statement text'), token_count: 2,
-  }]);
-});
-
-test('normalized grouping snapshot rows feed the shared feature builder unchanged', async () => {
-  const snapshot = makeGroupingSnapshotFixture();
-  const rows = adaptGroupingSnapshot(snapshot);
-  const calls = [];
-  const result = await buildFeatures(rows, {embedBatch: mockEmbed(calls), model, cache: new Map()});
-  const occurrenceId = snapshot.occurrences[0].occurrence_id;
-  assert.deepEqual(calls, [[
-    snapshot.report.requirement_checks[0].requirement,
-    snapshot.report.findings[0].statement,
-  ]]);
-  assert.equal(result.rows[occurrenceId].source_digest, snapshot.snapshot_digest);
-  assert.equal(result.rows[occurrenceId].evidence_revision, snapshot.report.evidence_digest);
-  assert.equal(result.rows[occurrenceId].views.semantics.text_digest,
-    featureDigest(snapshot.report.findings[0].statement));
-  assert.equal(result.rows[occurrenceId].views.task.text_digest,
-    featureDigest(snapshot.report.requirement_checks[0].requirement));
-});
-
-test('cache binding includes source, evidence, view, text and model configuration', async () => {
-  const cache = new Map();
-  const calls = [];
-  const first = await buildFeatures([row()], {embedBatch: mockEmbed(calls), model, cache});
-  const second = await buildFeatures([row()], {
-    embedBatch: async () => { throw new Error('cache miss'); }, model, cache,
-  });
-  assert.deepEqual(second, first);
-  assert.equal(cache.size, 2);
-
-  const changedCalls = [];
-  await buildFeatures([row({source_digest: 'source-b'})], {
-    embedBatch: mockEmbed(changedCalls), model, cache,
-  });
-  assert.equal(changedCalls.length, 1);
-  assert.equal(cache.size, 4);
-});
-
-test('token-aware chunker must prove exact contiguous source coverage and binding', async () => {
-  const calls = [];
-  const chunkerRevision = `sha256:${'e'.repeat(64)}`;
-  const chunker = async text => ({
-    binding: {
-      capability: model.capability,
-      model: model.name,
-      model_revision: model.revision,
-      max_seq_length: model.maxSequenceLength,
-      chunker_revision: chunkerRevision,
-    },
-    chunks: [
-      {start: 0, end: 6, text: text.slice(0, 6), token_count: 1},
-      {start: 6, end: 10, text: text.slice(6), token_count: 1},
-    ],
-  });
-  chunker.policy = {
-    capability: 'token-aware-chunker/v1',
-    revision: chunkerRevision,
-    tokenizer_revision: model.revision,
-  };
-  const result = await buildFeatures([row({views: {semantics: 'alpha beta'}})], {
-    embedBatch: mockEmbed(calls),
-    model,
-    cache: new Map(),
-    chunker,
-  });
-  assert.deepEqual(calls[0], ['alpha ', 'beta']);
-  assert.equal(result.rows['finding-1'].views.semantics.coverage.proof,
-    'token-aware-chunker+strict-serving');
-  assert.equal(result.rows['finding-1'].views.semantics.coverage.end, 10);
-  assert.deepEqual(result.chunking_policy, chunker.policy);
-
-  let modelCalls = 0;
-  const invalidChunker = async () => ({
-    binding: {
-      capability: model.capability, model: model.name,
-      model_revision: model.revision, max_seq_length: model.maxSequenceLength,
-      chunker_revision: chunkerRevision,
-    },
-    chunks: [{start: 1, end: 10, text: 'lpha beta', token_count: 2}],
-  });
-  invalidChunker.policy = chunker.policy;
-  await assert.rejects(() => buildFeatures([row({views: {semantics: 'alpha beta'}})], {
-    embedBatch: async () => { modelCalls++; },
-    model,
-    cache: new Map(),
-    chunker: invalidChunker,
-  }), /coverage/);
-  assert.equal(modelCalls, 0);
-});
-
-test('without a tokenizer-aware chunker an over-limit source fails closed', async () => {
-  let calls = 0;
-  await assert.rejects(() => buildFeatures([row({views: {semantics: 'long source'}})], {
-    model,
-    cache: new Map(),
-    embedBatch: async texts => {
-      calls++;
-      assert.deepEqual(texts, ['long source']);
-      throw new EmbeddingInputTooLongError();
-    },
-  }), EmbeddingInputTooLongError);
-  assert.equal(calls, 1);
-});
-
-test('feature source byte bounds reject locally before embedding', async () => {
-  let calls = 0;
-  await assert.rejects(() => buildFeatures([row({
-    views: {semantics: 'x'.repeat(256 * 1024 + 1)},
-  })], {
-    model,
-    cache: new Map(),
-    embedBatch: async () => { calls++; },
-  }), /byte limit/);
-  assert.equal(calls, 0);
-});
-
-test('feature builder rejects stale cache entries and unbound vectors', async () => {
-  const cache = new Map();
-  await buildFeatures([row({views: {semantics: 'text'}})], {
-    embedBatch: mockEmbed([]), model, cache,
-  });
-  const [key, entry] = cache.entries().next().value;
-  entry.feature.source_digest = 'wrong';
-  cache.set(key, entry);
-  await assert.rejects(() => buildFeatures([row({views: {semantics: 'text'}})], {
-    embedBatch: mockEmbed([]), model, cache,
-  }), /Stale/);
-
-  await assert.rejects(() => buildFeatures([row({views: {semantics: 'other'}})], {
-    model,
-    cache: new Map(),
-    embedBatch: async () => ({vectors: [vector(0)], tokenCounts: [1], model: {...model, revision: 'd'.repeat(40)}}),
-  }), /unbound/);
+  const feature=result.rows.one.views.semantics;
+  assert.equal(feature.coverage.end,text.length);
+  assert.ok(feature.chunks.some(c=>!c.embedded));
 });
