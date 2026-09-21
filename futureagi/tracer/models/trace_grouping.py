@@ -211,6 +211,40 @@ class TraceGroupingIssueState(BaseModel):
         ]
 
 
+class TraceGroupingSeverityJob(BaseModel):
+    """One immutable assessment input per issue revision; no grouping writes."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    issue = models.ForeignKey(TraceGroupingIssueState, on_delete=models.CASCADE)
+    source_attempt = models.ForeignKey(TraceGroupingAttempt, on_delete=models.CASCADE)
+    issue_revision = models.PositiveBigIntegerField()
+    policy_version = models.CharField(max_length=64)
+    state = models.CharField(max_length=32, default="pending")
+    not_before = models.DateTimeField()
+    attempt_number = models.PositiveIntegerField(default=0)
+    lease_token_digest = models.CharField(max_length=64, blank=True)
+    lease_expires_at = models.DateTimeField(null=True)
+    snapshot = models.JSONField(default=dict)
+    snapshot_digest = models.CharField(max_length=71, blank=True)
+    result = models.JSONField(null=True)
+    receipt = models.ForeignKey(
+        "tracer.TraceGroupingCall", on_delete=models.SET_NULL, null=True
+    )
+    failure_code = models.CharField(max_length=100, blank=True)
+
+    class Meta:
+        db_table = "tracer_trace_grouping_severity_job"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["issue", "issue_revision", "policy_version"],
+                name="unique_group_severity_revision",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["state", "not_before"], name="group_severity_due_idx")
+        ]
+
+
 class TraceGroupingFindingState(BaseModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     finding = models.OneToOneField(

@@ -241,7 +241,12 @@ export default function ErrorFeedDetailView() {
                   </Typography>
                 </Stack>
                 <ErrorStatusChip status={currentError.status} />
-                <ErrorSeverityBadge severity={currentError.severity} />
+                <ErrorSeverityBadge
+                  severity={currentError.severity}
+                  assessmentStatus={currentError.severity_assessment_status}
+                  source={currentError.severity_source}
+                  reason={currentError.severity_reason}
+                />
                 {/* Cluster badge */}
                 <Chip
                   icon={<Iconify icon="mdi:layers-outline" width={12} />}

@@ -63,7 +63,13 @@ def reserve_call(
     request_digest: str,
     max_cost_usd: str,
     repair_intent: dict | None = None,
+    severity_job_id: uuid.UUID | None = None,
 ) -> dict:
+    if severity_job_id is not None:
+        if repair_intent is not None or not request_key.startswith(
+            f"severity:{severity_job_id}:"
+        ):
+            raise GroupingControlError("invalid severity request identity")
     if (
         not request_key
         or len(request_key) > 255
@@ -107,9 +113,18 @@ def reserve_call(
         if org_id is None:
             raise GroupingNotFound("grouping attempt was not found")
         Organization.objects.select_for_update().get(pk=org_id)
-        scope, attempt = lock_attempt_scope(
-            attempt_id=attempt_id, lease_token=lease_token
-        )
+        if severity_job_id is not None:
+            from tracer.services.grouping.severity import severity_accounting_authority
+
+            scope, attempt = severity_accounting_authority(
+                job_id=severity_job_id, lease_token=lease_token
+            )
+            if attempt.id != attempt_id:
+                raise GroupingConflict("severity accounting attempt mismatch")
+        else:
+            scope, attempt = lock_attempt_scope(
+                attempt_id=attempt_id, lease_token=lease_token
+            )
         if repair_intent is not None:
             primary = TraceGroupingCall.no_workspace_objects.filter(
                 pk=uuid.UUID(repair_intent["primary_receipt_id"]),
@@ -202,7 +217,12 @@ def settle_call(
     output_tokens: int | None = None,
     cost_usd: str | None = None,
     failure_code: str = "",
+    severity_job_id: uuid.UUID | None = None,
 ) -> dict:
+    if severity_job_id is not None and not request_key.startswith(
+        f"severity:{severity_job_id}:"
+    ):
+        raise GroupingControlError("invalid severity request identity")
     if status not in {"settled", "unknown"}:
         raise GroupingControlError("invalid call settlement status")
     if model_used is not None and (
@@ -233,11 +253,20 @@ def settle_call(
     with transaction.atomic():
         # Settlement is restricted to the original attempt/token, but a late
         # receipt may settle after lease expiry. No algorithm mutation occurs.
-        scope, attempt = lock_attempt_scope(
-            attempt_id=attempt_id,
-            lease_token=lease_token,
-            allow_expired_for_settlement=True,
-        )
+        if severity_job_id is not None:
+            from tracer.services.grouping.severity import severity_accounting_authority
+
+            scope, attempt = severity_accounting_authority(
+                job_id=severity_job_id, lease_token=lease_token, settlement=True
+            )
+            if attempt.id != attempt_id:
+                raise GroupingConflict("severity accounting attempt mismatch")
+        else:
+            scope, attempt = lock_attempt_scope(
+                attempt_id=attempt_id,
+                lease_token=lease_token,
+                allow_expired_for_settlement=True,
+            )
         call = (
             TraceGroupingCall.no_workspace_objects.select_for_update()
             .filter(scope=attempt.work.scope, request_key=request_key)

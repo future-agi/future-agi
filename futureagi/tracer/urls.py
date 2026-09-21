@@ -59,6 +59,13 @@ from tracer.views.trace_investigation import (
     UpdateInvestigationAttemptView,
 )
 from tracer.views.trace_session import TraceSessionView
+from tracer.views.trace_severity import (
+    ClaimSeverityView,
+    PublishSeverityView,
+    RenewSeverityView,
+    ReserveSeverityView,
+    SettleSeverityView,
+)
 
 router = DefaultRouter()
 
@@ -87,6 +94,31 @@ router.register(r"shared-links", SharedLinkViewSet, basename="shared-link")
 router.register(r"dashboard", DashboardViewSet, basename="dashboard")
 
 urlpatterns = [
+    path(
+        "internal/error-feed-v2/grouping/severity/claims/",
+        ClaimSeverityView.as_view(),
+        name="grouping-severity-claims",
+    ),
+    path(
+        "internal/error-feed-v2/grouping/severity/attempts/<uuid:job_id>/",
+        RenewSeverityView.as_view(),
+        name="grouping-severity-renew",
+    ),
+    path(
+        "internal/error-feed-v2/grouping/severity/attempts/<uuid:job_id>/reserve/",
+        ReserveSeverityView.as_view(),
+        name="grouping-severity-reserve",
+    ),
+    path(
+        "internal/error-feed-v2/grouping/severity/attempts/<uuid:job_id>/settle/",
+        SettleSeverityView.as_view(),
+        name="grouping-severity-settle",
+    ),
+    path(
+        "internal/error-feed-v2/grouping/severity/attempts/<uuid:job_id>/publish/",
+        PublishSeverityView.as_view(),
+        name="grouping-severity-publish",
+    ),
     path(
         "internal/error-feed-v2/grouping/outbox/",
         GroupingOutboxView.as_view(),

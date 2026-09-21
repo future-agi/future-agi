@@ -271,6 +271,10 @@ class TraceErrorGroup(BaseModel):
     priority = models.CharField(
         max_length=20, default=Priority.MEDIUM, choices=Priority.choices
     )
+    # Legacy rows are explicitly unassessed, not retrospectively LLM graded.
+    severity_assessment_status = models.CharField(max_length=32, default="unassessed")
+    severity_source = models.CharField(max_length=16, default="legacy")
+    severity_reason = models.TextField(blank=True)
     external_issue_url = models.URLField(
         max_length=500,
         null=True,

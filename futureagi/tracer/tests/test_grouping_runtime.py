@@ -17,6 +17,7 @@ from tracer.models.trace_grouping import (
     TraceGroupingFeature,
     TraceGroupingOutbox,
     TraceGroupingScope,
+    TraceGroupingSeverityJob,
     TraceGroupingWork,
 )
 from tracer.models.trace_investigation import (
@@ -295,7 +296,10 @@ def test_raw_receipt_group_binds_create_and_junction(observe_project, monkeypatc
                 ],
             }
         )
-    result = publish_grouping(**payload)
+    # The HTTP serializer supplies UUID objects; a string-form replay must
+    # produce the same idempotency digest and must not duplicate membership.
+    result = publish_grouping(**{**payload, "receipt_ids": [receipt.id]})
+    assert publish_grouping(**payload) == result
     assert result["assigned"] == 1
     finding.refresh_from_db()
     assert finding.cluster_id == uuid.UUID(result["created_issue_ids"]["new-f6-issue"])
@@ -307,6 +311,13 @@ def test_raw_receipt_group_binds_create_and_junction(observe_project, monkeypatc
     assert membership.span_id is None
     assert membership.trace_session_id is None
     assert finding.cluster.error_count == 1
+    assert finding.cluster.severity_assessment_status == "pending"
+    assert (
+        TraceGroupingSeverityJob.no_workspace_objects.filter(
+            issue__cluster=finding.cluster, state="pending"
+        ).count()
+        == 1
+    )
 
 
 def test_source_digest_excludes_only_mutable_grouping_status(observe_project):

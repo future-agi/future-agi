@@ -254,6 +254,7 @@ import type {
   ChatSendMessageResponseApi,
   CheckoutSessionRequestApi,
   CheckoutSessionResponseApi,
+  ClaimGroupingRequestApi,
   ClaimInvestigationsRequestApi,
   ClaimInvestigationsResponseApi,
   ClassifyColumnRequestApi,
@@ -556,6 +557,9 @@ import type {
   GroundTruthStatusResponseApi,
   GroundTruthUploadRequestApi,
   GroundTruthUploadResponseApi,
+  GroupingClaimsResponseApi,
+  GroupingControlResponseApi,
+  GroupingErrorApi,
   HarnessAcceptedResponseApi,
   HarnessArtifactUploadResponseApi,
   HarnessEventBatchApi,
@@ -908,6 +912,7 @@ import type {
   PublicConfigResponseApi,
   PublishInvestigationRequestApi,
   PublishInvestigationResponseApi,
+  PublishSeverityApi,
   QueueAddItemsResponseApi,
   QueueAddLabelResponseApi,
   QueueAgreementResponseApi,
@@ -952,6 +957,7 @@ import type {
   RecoveryCodesRegenerateResponseApi,
   RecoveryCodesRemainingResponseApi,
   RedisKeyRequestApi,
+  RenewGroupingFeatureApi,
   ReplaySessionApi,
   ReplaySessionListApi,
   RerunCallsResponseApi,
@@ -959,6 +965,7 @@ import type {
   RerunOperationResponseApi,
   ResendInviteApi,
   ResendInviteResponseApi,
+  ReserveGroupingCallApi,
   ResetAnnotationsRequestApi,
   ResourceLimitDetailResponseApi,
   ResourceLimitListResponseApi,
@@ -1054,6 +1061,7 @@ import type {
   SecretKeysResponseApi,
   SendChatRequestApi,
   SessionComparisonResponseApi,
+  SettleGroupingCallApi,
   SetupChecksResponseApi,
   SetupIntentConfirmRequestApi,
   ShadowResultsWebhookRequestApi,
@@ -87376,6 +87384,362 @@ export const v1SelfHostedActivationsCreate = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(activationRequestApi),
+    },
+  );
+};
+
+export type tracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateResponse200 =
+  {
+    data: GroupingControlResponseApi;
+    status: 200;
+  };
+
+export type tracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateResponse400 =
+  {
+    data: GroupingErrorApi;
+    status: 400;
+  };
+
+export type tracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateResponse404 =
+  {
+    data: GroupingErrorApi;
+    status: 404;
+  };
+
+export type tracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateResponse409 =
+  {
+    data: GroupingErrorApi;
+    status: 409;
+  };
+
+export type tracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 409>;
+  };
+
+export type tracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateResponseSuccess =
+  tracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateResponse200 & {
+    headers: Headers;
+  };
+export type tracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateResponseError =
+  (
+    | tracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateResponse400
+    | tracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateResponse404
+    | tracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateResponse409
+    | tracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateResponseDefault
+  ) & {
+    headers: Headers;
+  };
+
+export type tracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateResponse =
+
+    | tracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateResponseSuccess
+    | tracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateResponseError;
+
+export const getTracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateUrl =
+  (jobId: string) => {
+    return `/tracer/internal/error-feed-v2/grouping/severity/attempts/${jobId}/`;
+  };
+
+export const tracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdate =
+  async (
+    jobId: string,
+    renewGroupingFeatureApi: RenewGroupingFeatureApi,
+    options?: RequestInit,
+  ): Promise<tracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateResponse> => {
+    return apiMutator<tracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateResponse>(
+      getTracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateUrl(
+        jobId,
+      ),
+      {
+        ...options,
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...options?.headers },
+        body: JSON.stringify(renewGroupingFeatureApi),
+      },
+    );
+  };
+
+export type tracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateResponse200 =
+  {
+    data: GroupingControlResponseApi;
+    status: 200;
+  };
+
+export type tracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateResponse400 =
+  {
+    data: GroupingErrorApi;
+    status: 400;
+  };
+
+export type tracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateResponse404 =
+  {
+    data: GroupingErrorApi;
+    status: 404;
+  };
+
+export type tracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateResponse409 =
+  {
+    data: GroupingErrorApi;
+    status: 409;
+  };
+
+export type tracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 409>;
+  };
+
+export type tracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateResponseSuccess =
+  tracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateResponse200 & {
+    headers: Headers;
+  };
+export type tracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateResponseError =
+  (
+    | tracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateResponse400
+    | tracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateResponse404
+    | tracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateResponse409
+    | tracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateResponseDefault
+  ) & {
+    headers: Headers;
+  };
+
+export type tracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateResponse =
+
+    | tracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateResponseSuccess
+    | tracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateResponseError;
+
+export const getTracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateUrl =
+  (jobId: string) => {
+    return `/tracer/internal/error-feed-v2/grouping/severity/attempts/${jobId}/publish/`;
+  };
+
+export const tracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreate =
+  async (
+    jobId: string,
+    publishSeverityApi: PublishSeverityApi,
+    options?: RequestInit,
+  ): Promise<tracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateResponse> => {
+    return apiMutator<tracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateResponse>(
+      getTracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateUrl(
+        jobId,
+      ),
+      {
+        ...options,
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...options?.headers },
+        body: JSON.stringify(publishSeverityApi),
+      },
+    );
+  };
+
+export type tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateResponse200 =
+  {
+    data: GroupingControlResponseApi;
+    status: 200;
+  };
+
+export type tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateResponse400 =
+  {
+    data: GroupingErrorApi;
+    status: 400;
+  };
+
+export type tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateResponse404 =
+  {
+    data: GroupingErrorApi;
+    status: 404;
+  };
+
+export type tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateResponse409 =
+  {
+    data: GroupingErrorApi;
+    status: 409;
+  };
+
+export type tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 409>;
+  };
+
+export type tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateResponseSuccess =
+  tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateResponse200 & {
+    headers: Headers;
+  };
+export type tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateResponseError =
+  (
+    | tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateResponse400
+    | tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateResponse404
+    | tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateResponse409
+    | tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateResponseDefault
+  ) & {
+    headers: Headers;
+  };
+
+export type tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateResponse =
+
+    | tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateResponseSuccess
+    | tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateResponseError;
+
+export const getTracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateUrl =
+  (jobId: string) => {
+    return `/tracer/internal/error-feed-v2/grouping/severity/attempts/${jobId}/reserve/`;
+  };
+
+export const tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreate =
+  async (
+    jobId: string,
+    reserveGroupingCallApi: ReserveGroupingCallApi,
+    options?: RequestInit,
+  ): Promise<tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateResponse> => {
+    return apiMutator<tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateResponse>(
+      getTracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateUrl(
+        jobId,
+      ),
+      {
+        ...options,
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...options?.headers },
+        body: JSON.stringify(reserveGroupingCallApi),
+      },
+    );
+  };
+
+export type tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateResponse200 =
+  {
+    data: GroupingControlResponseApi;
+    status: 200;
+  };
+
+export type tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateResponse400 =
+  {
+    data: GroupingErrorApi;
+    status: 400;
+  };
+
+export type tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateResponse404 =
+  {
+    data: GroupingErrorApi;
+    status: 404;
+  };
+
+export type tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateResponse409 =
+  {
+    data: GroupingErrorApi;
+    status: 409;
+  };
+
+export type tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 409>;
+  };
+
+export type tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateResponseSuccess =
+  tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateResponse200 & {
+    headers: Headers;
+  };
+export type tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateResponseError =
+  (
+    | tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateResponse400
+    | tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateResponse404
+    | tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateResponse409
+    | tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateResponseDefault
+  ) & {
+    headers: Headers;
+  };
+
+export type tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateResponse =
+
+    | tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateResponseSuccess
+    | tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateResponseError;
+
+export const getTracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateUrl =
+  (jobId: string) => {
+    return `/tracer/internal/error-feed-v2/grouping/severity/attempts/${jobId}/settle/`;
+  };
+
+export const tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreate =
+  async (
+    jobId: string,
+    settleGroupingCallApi: SettleGroupingCallApi,
+    options?: RequestInit,
+  ): Promise<tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateResponse> => {
+    return apiMutator<tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateResponse>(
+      getTracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateUrl(
+        jobId,
+      ),
+      {
+        ...options,
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...options?.headers },
+        body: JSON.stringify(settleGroupingCallApi),
+      },
+    );
+  };
+
+export type tracerInternalErrorFeedV2GroupingSeverityClaimsCreateResponse200 = {
+  data: GroupingClaimsResponseApi;
+  status: 200;
+};
+
+export type tracerInternalErrorFeedV2GroupingSeverityClaimsCreateResponse400 = {
+  data: GroupingErrorApi;
+  status: 400;
+};
+
+export type tracerInternalErrorFeedV2GroupingSeverityClaimsCreateResponse404 = {
+  data: GroupingErrorApi;
+  status: 404;
+};
+
+export type tracerInternalErrorFeedV2GroupingSeverityClaimsCreateResponse409 = {
+  data: GroupingErrorApi;
+  status: 409;
+};
+
+export type tracerInternalErrorFeedV2GroupingSeverityClaimsCreateResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 409>;
+  };
+
+export type tracerInternalErrorFeedV2GroupingSeverityClaimsCreateResponseSuccess =
+  tracerInternalErrorFeedV2GroupingSeverityClaimsCreateResponse200 & {
+    headers: Headers;
+  };
+export type tracerInternalErrorFeedV2GroupingSeverityClaimsCreateResponseError =
+  (
+    | tracerInternalErrorFeedV2GroupingSeverityClaimsCreateResponse400
+    | tracerInternalErrorFeedV2GroupingSeverityClaimsCreateResponse404
+    | tracerInternalErrorFeedV2GroupingSeverityClaimsCreateResponse409
+    | tracerInternalErrorFeedV2GroupingSeverityClaimsCreateResponseDefault
+  ) & {
+    headers: Headers;
+  };
+
+export type tracerInternalErrorFeedV2GroupingSeverityClaimsCreateResponse =
+  | tracerInternalErrorFeedV2GroupingSeverityClaimsCreateResponseSuccess
+  | tracerInternalErrorFeedV2GroupingSeverityClaimsCreateResponseError;
+
+export const getTracerInternalErrorFeedV2GroupingSeverityClaimsCreateUrl =
+  () => {
+    return `/tracer/internal/error-feed-v2/grouping/severity/claims/`;
+  };
+
+export const tracerInternalErrorFeedV2GroupingSeverityClaimsCreate = async (
+  claimGroupingRequestApi: ClaimGroupingRequestApi,
+  options?: RequestInit,
+): Promise<tracerInternalErrorFeedV2GroupingSeverityClaimsCreateResponse> => {
+  return apiMutator<tracerInternalErrorFeedV2GroupingSeverityClaimsCreateResponse>(
+    getTracerInternalErrorFeedV2GroupingSeverityClaimsCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(claimGroupingRequestApi),
     },
   );
 };

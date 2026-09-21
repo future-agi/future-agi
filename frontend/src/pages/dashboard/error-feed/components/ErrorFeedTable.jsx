@@ -510,7 +510,12 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
 
                     {/* Severity */}
                     <TableCell>
-                      <ErrorSeverityBadge severity={row.severity} />
+                      <ErrorSeverityBadge
+                        severity={row.severity}
+                        assessmentStatus={row.severity_assessment_status}
+                        source={row.severity_source}
+                        reason={row.severity_reason}
+                      />
                     </TableCell>
 
                     {/* Status */}

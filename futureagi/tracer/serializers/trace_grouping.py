@@ -14,6 +14,10 @@ class GroupingLeaseSerializer(StrictInputSerializer):
     lease_token = serializers.CharField(max_length=255, trim_whitespace=False)
 
 
+class PublishSeveritySerializer(GroupingLeaseSerializer):
+    receipt_id = serializers.UUIDField()
+
+
 class RenewGroupingFeatureSerializer(GroupingLeaseSerializer):
     action = serializers.ChoiceField(choices=("renew",))
 
