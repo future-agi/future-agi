@@ -13,10 +13,34 @@ from tracer.views.trace_grouping import (
     ReserveGroupingCallView,
     SettleGroupingCallView,
 )
+from tracer.views.trace_severity import ReserveSeverityView, SettleSeverityView
 
 
 @override_settings(INTERNAL_API_SECRET="test-grouping-secret")
 class GroupingControlApiTests(SimpleTestCase):
+    def test_severity_accounting_dispatch_does_not_shadow_response_operation(self):
+        job_id = uuid.uuid4()
+        common = {
+            "lease_token": "lease",
+            "request_key": f"severity:{job_id}:fixture",
+            "request_digest": "sha256:" + "a" * 64,
+        }
+        for view, extra in (
+            (ReserveSeverityView, {"max_cost_usd": "0.100000000"}),
+            (SettleSeverityView, {"status": "unknown", "result": None}),
+        ):
+            with patch(
+                "tracer.views.trace_severity.severity.account_call",
+                return_value={"status": "unknown"},
+            ) as service:
+                response = view.as_view()(
+                    self.request({**common, **extra}), job_id=job_id
+                )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.data, {"status": "unknown"})
+            self.assertEqual(service.call_args.kwargs["job_id"], job_id)
+            self.assertTrue(callable(service.call_args.kwargs["accounting_operation"]))
+
     def request(self, data, authenticated=True):
         return APIRequestFactory().post(
             "/grouping/claims/",
