@@ -56,6 +56,17 @@ export async function measureRequest({body, config, signal, fetchImpl = fetch,
   const response = await fetchImpl(url, {method:'POST', redirect:'error',
     headers:{authorization:`Bearer ${config.apiKey}`, 'content-type':'application/json'},
     body:JSON.stringify(countBody), signal:signal ? AbortSignal.any([signal,timeout]) : timeout});
+  // AgentCC's OpenAI-compatible route does not expose native countTokens.
+  // Each text token consumes at least one UTF-8 byte; add fixed headroom for
+  // protocol framing and reserve against this upper bound, not an estimate
+  // that could undercharge or silently exceed the model context.
+  const fallbackTokens = requestBytes + 8192;
+  if (response.status === 404 && fallbackTokens <= limits.inputTokens) {
+    await response.body?.cancel();
+    return {input_tokens:fallbackTokens,request_bytes:requestBytes,
+      input_token_limit:limits.inputTokens,request_byte_limit:limits.requestBytes,
+      count_source:'utf8_upper_bound'};
+  }
   if (!response.ok) {
     await response.body?.cancel();
     throw limitError(`Grouping token count unavailable: HTTP ${response.status}; inference not sent`,

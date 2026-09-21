@@ -20,9 +20,17 @@ test('native token count includes system, evidence and schema through the same m
 test('over-limit tokens, missing counts and unavailable counting fail closed',async()=>{
   for(const [response,pattern] of [[Response.json({totalTokens:1_000_001}),/token limit/],
     [Response.json({totalTokens:-1}),/Invalid/],
-    [Response.json({token_count:100}),/Invalid/],[new Response('',{status:404}),/unavailable/]]) {
+    [Response.json({token_count:100}),/Invalid/],[new Response('',{status:503}),/unavailable/]]) {
     await assert.rejects(measureRequest({body,config,fetchImpl:async()=>response}),pattern);
   }
+});
+test('gateway without native token count uses a bounded UTF-8 upper bound',async()=>{
+  const result=await measureRequest({body,config,fetchImpl:async()=>new Response('',{status:404})});
+  assert.equal(result.input_tokens,Buffer.byteLength(JSON.stringify(body))+8192);
+  assert.equal(result.count_source,'utf8_upper_bound');
+  await assert.rejects(measureRequest({body,config,
+    limits:{...requestLimits({}),inputTokens:result.input_tokens-1},
+    fetchImpl:async()=>new Response('',{status:404})}),/unavailable/);
 });
 test('transport bound rejects before any remote call; configuration cannot exceed model ceiling',async()=>{
   await assert.rejects(measureRequest({body,config,limits:{...requestLimits({}),requestBytes:1},
