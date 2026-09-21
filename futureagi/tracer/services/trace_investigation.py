@@ -35,6 +35,7 @@ from tracer.models.trace_investigation import (
 )
 from tracer.models.trace_scan import TraceScanConfig
 from tracer.queries.trace_scanner import is_trace_sampled
+from tracer.services.grouping_features import enqueue_grouping_features
 from tracer.services.trace_investigation_billing import charge_trace_investigation
 
 CONTRACT_VERSION = "omega-investigation/v1"
@@ -950,6 +951,7 @@ def publish_investigation(
             grouping_status=grouping_status,
         )
         _persist_investigation_details(report, result)
+        enqueue_grouping_features(report=report)
         transaction.on_commit(lambda report=report: charge_trace_investigation(report))
         if active:
             job.current_report = report

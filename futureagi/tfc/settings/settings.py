@@ -906,6 +906,18 @@ ERROR_FEED_OMEGA_LEASE_SECONDS = int(os.getenv("ERROR_FEED_OMEGA_LEASE_SECONDS",
 ERROR_FEED_OMEGA_PROJECT_CONCURRENCY = int(
     os.getenv("ERROR_FEED_OMEGA_PROJECT_CONCURRENCY", "2")
 )
+# Preparation-only rollout. Enabling this does not enable Feed membership writes.
+ERROR_FEED_GROUPING_ENABLED = (
+    os.getenv("ERROR_FEED_GROUPING_ENABLED", "false") == "true"
+)
+ERROR_FEED_GROUPING_ALL_PROJECTS = (
+    os.getenv("ERROR_FEED_GROUPING_ALL_PROJECTS", "false") == "true"
+)
+ERROR_FEED_GROUPING_PROJECT_IDS = tuple(
+    project_id.strip()
+    for project_id in os.getenv("ERROR_FEED_GROUPING_PROJECT_IDS", "").split(",")
+    if project_id.strip()
+)
 
 # Hosted ALK control plane. HARNESS_PROVIDER chooses the public backend; the managed backend
 # selects its infrastructure implementation independently through HOSTED_SANDBOX_PROVIDER.
