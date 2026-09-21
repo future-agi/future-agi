@@ -1,0 +1,69 @@
+"""Schedule embeddings in the investigation transaction, without network I/O.
+
+The row is the durable work item. Kafka wake-ups and worker claims will consume
+this queue; neither is required for publication to remember the pending work.
+"""
+
+from django.conf import settings
+from django.db import transaction
+from django.utils import timezone
+
+from tracer.constants.grouping_versions import FEATURE_POLICY_VERSION
+from tracer.models.trace_grouping import GroupingFeatureState, TraceGroupingFeatureJob
+from tracer.models.trace_investigation import (
+    TraceInvestigationFinding,
+    TraceInvestigationReport,
+    TraceInvestigationSource,
+)
+
+
+def enqueue_grouping_features(
+    *, report: TraceInvestigationReport
+) -> TraceGroupingFeatureJob | None:
+    """Persist immediately-due work for an explicitly enabled project.
+
+    One publication contains all findings for a report. A report-level work item
+    prepares each finding's views without N identical report snapshot reads.
+    Retries retain the existing row/deadline; failed or historical reports never
+    provide ordinary clustering input. No membership or public Feed data changes.
+    """
+    if not getattr(settings, "ERROR_FEED_GROUPING_ENABLED", False):
+        return None
+    if not getattr(settings, "ERROR_FEED_GROUPING_ALL_PROJECTS", False):
+        projects = getattr(settings, "ERROR_FEED_GROUPING_PROJECT_IDS", ())
+        if str(report.project_id) not in projects:
+            return None
+    with transaction.atomic():
+        # Refresh the authoritative row: callers must not enqueue an old Python
+        # object after a concurrent replacement has made its report non-current.
+        current = (
+            TraceInvestigationReport.no_workspace_objects.select_for_update()
+            .filter(pk=report.pk, is_current=True)
+            .first()
+        )
+        if current is None or current.source != TraceInvestigationSource.OMEGA:
+            return None
+        now = timezone.now()
+        # A replacement with no findings still invalidates the old feature work.
+        TraceGroupingFeatureJob.no_workspace_objects.filter(
+            report__project_id=current.project_id,
+            report__trace_id=current.trace_id,
+            report__is_current=False,
+        ).exclude(state=GroupingFeatureState.SUPERSEDED).update(
+            state=GroupingFeatureState.SUPERSEDED, updated_at=now
+        )
+        if current.execution_status != "completed":
+            return None
+        if not TraceInvestigationFinding.no_workspace_objects.filter(
+            report=current
+        ).exists():
+            return None
+        job, _ = TraceGroupingFeatureJob.no_workspace_objects.get_or_create(
+            report=current,
+            policy_version=FEATURE_POLICY_VERSION,
+            defaults={
+                "publication_result_digest": current.result_digest,
+                "not_before": now,
+            },
+        )
+        return job
