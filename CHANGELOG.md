@@ -1,5 +1,66 @@
 # Changelog
 
+## [1.38.3](https://github.com/future-agi/future-agi/compare/v1.38.2...v1.38.3) (2026-09-15)
+
+
+### Bug Fixes
+
+* **eval-tasks:** batch changed span identities below query size limit ([cea0869](https://github.com/future-agi/future-agi/commit/cea0869da412809eb89def3fbbaab7ad00a414f8))
+* **eval-tasks:** bound remaining continuous candidate queries ([201282d](https://github.com/future-agi/future-agi/commit/201282d2d48417d2efca9c69da7a29393515d224))
+* **eval-tasks:** hotfix dense continuous and sparse historical selection ([5d9bea6](https://github.com/future-agi/future-agi/commit/5d9bea61fb9a6cd2ca64a89810d7fb3a6c498276))
+* **eval-tasks:** page dense continuous candidate windows with workflow budget ([6c27485](https://github.com/future-agi/future-agi/commit/6c274857080e651f9b285e72e75073ac1a42151c))
+* **eval-tasks:** preserve historical selection window across budget escalation ([7d404f4](https://github.com/future-agi/future-agi/commit/7d404f4d889ebae295e03deef132be119d522bed))
+* **tracer:** escalate small-limit eval task selection to the workflow budget ([6965153](https://github.com/future-agi/future-agi/commit/6965153ae9cd46e80c85572a078f386bb09d0931))
+
+## [1.38.2](https://github.com/future-agi/future-agi/compare/v1.38.1...v1.38.2) (2026-09-14)
+
+
+### Bug Fixes
+
+* **dashboards:** apply Dataset and Eval Source filters to eval metric charts ([40d950d](https://github.com/future-agi/future-agi/commit/40d950d25851b1c7286d3e8ae302d33699af0e4e))
+* **dashboards:** apply Dataset and Eval Source filters to eval metric charts (TH-7938) ([37d07d7](https://github.com/future-agi/future-agi/commit/37d07d766bac22afc8832854b72168b07460f440))
+* **dashboards:** apply Dataset and Eval Source filters to eval metric charts (TH-7938) ([09046a8](https://github.com/future-agi/future-agi/commit/09046a89d629226f35d9dbba9e0b00dcc3fc4e4e))
+* **evals:** preserve system eval binding config (TH-7897) ([2a7ced2](https://github.com/future-agi/future-agi/commit/2a7ced21559c242b6453420c549a274f8f09fb05))
+
+## [1.38.1](https://github.com/future-agi/future-agi/compare/v1.38.0...v1.38.1) (2026-09-12)
+
+
+### Bug Fixes
+
+* **ci:** pull MinIO from quay.io; Docker Hub no longer serves minio/minio ([cfdaf41](https://github.com/future-agi/future-agi/commit/cfdaf41764ea5124358bd96ac1474d146c2a938c))
+* **ci:** pull MinIO from quay.io; Docker Hub no longer serves minio/minio ([9a2b3bf](https://github.com/future-agi/future-agi/commit/9a2b3bfaf8c7ec42b7c591fab6f52daf2728f25a))
+
+## [1.38.0](https://github.com/future-agi/future-agi/compare/v1.37.2...v1.38.0) (2026-09-11)
+
+
+### Features
+
+* **admin:** show Custom Tools to staff as read-only [TH-7898] ([6ddb301](https://github.com/future-agi/future-agi/commit/6ddb30100e4f500bb6926ed54e0cf8c3b2cc4814))
+* **harness:** persist polled Daytona diagnostics ([85eb0d8](https://github.com/future-agi/future-agi/commit/85eb0d81c2ba5d3f708fe9f472116f36fe2f014a))
+* **simulate:** let the guest's Observe collector be configured separately ([20c83fd](https://github.com/future-agi/future-agi/commit/20c83fdb49c4ccdb36265873cec0e723a368f213))
+* **simulate:** merge Hosted Bundle V2 production flow into dev ([946fb1f](https://github.com/future-agi/future-agi/commit/946fb1f16e8b47f181442aa981830d6c6e136a16))
+* **simulate:** pass Observe configuration to the harness guest and allow its collector ([2e6d8eb](https://github.com/future-agi/future-agi/commit/2e6d8eb7381c4d61bad88ef81a2f61aa0ae9c0b4))
+* **simulate:** Retell outbound phone simulation on the hosted runner ([dc102c1](https://github.com/future-agi/future-agi/commit/dc102c10cbbe205ac7488340d1407791dc8aa1bb))
+* **simulate:** send the harness job's tenancy context to the guest for tracing ([77dff97](https://github.com/future-agi/future-agi/commit/77dff97819bedfcf9b07c19cfd3d48d2cc21e767))
+
+
+### Bug Fixes
+
+* bound sampled eval task selection scans ([c024254](https://github.com/future-agi/future-agi/commit/c0242548361727027fa256b41d60148610f7038a))
+* **contracts:** regenerate swagger for the admin invoice preview docstring ([#2721](https://github.com/future-agi/future-agi/issues/2721)) ([b2c38e8](https://github.com/future-agi/future-agi/commit/b2c38e8d64a2ff88b53bb68dcc51b34a610aa493))
+* **falcon-ai:** create agent evals by default when no type is given ([bea4b4c](https://github.com/future-agi/future-agi/commit/bea4b4cf32cf2a66b4ca29138780a0b08bbe788d))
+* **falcon-ai:** create agent evals by default when no type is given ([f62e77b](https://github.com/future-agi/future-agi/commit/f62e77b694aa58563af8268fc41f944514e829d8))
+* **harness:** harden Daytona diagnostics capture ([643c851](https://github.com/future-agi/future-agi/commit/643c851810211c6cad6f954cac249e84b3a8c5ec))
+* **harness:** normalize polled Daytona logs ([4ce6155](https://github.com/future-agi/future-agi/commit/4ce61559fbc5cf3e230e242deb2ede95688153f4))
+* **harness:** redact arbitrary secret aliases ([1785a84](https://github.com/future-agi/future-agi/commit/1785a84be01099c3e47e964600deed03fef65a3d))
+* **harness:** surface runtime validation cause ([b4457f3](https://github.com/future-agi/future-agi/commit/b4457f35fb85633e0d152310d532c13315dec129))
+* **observe:** attributes search, project sharing, and eval-mapping UX ([#2718](https://github.com/future-agi/future-agi/issues/2718)) ([ceb8d40](https://github.com/future-agi/future-agi/commit/ceb8d401d49886712e559b9c4e3f0764f15daaea))
+* **simulate:** align harness backend CI contracts ([04095c2](https://github.com/future-agi/future-agi/commit/04095c29dc1d8bb50d0c9aff45413aaeaf48e266))
+* **simulate:** bound wall-clock for every hosted voice job ([186cbfa](https://github.com/future-agi/future-agi/commit/186cbfa602ab5d6bbf0abcf4e449546eb12be43e))
+* **simulate:** declare resolved credential names to harness ([43be849](https://github.com/future-agi/future-agi/commit/43be84910efac548303ad2c3bfadd91d3af0494d))
+* **simulate:** derive the Observe collector host only from an explicit base url ([3d089b5](https://github.com/future-agi/future-agi/commit/3d089b570cecf246f4a3a84ecff9bdcc7fc93348))
+* **tests:** restore NLTK corpus initialization ([9b12fcf](https://github.com/future-agi/future-agi/commit/9b12fcf2812d9f80cf7ad927cf14d1732ac0cc30))
+
 ## [1.37.2](https://github.com/future-agi/future-agi/compare/v1.37.1...v1.37.2) (2026-09-10)
 
 
