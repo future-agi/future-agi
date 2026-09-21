@@ -59,15 +59,27 @@ def test_oss_hosted_authoring_usage_is_free(hosted_attempt, monkeypatch):
     assert hosted_attempt.attempt.authoring_usage_report is None
 
 
-def _record(action="text_call", *, amount=1, funding="platform"):
-    return {
+def _record(
+    action="text_call",
+    *,
+    amount=1,
+    funding="platform",
+    outcome="completed",
+    failure_domain=None,
+    occurred_at=None,
+):
+    record = {
         "id": str(uuid4()),
         "action": action,
         "scenario_key": "case-one",
         "amount": amount,
         "funding": funding,
-        "occurred_at": datetime.now(UTC).isoformat(),
+        "occurred_at": occurred_at or datetime.now(UTC).isoformat(),
+        "outcome": outcome,
     }
+    if failure_domain is not None:
+        record["failure_domain"] = failure_domain
+    return record
 
 
 def _report(records):
@@ -308,13 +320,14 @@ def test_receipt_replay_bills_platform_text_and_all_voice_minutes(
     harness_usage.replay_harness_usage(attempt)
 
     assert {(event.event_type, float(event.amount)) for event in events} == {
+        ("text_call", 200.0),
         ("text_call", 35.0),
         ("voice_call", 0.25),
         ("voice_call", 2.0),
     }
     attempt.job.refresh_from_db()
     assert harness_usage.harness_consumption(attempt.job) == {
-        "text_sim_tokens": 35,
+        "text_sim_tokens": 235,
         "voice_sim_minutes": 2.25,
         "ai_credits": 0,
         "sandbox_seconds": 0,
@@ -331,7 +344,17 @@ def test_infrastructure_receipt_does_not_bill_measured_call(
     _provision(attempt)
     with django_capture_on_commit_callbacks(execute=True):
         harness_usage.record_harness_usage(
-            attempt, _report([_record("voice_call", amount=0.25)])
+            attempt,
+            _report(
+                [
+                    _record(
+                        "voice_call",
+                        amount=0.25,
+                        outcome="failed",
+                        failure_domain="infrastructure",
+                    )
+                ]
+            ),
         )
     _receipt(attempt, failure_domain="infrastructure")
 
@@ -340,6 +363,50 @@ def test_infrastructure_receipt_does_not_bill_measured_call(
     assert events == []
     attempt.job.refresh_from_db()
     assert harness_usage.harness_consumption(attempt.job)["voice_sim_minutes"] == 0
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+def test_completed_record_is_not_reclassified_by_final_receipt(
+    metered_attempt, django_capture_on_commit_callbacks
+):
+    capability, events = metered_attempt
+    attempt = capability.attempt
+    _provision(attempt)
+    with django_capture_on_commit_callbacks(execute=True):
+        harness_usage.record_harness_usage(
+            attempt,
+            _report([_record("voice_call", amount=0.25, outcome="completed")]),
+        )
+    _receipt(attempt, failure_domain="infrastructure")
+
+    harness_usage.replay_harness_usage(attempt)
+
+    assert {(event.event_type, float(event.amount)) for event in events} == {
+        ("voice_call", 0.25)
+    }
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+def test_guest_usage_timestamp_is_clamped_to_attempt_window(
+    metered_attempt, django_capture_on_commit_callbacks
+):
+    capability, events = metered_attempt
+    attempt = capability.attempt
+    _provision(attempt)
+    occurred_at = (attempt.created_at - timedelta(days=30)).isoformat()
+    with django_capture_on_commit_callbacks(execute=True):
+        harness_usage.record_harness_usage(
+            attempt,
+            _report([_record("voice_call", amount=0.25, occurred_at=occurred_at)]),
+        )
+    _receipt(attempt)
+
+    harness_usage.replay_harness_usage(attempt)
+
+    assert len(events) == 1
+    assert events[0].timestamp == attempt.created_at
 
 
 @pytest.mark.django_db

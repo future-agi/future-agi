@@ -497,10 +497,10 @@ class DaytonaHarnessProvider:
                 status=status.HTTP_400_BAD_REQUEST,
             )
         payload = request.validated_data
-        from simulate.services.harness_usage import require_harness_authoring
+        from simulate.services.harness_usage import require_harness_run_usage
 
         try:
-            require_harness_authoring(str(organization.id))
+            require_harness_run_usage(str(organization.id), payload)
         except Exception as exc:
             response = _usage_limit_response(exc)
             if response is not None:

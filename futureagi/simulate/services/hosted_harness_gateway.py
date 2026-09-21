@@ -192,9 +192,7 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
     # The sandbox resolves nothing on our network, so the guest's collector is configured
     # separately and only falls back to ours when they are the same host.
     collector = str(
-        os.environ.get("ALK_HOSTED_FI_BASE_URL")
-        or os.environ.get("FI_BASE_URL")
-        or ""
+        os.environ.get("ALK_HOSTED_FI_BASE_URL") or os.environ.get("FI_BASE_URL") or ""
     ).strip()
     if collector:
         values["FI_BASE_URL"] = collector
@@ -2289,7 +2287,14 @@ class DaytonaHostedGateway:
                 record_harness_authoring_usage,
             )
 
-            record_harness_authoring_usage(attempt, spend)
+            try:
+                record_harness_authoring_usage(attempt, spend)
+            except Exception:  # noqa: BLE001 - poll must continue to terminal cleanup
+                logger.exception(
+                    "could not price hosted authoring usage job=%s attempt=%s",
+                    job.id,
+                    attempt.id,
+                )
 
         # Unified hosted execution authors the contract/world/scenarios in the same
         # sandbox that later runs the calls.  Freeze those inputs as soon as Bundle V2
@@ -3065,7 +3070,10 @@ def prepare_dispatch_payload(
     metadata = dict(dispatched.get("metadata") or {})
     metadata["environment_value_names"] = sorted(
         {
-            *(str(name).upper() for name in metadata.get("environment_value_names", [])),
+            *(
+                str(name).upper()
+                for name in metadata.get("environment_value_names", [])
+            ),
             *(str(name).upper() for name in secrets_map),
         }
     )

@@ -90,12 +90,16 @@ export function useCreditExhaustion({ feature = "unknown" } = {}) {
     setExhaustionError(null);
   }, [exhaustionError, feature]);
 
+  const clearError = useCallback(() => {
+    setExhaustionError(null);
+  }, []);
+
   return {
     exhaustionError,
     isExhausted: !!exhaustionError,
     handleError,
     handleUpgradeClick,
     handleDismiss,
-    clearError: () => setExhaustionError(null),
+    clearError,
   };
 }

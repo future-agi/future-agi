@@ -4,6 +4,17 @@ from rest_framework import serializers
 
 from simulate.serializers.hosted_harness import _reject_non_finite
 
+_FAILURE_DOMAINS = (
+    "agent",
+    "simulator",
+    "environment",
+    "connectivity",
+    "infrastructure",
+    "grading",
+    "artifact",
+    "platform_sync",
+)
+
 
 class HarnessUsageRecordSerializer(serializers.Serializer):
     id = serializers.UUIDField()
@@ -12,10 +23,24 @@ class HarnessUsageRecordSerializer(serializers.Serializer):
     amount = serializers.FloatField(min_value=0, validators=[_reject_non_finite])
     occurred_at = serializers.DateTimeField()
     funding = serializers.ChoiceField(choices=("platform", "customer"))
+    outcome = serializers.ChoiceField(
+        choices=("completed", "failed"), default="completed"
+    )
+    failure_domain = serializers.ChoiceField(
+        choices=_FAILURE_DOMAINS, required=False, allow_null=True
+    )
 
     def validate(self, attrs):
         if attrs["action"] == "text_call" and not attrs["amount"].is_integer():
             raise serializers.ValidationError("Token counts must be integers.")
+        if attrs["outcome"] == "failed" and not attrs.get("failure_domain"):
+            raise serializers.ValidationError(
+                {"failure_domain": "Failed records must include a failure domain."}
+            )
+        if attrs["outcome"] == "completed" and attrs.get("failure_domain"):
+            raise serializers.ValidationError(
+                {"failure_domain": "Completed records cannot include a failure domain."}
+            )
         return attrs
 
 
@@ -38,7 +63,7 @@ class HarnessUsageRequestSerializer(serializers.Serializer):
         missing = [name for name in required if name not in attrs]
         if missing:
             raise serializers.ValidationError(
-                {name: "This field is required." for name in missing}
+                dict.fromkeys(missing, "This field is required.")
             )
         return attrs
 

@@ -101,6 +101,7 @@ export default function HarnessDetail() {
     handleError: handleCreditError,
     handleUpgradeClick,
     handleDismiss: dismissCreditBanner,
+    clearError: clearCreditError,
   } = useCreditExhaustion({ feature: "hosted_harness" });
   const [clock, setClock] = useState(Date.now());
   const [cancelError, setCancelError] = useState("");
@@ -146,9 +147,9 @@ export default function HarnessDetail() {
       }
     } else if (hadRemoteUsageLimit.current) {
       hadRemoteUsageLimit.current = false;
-      dismissCreditBanner();
+      clearCreditError();
     }
-  }, [usageLimit, handleCreditError, dismissCreditBanner]);
+  }, [usageLimit, handleCreditError, clearCreditError]);
 
   // Shares the list page's key, so arriving from the list reuses what is already cached
   // rather than issuing a second request for the same array.

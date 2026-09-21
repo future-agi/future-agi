@@ -55,13 +55,39 @@ def check_harness_action(organization_id: str, action: str) -> dict:
     return check_usage(organization_id, action).model_dump(mode="json")
 
 
-def require_harness_authoring(organization_id: str) -> None:
-    decision = check_harness_action(organization_id, "harness_authoring")
-    if not decision["allowed"]:
-        from ee.usage.exceptions import UsageLimitExceeded
-        from ee.usage.schemas.events import CheckResult
+def _require_harness_action(organization_id: str, action: str) -> None:
+    decision = check_harness_action(organization_id, action)
+    if decision["allowed"]:
+        return
+    from ee.usage.exceptions import UsageLimitExceeded
+    from ee.usage.schemas.events import CheckResult
 
-        raise UsageLimitExceeded(CheckResult.model_validate(decision))
+    raise UsageLimitExceeded(CheckResult.model_validate(decision))
+
+
+def require_harness_authoring(organization_id: str) -> None:
+    _require_harness_action(organization_id, "harness_authoring")
+
+
+def require_harness_run_usage(organization_id: str, payload: dict) -> None:
+    """Check authoring and any call rail that the submitted connector identifies."""
+
+    require_harness_authoring(organization_id)
+    agent = payload.get("agent") or {}
+    config = agent.get("config") or {}
+    metadata = payload.get("metadata") or {}
+    modality = str(metadata.get("modality") or config.get("modality") or "").lower()
+    connector = str(agent.get("connector") or "").lower()
+    if modality == "text" or connector == "retell_chat":
+        actions = ("text_call",)
+    elif modality == "voice" or connector in {"livekit", "vapi", "retell"}:
+        actions = ("voice_call",)
+    else:
+        # ``auto`` can resolve to either lane only after the authored contract is available.
+        # The guest still performs the dimension-specific check immediately before dialing.
+        actions = ()
+    for action in actions:
+        _require_harness_action(organization_id, action)
 
 
 def record_harness_usage(attempt: HostedHarnessAttempt, report: dict) -> dict:
@@ -85,8 +111,8 @@ def record_harness_usage(attempt: HostedHarnessAttempt, report: dict) -> dict:
             old = (
                 (legacy_job.payload.get("metadata") or {}).get(_REPORT_KEY) or {}
             ).get(str(current.id))
+        previous = {item["id"]: item for item in (old or {}).get("records", [])}
         if old is not None:
-            previous = {item["id"]: item for item in old["records"]}
             if any(
                 key in by_id and by_id[key] != item for key, item in previous.items()
             ):
@@ -103,22 +129,39 @@ def record_harness_usage(attempt: HostedHarnessAttempt, report: dict) -> dict:
                         status_code=409,
                     )
                 normalized = old
+        new_record_ids = frozenset(by_id) - frozenset(previous)
         current.usage_report = normalized
         current.save(update_fields=["usage_report", "updated_at"])
-        transaction.on_commit(lambda: emit_harness_usage(current, normalized))
+        transaction.on_commit(
+            lambda: emit_harness_usage(
+                current,
+                normalized,
+                record_ids=new_record_ids,
+            )
+        )
     return {"accepted": True}
 
 
-def _billable_records(attempt: HostedHarnessAttempt, report: dict):
+def _billable_records(
+    attempt: HostedHarnessAttempt,
+    report: dict,
+    *,
+    record_ids: frozenset[str] | None = None,
+):
+    cached = getattr(attempt, "_prefetched_objects_cache", {}).get("result_receipts")
     receipts = {
         receipt.scenario.scenario_key: receipt
-        for receipt in attempt.result_receipts.select_related("scenario").all()
+        for receipt in (
+            cached
+            if cached is not None
+            else attempt.result_receipts.select_related("scenario").all()
+        )
     }
     history = attempt.receipt_history or {}
     for item in report["records"]:
-        if not item["amount"]:
+        if record_ids is not None and item["id"] not in record_ids:
             continue
-        if item["action"] == "text_call" and item["funding"] == "customer":
+        if not item["amount"]:
             continue
         receipt = receipts.get(item["scenario_key"])
         if receipt is not None:
@@ -132,20 +175,44 @@ def _billable_records(attempt: HostedHarnessAttempt, report: dict):
             receipt_body = historical["body"]
         if receipt_status == "skipped" or not receipt_body.get("call"):
             continue
-        failure_domain = (receipt_body.get("failure") or {}).get("domain")
-        if failure_domain in _NON_BILLABLE_FAILURE_DOMAINS:
+        if (
+            item.get("outcome", "completed") == "failed"
+            and item.get("failure_domain") in _NON_BILLABLE_FAILURE_DOMAINS
+        ):
             continue
+        # Hosted simulator usage is always platform-funded.  Keep the guest field in properties
+        # for audit, but never let an untrusted value suppress a billable simulator call.
         yield item
 
 
-def emit_harness_usage(attempt: HostedHarnessAttempt, report: dict) -> None:
+def _bounded_usage_timestamp(attempt: HostedHarnessAttempt, occurred_at: str):
+    timestamp = parse_datetime(occurred_at)
+    if timestamp is None:
+        timestamp = attempt.created_at
+    if timezone.is_naive(timestamp):
+        timestamp = timezone.make_aware(timestamp)
+    lower = attempt.created_at
+    upper = attempt.cleanup_verified_at or attempt.expires_at or timezone.now()
+    if timezone.is_naive(lower):
+        lower = timezone.make_aware(lower)
+    if timezone.is_naive(upper):
+        upper = timezone.make_aware(upper)
+    return min(max(timestamp, lower), max(lower, upper))
+
+
+def emit_harness_usage(
+    attempt: HostedHarnessAttempt,
+    report: dict,
+    *,
+    record_ids: frozenset[str] | None = None,
+) -> None:
     if is_oss():
         return
     from ee.usage.schemas.events import UsageEvent
     from ee.usage.services.emitter import emit
 
     job = attempt.job
-    for item in _billable_records(attempt, report):
+    for item in _billable_records(attempt, report, record_ids=record_ids):
         event_id = uuid5(UUID(str(attempt.id)), str(item["id"]))
         emit(
             UsageEvent(
@@ -153,7 +220,7 @@ def emit_harness_usage(attempt: HostedHarnessAttempt, report: dict) -> None:
                 org_id=str(job.organization_id),
                 event_type=item["action"],
                 amount=item["amount"],
-                timestamp=parse_datetime(item["occurred_at"]),
+                timestamp=_bounded_usage_timestamp(attempt, item["occurred_at"]),
                 properties={
                     "source": "rl_environment",
                     "source_id": str(job.id),
@@ -163,6 +230,8 @@ def emit_harness_usage(attempt: HostedHarnessAttempt, report: dict) -> None:
                     "workspace_id": str(job.workspace_id or ""),
                     "test_execution_id": str(job.test_execution_id or ""),
                     "funding": item["funding"],
+                    "outcome": item.get("outcome", "completed"),
+                    "failure_domain": item.get("failure_domain"),
                 },
             )
         )

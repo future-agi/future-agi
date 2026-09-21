@@ -541,7 +541,7 @@ def test_daytona_create_returns_structured_usage_limit_response(user, workspace)
         limit=12,
     )
     with patch(
-        "simulate.services.harness_usage.require_harness_authoring",
+        "simulate.services.harness_usage.require_harness_run_usage",
         side_effect=UsageLimitExceeded(refusal),
     ):
         response = client.post(
@@ -713,6 +713,7 @@ def test_daytona_create_starts_gateway_workflow(user, workspace):
             "simulate.services.harness_provider.serialize_job", return_value=serialized
         ),
         patch("simulate.services.harness_provider._validate_required_credential_files"),
+        patch("simulate.services.harness_usage.require_harness_run_usage") as usage,
     ):
         response = client.post(
             "/simulate/api/harness-jobs/",
@@ -727,6 +728,9 @@ def test_daytona_create_starts_gateway_workflow(user, workspace):
     assert create.call_args.kwargs["idempotency_key"] == "key-1"
     assert create.call_args.kwargs["workspace"] == workspace
     assert start.call_args.args[0] == str(_Job.id)
+    usage.assert_called_once()
+    assert usage.call_args.args[0] == str(user.organization.id)
+    assert usage.call_args.args[1]["agent"]["connector"] == "auto"
 
 
 @pytest.mark.django_db
