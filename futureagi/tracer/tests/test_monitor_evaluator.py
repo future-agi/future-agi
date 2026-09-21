@@ -68,6 +68,26 @@ def test_missing_eval_config_raises_config_error_at_builder(
         build_monitor_ch_builder(user_alert_monitor)
 
 
+def test_missing_project_raises_config_error_at_builder(user_alert_monitor) -> None:
+    # str(None) == "None" would otherwise reach ClickHouse as a literal
+    # project_id and fail UUID parsing on every run without alerting.
+    user_alert_monitor.project = None
+    with pytest.raises(MonitorConfigError):
+        build_monitor_ch_builder(user_alert_monitor)
+
+
+def test_missing_project_is_skipped_not_retried(user_alert_monitor) -> None:
+    user_alert_monitor.project = None
+    user_alert_monitor.save()
+    # process_monitor_task must swallow MonitorConfigError as a permanent
+    # misconfig (logged, no retry) rather than raising to Temporal.
+    # _original_func skips the activity wrapper's close_old_connections(),
+    # which would break the test transaction.
+    task_fn = process_monitor_task._original_func
+    with _patch_ch([]):  # no CH call may happen for a projectless monitor
+        task_fn(str(user_alert_monitor.id), timezone.now().isoformat())
+
+
 def test_unknown_eval_output_type_raises_config_error(user_alert_monitor) -> None:
     user_alert_monitor.metric_type = "evaluation_metrics"
     user_alert_monitor.metric = "22222222-2222-2222-2222-222222222222"
