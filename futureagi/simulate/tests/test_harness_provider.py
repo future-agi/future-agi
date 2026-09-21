@@ -100,7 +100,7 @@ def test_default_provider_is_hosted():
     assert isinstance(get_harness_provider(), HostedHarnessProvider)
 
 
-def test_e2b_health_exposes_public_ingress_limitation(settings):
+def test_e2b_health_exposes_relayed_public_ingress(settings):
     settings.HOSTED_SANDBOX_PROVIDER = "e2b"
     settings.E2B_API_KEY = "configured"
     settings.ALK_E2B_TEMPLATE_REFERENCE = "alk-hosted-e2b:build-123"
@@ -111,7 +111,7 @@ def test_e2b_health_exposes_public_ingress_limitation(settings):
         "configured": True,
         "provider": "e2b",
         "sandbox_provider": "e2b",
-        "public_ingress": False,
+        "public_ingress": True,
     }
 
 

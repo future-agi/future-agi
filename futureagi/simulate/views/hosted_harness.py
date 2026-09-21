@@ -8,8 +8,9 @@ from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from simulate.authentication import HarnessAttemptAuthentication
 from simulate.serializers.hosted_harness import (
@@ -34,6 +35,10 @@ from simulate.services.hosted_harness_ingestion import (
     ingest_event_batch,
     ingest_manifest,
     ingest_result_receipt,
+)
+from simulate.services.hosted_harness_ingress import (
+    create_ingress_proxy_url,
+    proxy_ingress_request,
 )
 from tfc.utils.api_contracts import validated_request
 
@@ -135,7 +140,17 @@ class HostedHarnessAttemptViewSet(viewsets.ViewSet):
                 request.validated_data["port"],
                 expires_in_seconds=expires_in_seconds,
             )
-            preview_url = preview.url
+            relay_headers = getattr(preview, "headers", {}) or {}
+            preview_url = (
+                create_ingress_proxy_url(
+                    request,
+                    attempt,
+                    request.validated_data["port"],
+                    expires_in_seconds=expires_in_seconds,
+                )
+                if relay_headers
+                else preview.url
+            )
             if not preview_url.startswith("https://"):
                 raise ValueError("signed preview URL is missing or not HTTPS")
         except Exception as exc:
@@ -209,3 +224,27 @@ class HostedHarnessAttemptViewSet(viewsets.ViewSet):
             {"artifact_id": f"sha256:{artifact_digest}", "duplicate": not created},
             status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         )
+
+
+class HostedHarnessIngressProxyView(APIView):
+    """Relay a signed callback URL to the active sandbox without exposing provider headers."""
+
+    authentication_classes = []
+    permission_classes = [AllowAny]
+    http_method_names = ["get", "post", "put", "patch", "delete", "head", "options"]
+
+    def handle_exception(self, exc):
+        if isinstance(exc, HostedHarnessError):
+            return Response(exc.as_dict(), status=exc.status_code)
+        return super().handle_exception(exc)
+
+    def _proxy(self, request, token, target_path=""):
+        return proxy_ingress_request(request, token, target_path)
+
+    get = _proxy
+    post = _proxy
+    put = _proxy
+    patch = _proxy
+    delete = _proxy
+    head = _proxy
+    options = _proxy
