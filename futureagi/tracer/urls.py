@@ -11,8 +11,6 @@ from tracer.views.custom_eval_config import CustomEvalConfigView
 from tracer.views.dashboard import DashboardViewSet, DashboardWidgetViewSet
 from tracer.views.dataset import DatasetView
 from tracer.views.error_analysis import (
-    ErrorClusterDetailView,
-    ErrorClusterFeedView,
     TraceErrorAnalysisView,
     TraceErrorTaskView,
 )
@@ -41,6 +39,19 @@ from tracer.views.replay_session import ReplaySessionView
 from tracer.views.saved_view import SavedViewViewSet
 from tracer.views.shared_link import SharedLinkViewSet, resolve_shared_link
 from tracer.views.trace import GetUserCodeExampleView, TraceView, UsersView
+from tracer.views.trace_grouping import (
+    AcknowledgeGroupingOutboxView,
+    ClaimGroupingFeaturesView,
+    ClaimGroupingView,
+    CompleteGroupingFeatureView,
+    GroupingCheckpointView,
+    GroupingOutboxView,
+    PublishGroupingView,
+    RenewGroupingFeatureView,
+    ReserveGroupingCallView,
+    SettleGroupingCallView,
+    UpdateGroupingAttemptView,
+)
 from tracer.views.trace_investigation import (
     ClaimInvestigationsView,
     PublishInvestigationView,
@@ -76,6 +87,61 @@ router.register(r"shared-links", SharedLinkViewSet, basename="shared-link")
 router.register(r"dashboard", DashboardViewSet, basename="dashboard")
 
 urlpatterns = [
+    path(
+        "internal/error-feed-v2/grouping/outbox/",
+        GroupingOutboxView.as_view(),
+        name="grouping-outbox",
+    ),
+    path(
+        "internal/error-feed-v2/grouping/outbox/<uuid:event_id>/ack/",
+        AcknowledgeGroupingOutboxView.as_view(),
+        name="grouping-outbox-ack",
+    ),
+    path(
+        "internal/error-feed-v2/grouping/feature-claims/",
+        ClaimGroupingFeaturesView.as_view(),
+        name="grouping-feature-claims",
+    ),
+    path(
+        "internal/error-feed-v2/grouping/feature-attempts/<uuid:feature_job_id>/",
+        RenewGroupingFeatureView.as_view(),
+        name="grouping-feature-renew",
+    ),
+    path(
+        "internal/error-feed-v2/grouping/feature-attempts/<uuid:feature_job_id>/complete/",
+        CompleteGroupingFeatureView.as_view(),
+        name="grouping-feature-complete",
+    ),
+    path(
+        "internal/error-feed-v2/grouping/claims/",
+        ClaimGroupingView.as_view(),
+        name="grouping-claims",
+    ),
+    path(
+        "internal/error-feed-v2/grouping/attempts/<uuid:attempt_id>/",
+        UpdateGroupingAttemptView.as_view(),
+        name="grouping-attempt",
+    ),
+    path(
+        "internal/error-feed-v2/grouping/attempts/<uuid:attempt_id>/checkpoint/",
+        GroupingCheckpointView.as_view(),
+        name="grouping-checkpoint",
+    ),
+    path(
+        "internal/error-feed-v2/grouping/attempts/<uuid:attempt_id>/reserve/",
+        ReserveGroupingCallView.as_view(),
+        name="grouping-call-reserve",
+    ),
+    path(
+        "internal/error-feed-v2/grouping/attempts/<uuid:attempt_id>/settle/",
+        SettleGroupingCallView.as_view(),
+        name="grouping-call-settle",
+    ),
+    path(
+        "internal/error-feed-v2/grouping/attempts/<uuid:attempt_id>/publish/",
+        PublishGroupingView.as_view(),
+        name="grouping-publish",
+    ),
     path(
         "internal/error-feed-v2/notifications/",
         RecordTraceNotificationsView.as_view(),

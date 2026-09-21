@@ -915,6 +915,7 @@ def publish_investigation(
                 has_issues = True
             elif result["outcome"] == "success" and not findings:
                 has_issues = False
+        old_current_report_id = job.current_report_id if active else None
         if active:
             TraceInvestigationReport.no_workspace_objects.filter(
                 project_id=job.project_id,
@@ -972,4 +973,11 @@ def publish_investigation(
             else:
                 job.state = TraceInvestigationJobState.CANCELLED
             job.save(update_fields=["state", "current_report", "updated_at"])
+        if active and old_current_report_id and old_current_report_id != report.id:
+            from tracer.services.grouping.lifecycle import deproject_superseded_report
+
+            deproject_superseded_report(
+                old_report_id=old_current_report_id,
+                successor_report_id=report.id,
+            )
         return _publication_receipt(report, duplicate=False)

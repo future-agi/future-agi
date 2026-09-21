@@ -9,7 +9,12 @@ from django.db import transaction
 from django.utils import timezone
 
 from tracer.constants.grouping_versions import FEATURE_POLICY_VERSION
-from tracer.models.trace_grouping import GroupingFeatureState, TraceGroupingFeatureJob
+from tracer.models.trace_grouping import (
+    GroupingFeatureState,
+    TraceGroupingFeatureJob,
+    TraceGroupingOutbox,
+    TraceGroupingScope,
+)
 from tracer.models.trace_investigation import (
     TraceInvestigationFinding,
     TraceInvestigationReport,
@@ -65,5 +70,23 @@ def enqueue_grouping_features(
                 "publication_result_digest": current.result_digest,
                 "not_before": now,
             },
+        )
+        scope, _ = TraceGroupingScope.no_workspace_objects.get_or_create(
+            project_id=current.project_id,
+            defaults={
+                "organization_id": current.organization_id,
+                "workspace_id": current.workspace_id,
+            },
+        )
+        if (
+            scope.organization_id != current.organization_id
+            or scope.workspace_id != current.workspace_id
+        ):
+            raise ValueError("grouping scope disagrees with source report tenant")
+        TraceGroupingOutbox.no_workspace_objects.get_or_create(
+            scope=scope,
+            event_kind="error-feed.grouping-feature-ready.v1",
+            source_id=job.id,
+            revision=0,
         )
         return job

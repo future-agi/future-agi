@@ -80,6 +80,19 @@ def canonical_snapshot_digest(value: Mapping[str, object]) -> str:
     return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
 
 
+def canonical_grouping_source_digest(snapshot: Mapping[str, object]) -> str:
+    """Stable source identity excluding only mutable grouping projection state."""
+    report = dict(snapshot["report"])
+    report.pop("grouping_status", None)
+    return canonical_snapshot_digest(
+        {
+            "contract_version": snapshot["contract_version"],
+            "report": report,
+            "occurrences": snapshot["occurrences"],
+        }
+    )
+
+
 def _bounded(queryset: QuerySet[T], *, limit: int, label: str) -> list[T]:
     rows = list(queryset[: limit + 1])
     if len(rows) > limit:

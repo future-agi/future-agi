@@ -25,7 +25,7 @@ import uuid
 from dataclasses import dataclass
 from types import SimpleNamespace
 
-from django.db.models import Count, F, Q
+from django.db.models import Count, Exists, F, OuterRef, Q
 from django.db.models.functions import Coalesce
 
 from ee.agenthub.cluster_rca.types import CountBucket
@@ -33,7 +33,11 @@ from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.observation_span import EvalLogger
 from tracer.models.project_version import ProjectVersion
 from tracer.models.trace_error_analysis import ErrorClusterTraces, TraceErrorGroup
-from tracer.models.trace_investigation import TraceInvestigationFinding
+from tracer.models.trace_investigation import (
+    TraceInvestigationFinding,
+    TraceInvestigationGroupingStatus,
+    TraceInvestigationSource,
+)
 
 
 @dataclass(frozen=True)
@@ -51,16 +55,70 @@ class InvestigationIssue:
     cluster_id: uuid.UUID
 
 
-def _current_findings(cluster_uuid: str, trace_uuids: list[str] | None = None):
-    """Only grouped findings from the active report for this cluster."""
-    qs = TraceInvestigationFinding.objects.filter(
-        cluster_id=cluster_uuid,
-        cluster__deleted=False,
-        deleted=False,
-        report__deleted=False,
-        report__is_current=True,
-        report__project_id=F("cluster__project_id"),
+def _visible_clusters():
+    """Keep legacy/eval groups visible; suppress unsettled F6 groups."""
+    return TraceErrorGroup.objects.filter(deleted=False).filter(
+        Q(issue_state__isnull=True)
+        | Q(issue_state__dirty=False, issue_state__retired=False)
     )
+
+
+def _current_memberships(cluster_uuid: str):
+    """Use the canonical finding junction for F6, without changing legacy/eval."""
+    return ErrorClusterTraces.objects.filter(
+        cluster_id=cluster_uuid, deleted=False, cluster__deleted=False
+    ).filter(
+        Q(cluster__issue_state__isnull=True)
+        | Q(
+            cluster__issue_state__dirty=False,
+            cluster__issue_state__retired=False,
+            finding__isnull=False,
+            finding__deleted=False,
+            finding__cluster_id=F("cluster_id"),
+            trace_id=F("finding__report__trace_id"),
+            finding__report__source=TraceInvestigationSource.OMEGA,
+            finding__report__project_id=F("cluster__project_id"),
+            finding__report__is_current=True,
+            finding__report__deleted=False,
+            finding__report__execution_status="completed",
+            finding__report__grouping_status=TraceInvestigationGroupingStatus.COMPLETED,
+        )
+    )
+
+
+def _current_findings(
+    cluster_uuid: str | None = None, trace_uuids: list[str] | None = None
+):
+    """Only current findings; F6 additionally needs an active matching junction."""
+    active_junction = ErrorClusterTraces.objects.filter(
+        cluster_id=OuterRef("cluster_id"),
+        finding_id=OuterRef("pk"),
+        trace_id=OuterRef("report__trace_id"),
+        deleted=False,
+    )
+    qs = (
+        TraceInvestigationFinding.objects.filter(
+            cluster__deleted=False,
+            deleted=False,
+            report__deleted=False,
+            report__is_current=True,
+            report__project_id=F("cluster__project_id"),
+        )
+        .alias(has_active_junction=Exists(active_junction))
+        .filter(
+            Q(cluster__issue_state__isnull=True)
+            | Q(
+                cluster__issue_state__dirty=False,
+                cluster__issue_state__retired=False,
+                report__source=TraceInvestigationSource.OMEGA,
+                report__execution_status="completed",
+                report__grouping_status=TraceInvestigationGroupingStatus.COMPLETED,
+                has_active_junction=True,
+            )
+        )
+    )
+    if cluster_uuid is not None:
+        qs = qs.filter(cluster_id=cluster_uuid)
     if trace_uuids is not None:
         qs = qs.filter(report__trace_id__in=trace_uuids)
     return qs
@@ -112,8 +170,10 @@ def resolve_cluster_context(cluster_ref: str, project_id: str) -> dict | None:
     enforced on BOTH branches (by id and by label), so a foreign-tenant cluster
     can't resolve and have the agent adopt that project."""
     ref = str(cluster_ref)
-    qs = TraceErrorGroup.objects.filter(project_id=project_id, deleted=False).only(
-        "id", "cluster_id", "project_id"
+    qs = (
+        _visible_clusters()
+        .filter(project_id=project_id)
+        .only("id", "cluster_id", "project_id")
     )
     try:
         uuid.UUID(ref)
@@ -133,7 +193,8 @@ def get_cluster_for_read(cluster_uuid: str, project_id: str) -> TraceErrorGroup 
     """[explicit] The cluster row for ``read(cluster)``. ``None`` if absent.
     select_related('eval_config') — caller reads ``group.eval_config.name``."""
     return (
-        TraceErrorGroup.objects.select_related("eval_config")
+        _visible_clusters()
+        .select_related("eval_config")
         .only(
             "id",
             "cluster_id",
@@ -159,7 +220,7 @@ def get_cluster_for_read(cluster_uuid: str, project_id: str) -> TraceErrorGroup 
             "eval_target_type",
             "success_trace_id",
         )
-        .filter(id=cluster_uuid, project_id=project_id, deleted=False)
+        .filter(id=cluster_uuid, project_id=project_id)
         .first()
     )
 
@@ -171,9 +232,8 @@ def cluster_member_trace_ids(cluster_uuid: str) -> list[str]:
     """[transitive] Distinct trace_ids of the cluster's TRACE members. Reads the
     trace_id COLUMN (never the PG Trace FK). Session members resolve separately."""
     rows = (
-        ErrorClusterTraces.objects.filter(
-            cluster_id=cluster_uuid, deleted=False, trace_id__isnull=False
-        )
+        _current_memberships(cluster_uuid)
+        .filter(trace_id__isnull=False)
         .values_list("trace_id", flat=True)
         .distinct()
     )
@@ -183,9 +243,8 @@ def cluster_member_trace_ids(cluster_uuid: str) -> list[str]:
 def cluster_member_session_ids(cluster_uuid: str) -> list[str]:
     """[transitive] Distinct trace_session_ids of the cluster's SESSION members."""
     rows = (
-        ErrorClusterTraces.objects.filter(
-            cluster_id=cluster_uuid, deleted=False, trace_session__isnull=False
-        )
+        _current_memberships(cluster_uuid)
+        .filter(trace_session__isnull=False)
         .values_list("trace_session_id", flat=True)
         .distinct()
     )
@@ -198,9 +257,8 @@ def cluster_memberships(
     """[transitive] Junction rows for the given traces, newest-first, for
     provenance. Caller reads trace_id / eval_logger_id / created_at."""
     return list(
-        ErrorClusterTraces.objects.filter(
-            cluster_id=cluster_uuid, trace_id__in=trace_uuids, deleted=False
-        )
+        _current_memberships(cluster_uuid)
+        .filter(trace_id__in=trace_uuids)
         .only("trace_id", "eval_logger_id", "created_at")
         .order_by("-created_at")
     )
@@ -209,9 +267,8 @@ def cluster_memberships(
 def count_cluster_eval_members(cluster_uuid: str) -> int:
     """[transitive] Distinct eval-logger members of the cluster (manifest count)."""
     return (
-        ErrorClusterTraces.objects.filter(
-            cluster_id=cluster_uuid, deleted=False, eval_logger__isnull=False
-        )
+        _current_memberships(cluster_uuid)
+        .filter(eval_logger__isnull=False)
         .values("eval_logger")
         .distinct()
         .count()
@@ -295,14 +352,11 @@ def get_scan_issue_for_read(
 ) -> InvestigationIssue | None:
     """[explicit] Read one finding by ID, with an explicit project guard."""
     finding = (
-        TraceInvestigationFinding.objects.filter(
+        _current_findings()
+        .filter(
             id=issue_uuid,
-            deleted=False,
-            cluster__deleted=False,
             cluster__project_id=project_id,
             report__project_id=project_id,
-            report__deleted=False,
-            report__is_current=True,
         )
         .select_related("cluster", "report")
         .first()
