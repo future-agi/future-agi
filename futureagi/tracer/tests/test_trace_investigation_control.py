@@ -362,6 +362,71 @@ def test_publication_is_idempotent_and_newer_generation_wins(observe_project):
         )
 
 
+@override_settings(ERROR_FEED_OMEGA_DELAY_SECONDS=0)
+def test_late_old_publication_does_not_interrupt_new_claim(observe_project):
+    _configure(observe_project)
+    trace_id = uuid.uuid4()
+    record_trace_notifications(
+        deliveries=[_delivery(observe_project, offset=1, trace_id=trace_id)]
+    )
+    old_claim = claim_due_investigations(
+        worker_id="node-1", engine_version="omega-v1", limit=1
+    )["claims"][0]
+    record_trace_notifications(
+        deliveries=[_delivery(observe_project, offset=2, trace_id=trace_id)]
+    )
+    update_investigation_attempt(
+        attempt_id=old_claim["attempt_id"],
+        organization_id=old_claim["organization_id"],
+        workspace_id=old_claim["workspace_id"],
+        project_id=old_claim["project_id"],
+        job_id=old_claim["job_id"],
+        lease_token=old_claim["lease_token"],
+        action="cancel",
+        reason="superseded",
+    )
+    new_claim = claim_due_investigations(
+        worker_id="node-2", engine_version="omega-v1", limit=1
+    )["claims"][0]
+
+    stale = _publish(
+        idempotency_key="old-publication",
+        lease_token=old_claim["lease_token"],
+        result=_result(old_claim),
+    )
+    job = TraceInvestigationJob.no_workspace_objects.get(trace_id=trace_id)
+    assert stale["grouping_status"] == "stale"
+    assert (job.generation, job.state) == (2, TraceInvestigationJobState.RUNNING)
+
+    current = _publish(
+        idempotency_key="new-publication",
+        lease_token=new_claim["lease_token"],
+        result=_result(new_claim),
+    )
+    assert current["grouping_status"] == "pending"
+    job.refresh_from_db()
+    assert job.state == TraceInvestigationJobState.COMPLETED
+
+
+@override_settings(ERROR_FEED_OMEGA_DELAY_SECONDS=0)
+def test_unknown_investigation_is_not_recorded_as_passing(observe_project):
+    _configure(observe_project)
+    record_trace_notifications(deliveries=[_delivery(observe_project)])
+    claim = claim_due_investigations(
+        worker_id="node-1", engine_version="omega-v1", limit=1
+    )["claims"][0]
+    result = _result(claim, findings=False)
+    result["outcome"] = "unknown"
+    result["result_digest"] = canonical_wire_result_digest(result)
+    receipt = _publish(
+        idempotency_key="unknown-publication",
+        lease_token=claim["lease_token"],
+        result=result,
+    )
+    report = TraceInvestigationReport.no_workspace_objects.get(id=receipt["report_id"])
+    assert report.has_issues is None
+
+
 @override_settings(
     ERROR_FEED_OMEGA_DELAY_SECONDS=0,
 )
