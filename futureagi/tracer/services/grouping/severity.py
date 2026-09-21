@@ -39,7 +39,9 @@ LEASE_SECONDS = 180
 MAX_ATTEMPTS = 3
 
 
-def account_call(*, job_id: uuid.UUID, operation: Callable, data: dict) -> dict:
+def account_call(
+    *, job_id: uuid.UUID, accounting_operation: Callable, data: dict
+) -> dict:
     attempt_id = (
         TraceGroupingSeverityJob.no_workspace_objects.filter(pk=job_id)
         .values_list("source_attempt_id", flat=True)
@@ -47,7 +49,7 @@ def account_call(*, job_id: uuid.UUID, operation: Callable, data: dict) -> dict:
     )
     if attempt_id is None:
         raise GroupingNotFound("severity job not found")
-    return operation(attempt_id=attempt_id, severity_job_id=job_id, **data)
+    return accounting_operation(attempt_id=attempt_id, severity_job_id=job_id, **data)
 
 
 def enqueue_severity(

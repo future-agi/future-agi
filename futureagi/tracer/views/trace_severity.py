@@ -44,7 +44,7 @@ class ReserveSeverityView(InternalGroupingView):
         return _respond(
             severity.account_call,
             job_id=job_id,
-            operation=accounting.reserve_call,
+            accounting_operation=accounting.reserve_call,
             data=request.validated_data,
         )
 
@@ -57,7 +57,7 @@ class SettleSeverityView(InternalGroupingView):
         return _respond(
             severity.account_call,
             job_id=job_id,
-            operation=accounting.settle_call,
+            accounting_operation=accounting.settle_call,
             data=request.validated_data,
         )
 
