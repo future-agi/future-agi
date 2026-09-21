@@ -905,7 +905,7 @@ ERROR_FEED_OMEGA_LEASE_SECONDS = int(os.getenv("ERROR_FEED_OMEGA_LEASE_SECONDS",
 ERROR_FEED_OMEGA_PROJECT_CONCURRENCY = int(
     os.getenv("ERROR_FEED_OMEGA_PROJECT_CONCURRENCY", "2")
 )
-# Preparation-only rollout. Enabling this does not enable Feed membership writes.
+# Grouping rollout remains disabled by default; paid work also requires budgets.
 ERROR_FEED_GROUPING_ENABLED = (
     os.getenv("ERROR_FEED_GROUPING_ENABLED", "false") == "true"
 )
@@ -916,6 +916,21 @@ ERROR_FEED_GROUPING_PROJECT_IDS = tuple(
     project_id.strip()
     for project_id in os.getenv("ERROR_FEED_GROUPING_PROJECT_IDS", "").split(",")
     if project_id.strip()
+)
+# Cumulative durable reservations plus known charges; no implicit daily reset.
+# A deployment must explicitly authorize all three independent caps.
+ERROR_FEED_GROUPING_PROJECT_BUDGET_USD = os.getenv(
+    "ERROR_FEED_GROUPING_PROJECT_BUDGET_USD", "0"
+)
+ERROR_FEED_GROUPING_WORK_BUDGET_USD = os.getenv(
+    "ERROR_FEED_GROUPING_WORK_BUDGET_USD", "0"
+)
+ERROR_FEED_GROUPING_TENANT_BUDGET_USD = os.getenv(
+    "ERROR_FEED_GROUPING_TENANT_BUDGET_USD", "0"
+)
+# Brief batching delay is for grouping only; occurrence embeddings enqueue now.
+ERROR_FEED_GROUPING_DEBOUNCE_SECONDS = int(
+    os.getenv("ERROR_FEED_GROUPING_DEBOUNCE_SECONDS", "5")
 )
 
 # Hosted ALK sandbox gateway

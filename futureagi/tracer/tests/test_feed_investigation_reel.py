@@ -58,3 +58,33 @@ def test_legacy_key_moments_take_precedence_over_receipts():
 
     assert len(reel) == 1
     assert reel[0]["raw"] == "No answer sent"
+
+
+def test_selected_issue_receipts_do_not_show_report_wide_moments_or_receipts():
+    selected = SimpleNamespace(
+        deleted=False, excerpt="Linked to selected finding", span_id="selected"
+    )
+    report = SimpleNamespace(
+        key_moments=_RelatedRows(
+            [
+                SimpleNamespace(
+                    deleted=False,
+                    kevinified="Unrelated moment",
+                    verbatim="Unrelated moment",
+                    role="decisive",
+                    span_id="other",
+                    status="error",
+                    is_failure=True,
+                )
+            ]
+        ),
+        evidence_receipts=_RelatedRows(
+            [SimpleNamespace(deleted=False, excerpt="Unrelated", span_id="other")]
+        ),
+    )
+
+    assert [
+        step["raw"]
+        for step in _investigation_reel(report, selected_receipts=[selected])
+    ] == ["Linked to selected finding"]
+    assert _investigation_reel(report, selected_receipts=[]) == []

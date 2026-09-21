@@ -18,9 +18,11 @@ from django.db.models import (
     Avg,
     Case,
     Count,
+    DateTimeField,
     F,
     FloatField,
     IntegerField,
+    Max,
     Q,
     QuerySet,
     Value,
@@ -42,13 +44,21 @@ from tracer.models.trace_error_analysis import (
 )
 from tracer.models.trace_investigation import (
     TraceInvestigationFinding,
+    TraceInvestigationFindingEvidence,
+    TraceInvestigationGroupingStatus,
     TraceInvestigationKeyMoment,
     TraceInvestigationReport,
+    TraceInvestigationSource,
     TraceInvestigationTool,
 )
 from tracer.queries import deep_analysis_state
 from tracer.services.clickhouse.v2 import get_reader
 from tracer.services.clickhouse.v2.span_reader import CHSpan
+from tracer.services.grouping.human_edits import (
+    GroupingHumanEditUnavailable,
+    edit_grouping_issue,
+    is_grouping_issue,
+)
 from tracer.types.feed_types import (
     CoOccurringIssue,
     DeepAnalysisDispatchResponse,
@@ -154,10 +164,59 @@ def _base_qs(project_ids: list[str]) -> QuerySet:
     return (
         TraceErrorGroup.objects.filter(project_id__in=project_ids, deleted=False)
         .exclude(issue_group__isnull=True)
+        .exclude(issue_state__dirty=True)
+        .exclude(issue_state__retired=True)
         # ``success_trace`` (FK → dropped ``tracer_trace``) is only dereferenced
         # in the detail path, which resolves it from CH; list/stats never read it.
         .select_related("project", "assignee")
     )
+
+
+def _current_memberships() -> QuerySet:
+    """Source-aware active memberships; legacy scanner/eval rows keep their unit."""
+    return ErrorClusterTraces.objects.filter(
+        deleted=False, cluster__deleted=False
+    ).filter(
+        Q(cluster__issue_state__isnull=True)
+        | Q(
+            cluster__issue_state__dirty=False,
+            cluster__issue_state__retired=False,
+            finding__isnull=False,
+            finding__deleted=False,
+            finding__cluster_id=F("cluster_id"),
+            trace_id=F("finding__report__trace_id"),
+            finding__report__source=TraceInvestigationSource.OMEGA,
+            finding__report__project_id=F("cluster__project_id"),
+            finding__report__is_current=True,
+            finding__report__deleted=False,
+            finding__report__execution_status="completed",
+            finding__report__grouping_status=TraceInvestigationGroupingStatus.COMPLETED,
+        )
+    )
+
+
+def _members_with_occurrence_time() -> QuerySet:
+    """Omega uses report recorded time; old scanner/eval use junction time."""
+    return _current_memberships().annotate(
+        occurrence_at=Case(
+            When(
+                cluster__issue_state__isnull=False,
+                then=F("finding__report__recorded_at"),
+            ),
+            default=F("created_at"),
+            output_field=DateTimeField(),
+        )
+    )
+
+
+def _is_omega_group(cluster_id: str, project_id: str) -> bool:
+    return TraceErrorGroup.objects.filter(
+        cluster_id=cluster_id,
+        project_id=project_id,
+        deleted=False,
+        issue_state__dirty=False,
+        issue_state__retired=False,
+    ).exists()
 
 
 def _apply_filters(
@@ -198,44 +257,43 @@ def _apply_filters(
 # ---------------------------------------------------------------------------
 
 
-def _fetch_trends_batch(cluster_ids: list[str], days: int = 14) -> dict:
+def _fetch_trends_batch(cluster_pks: list[str], days: int = 14) -> dict:
     """
-    Return {cluster_id: [TrendPoint, ...]} with daily buckets over `days`.
+    Return {cluster_pk: [TrendPoint, ...]} with daily buckets over `days`.
 
     Buckets come from ErrorClusterTraces.created_at grouped by day.
     """
-    if not cluster_ids:
+    if not cluster_pks:
         return {}
 
     since = timezone.now() - timedelta(days=days)
     rows = (
-        ErrorClusterTraces.objects.filter(
-            cluster__cluster_id__in=cluster_ids,
-            created_at__gte=since,
+        _members_with_occurrence_time()
+        .filter(
+            cluster_id__in=cluster_pks,
+            occurrence_at__gte=since,
         )
-        .annotate(bucket=TruncDate("created_at"))
-        .values("cluster__cluster_id", "bucket")
+        .annotate(bucket=TruncDate("occurrence_at"))
+        .values("cluster_id", "bucket")
         .annotate(value=Count("id"))
-        .order_by("cluster__cluster_id", "bucket")
+        .order_by("cluster_id", "bucket")
     )
 
-    result: dict = {cid: [] for cid in cluster_ids}
+    result: dict = {str(pk): [] for pk in cluster_pks}
     for row in rows:
-        cid = row["cluster__cluster_id"]
-        if cid in result:
+        pk = str(row["cluster_id"])
+        if pk in result:
             bucket = row["bucket"]
             # TruncDate returns date, serializer needs datetime
             if not isinstance(bucket, datetime):
                 bucket = datetime.combine(bucket, datetime.min.time(), tzinfo=UTC)
-            result[cid].append(
-                TrendPoint(timestamp=bucket, value=row["value"], users=0)
-            )
+            result[pk].append(TrendPoint(timestamp=bucket, value=row["value"], users=0))
     return result
 
 
-def _fetch_users_affected_batch(cluster_ids: list[str]) -> dict:
+def _fetch_users_affected_batch(cluster_pks: list[str]) -> dict:
     """
-    Return {cluster_id: distinct_end_user_count}.
+    Return {cluster_pk: distinct_end_user_count}.
 
     Goes ErrorClusterTraces → trace → ObservationSpan.end_user.
 
@@ -249,13 +307,17 @@ def _fetch_users_affected_batch(cluster_ids: list[str]) -> dict:
       3. Distinct(end_user_id) per cluster_id in Python — for each span
          we add the user to every cluster the trace belongs to.
     """
-    if not cluster_ids:
+    if not cluster_pks:
         return {}
 
-    ect_rows = ErrorClusterTraces.objects.filter(
-        cluster__cluster_id__in=cluster_ids,
-    ).values_list(
-        "trace_id", "trace_session_id", "cluster__cluster_id", "cluster__project_id"
+    ect_rows = (
+        _current_memberships()
+        .filter(
+            cluster_id__in=cluster_pks,
+        )
+        .values_list(
+            "trace_id", "trace_session_id", "cluster_id", "cluster__project_id"
+        )
     )
 
     # trace_id → set of cluster_ids it belongs to (one trace can sit in
@@ -275,6 +337,7 @@ def _fetch_users_affected_batch(cluster_ids: list[str]) -> dict:
     for tid, sid, cid, pid in ect_rows:
         if not cid:
             continue
+        cid = str(cid)
         if pid:
             project_ids.add(str(pid))
         if tid:
@@ -310,22 +373,22 @@ def _fetch_users_affected_batch(cluster_ids: list[str]) -> dict:
     return {cid: len(users) for cid, users in users_by_cluster.items() if users}
 
 
-def _fetch_sessions_batch(cluster_ids: list[str]) -> dict:
-    """Return {cluster_id: distinct_session_count}.
+def _fetch_sessions_batch(cluster_pks: list[str]) -> dict:
+    """Return {cluster_pk: distinct_session_count}.
 
     Session members carry their session on the junction row; trace members
     resolve theirs from the CH root span's ``trace_session_id`` (the PG
     ``Trace.session`` FK is gone post-cutover). Distinct session ids are counted
     per cluster in Python — mirrors the old cross-store SQL COUNT(DISTINCT).
     """
-    if not cluster_ids:
+    if not cluster_pks:
         return {}
 
     rows = list(
-        ErrorClusterTraces.objects.filter(
-            cluster__cluster_id__in=cluster_ids
-        ).values_list(
-            "cluster__cluster_id", "trace_id", "trace_session_id", "cluster__project_id"
+        _current_memberships()
+        .filter(cluster_id__in=cluster_pks)
+        .values_list(
+            "cluster_id", "trace_id", "trace_session_id", "cluster__project_id"
         )
     )
 
@@ -343,6 +406,7 @@ def _fetch_sessions_batch(cluster_ids: list[str]) -> dict:
 
     sessions_by_cluster: dict[str, set] = {}
     for cid, tid, sid, _pid in rows:
+        cid = str(cid)
         session_id = str(sid) if sid else (ch_sessions.get(str(tid)) if tid else None)
         if session_id:
             sessions_by_cluster.setdefault(cid, set()).add(session_id)
@@ -350,42 +414,42 @@ def _fetch_sessions_batch(cluster_ids: list[str]) -> dict:
     return {cid: len(s) for cid, s in sessions_by_cluster.items() if s}
 
 
-def _fetch_latest_trace_id_batch(cluster_ids: list[str]) -> dict:
-    """Return {cluster_id: latest_trace_id_str}.
+def _fetch_latest_trace_id_batch(cluster_pks: list[str]) -> dict:
+    """Return {cluster_pk: latest_trace_id_str}.
 
     Single Postgres DISTINCT ON query — relies on the
     (cluster, -created_at) index to pick the newest membership row per
     cluster without a per-cluster round-trip.
     """
-    if not cluster_ids:
+    if not cluster_pks:
         return {}
 
     rows = (
-        ErrorClusterTraces.objects.filter(
-            cluster__cluster_id__in=cluster_ids,
+        _members_with_occurrence_time()
+        .filter(
+            cluster_id__in=cluster_pks,
             trace_id__isnull=False,
         )
-        .order_by("cluster__cluster_id", "-created_at")
-        .distinct("cluster__cluster_id")
-        .values("cluster__cluster_id", "trace_id")
+        .order_by("cluster_id", "-occurrence_at")
+        .distinct("cluster_id")
+        .values("cluster_id", "trace_id")
     )
 
-    out = {
-        str(r["cluster__cluster_id"]): str(r["trace_id"]) for r in rows if r["trace_id"]
-    }
+    out = {str(r["cluster_id"]): str(r["trace_id"]) for r in rows if r["trace_id"]}
 
     # Session-membered clusters have trace_id NULL on every junction row —
     # fall back to the newest member session's latest trace.
-    missing = [cid for cid in cluster_ids if str(cid) not in out]
+    missing = [pk for pk in cluster_pks if str(pk) not in out]
     if missing:
         sess_rows = list(
-            ErrorClusterTraces.objects.filter(
-                cluster__cluster_id__in=missing,
+            _members_with_occurrence_time()
+            .filter(
+                cluster_id__in=missing,
                 trace_session_id__isnull=False,
             )
-            .order_by("cluster__cluster_id", "-created_at")
-            .distinct("cluster__cluster_id")
-            .values("cluster__cluster_id", "trace_session_id", "cluster__project_id")
+            .order_by("cluster_id", "-occurrence_at")
+            .distinct("cluster_id")
+            .values("cluster_id", "trace_session_id", "cluster__project_id")
         )
         # This batch may span projects; session→trace resolution is
         # multi-tenant-pinned, so resolve per project (project read off the
@@ -403,7 +467,7 @@ def _fetch_latest_trace_id_batch(cluster_ids: list[str]) -> dict:
         for r in sess_rows:
             tid = rep_map.get(str(r["trace_session_id"]))
             if tid:
-                out[str(r["cluster__cluster_id"])] = tid
+                out[str(r["cluster_id"])] = tid
 
     return out
 
@@ -520,20 +584,20 @@ def list_clusters(
     if not clusters:
         return FeedListResponse(data=[], total=total, limit=limit, offset=offset)
 
-    cluster_ids = [c.cluster_id for c in clusters]
-    trends_map = _fetch_trends_batch(cluster_ids)
-    users_map = _fetch_users_affected_batch(cluster_ids)
-    sessions_map = _fetch_sessions_batch(cluster_ids)
-    latest_trace_map = _fetch_latest_trace_id_batch(cluster_ids)
+    cluster_pks = [str(c.pk) for c in clusters]
+    trends_map = _fetch_trends_batch(cluster_pks)
+    users_map = _fetch_users_affected_batch(cluster_pks)
+    sessions_map = _fetch_sessions_batch(cluster_pks)
+    latest_trace_map = _fetch_latest_trace_id_batch(cluster_pks)
     voice_pids = voice_project_ids([str(c.project_id) for c in clusters])
 
     rows = [
         _row_from_cluster(
             c,
-            trends=trends_map.get(c.cluster_id, []),
-            users_affected=users_map.get(c.cluster_id, 0),
-            sessions=sessions_map.get(c.cluster_id, 0),
-            latest_trace_id=latest_trace_map.get(c.cluster_id),
+            trends=trends_map.get(str(c.pk), []),
+            users_affected=users_map.get(str(c.pk), 0),
+            sessions=sessions_map.get(str(c.pk), 0),
+            latest_trace_id=latest_trace_map.get(str(c.pk)),
             modality="voice" if str(c.project_id) in voice_pids else "text",
         )
         for c in clusters
@@ -556,8 +620,8 @@ def get_stats(
 
     total_errors = qs.aggregate(total=Count("id"))["total"] or 0
 
-    cluster_ids = list(qs.values_list("cluster_id", flat=True))
-    users_map = _fetch_users_affected_batch(cluster_ids)
+    cluster_pks = [str(pk) for pk in qs.values_list("pk", flat=True)]
+    users_map = _fetch_users_affected_batch(cluster_pks)
     affected_users = sum(users_map.values())
 
     return FeedStats(
@@ -579,8 +643,11 @@ def get_cluster_detail(
     If project_ids is None, finds by cluster_id alone (unique in practice since
     cluster_id is hashed from project+content).
     """
-    qs = TraceErrorGroup.objects.filter(deleted=False).select_related(
-        "project", "assignee"
+    qs = (
+        TraceErrorGroup.objects.filter(deleted=False)
+        .select_related("project", "assignee")
+        .exclude(issue_state__dirty=True)
+        .exclude(issue_state__retired=True)
     )
     if project_ids is not None:
         qs = qs.filter(project_id__in=project_ids)
@@ -588,17 +655,18 @@ def get_cluster_detail(
     if not cluster:
         return None
 
-    trends_map = _fetch_trends_batch([cluster.cluster_id])
-    users_map = _fetch_users_affected_batch([cluster.cluster_id])
-    sessions_map = _fetch_sessions_batch([cluster.cluster_id])
-    latest_trace_map = _fetch_latest_trace_id_batch([cluster.cluster_id])
+    cluster_pk = str(cluster.pk)
+    trends_map = _fetch_trends_batch([cluster_pk])
+    users_map = _fetch_users_affected_batch([cluster_pk])
+    sessions_map = _fetch_sessions_batch([cluster_pk])
+    latest_trace_map = _fetch_latest_trace_id_batch([cluster_pk])
 
     row = _row_from_cluster(
         cluster,
-        trends=trends_map.get(cluster.cluster_id, []),
-        users_affected=users_map.get(cluster.cluster_id, 0),
-        sessions=sessions_map.get(cluster.cluster_id, 0),
-        latest_trace_id=latest_trace_map.get(cluster.cluster_id),
+        trends=trends_map.get(cluster_pk, []),
+        users_affected=users_map.get(cluster_pk, 0),
+        sessions=sessions_map.get(cluster_pk, 0),
+        latest_trace_id=latest_trace_map.get(cluster_pk),
         modality="voice" if is_voice_project(cluster.project_id) else "text",
     )
 
@@ -614,7 +682,9 @@ def get_cluster_detail(
         if cluster.eval_target_type == EvalTargetType.SESSION:
             # Session evals anchor to the session (trace NULL): find a
             # passing session and represent it by its latest trace.
-            _, member_session_ids = _cluster_member_ids(cluster.cluster_id)
+            _, member_session_ids = _cluster_member_ids(
+                cluster.cluster_id, str(cluster.project_id)
+            )
             passing_session = (
                 EvalLogger.objects.filter(
                     custom_eval_config__project_id=cluster.project_id,
@@ -690,15 +760,44 @@ def update_cluster(
     if not cluster:
         return None
 
+    if is_grouping_issue(cluster.pk):
+        try:
+            edit_grouping_issue(
+                cluster.pk,
+                lambda current: _set_cluster_update_fields(
+                    current, payload, changed_only=True
+                ),
+            )
+        except GroupingHumanEditUnavailable:
+            return None
+    else:
+        update_fields = _set_cluster_update_fields(cluster, payload)
+        if update_fields:
+            cluster.save(update_fields=[*update_fields, "updated_at"])
+
+    return get_cluster_detail(cluster_id, project_ids)
+
+
+def _set_cluster_update_fields(
+    cluster: TraceErrorGroup,
+    payload: FeedUpdatePayload,
+    *,
+    changed_only: bool = False,
+) -> list[str]:
+    """Apply the existing PATCH fields; F6 versions only actual changes."""
+
     update_fields: list[str] = []
 
     if payload.status is not None:
-        cluster.status = payload.status
-        update_fields.append("status")
+        if not changed_only or cluster.status != payload.status:
+            cluster.status = payload.status
+            update_fields.append("status")
 
     if payload.severity is not None:
-        cluster.priority = severity_to_priority(payload.severity)
-        update_fields.append("priority")
+        priority = severity_to_priority(payload.severity)
+        if not changed_only or cluster.priority != priority:
+            cluster.priority = priority
+            update_fields.append("priority")
 
     if payload.assignee_provided:
         user = None
@@ -720,14 +819,11 @@ def update_cluster(
                 raise ValueError(
                     "Assignee is not an active member of this organization"
                 )
-        cluster.assignee = user
-        update_fields.append("assignee")
+        if not changed_only or cluster.assignee_id != (user.id if user else None):
+            cluster.assignee = user
+            update_fields.append("assignee")
 
-    if update_fields:
-        update_fields.append("updated_at")
-        cluster.save(update_fields=update_fields)
-
-    return get_cluster_detail(cluster_id, project_ids)
+    return update_fields
 
 
 # ---------------------------------------------------------------------------
@@ -795,17 +891,23 @@ class _CHTraceShim:
 
     def __init__(self, trace_id: str, root):
         self.id = trace_id
-        self.created_at = getattr(root, "start_time", None) or timezone.now()
+        self.created_at = getattr(root, "start_time", None)
         self.input = getattr(root, "input", None)
         self.output = getattr(root, "output", None)
 
 
-def _resolve_member_traces(trace_ids: list[str], project_id: str | None = None) -> dict:
+def _resolve_member_traces(
+    trace_ids: list[str],
+    project_id: str | None = None,
+    *,
+    include_unavailable: bool = False,
+) -> dict:
     """``{trace_id: trace-like}`` for cluster members, hydrated from the CH
     root span. Post-cutover traces are CH-only (no PG ``Trace`` row), so the
     root span is the sole source for the attrs the row/rep builders read
     (``id``, ``created_at``, ``input``, ``output``). Members with no root span
-    in CH are omitted (same as an unresolvable trace before the cutover).
+    in CH are omitted for legacy callers. Omega can keep an unavailable row
+    with null content, so a valid finding is not silently erased from a page.
 
     ``project_id`` (optional) is forwarded so the underlying root read prunes
     by primary-key prefix — see ``_get_root_spans_batch``.
@@ -817,20 +919,23 @@ def _resolve_member_traces(trace_ids: list[str], project_id: str | None = None) 
     out: dict = {}
     for tid in ids:
         root = roots.get(tid)
-        if root is not None:
+        if root is not None or include_unavailable:
             out[tid] = _CHTraceShim(tid, root)
     return out
 
 
-def _cluster_member_ids(cluster_id: str) -> tuple[list[str], list[str]]:
+def _cluster_member_ids(
+    cluster_id: str, project_id: str | None = None
+) -> tuple[list[str], list[str]]:
     """(trace_ids, session_ids) of the cluster's junction members.
 
     Session-target eval results anchor their junction row to a TraceSession
     (trace FK NULL), so the two member kinds must be read separately.
     """
-    rows = ErrorClusterTraces.objects.filter(
-        cluster__cluster_id=cluster_id
-    ).values_list("trace_id", "trace_session_id")
+    rows = _current_memberships().filter(cluster__cluster_id=cluster_id)
+    if project_id is not None:
+        rows = rows.filter(cluster__project_id=project_id)
+    rows = rows.values_list("trace_id", "trace_session_id")
     trace_ids = [str(t) for t, _ in rows if t]
     session_ids = [str(s) for t, s in rows if s and not t]
     return trace_ids, session_ids
@@ -914,7 +1019,7 @@ def _trace_ids_for_cluster(cluster_id: str, project_id: str) -> list[str]:
     Trace/span members contribute their own trace; session members resolve
     to their session's latest trace via ``_session_rep_trace_map``.
     """
-    trace_ids, session_ids = _cluster_member_ids(cluster_id)
+    trace_ids, session_ids = _cluster_member_ids(cluster_id, project_id)
     if session_ids:
         trace_ids.extend(_session_rep_trace_map(session_ids, project_id).values())
     return trace_ids
@@ -926,16 +1031,17 @@ def _trace_ids_for_cluster(cluster_id: str, project_id: str) -> list[str]:
 
 
 def _fetch_events_over_time(
-    cluster_id: str, days: int = 14
+    cluster_id: str, days: int = 14, project_id: str | None = None
 ) -> list[EventsOverTimePoint]:
-    """Bucket ErrorClusterTraces.created_at into daily error counts."""
+    """Bucket current occurrences; Omega uses report recorded time."""
     since = timezone.now() - timedelta(days=days)
+    members = _members_with_occurrence_time().filter(
+        cluster__cluster_id=cluster_id, occurrence_at__gte=since
+    )
+    if project_id is not None:
+        members = members.filter(cluster__project_id=project_id)
     rows = (
-        ErrorClusterTraces.objects.filter(
-            cluster__cluster_id=cluster_id,
-            created_at__gte=since,
-        )
-        .annotate(bucket=TruncDate("created_at"))
+        members.annotate(bucket=TruncDate("occurrence_at"))
         .values("bucket")
         .annotate(errors=Count("id", distinct=False))
         .order_by("bucket")
@@ -1059,6 +1165,20 @@ def _tfidf_distinctive_terms(
     return scored[:top_k]
 
 
+def _current_scanner_findings(project_id: str) -> QuerySet:
+    """For F6, brief-derived cards use only findings with active memberships."""
+    active_finding_ids = (
+        _current_memberships().filter(finding_id__isnull=False).values("finding_id")
+    )
+    return TraceInvestigationFinding.objects.filter(
+        report__project_id=project_id,
+        report__is_current=True,
+        report__deleted=False,
+        cluster__source=ClusterSource.SCANNER,
+        deleted=False,
+    ).filter(Q(cluster__issue_state__isnull=True) | Q(id__in=active_finding_ids))
+
+
 def _project_cluster_briefs_corpus(
     project_id: str,
 ) -> tuple[list[str], list[str]]:
@@ -1066,13 +1186,9 @@ def _project_cluster_briefs_corpus(
     concatenated scanner issue briefs. Clusters without briefs are skipped.
     Single query, grouped in Python.
     """
-    rows = TraceInvestigationFinding.objects.filter(
-        report__project_id=project_id,
-        report__is_current=True,
-        report__deleted=False,
-        cluster__source=ClusterSource.SCANNER,
-        deleted=False,
-    ).values_list("cluster__cluster_id", "statement")
+    rows = _current_scanner_findings(project_id).values_list(
+        "cluster__cluster_id", "statement"
+    )
 
     by_cluster: dict[str, list[str]] = {}
     for cid, brief in rows:
@@ -1094,10 +1210,14 @@ def _project_cluster_inputs_corpus(
     dict maps ``cluster_id → {trace_id: input_text}`` so callers can count
     how many traces contain a particular term without another round-trip.
     """
-    ect_rows = ErrorClusterTraces.objects.filter(
-        cluster__project_id=project_id,
-        cluster__source=ClusterSource.SCANNER,
-    ).values_list("cluster__cluster_id", "trace_id")
+    ect_rows = (
+        _current_memberships()
+        .filter(
+            cluster__project_id=project_id,
+            cluster__source=ClusterSource.SCANNER,
+        )
+        .values_list("cluster__cluster_id", "trace_id")
+    )
     cluster_to_traces: dict[str, list[str]] = {}
     all_trace_ids: set = set()
     for cid, tid in ect_rows:
@@ -1379,13 +1499,7 @@ def _insight_brief_phrase(cluster_id: str, project_id: str) -> PatternInsight | 
     distinctive n-gram.
     """
     rows = (
-        TraceInvestigationFinding.objects.filter(
-            report__project_id=project_id,
-            report__is_current=True,
-            report__deleted=False,
-            cluster__source=ClusterSource.SCANNER,
-            deleted=False,
-        )
+        _current_scanner_findings(project_id)
         .exclude(statement="")
         .values_list("cluster__cluster_id", "statement")
     )
@@ -1539,7 +1653,8 @@ def _insight_judge_phrase(cluster_id: str, project_id: str) -> PatternInsight | 
     project), so the contrast is other eval clusters — same shape as the
     scanner brief contrast."""
     rows = (
-        ErrorClusterTraces.objects.filter(
+        _current_memberships()
+        .filter(
             cluster__project_id=project_id,
             cluster__source=ClusterSource.EVAL,
             eval_logger__isnull=False,
@@ -1594,7 +1709,9 @@ def _scanner_key_moments(trace_ids: list[str]) -> list[KeyMoment]:
     return out
 
 
-def _fetch_pattern_summary(cluster_id: str) -> PatternSummary:
+def _fetch_pattern_summary(
+    cluster_id: str, project_id: str | None = None
+) -> PatternSummary:
     """Adaptive Pattern Summary: effect-size cards vs the KNN-passing baseline.
 
     Runs all applicable builders, keeps the ones that clear their firing floor
@@ -1607,7 +1724,10 @@ def _fetch_pattern_summary(cluster_id: str) -> PatternSummary:
     precompute that materializes the result is a tracked follow-up. The builders
     don't change when it moves.
     """
-    cluster = TraceErrorGroup.objects.filter(cluster_id=cluster_id).first()
+    cluster_qs = _cluster_qs_for_access(cluster_id)
+    if project_id is not None:
+        cluster_qs = cluster_qs.filter(project_id=project_id)
+    cluster = cluster_qs.first()
     if not cluster:
         return PatternSummary()
 
@@ -1742,21 +1862,67 @@ def _get_investigation_reports_batch(trace_ids: list[str], project_id: str) -> d
     return {str(report.trace_id): report for report in rows}
 
 
+def _cluster_evidence_by_trace(
+    cluster_id: str, project_id: str, trace_ids: list[str]
+) -> dict[str, list]:
+    """Only evidence explicitly linked to this issue's current findings."""
+    if not trace_ids:
+        return {}
+    finding_ids = (
+        _current_memberships()
+        .filter(
+            cluster__cluster_id=cluster_id,
+            cluster__project_id=project_id,
+            trace_id__in=trace_ids,
+            finding_id__isnull=False,
+        )
+        .values("finding_id")
+    )
+    links = (
+        TraceInvestigationFindingEvidence.objects.filter(
+            finding_id__in=finding_ids,
+            deleted=False,
+            evidence__deleted=False,
+            evidence__report_id=F("finding__report_id"),
+        )
+        .select_related("evidence", "finding__report")
+        .order_by("finding__report__trace_id", "evidence__ordinal", "evidence_id")
+    )
+    result: dict[str, list] = {}
+    seen: dict[str, set] = {}
+    for link in links:
+        trace_id = str(link.finding.report.trace_id)
+        evidence_id = link.evidence_id
+        if evidence_id in seen.setdefault(trace_id, set()):
+            continue
+        seen[trace_id].add(evidence_id)
+        if len(result.setdefault(trace_id, [])) < 8:
+            result[trace_id].append(link.evidence)
+    return result
+
+
 def _investigation_reel(
-    report: TraceInvestigationReport, highlight_terms: list[str] | None = None
+    report: TraceInvestigationReport,
+    highlight_terms: list[str] | None = None,
+    *,
+    selected_receipts: list | None = None,
 ) -> list[dict]:
-    moments = [
-        {
-            "kevinified": moment.kevinified,
-            "verbatim": moment.verbatim,
-            "role": moment.role,
-            "span": moment.span_id,
-            "status": moment.status,
-            "is_failure": moment.is_failure,
-        }
-        for moment in report.key_moments.all()
-        if not moment.deleted
-    ]
+    moments = (
+        []
+        if selected_receipts is not None
+        else [
+            {
+                "kevinified": moment.kevinified,
+                "verbatim": moment.verbatim,
+                "role": moment.role,
+                "span": moment.span_id,
+                "status": moment.status,
+                "is_failure": moment.is_failure,
+            }
+            for moment in report.key_moments.all()
+            if not moment.deleted
+        ]
+    )
     if moments:
         return _key_moments_to_reel(moments, highlight_terms=highlight_terms)
     return [
@@ -1769,7 +1935,11 @@ def _investigation_reel(
             "raw": receipt.excerpt,
             "meta": None,
         }
-        for receipt in report.evidence_receipts.all()
+        for receipt in (
+            selected_receipts
+            if selected_receipts is not None
+            else report.evidence_receipts.all()
+        )
         if not receipt.deleted and receipt.excerpt
     ][:8]
 
@@ -1998,6 +2168,7 @@ def _build_representative_trace(
     totals: tuple[int | None, int | None, int | None] | None = None,
     score: float | None = None,
     investigation_report: TraceInvestigationReport | None = None,
+    selected_receipts: list | None = None,
     judge: tuple[str | None, float | None] | None = None,
     _prefetched: bool = False,
 ) -> RepresentativeTrace:
@@ -2057,7 +2228,11 @@ def _build_representative_trace(
         )
     if investigation_report:
         turns = investigation_report.turn_count
-        fail_reel = _investigation_reel(investigation_report, highlight_terms)
+        fail_reel = _investigation_reel(
+            investigation_report,
+            highlight_terms,
+            selected_receipts=selected_receipts,
+        )
 
     if judge is None and not _prefetched:
         judge = trace_judge(str(trace.id))
@@ -2086,7 +2261,9 @@ def _build_representative_trace(
     )
 
 
-def _fetch_success_trace_pass_reel(cluster_id: str) -> list[dict]:
+def _fetch_success_trace_pass_reel(
+    cluster_id: str, project_id: str | None = None
+) -> list[dict]:
     """
     Build the "Working Trace" reel from the cluster's success trace.
 
@@ -2096,7 +2273,10 @@ def _fetch_success_trace_pass_reel(cluster_id: str) -> list[dict]:
     own root input + output (+ key_moments if they exist) so the reel always
     has something useful to show.
     """
-    cluster = TraceErrorGroup.objects.filter(cluster_id=cluster_id).first()
+    cluster_qs = _cluster_qs_for_access(cluster_id)
+    if project_id is not None:
+        cluster_qs = cluster_qs.filter(project_id=project_id)
+    cluster = cluster_qs.first()
     if not cluster or not cluster.success_trace_id:
         return []
 
@@ -2161,54 +2341,65 @@ def _fetch_representative_traces(
     FeedDetailCore.success_trace for future comparison features.
     """
     if pass_reel is None:
-        pass_reel = _fetch_success_trace_pass_reel(cluster_id)
+        pass_reel = _fetch_success_trace_pass_reel(cluster_id, project_id)
     if highlight_terms is None:
         highlight_terms = _cluster_highlight_terms(cluster_id, project_id)
 
     qs = (
-        ErrorClusterTraces.objects.filter(cluster__cluster_id=cluster_id)
+        _members_with_occurrence_time()
+        .filter(cluster__cluster_id=cluster_id, cluster__project_id=project_id)
         # Only raw ``trace_id``/``trace_session_id`` are read below; member
         # traces hydrate from CH via ``_resolve_member_traces``.
-        .order_by("-created_at")
+        .order_by("-occurrence_at")
     )
-    ect_rows = list(
-        qs[: limit * 3] if limit else qs
-    )  # over-fetch for dedupe when limited
-
-    # Session members carry no trace FK — resolve each to its session's
-    # latest trace so the cards stay trace-shaped. Their judge reason and
-    # score come from the session-level eval, keyed back via session_by_trace.
-    member_session_ids = [
-        str(e.trace_session_id)
-        for e in ect_rows
-        if e.trace_session_id and not e.trace_id
-    ]
-    rep_map = _session_rep_trace_map(member_session_ids, project_id)
-
-    # First pass: resolve each member to a trace id (session members via their
-    # CH representative trace), preserving -created_at order and deduping.
-    ordered_ids: list[str] = []
     session_by_trace: dict[str, str] = {}
-    seen_ids: set = set()
-    for ect in ect_rows:
-        if ect.trace_id:
-            tid = str(ect.trace_id)
-        elif ect.trace_session_id:
-            tid = rep_map.get(str(ect.trace_session_id))
-            if not tid:
+    if _is_omega_group(cluster_id, project_id):
+        # Group by trace in SQL before LIMIT. A trace may have 100 findings;
+        # bounded over-fetch of membership rows cannot fill a trace page.
+        distinct_traces = (
+            qs.filter(trace_id__isnull=False)
+            .order_by()
+            .values("trace_id")
+            .annotate(latest=Max("occurrence_at"))
+            .order_by("-latest", "trace_id")
+        )
+        if limit is not None:
+            distinct_traces = distinct_traces[:limit]
+        ordered_ids = [str(row["trace_id"]) for row in distinct_traces]
+    else:
+        # Preserve session/span eval representation and ordering.
+        ect_rows = list(qs[: limit * 3] if limit else qs)
+        member_session_ids = [
+            str(e.trace_session_id)
+            for e in ect_rows
+            if e.trace_session_id and not e.trace_id
+        ]
+        rep_map = _session_rep_trace_map(member_session_ids, project_id)
+        ordered_ids = []
+        seen_ids: set = set()
+        for ect in ect_rows:
+            if ect.trace_id:
+                tid = str(ect.trace_id)
+            elif ect.trace_session_id:
+                tid = rep_map.get(str(ect.trace_session_id))
+                if not tid:
+                    continue
+                session_by_trace[tid] = str(ect.trace_session_id)
+            else:
                 continue
-            session_by_trace[tid] = str(ect.trace_session_id)
-        else:
-            continue
-        if tid in seen_ids:
-            continue
-        seen_ids.add(tid)
-        ordered_ids.append(tid)
-        if limit and len(ordered_ids) >= limit:
-            break
+            if tid in seen_ids:
+                continue
+            seen_ids.add(tid)
+            ordered_ids.append(tid)
+            if limit and len(ordered_ids) >= limit:
+                break
 
     # PG Trace where it exists, else CH-backed shim (post-cutover CH-only traces).
-    traces_by_id = _resolve_member_traces(ordered_ids, project_id)
+    traces_by_id = _resolve_member_traces(
+        ordered_ids,
+        project_id,
+        include_unavailable=_is_omega_group(cluster_id, project_id),
+    )
     deduped = [traces_by_id[t] for t in ordered_ids if t in traces_by_id]
     if not deduped:
         return []
@@ -2218,6 +2409,11 @@ def _fetch_representative_traces(
     totals = _get_trace_totals_batch(trace_ids, project_id)
     scores = _get_trace_scores_batch(trace_ids)
     reports = _get_investigation_reports_batch(trace_ids, project_id)
+    evidence_by_trace = (
+        _cluster_evidence_by_trace(cluster_id, project_id, trace_ids)
+        if _is_omega_group(cluster_id, project_id)
+        else None
+    )
     judges = _trace_judges_batch(trace_ids)
     session_judges = _session_judges_batch(list(session_by_trace.values()))
 
@@ -2244,6 +2440,11 @@ def _fetch_representative_traces(
             totals=totals.get(str(trace.id)),
             score=_score_for(str(trace.id)),
             investigation_report=reports.get(str(trace.id)),
+            selected_receipts=(
+                evidence_by_trace.get(str(trace.id), [])
+                if evidence_by_trace is not None
+                else None
+            ),
             judge=_judge_for(str(trace.id)),
             _prefetched=True,
         )
@@ -2254,7 +2455,11 @@ def _fetch_representative_traces(
 def _cluster_qs_for_access(
     cluster_id: str, project_ids: list[str] | None = None
 ) -> QuerySet:
-    qs = TraceErrorGroup.objects.filter(cluster_id=cluster_id, deleted=False)
+    qs = (
+        TraceErrorGroup.objects.filter(cluster_id=cluster_id, deleted=False)
+        .exclude(issue_state__dirty=True)
+        .exclude(issue_state__retired=True)
+    )
     if project_ids is not None:
         qs = qs.filter(project_id__in=project_ids)
     return qs
@@ -2278,16 +2483,20 @@ def get_overview(
         return None
     project_id = str(cluster.project_id)
 
-    member_total = ErrorClusterTraces.objects.filter(
-        cluster__cluster_id=cluster_id
-    ).aggregate(c=Count(Coalesce("trace_id", "trace_session_id"), distinct=True))["c"]
+    member_total = (
+        _current_memberships()
+        .filter(cluster__cluster_id=cluster_id, cluster__project_id=project_id)
+        .aggregate(c=Count(Coalesce("trace_id", "trace_session_id"), distinct=True))[
+            "c"
+        ]
+    )
 
-    pass_reel = _fetch_success_trace_pass_reel(cluster_id)
+    pass_reel = _fetch_success_trace_pass_reel(cluster_id, project_id)
     highlight_terms = _cluster_highlight_terms(cluster_id, project_id)
 
     return OverviewResponse(
-        events_over_time=_fetch_events_over_time(cluster_id),
-        pattern_summary=_fetch_pattern_summary(cluster_id),
+        events_over_time=_fetch_events_over_time(cluster_id, project_id=project_id),
+        pattern_summary=_fetch_pattern_summary(cluster_id, project_id),
         representative_traces=_fetch_representative_traces(
             cluster_id,
             project_id,
@@ -2319,7 +2528,7 @@ def _percentile(values: list[int], pct: float) -> int:
 
 def _fetch_traces_aggregates(cluster_id: str, project_id: str) -> TracesAggregates:
     """Compute per-cluster aggregates for the Traces tab stat bar."""
-    member_trace_ids, member_session_ids = _cluster_member_ids(cluster_id)
+    member_trace_ids, member_session_ids = _cluster_member_ids(cluster_id, project_id)
     trace_ids = list(member_trace_ids)
     if member_session_ids:
         trace_ids.extend(
@@ -2391,49 +2600,61 @@ def _fetch_trace_rows(
 ) -> tuple[list[TracesListRow], int]:
     """Paginated list of traces in the cluster for the AG Grid."""
     base = (
-        ErrorClusterTraces.objects.filter(cluster__cluster_id=cluster_id)
+        _members_with_occurrence_time()
+        .filter(cluster__cluster_id=cluster_id, cluster__project_id=project_id)
         # Raw ``trace_id``/``trace_session_id`` only; traces hydrate from CH.
-        .order_by("-created_at")
+        .order_by("-occurrence_at")
     )
-
-    # Session members have trace_id NULL — count the member unit either way.
-    total = base.aggregate(
-        c=Count(Coalesce("trace_id", "trace_session_id"), distinct=True)
-    )["c"]
-
-    page_ects = list(base[offset : offset + limit * 3])  # over-fetch for dedupe
-    page_session_ids = [
-        str(e.trace_session_id)
-        for e in page_ects
-        if e.trace_session_id and not e.trace_id
-    ]
-    rep_map = _session_rep_trace_map(page_session_ids, project_id)
-
-    # Resolve each member to a trace id (trace members carry trace_id; session
-    # members resolve to their representative trace via CH), preserving the
-    # -created_at order and deduping.
-    page_trace_ids: list[str] = []
     session_by_trace: dict[str, str] = {}
-    seen: set = set()
-    for ect in page_ects:
-        if ect.trace_id:
-            tid = str(ect.trace_id)
-        elif ect.trace_session_id:
-            tid = rep_map.get(str(ect.trace_session_id))
-            if not tid:
+    if _is_omega_group(cluster_id, project_id):
+        distinct_traces = (
+            base.filter(trace_id__isnull=False)
+            .order_by()
+            .values("trace_id")
+            .annotate(latest=Max("occurrence_at"))
+            .order_by("-latest", "trace_id")
+        )
+        total = distinct_traces.count()
+        page_trace_ids = [
+            str(row["trace_id"]) for row in distinct_traces[offset : offset + limit]
+        ]
+    else:
+        # Keep the legacy session/span unit; only Omega has finding fan-out.
+        total = base.aggregate(
+            c=Count(Coalesce("trace_id", "trace_session_id"), distinct=True)
+        )["c"]
+        page_ects = list(base[offset : offset + limit * 3])
+        page_session_ids = [
+            str(e.trace_session_id)
+            for e in page_ects
+            if e.trace_session_id and not e.trace_id
+        ]
+        rep_map = _session_rep_trace_map(page_session_ids, project_id)
+        page_trace_ids = []
+        seen: set = set()
+        for ect in page_ects:
+            if ect.trace_id:
+                tid = str(ect.trace_id)
+            elif ect.trace_session_id:
+                tid = rep_map.get(str(ect.trace_session_id))
+                if not tid:
+                    continue
+                session_by_trace[tid] = str(ect.trace_session_id)
+            else:
                 continue
-            session_by_trace[tid] = str(ect.trace_session_id)
-        else:
-            continue
-        if tid in seen:
-            continue
-        seen.add(tid)
-        page_trace_ids.append(tid)
-        if len(page_trace_ids) >= limit:
-            break
+            if tid in seen:
+                continue
+            seen.add(tid)
+            page_trace_ids.append(tid)
+            if len(page_trace_ids) >= limit:
+                break
 
     # PG Trace where it exists, else CH-backed shim (post-cutover CH-only traces).
-    traces_by_id = _resolve_member_traces(page_trace_ids, project_id)
+    traces_by_id = _resolve_member_traces(
+        page_trace_ids,
+        project_id,
+        include_unavailable=_is_omega_group(cluster_id, project_id),
+    )
     page_traces = [traces_by_id[t] for t in page_trace_ids if t in traces_by_id]
     if not page_traces:
         return [], total
@@ -2512,14 +2733,20 @@ def get_traces_tab(
 
 
 def _member_ids_in_window(
-    cluster_id: str, since: datetime, until: datetime | None = None
+    cluster_id: str,
+    since: datetime,
+    until: datetime | None = None,
+    *,
+    project_id: str | None = None,
 ) -> tuple[list[str], list[str]]:
-    """(trace_ids, session_ids) that joined the cluster within a window."""
-    qs = ErrorClusterTraces.objects.filter(
-        cluster__cluster_id=cluster_id, created_at__gte=since
+    """(trace_ids, session_ids) with current occurrences in a window."""
+    qs = _members_with_occurrence_time().filter(
+        cluster__cluster_id=cluster_id, occurrence_at__gte=since
     )
+    if project_id is not None:
+        qs = qs.filter(cluster__project_id=project_id)
     if until is not None:
-        qs = qs.filter(created_at__lt=until)
+        qs = qs.filter(occurrence_at__lt=until)
     rows = qs.values_list("trace_id", "trace_session_id")
     trace_ids = [str(t) for t, _ in rows if t]
     session_ids = [str(s) for t, s in rows if s and not t]
@@ -2557,7 +2784,9 @@ def _avg_eval_score(trace_ids: list[str]) -> float | None:
     ).aggregate(avg=Avg(EVAL_SCORE_EXPR))["avg"]
 
 
-def _project_scope_total(project_id: str, source: str, start, end=None) -> int:
+def _project_scope_total(
+    project_id: str, source: str, start, end=None, *, omega: bool = False
+) -> int:
     """Total project-wide events in a window, matched to the cluster's source.
 
     Scanner clusters: scanner ran on every trace, so denominator = scanner runs.
@@ -2590,6 +2819,11 @@ def _project_scope_total(project_id: str, source: str, start, end=None) -> int:
         deleted=False,
         recorded_at__gte=start,
     )
+    if omega:
+        qs = qs.filter(
+            source=TraceInvestigationSource.OMEGA,
+            execution_status="completed",
+        )
     if end is not None:
         qs = qs.filter(recorded_at__lt=end)
     return qs.count()
@@ -2599,17 +2833,20 @@ def _fetch_trend_metrics(
     cluster_id: str, project_id: str, days: int
 ) -> list[TrendMetric]:
     """Build the 3 KPI cards — current vs previous window."""
-    cluster = TraceErrorGroup.objects.filter(cluster_id=cluster_id).first()
+    cluster = _cluster_qs_for_access(cluster_id).filter(project_id=project_id).first()
     cluster_source = cluster.source if cluster else ClusterSource.SCANNER
+    omega = _is_omega_group(cluster_id, project_id)
 
     now = timezone.now()
     window = timedelta(days=days)
     cur_start = now - window
     prev_start = cur_start - window
 
-    cur_trace_members, cur_sessions = _member_ids_in_window(cluster_id, cur_start)
+    cur_trace_members, cur_sessions = _member_ids_in_window(
+        cluster_id, cur_start, project_id=project_id
+    )
     prev_trace_members, prev_sessions = _member_ids_in_window(
-        cluster_id, prev_start, cur_start
+        cluster_id, prev_start, cur_start, project_id=project_id
     )
     cur_traces = cur_trace_members + list(
         _session_rep_trace_map(cur_sessions, project_id).values()
@@ -2618,11 +2855,15 @@ def _fetch_trend_metrics(
         _session_rep_trace_map(prev_sessions, project_id).values()
     )
 
-    cur_total = _project_scope_total(project_id, cluster_source, cur_start)
-    prev_total = _project_scope_total(project_id, cluster_source, prev_start, cur_start)
+    cur_total = _project_scope_total(project_id, cluster_source, cur_start, omega=omega)
+    prev_total = _project_scope_total(
+        project_id, cluster_source, prev_start, cur_start, omega=omega
+    )
 
-    cur_err_rate = (100.0 * len(cur_traces) / cur_total) if cur_total else 0.0
-    prev_err_rate = (100.0 * len(prev_traces) / prev_total) if prev_total else 0.0
+    cur_numerator = len(set(cur_traces)) if omega else len(cur_traces)
+    prev_numerator = len(set(prev_traces)) if omega else len(prev_traces)
+    cur_err_rate = (100.0 * cur_numerator / cur_total) if cur_total else 0.0
+    prev_err_rate = (100.0 * prev_numerator / prev_total) if prev_total else 0.0
 
     # Session clusters score on session-target eval rows, not span evals.
     cur_score = (
@@ -2662,10 +2903,13 @@ def _fetch_events_over_time_with_passing(
     since = timezone.now() - timedelta(days=days)
 
     err_rows = (
-        ErrorClusterTraces.objects.filter(
-            cluster__cluster_id=cluster_id, created_at__gte=since
+        _members_with_occurrence_time()
+        .filter(
+            cluster__cluster_id=cluster_id,
+            cluster__project_id=project_id,
+            occurrence_at__gte=since,
         )
-        .annotate(bucket=TruncDate("created_at"))
+        .annotate(bucket=TruncDate("occurrence_at"))
         .values("bucket")
         .annotate(errors=Count("id"))
     )
@@ -2682,17 +2926,18 @@ def _fetch_events_over_time_with_passing(
     # the window, then CH list_by_trace_ids gets the spans + end_user_ids,
     # then we group end_user_id by bucket in Python.
     #
-    # Note: a single trace can appear in ECT multiple times across days
-    # (rare — re-clustering); the PG `TruncDate(ect.created_at)` picks
-    # each row's own bucket, so a span's end_user is counted on the day
-    # its ECT row was created. We model that 1:1 by carrying the per-ECT
-    # bucket dates rather than collapsing to one bucket per trace_id.
+    # A trace can have several current findings. Each occurrence uses its
+    # source-aware timestamp (report time for Omega, junction time otherwise),
+    # while affected users are distinct within each day bucket.
     users_by_day: dict[object, set] = {}
     ect_rows_in_window = list(
-        ErrorClusterTraces.objects.filter(
+        _members_with_occurrence_time()
+        .filter(
             cluster__cluster_id=cluster_id,
-            created_at__gte=since,
-        ).values_list("trace_id", "trace_session_id", "created_at")
+            cluster__project_id=project_id,
+            occurrence_at__gte=since,
+        )
+        .values_list("trace_id", "trace_session_id", "occurrence_at")
     )
     if ect_rows_in_window:
         # trace_id → list of bucket-dates (one ECT row may pair a trace
@@ -2732,15 +2977,21 @@ def _fetch_events_over_time_with_passing(
 
     # Project-wide passing investigations per day — context for
     # the dual-axis chart
-    pass_rows = (
-        TraceInvestigationReport.objects.filter(
-            project_id=project_id,
-            has_issues=False,
-            is_current=True,
-            deleted=False,
-            recorded_at__gte=since,
+    passing_qs = TraceInvestigationReport.objects.filter(
+        project_id=project_id,
+        has_issues=False,
+        is_current=True,
+        deleted=False,
+        recorded_at__gte=since,
+    )
+    if _is_omega_group(cluster_id, project_id):
+        passing_qs = passing_qs.filter(
+            source=TraceInvestigationSource.OMEGA,
+            execution_status="completed",
+            outcome="success",
         )
-        .annotate(bucket=TruncDate("recorded_at"))
+    pass_rows = (
+        passing_qs.annotate(bucket=TruncDate("recorded_at"))
         .values("bucket")
         .annotate(passing=Count("id"))
     )
@@ -2760,14 +3011,14 @@ def _fetch_events_over_time_with_passing(
 
 
 def _fetch_score_trends(
-    cluster_id: str, days: int, max_labels: int = 4
+    cluster_id: str, days: int, max_labels: int = 4, project_id: str | None = None
 ) -> list[ScoreTrend]:
     """Per-CustomEvalConfig.name score sparkline over the last ``days``.
 
     Splits the window in half: first half = prev, second half = current.
     Daily sparkline is average ``output_float`` per day over the full window.
     """
-    member_trace_ids, member_session_ids = _cluster_member_ids(cluster_id)
+    member_trace_ids, member_session_ids = _cluster_member_ids(cluster_id, project_id)
     if not member_trace_ids and not member_session_ids:
         return []
 
@@ -2840,12 +3091,17 @@ def _fetch_score_trends(
     return result
 
 
-def _fetch_activity_heatmap(cluster_id: str, days: int = 30) -> list[list[HeatmapCell]]:
+def _fetch_activity_heatmap(
+    cluster_id: str, days: int = 30, project_id: str | None = None
+) -> list[list[HeatmapCell]]:
     """Build a 7×24 grid (day 0=Sun … 6=Sat) of cluster-error counts."""
     since = timezone.now() - timedelta(days=days)
-    rows = ErrorClusterTraces.objects.filter(
-        cluster__cluster_id=cluster_id, created_at__gte=since
-    ).values_list("created_at", flat=True)
+    members = _members_with_occurrence_time().filter(
+        cluster__cluster_id=cluster_id, occurrence_at__gte=since
+    )
+    if project_id is not None:
+        members = members.filter(cluster__project_id=project_id)
+    rows = members.values_list("occurrence_at", flat=True)
 
     counts: dict = {}
     for ts in rows:
@@ -2876,8 +3132,10 @@ def get_trends_tab(
         events_over_time=_fetch_events_over_time_with_passing(
             cluster_id, project_id, days
         ),
-        score_trends=_fetch_score_trends(cluster_id, days),
-        activity_heatmap=_fetch_activity_heatmap(cluster_id, days=max(days, 30)),
+        score_trends=_fetch_score_trends(cluster_id, days, project_id=project_id),
+        activity_heatmap=_fetch_activity_heatmap(
+            cluster_id, days=max(days, 30), project_id=project_id
+        ),
     )
 
 
@@ -2907,8 +3165,8 @@ def _fetch_sidebar_ai_metadata(
     # (session-aware — resolves session members to their rep trace).
     focus_trace_id: str | None = selected_trace_id
     if focus_trace_id is None:
-        focus_trace_id = _fetch_latest_trace_id_batch([cluster.cluster_id]).get(
-            cluster.cluster_id
+        focus_trace_id = _fetch_latest_trace_id_batch([str(cluster.pk)]).get(
+            str(cluster.pk)
         )
 
     model: str | None = None
@@ -3059,9 +3317,11 @@ def _fetch_co_occurring_issues(
     if not this_traces_set:
         return []
 
-    ect_rows = ErrorClusterTraces.objects.filter(
-        cluster__project_id=project_id
-    ).values_list("cluster__cluster_id", "trace_id")
+    ect_rows = (
+        _current_memberships()
+        .filter(cluster__project_id=project_id)
+        .values_list("cluster__cluster_id", "trace_id")
+    )
 
     other_traces: dict = {}
     for cid, tid in ect_rows:
@@ -3132,7 +3392,7 @@ def get_sidebar(
         return None
 
     project_id = str(cluster.project_id)
-    member_trace_ids, member_session_ids = _cluster_member_ids(cluster_id)
+    member_trace_ids, member_session_ids = _cluster_member_ids(cluster_id, project_id)
     rep_map = _session_rep_trace_map(member_session_ids, project_id)
     session_by_trace = {tid: sid for sid, tid in rep_map.items()}
     trace_ids = member_trace_ids + list(rep_map.values())
@@ -3312,7 +3572,7 @@ def _cluster_has_trace(
     """Guardrail: the POST / GET endpoints only act on traces that are
     actually linked to the given cluster. Prevents a user from analyzing
     an arbitrary trace by hitting the wrong URL."""
-    qs = ErrorClusterTraces.objects.filter(
+    qs = _current_memberships().filter(
         cluster__cluster_id=cluster_id, trace_id=trace_id
     )
     if project_ids is not None:

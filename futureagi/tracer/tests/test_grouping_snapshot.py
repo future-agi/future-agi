@@ -25,6 +25,7 @@ from tracer.models.trace_investigation import (
 from tracer.queries import grouping
 from tracer.queries.grouping import (
     GroupingSnapshotError,
+    canonical_grouping_source_digest,
     canonical_snapshot_digest,
     export_grouping_snapshot,
 )
@@ -224,6 +225,9 @@ def test_export_grouping_snapshot_preserves_normalized_rows_and_provenance(
     }
     assert canonical_snapshot_digest(cross_language_body) == (
         "sha256:04b4fd6c95b0e8f45d5bb92b365f8b8ec1136036b85c6483fea56a5ab05b6622"
+    )
+    assert canonical_grouping_source_digest(cross_language) == (
+        "sha256:28d4fd92c5b661ff265b0c92ebc243914f5f19e8646c5914a98c3fcb20651123"
     )
 
 

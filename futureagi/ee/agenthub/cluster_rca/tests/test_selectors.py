@@ -40,6 +40,7 @@ from tracer.models.trace_error_analysis import (
     ErrorClusterTraces,
     TraceErrorGroup,
 )
+from tracer.models.trace_grouping import TraceGroupingIssueState, TraceGroupingScope
 from tracer.models.trace_investigation import (
     TraceInvestigationAttempt,
     TraceInvestigationFinding,
@@ -334,6 +335,126 @@ class TestInvestigationFindingAdapter:
             str(cluster.id), [trace_id], 0, 10
         ) == ([], 0)
         assert selectors.get_scan_issue_for_read(str(finding.id), str(home.id)) is None
+
+
+@pytest.mark.django_db
+class TestF6CurrentMembership:
+    def test_f6_reads_require_completed_current_matching_finding_membership(
+        self, tenants
+    ):
+        home, _ = tenants
+        cluster = _cluster(home, "F6-RCA")
+        scope = TraceGroupingScope.objects.create(
+            project=home, organization=home.organization, workspace=home.workspace
+        )
+        TraceGroupingIssueState.objects.create(scope=scope, cluster=cluster)
+        finding = _investigation_finding(home, cluster)
+        trace_id = str(finding.report.trace_id)
+
+        # A finding FK alone is not F6 membership; its active junction is canonical.
+        assert selectors.cluster_member_trace_ids(str(cluster.id)) == []
+        assert selectors.count_cluster_scan_issues(str(cluster.id), [trace_id]) == 0
+        assert selectors.get_scan_issue_for_read(str(finding.id), str(home.id)) is None
+
+        member = ErrorClusterTraces.objects.create(
+            cluster=cluster, finding=finding, trace_id=trace_id
+        )
+        assert selectors.cluster_member_trace_ids(str(cluster.id)) == [trace_id]
+        assert [
+            m.id for m in selectors.cluster_memberships(str(cluster.id), [trace_id])
+        ] == [member.id]
+        assert selectors.current_finding_ids_by_trace(str(cluster.id), [trace_id]) == {
+            trace_id: finding.id
+        }
+        assert selectors.count_cluster_scan_issues(str(cluster.id), [trace_id]) == 1
+        assert (
+            selectors.get_scan_issue_for_read(str(finding.id), str(home.id)).id
+            == finding.id
+        )
+
+        finding.report.grouping_status = "pending"
+        finding.report.save(update_fields=["grouping_status"])
+        assert selectors.cluster_member_trace_ids(str(cluster.id)) == []
+        assert selectors.count_cluster_scan_issues(str(cluster.id), [trace_id]) == 0
+        finding.report.grouping_status = "completed"
+        finding.report.save(update_fields=["grouping_status"])
+
+        member.trace_id = uuid.uuid4()
+        member.save(update_fields=["trace_id"])
+        assert selectors.cluster_member_trace_ids(str(cluster.id)) == []
+        assert selectors.count_cluster_scan_issues(str(cluster.id), [trace_id]) == 0
+        member.trace_id = trace_id
+        member.save(update_fields=["trace_id"])
+
+        finding.report.is_current = False
+        finding.report.save(update_fields=["is_current"])
+        assert selectors.cluster_member_trace_ids(str(cluster.id)) == []
+        assert selectors.get_scan_issue_for_read(str(finding.id), str(home.id)) is None
+
+    def test_dirty_and_retired_f6_are_hidden_without_hiding_unmarked_groups(
+        self, tenants
+    ):
+        home, _ = tenants
+        cluster = _cluster(home, "F6-HIDDEN")
+        legacy = _cluster(home, "LEGACY-VISIBLE")
+        legacy_trace = str(uuid.uuid4())
+        ErrorClusterTraces.objects.create(cluster=legacy, trace_id=legacy_trace)
+        scope = TraceGroupingScope.objects.create(
+            project=home, organization=home.organization, workspace=home.workspace
+        )
+        state = TraceGroupingIssueState.objects.create(scope=scope, cluster=cluster)
+        finding = _investigation_finding(home, cluster)
+        trace_id = str(finding.report.trace_id)
+        ErrorClusterTraces.objects.create(
+            cluster=cluster, finding=finding, trace_id=trace_id
+        )
+
+        for field in ("dirty", "retired"):
+            setattr(state, field, True)
+            state.save(update_fields=[field])
+            assert (
+                selectors.resolve_cluster_context(str(cluster.id), str(home.id)) is None
+            )
+            assert (
+                selectors.resolve_cluster_context(cluster.cluster_id, str(home.id))
+                is None
+            )
+            assert selectors.get_cluster_for_read(str(cluster.id), str(home.id)) is None
+            assert selectors.cluster_member_trace_ids(str(cluster.id)) == []
+            assert (
+                selectors.get_scan_issue_for_read(str(finding.id), str(home.id)) is None
+            )
+            setattr(state, field, False)
+            state.save(update_fields=[field])
+
+        assert selectors.cluster_member_trace_ids(str(legacy.id)) == [legacy_trace]
+        assert (
+            selectors.resolve_cluster_context(legacy.cluster_id, str(home.id))
+            is not None
+        )
+
+    def test_protected_empty_f6_issue_remains_readable(self, tenants):
+        home, _ = tenants
+        cluster = _cluster(home, "F6-EMPTY")
+        scope = TraceGroupingScope.objects.create(
+            project=home, organization=home.organization, workspace=home.workspace
+        )
+        state = TraceGroupingIssueState.objects.create(
+            scope=scope, cluster=cluster, protected=True
+        )
+        cluster.error_count = cluster.total_events = cluster.unique_traces = 0
+        cluster.save(update_fields=["error_count", "total_events", "unique_traces"])
+
+        assert state.retired is False
+        assert (
+            selectors.resolve_cluster_context(cluster.cluster_id, str(home.id))
+            is not None
+        )
+        assert (
+            selectors.get_cluster_for_read(str(cluster.id), str(home.id)).error_count
+            == 0
+        )
+        assert selectors.cluster_member_trace_ids(str(cluster.id)) == []
 
 
 @pytest.mark.django_db
