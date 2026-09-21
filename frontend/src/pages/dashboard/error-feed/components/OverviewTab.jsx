@@ -805,8 +805,8 @@ PatternSummary.propTypes = {
 };
 
 // ── Agent flow from real span tree ────────────────────────────────────────────
-function TraceGraphView({ traceId, mode }) {
-  const { data, isLoading } = useGetTraceDetail(traceId);
+export function TraceGraphView({ traceId, mode }) {
+  const { data, isLoading, isError } = useGetTraceDetail(traceId);
   const spanTree = data?.observation_spans || data?.observationSpans;
 
   const graphData = useMemo(() => {
@@ -819,6 +819,14 @@ function TraceGraphView({ traceId, mode }) {
       <Box sx={{ height: 340 }}>
         <GraphSkeleton />
       </Box>
+    );
+  }
+
+  if (isError) {
+    return (
+      <Typography fontSize="12px" color="error.main" sx={{ py: 2, textAlign: "center" }}>
+        Could not load trace spans. Please retry.
+      </Typography>
     );
   }
 
@@ -1089,12 +1097,21 @@ function TraceGraphCompare({ failingTraceId, workingTraceId, mode }) {
     </Box>
   );
 
-  const renderSide = (graph, loading, label) => {
+  const renderSide = (graph, loading, failed, label) => {
     if (loading) {
       return (
         <Box sx={{ height: 360 }}>
           <GraphSkeleton />
         </Box>
+      );
+    }
+    if (failed) {
+      return (
+        <Stack alignItems="center" justifyContent="center" sx={{ height: 360, p: 2 }}>
+          <Typography fontSize="12px" color="error.main" textAlign="center">
+            Could not load {label} spans. Please retry.
+          </Typography>
+        </Stack>
       );
     }
     if (!graph) {
@@ -1152,14 +1169,14 @@ function TraceGraphCompare({ failingTraceId, workingTraceId, mode }) {
           accentColor="#DB2F2D"
           traceShortId={failingTraceId ? failingTraceId.slice(0, 8) : null}
         >
-          {renderSide(failRenderGraph, failLoading, "failing trace")}
+          {renderSide(failRenderGraph, failLoading, failQ.isError, "failing trace")}
         </CompareColumn>
         <CompareColumn
           title="Working trace"
           accentColor="#5ACE6D"
           traceShortId={workingTraceId ? workingTraceId.slice(0, 8) : null}
         >
-          {renderSide(passRenderGraph, passLoading, "working trace")}
+          {renderSide(passRenderGraph, passLoading, passQ.isError, "working trace")}
         </CompareColumn>
       </Box>
     </Stack>
