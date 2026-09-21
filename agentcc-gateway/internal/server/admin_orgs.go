@@ -42,6 +42,9 @@ func redactOrgConfig(cfg *tenant.OrgConfig) *tenant.OrgConfig {
 			if cp.AWSSessionToken != "" {
 				cp.AWSSessionToken = redactAPIKey(cp.AWSSessionToken)
 			}
+			if cp.ServiceAccountJSON != "" {
+				cp.ServiceAccountJSON = "****"
+			}
 			rp[name] = &cp
 		}
 		redacted.Providers = rp

@@ -75,8 +75,14 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 		headers:   cfg.Headers,
 	}
 
-	if vertexAI && cfg.CredentialsFile != "" {
-		tp, err := gauth.NewTokenProvider(cfg.CredentialsFile, gauth.ScopeCloudPlatform)
+	if vertexAI && (cfg.CredentialsFile != "" || cfg.ServiceAccountJSON != "") {
+		var tp *gauth.TokenProvider
+		var err error
+		if cfg.ServiceAccountJSON != "" {
+			tp, err = gauth.NewTokenProviderJSON([]byte(cfg.ServiceAccountJSON), gauth.ScopeCloudPlatform)
+		} else {
+			tp, err = gauth.NewTokenProvider(cfg.CredentialsFile, gauth.ScopeCloudPlatform)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("gemini: vertex ai credentials: %w", err)
 		}

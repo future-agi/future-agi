@@ -47,6 +47,7 @@ class ProviderConfig(GatewayAdminContractModel):
     aws_secret_access_key: str | None = Field(None, validation_alias=AliasChoices('aws_secret_access_key', 'awsSecretAccessKey'))
     aws_region: str | None = Field(None, validation_alias=AliasChoices('aws_region', 'awsRegion'))
     aws_session_token: str | None = Field(None, validation_alias=AliasChoices('aws_session_token', 'awsSessionToken'))
+    service_account_json: str | None = Field(None, validation_alias=AliasChoices('service_account_json', 'serviceAccountJson'))
 
 
 class GuardrailCheck(GatewayAdminContractModel):

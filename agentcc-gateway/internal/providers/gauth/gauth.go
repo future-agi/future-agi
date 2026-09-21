@@ -52,10 +52,21 @@ func NewTokenProvider(credentialsFile, scope string) (*TokenProvider, error) {
 	if err != nil {
 		return nil, fmt.Errorf("gauth: read credentials file: %w", err)
 	}
+	return NewTokenProviderJSON(data, scope)
+}
 
+// NewTokenProviderJSON loads a service account without writing its private key to disk.
+// Managed providers receive this value from encrypted per-organization credentials.
+func NewTokenProviderJSON(data []byte, scope string) (*TokenProvider, error) {
 	var sa serviceAccountKey
 	if err := json.Unmarshal(data, &sa); err != nil {
-		return nil, fmt.Errorf("gauth: parse credentials file: %w", err)
+		return nil, fmt.Errorf("gauth: parse service account JSON: %w", err)
+	}
+	if sa.ClientEmail == "" || sa.PrivateKey == "" {
+		return nil, fmt.Errorf("gauth: service account JSON requires client_email and private_key")
+	}
+	if sa.TokenURI != "" && sa.TokenURI != defaultTokenURL {
+		return nil, fmt.Errorf("gauth: unsupported Google token URI")
 	}
 
 	block, _ := pem.Decode([]byte(sa.PrivateKey))
