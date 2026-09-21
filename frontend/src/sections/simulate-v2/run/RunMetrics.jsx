@@ -366,9 +366,14 @@ function RunOverview({ tasks }) {
     };
   }, [tasks]);
 
+  /* Each tile carries an `axisLabel` — a plain-English answer to
+     "what does the y-axis plot?" — so the chart is legible without
+     needing a caller. x-axis is always the task index (1..N) through
+     the run. */
   const kpis = [
     {
       label: "Pass rate", value: `${stats.passRate}%`,
+      axisLabel: "rolling pass rate over the last 6 tasks (%)",
       sub: `${stats.passed} of ${stats.measured} tasks · rolling 6-task window`,
       tone: stats.passRate >= 80 ? OUTCOME.passed : stats.passRate >= 50 ? AMBER : OUTCOME.failed,
       series: series.passRate,
@@ -377,6 +382,7 @@ function RunOverview({ tasks }) {
     },
     {
       label: "Critical failures", value: stats.critical,
+      axisLabel: "cumulative release-blocker count",
       sub: stats.critical === 0 ? "no release blockers · cumulative" : "release blockers · cumulative",
       tone: stats.critical === 0 ? OUTCOME.passed : OUTCOME.failed,
       series: series.critical,
@@ -385,6 +391,7 @@ function RunOverview({ tasks }) {
     },
     {
       label: "Median duration", value: `${stats.medianDuration.toFixed(1)}s`,
+      axisLabel: "per-task duration (seconds)",
       sub: `p95 ${stats.p95Duration.toFixed(1)}s · per task`,
       tone: null,
       series: series.duration, seriesColor: ACCENT,
@@ -392,6 +399,7 @@ function RunOverview({ tasks }) {
     },
     {
       label: "Tokens used", value: compactNumber(stats.totalTokens),
+      axisLabel: "per-task token count",
       sub: `avg ${compactNumber(Math.round(stats.avgTokens))} per task`,
       tone: null,
       series: series.tokens, seriesColor: ACCENT,
@@ -399,6 +407,7 @@ function RunOverview({ tasks }) {
     },
     {
       label: "Median turns", value: stats.medianTurns,
+      axisLabel: "per-task turn count",
       sub: `p95 ${stats.p95Turns} turns · per task`,
       tone: null,
       series: series.turns, seriesColor: ACCENT,
@@ -406,6 +415,7 @@ function RunOverview({ tasks }) {
     },
     {
       label: "Median latency", value: `${Math.round(stats.medianLatency)}ms`,
+      axisLabel: "per-task latency (ms)",
       sub: `p95 ${Math.round(stats.p95Latency)}ms · per task`,
       tone: null,
       series: series.latency, seriesColor: ACCENT,
@@ -478,7 +488,17 @@ function RunOverview({ tasks }) {
               dark={dark}
               fmt={k.chartFmt}
             />
-            <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 1, fontSize: 11 }}>
+            {/* Explicit y-axis label — so a reader can tell what the
+                line plots without asking. x is the task index (1..N). */}
+            {k.axisLabel && (
+              <Typography sx={{
+                typography: "s3", color: "text.subtitle", mt: 0.75,
+                fontSize: 10.5, fontStyle: "italic",
+              }}>
+                y: {k.axisLabel}  ·  x: task index
+              </Typography>
+            )}
+            <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.5, fontSize: 11 }}>
               {k.sub}
             </Typography>
           </Box>

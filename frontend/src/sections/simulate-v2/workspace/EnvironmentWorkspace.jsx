@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { alpha } from "@mui/material/styles";
 import PropTypes from "prop-types";
 import { Box, Stack, Typography, Button, Tooltip, Tab, IconButton, Menu, MenuItem } from "@mui/material";
@@ -119,7 +119,16 @@ const GAP_AREA_TO_STEP = {
 export default function EnvironmentWorkspace() {
   const { envId, step = "overview" } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { state, dispatch } = useSimStore();
+
+  // Back should return to where the user came from (Improvements L2,
+  // Environments landing, wherever). Fall back to the environments
+  // list only when this page was opened directly (no in-app history).
+  const goBack = () => {
+    if (location.key && location.key !== "default") navigate(-1);
+    else navigate(paths.dashboard.simulate.environments);
+  };
 
   const env =
     getEnvironment(envId) || state.myEnvironments.find((e) => e.id === envId);
@@ -476,9 +485,9 @@ export default function EnvironmentWorkspace() {
         spacing={2}
         sx={{ px: 3, py: 2, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
       >
-        <Tooltip title="All environments" arrow>
+        <Tooltip title="Back" arrow>
           <Button
-            onClick={() => navigate(paths.dashboard.simulate.environments)}
+            onClick={goBack}
             sx={{ minWidth: 32, width: 32, height: 32, p: 0, color: "text.subtitle" }}
           >
             <Iconify icon="solar:alt-arrow-left-linear" width={18} />

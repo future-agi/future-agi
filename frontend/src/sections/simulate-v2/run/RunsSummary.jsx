@@ -10,10 +10,11 @@ import {
 import { ConfirmDialog } from "src/components/custom-dialog";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
-import { runSummaries, evalSeries, trialSummaries, chipIdentity as computeChipIdentity } from "../_mock/comparison";
+import { runSummaries, evalSeries, trialSummaries, RUN_COLORS } from "../_mock/comparison";
 import { currentEnvVersion, currentAgentVersion } from "../_mock/versions";
 import { staleScenarios } from "../_mock/proofs";
 import WinnerDrawer from "./WinnerDrawer";
+import AppliedEvalsDrawer from "../workspace/evals/AppliedEvalsDrawer";
 import { allMetrics, deltaAgainst } from "../_mock/winner";
 import { useEnvState } from "../store";
 import { neutralCheckboxSx } from "../components/primitives";
@@ -52,6 +53,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
   const [addAnchor, setAddAnchor] = useState(null);
   const [pickingWinner, setPickingWinner] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [addEvalsOpen, setAddEvalsOpen] = useState(false);
   /*
     Null means "all of them" rather than a copied list of ids: the evals arrive
     after the store hydrates, so seeding this with what exists on the first
@@ -73,38 +75,81 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
   const baselineId = envState.baselineRunId || null;
 
   const summaries = useMemo(() => runSummaries(env, envState), [env, envState]);
-  const series = useMemo(() => evalSeries(summaries, envState), [summaries, envState]);
 
   /*
-    Trials, exposed as runs.
+    Trials, exposed as first-class runs.
 
     Each trial of a self improvement was a full execution of the candidate
-    prompt against the environment — a run, by any honest reading. Surfacing
-    them here gives Compare something to reach into a self improvement with,
-    without collapsing the parent concept.
-
-    The chart above keeps using `summaries` (manual runs only) so the trend
-    line does not spike twelve times per self improvement.
+    prompt against the environment — a run, by any honest reading. Product
+    feedback: they should be peer runs in the list, not hidden behind a
+    Trials tab. So we merge manual and trial rows into one chronological
+    stream and assign a single continuous ordinal across both — Run 4, 5,
+    6, … regardless of which one is a manual re-run and which is a trial.
   */
-  const trials = useMemo(() => trialSummaries(env, envState), [env, envState]);
+  /* Demo-friendly cap: show at most 8 trials so the merged list stays
+     readable at a glance. The mock generates far more; the search is
+     the same story with 8 candidates. Take the earliest 8 so the
+     narrative of the SI reads left-to-right. */
+  const TRIAL_CAP = 8;
+  const trials = useMemo(() => {
+    const all = trialSummaries(env, envState);
+    return all
+      .slice()
+      .sort((a, b) => new Date(a.finishedAt || 0) - new Date(b.finishedAt || 0))
+      .slice(0, TRIAL_CAP);
+  }, [env, envState]);
 
   /*
-    Newest first — the run someone just finished is the one they came
-    here to look at. Trials are NOT interleaved here; each manual run's
-    detail page carries a Trials tab that surfaces the self-improvement
-    runs launched from that run. Keeping the top-level list to manual
-    runs matches the mental model users had before self improvements
-    existed and keeps the list short.
+    The one source of row-level truth. Chronological, then stamped with
+    a fresh ordinal so numbering runs 1..N across manual + trial without
+    gaps. Chip letter is the ordinal so the badge always matches "Run N".
+    parentRunOrdinal is stamped onto trial rows so the "from Run N" chip
+    reads the same ordinal you can find in the list.
   */
-  const rows = useMemo(() => [...summaries].reverse(), [summaries]);
+  const mergedRaw = useMemo(() => {
+    const combined = [...summaries, ...trials]
+      .filter((r) => !r.synthetic)
+      .sort((a, b) => new Date(a.finishedAt || 0) - new Date(b.finishedAt || 0));
+    const stamped = combined.map((r, i) => {
+      const ord = i + 1;
+      return {
+        ...r,
+        ordinal: ord,
+        letter: String(ord),
+        color: RUN_COLORS[(ord - 1) % RUN_COLORS.length],
+      };
+    });
+    /* For every trial, find the ordinal of the manual run that spawned
+       its self-improvement search — used by the "from Run N" chip on
+       trial rows. Trial → optimization.fromRunId → run.ordinal. */
+    const ordinalById = new Map(stamped.map((r) => [r.id, r.ordinal]));
+    const parentByOptId = new Map(
+      (envState.optimizations || []).map((o) => [o.id, o.fromRunId]),
+    );
+    return stamped.map((r) => {
+      if (r.kind !== "trial") return r;
+      const parentRunId = parentByOptId.get(r.selfImprovementId);
+      return { ...r, parentRunOrdinal: parentRunId ? ordinalById.get(parentRunId) : null };
+    });
+  }, [summaries, trials, envState.optimizations]);
 
-  /* Selection lookups can still resolve trial ids (Add-run picker in
-     compare, saved views) — allSummaries keeps both. */
-  const allSummaries = useMemo(() => [...summaries, ...trials], [summaries, trials]);
+  /* Newest first for display — the run someone just finished is the top row. */
+  const rows = useMemo(() => [...mergedRaw].reverse(), [mergedRaw]);
 
-  /* Unified chip identity — shared with the compare page so a row's
-     letter and colour are the same on both screens. */
-  const chipIdentity = useMemo(() => computeChipIdentity(env, envState), [env, envState]);
+  /* Chart, compare, baseline lookups all read from the same merged list. */
+  const allSummaries = mergedRaw;
+
+  /* Eval series is now built off the merged list so trials contribute
+     points, not just manual runs. Same shape evalSeries produces. */
+  const series = useMemo(() => {
+    const evalDefs = (envState?.evals || []).map((e) => ({ id: e.id })).filter((e) => e.id);
+    const rawSeries = evalSeries(summaries, envState); /* keeps colour/name mapping */
+    return rawSeries.map((s) => ({
+      ...s,
+      data: mergedRaw.map((r) => (r.scores?.[s.id] == null ? null : r.scores[s.id])),
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mergedRaw, summaries, envState]);
 
   /* One winner across the environment, not one per self improvement.
      `trialSummaries` marks the winner of each search — useful inside
@@ -161,19 +206,19 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
     reads it, only goes up).
   */
   const chartData = useMemo(() => {
-    /* Chart is a trend across manual runs only — trials live under
-       their parent run's Trials tab and would flood the trend line if
-       plotted here. */
-    const categories = summaries.map((s, i) => {
-      const partial = s.total < envState.scenarios.length;
-      const base = i === summaries.length - 1 ? "latest" : `Run ${s.ordinal}`;
-      return partial ? `${base} · subset` : base;
+    /* Chart plots the merged chronological stream — every run in the
+       list contributes a point, trials included. That's what the
+       "trials are peer runs" rule means: the trend line has to include
+       them, otherwise the chart contradicts the table below it. */
+    const categories = mergedRaw.map((r, i) => {
+      const label = i === mergedRaw.length - 1 ? "latest" : `Run ${r.ordinal}`;
+      return label;
     });
     const seriesOut = shownSeries.map((x) => ({
       name: x.name, color: x.color, data: [...x.data],
     }));
     return { categories, categoriesFull: categories, series: seriesOut };
-  }, [shownSeries, summaries, envState?.scenarios?.length]);
+  }, [shownSeries, mergedRaw]);
 
 
   /* The same metric definitions the winner weights use, so a column that reads
@@ -260,11 +305,11 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
       : (baseline ? 132 : 108);
     const columns = [num, num, num, num, num, num, ...evals.map(() => score)];
     return {
-      template: `26px minmax(210px, 300px) ${columns.map((c) => `minmax(${c}px, 1fr)`).join(" ")}`,
+      template: `26px minmax(280px, 380px) ${columns.map((c) => `minmax(${c}px, 1fr)`).join(" ")}`,
       /* Below this the table scrolls rather than crushing the run names. */
       /* Plus the width of the fade, so the rightmost grader is never underneath
          it at the end of a scroll. */
-      min: 26 + 210 + columns.reduce((a, c) => a + c, 0) + 12 * (columns.length + 1) + 28,
+      min: 26 + 280 + columns.reduce((a, c) => a + c, 0) + 12 * (columns.length + 1) + 28,
       deltaWidth: baseline ? 52 : 0,
       /* Where the system numbers end and the graders begin. */
       firstEval: 6,
@@ -272,8 +317,8 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
   }, [baseline, evals]);
 
   return (
-    <Box sx={{ p: 2 }}>
-      <Stack direction={{ xs: "column", md: "row" }} alignItems={{ md: "center" }} spacing={1.5} sx={{ mb: 2 }}>
+    <Box sx={{ p: 2, display: "flex", flexDirection: "column", minHeight: "100%" }}>
+      <Stack direction={{ xs: "column", md: "row" }} alignItems={{ md: "center" }} spacing={1.5} sx={{ mb: 2, flexShrink: 0 }}>
         <Box flex={1} minWidth={0}>
           <Typography sx={{ typography: "m2", fontWeight: 600 }}>Simulations summary</Typography>
           {/* Only claim the runs are comparable when they are. A partial re-run
@@ -281,11 +326,8 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
               acceptable is a subtitle that keeps promising "the same scenarios"
               while one of the rows below covered three of them. */}
           <Typography sx={{ typography: "s1", color: "text.secondary" }}>
-            {summaries.length} runs
-            {full.length === summaries.length
-              ? `. The same ${envState.scenarios.length} scenarios every time, so what changed is the agent. 3 samples per scenario.`
-              : `. ${full.length} over the full ${envState.scenarios.length} scenarios, ${summaries.length - full.length} over a subset. 3 samples per scenario.`}
-            {trials.length > 0 && ` · ${trials.length} self-improvement trial${trials.length === 1 ? "" : "s"} live under their parent run`}
+            {mergedRaw.length} runs · {envState.scenarios.length} scenarios
+            {trials.length > 0 && ` · ${summaries.length} manual, ${trials.length} SI trials`}
           </Typography>
         </Box>
         <Stack direction="row" spacing={1} flexShrink={0}>
@@ -299,11 +341,11 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
           </Button>
           <Button
             variant="outlined" color="inherit" size="small"
-            onClick={() => onGo("evals")}
-            startIcon={<Iconify icon="solar:shield-check-linear" width={15} />}
+            onClick={() => setAddEvalsOpen(true)}
+            startIcon={<Iconify icon="solar:add-circle-linear" width={15} />}
             sx={{ typography: "s2", fontWeight: 700, borderColor: "divider" }}
           >
-            Edit evals
+            Add Evals
           </Button>
           {/* The label does not change once a winner exists. Picking one is the
               same act every time — open the weights, decide, apply — and
@@ -328,6 +370,12 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
         sx={{
           border: "1px solid", borderColor: "divider", borderRadius: 1.5,
           bgcolor: "background.paper", overflow: "hidden",
+          /* Grow to fill any remaining vertical space so the card
+             reaches the bottom of the surrounding scroll container
+             instead of leaving a blank strip beneath it (e.g. on
+             Improvements L2 where the header is shorter than the
+             env workspace's). */
+          flex: 1, display: "flex", flexDirection: "column",
         }}
       >
         {/*
@@ -336,8 +384,8 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
           they grow leftward into the title until the two collide.
         */}
         <Stack
-          direction="row" alignItems="flex-start" spacing={2}
-          sx={{ px: 2.5, pt: 1.5, pb: 0.25 }}
+          direction="row" alignItems="center" spacing={2}
+          sx={{ px: 2.5, pt: 1, pb: 0.5 }}
         >
           {/*
             Which graders to draw. The last one cannot be unticked — an empty
@@ -363,9 +411,9 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
               MenuProps: { PaperProps: { sx: { maxHeight: 320 } } },
             }}
             sx={{
-              width: 220, flexShrink: 0,
+              width: 200, flexShrink: 0,
               "& .MuiInputBase-input": {
-                typography: "s2", py: 0.75,
+                typography: "s2", py: 0.5,
                 whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
               },
             }}
@@ -390,7 +438,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
           {/* Wraps within its own half of the row instead of pushing anything. */}
           <Stack
             direction="row" spacing={1.5} flexWrap="wrap" rowGap={0.75}
-            sx={{ flex: 1, minWidth: 0, justifyContent: "flex-end", pt: 0.75 }}
+            sx={{ flex: 1, minWidth: 0, justifyContent: "flex-end" }}
           >
             {shown.map((e) => (
               <Stack key={e.id} direction="row" alignItems="center" spacing={0.625}>
@@ -419,8 +467,27 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
               },
               theme: { mode: theme.palette.mode },
               colors: chartData.series.map((x) => x.color),
-              stroke: { width: 2, curve: "smooth" },
-              markers: { size: 2.5, strokeWidth: 0 },
+              stroke: { width: 2, curve: "straight" },
+              markers: (() => {
+                /* Discrete markers: manual runs get a larger opaque dot,
+                   trials a smaller subtler one — the eye reads the line as
+                   "manual runs are the anchors, trials fill in between".
+                   Same colour per series so the trend stays coherent. */
+                const discrete = [];
+                mergedRaw.forEach((r, i) => {
+                  chartData.series.forEach((s, si) => {
+                    discrete.push({
+                      seriesIndex: si,
+                      dataPointIndex: i,
+                      fillColor: s.color,
+                      strokeColor: s.color,
+                      size: r.kind === "trial" ? 2 : 4,
+                      shape: "circle",
+                    });
+                  });
+                });
+                return { size: 0, strokeWidth: 0, hover: { size: 5 }, discrete };
+              })(),
               legend: { show: false },
               dataLabels: { enabled: false },
               grid: {
@@ -469,9 +536,9 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                 y: {
                   formatter: (v, opts) => {
                     if (v == null) return "\u2014";
-                    const run = summaries[opts?.dataPointIndex ?? -1];
+                    const run = mergedRaw[opts?.dataPointIndex ?? -1];
                     const partial = run && run.total < envState.scenarios.length;
-                    return `${v}%${partial ? ` · ${run.total} of ${envState.scenarios.length} scenarios` : ""}`;
+                    return `${v}%${partial ? ` · ${run.total} of ${envState.scenarios.length} scenarios` : ""}${run?.kind === "trial" ? " · trial" : ""}`;
                   },
                 },
               },
@@ -603,8 +670,12 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
         */}
         <Box
           sx={{
-            overflowX: "auto",
+            overflow: "auto",
             position: "relative",
+            /* Grow to consume any leftover vertical space inside the
+               card so the card visually reaches the bottom of the
+               surrounding scroll container. */
+            flex: 1, minHeight: 0,
             "&::after": {
               content: '""',
               position: "sticky", right: 0, top: 0, float: "right",
@@ -674,23 +745,18 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                       </Box>
 
                       <Stack direction="row" alignItems="center" spacing={1.25} sx={{ minWidth: 0, py: 0.875, pr: 1.5, overflow: "hidden" }}>
-                        {(() => {
-                          const chip = chipIdentity.get(r.id) || { letter: r.letter, color: r.color };
-                          return (
-                            <Box
-                              sx={{
-                                minWidth: 26, height: 22, px: 0.75, borderRadius: 0.75, flexShrink: 0,
-                                display: "grid", placeItems: "center",
-                                typography: "s3", fontWeight: 700,
-                                fontVariantNumeric: "tabular-nums",
-                                color: chip.color,
-                                bgcolor: (t) => alpha(chip.color, t.palette.mode === "dark" ? 0.22 : 0.14),
-                              }}
-                            >
-                              {chip.letter}
-                            </Box>
-                          );
-                        })()}
+                        <Box
+                          sx={{
+                            minWidth: 26, height: 22, px: 0.75, borderRadius: 0.75, flexShrink: 0,
+                            display: "grid", placeItems: "center",
+                            typography: "s3", fontWeight: 700,
+                            fontVariantNumeric: "tabular-nums",
+                            color: r.color,
+                            bgcolor: (t) => alpha(r.color, t.palette.mode === "dark" ? 0.22 : 0.14),
+                          }}
+                        >
+                          {r.letter}
+                        </Box>
                         {r.id === overallWinnerId && (
                           <Tooltip arrow title="Best-scoring run in this environment">
                             <Box sx={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
@@ -699,15 +765,21 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                           </Tooltip>
                         )}
                         <Stack direction="row" alignItems="baseline" spacing={0.75} sx={{ minWidth: 0, overflow: "hidden" }}>
-                          <Typography noWrap sx={{ typography: "s2", fontWeight: 600, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
-                            Run {r.trialN}
-                            <Box component="span" sx={{ color: "text.subtitle", fontWeight: 500 }}>
-                              {" "}· {r.selfImprovementName}
-                            </Box>
+                          <Typography noWrap sx={{ typography: "s2", fontWeight: 600, flexShrink: 0 }}>
+                            Run {r.ordinal} · agent {r.agentVersion}
+                            {r.envVersion && (
+                              <Box component="span" sx={{ color: "text.subtitle", fontWeight: 500 }}>
+                                {" "}× env {r.envVersion}
+                              </Box>
+                            )}
                           </Typography>
                           <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0 }}>
                             {runTimeLabel(r)}
                           </Typography>
+                          {/* SI provenance chip — this trial belongs to the
+                              self-improvement search launched from Run N.
+                              Clicking navigates to that parent run so the
+                              SI story is reachable in one hop. */}
                           {r.id === baselineId && (
                             <Typography
                               sx={{
@@ -793,26 +865,21 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                     </Box>
 
                     <Stack direction="row" alignItems="center" spacing={1.25} sx={{ minWidth: 0, py: 0.875, pr: 1.5 }}>
-                      {/* Numeric chip, unique colour per row. Same scheme
-                          across manual runs and trials so the badge is
-                          uniform even as the list grows past 26. */}
-                      {(() => {
-                        const chip = chipIdentity.get(r.id) || { letter: r.letter, color: r.color };
-                        return (
-                          <Box
-                            sx={{
-                              minWidth: 26, height: 22, px: 0.75, borderRadius: 0.75, flexShrink: 0,
-                              display: "grid", placeItems: "center",
-                              typography: "s3", fontWeight: 700,
-                              fontVariantNumeric: "tabular-nums",
-                              color: chip.color,
-                              bgcolor: (t) => alpha(chip.color, t.palette.mode === "dark" ? 0.22 : 0.14),
-                            }}
-                          >
-                            {chip.letter}
-                          </Box>
-                        );
-                      })()}
+                      {/* Numeric chip = the continuous ordinal, same
+                          scheme across manual runs and trials so a row's
+                          badge always matches its "Run N" label. */}
+                      <Box
+                        sx={{
+                          minWidth: 26, height: 22, px: 0.75, borderRadius: 0.75, flexShrink: 0,
+                          display: "grid", placeItems: "center",
+                          typography: "s3", fontWeight: 700,
+                          fontVariantNumeric: "tabular-nums",
+                          color: r.color,
+                          bgcolor: (t) => alpha(r.color, t.palette.mode === "dark" ? 0.22 : 0.14),
+                        }}
+                      >
+                        {r.letter}
+                      </Box>
                       {/*
                         Named by what distinguishes it. Every run of this
                         environment carries the same auto-generated label, so
@@ -820,9 +887,9 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                         the agent version — the thing that actually changed —
                         out of sight.
                       */}
-                      <Box minWidth={0} sx={{ display: "flex", alignItems: "center", minWidth: 0 }}>
-                        <Stack direction="row" alignItems="baseline" spacing={0.75} sx={{ minWidth: 0 }}>
-                          <Typography noWrap sx={{ typography: "s2", fontWeight: 600, flexShrink: 0 }}>
+                      <Box minWidth={0} sx={{ display: "flex", alignItems: "center", minWidth: 0, overflow: "hidden" }}>
+                        <Stack direction="row" alignItems="baseline" spacing={0.75} sx={{ minWidth: 0, overflow: "hidden" }}>
+                          <Typography noWrap sx={{ typography: "s2", fontWeight: 600, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
                             Run {r.ordinal} · agent {r.agentVersion}
                             {/* Env version stamped on the run — pinned
                                 at start, not inferred later. Only shown
@@ -951,7 +1018,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                         measurement, so it is the one that gets an accent. */}
                     <MetricCell
                       quiet={!r.saidNotDone}
-                      tone={r.saidNotDone ? "#C2603F" : undefined}
+                      tone={r.saidNotDone ? "#DC2626" : undefined}
                       deltaWidth={grid.deltaWidth} text={`${r.saidNotDone}`}
                       delta={deltaAgainst(metrics.saidNotDone, r, baseline)}
                     />
@@ -1002,6 +1069,14 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
             Delete
           </Button>
         }
+      />
+
+      <AppliedEvalsDrawer
+        open={addEvalsOpen}
+        onClose={() => setAddEvalsOpen(false)}
+        env={env}
+        envState={envState}
+        patch={patch}
       />
 
       <WinnerDrawer
@@ -1246,11 +1321,15 @@ MetricCell.propTypes = {
  */
 function Delta({ delta }) {
   if (!delta || delta.flat) return <Box />;
-  const color = delta.better ? "#5AA47B" : "#C2603F";
+  /* Arrow direction is SEMANTIC: up = improved, down = regressed —
+     regardless of whether the underlying number went up or down.
+     Otherwise a metric where lower-is-better (duration, cost, tokens)
+     would show a green down arrow, which reads as regression. */
+  const color = delta.better ? "#16A34A" : "#DC2626";
   return (
     <Stack direction="row" alignItems="center" spacing={0.125} sx={{ minWidth: 0, opacity: 0.92 }}>
       <Iconify
-        icon={delta.up ? "eva:arrow-upward-fill" : "eva:arrow-downward-fill"}
+        icon={delta.better ? "eva:arrow-upward-fill" : "eva:arrow-downward-fill"}
         width={10}
         sx={{ color, flexShrink: 0 }}
       />

@@ -368,6 +368,12 @@ const RunTests = lazyWithRetry(
 const SimulatedRuns = lazyWithRetry(
   () => import("src/pages/dashboard/simulate-v2/SimulatedRunsPage"),
 );
+const SimImprovementsPage = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate-v2/ImprovementsPage"),
+);
+const SimImprovementEnvRunsPage = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate-v2/ImprovementEnvRunsPage"),
+);
 const RunTestDetail = lazyWithRetry(
   () => import("src/pages/dashboard/run-tests/RunTestDetail"),
 );
@@ -1386,6 +1392,21 @@ export const dashboardRoutes = (
             {
               path: "environments",
               element: <SimEnvironments />,
+            },
+            {
+              /* Improvements — L1: workspace-wide list of run sources
+                 (environments + datasets). Clicking a row drills into
+                 the source's runs summary. */
+              path: "improvements",
+              element: <SimImprovementsPage />,
+            },
+            {
+              /* Improvements — L2 (env): env-scoped runs lens. Shares
+                 the env's SimStore, so any edit here (add runs, edit
+                 evals, choose winner) mutates the same env state the
+                 env workspace reads. */
+              path: "improvements/env/:envId",
+              element: <SimImprovementEnvRunsPage />,
             },
             {
               /* /environments/browse is legacy — the old two-column

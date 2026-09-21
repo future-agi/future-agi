@@ -372,7 +372,16 @@ export default function LiveRunView() {
       {/* ── run header ── */}
       <Box sx={{ borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}>
         <Stack direction="row" alignItems="center" spacing={2} sx={{ px: 3, py: 1.75 }}>
-          <IconButton size="small" onClick={() => navigate(paths.dashboard.simulate.environmentStep(envId, "runs"))}>
+          <IconButton
+            size="small"
+            onClick={() => {
+              /* Go back to the surface that opened this run — Improvements L2,
+                 the env workspace's Runs tab, or wherever else. Falls back to
+                 the env's Runs tab on cold-load (no history). */
+              if (window.history.length > 1) navigate(-1);
+              else navigate(paths.dashboard.simulate.environmentStep(envId, "runs"));
+            }}
+          >
             <Iconify icon="solar:alt-arrow-left-linear" width={18} sx={{ color: "text.subtitle" }} />
           </IconButton>
 

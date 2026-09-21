@@ -128,6 +128,15 @@ export const paths = {
       // travel in the query string so a comparison is a link someone can send.
       simulationCompare: (envId) => `${ROOTS.DASHBOARD}/simulate/environments/${envId}/compare`,
       simulationRuns: `${ROOTS.DASHBOARD}/simulate/runs`,
+      /* Improvements — workspace-wide runs surface.
+         L1 (improvements): sources listed as rows — envs + datasets.
+         L2 (improvementEnvRuns): env-scoped runs lens; shares the
+             env's own SimStore, so runs added/evals edited/winners
+             chosen from here mutate the same env state the workspace
+             reads. */
+      improvements: `${ROOTS.DASHBOARD}/simulate/improvements`,
+      improvementEnvRuns: (envId) =>
+        `${ROOTS.DASHBOARD}/simulate/improvements/env/${envId}`,
       // Where a finished run reports. The legacy execution-detail screen, fed
       // for prototype runs by the mock adapter in simulate-v2/_mock.
       executionDetail: (testId, executionId) =>

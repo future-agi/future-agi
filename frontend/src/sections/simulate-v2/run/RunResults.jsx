@@ -17,7 +17,7 @@ import {
   SectionCard, ScorePill, StatusChip, StatusDot, PersonaBadge, EmptyState, neutralCheckboxSx,
 } from "../components/primitives";
 import Stage from "./stages";
-import RunAnalytics from "./RunAnalytics";
+import RunAnalytics from "./RunAnalyticsV2";
 import CallDrawer from "./CallDrawer";
 import VoiceDetailDrawerV2 from "src/components/VoiceDetailDrawerV2";
 import { effectiveModality } from "../_mock/rlContract";
@@ -121,8 +121,10 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
   const [tab, setTab] = useState(() => {
     const t = params.get("tab") || "tasks";
     /* Stale deep-links to removed tabs — the old "Self improvement runs"
-       (`optimize`/`omega`) and the "Verify" tab — now land on Test runs. */
-    return t === "optimize" || t === "omega" || t === "verify" ? "tasks" : t;
+       (`optimize`/`omega`), the "Verify" tab, and the now-retired "Trials"
+       tab (self-improvement trials are peer runs on the Runs list) — all
+       land on Test runs. */
+    return t === "optimize" || t === "omega" || t === "verify" || t === "trials" ? "tasks" : t;
   });
   const [replaying, setReplaying] = useState(null);
   const [openTask, setOpenTask] = useState(null);
@@ -137,6 +139,26 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
     live in the SectionCard header where the title used to sit.
   */
   const [groupBy, setGroupBy] = useState("useCase");
+  /* Review-mode toggle. The banner is about CRITICAL failures — the
+     release-blocker subset — not the whole Failing bucket. Review
+     narrows the table to exactly those scenarios by combining a
+     status filter (Failing) with an attribute filter (Criticality =
+     Critical). Reset restores the full view. */
+  const [reviewMode, setReviewMode] = useState(null);
+  const enterReviewMode = () => {
+    setReviewMode({ groupBy, statusChip, filters });
+    setGroupByReconciled("pattern");
+    setStatusChip("failing");
+    setFilters({ critical: ["Critical"] });
+    setTab("tasks");
+  };
+  const exitReviewMode = () => {
+    if (!reviewMode) return;
+    setGroupByReconciled(reviewMode.groupBy);
+    setStatusChip(reviewMode.statusChip);
+    setFilters(reviewMode.filters || {});
+    setReviewMode(null);
+  };
   /*
     Column visibility for the traces table. A Set of column keys the
     user has chosen to show; essentials (Persona, Scenario) render
@@ -404,7 +426,16 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
         direction="row" alignItems="center" spacing={2}
         sx={{ px: 3, py: 2, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
       >
-        <IconButton size="small" onClick={() => navigate(paths.dashboard.simulate.environmentStep(envId, "runs"))}>
+        <IconButton
+          size="small"
+          onClick={() => {
+            /* Return to whichever surface opened this run — Improvements L2,
+               the env's own Runs tab, or the compare page — instead of
+               hard-forcing the env workspace. Falls back on cold-load. */
+            if (window.history.length > 1) navigate(-1);
+            else navigate(paths.dashboard.simulate.environmentStep(envId, "runs"));
+          }}
+        >
           <Iconify icon="solar:alt-arrow-left-linear" width={18} sx={{ color: "text.subtitle" }} />
         </IconButton>
         <Box flex={1} minWidth={0}>
@@ -508,16 +539,29 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
               <Stack direction="row" alignItems="center" spacing={1.25}>
                 <Iconify icon="solar:danger-triangle-linear" width={18} sx={{ color: "#DC2626" }} />
                 <Typography sx={{ typography: "s2", flex: 1 }}>
-                  <b>{failedCritical} critical {failedCritical === 1 ? "scenario" : "scenarios"} failed.</b>{" "}
-                  These are release blockers — the agent broke a rule the environment enforces.
+                  <b>{failedCritical} of {statusCounts.failing} failing {statusCounts.failing === 1 ? "scenario is" : "scenarios are"} critical.</b>{" "}
+                  {reviewMode
+                    ? "Showing only critical failing scenarios. Reset to return to the full list."
+                    : "Critical failures are release blockers — the agent broke a rule the environment enforces."}
                 </Typography>
-                <Button
-                  size="small"
-                  onClick={() => { setGroupByReconciled("pattern"); setTab("tasks"); }}
-                  sx={{ typography: "s2", fontWeight: 700, color: "#DC2626" }}
-                >
-                  Review
-                </Button>
+                {reviewMode ? (
+                  <Button
+                    size="small"
+                    onClick={exitReviewMode}
+                    startIcon={<Iconify icon="mingcute:close-line" width={14} />}
+                    sx={{ typography: "s2", fontWeight: 700, color: "#DC2626" }}
+                  >
+                    Reset view
+                  </Button>
+                ) : (
+                  <Button
+                    size="small"
+                    onClick={enterReviewMode}
+                    sx={{ typography: "s2", fontWeight: 700, color: "#DC2626" }}
+                  >
+                    Review
+                  </Button>
+                )}
               </Stack>
             </Box>
           )}
@@ -531,9 +575,6 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
           >
             <Tab value="tasks" label={`Test runs (${stats.total})`} sx={{ minHeight: 38 }} />
             <Tab value="analytics" label="Analytics" sx={{ minHeight: 38 }} />
-            {trialsFromRun.length > 0 && (
-              <Tab value="trials" label={`Trials (${trialsFromRun.length})`} sx={{ minHeight: 38 }} />
-            )}
           </CustomTabs>
 
           {tab === "tasks" && (
@@ -688,48 +729,6 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
 
           {tab === "analytics" && <RunAnalytics tasks={tasks} evals={shownEvals} env={env} stats={stats} />}
 
-
-          {tab === "trials" && (
-            <SectionCard
-              title="Self-improvement trials from this run"
-              subtitle={
-                trialsSelected.length >= 2
-                  ? `${trialsSelected.length} selected · ready to compare`
-                  : "Every candidate the search executed. Click a row to open it; tick two or more to compare."
-              }
-              action={
-                trialsSelected.length > 0 && (
-                  <Stack direction="row" spacing={1}>
-                    <Button
-                      size="small" variant="outlined"
-                      onClick={() => setTrialsSelected([])}
-                      sx={{ typography: "s2", fontWeight: 600, color: "text.primary", borderColor: "divider" }}
-                    >
-                      Clear
-                    </Button>
-                    <Button
-                      size="small" variant="contained" color="primary"
-                      disabled={trialsSelected.length < 2}
-                      onClick={compareTrials}
-                      startIcon={<Iconify icon="solar:transfer-horizontal-linear" width={15} />}
-                      sx={{ typography: "s2", fontWeight: 700 }}
-                    >
-                      Compare
-                    </Button>
-                  </Stack>
-                )
-              }
-            >
-              <TrialsTable
-                trials={trialsFromRun}
-                chips={trialChips}
-                evals={trialEvals}
-                selected={trialsSelected}
-                onToggle={toggleTrial}
-                onOpen={(t) => navigate(paths.dashboard.simulate.simulationRun(env.id, t.id))}
-              />
-            </SectionCard>
-          )}
 
           <ReplayDrawer task={replaying} seed={seed} onClose={() => setReplaying(null)} />
         </Box>

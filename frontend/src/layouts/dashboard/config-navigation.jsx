@@ -56,6 +56,7 @@ const ICONS = {
   feed: icon("ic_feed"),
   persona: icon("ic_persona"),
   agents: icon("ic_agents"),
+  improvements: icon("ic_chartsObserve"),
 };
 
 // ----------------------------------------------------------------------
@@ -216,7 +217,15 @@ export function useNavData() {
           {
             title: "Environments",
             path: paths.dashboard.simulate.environments,
-            icon: ICONS.agentDefinition,
+            icon: ICONS.simulatorAgent,
+          },
+          {
+            /* Improvements — workspace-wide runs surface. Each row is
+               one source (an env or a dataset); clicking drills into
+               that source's runs summary. */
+            title: "Improvements",
+            path: paths.dashboard.simulate.improvements,
+            icon: ICONS.improvements,
           },
           // {
           //   title: "Agent Definition",
