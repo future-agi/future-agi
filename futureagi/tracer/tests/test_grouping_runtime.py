@@ -355,6 +355,8 @@ def test_call_reservation_never_resends_unknown_and_accounts_actual_overage(
     first = reserve_call(**request, max_cost_usd="0.010000000")
     assert first["created"] is True
     assert reserve_call(**request, max_cost_usd="0.010000000")["created"] is False
+    # A new estimator must reuse, not overwrite/re-send, an old reservation.
+    assert reserve_call(**request, max_cost_usd="0.020000000")["created"] is False
     settled_unknown = settle_call(
         **request,
         status="unknown",
@@ -384,6 +386,14 @@ def test_call_reservation_never_resends_unknown_and_accounts_actual_overage(
         reserve_call(
             **{**request, "request_key": "next-request"}, max_cost_usd="0.010000000"
         )
+    with override_settings(ERROR_FEED_GROUPING_BUDGET_ENFORCED=False):
+        uncapped = reserve_call(
+            **{**request, "request_key": "next-request"}, max_cost_usd="1.000000000"
+        )
+        assert uncapped["created"] is True
+        scope.refresh_from_db()
+        assert scope.reserved_usd == Decimal("1.000000000")
+        assert scope.spent_usd == Decimal("0.020000000")
 
 
 @override_settings(

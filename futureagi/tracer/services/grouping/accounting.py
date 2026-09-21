@@ -149,10 +149,10 @@ def reserve_call(
         if existing:
             if (
                 existing.request_digest != request_digest
-                or existing.max_cost_usd != amount
                 or existing.repair_intent != repair_intent
             ):
                 raise GroupingConflict("request key was reused for a different call")
+            # A changed estimate never rewrites an existing reservation.
             # A prior reservation could have been sent before a crash. It is
             # never permission to send a second paid call.
             return {**_receipt(existing), "created": False}
@@ -180,7 +180,7 @@ def reserve_call(
         tenant_committed = (tenant_totals["spent"] or Decimal(0)) + (
             tenant_totals["reserved"] or Decimal(0)
         )
-        if (
+        if getattr(settings, "ERROR_FEED_GROUPING_BUDGET_ENFORCED", True) and (
             budget <= 0
             or work_budget <= 0
             or tenant_budget <= 0

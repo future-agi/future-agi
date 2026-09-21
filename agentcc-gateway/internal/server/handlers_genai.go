@@ -37,6 +37,11 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 	rc.RequestID = models.GetRequestID(r.Context())
 	rc.TraceID = w.Header().Get("x-agentcc-trace-id")
 	rc.Model = model
+	// Retain provider-qualified routing identity, but send only the model name
+	// upstream on the native Google API (e.g. vertex_ai/gemini-3.8-flash).
+	if prefix := r.URL.Query().Get("provider"); prefix != "" {
+		rc.Model = prefix + "/" + model
+	}
 	rc.RequestHeaders = cloneRequestHeaders(r)
 
 	switch action {
@@ -114,7 +119,7 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 	h.applyOrgModelDatabaseOverrides(orgCfg, rc)
 	h.applyOrgModelMapOverrides(orgCfg, rc)
 
-	provider, err := h.resolveProviderWithOrgFallback(ctx, rc, orgID, orgCfg, model)
+	provider, err := h.resolveProviderWithOrgFallback(ctx, rc, orgID, orgCfg, rc.Model)
 	if err != nil {
 		writeGenAIErrorFromError(w, err)
 		return

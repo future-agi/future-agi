@@ -157,8 +157,9 @@ type geminiCandidate struct {
 }
 
 type geminiUsageMetadata struct {
-	PromptTokenCount     int `json:"promptTokenCount"`
-	CandidatesTokenCount int `json:"candidatesTokenCount"`
+	CachedContentTokenCount *int `json:"cachedContentTokenCount,omitempty"`
+	PromptTokenCount        int  `json:"promptTokenCount"`
+	CandidatesTokenCount    int  `json:"candidatesTokenCount"`
 	// Gemini reports thinking tokens separately from candidatesTokenCount but
 	// bills them as output. Fold them into CompletionTokens so thinking-on runs
 	// aren't under-billed (OpenAI's completion_tokens includes reasoning too).
@@ -747,6 +748,11 @@ func translateResponse(resp *geminiResponse, model string) *models.ChatCompletio
 			PromptTokens:     resp.UsageMetadata.PromptTokenCount,
 			CompletionTokens: resp.UsageMetadata.CandidatesTokenCount + resp.UsageMetadata.ThoughtsTokenCount,
 			TotalTokens:      resp.UsageMetadata.TotalTokenCount,
+		}
+		if cached := resp.UsageMetadata.CachedContentTokenCount; cached != nil {
+			details, _ := json.Marshal(map[string]int{"cached_tokens": *cached})
+			raw := json.RawMessage(details)
+			result.Usage.PromptTokensDetails = &raw
 		}
 	}
 
