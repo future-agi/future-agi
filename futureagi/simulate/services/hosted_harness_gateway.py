@@ -142,6 +142,23 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         "SIMULATOR_LLM_PROVIDER": provider,
         "SIMULATOR_LLM_MODEL": model,
     }
+    if backend == "claude":
+        # Authoring may need a virtual key with model aliases that the platform's internal
+        # service key does not have. The key is platform-owned, never taken from the job.
+        gateway_key = str(
+            os.environ.get("AGENTCC_HARNESS_API_KEY")
+            or os.environ.get("AGENTCC_INTERNAL_API_KEY")
+            or ""
+        ).strip()
+        gateway_url = str(os.environ.get("AGENTCC_BASE_URL") or "").strip()
+        if not gateway_key or not gateway_url:
+            raise HostedHarnessError(
+                "authoring_gateway_not_configured",
+                "Claude authoring requires AGENTCC_HARNESS_API_KEY (or the local internal key) and a sandbox-reachable AGENTCC_BASE_URL",
+                status_code=503,
+            )
+        values["AGENTCC_API_KEY"] = gateway_key
+        values["AGENTCC_BASE_URL"] = gateway_url
     for name in (
         "LIVEKIT_URL",
         "LIVEKIT_API_KEY",
@@ -1077,6 +1094,9 @@ def _resolved_egress_domains(
     values: list[str] = [domain for domain in base_domains if isinstance(domain, str)]
     values.extend(_provider_egress_domains(target_secrets))
     values.extend(_provider_egress_domains(simulator_env))
+    gateway_host = _hostname_from_url(simulator_env.get("AGENTCC_BASE_URL"))
+    if gateway_host:
+        values.append(gateway_host)
     # Observe, when the guest is given credentials for it. Derived rather than requested, because a
     # customer cannot be expected to know the collector is a dependency of their own run.
     simulator_values = {str(k).upper(): v for k, v in simulator_env.items()}
@@ -1366,6 +1386,9 @@ class DaytonaHostedGateway:
             "us-east5-aiplatform.googleapis.com",
             "us-central1-aiplatform.googleapis.com",
         ]
+        gateway_host = _hostname_from_url(simulator_env.get("AGENTCC_BASE_URL"))
+        if gateway_host and gateway_host not in default_authoring_egress:
+            default_authoring_egress.insert(0, gateway_host)
         allowed_domains = list(
             dict.fromkeys(
                 getattr(
@@ -1389,7 +1412,9 @@ class DaytonaHostedGateway:
                 for name, value in simulator_env.items()
                 if name not in {"LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"}
             },
-            "CLAUDE_CODE_USE_VERTEX": "1",
+            "CLAUDE_CODE_USE_VERTEX": (
+                "0" if simulator_env.get("AGENTCC_API_KEY") else "1"
+            ),
             "GOOGLE_GENAI_USE_VERTEXAI": "True",
             "CLOUD_ML_REGION": getattr(
                 settings, "ALK_HOSTED_AUTHORING_CLAUDE_REGION", "us-east5"
