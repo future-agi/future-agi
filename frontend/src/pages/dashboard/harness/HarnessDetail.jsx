@@ -25,6 +25,7 @@ import ScenarioOutcome from "./ScenarioOutcome";
 import CustomTooltip from "src/components/tooltip";
 
 import StageOutput from "./StageOutput";
+import HarnessConversation from "src/sections/simulate-v2/assistant/HarnessConversation";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import EnvironmentSwitcher from "src/components/harness/EnvironmentSwitcher";
 import { compactActivityEvents } from "./activityEvents";
@@ -564,6 +565,9 @@ export default function HarnessDetail() {
               // A fr-based left column grew to a third of a wide viewport around ~200px of
               // content, which is what read as skewed. Fixed width; the feed takes the slack.
               md: "264px minmax(0, 1fr)",
+              // The conversation sits beside the work rather than over it, at the width the
+              // studio design uses for it.
+              lg: "264px minmax(0, 1fr) minmax(340px, 400px)",
             },
           }}
         >
@@ -1215,6 +1219,19 @@ export default function HarnessDetail() {
                 )}
               </Box>
             )}
+          </Box>
+
+          <Box
+            sx={{
+              display: { xs: "none", lg: "flex" },
+              flexDirection: "column",
+              minHeight: 0,
+              minWidth: 0,
+              p: 2,
+              pl: 0,
+            }}
+          >
+            <HarnessConversation jobId={String(jobId)} />
           </Box>
         </Box>
       </Box>

@@ -35,6 +35,9 @@ type streamState struct {
 	currentToolCallID string
 	pendingStopReason string
 	pendingUsage      *models.Usage
+	// What message_start managed to report for the prompt. Zero means the provider had not
+	// counted it yet, and the count has to travel on the closing delta instead.
+	startedInputTokens int
 	// toolNameMapping maps truncated tool name → original name, populated
 	// when the caller used WithMapping. Applied on tool_use content_block_start
 	// emission so the SDK sees the original name the client sent.
@@ -149,6 +152,7 @@ func handleChunk(ctx context.Context, state *streamState, chunk models.StreamChu
 				OutputTokens: chunk.Usage.CompletionTokens,
 			}
 		}
+		state.startedInputTokens = startUsage.InputTokens
 		emit(ctx, events, sseFrame("message_start", MessageStartEvent{
 			Type: "message_start",
 			Message: MessageStartMsg{
@@ -307,8 +311,13 @@ func flushPendingStop(ctx context.Context, state *streamState, events chan<- []b
 	}
 
 	var outputTokens int
+	var inputTokens int
 	if state.pendingUsage != nil {
 		outputTokens = state.pendingUsage.CompletionTokens
+		// Only when message_start could not carry it, so a good count is never overwritten.
+		if state.startedInputTokens == 0 {
+			inputTokens = state.pendingUsage.PromptTokens
+		}
 	}
 
 	emit(ctx, events, sseFrame("message_delta", MessageDeltaEvent{
@@ -316,7 +325,7 @@ func flushPendingStop(ctx context.Context, state *streamState, events chan<- []b
 		Delta: MessageDelta{
 			StopReason: state.pendingStopReason,
 		},
-		Usage: DeltaUsage{OutputTokens: outputTokens},
+		Usage: DeltaUsage{OutputTokens: outputTokens, InputTokens: inputTokens},
 	}))
 
 	emit(ctx, events, sseFrame("message_stop", MessageStopEvent{Type: "message_stop"}))

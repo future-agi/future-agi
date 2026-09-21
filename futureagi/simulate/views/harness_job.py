@@ -291,6 +291,14 @@ class HarnessJobViewSet(viewsets.ViewSet):
     def amend_scenarios(self, request, pk=None):
         return get_harness_provider().amend_scenarios(request, pk)
 
+    @action(detail=True, methods=["get", "post"], url_path="chat")
+    def chat(self, request, pk=None):
+        """Talk to a run that is still up: POST to say something, GET to read what it said."""
+        provider = get_harness_provider()
+        if request.method == "POST":
+            return provider.chat_send(request, pk)
+        return provider.chat_read(request, pk)
+
     @action(detail=False, methods=["get"])
     def health(self, request):
         return Response(get_harness_provider().health())
