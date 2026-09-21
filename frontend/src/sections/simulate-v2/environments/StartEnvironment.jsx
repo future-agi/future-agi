@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { alpha } from "@mui/material/styles";
 import {
   Box, Stack, Typography, Button, TextField, IconButton, Tooltip, Tab, Tabs,
+  Switch, MenuItem, Select,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
@@ -11,6 +12,7 @@ import { SectionCard } from "../components/primitives";
 import { useSimStore } from "../store";
 import DescribeFlowStep from "./intake/DescribeFlowStep";
 import MyEnvironmentsTable from "./MyEnvironmentsTable";
+import { countries } from "src/assets/data/countries";
 import vapiLogo from "./platform-logos/vapi.svg?raw";
 import retellLogo from "./platform-logos/retell.svg?raw";
 import blandLogo from "./platform-logos/bland.svg?raw";
@@ -670,10 +672,17 @@ function PanelHostedPlatform() {
      scenarios. Not required to build the env, but improves the
      derivation when supplied. */
   const [repoUrl, setRepoUrl] = useState("");
-  /* Voice-only: matches the `callDirection` field on voice_platform in
-     _mock/agentTypes.js. Inbound = we call the agent, outbound = the
-     agent dials our simulated customer. */
-  const [callDirection, setCallDirection] = useState("inbound");
+  /* Voice contact details — how the test call actually reaches the
+     agent. `simMode` = web (WebRTC, no telephony provider) or phone
+     (PSTN, needs a country code + number). `inboundCalls` mirrors the
+     old callDirection binary: on = agent takes inbound, off = agent
+     dials out. `agentSpeaksFirst` tells the simulator to wait for the
+     agent's greeting before replying. */
+  const [simMode, setSimMode] = useState("web");
+  const [countryIso, setCountryIso] = useState("US");
+  const [contactNumber, setContactNumber] = useState("");
+  const [inboundCalls, setInboundCalls] = useState(true);
+  const [agentSpeaksFirst, setAgentSpeaksFirst] = useState(false);
 
   /* When agent type flips, the current platform selection is likely
      stale. Snap to the first platform of the new type and clear the
@@ -688,7 +697,8 @@ function PanelHostedPlatform() {
   };
 
   const chosen = platforms.find((p) => p.id === platform) || platforms[0];
-  const canGo = !!chosen && !!id.trim() && !!key.trim();
+  const phoneOk = agentType !== "voice" || simMode !== "phone" || !!contactNumber.trim();
+  const canGo = !!chosen && !!id.trim() && !!key.trim() && phoneOk;
 
   return (
     <Stack spacing={1.75} sx={{ p: 2.5 }}>
@@ -746,6 +756,15 @@ function PanelHostedPlatform() {
             mono
             helper="Stored encrypted; used only to invoke the agent on your behalf."
           />
+          {agentType === "voice" && (
+            <ContactInformation
+              mode={simMode} onMode={setSimMode}
+              countryIso={countryIso} onCountryIso={setCountryIso}
+              contactNumber={contactNumber} onContactNumber={setContactNumber}
+              inboundCalls={inboundCalls} onInboundCalls={setInboundCalls}
+              agentSpeaksFirst={agentSpeaksFirst} onAgentSpeaksFirst={setAgentSpeaksFirst}
+            />
+          )}
           <Field
             label="GitHub repo"
             placeholder="https://github.com/your-org/your-agent"
@@ -753,20 +772,15 @@ function PanelHostedPlatform() {
             mono
             helper="Optional. Lets us read the agent's tools + prompts to seed matching scenarios."
           />
-          {agentType === "voice" && (
-            <Box>
-              <Label>Call direction</Label>
-              <Box sx={{ display: "grid", gap: 0.75, gridTemplateColumns: "1fr 1fr", mt: 0.75 }}>
-                <ChipCard label="Inbound — we call your agent" on={callDirection === "inbound"} onClick={() => setCallDirection("inbound")} />
-                <ChipCard label="Outbound — your agent dials us" on={callDirection === "outbound"} onClick={() => setCallDirection("outbound")} />
-              </Box>
-            </Box>
-          )}
         </>
       )}
       <ContinueRow
         disabled={!canGo}
-        hint={!chosen ? "Pick a supported path above" : "Fill both fields"}
+        hint={
+          !chosen ? "Pick a supported path above"
+          : !phoneOk ? "Add a contact number for telephony simulation"
+          : "Fill both fields"
+        }
         onClick={() => build({
           kind: "platform",
           agentType,
@@ -774,7 +788,19 @@ function PanelHostedPlatform() {
           agentId: id.trim(),
           apiKey: key.trim(),
           ...(repoUrl.trim() ? { repoUrl: repoUrl.trim() } : {}),
-          ...(agentType === "voice" ? { callDirection } : {}),
+          ...(agentType === "voice" ? {
+            callDirection: inboundCalls ? "inbound" : "outbound",
+            contact: {
+              mode: simMode,
+              inboundCalls,
+              agentSpeaksFirst,
+              ...(simMode === "phone" ? {
+                countryIso,
+                countryCode: COUNTRY_BY_ISO[countryIso]?.dial || "",
+                number: contactNumber.trim(),
+              } : {}),
+            },
+          } : {}),
         })}
       />
     </Stack>
@@ -1260,6 +1286,241 @@ Field.propTypes = {
   mono: PropTypes.bool, type: PropTypes.string,
   multiline: PropTypes.bool, fullWidth: PropTypes.bool,
 };
+
+/* Contact Information — how test calls actually reach the agent.
+   Layout mirrors the prod v1 flow:
+     • one header card: current mode + description on the left, a
+       segmented Web/Phone toggle on the right.
+     • when Phone: Country Code + Contact Number as two bordered
+       inputs stacked side-by-side below.
+     • Inbound Calls toggle row (agent takes inbound calls).
+     • Agent speaks first toggle row.
+   No section header — reads as a run of stacked cards, matching the
+   rest of the form. */
+function ContactInformation({
+  mode, onMode,
+  countryIso, onCountryIso,
+  contactNumber, onContactNumber,
+  inboundCalls, onInboundCalls,
+  agentSpeaksFirst, onAgentSpeaksFirst,
+}) {
+  const header = mode === "phone"
+    ? { title: "Telephony simulation (PSTN)", body: "A real phone call is placed over PSTN — requires a configured telephony provider." }
+    : { title: "Web simulation (WebRTC)", body: "No phone call is placed and no telephony provider is needed." };
+  const selected = COUNTRY_BY_ISO[countryIso] || COUNTRY_BY_ISO.US;
+
+  return (
+    <Stack spacing={1}>
+      {/* mode header card + segmented toggle */}
+      <Stack
+        direction="row" alignItems="center" spacing={1.5}
+        sx={{
+          px: 1.75, py: 1.25, borderRadius: 1,
+          border: "1px solid", borderColor: "divider",
+        }}
+      >
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography sx={{ typography: "s2", fontWeight: 700 }}>{header.title}</Typography>
+          <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>
+            {header.body}
+          </Typography>
+        </Box>
+        <SegmentedToggle
+          value={mode} onChange={onMode}
+          options={[
+            { value: "web",   label: "Web" },
+            { value: "phone", label: "Phone" },
+          ]}
+        />
+      </Stack>
+
+      {/* phone-only fields */}
+      {mode === "phone" && (
+        <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+          <Box sx={{ width: { xs: "100%", sm: 180 } }}>
+            <Typography sx={{ typography: "s3", fontWeight: 600, mb: 0.5 }}>Country Code</Typography>
+            <Select
+              fullWidth size="small"
+              value={countryIso}
+              onChange={(e) => onCountryIso(e.target.value)}
+              MenuProps={{ PaperProps: { sx: { maxHeight: 320 } } }}
+              renderValue={() => (
+                <Stack direction="row" alignItems="center" spacing={1}>
+                  <Box component="span" sx={{ fontSize: 18, lineHeight: 1 }}>{selected.flag}</Box>
+                  <Typography sx={{ typography: "s2", fontFamily: "ui-monospace, Menlo, monospace" }}>
+                    {selected.dial}
+                  </Typography>
+                </Stack>
+              )}
+              sx={{ "& .MuiSelect-select": { display: "flex", alignItems: "center", py: 0.75 } }}
+            >
+              {COUNTRY_OPTIONS.map((c, idx) => (
+                <MenuItem key={c.iso} value={c.iso} sx={{
+                  typography: "s2", py: 0.75,
+                  borderTop: idx > 0 && !c.suggested && COUNTRY_OPTIONS[idx - 1]?.suggested
+                    ? "1px solid" : "none",
+                  borderColor: "divider",
+                }}>
+                  <Stack direction="row" alignItems="center" spacing={1.25} sx={{ width: "100%" }}>
+                    <Box component="span" sx={{ fontSize: 18, lineHeight: 1, flexShrink: 0 }}>{c.flag}</Box>
+                    <Typography sx={{
+                      typography: "s2", flex: 1, minWidth: 0,
+                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                    }}>
+                      {c.name}
+                    </Typography>
+                    <Typography sx={{
+                      typography: "s2", color: "text.subtitle",
+                      fontFamily: "ui-monospace, Menlo, monospace", flexShrink: 0,
+                    }}>
+                      {c.dial}
+                    </Typography>
+                  </Stack>
+                </MenuItem>
+              ))}
+            </Select>
+          </Box>
+          <Box sx={{ flex: 1 }}>
+            <Field
+              label="Contact Number"
+              required
+              placeholder="Number to call for the simulation"
+              value={contactNumber} onChange={onContactNumber}
+              mono
+            />
+          </Box>
+        </Stack>
+      )}
+
+      <ToggleRow
+        checked={inboundCalls}
+        onChange={onInboundCalls}
+        title="Inbound Calls"
+        body="Allows the agent to take inbound calls."
+      />
+      <ToggleRow
+        checked={agentSpeaksFirst}
+        onChange={onAgentSpeaksFirst}
+        title="Agent speaks first"
+        body="Turn on if your agent greets first. The simulator waits for it before replying."
+      />
+    </Stack>
+  );
+}
+ContactInformation.propTypes = {
+  mode: PropTypes.oneOf(["web", "phone"]),
+  onMode: PropTypes.func,
+  countryIso: PropTypes.string,
+  onCountryIso: PropTypes.func,
+  contactNumber: PropTypes.string,
+  onContactNumber: PropTypes.func,
+  inboundCalls: PropTypes.bool,
+  onInboundCalls: PropTypes.func,
+  agentSpeaksFirst: PropTypes.bool,
+  onAgentSpeaksFirst: PropTypes.func,
+};
+
+/* Two-value segmented control — active pill uses the same tinted
+   selected surface as the ChipCard elsewhere so it doesn't feel like
+   a foreign primitive. */
+function SegmentedToggle({ value, onChange, options }) {
+  return (
+    <Stack
+      direction="row"
+      sx={{
+        p: 0.375, borderRadius: 1,
+        border: "1px solid", borderColor: "divider",
+        bgcolor: (th) => alpha(th.palette.text.primary, th.palette.mode === "dark" ? 0.03 : 0.02),
+      }}
+    >
+      {options.map((o) => {
+        const on = value === o.value;
+        return (
+          <Box
+            key={o.value}
+            role="button" tabIndex={0}
+            onClick={() => onChange(o.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onChange(o.value); } }}
+            sx={{
+              px: 1.75, py: 0.625, borderRadius: 0.75, cursor: "pointer",
+              typography: "s2", fontWeight: 600,
+              color: on ? "text.primary" : "text.subtitle",
+              bgcolor: (th) => on
+                ? (th.palette.mode === "dark" ? alpha(th.palette.text.primary, 0.1) : "#fff")
+                : "transparent",
+              boxShadow: (th) => on
+                ? (th.palette.mode === "dark" ? "none" : `0 1px 2px ${alpha(th.palette.text.primary, 0.08)}`)
+                : "none",
+              transition: "background-color 120ms ease, color 120ms ease",
+            }}
+          >
+            {o.label}
+          </Box>
+        );
+      })}
+    </Stack>
+  );
+}
+SegmentedToggle.propTypes = {
+  value: PropTypes.string, onChange: PropTypes.func,
+  options: PropTypes.arrayOf(PropTypes.shape({ value: PropTypes.string, label: PropTypes.node })),
+};
+
+function ToggleRow({ checked, onChange, title, body }) {
+  return (
+    <Stack
+      direction="row" alignItems="center" spacing={1.5}
+      sx={{
+        px: 1.75, py: 1.25, borderRadius: 1,
+        border: "1px solid", borderColor: "divider",
+      }}
+    >
+      <Box sx={{ flex: 1, minWidth: 0 }}>
+        <Typography sx={{ typography: "s2", fontWeight: 700 }}>{title}</Typography>
+        <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>
+          {body}
+        </Typography>
+      </Box>
+      <Switch
+        size="small"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+    </Stack>
+  );
+}
+ToggleRow.propTypes = {
+  checked: PropTypes.bool, onChange: PropTypes.func,
+  title: PropTypes.node, body: PropTypes.node,
+};
+
+/* Full country list from src/assets/data/countries. Ordering surfaces
+   the `suggested` markets first (US, GB, IN, AU, DE, FR, …), then the
+   rest alphabetised, so the picker opens on the countries the voice
+   pilots actually land in without hiding the long tail. */
+const flagOf = (iso) =>
+  iso && iso.length === 2
+    ? String.fromCodePoint(...iso.toUpperCase().split("").map((c) => 0x1F1E6 + c.charCodeAt(0) - 65))
+    : "";
+
+const COUNTRY_OPTIONS = (() => {
+  const filled = countries.filter((c) => c.code && c.phone);
+  /* `phone` in the seed uses "1-268" for territories that share a
+     dial prefix — we keep just the leading trunk so the picker never
+     shows a hyphenated code the user cannot type. */
+  const cleaned = filled.map((c) => ({
+    iso: c.code,
+    name: c.label,
+    dial: `+${String(c.phone).split("-")[0]}`,
+    suggested: !!c.suggested,
+    flag: flagOf(c.code),
+  }));
+  const suggested = cleaned.filter((c) => c.suggested);
+  const rest = cleaned.filter((c) => !c.suggested).sort((a, b) => a.name.localeCompare(b.name));
+  return [...suggested, ...rest];
+})();
+
+const COUNTRY_BY_ISO = Object.fromEntries(COUNTRY_OPTIONS.map((c) => [c.iso, c]));
 
 function ProviderRow({ options, value, onChange }) {
   return (
