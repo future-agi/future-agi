@@ -7,6 +7,7 @@ import pytest
 from django.test import override_settings
 
 from tracer.ee_boundary import TraceInvestigationUsagePricing
+from tracer.models.trace_investigation import TraceInvestigationSource
 from tracer.services.trace_investigation import (
     canonical_wire_result_digest,
     claim_due_investigations,
@@ -46,6 +47,7 @@ def test_gateway_accounting_must_match_reported_cost():
 def test_charge_uses_existing_emitter_with_stable_tenant_event():
     report = SimpleNamespace(
         id=uuid.uuid4(),
+        source=TraceInvestigationSource.OMEGA,
         organization_id=uuid.uuid4(),
         project_id=uuid.uuid4(),
         workspace_id=None,

@@ -397,7 +397,7 @@ def _expire_claims(now: datetime) -> None:
             )
             if job.state == TraceInvestigationJobState.RUNNING:
                 job.state = (
-                    TraceInvestigationJobState.WAITING
+                    _superseded_job_state(job, now)
                     if job.generation > attempt.generation
                     else TraceInvestigationJobState.CANCELLED
                 )
@@ -575,6 +575,21 @@ def _locked_attempt(
     return attempt, job
 
 
+def _superseded_job_state(job: TraceInvestigationJob, now) -> str:
+    """Keep a newer live claim running; otherwise queue its generation."""
+    newer_claimed = TraceInvestigationAttempt.no_workspace_objects.filter(
+        job=job,
+        generation=job.generation,
+        status=TraceInvestigationAttemptStatus.CLAIMED,
+        lease_expires_at__gt=now,
+    ).exists()
+    return (
+        TraceInvestigationJobState.RUNNING
+        if newer_claimed
+        else TraceInvestigationJobState.WAITING
+    )
+
+
 def update_investigation_attempt(
     *,
     attempt_id: uuid.UUID,
@@ -605,7 +620,7 @@ def update_investigation_attempt(
             attempt.save(update_fields=["status", "completed_at", "updated_at"])
             if job.state == TraceInvestigationJobState.RUNNING:
                 job.state = (
-                    TraceInvestigationJobState.WAITING
+                    _superseded_job_state(job, now)
                     if job.generation > attempt.generation
                     else TraceInvestigationJobState.CANCELLED
                 )
@@ -628,12 +643,13 @@ def update_investigation_attempt(
                     "updated_at",
                 ]
             )
-            job.state = (
-                TraceInvestigationJobState.WAITING
-                if job.generation > attempt.generation
-                else TraceInvestigationJobState.CANCELLED
-            )
-            job.save(update_fields=["state", "updated_at"])
+            if job.state == TraceInvestigationJobState.RUNNING:
+                job.state = (
+                    _superseded_job_state(job, now)
+                    if job.generation > attempt.generation
+                    else TraceInvestigationJobState.CANCELLED
+                )
+                job.save(update_fields=["state", "updated_at"])
 
     if expired:
         raise InvestigationConflict("attempt lease has expired")
@@ -907,7 +923,12 @@ def publish_investigation(
             source=TraceInvestigationSource.OMEGA,
             recorded_at=now,
             is_current=active,
-            has_issues=bool(result["findings"]),
+            has_issues=(
+                bool(result["findings"])
+                if result["execution_status"] == "completed"
+                and result["outcome"] != "unknown"
+                else None
+            ),
             job=job,
             attempt=attempt,
             idempotency_key=idempotency_key,
@@ -942,7 +963,7 @@ def publish_investigation(
             attempt.save(update_fields=["status", "completed_at", "updated_at"])
         if job.state == TraceInvestigationJobState.RUNNING:
             if job.generation > attempt.generation:
-                job.state = TraceInvestigationJobState.WAITING
+                job.state = _superseded_job_state(job, now)
             elif active:
                 job.state = TraceInvestigationJobState.COMPLETED
             else:
