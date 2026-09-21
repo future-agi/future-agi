@@ -8,6 +8,7 @@ import {gatewayConfig} from './gateway-provider.mjs';
 import {createControlClient} from './control-client.mjs';
 import {recordKafkaBatch, runCoordinator} from './coordinator.mjs';
 import {investigateTrace} from './investigation.mjs';
+import {createStorageRecordingResolver} from './audio-inspection.mjs';
 
 const {Kafka, logLevel, CompressionTypes, CompressionCodecs} = kafkaModule;
 CompressionCodecs[CompressionTypes.Snappy] = SnappyCodec;
@@ -27,6 +28,9 @@ export async function runDaemon(env = process.env, signal) {
   const control = createControlClient({baseUrl: env.OMEGA_DJANGO_URL, token: await secret(env, 'OMEGA_INTERNAL_API_SECRET')});
   const clickhouse = {baseUrl: env.OMEGA_CLICKHOUSE_URL, database: env.OMEGA_CLICKHOUSE_DATABASE || 'default',
     username: env.OMEGA_CLICKHOUSE_USERNAME, password: await secret(env, 'OMEGA_CLICKHOUSE_PASSWORD')};
+  const audioOrigins = (env.OMEGA_AUDIO_ALLOWED_ORIGINS ?? '').split(',').map(value => value.trim()).filter(Boolean);
+  const resolveRecording = audioOrigins.length
+    ? createStorageRecordingResolver({allowedOrigins: audioOrigins}) : undefined;
   if (!clickhouse.username || !clickhouse.baseUrl) throw new Error('Dedicated read-only ClickHouse credentials required');
   const stop = new AbortController();
   const combined = signal ? AbortSignal.any([signal, stop.signal]) : stop.signal;
@@ -53,7 +57,7 @@ export async function runDaemon(env = process.env, signal) {
     running = runCoordinator({control, spool: env.OMEGA_REPORT_SPOOL, workerId: env.OMEGA_WORKER_ID || hostname(),
       engineVersion: env.OMEGA_ENGINE_VERSION, concurrency, signal: combined,
       investigate: (claim, {signal: runSignal}) => investigateTrace(claim, {gatewayConfig: config, clickhouse,
-        scratchRoot: env.OMEGA_SCRATCH_DIR || '/tmp', signal: runSignal}),
+        scratchRoot: env.OMEGA_SCRATCH_DIR || '/tmp', signal: runSignal, resolveRecording}),
       onError: (_error, attemptId) => process.stderr.write(JSON.stringify({event: 'omega_work_failed', attempt_id: attemptId ?? null}) + '\n')});
     await running;
     if (stop.signal.aborted && !signal?.aborted) throw new Error('Kafka consumer crashed');

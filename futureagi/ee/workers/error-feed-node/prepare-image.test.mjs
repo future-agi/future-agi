@@ -15,7 +15,7 @@ test('image preparation reuses verified Kafka and Snappy artifacts offline and r
     for (const path of [worker, join(context, 'packages'), source]) await mkdir(path, {recursive: true});
     await copyFile(new URL('./prepare-image.mjs', import.meta.url), join(worker, 'prepare-image.mjs'));
     for (const name of ['gateway-provider.mjs', 'worker.mjs', 'daemon.mjs', 'control-client.mjs',
-      'coordinator.mjs', 'evidence-store.mjs', 'investigation.mjs', 'Dockerfile']) {
+      'coordinator.mjs', 'evidence-store.mjs', 'investigation.mjs', 'audio-inspection.mjs', 'Dockerfile']) {
       await writeFile(join(worker, name), '// fixture\n');
     }
     const externalPackages = [];

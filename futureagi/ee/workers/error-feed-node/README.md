@@ -80,6 +80,7 @@ Set these variables at runtime, never in the image:
 | `OMEGA_CLICKHOUSE_URL` | HTTP endpoint for the v2 spans table |
 | `OMEGA_CLICKHOUSE_DATABASE` | Database; default `default` |
 | `OMEGA_CLICKHOUSE_USERNAME`, `OMEGA_CLICKHOUSE_PASSWORD_FILE` | Dedicated SELECT-only account |
+| `OMEGA_AUDIO_ALLOWED_ORIGINS` | Optional comma-separated exact HTTPS storage origins; enables one question-driven Gemini audio inspection per investigation. The worker reads the URL from a scoped span, checks it with HEAD, and passes the URL through AgentCC without downloading audio. Leave unset to disable. |
 | `OMEGA_REPORT_SPOOL` | Persistent mounted directory writable by UID 1000; image default `/var/lib/omega/reports` |
 | `OMEGA_SCRATCH_DIR` | Temporary evidence on disk; image default `/var/lib/omega/scratch` |
 

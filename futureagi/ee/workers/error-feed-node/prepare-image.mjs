@@ -16,7 +16,7 @@ for (const item of manifest.packages) {
 }
 await mkdir(join(context, 'worker'), {recursive: true});
 const workerFiles = ['gateway-provider.mjs', 'worker.mjs', 'daemon.mjs', 'control-client.mjs',
-  'coordinator.mjs', 'evidence-store.mjs', 'investigation.mjs'];
+  'coordinator.mjs', 'evidence-store.mjs', 'investigation.mjs', 'audio-inspection.mjs'];
 for (const name of workerFiles) {
   await copyFile(join(worker, name), join(context, 'worker', name));
 }

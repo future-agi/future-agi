@@ -54,9 +54,7 @@ export function createGatewayProvider({baseUrl, model, apiKey, signal, maxCalls 
       && (!Number.isSafeInteger(maxInputBytesTotal) || maxInputBytesTotal < 1)) throw new Error('Invalid input byte budget');
   const calls = [];
   let requestBytes = 0;
-  const transport = new ChatCompletionsCompatibleProvider({
-    id: 'agentcc', baseUrl, model, apiKey,
-    fetch: async (url, init) => {
+  const trackedFetch = async (url, init) => {
       signal?.throwIfAborted();
       if (calls.length >= maxCalls) throw new Error('Model-call budget exhausted');
       const bytes = serializedRequestBytes(init?.body);
@@ -89,7 +87,9 @@ export function createGatewayProvider({baseUrl, model, apiKey, signal, maxCalls 
         if (error.message.startsWith('Gateway request failed with HTTP ')) throw error;
         throw new Error(signal?.aborted ? 'Gateway request aborted' : 'Gateway transport failed');
       } finally { call.latency_ms = Date.now() - started; }
-    }
+    };
+  const transport = new ChatCompletionsCompatibleProvider({
+    id: 'agentcc', baseUrl, model, apiKey, fetch: trackedFetch
   });
   // generate only: streaming cost headers cannot be assumed final before the
   // gateway has completed a response. Preserve raw usage details for cached and
@@ -137,6 +137,37 @@ export function createGatewayProvider({baseUrl, model, apiKey, signal, maxCalls 
   };
   return {
     provider,
+    async inspectAudio({url, format, question}) {
+      if (typeof url !== 'string' || !url.startsWith('https://') || url.length > 2048
+          || !['wav', 'mp3'].includes(format) || typeof question !== 'string'
+          || !question.trim() || question.length > 1000) throw new Error('Invalid audio inspection input');
+      const body = JSON.stringify({model, max_tokens: 1200, messages: [{role: 'user', content: [
+        {type: 'text', text: `Answer only this question about the attached recording: ${question}\nReturn JSON with answer, observations (each with start_seconds, end_seconds, speaker, statement, confidence), metrics (name, value, unit, method), and uncertainty. Do not invent timestamps or measurements. Use null when unavailable.`},
+        {type: 'file', file: {file_id: url, format: format === 'wav' ? 'audio/wav' : 'audio/mpeg'}},
+      ]}]});
+      const response = await trackedFetch(baseUrl.replace(/\/$/, '') + '/chat/completions', {
+        method: 'POST', headers: {Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json',
+          'Cache-Control': 'no-store', 'X-AgentCC-Cache': 'skip'}, body,
+      });
+      const call = calls.at(-1);
+      try {
+        const raw = await response.json();
+        const content = raw.choices?.[0]?.message?.content;
+        if (typeof content !== 'string' || content.length > 16000) throw new Error('Invalid audio model response');
+        const parsed = JSON.parse(content.trim().replace(/^```(?:json)?\s*/i, '').replace(/```$/, '').trim());
+        if (!parsed || typeof parsed.answer !== 'string' || parsed.answer.length > 8000
+            || !Array.isArray(parsed.observations) || parsed.observations.length > 30
+            || !Array.isArray(parsed.metrics) || parsed.metrics.length > 30) throw new Error('Invalid audio observation');
+        call.status = 'completed';
+        call.usage = raw.usage ?? null;
+        call.response_id = raw.id ?? null;
+        return {observation: parsed, request_id: call.gateway_request_id,
+          model_used: call.routed_model ?? model};
+      } catch {
+        call.status = 'invalid_response';
+        throw new Error('Audio gateway response could not be processed');
+      }
+    },
     accounting() {
       const unknown = calls.filter(c => c.cost_microusd === null).length;
       const knownMicros = calls.reduce((sum, c) => sum + (c.cost_microusd ?? 0), 0);

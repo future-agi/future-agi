@@ -309,3 +309,65 @@ test('verifier rechecks an unread child after an unsupported success', async () 
     assert.equal(result.coverage.read_complete, true);
   } finally { await rm(scratch, {recursive: true, force: true}); }
 });
+
+test('question-driven audio inspection runs inside the investigator and keeps the existing report contract', async () => {
+  const scratch = await mkdtemp(join(tmpdir(), 'omega-audio-investigation-test-'));
+  try {
+    const claim = makeClaim();
+    const row = {id: 'audio-span', project_id: claim.project_id, trace_id: claim.trace_id,
+      parent_span_id: '', input: 'Do not interrupt the caller', span_attr_str: {
+        'gen_ai.voice.recording.url': 'https://media.example.test/call.wav'}};
+    const raw = JSON.stringify(row);
+    const evidenceId = `${row.id}:0:${Buffer.byteLength(raw)}`;
+    const assessment = {outcome: 'success', findings: [], requirement_checks: [{requirement_id: 'interruption',
+      requirement: 'Do not interrupt the caller', status: 'satisfied', evidence_ids: [evidenceId]}]};
+    let controllerStep = 0, audioRequests = 0, resolutions = 0;
+    const result = await investigateTrace(claim, {scratchRoot: scratch,
+      resolveRecording: async ({store, span_id}) => {
+        assert.equal(store.index.has(span_id), true);
+        resolutions++;
+        return {url: 'https://media.example.test/call.wav', format: 'wav'};
+      },
+      fetchEvidence: async (c, path) => storeEvidence([Buffer.from(raw + '\n')], path, c),
+      gatewayConfig: {baseUrl: 'https://gateway.invalid/v1', model: 'fixture', apiKey: 'fixture',
+        fetchImpl: async (_url, init) => {
+          const request = JSON.parse(init.body);
+          let message;
+          if (Array.isArray(request.messages[0]?.content)) {
+            audioRequests++;
+            assert.equal(request.messages[0].content[1].file.file_id, 'https://media.example.test/call.wav');
+            message = {role: 'assistant', content: JSON.stringify({answer: 'No interruption',
+              observations: [{statement: 'Caller finished the sentence before the agent replied',
+                start_seconds: 2, end_seconds: 5, speaker: 'agent', confidence: 0.8}],
+              metrics: [{name: 'assistant_interruptions', value: 0, unit: 'count', method: 'audio review'}],
+              uncertainty: null})};
+          } else if (request.messages.find(m => m.role === 'system').content.includes('Independently check')) {
+            message = {role: 'assistant', content: JSON.stringify(assessment)};
+          } else if (controllerStep++ === 0) {
+            message = {role: 'assistant', content: '', tool_calls: [{id: 'read-audio-span', type: 'function',
+              function: {name: 'read_span', arguments: JSON.stringify({span_id: row.id, offset: 0, length: 4096})}}]};
+          } else if (controllerStep === 2) {
+            message = {role: 'assistant', content: '', tool_calls: [{id: 'inspect-audio', type: 'function',
+              function: {name: 'inspect_audio', arguments: JSON.stringify({span_id: row.id,
+                question: 'Did the assistant interrupt the caller?'})}}]};
+          } else {
+            message = {role: 'assistant', content: JSON.stringify({action: 'finish', question: '',
+              child_instructions: '', assessment})};
+          }
+          return new Response(JSON.stringify({choices: [{message}],
+            usage: {prompt_tokens: 20, completion_tokens: 20}}),
+          {headers: {'content-type': 'application/json', 'x-agentcc-cost': '0.000100',
+            'x-request-id': `gateway-${controllerStep}-${audioRequests}`}});
+        }}});
+    assert.equal(result.execution_status, 'completed');
+    assert.equal(result.outcome, 'success');
+    assert.equal(resolutions, 1);
+    assert.equal(audioRequests, 1);
+    assert.equal(result.usage.model_calls, 5);
+    assert.equal(result.gateway_accounting.length, 5);
+    assert.equal(result.usage.cost_usd, 0.0005);
+    assert.equal(result.evidence_receipts.length, 1);
+    assert.equal(result.evidence_receipts[0].evidence_id, evidenceId);
+    assert.equal('recording_digest' in result.evidence_receipts[0], false);
+  } finally {await rm(scratch, {recursive: true, force: true});}
+});
