@@ -210,6 +210,7 @@ export default function HarnessCreate() {
   const [connector, setConnector] = useState("auto");
   const [providerMode, setProviderMode] = useState("environment_backed");
   const [providerTargetId, setProviderTargetId] = useState("");
+  const [phoneSystemPrompt, setPhoneSystemPrompt] = useState("");
   const [providerDynamicVariables, setProviderDynamicVariables] = useState("");
   const [scenarioCount, setScenarioCount] = useState(10);
   // Per call, not per run. See callLimitConfig above.
@@ -341,7 +342,7 @@ export default function HarnessCreate() {
     ...(sourcePayload() ? { source: sourcePayload() } : {}),
     agent: {
       connector,
-      ...(["vapi", "retell", "retell_chat"].includes(connector)
+      ...(["vapi", "retell", "retell_chat", "phone"].includes(connector)
         ? { mode: providerMode }
         : {}),
       config: {
@@ -361,6 +362,12 @@ export default function HarnessCreate() {
         ...(["retell", "retell_chat"].includes(connector) &&
         providerMode === "provider_import"
           ? { agent_id: providerTargetId.trim() }
+          : {}),
+        ...(connector === "phone"
+          ? {
+              phone_number: providerTargetId.trim(),
+              target_system_prompt: phoneSystemPrompt.trim(),
+            }
           : {}),
         ...(connector === "retell_chat" && providerDynamicVariables.trim()
           ? {
@@ -412,12 +419,12 @@ export default function HarnessCreate() {
       name:
         uploadedSource?.name ||
         githubRepository.trim().split("/").pop() ||
-        providerTargetId.trim() ||
+        (connector === "phone" ? "phone-agent" : providerTargetId.trim()) ||
         "agent",
       authoring_key:
         uploadedSource?.name ||
         githubRepository.trim().split("/").pop() ||
-        providerTargetId.trim() ||
+        (connector === "phone" ? "phone-agent" : providerTargetId.trim()) ||
         "agent",
     },
   });
@@ -596,7 +603,8 @@ export default function HarnessCreate() {
     Boolean(String(providerCredentialValues[providerApiKeyName] || "").trim());
   const providerTargetConfigured =
     !["connect_only", "provider_import"].includes(providerMode) ||
-    Boolean(providerTargetId.trim());
+    (Boolean(providerTargetId.trim()) &&
+      (connector !== "phone" || Boolean(phoneSystemPrompt.trim())));
   const providerConnectionReady =
     providerApiKeyConfigured && providerTargetConfigured;
   const toggleSecret = (name) =>
@@ -614,8 +622,7 @@ export default function HarnessCreate() {
     // generic value. Secret-looking names are always handled as credentials,
     // matching the backend's fail-closed config validation.
     const isSecret =
-      item.kind === "secret" ||
-      isSecretCredentialName(item.environment_name);
+      item.kind === "secret" || isSecretCredentialName(item.environment_name);
     const isFile = item.kind === "file";
     const revealed = revealedSecrets.has(item.environment_name);
     return (
@@ -766,9 +773,10 @@ export default function HarnessCreate() {
       : Boolean(parseGitHubInput(githubRepository)) &&
         (githubVisibility === "public" || Boolean(githubInstallationId.trim()));
   const hasConnectedProviderSource =
-    ["vapi", "retell", "retell_chat"].includes(connector) &&
+    ["vapi", "retell", "retell_chat", "phone"].includes(connector) &&
     ["connect_only", "provider_import"].includes(providerMode) &&
-    Boolean(providerTargetId.trim());
+    Boolean(providerTargetId.trim()) &&
+    (connector !== "phone" || Boolean(phoneSystemPrompt.trim()));
   const hasSource = hasUploadedOrRepositorySource || hasConnectedProviderSource;
 
   return (
@@ -828,7 +836,7 @@ export default function HarnessCreate() {
             <Stack spacing={2}>
               <Section
                 title="Agent source"
-                description="Upload or check out source code, or connect a provider agent below. Source code is optional when a provider agent ID is connected."
+                description="Upload or check out source code, or connect an existing agent ID or phone number below. Source code is optional for connect-only targets."
               >
                 <Stack spacing={2}>
                   <Box
@@ -1340,7 +1348,7 @@ export default function HarnessCreate() {
 
               <Section
                 title="Agent connection"
-                description="Let ALK detect the runtime, or explicitly test an agent hosted by Vapi or Retell."
+                description="Let ALK detect the runtime, or connect an existing Vapi, Retell, or phone-accessible agent."
               >
                 <Stack spacing={1.5}>
                   <TextField
@@ -1350,7 +1358,10 @@ export default function HarnessCreate() {
                     value={connector}
                     onChange={(event) => {
                       setConnector(event.target.value);
-                      if (event.target.value === "retell_chat") {
+                      setProviderTargetId("");
+                      if (
+                        ["retell_chat", "phone"].includes(event.target.value)
+                      ) {
                         setProviderMode("connect_only");
                       }
                       setPreflightDirty(Boolean(preflight));
@@ -1362,9 +1373,12 @@ export default function HarnessCreate() {
                     <MenuItem value="vapi">Vapi</MenuItem>
                     <MenuItem value="retell">Retell</MenuItem>
                     <MenuItem value="retell_chat">Retell chat</MenuItem>
+                    <MenuItem value="phone">Others (phone number)</MenuItem>
                   </TextField>
 
-                  {["vapi", "retell", "retell_chat"].includes(connector) && (
+                  {["vapi", "retell", "retell_chat", "phone"].includes(
+                    connector,
+                  ) && (
                     <>
                       <Box
                         role="radiogroup"
@@ -1375,7 +1389,7 @@ export default function HarnessCreate() {
                           gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" },
                         }}
                       >
-                        {connector !== "retell_chat" && (
+                        {!["retell_chat", "phone"].includes(connector) && (
                           <SourceTile
                             icon="solar:code-square-linear"
                             title="Create from repository code"
@@ -1387,20 +1401,30 @@ export default function HarnessCreate() {
                             }}
                           />
                         )}
-                        <SourceTile
-                          icon="solar:copy-linear"
-                          title="Clone and rewire agent ID"
-                          description="Copy the provider definition, point its HTTP tools at this isolated environment, then delete the copy."
-                          selected={providerMode === "provider_import"}
-                          onSelect={() => {
-                            setProviderMode("provider_import");
-                            setPreflightDirty(Boolean(preflight));
-                          }}
-                        />
+                        {connector !== "phone" && (
+                          <SourceTile
+                            icon="solar:copy-linear"
+                            title="Clone and rewire agent ID"
+                            description="Copy the provider definition, point its HTTP tools at this isolated environment, then delete the copy."
+                            selected={providerMode === "provider_import"}
+                            onSelect={() => {
+                              setProviderMode("provider_import");
+                              setPreflightDirty(Boolean(preflight));
+                            }}
+                          />
+                        )}
                         <SourceTile
                           icon="solar:link-circle-linear"
-                          title="Use existing agent ID"
-                          description="Connect to the existing provider agent without changing or cloning it."
+                          title={
+                            connector === "phone"
+                              ? "Call existing number"
+                              : "Use existing agent ID"
+                          }
+                          description={
+                            connector === "phone"
+                              ? "Dial the agent's existing number without cloning or rewiring it."
+                              : "Connect to the existing provider agent without changing or cloning it."
+                          }
                           selected={providerMode === "connect_only"}
                           onSelect={() => {
                             setProviderMode("connect_only");
@@ -1412,58 +1436,65 @@ export default function HarnessCreate() {
                         providerMode,
                       ) ? (
                         <Stack spacing={1.5}>
-                          <TextField
-                            fullWidth
-                            size="small"
-                            label={providerApiKeyName}
-                            type={
-                              revealedSecrets.has(providerApiKeyName)
-                                ? "text"
-                                : "password"
-                            }
-                            value={
-                              providerCredentialValues[providerApiKeyName] || ""
-                            }
-                            onChange={(event) => {
-                              setProviderCredentialValues((current) => ({
-                                ...current,
-                                [providerApiKeyName]: event.target.value,
-                              }));
-                              setPreflightDirty(Boolean(preflight));
-                            }}
-                            helperText="Used to inspect and connect to this provider agent. Stored as a run-scoped secret; never written to the job or artifacts."
-                            InputProps={{
-                              endAdornment: (
-                                <InputAdornment position="end">
-                                  <IconButton
-                                    size="small"
-                                    edge="end"
-                                    onClick={() =>
-                                      toggleSecret(providerApiKeyName)
-                                    }
-                                    aria-label={`${revealedSecrets.has(providerApiKeyName) ? "Hide" : "Show"} ${providerApiKeyName}`}
-                                  >
-                                    <Iconify
-                                      icon={
-                                        revealedSecrets.has(providerApiKeyName)
-                                          ? "solar:eye-closed-linear"
-                                          : "solar:eye-linear"
+                          {providerApiKeyName && (
+                            <TextField
+                              fullWidth
+                              size="small"
+                              label={providerApiKeyName}
+                              type={
+                                revealedSecrets.has(providerApiKeyName)
+                                  ? "text"
+                                  : "password"
+                              }
+                              value={
+                                providerCredentialValues[providerApiKeyName] ||
+                                ""
+                              }
+                              onChange={(event) => {
+                                setProviderCredentialValues((current) => ({
+                                  ...current,
+                                  [providerApiKeyName]: event.target.value,
+                                }));
+                                setPreflightDirty(Boolean(preflight));
+                              }}
+                              helperText="Used to inspect and connect to this provider agent. Stored as a run-scoped secret; never written to the job or artifacts."
+                              InputProps={{
+                                endAdornment: (
+                                  <InputAdornment position="end">
+                                    <IconButton
+                                      size="small"
+                                      edge="end"
+                                      onClick={() =>
+                                        toggleSecret(providerApiKeyName)
                                       }
-                                      width={16}
-                                    />
-                                  </IconButton>
-                                </InputAdornment>
-                              ),
-                            }}
-                          />
+                                      aria-label={`${revealedSecrets.has(providerApiKeyName) ? "Hide" : "Show"} ${providerApiKeyName}`}
+                                    >
+                                      <Iconify
+                                        icon={
+                                          revealedSecrets.has(
+                                            providerApiKeyName,
+                                          )
+                                            ? "solar:eye-closed-linear"
+                                            : "solar:eye-linear"
+                                        }
+                                        width={16}
+                                      />
+                                    </IconButton>
+                                  </InputAdornment>
+                                ),
+                              }}
+                            />
+                          )}
                           <TextField
                             size="small"
                             label={
-                              connector === "vapi"
-                                ? "Vapi assistant ID"
-                                : connector === "retell_chat"
-                                  ? "Retell chat agent ID"
-                                  : "Retell voice agent ID"
+                              connector === "phone"
+                                ? "Agent phone number (E.164)"
+                                : connector === "vapi"
+                                  ? "Vapi assistant ID"
+                                  : connector === "retell_chat"
+                                    ? "Retell chat agent ID"
+                                    : "Retell voice agent ID"
                             }
                             value={providerTargetId}
                             onChange={(event) => {
@@ -1471,11 +1502,36 @@ export default function HarnessCreate() {
                               setPreflightDirty(Boolean(preflight));
                             }}
                             helperText={
-                              providerMode === "provider_import"
-                                ? "ALK clones this target, rewires imported HTTP tools to the isolated environment, and cleans up the clone. Upload source code only when the provider definition lacks required environment or tool information."
-                                : "ALK connects to this existing provider agent without cloning it. Source-code upload is optional."
+                              connector === "phone"
+                                ? "The platform dials this number using its configured outbound SIP trunk. Use a number you control or are authorized to test."
+                                : providerMode === "provider_import"
+                                  ? "ALK clones this target, rewires imported HTTP tools to the isolated environment, and cleans up the clone. Upload source code only when the provider definition lacks required environment or tool information."
+                                  : "ALK connects to this existing provider agent without cloning it. Source-code upload is optional."
                             }
                           />
+                          {connector === "phone" && (
+                            <>
+                              <TextField
+                                size="small"
+                                multiline
+                                minRows={5}
+                                label="Agent system prompt"
+                                value={phoneSystemPrompt}
+                                onChange={(event) => {
+                                  setPhoneSystemPrompt(event.target.value);
+                                  setPreflightDirty(Boolean(preflight));
+                                }}
+                                helperText="Used to understand the target and generate scenarios; it does not change the live phone agent. External tool calls keep using their existing endpoints."
+                              />
+                              <Alert severity="info" variant="outlined">
+                                Calls use the platform outbound SIP trunk. No
+                                agent is cloned or rewired; tools remain on
+                                their existing system, so isolated world effects
+                                are available only if that system is already
+                                connected.
+                              </Alert>
+                            </>
+                          )}
                           {connector === "retell_chat" && (
                             <TextField
                               size="small"

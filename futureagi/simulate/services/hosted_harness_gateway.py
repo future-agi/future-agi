@@ -191,6 +191,8 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         "LIVEKIT_URL",
         "LIVEKIT_API_KEY",
         "LIVEKIT_API_SECRET",
+        "SIP_OUTBOUND_TRUNK_ID",
+        "SIP_OUTBOUND_FROM_NUMBER",
         "CARTESIA_API_KEY",
         "DEEPGRAM_API_KEY",
         "GEMINI_API_KEY",
@@ -908,6 +910,7 @@ def _webrtc_egress_cidrs(
         "livekit",
         "vapi",
         "retell",
+        "phone",
     }:
         return ()
     return tuple(sorted(getattr(settings, "ALK_HOSTED_WEBRTC_EGRESS_CIDRS", []) or []))

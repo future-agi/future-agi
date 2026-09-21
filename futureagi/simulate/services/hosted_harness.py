@@ -458,6 +458,13 @@ def _target_agent_prompt(job: HostedHarnessJob, payload: dict[str, Any]) -> str:
     supplied = str(payload.get("agent_prompt") or "").strip()
     if supplied:
         return supplied
+    if str((job.payload.get("agent") or {}).get("connector") or "") == "phone":
+        return str(
+            ((job.payload.get("agent") or {}).get("config") or {}).get(
+                "target_system_prompt"
+            )
+            or ""
+        ).strip()
     return str(_authored_contract_data(job).get("system_prompt_excerpt") or "").strip()
 
 
@@ -490,7 +497,7 @@ def _record_target_agent_facts(
     # model and language are left alone: the contract carries neither.
     connector = str((job.payload.get("agent") or {}).get("connector") or "").lower()
     if (
-        connector in {"livekit", "vapi", "retell", "retell_chat"}
+        connector in {"livekit", "vapi", "retell", "retell_chat", "phone"}
         and not agent_definition.provider
     ):
         agent_definition.provider = (

@@ -1,4 +1,7 @@
-from simulate.serializers.harness_job import HarnessAgentSerializer
+from simulate.serializers.harness_job import (
+    HarnessAgentSerializer,
+    HarnessJobCreateSerializer,
+)
 
 
 def test_vapi_connect_only_accepts_existing_assistant_id():
@@ -12,6 +15,68 @@ def test_vapi_connect_only_accepts_existing_assistant_id():
     )
     assert serializer.is_valid(), serializer.errors
     assert serializer.validated_data["mode"] == "connect_only"
+
+
+def test_phone_connect_only_accepts_number_and_prompt_without_provider_key():
+    serializer = HarnessAgentSerializer(
+        data={
+            "connector": "phone",
+            "mode": "connect_only",
+            "config": {
+                "phone_number": "+14155551234",
+                "target_system_prompt": "You help callers book appointments.",
+            },
+            "secret_refs": {},
+        }
+    )
+    assert serializer.is_valid(), serializer.errors
+
+
+def test_phone_connect_only_rejects_invalid_number_or_missing_prompt():
+    serializer = HarnessAgentSerializer(
+        data={
+            "connector": "phone",
+            "mode": "connect_only",
+            "config": {"phone_number": "5551234"},
+        }
+    )
+    assert not serializer.is_valid()
+
+
+def test_phone_connect_only_rejects_customer_caller_id_override():
+    serializer = HarnessAgentSerializer(
+        data={
+            "connector": "phone",
+            "mode": "connect_only",
+            "config": {
+                "phone_number": "+14155551234",
+                "target_system_prompt": "You help callers book appointments.",
+                "sip_outbound_from_number": "+14155559999",
+            },
+        }
+    )
+    assert not serializer.is_valid()
+
+
+def test_phone_connect_only_needs_no_repository_or_customer_secret():
+    serializer = HarnessJobCreateSerializer(
+        data={
+            "schema_version": "futureagi.harness-job.v1",
+            "agent": {
+                "connector": "phone",
+                "mode": "connect_only",
+                "config": {
+                    "phone_number": "+14155551234",
+                    "target_system_prompt": "You help callers book appointments.",
+                },
+                "secret_refs": {},
+            },
+            "scenario_count": 1,
+            "artifacts": {"level": "full"},
+        }
+    )
+    assert serializer.is_valid(), serializer.errors
+    assert serializer.validated_data["source"]["kind"] == "provider"
 
 
 def test_retell_environment_backed_accepts_repository_lifecycle():
