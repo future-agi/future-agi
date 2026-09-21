@@ -17688,6 +17688,28 @@ export const HarnessUsageRecordApiFunding = {
   customer: "customer",
 } as const;
 
+export type HarnessUsageRecordApiOutcome =
+  (typeof HarnessUsageRecordApiOutcome)[keyof typeof HarnessUsageRecordApiOutcome];
+
+export const HarnessUsageRecordApiOutcome = {
+  completed: "completed",
+  failed: "failed",
+} as const;
+
+export type HarnessUsageRecordApiFailureDomain =
+  (typeof HarnessUsageRecordApiFailureDomain)[keyof typeof HarnessUsageRecordApiFailureDomain];
+
+export const HarnessUsageRecordApiFailureDomain = {
+  agent: "agent",
+  simulator: "simulator",
+  environment: "environment",
+  connectivity: "connectivity",
+  infrastructure: "infrastructure",
+  grading: "grading",
+  artifact: "artifact",
+  platform_sync: "platform_sync",
+} as const;
+
 export interface HarnessUsageRecordApi {
   id: string;
   action: HarnessUsageRecordApiAction;
@@ -17700,6 +17722,8 @@ export interface HarnessUsageRecordApi {
   amount: number;
   occurred_at: string;
   funding: HarnessUsageRecordApiFunding;
+  outcome?: HarnessUsageRecordApiOutcome;
+  failure_domain?: HarnessUsageRecordApiFailureDomain;
 }
 
 export interface HarnessUsageRequestApi {

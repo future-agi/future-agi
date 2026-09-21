@@ -36410,6 +36410,8 @@ export const simulateApiHarnessAttemptsUsageBodyRecordsItemScenarioKeyMax = 255;
 
 export const simulateApiHarnessAttemptsUsageBodyRecordsItemAmountMin = 0;
 
+export const simulateApiHarnessAttemptsUsageBodyRecordsItemOutcomeDefault = `completed`;
+
 export const SimulateApiHarnessAttemptsUsageBody = zod.object({
   operation: zod.enum(["check", "report"]),
   action: zod.enum(["text_call", "voice_call"]).optional(),
@@ -36428,6 +36430,23 @@ export const SimulateApiHarnessAttemptsUsageBody = zod.object({
           .min(simulateApiHarnessAttemptsUsageBodyRecordsItemAmountMin),
         occurred_at: zod.string().datetime({ offset: true }),
         funding: zod.enum(["platform", "customer"]),
+        outcome: zod
+          .enum(["completed", "failed"])
+          .default(
+            simulateApiHarnessAttemptsUsageBodyRecordsItemOutcomeDefault,
+          ),
+        failure_domain: zod
+          .enum([
+            "agent",
+            "simulator",
+            "environment",
+            "connectivity",
+            "infrastructure",
+            "grading",
+            "artifact",
+            "platform_sync",
+          ])
+          .optional(),
       }),
     )
     .optional(),

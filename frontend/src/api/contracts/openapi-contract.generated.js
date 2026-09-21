@@ -88318,6 +88318,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           enum: ["platform", "customer"],
         },
+        outcome: {
+          title: "Outcome",
+          type: "string",
+          enum: ["completed", "failed"],
+          default: "completed",
+        },
+        failure_domain: {
+          title: "Failure domain",
+          type: "string",
+          enum: [
+            "agent",
+            "simulator",
+            "environment",
+            "connectivity",
+            "infrastructure",
+            "grading",
+            "artifact",
+            "platform_sync",
+          ],
+          "x-nullable": true,
+        },
       },
     },
     HuggingFaceDatasetConfigResult: {
