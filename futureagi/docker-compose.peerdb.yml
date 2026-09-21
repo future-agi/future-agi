@@ -138,7 +138,7 @@ services:
 
   # PeerDB MinIO (staging area for CH ingestion)
   peerdb-minio:
-    image: minio/minio:latest
+    image: quay.io/minio/minio:latest
     restart: unless-stopped
     volumes:
       - peerdb-minio-data:/data

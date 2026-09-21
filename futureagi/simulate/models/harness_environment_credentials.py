@@ -39,6 +39,7 @@ class HarnessCredentialFile(BaseModel):
 
     class Meta:
         db_table = "simulate_harness_credential_file"
+        ordering = ("-created_at",)
 
     def set_content(self, content: bytes) -> None:
         self.encrypted_content = encrypt_token(base64.b64encode(content).decode("ascii"))
@@ -70,6 +71,7 @@ class HarnessEnvironmentCredentials(BaseModel):
 
     class Meta:
         db_table = "simulate_harness_environment_credentials"
+        ordering = ("-created_at",)
 
     def set_environment(self, values: dict[str, str]) -> None:
         serialized = json.dumps(values, sort_keys=True, separators=(",", ":"))

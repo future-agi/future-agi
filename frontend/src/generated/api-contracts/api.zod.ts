@@ -23188,6 +23188,9 @@ export const ModelHubExperimentsUpdateResponse = zod.object({
 });
 
 export const ModelHubExperimentsDataListQueryParams = zod.object({
+  created_at: zod.string().optional(),
+  status: zod.string().optional(),
+  dataset_id: zod.string().optional(),
   ordering: zod
     .string()
     .optional()
@@ -23400,6 +23403,9 @@ export const ModelHubExperimentsV2CreateResponse = zod.object({
  * V2 experiment list with filtering, search, and pagination.
  */
 export const ModelHubExperimentsV2ListListQueryParams = zod.object({
+  created_at: zod.string().optional(),
+  status: zod.string().optional(),
+  dataset_id: zod.string().optional(),
   search: zod.string().optional().describe("A search term."),
   ordering: zod
     .string()
@@ -26095,6 +26101,8 @@ export const ModelHubMetricsByColumnListResponse = zod.object({
 });
 
 export const ModelHubOptimisationListQueryParams = zod.object({
+  optimize_type: zod.string().optional(),
+  status: zod.string().optional(),
   search: zod.string().optional().describe("A search term."),
   ordering: zod
     .string()
@@ -27609,6 +27617,7 @@ export const ModelHubPromptBaseTemplatesDeleteParams = zod.object({
 });
 
 export const ModelHubPromptExecutionsListQueryParams = zod.object({
+  name: zod.string().optional(),
   search: zod.string().optional().describe("A search term."),
   ordering: zod
     .string()
@@ -27807,6 +27816,9 @@ export const ModelHubPromptFoldersDeleteParams = zod.object({
 });
 
 export const ModelHubPromptHistoryExecutionsListQueryParams = zod.object({
+  template_name: zod.string().optional(),
+  template_version: zod.string().optional(),
+  created_at: zod.string().optional(),
   search: zod.string().optional().describe("A search term."),
   ordering: zod
     .string()
@@ -27873,6 +27885,9 @@ export const ModelHubPromptHistoryExecutionsGetExecutionDetailsParams =
 
 export const ModelHubPromptHistoryExecutionsGetExecutionDetailsQueryParams =
   zod.object({
+    template_name: zod.string().optional(),
+    template_version: zod.string().optional(),
+    created_at: zod.string().optional(),
     search: zod.string().optional().describe("A search term."),
     ordering: zod
       .string()
@@ -28224,6 +28239,9 @@ export const ModelHubPromptLabelsAssignLabelByIdBody = zod.object({
 });
 
 export const ModelHubPromptTemplatesListQueryParams = zod.object({
+  name: zod.string().optional(),
+  version: zod.string().optional(),
+  created_at: zod.string().optional(),
   search: zod.string().optional().describe("A search term."),
   ordering: zod
     .string()
@@ -28387,6 +28405,9 @@ If no version is specified, returns the default version (is_default=True).
 If a version is specified, returns that specific version.
  */
 export const ModelHubPromptTemplatesGetTemplateByNameQueryParams = zod.object({
+  name: zod.string().optional(),
+  version: zod.string().optional(),
+  created_at: zod.string().optional(),
   search: zod.string().optional().describe("A search term."),
   ordering: zod
     .string()
@@ -31292,7 +31313,7 @@ export const simulateAgentDefinitionsCreateCreateBodyObservabilityEnabledDefault
   false;
 export const simulateAgentDefinitionsCreateCreateBodyLivekitUrlMax = 500;
 
-export const simulateAgentDefinitionsCreateCreateBodyLivekitMaxConcurrencyMax = 5;
+export const simulateAgentDefinitionsCreateCreateBodyLivekitMaxConcurrencyMax = 25;
 
 export const SimulateAgentDefinitionsCreateCreateBody = zod.object({
   agent_name: zod
@@ -31511,7 +31532,7 @@ export const simulateAgentDefinitionsEditUpdateBodyAgentNameMax = 255;
 
 export const simulateAgentDefinitionsEditUpdateBodyLivekitUrlMax = 500;
 
-export const simulateAgentDefinitionsEditUpdateBodyLivekitMaxConcurrencyMax = 5;
+export const simulateAgentDefinitionsEditUpdateBodyLivekitMaxConcurrencyMax = 25;
 
 export const SimulateAgentDefinitionsEditUpdateBody = zod.object({
   agent_name: zod
@@ -31767,7 +31788,7 @@ export const simulateAgentDefinitionsVersionsCreateCreateBodyLivekitApiSecretMax
 
 export const simulateAgentDefinitionsVersionsCreateCreateBodyLivekitAgentNameMax = 255;
 
-export const simulateAgentDefinitionsVersionsCreateCreateBodyLivekitMaxConcurrencyMax = 5;
+export const simulateAgentDefinitionsVersionsCreateCreateBodyLivekitMaxConcurrencyMax = 25;
 
 export const simulateAgentDefinitionsVersionsCreateCreateBodyCommitMessageDefault = ``;
 export const simulateAgentDefinitionsVersionsCreateCreateBodyObservabilityEnabledDefault =
@@ -62379,7 +62400,10 @@ export const UsageAdminInvoiceGenerateCreateResponse = zod.object({
 });
 
 /**
- * Preview invoice for an org+period (no side effects).
+ * Creates no invoice and deducts no credits, but does backfill missing
+``UsageSummary`` rows for the usage period. Open to staff so the admin's
+read-only Generate Invoice page can show what would be billed.
+ * @summary Preview invoice for an org+period.
  */
 
 export const usageAdminInvoicePreviewCreateBodyPeriodRegExp = new RegExp(

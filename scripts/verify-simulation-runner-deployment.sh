@@ -42,7 +42,8 @@ Every problem is reported together; a value of only whitespace counts as missing
                     the internal bearer and ingestion then authenticates the wrong
                     org), HOSTED_RUNNER_MAX_DURATION_SECONDS (retired)
   optional          HOSTED_RUNNER_PARENT_SLACK_SECONDS (integer, default 600),
-                    HOSTED_RUNNER_LEASED_ROOM_REUSE (default true). Assigned-but-
+                    HOSTED_RUNNER_LEASED_ROOM_REUSE (default false; turn on only
+                    once a reuse-capable runner kit is deployed). Assigned-but-
                     empty is refused: int("") kills the worker at import.
   glued lines       a value containing one of these names followed by "=" is two
                     assignments joined by an append with no trailing newline.

@@ -2299,6 +2299,172 @@ class TestBuildVoiceRunnerJob:
             )
         assert job["voice"]["params"]["max_seconds"] == 120.0
 
+    def test_leased_room_reuse_defaults_off(
+        self, organization, workspace, simulator_agent
+    ):
+        # Issue 3: the committed default is off, so a multi-row originator run
+        # is refused without any override until the reuse-capable kit is on.
+        from simulate.services.hosted_runner import HostedRunnerBuildError
+
+        agent = self._retell_originator_agent(organization, workspace)
+        with pytest.raises(HostedRunnerBuildError) as excinfo:
+            self._build_multi(organization, workspace, simulator_agent, agent, 3)
+        assert "HOSTED_RUNNER_LEASED_ROOM_REUSE" in str(excinfo.value)
+
+    def test_leased_room_admission_refuses_excess_rows(
+        self, organization, workspace, simulator_agent
+    ):
+        # Issue 2: even with reuse on, a leased-number run over the case cap is
+        # refused before any number is leased.
+        from django.test import override_settings
+
+        from simulate.services.hosted_runner import HostedRunnerBuildError
+
+        agent = self._retell_originator_agent(organization, workspace)
+        with override_settings(
+            HOSTED_RUNNER_LEASED_ROOM_REUSE=True,
+            HOSTED_RUNNER_LEASED_ROOM_MAX_CASES=2,
+        ):
+            with pytest.raises(HostedRunnerBuildError) as excinfo:
+                self._build_multi(organization, workspace, simulator_agent, agent, 3)
+        assert "capped at 2" in str(excinfo.value)
+
+    def test_leased_room_admission_refuses_excess_wallclock(
+        self, organization, workspace, simulator_agent
+    ):
+        # Issue 2: a run within the case cap but over the wall-clock cap is
+        # still refused before the lease.
+        from django.test import override_settings
+
+        from simulate.services.hosted_runner import HostedRunnerBuildError
+
+        agent = self._retell_originator_agent(organization, workspace)
+        with override_settings(
+            HOSTED_RUNNER_LEASED_ROOM_REUSE=True,
+            HOSTED_RUNNER_LEASED_ROOM_MAX_CASES=0,
+            HOSTED_RUNNER_LEASED_ROOM_MAX_WALLCLOCK_SECONDS=60,
+        ):
+            with pytest.raises(HostedRunnerBuildError) as excinfo:
+                self._build_multi(organization, workspace, simulator_agent, agent, 3)
+        assert "cap" in str(excinfo.value)
+
+    def test_leased_room_admission_disabled_with_zero_caps(
+        self, organization, workspace, simulator_agent
+    ):
+        # Issue 2 + re-review: admission now has a global layer as well as the
+        # leased one, so fully disabling it means zeroing both. With all four
+        # caps at 0 a large run builds.
+        from django.test import override_settings
+
+        agent = self._retell_originator_agent(organization, workspace)
+        with override_settings(
+            HOSTED_RUNNER_LEASED_ROOM_REUSE=True,
+            HOSTED_RUNNER_MAX_CASES=0,
+            HOSTED_RUNNER_MAX_WALLCLOCK_SECONDS=0,
+            HOSTED_RUNNER_LEASED_ROOM_MAX_CASES=0,
+            HOSTED_RUNNER_LEASED_ROOM_MAX_WALLCLOCK_SECONDS=0,
+        ):
+            job, mode = self._build_multi(
+                organization, workspace, simulator_agent, agent, 40
+            )
+        assert mode == "voice_sip"
+
+    def test_sip_outbound_admission_refuses_excess_wallclock(
+        self, organization, workspace, simulator_agent
+    ):
+        # Re-review: the wall-clock bound must cover every hosted voice job, not
+        # only the leased-DID path. sip_outbound is forced serial, so an
+        # oversized dataset reserves a runner child slot without bound; refuse
+        # it before the workflow is dispatched.
+        from django.test import override_settings
+
+        from simulate.services.hosted_runner import HostedRunnerBuildError
+
+        agent = self._voice_agent(
+            organization,
+            workspace,
+            provider="livekit",
+            phone="+15551230000",
+            inbound=True,
+        )
+        with override_settings(
+            LIVEKIT_OUTBOUND_TRUNK_ID="ST_trunk",
+            PSTN_CALLER_NUMBER="+15550009999",
+            HOSTED_RUNNER_MAX_WALLCLOCK_SECONDS=600,
+        ):
+            with pytest.raises(HostedRunnerBuildError) as excinfo:
+                self._build_multi(
+                    organization, workspace, simulator_agent, agent, 3
+                )
+        message = str(excinfo.value)
+        assert "cap" in message
+        assert "HOSTED_RUNNER_MAX_WALLCLOCK_SECONDS" in message
+
+    def test_sip_outbound_admission_refuses_excess_rows(
+        self, organization, workspace, simulator_agent
+    ):
+        # The global case cap also protects the non-leased telephony path.
+        from django.test import override_settings
+
+        from simulate.services.hosted_runner import HostedRunnerBuildError
+
+        agent = self._voice_agent(
+            organization,
+            workspace,
+            provider="livekit",
+            phone="+15551230000",
+            inbound=True,
+        )
+        with override_settings(
+            LIVEKIT_OUTBOUND_TRUNK_ID="ST_trunk",
+            PSTN_CALLER_NUMBER="+15550009999",
+            HOSTED_RUNNER_MAX_CASES=2,
+        ):
+            with pytest.raises(HostedRunnerBuildError) as excinfo:
+                self._build_multi(
+                    organization, workspace, simulator_agent, agent, 3
+                )
+        assert "capped at 2" in str(excinfo.value)
+
+    def test_web_transport_admission_refuses_excess_wallclock(
+        self, organization, workspace, simulator_agent
+    ):
+        # The global wall-clock bound covers non-telephony webrtc too, not only
+        # the telephony paths — a serial or low-concurrency web run has the same
+        # unbounded child-slot problem. The cap is set below the minimum
+        # per-case budget so the refusal holds regardless of the fixture's call
+        # ceiling or the credentials' default concurrency.
+        from django.test import override_settings
+
+        from simulate.services.hosted_runner import HostedRunnerBuildError
+
+        agent = self._voice_agent(
+            organization,
+            workspace,
+            provider="vapi",
+            phone="",
+            assistant_id="asst_123",
+        )
+        with override_settings(HOSTED_RUNNER_MAX_WALLCLOCK_SECONDS=100):
+            with pytest.raises(HostedRunnerBuildError) as excinfo:
+                self._build_multi(
+                    organization, workspace, simulator_agent, agent, 3
+                )
+        assert "HOSTED_RUNNER_MAX_WALLCLOCK_SECONDS" in str(excinfo.value)
+
+    def test_admission_env_int_is_lenient(self, monkeypatch):
+        # Issue B: a bad HOSTED_RUNNER_*_MAX_* override must fall back to the
+        # default rather than crash settings import with a ValueError.
+        from tfc.settings.settings import _admission_env_int
+
+        for bad in ("not-an-int", "", "  ", "12.5"):
+            monkeypatch.setenv("FI_TEST_ADMISSION_INT", bad)
+            assert _admission_env_int("FI_TEST_ADMISSION_INT", 25) == 25
+        monkeypatch.delenv("FI_TEST_ADMISSION_INT", raising=False)
+        assert _admission_env_int("FI_TEST_ADMISSION_INT", 25) == 25
+        monkeypatch.setenv("FI_TEST_ADMISSION_INT", "50")
+        assert _admission_env_int("FI_TEST_ADMISSION_INT", 25) == 50
+
     def _assert_leased_deadline_identity(self, job, case_count):
         """D15: pin ``cleanup_timeout`` and the derived child deadline from
         the budget constants (not by echoing the function's own output), so a
@@ -6041,6 +6207,65 @@ class TestViewGatesReadVersionSnapshot:
             )
         assert response.status_code == 403
         mock_check.assert_called_once_with(str(organization.id), "has_voice_sim")
+
+    def _other_agent_version(self, organization, workspace):
+        """A version belonging to a DIFFERENT same-org agent."""
+        other = AgentDefinition.objects.create(
+            agent_name="Other Agent",
+            agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+            inbound=False,
+            description="other agent",
+            organization=organization,
+            workspace=workspace,
+            languages=["en"],
+        )
+        return other.create_version(
+            description="foreign", commit_message="v1", status="active"
+        )
+
+    def test_create_run_test_rejects_cross_agent_version(
+        self, auth_client, organization, workspace, scenario
+    ):
+        # Issue 1: pairing a voice definition with another same-org agent's
+        # version must be refused before any RunTest row exists — otherwise the
+        # foreign snapshot answers the voice gate and the run reads its
+        # snapshot/credentials.
+        voice_agent, _ = self._pinned_voice_agent(organization, workspace)
+        foreign_version = self._other_agent_version(organization, workspace)
+        before = RunTest.objects.count()
+        response = auth_client.post(
+            "/simulate/run-tests/create/",
+            {
+                "name": "Cross Agent RT",
+                "agent_definition_id": str(voice_agent.id),
+                "agent_version": str(foreign_version.id),
+                "scenario_ids": [str(scenario.id)],
+            },
+            format="json",
+        )
+        assert response.status_code == 404
+        assert RunTest.objects.count() == before
+
+    def test_components_patch_rejects_cross_agent_version(
+        self, auth_client, organization, workspace
+    ):
+        # Issue 1: the same constraint on the components-update version lookup.
+        voice_agent, _ = self._pinned_voice_agent(organization, workspace)
+        run_test = RunTest.objects.create(
+            name="Cross Agent Patch RT",
+            agent_definition=voice_agent,
+            organization=organization,
+            workspace=workspace,
+        )
+        foreign_version = self._other_agent_version(organization, workspace)
+        response = auth_client.patch(
+            f"/simulate/run-tests/{run_test.id}/components/",
+            {"version": str(foreign_version.id)},
+            format="json",
+        )
+        assert response.status_code == 404
+        run_test.refresh_from_db()
+        assert run_test.agent_version_id is None
 
     def test_bulk_rerun_routes_each_execution_by_its_own_pinned_version(
         self, auth_client, organization, workspace, scenario

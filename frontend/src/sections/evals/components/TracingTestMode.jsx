@@ -13,7 +13,8 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
-import { alpha } from "@mui/material/styles";
+import { alpha, styled } from "@mui/material/styles";
+import { createFilterOptions } from "@mui/material/Autocomplete";
 import PropTypes from "prop-types";
 import React, {
   useCallback,
@@ -99,6 +100,57 @@ import {
   parseVoiceCallDetailResponse,
   parseVoiceCallListResponse,
 } from "src/api/project/observe-contracts";
+
+const MappingOption = styled("li")(({ theme }) => ({
+  fontSize: "12px",
+  fontFamily: "monospace",
+  whiteSpace: "nowrap",
+  overflow: "hidden",
+  containerType: "inline-size",
+  color: theme.palette.text.primary,
+  '&[data-nested="true"]': { color: theme.palette.primary.main },
+  // Reveal the clipped tail on hover/focus; fitting text stays put.
+  "&:hover > span, &.Mui-focused > span": {
+    maxWidth: "none",
+    flexShrink: 0,
+    transform: "translateX(min(0px, calc(100cqw - 100%)))",
+  },
+}));
+
+const MappingOptionLabel = styled("span")({
+  display: "inline-block",
+  maxWidth: "100%",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  verticalAlign: "top",
+});
+
+// The listbox is not virtualised; cap what gets mounted. The search is
+// server-backed, so narrowing the query still reaches everything.
+const MAPPING_OPTION_RENDER_LIMIT = 200;
+const filterMappingOptions = createFilterOptions({
+  limit: MAPPING_OPTION_RENDER_LIMIT,
+});
+
+// Module-level so their identity is stable across renders.
+const MAPPING_LISTBOX_PROPS = { style: { maxHeight: 260 } };
+const isMappingOptionEqual = (opt, val) => opt === val;
+
+const renderMappingOption = (props, col) => {
+  const { key, ...rest } = props;
+  const depth = col.includes(".") ? col.split(".").length - 1 : 0;
+  return (
+    <MappingOption
+      key={key}
+      {...rest}
+      title={col}
+      data-nested={depth > 0 ? "true" : undefined}
+      style={depth > 0 ? { paddingLeft: 12 + depth * 12 } : undefined}
+    >
+      <MappingOptionLabel>{col}</MappingOptionLabel>
+    </MappingOption>
+  );
+};
 
 const ROW_TYPE_OPTIONS = [
   { value: "Span", label: "Spans", icon: "solar:layers-outline" },
@@ -272,6 +324,169 @@ const tracingPreviewRowIdentity = (rowType, row) => {
     return row?.trace_id || row?.id || null;
   }
   return getSpanReadIdentityKey(row);
+};
+
+const MAPPING_COMMIT_DEBOUNCE_MS = 120;
+const MAPPING_AUTOCOMPLETE_SX = { flex: 1 };
+
+const MappingRow = React.memo(function MappingRow({
+  variable,
+  options,
+  value,
+  allowCustomFieldPath,
+  disabled,
+  isFetchingColumns,
+  disabledTooltip,
+  onSelect,
+  onType,
+  onOpen,
+}) {
+  const [inputValue, setInputValue] = useState(value || "");
+  const commitTimer = useRef(null);
+  const lastCommitted = useRef(value || "");
+
+  useEffect(() => {
+    const next = value || "";
+    if (next === lastCommitted.current) return;
+    lastCommitted.current = next;
+    setInputValue(next);
+  }, [value]);
+
+  useEffect(() => () => clearTimeout(commitTimer.current), []);
+
+  const autocomplete = (
+    <Autocomplete
+      size="small"
+      freeSolo={allowCustomFieldPath}
+      disabled={disabled}
+      options={options}
+      value={value || null}
+      onOpen={() => onOpen(variable, value)}
+      onChange={(_, val) => {
+        const next = val || "";
+        clearTimeout(commitTimer.current);
+        lastCommitted.current = next;
+        setInputValue(next);
+        onSelect(variable, next);
+      }}
+      {...(allowCustomFieldPath
+        ? {
+            inputValue,
+            onInputChange: (_event, val, reason) => {
+              if (reason === "reset") return;
+              const next = val || "";
+              setInputValue(next);
+              clearTimeout(commitTimer.current);
+              commitTimer.current = setTimeout(() => {
+                lastCommitted.current = next;
+                onType(variable, next);
+              }, MAPPING_COMMIT_DEBOUNCE_MS);
+            },
+          }
+        : {})}
+      openOnFocus
+      autoHighlight
+      selectOnFocus
+      handleHomeEndKeys
+      isOptionEqualToValue={isMappingOptionEqual}
+      sx={MAPPING_AUTOCOMPLETE_SX}
+      filterOptions={filterMappingOptions}
+      ListboxProps={MAPPING_LISTBOX_PROPS}
+      renderInput={(params) => (
+        <TextField
+          {...params}
+          placeholder={
+            isFetchingColumns
+              ? "Loading columns..."
+              : allowCustomFieldPath
+                ? "Search or type a path (e.g. attributes.input.value)"
+                : "Search column..."
+          }
+          InputProps={{
+            ...params.InputProps,
+            sx: {
+              ...params.InputProps.sx,
+              fontSize: "12px",
+              fontFamily: "monospace",
+              height: 28,
+              py: 0,
+            },
+            endAdornment: isFetchingColumns ? (
+              <InputAdornment position="end">
+                <CircularProgress size={14} />
+              </InputAdornment>
+            ) : (
+              params.InputProps.endAdornment
+            ),
+          }}
+        />
+      )}
+      renderOption={renderMappingOption}
+    />
+  );
+
+  return (
+    <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          gap: 0.5,
+          px: 1,
+          py: 0.25,
+          borderRadius: "4px",
+          border: "1px solid",
+          borderColor: "divider",
+          minWidth: 120,
+        }}
+      >
+        <Iconify
+          icon="mdi:code-braces"
+          width={14}
+          sx={{ color: "text.secondary" }}
+        />
+        <Typography
+          variant="caption"
+          fontWeight={600}
+          sx={{ fontSize: "12px" }}
+        >
+          {variable}
+        </Typography>
+      </Box>
+      <Iconify
+        icon="mdi:arrow-right"
+        width={14}
+        sx={{ color: "text.disabled" }}
+      />
+      {disabled ? (
+        <CustomTooltip
+          show
+          type="black"
+          size="small"
+          title={disabledTooltip}
+          placement="top"
+          arrow
+        >
+          <Box sx={{ flex: 1 }}>{autocomplete}</Box>
+        </CustomTooltip>
+      ) : (
+        autocomplete
+      )}
+    </Box>
+  );
+});
+
+MappingRow.propTypes = {
+  variable: PropTypes.string.isRequired,
+  options: PropTypes.arrayOf(PropTypes.string).isRequired,
+  value: PropTypes.string,
+  allowCustomFieldPath: PropTypes.bool,
+  disabled: PropTypes.bool,
+  isFetchingColumns: PropTypes.bool,
+  disabledTooltip: PropTypes.string,
+  onSelect: PropTypes.func.isRequired,
+  onType: PropTypes.func.isRequired,
+  onOpen: PropTypes.func.isRequired,
 };
 
 const TracingTestMode = React.forwardRef(
@@ -1191,9 +1406,14 @@ const TracingTestMode = React.forwardRef(
     const [deepenedPaths, setDeepenedPaths] = useState([]);
     const [deepenedTruncated, setDeepenedTruncated] = useState(() => new Set());
 
+    // A prefix stays in `truncatedSet` once known, so without this each
+    // backspace across a `.` re-walked the subtree.
+    const expandedPrefixesRef = useRef(new Set());
+
     useEffect(() => {
       setDeepenedPaths([]);
       setDeepenedTruncated(new Set());
+      expandedPrefixesRef.current = new Set();
     }, [spanDetail]);
 
     // Mapping-dropdown source: paths walked from the previewed row (eager
@@ -1206,6 +1426,21 @@ const TracingTestMode = React.forwardRef(
         : rowFields.map((f) => f?.colId || f?.key);
       return mergeTracingFieldNames(genericFields, exactAttributeFields);
     }, [walkedFromDetail, deepenedPaths, rowFields, exactAttributeFields]);
+
+    // Untouched variables keep the same `fieldNames` reference so their
+    // listboxes skip re-filtering while a sibling is being typed into.
+    const optionsByVariable = useMemo(() => {
+      const fieldSet = new Set(fieldNames);
+      const out = {};
+      variables.forEach((variable) => {
+        const current = mapping[variable];
+        out[variable] =
+          current && !fieldSet.has(current)
+            ? [current, ...fieldNames]
+            : fieldNames;
+      });
+      return out;
+    }, [variables, mapping, fieldNames]);
 
     const truncatedSet = useMemo(() => {
       const merged = new Set(walkedFromDetail?.truncated || []);
@@ -1223,6 +1458,8 @@ const TracingTestMode = React.forwardRef(
         if (!inputValue?.endsWith(".")) return;
         const prefix = inputValue.slice(0, -1);
         if (!truncatedSet.has(prefix)) return;
+        if (expandedPrefixesRef.current.has(prefix)) return;
+        expandedPrefixesRef.current.add(prefix);
         const { paths, truncated } = expandPaths(spanDetail, prefix);
         if (!paths.length) return;
         setDeepenedPaths((prev) => {
@@ -1237,6 +1474,23 @@ const TracingTestMode = React.forwardRef(
         });
       },
       [truncatedSet, spanDetail, walkedFromDetail],
+    );
+
+    const handleMappingSelect = useCallback((variable, val) => {
+      setMapping((prev) => ({ ...prev, [variable]: val }));
+    }, []);
+    const handleMappingType = useCallback(
+      (variable, val) => {
+        handleMappingInputChange(null, val);
+        setMapping((prev) => ({ ...prev, [variable]: val }));
+      },
+      [handleMappingInputChange],
+    );
+    const handleMappingOpen = useCallback(
+      (variable, val) => {
+        if (allowCustomFieldPath) setMappingSearch(val || variable);
+      },
+      [allowCustomFieldPath],
     );
 
     // Notify parent of available fields for autocomplete
@@ -1456,7 +1710,14 @@ const TracingTestMode = React.forwardRef(
     );
 
     return (
-      <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 1.5,
+          height: "100%",
+        }}
+      >
         {/* Project selector — hidden when pre-selected (e.g. task flow) */}
         {!projectLocked && (
           <Box>
@@ -2119,13 +2380,15 @@ const TracingTestMode = React.forwardRef(
         {/* Variable mapping */}
         {variables.length > 0 &&
           (() => {
-            const isFetchingColumns =
+            const isLoadingRowColumns =
               !!selectedProjectId &&
-              (loading ||
-                isPendingNewFetch ||
-                loadingDetail ||
-                isFetchingExactAttributes);
-            const mappingDisabledTooltip = isFetchingColumns
+              (loading || isPendingNewFetch || loadingDetail);
+            // The exact lookup refetches per keystroke; disabling the control
+            // would close its popup, so it only drives the spinner.
+            const isFetchingColumns =
+              isLoadingRowColumns ||
+              (!!selectedProjectId && isFetchingExactAttributes);
+            const mappingDisabledTooltip = isLoadingRowColumns
               ? "Columns are being fetched"
               : "";
             const exactAttributeReadMessage = getAttributeLookupMessage(
@@ -2180,183 +2443,21 @@ const TracingTestMode = React.forwardRef(
                 <Box
                   sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}
                 >
-                  {variables.map((variable) => {
-                    const autocomplete = (
-                      <Autocomplete
-                        size="small"
-                        freeSolo={allowCustomFieldPath}
-                        disabled={isFetchingColumns}
-                        options={
-                          mapping[variable] &&
-                          !fieldNames.includes(mapping[variable])
-                            ? [mapping[variable], ...fieldNames]
-                            : fieldNames
-                        }
-                        value={mapping[variable] || null}
-                        onOpen={() => {
-                          if (allowCustomFieldPath) {
-                            setMappingSearch(mapping[variable] || variable);
-                          }
-                        }}
-                        onChange={(_, val) =>
-                          setMapping((prev) => ({
-                            ...prev,
-                            [variable]: val || "",
-                          }))
-                        }
-                        {...(allowCustomFieldPath
-                          ? {
-                              inputValue: mapping[variable] || "",
-                              onInputChange: (event, val, reason) => {
-                                if (reason === "reset") return;
-                                handleMappingInputChange(event, val);
-                                setMapping((prev) => ({
-                                  ...prev,
-                                  [variable]: val || "",
-                                }));
-                              },
-                            }
-                          : {})}
-                        openOnFocus
-                        autoHighlight
-                        selectOnFocus
-                        handleHomeEndKeys
-                        isOptionEqualToValue={(opt, val) => opt === val}
-                        sx={{ flex: 1 }}
-                        ListboxProps={{ style: { maxHeight: 260 } }}
-                        renderInput={(params) => (
-                          <TextField
-                            {...params}
-                            placeholder={
-                              isFetchingColumns
-                                ? "Loading columns..."
-                                : allowCustomFieldPath
-                                  ? "Search or type a path (e.g. attributes.input.value)"
-                                  : "Search column..."
-                            }
-                            InputProps={{
-                              ...params.InputProps,
-                              sx: {
-                                ...params.InputProps.sx,
-                                fontSize: "12px",
-                                fontFamily: "monospace",
-                                height: 28,
-                                py: 0,
-                              },
-                              endAdornment: isFetchingColumns ? (
-                                <InputAdornment position="end">
-                                  <CircularProgress size={14} />
-                                </InputAdornment>
-                              ) : (
-                                params.InputProps.endAdornment
-                              ),
-                            }}
-                          />
-                        )}
-                        renderOption={(props, col) => {
-                          const { key, ...rest } = props;
-                          return (
-                            <Box
-                              component="li"
-                              key={key}
-                              {...rest}
-                              title={col}
-                              sx={{
-                                ...rest.sx,
-                                fontSize: "12px",
-                                fontFamily: "monospace",
-                                pl: col.includes(".")
-                                  ? `${12 + (col.split(".").length - 1) * 12}px`
-                                  : undefined,
-                                color: col.includes(".")
-                                  ? "primary.main"
-                                  : "text.primary",
-                                whiteSpace: "nowrap",
-                                overflow: "hidden",
-                                containerType: "inline-size",
-                                // The option <li> is a flex row, so the span
-                                // is a flex item: releasing max-width alone
-                                // won't widen it — flex-shrink must go too.
-                                "&:hover > span, &.Mui-focused > span": {
-                                  maxWidth: "none",
-                                  flexShrink: 0,
-                                  // Slide left just far enough to reveal the
-                                  // clipped tail; fitting text stays put.
-                                  transform:
-                                    "translateX(min(0px, calc(100cqw - 100%)))",
-                                },
-                              }}
-                            >
-                              <Box
-                                component="span"
-                                sx={{
-                                  display: "inline-block",
-                                  maxWidth: "100%",
-                                  overflow: "hidden",
-                                  textOverflow: "ellipsis",
-                                  verticalAlign: "top",
-                                }}
-                              >
-                                {col}
-                              </Box>
-                            </Box>
-                          );
-                        }}
-                      />
-                    );
-                    return (
-                      <Box
-                        key={variable}
-                        sx={{ display: "flex", alignItems: "center", gap: 1 }}
-                      >
-                        <Box
-                          sx={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 0.5,
-                            px: 1,
-                            py: 0.25,
-                            borderRadius: "4px",
-                            border: "1px solid",
-                            borderColor: "divider",
-                            minWidth: 120,
-                          }}
-                        >
-                          <Iconify
-                            icon="mdi:code-braces"
-                            width={14}
-                            sx={{ color: "text.secondary" }}
-                          />
-                          <Typography
-                            variant="caption"
-                            fontWeight={600}
-                            sx={{ fontSize: "12px" }}
-                          >
-                            {variable}
-                          </Typography>
-                        </Box>
-                        <Iconify
-                          icon="mdi:arrow-right"
-                          width={14}
-                          sx={{ color: "text.disabled" }}
-                        />
-                        {isFetchingColumns ? (
-                          <CustomTooltip
-                            show
-                            type="black"
-                            size="small"
-                            title={mappingDisabledTooltip}
-                            placement="top"
-                            arrow
-                          >
-                            <Box sx={{ flex: 1 }}>{autocomplete}</Box>
-                          </CustomTooltip>
-                        ) : (
-                          autocomplete
-                        )}
-                      </Box>
-                    );
-                  })}
+                  {variables.map((variable) => (
+                    <MappingRow
+                      key={variable}
+                      variable={variable}
+                      options={optionsByVariable[variable] || fieldNames}
+                      value={mapping[variable] || ""}
+                      allowCustomFieldPath={allowCustomFieldPath}
+                      disabled={isLoadingRowColumns}
+                      isFetchingColumns={isFetchingColumns}
+                      disabledTooltip={mappingDisabledTooltip}
+                      onSelect={handleMappingSelect}
+                      onType={handleMappingType}
+                      onOpen={handleMappingOpen}
+                    />
+                  ))}
                 </Box>
               </Box>
             );

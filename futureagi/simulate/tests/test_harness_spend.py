@@ -180,6 +180,10 @@ def test_the_ledger_is_read_before_the_only_delete_that_exists(monkeypatch):
         job_id = "job-3"
         attempt_number = 1
         provider_ref = "ref-3"
+        # Cleanup only captures diagnostics when a real attempt has not already
+        # finalized them. This lightweight test double exercises spend/delete
+        # ordering, so model the normal terminal-poll path explicitly.
+        diagnostics_final = True
 
     monkeypatch.setattr(
         gateway, "_read_harness_spend", lambda *_: order.append("read_spend")

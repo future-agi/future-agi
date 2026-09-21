@@ -84,6 +84,21 @@ def _bounded_env_int(
     return int(spec.parse(name, os.getenv(name)))
 
 
+def _admission_env_int(name: str, default: int) -> int:
+    """A hosted-runner admission ceiling from the environment. A missing,
+    empty, or non-integer value falls back to the default so a bad override can
+    never crash settings import (``_positive_setting`` in the service layer
+    documents the same lenient fallback and cannot help once import has already
+    failed). The service layer re-checks the bound and treats 0 as 'disabled'."""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return int(raw.strip())
+    except ValueError:
+        return default
+
+
 # Numeric runtime knobs are declared once in runtime_setting_specs.py. Parse
 # and cross-validate them before database/cache configuration consumes them.
 _runtime_numeric_settings = _load_numeric_settings(
@@ -678,8 +693,25 @@ GCP_MARKETPLACE_DIMENSIONS = [
     "voice_sim_minutes",
 ]
 
-# Google accepts these two as floating point. The other four must be integers.
+# Ledger semantics: these two dimensions are fractional, the other four are
+# whole counts and are floored before they are recorded as reported.
 GCP_MARKETPLACE_FLOAT_DIMENSIONS = {"storage", "voice_sim_minutes"}
+# Wire type is a property of the metric, not the dimension, and Service Control
+# rejects a value whose type differs from the service config ("Inconsistent
+# metric value type ... Expecting double, got int64"). Mirrors the config the
+# service is on -- note payg's gateway_request is DOUBLE while scale's and
+# enterprise's are INT64. Verify against:
+#   gcloud endpoints configs describe <id> \
+#     --service=futureagi.endpoints.futureagiprimary.cloud.goog --format="yaml(metrics)"
+GCP_MARKETPLACE_DOUBLE_METRICS = {
+    "gateway_request",
+    "payg_storage",
+    "payg_voice_simulation",
+    "scale_storage",
+    "scale_voice_simulation",
+    "enterprise_storage",
+    "enterprise_voice_simulation",
+}
 
 # EE license key (self-hosted only, JWT RS256)
 EE_LICENSE_KEY = os.environ.get("EE_LICENSE_KEY", "")
@@ -772,11 +804,36 @@ HOSTED_RUNNER_VOICE_ENABLED = os.getenv(
     "HOSTED_RUNNER_VOICE_ENABLED", "false"
 ).lower() in ("true", "1", "yes")
 
-# Rollback lever for sequential reuse of the leased simulator room (D10):
-# default on, flip off if reuse misbehaves at runtime without a redeploy.
+# Sequential reuse of one leased simulator room across a multi-row phone run
+# (D10). Default OFF: only a runner whose simulator kit serves multiple
+# personas over a reused room can honour it; the released kit rejects such a
+# job at SDK hydration. Turn it on by env once that kit image is deployed and
+# verified, not before.
 HOSTED_RUNNER_LEASED_ROOM_REUSE = os.getenv(
-    "HOSTED_RUNNER_LEASED_ROOM_REUSE", "true"
+    "HOSTED_RUNNER_LEASED_ROOM_REUSE", "false"
 ).lower() in ("true", "1", "yes")
+
+# Admission ceilings for hosted voice runs. Every run reserves a runner child
+# slot for its full wall-clock; a telephony or single-concurrency web run is
+# serial, so an arbitrary dataset otherwise reserves that slot without bound.
+# Refuse a run before the workflow is dispatched when it would reserve too many
+# cases or too much wall-clock. 0 disables that specific limit. Parsed leniently
+# so a bad override cannot crash settings import.
+#
+# Global cap — every hosted voice job.
+HOSTED_RUNNER_MAX_CASES = _admission_env_int("HOSTED_RUNNER_MAX_CASES", 500)
+HOSTED_RUNNER_MAX_WALLCLOCK_SECONDS = _admission_env_int(
+    "HOSTED_RUNNER_MAX_WALLCLOCK_SECONDS", 6 * 60 * 60
+)
+# Tighter cap for the leased-room phone path (the target dials our one scarce
+# leased number, so cases run strictly serially and hold that number for the
+# whole run).
+HOSTED_RUNNER_LEASED_ROOM_MAX_CASES = _admission_env_int(
+    "HOSTED_RUNNER_LEASED_ROOM_MAX_CASES", 25
+)
+HOSTED_RUNNER_LEASED_ROOM_MAX_WALLCLOCK_SECONDS = _admission_env_int(
+    "HOSTED_RUNNER_LEASED_ROOM_MAX_WALLCLOCK_SECONDS", 4 * 60 * 60
+)
 
 # Structured logging configuration with django-structlog
 # This provides:
