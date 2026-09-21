@@ -905,7 +905,7 @@ ERROR_FEED_OMEGA_LEASE_SECONDS = int(os.getenv("ERROR_FEED_OMEGA_LEASE_SECONDS",
 ERROR_FEED_OMEGA_PROJECT_CONCURRENCY = int(
     os.getenv("ERROR_FEED_OMEGA_PROJECT_CONCURRENCY", "2")
 )
-# Grouping rollout remains disabled by default; paid work also requires budgets.
+# Grouping rollout remains disabled by default.
 ERROR_FEED_GROUPING_ENABLED = (
     os.getenv("ERROR_FEED_GROUPING_ENABLED", "false") == "true"
 )
@@ -918,7 +918,12 @@ ERROR_FEED_GROUPING_PROJECT_IDS = tuple(
     if project_id.strip()
 )
 # Cumulative durable reservations plus known charges; no implicit daily reset.
-# A deployment must explicitly authorize all three independent caps.
+# Production can explicitly disable dollar caps; accounting/idempotency remain on.
+ERROR_FEED_GROUPING_BUDGET_ENFORCED = (
+    os.getenv("ERROR_FEED_GROUPING_BUDGET_ENFORCED", "true").lower() != "false"
+)
+# With enforcement enabled, authorize all three independent caps. $10 is a
+# local Compose setting, never a production default.
 ERROR_FEED_GROUPING_PROJECT_BUDGET_USD = os.getenv(
     "ERROR_FEED_GROUPING_PROJECT_BUDGET_USD", "0"
 )
