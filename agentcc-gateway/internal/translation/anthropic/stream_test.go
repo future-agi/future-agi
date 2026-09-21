@@ -468,3 +468,77 @@ func countEvents(names []string, name string) int {
 	}
 	return n
 }
+
+// A provider that counts the prompt only at the end of its stream leaves message_start with a
+// zero, and a client that took that as final reported a stage which sent no prompt at all. The
+// count travels on the closing delta instead, and only when message_start could not carry it.
+func TestInputTokensTravelOnTheDeltaWhenMessageStartHadNone(t *testing.T) {
+
+	chunks := []models.StreamChunk{
+		{
+			ID:      "gen-1",
+			Model:   "gemini-3.7-flash",
+			Choices: []models.StreamChoice{{Delta: models.Delta{Content: strPtr("hello")}}},
+		},
+		{
+			ID:      "gen-1",
+			Model:   "gemini-3.7-flash",
+			Choices: []models.StreamChoice{{Delta: models.Delta{}, FinishReason: strPtr("stop")}},
+			Usage:   &models.Usage{PromptTokens: 41, CompletionTokens: 7},
+		},
+	}
+
+	events, errs := tr.StreamEventsFromCanonical(context.Background(), feedChunks(chunks))
+	usage := deltaUsage(t, collectEvents(t, events, errs))
+
+	if got, _ := usage["input_tokens"].(float64); got != 41 {
+		t.Errorf("input_tokens on the delta = %v, want 41", usage["input_tokens"])
+	}
+	if got, _ := usage["output_tokens"].(float64); got != 7 {
+		t.Errorf("output_tokens on the delta = %v, want 7", usage["output_tokens"])
+	}
+}
+
+// And a count message_start already reported is never overwritten, because the overwrite would
+// arrive as a zero on a path that does not recount the prompt.
+func TestTheDeltaStaysSilentWhenMessageStartAlreadyCounted(t *testing.T) {
+
+	chunks := []models.StreamChunk{
+		{
+			ID:      "gen-2",
+			Model:   "gemini-3.7-flash",
+			Choices: []models.StreamChoice{{Delta: models.Delta{Content: strPtr("hi")}}},
+			Usage:   &models.Usage{PromptTokens: 12},
+		},
+		{
+			ID:      "gen-2",
+			Model:   "gemini-3.7-flash",
+			Choices: []models.StreamChoice{{Delta: models.Delta{}, FinishReason: strPtr("stop")}},
+			Usage:   &models.Usage{PromptTokens: 12, CompletionTokens: 5},
+		},
+	}
+
+	events, errs := tr.StreamEventsFromCanonical(context.Background(), feedChunks(chunks))
+	usage := deltaUsage(t, collectEvents(t, events, errs))
+
+	if _, present := usage["input_tokens"]; present {
+		t.Errorf("message_delta repeated input_tokens it did not need to: %v", usage)
+	}
+}
+
+// deltaUsage is the usage object off the one message_delta in a stream.
+func deltaUsage(t *testing.T, got []map[string]interface{}) map[string]interface{} {
+	t.Helper()
+	for _, event := range got {
+		if event["_event"] != "message_delta" {
+			continue
+		}
+		usage, _ := event["usage"].(map[string]interface{})
+		if usage == nil {
+			t.Fatalf("message_delta carried no usage: %v", event)
+		}
+		return usage
+	}
+	t.Fatal("no message_delta was emitted")
+	return nil
+}

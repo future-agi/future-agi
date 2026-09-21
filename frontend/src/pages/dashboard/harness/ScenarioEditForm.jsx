@@ -378,6 +378,7 @@ ScenarioEditForm.propTypes = {
   busy: PropTypes.bool,
   onCancel: PropTypes.func.isRequired,
   onSave: PropTypes.func.isRequired,
+  editableFields: PropTypes.arrayOf(PropTypes.string),
 };
 
 function SectionHeader({ title, hint }) {

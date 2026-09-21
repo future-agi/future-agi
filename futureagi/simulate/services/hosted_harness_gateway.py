@@ -90,6 +90,8 @@ _SCENARIO_DIRECTORY_COUNT_COMMAND = (
     "find /work/authoring/scenarios -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l"
 )
 _ADJUSTMENTS_PATH = "/run/futureagi/adjustments.jsonl"
+_CHAT_INBOX_PATH = "/run/futureagi/chat/inbox.jsonl"
+_CHAT_OUTBOX_PATH = "/run/futureagi/chat/outbox.jsonl"
 _ADJUSTMENT_STATUS_PATH = "/run/futureagi/adjustment-status.jsonl"
 _SIMULATOR_SECRETS_PATH = "/run/futureagi/simulator-secrets.json"
 _SIMULATOR_VERTEX_CREDENTIALS_PATH = "/run/futureagi/simulator-vertex-sa.json"
@@ -209,6 +211,9 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         # How many copies of the agent's runtime the guest validates scenario setups against.
         # Unset means one, which is what it did before lanes existed.
         "ALK_VALIDATION_INSTANCES",
+        # Whether a validation reset reseals the store underneath the running processes instead of
+        # stopping and respawning them. Unset means it respawns, exactly as before.
+        "ALK_VALIDATION_RESET_IN_PLACE",
         # Where the Claude Agent SDK backend finds an endpoint speaking Anthropic Messages. Left
         # unset the guest starts its own on loopback, which is the ordinary case; set here only to
         # point a run at a gateway that already exists somewhere else.
@@ -1837,8 +1842,10 @@ class HostedHarnessGateway:
                     "ALK_VERTEX_LOCATION",
                     # Authoring writes the scenarios, so the switch is exported here too.
                     "ALK_VOICEMAIL_SCENARIOS",
-                    # Runtime validation runs inside authoring, so its lane count is needed here.
+                    # Runtime validation runs inside authoring, so its lane count is needed here,
+                    # and so is how it resets between scenarios.
                     "ALK_VALIDATION_INSTANCES",
+                    "ALK_VALIDATION_RESET_IN_PLACE",
                     # Authoring is where the model calls happen, so the gateway address belongs
                     # here too. Absent, the guest's own launcher supplies it.
                     "ALK_HARNESS_GATEWAY_URL",
@@ -1863,6 +1870,14 @@ class HostedHarnessGateway:
                         # exports. Returns immediately unless ALK_HARNESS names a backend that
                         # needs a gateway, so the ADK path is untouched.
                         ". /opt/alk/start-sandbox-gateway.sh; "
+                        # The conversation outlives the pipeline on purpose: it answers while
+                        # authoring runs, between stages, and long after the last one ended. Its
+                        # own process, backgrounded, because the pipeline chain below finishes and
+                        # a chat that finishes with it could only ever be talked to mid-stage.
+                        "export ALK_HARNESS_CHAT_DIR=/run/futureagi/chat; "
+                        "mkdir -p /run/futureagi/chat; "
+                        "nohup python -m fi.alk.harness.converse_service /work/authoring "
+                        ">/run/futureagi/chat/service.log 2>&1 & "
                         "if [ ! -f /work/authoring/contract.json ]; then "
                         "python -m fi.alk.harness.hosted_authoring_entrypoint "
                         "/work/job.json --source /work/source --output /work/authoring "
@@ -2198,6 +2213,97 @@ class HostedHarnessGateway:
                 ) from exc
         return locked
 
+    def _live_sandbox(self, job: HostedHarnessJob):
+        """The sandbox of the attempt running right now, or a reason it cannot be reached."""
+        if job.state in {
+            HostedHarnessJob.State.COMPLETED,
+            HostedHarnessJob.State.FAILED,
+            HostedHarnessJob.State.CANCELED,
+        }:
+            raise HostedHarnessError(
+                "chat_run_finished",
+                "this run has finished; bring it back up before talking to it",
+                status_code=409,
+            )
+        attempt = (
+            HostedHarnessAttempt.no_workspace_objects.filter(
+                job=job, attempt_number=job.current_attempt_number
+            )
+            .exclude(provider_ref__isnull=True)
+            .first()
+        )
+        if attempt is None or not attempt.provider_ref:
+            raise HostedHarnessError(
+                "chat_not_ready",
+                "the hosted sandbox is not up yet; retry in a few seconds",
+                status_code=409,
+                retryable=True,
+            )
+        return self.client.get(
+            str(attempt.provider_ref), request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS
+        )
+
+    def chat_send(self, job: HostedHarnessJob, text: str) -> dict[str, Any]:
+        """Say one thing to the run while it is running.
+
+        Appended rather than rewritten, and read by the harness at its next turn rather than at
+        the next stage, which is the whole difference between a conversation and a queue. Not an
+        adjustment: an adjustment is a durable control-plane record that moves the plan, this is
+        somebody talking.
+        """
+        said = (text or "").strip()
+        if not said:
+            raise HostedHarnessError(
+                "chat_empty", "there is nothing to say", status_code=400
+            )
+        sandbox = self._live_sandbox(job)
+        record = {
+            "at": timezone.now().isoformat(),
+            "text": said,
+        }
+        try:
+            existing = sandbox.fs.download_file(
+                _CHAT_INBOX_PATH, _PROGRESS_FILE_TIMEOUT_SECONDS
+            )
+        except Exception:  # noqa: BLE001 - nothing said yet is the ordinary first case
+            existing = b""
+        body = existing + json.dumps(record, separators=(",", ":")).encode("utf-8") + b"\n"
+        try:
+            sandbox.fs.upload_file(body, _CHAT_INBOX_PATH)
+        except Exception as exc:
+            raise HostedHarnessError(
+                "chat_delivery_failed",
+                "the message could not be delivered to the hosted run; retry",
+                status_code=503,
+                retryable=True,
+            ) from exc
+        return record
+
+    def chat_read(self, job: HostedHarnessJob, *, after: int = 0) -> dict[str, Any]:
+        """Everything the run has emitted, from line ``after`` on.
+
+        A cursor of lines rather than a stream, because the channel is a file: the caller holds
+        the cursor and asks again, which survives a dropped socket without replaying the whole
+        transcript.
+        """
+        sandbox = self._live_sandbox(job)
+        try:
+            raw = sandbox.fs.download_file(
+                _CHAT_OUTBOX_PATH, _PROGRESS_FILE_TIMEOUT_SECONDS
+            )
+        except Exception:  # noqa: BLE001 - absent until the first turn emits something
+            return {"events": [], "cursor": after}
+        lines = raw.decode("utf-8", errors="replace").splitlines()
+        events = []
+        for line in lines[max(after, 0) :]:
+            try:
+                parsed = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(parsed, dict):
+                events.append(parsed)
+        return {"events": events, "cursor": len(lines)}
+
     @staticmethod
     def _sync_authoring_progress(attempt: HostedHarnessAttempt, sandbox) -> None:
         """Expose safe in-sandbox authoring outputs while the unified command is running."""
@@ -2227,6 +2333,9 @@ class HostedHarnessGateway:
         bundle = _json("/work/bundle/manifest.json")
         # Read on every poll, so a sandbox deleted later still leaves its last known total.
         spend = _json("/work/authoring/cost.json")
+        # Written by save_scenarios, so its presence is what marks the suite saved rather than
+        # merely complete. The count reaches its target on the last submit, seconds earlier.
+        coverage = _json("/work/authoring/coverage.json")
         job = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id)
         _record_harness_spend(job, spend, attempt.attempt_number)
 
@@ -2239,10 +2348,15 @@ class HostedHarnessGateway:
         # re-freeze even though a key already exists — gated on its one-shot marker.
         # store_authoring_archive clears that marker in the same save.
         metadata = (job.payload or {}).get("metadata") or {}
+        # Either manifest means the suite is sealed enough to freeze. The unified pipeline writes
+        # only the authoring one, so gating on the legacy path alone left every run that used it
+        # with no archive, and therefore no suite to rerun or edit.
+        sealed = bundle if isinstance(bundle, dict) else authored_bundle
         if (
-            isinstance(bundle, dict)
+            isinstance(sealed, dict)
             and isinstance(scenarios, list)
             and len(scenarios) == job.scenario_count
+            and isinstance(coverage, dict)
             and (
                 not metadata.get("authoring_object_key")
                 or metadata.get("scenario_extend")
@@ -2302,6 +2416,16 @@ class HostedHarnessGateway:
             for item in (job.stage_outputs or [])
             if isinstance(item, dict) and item.get("kind")
         }
+        # Once the suite is sealed, the archive is the truth and this poll is not. `/work/authoring`
+        # is rewritten from scratch when an attempt relaunches, so a heartbeat landing mid-rewrite
+        # reads a partial `scenarios.json` and, merged in, replaces a complete suite with it. That
+        # is how a job whose sealed archive held 60 placed scenarios across nine overlay levels came
+        # to show a coverage grid summing to 30: half the rows had no coverage at all.
+        sealed_now = (job.payload or {}).get("metadata") or {}
+        if sealed_now.get("authoring_object_key") and not sealed_now.get("scenario_extend"):
+            outputs = [
+                item for item in outputs if item.get("kind") not in {"scenarios", "coverage"}
+            ]
         merged.update({item["kind"]: item for item in outputs})
         order = {"contract": 0, "environment": 1, "scenarios": 2}
         job.stage_outputs = sorted(
@@ -3442,24 +3566,21 @@ def store_authoring_archive(
     payload["metadata"] = metadata
     job.payload = payload
     update_fields = ["payload", "updated_at"]
+    # Refreshed whichever path stored the archive. The lifecycle is what `advance_lifecycle` gates,
+    # not what the job shows: a suite that reached object storage has a coverage report to surface.
+    rebuilt = authoring_stage_outputs_from_archive(body, scenario_limit=job.scenario_count)
+    produced = {one.get("kind") for one in rebuilt}
+    kept = [
+        one
+        for one in (job.stage_outputs or [])
+        if isinstance(one, dict) and one.get("kind") not in produced
+    ]
+    order = {"contract": 0, "environment": 1, "scenarios": 2, "coverage": 3}
+    job.stage_outputs = sorted(
+        rebuilt + kept, key=lambda one: order.get(one.get("kind"), len(order))
+    )
+    update_fields.append("stage_outputs")
     if advance_lifecycle:
-        # Merged, not assigned: the environment output comes from the runtime bundle manifest,
-        # which this archive never carries.
-        rebuilt = authoring_stage_outputs_from_archive(
-            body, scenario_limit=job.scenario_count
-        )
-        produced = {one.get("kind") for one in rebuilt}
-        kept = [
-            one
-            for one in (job.stage_outputs or [])
-            if isinstance(one, dict) and one.get("kind") not in produced
-        ]
-        order = {"contract": 0, "environment": 1, "scenarios": 2, "coverage": 3}
-        job.stage_outputs = sorted(
-            rebuilt + kept, key=lambda one: order.get(one.get("kind"), len(order))
-        )
-        update_fields.append("stage_outputs")
-        # An edit is not a rerun, so a job past authoring keeps the state it had.
         settled = {
             HostedHarnessJob.State.RUNNING,
             HostedHarnessJob.State.FINALIZING,

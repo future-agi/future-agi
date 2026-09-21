@@ -652,6 +652,46 @@ class HostedHarnessProvider:
             return Response(exc.as_dict(), status=exc.status_code)
         return Response(serialize_job(job))
 
+    def chat_send(self, request, pk) -> Response:
+        """Say one thing to a run that is still up."""
+        from simulate.services.hosted_harness import HostedHarnessError
+        from simulate.services.hosted_harness_gateway import HostedHarnessGateway
+
+        job = self._job(request, pk)
+        if job is None:
+            return Response(
+                {"detail": "Hosted harness job not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        try:
+            said = HostedHarnessGateway().chat_send(
+                job, str(request.data.get("text") or "")
+            )
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
+        return Response(said)
+
+    def chat_read(self, request, pk) -> Response:
+        """Everything the run has said since the caller's cursor."""
+        from simulate.services.hosted_harness import HostedHarnessError
+        from simulate.services.hosted_harness_gateway import HostedHarnessGateway
+
+        job = self._job(request, pk)
+        if job is None:
+            return Response(
+                {"detail": "Hosted harness job not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        try:
+            after = int(request.query_params.get("after") or 0)
+        except (TypeError, ValueError):
+            after = 0
+        try:
+            seen = HostedHarnessGateway().chat_read(job, after=after)
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
+        return Response(seen)
+
     def amend_scenarios(self, request, pk) -> Response:
         """Edit a finished job's authored suite: personas, fields, deletions.
 

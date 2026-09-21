@@ -206,10 +206,17 @@ type MessageDeltaEvent struct {
 	Usage DeltaUsage   `json:"usage"`
 }
 
-// DeltaUsage is what a message_delta reports: what the model has written so far, and nothing
-// about the prompt.
+// DeltaUsage is what a message_delta reports: what the model has written so far, and the prompt
+// count only once it is actually known.
+//
+// InputTokens is omitted unless non-zero, which is the whole point. A provider that reports usage
+// only at the end of its stream leaves message_start with nothing to say, and a client that took
+// that zero as final reports a stage that sent no prompt at all. Sending the real count here
+// corrects it; sending a zero here would overwrite a good count with a bad one, so it is never
+// serialised.
 type DeltaUsage struct {
 	OutputTokens int `json:"output_tokens"`
+	InputTokens  int `json:"input_tokens,omitempty"`
 }
 
 // MessageDelta is the payload inside MessageDeltaEvent.
