@@ -99,7 +99,7 @@ describe("AddProviderDialog validation", () => {
       },
     });
     const modelInput = screen.getByPlaceholderText(/model IDs/i);
-    await userEvent.type(modelInput, "gemini-3.7-flash{enter}");
+    await userEvent.type(modelInput, "vertex_ai/gemini-3.7-flash{enter}");
     await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
 
     expect(fetchMutate).not.toHaveBeenCalled();
@@ -109,6 +109,7 @@ describe("AddProviderDialog validation", () => {
     expect(payload.config.api_format).toBe("gemini");
     expect(payload.config.gcp_project).toBe("demo-project");
     expect(payload.config.gcp_location).toBe("us-central1");
+    expect(payload.config.models).toContain("vertex_ai/gemini-3.7-flash");
     expect(payload.config.service_account_json).toContain(
       '"type":"service_account"',
     );

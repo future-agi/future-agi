@@ -1887,6 +1887,7 @@ export const endpoints = {
     requestLogDetail: (id) =>
       apiPath("/agentcc/request-logs/{id}/", { id: id }),
     requestLogSearch: apiPath("/agentcc/request-logs/search/"),
+    requestLogMetadataValues: apiPath("/agentcc/request-logs/metadata-values/"),
     requestLogSessions: apiPath("/agentcc/request-logs/sessions/"),
     requestLogSessionDetail: (sessionId) =>
       apiPath("/agentcc/request-logs/sessions/{session_id}/", {

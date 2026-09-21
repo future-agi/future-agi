@@ -592,10 +592,11 @@ class TestSkillListView:
     URL = "/falcon-ai/skills/"
 
     def test_create_rejects_unknown_fields(self, auth_client):
+        skill_name = f"invalid-skill-{uuid.uuid4().hex}"
         resp = auth_client.post(
             self.URL,
             {
-                "name": "Custom Skill",
+                "name": skill_name,
                 "description": "",
                 "instructions": "Help safely",
                 "trigger_phrases": ["help safely"],
@@ -605,4 +606,6 @@ class TestSkillListView:
         )
 
         assert resp.status_code == 400
-        assert Skill.objects.count() == 0
+        # URL import can seed built-in skills on first request; only assert
+        # that this rejected request did not create its unique skill.
+        assert not Skill.objects.filter(name=skill_name).exists()

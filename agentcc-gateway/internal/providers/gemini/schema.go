@@ -69,8 +69,18 @@ func stripUnsupportedSchemaKeywords(value any) bool {
 				changed = true
 			}
 		}
-		for _, child := range node {
-			changed = stripUnsupportedSchemaKeywords(child) || changed
+		// A properties map is keyed by user-defined argument names. Those names may
+		// themselves be JSON Schema keywords (for example, "default"), so visit
+		// only its schema values rather than treating the map as a schema.
+		if properties, ok := node["properties"].(map[string]any); ok {
+			for _, propertySchema := range properties {
+				changed = stripUnsupportedSchemaKeywords(propertySchema) || changed
+			}
+		}
+		for _, key := range []string{"items", "anyOf", "oneOf"} {
+			if child, ok := node[key]; ok {
+				changed = stripUnsupportedSchemaKeywords(child) || changed
+			}
 		}
 	case []any:
 		for _, child := range node {
