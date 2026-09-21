@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -102,6 +103,24 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 	h.applyOrgAuditOverrides(orgCfg, rc)
 	h.applyOrgModelDatabaseOverrides(orgCfg, rc)
 	h.applyOrgModelMapOverrides(orgCfg, rc)
+
+	// Claude Code only accepts Claude-shaped model names. Resolve access-group aliases before
+	// provider selection so an alias can route its Anthropic request to a non-Anthropic backend.
+	keyGroups := splitCSV(rc.Metadata["key_access_groups"])
+	if h.accessGroupChecker.IsEnabled() && len(keyGroups) > 0 {
+		resolved := h.accessGroupChecker.ResolveAlias(rc.Model, keyGroups)
+		if resolved != rc.Model {
+			rc.SetMetadata("model_alias", rc.Model)
+			rc.Model = resolved
+			model = resolved
+		}
+		if _, allowed := h.accessGroupChecker.Check(rc.Model, keyGroups); !allowed {
+			writeAnthropicErrorFromError(w, models.ErrForbidden(
+				fmt.Sprintf("Model %q is not available for this API key. %s", rc.Model,
+					h.accessGroupChecker.DescribeAllowed(keyGroups))))
+			return
+		}
+	}
 
 	// Resolve provider.
 	var provider providers.Provider
@@ -268,6 +287,22 @@ func (h *Handlers) AnthropicCountTokens(w http.ResponseWriter, r *http.Request) 
 	h.applyOrgAuditOverrides(orgCfg, rc)
 	h.applyOrgModelDatabaseOverrides(orgCfg, rc)
 	h.applyOrgModelMapOverrides(orgCfg, rc)
+
+	keyGroups := splitCSV(rc.Metadata["key_access_groups"])
+	if h.accessGroupChecker.IsEnabled() && len(keyGroups) > 0 {
+		resolved := h.accessGroupChecker.ResolveAlias(rc.Model, keyGroups)
+		if resolved != rc.Model {
+			rc.SetMetadata("model_alias", rc.Model)
+			rc.Model = resolved
+			model = resolved
+		}
+		if _, allowed := h.accessGroupChecker.Check(rc.Model, keyGroups); !allowed {
+			writeAnthropicErrorFromError(w, models.ErrForbidden(
+				fmt.Sprintf("Model %q is not available for this API key. %s", rc.Model,
+					h.accessGroupChecker.DescribeAllowed(keyGroups))))
+			return
+		}
+	}
 
 	provider, err := h.resolveProviderWithOrgFallback(ctx, rc, orgID, orgCfg, model)
 	if err != nil {
@@ -602,6 +637,11 @@ func (h *Handlers) handleAnthropicNonStreamViaCanonical(
 	if canonicalResp.Model != "" {
 		rc.ResolvedModel = canonicalResp.Model
 	}
+	if alias := rc.Metadata["model_alias"]; alias != "" {
+		wireResp := *canonicalResp
+		wireResp.Model = alias
+		canonicalResp = &wireResp
+	}
 
 	// Convert response back to Anthropic wire format.
 	// If the original request had a tool_name_mapping, restore truncated names.
@@ -649,6 +689,8 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 	canonicalReq *models.ChatCompletionRequest,
 ) {
 	rc.Request = canonicalReq
+	streamCtx, streamCancel := context.WithCancel(ctx)
+	defer streamCancel()
 
 	var rawChunkCh <-chan models.StreamChunk
 	var errCh <-chan error
@@ -656,7 +698,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 	// Pre-plugins run before the upstream stream opens; post-plugins wait for
 	// the final chunk, which is where usage arrives.
 	if err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
-		rawChunkCh, errCh = provider.StreamChatCompletion(ctx, canonicalReq)
+		rawChunkCh, errCh = provider.StreamChatCompletion(streamCtx, canonicalReq)
 		return nil
 	}); err != nil {
 		writeAnthropicErrorFromError(w, err)
@@ -676,7 +718,10 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 
 	// Tee for usage: the counts are already structured here, unlike in the
 	// translated SSE bytes.
-	chunkCh, usageCh := teeStreamUsage(ctx, rawChunkCh)
+	chunkCh, usageCh := teeStreamUsage(streamCtx, rawChunkCh)
+	if alias := rc.Metadata["model_alias"]; alias != "" {
+		chunkCh = rewriteStreamModel(streamCtx, chunkCh, alias)
+	}
 
 	// Must be reached from every exit below — the tokens were spent either way.
 	finalize := func(detach bool) {
@@ -700,24 +745,21 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 			StreamEventsFromCanonicalWithMapping(ctx context.Context, chunks <-chan models.StreamChunk, mapping map[string]string) (<-chan []byte, <-chan error)
 		}
 		if smr, ok := translator.(streamMappingRestorer); ok {
-			eventCh, translatorErrCh = smr.StreamEventsFromCanonicalWithMapping(ctx, chunkCh, mapping)
+			eventCh, translatorErrCh = smr.StreamEventsFromCanonicalWithMapping(streamCtx, chunkCh, mapping)
 		} else {
-			eventCh, translatorErrCh = translator.StreamEventsFromCanonical(ctx, chunkCh)
+			eventCh, translatorErrCh = translator.StreamEventsFromCanonical(streamCtx, chunkCh)
 		}
 	} else {
-		eventCh, translatorErrCh = translator.StreamEventsFromCanonical(ctx, chunkCh)
+		eventCh, translatorErrCh = translator.StreamEventsFromCanonical(streamCtx, chunkCh)
 	}
 
 	h.setAgentccHeaders(w, rc)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
-
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		slog.Warn("streaming not supported", "request_id", rc.RequestID)
-		// Stream is open, so the request still has to be accounted for.
 		finalize(true)
 		return
 	}
@@ -743,6 +785,14 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 				return
 			}
 			flusher.Flush()
+			if bytes.HasPrefix(event, []byte("event: message_stop\n")) {
+				// message_stop is the terminal Anthropic event. Some upstream
+				// providers leave an auxiliary channel open after their finish
+				// reason, so waiting for every channel keeps the HTTP body open.
+				streamCancel()
+				finalize(false)
+				return
+			}
 
 		case err, ok := <-translatorErrCh:
 			if !ok {
@@ -858,6 +908,25 @@ func teeStreamUsage(ctx context.Context, in <-chan models.StreamChunk) (<-chan m
 	}()
 
 	return out, done
+}
+
+// rewriteStreamModel keeps the Anthropic wire response consistent with the Claude-shaped
+// alias accepted by Claude Code. Usage collection happens before this rewrite, so telemetry
+// still records the concrete upstream model.
+func rewriteStreamModel(ctx context.Context, in <-chan models.StreamChunk, model string) <-chan models.StreamChunk {
+	out := make(chan models.StreamChunk)
+	go func() {
+		defer close(out)
+		for chunk := range in {
+			chunk.Model = model
+			select {
+			case out <- chunk:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return out
 }
 
 // applyCanonicalStreamUsage moves a finished stream's usage onto rc. Left nil
