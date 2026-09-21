@@ -62,13 +62,13 @@ def get_harness_provider():
     return DaytonaHarnessProvider()
 
 
-def _organization(request):
+def request_organization(request):
     return getattr(request, "organization", None) or getattr(
         request.user, "organization", None
     )
 
 
-def _workspace(request):
+def request_workspace(request):
     workspace = getattr(request, "workspace", None)
     if workspace is not None:
         return workspace
@@ -85,7 +85,7 @@ def _workspace(request):
 
     from accounts.models.workspace import Workspace
 
-    organization = _organization(request)
+    organization = request_organization(request)
     workspace = (
         Workspace.no_workspace_objects.select_related("organization")
         .filter(id=workspace_id, organization=organization, is_active=True)
@@ -96,9 +96,9 @@ def _workspace(request):
     return workspace
 
 
-def _scope_jobs(queryset, request):
+def scope_jobs(queryset, request):
     """Apply the exact tenant scope captured by the submitting request."""
-    workspace = _workspace(request)
+    workspace = request_workspace(request)
     if workspace is None:
         return queryset.filter(workspace__isnull=True)
     return queryset.filter(workspace=workspace)
@@ -406,7 +406,9 @@ def _preflight_source_connectors(request, payload):
     # the repository source scanner with a synthetic source.
     if payload["source"]["kind"] in {"remote", "provider"}:
         return [], [], 0
-    probe = HostedHarnessJob(organization=_organization(request), payload=payload)
+    probe = HostedHarnessJob(
+        organization=request_organization(request), payload=payload
+    )
     archive, _commit = HostedSourceAcquirer().acquire(probe)
     detected, required_files, scanned = detect_source_credentials(archive)
     if payload["agent"]["connector"] != "auto":
@@ -646,6 +648,94 @@ def _preflight_checks(
     return checks
 
 
+def _sandbox_preflight_body(payload, report):
+    """The declared preflight shape, rebuilt from what the sandbox server reports.
+
+    Both providers answer the same endpoint, so they owe the same body. The
+    sandbox already discovers credentials and inspects packaging; it just
+    reports them in its own envelope, so its findings are mapped onto the
+    declared shape rather than passed through. ``probe`` is empty because the
+    sandbox holds no provider keys to try, and the snapshot names no image:
+    those are Daytona facts, and inventing them here would make the readiness
+    panel state something untrue.
+    """
+    from simulate.services.hosted_harness_gateway import (
+        HOSTED_ENGINE_CATALOG,
+        HOSTED_RUNTIME_CATALOG,
+    )
+
+    credentials = dict(report.get("credentials") or {})
+    requirements = [
+        item for item in credentials.get("requirements") or [] if isinstance(item, dict)
+    ]
+    missing = [
+        str(item.get("environment_name") or item.get("id") or "")
+        for item in requirements
+        if item.get("required") and item.get("status") == "missing"
+    ]
+    required_files = [
+        str(item.get("environment_name") or item.get("id") or "")
+        for item in requirements
+        if item.get("kind") == "file"
+    ]
+    checks = _preflight_checks(
+        payload["source"]["kind"],
+        None,
+        int(credentials.get("scanned_files") or 0),
+        missing,
+        required_files,
+        [],
+    )
+    packaging = report.get("packaging") or {}
+    checks.append(_packaging_check(packaging))
+    # The sandbox decides readiness from packaging as well as credentials, so
+    # its verdict leads and the checks explain it. Deriving the state from the
+    # checks alone could report "connected" for a source the sandbox has
+    # already refused to run.
+    ready = bool(report.get("ready_to_submit"))
+    credentials["probe"] = []
+    return {
+        "ready_to_submit": ready,
+        "state": "connected" if ready else "failed",
+        "checks": checks,
+        "credentials": credentials,
+        "effective_parallelism": payload["runtime"]["parallelism"],
+        "snapshot": {
+            "name": None,
+            "digest": None,
+            "engines": HOSTED_ENGINE_CATALOG,
+            "runtimes": HOSTED_RUNTIME_CATALOG,
+        },
+    }
+
+
+def _packaging_check(packaging):
+    """Whether the sandbox can build the source, which only it inspects."""
+    if not packaging:
+        return _check(
+            "packaging",
+            "Source is buildable",
+            "skipped",
+            "the sandbox reported no packaging analysis",
+        )
+    if packaging.get("ready") and packaging.get("agent_runtime_packaged", True):
+        selected = str(packaging.get("selected_path") or "").strip()
+        return _check(
+            "packaging",
+            "Source is buildable",
+            "passed",
+            f"building from {selected}" if selected else "a build was found",
+        )
+    notes = [str(note) for note in packaging.get("notes") or [] if str(note).strip()]
+    return _check(
+        "packaging",
+        "Source is buildable",
+        "failed",
+        notes[0] if notes else "no Dockerfile or compose file packages the agent",
+        fix="Add a Dockerfile that runs the agent, or a compose file that starts it",
+    )
+
+
 class DaytonaHarnessProvider:
     """Platform-as-gateway. Persists the job and drives Daytona via Temporal."""
 
@@ -658,7 +748,7 @@ class DaytonaHarnessProvider:
         )
         from simulate.temporal.client import start_hosted_harness_gateway_workflow
 
-        organization = _organization(request)
+        organization = request_organization(request)
         if organization is None:
             return Response(
                 {"detail": "Organization not found"},
@@ -688,7 +778,7 @@ class DaytonaHarnessProvider:
                 organization,
                 payload,
                 idempotency_key=idempotency_key,
-                workspace=_workspace(request),
+                workspace=request_workspace(request),
             )
             retry_cfg = job.payload["retry"]
             start_hosted_harness_gateway_workflow(
@@ -708,8 +798,8 @@ class DaytonaHarnessProvider:
         return Response(serialize_job(job), status=status.HTTP_202_ACCEPTED)
 
     def list(self, request) -> Response:
-        organization = _organization(request)
-        jobs = _scope_jobs(
+        organization = request_organization(request)
+        jobs = scope_jobs(
             HostedHarnessJob.no_workspace_objects.filter(organization=organization),
             request,
         ).order_by("-created_at")[:100]
@@ -998,8 +1088,8 @@ class DaytonaHarnessProvider:
 
         from simulate.services.hosted_harness import HostedHarnessError
 
-        organization = _organization(request)
-        workspace = _workspace(request)
+        organization = request_organization(request)
+        workspace = request_workspace(request)
         if organization is None:
             return Response(
                 {"detail": "Organization not found"},
@@ -1100,7 +1190,7 @@ class DaytonaHarnessProvider:
         from simulate.services.hosted_harness import HostedHarnessError
         from simulate.services.hosted_harness_gateway import store_source_archive
 
-        organization = _organization(request)
+        organization = request_organization(request)
         if organization is None:
             return Response(
                 {"detail": "Organization not found"},
@@ -1148,8 +1238,8 @@ class DaytonaHarnessProvider:
         }
 
     def _job(self, request, pk):
-        organization = _organization(request)
-        return _scope_jobs(
+        organization = request_organization(request)
+        return scope_jobs(
             HostedHarnessJob.no_workspace_objects.filter(
                 id=pk, organization=organization
             ),
@@ -1281,7 +1371,7 @@ class SandboxHarnessProvider:
 
         try:
             payload = self._flatten_source(request.validated_data)
-            return Response(self._client().preflight(payload))
+            report = self._client().preflight(payload)
         except _SandboxMappingError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         except HarnessSandboxRejected as exc:
@@ -1290,6 +1380,7 @@ class SandboxHarnessProvider:
             return Response(
                 {"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE
             )
+        return Response(_sandbox_preflight_body(request.validated_data, report))
 
     def retrieve(self, request, pk) -> Response:
         from simulate.services.harness_sandbox import (

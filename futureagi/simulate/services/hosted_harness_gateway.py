@@ -1237,6 +1237,19 @@ def _persist_bundle_stage_outputs(
                     data=scenario_data,
                 )
             )
+    if "sub_goals" not in existing:
+        catalogue = _load_bundle_file(manifest, "sub_goals.json", job)
+        if isinstance(catalogue, dict):
+            goals = catalogue.get("sub_goals") or []
+            outputs.append(
+                HostedHarnessStageOutput(
+                    job=job,
+                    title="Sub-goal catalogue",
+                    summary=f"{len(goals)} sub-goals",
+                    kind="sub_goals",
+                    data=catalogue,
+                )
+            )
     if outputs:
         HostedHarnessStageOutput.no_workspace_objects.bulk_create(outputs)
 
@@ -2244,7 +2257,11 @@ class DaytonaHostedGateway:
             )
         authored_bundle = _json("/work/authoring/environment-bundle/manifest.json")
         scenarios = _json("/work/authoring/scenarios.json")
+        sub_goals = _json("/work/authoring/sub_goals.json")
         bundle = _json("/work/bundle/manifest.json")
+        # Written when the world is sealed, so it appears later than the authoring
+        # documents above and only once a store has actually been built.
+        build_output = _json("/work/artifacts/build.json")
         # Read on every poll, so a sandbox deleted later still leaves its last known total.
         spend = _json("/work/authoring/cost.json")
         job = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id)
@@ -2292,6 +2309,8 @@ class DaytonaHostedGateway:
             environment,
             scenarios,
             bundle if isinstance(bundle, dict) else authored_bundle,
+            sub_goals=sub_goals,
+            build_output=build_output,
         )
         stage = "understanding_agent"
         if isinstance(contract, dict):
@@ -3243,7 +3262,12 @@ def _record_harness_spend(
 
 
 def authoring_stage_outputs(
-    contract: Any, environment: Any, scenarios: Any, bundle: Any = None
+    contract: Any,
+    environment: Any,
+    scenarios: Any,
+    bundle: Any = None,
+    sub_goals: Any = None,
+    build_output: Any = None,
 ) -> list[dict[str, Any]]:
     """Build the complete, secret-safe snapshots shown by the hosted-run UI."""
     outputs: list[dict[str, Any]] = []
@@ -3284,7 +3308,66 @@ def authoring_stage_outputs(
                 "data": _secret_safe(scenarios),
             }
         )
+    if isinstance(sub_goals, dict):
+        goals = sub_goals.get("sub_goals") or []
+        suite = sub_goals.get("suite_evals") or []
+        outputs.append(
+            {
+                "id": "00000000-0000-0000-0000-000000000004",
+                "kind": "sub_goals",
+                "title": "Sub-goal catalogue",
+                "summary": f"{len(goals)} sub-goals · {len(suite)} suite evals",
+                "data": _secret_safe(sub_goals),
+            }
+        )
+    stores = _seeded_stores(build_output)
+    if stores:
+        tables = sum(len(store["tables"]) for store in stores)
+        rows = sum(store["total_rows"] for store in stores)
+        outputs.append(
+            {
+                "id": "00000000-0000-0000-0000-000000000005",
+                "kind": "stores",
+                "title": "Seeded world state",
+                "summary": f"{tables} tables · {rows} rows",
+                "data": stores,
+            }
+        )
     return outputs
+
+
+def _seeded_stores(build_output: Any) -> list[dict[str, Any]]:
+    """The tables each built store holds, from the sealed build output.
+
+    ``build.json`` records a baseline per store, and ``row_counts`` is populated
+    for postgres stores only, so a store backed by anything else contributes no
+    tables rather than a row of zeroes. Only identifiers and counts are carried;
+    the digests and baseline references stay in the artifact, since nothing in
+    the UI reads them and they say where the sealed data lives.
+    """
+    records = build_output.get("stores") if isinstance(build_output, dict) else None
+    stores: list[dict[str, Any]] = []
+    for record in records or []:
+        if not isinstance(record, dict):
+            continue
+        counts = record.get("row_counts")
+        tables = [
+            {"name": str(name), "rows": int(rows)}
+            for name, rows in sorted((counts or {}).items())
+            if isinstance(rows, int)
+        ]
+        if not tables:
+            continue
+        stores.append(
+            {
+                "capability": str(record.get("capability") or ""),
+                "engine": str(record.get("engine") or ""),
+                "strategy": str(record.get("strategy") or ""),
+                "tables": tables,
+                "total_rows": sum(table["rows"] for table in tables),
+            }
+        )
+    return stores
 
 
 def authoring_stage_outputs_from_archive(
@@ -3293,7 +3376,7 @@ def authoring_stage_outputs_from_archive(
     """Read only the bounded JSON snapshots from a sealed authoring archive."""
     documents: dict[str, Any] = {}
     scenario_documents: list[dict[str, Any]] = []
-    wanted = {"contract.json", "environment.json", "scenarios.json"}
+    wanted = {"contract.json", "environment.json", "scenarios.json", "sub_goals.json"}
     with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
         for member in archive.getmembers():
             path = Path(member.name)
@@ -3334,6 +3417,7 @@ def authoring_stage_outputs_from_archive(
         documents.get("contract.json"),
         documents.get("environment.json"),
         scenarios,
+        sub_goals=documents.get("sub_goals.json"),
     )
 
 

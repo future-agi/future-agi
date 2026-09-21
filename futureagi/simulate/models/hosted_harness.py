@@ -35,6 +35,10 @@ class HostedHarnessJob(BaseModel):
         blank=True,
     )
     run_id = models.UUIDField(unique=True)
+    # The name a person gave this environment, which outranks every value
+    # derived from the submitted request. Empty means nobody has renamed it, so
+    # the derived name still applies.
+    name = models.CharField(max_length=255, blank=True, default="")
     idempotency_key = models.CharField(max_length=255)
     request_digest = models.CharField(max_length=71)
     schema_version = models.CharField(max_length=64)
