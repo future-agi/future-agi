@@ -161,6 +161,7 @@ import type {
   AgentccProviderCredentialsList200,
   AgentccProviderCredentialsListParams,
   AgentccRequestLogDetailApi,
+  AgentccRequestLogMetadataValuesResponseApi,
   AgentccRequestLogsExport200,
   AgentccRequestLogsExportParams,
   AgentccRequestLogsList200,
@@ -572,6 +573,8 @@ import type {
   HarnessSecretFileUploadResponseApi,
   HarnessSecretValuesApi,
   HarnessSourceUploadResponseApi,
+  HarnessUsageRequestApi,
+  HarnessUsageResponseApi,
   HealthCheckResponseApi,
   HeartbeatApi,
   HuggingFaceAddRowsRequestApi,
@@ -16407,6 +16410,55 @@ export const agentccRequestLogsExport = async (
 ): Promise<agentccRequestLogsExportResponse> => {
   return apiMutator<agentccRequestLogsExportResponse>(
     getAgentccRequestLogsExportUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type agentccRequestLogsMetadataValuesResponse200 = {
+  data: AgentccRequestLogMetadataValuesResponseApi;
+  status: 200;
+};
+
+export type agentccRequestLogsMetadataValuesResponse400 = {
+  data: AgentccErrorResponseApi;
+  status: 400;
+};
+
+export type agentccRequestLogsMetadataValuesResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400>;
+};
+
+export type agentccRequestLogsMetadataValuesResponseSuccess =
+  agentccRequestLogsMetadataValuesResponse200 & {
+    headers: Headers;
+  };
+export type agentccRequestLogsMetadataValuesResponseError = (
+  | agentccRequestLogsMetadataValuesResponse400
+  | agentccRequestLogsMetadataValuesResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type agentccRequestLogsMetadataValuesResponse =
+  | agentccRequestLogsMetadataValuesResponseSuccess
+  | agentccRequestLogsMetadataValuesResponseError;
+
+export const getAgentccRequestLogsMetadataValuesUrl = () => {
+  return `/agentcc/request-logs/metadata-values/`;
+};
+
+/**
+ * Application, service and custom tag values seen in recent requests.
+ */
+export const agentccRequestLogsMetadataValues = async (
+  options?: RequestInit,
+): Promise<agentccRequestLogsMetadataValuesResponse> => {
+  return apiMutator<agentccRequestLogsMetadataValuesResponse>(
+    getAgentccRequestLogsMetadataValuesUrl(),
     {
       ...options,
       method: "GET",
@@ -58917,6 +58969,56 @@ export const simulateApiHarnessAttemptsScenarios = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(harnessScenarioOperationApi),
+    },
+  );
+};
+
+export type simulateApiHarnessAttemptsUsageResponse200 = {
+  data: HarnessUsageResponseApi;
+  status: 200;
+};
+
+export type simulateApiHarnessAttemptsUsageResponse402 = {
+  data: HarnessUsageResponseApi;
+  status: 402;
+};
+
+export type simulateApiHarnessAttemptsUsageResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 402>;
+};
+
+export type simulateApiHarnessAttemptsUsageResponseSuccess =
+  simulateApiHarnessAttemptsUsageResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessAttemptsUsageResponseError = (
+  | simulateApiHarnessAttemptsUsageResponse402
+  | simulateApiHarnessAttemptsUsageResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateApiHarnessAttemptsUsageResponse =
+  | simulateApiHarnessAttemptsUsageResponseSuccess
+  | simulateApiHarnessAttemptsUsageResponseError;
+
+export const getSimulateApiHarnessAttemptsUsageUrl = (id: string) => {
+  return `/simulate/api/harness/attempts/${id}/usage/`;
+};
+
+export const simulateApiHarnessAttemptsUsage = async (
+  id: string,
+  harnessUsageRequestApi: HarnessUsageRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessAttemptsUsageResponse> => {
+  return apiMutator<simulateApiHarnessAttemptsUsageResponse>(
+    getSimulateApiHarnessAttemptsUsageUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessUsageRequestApi),
     },
   );
 };

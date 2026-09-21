@@ -518,9 +518,22 @@ fi
 # Done up-front so the rest of the install can run unattended. Captured
 # values are used after the backend reports healthy. Press Enter on the
 # email prompt to skip; --skip-user-creation / CI=1 skip without asking.
+readonly ACCOUNT_SKIPPED="skipped"
+readonly ACCOUNT_CREATED="created"
+readonly ACCOUNT_EXISTS="exists"
+readonly ACCOUNT_FAILED="failed"
+readonly GATE_CONTAINERS="containers to start"
+
 USER_EMAIL=""
 USER_NAME=""
 USER_PASS=""
+ACCOUNT_STATE="$ACCOUNT_SKIPPED"
+
+# Terminal input carries raw bytes, so a stray escape sequence (Shift+Tab emits
+# ESC [ Z) travels into create_user and the sign-in banner.
+EMAIL_PATTERN="^[A-Za-z0-9.!#\$%&'*+/=?^_\`{|}~-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+\$"
+
+strip_control_chars() { printf '%s' "${1//[[:cntrl:]]/}"; }
 
 prompt_user() {
   step "Create your first account"
@@ -530,11 +543,12 @@ prompt_user() {
 
   while true; do
     printf "  ${BOLD}Email${RESET}    : "; read -r USER_EMAIL || USER_EMAIL=""
+    USER_EMAIL=$(strip_control_chars "$USER_EMAIL")
     if [[ -z "$USER_EMAIL" ]]; then
       say "  ${DIM}skipped — no user will be created${RESET}"
       return
     fi
-    if [[ "$USER_EMAIL" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]]; then
+    if [[ "$USER_EMAIL" =~ $EMAIL_PATTERN ]]; then
       break
     fi
     warn "  '$USER_EMAIL' doesn't look like an email address — try again"
@@ -542,6 +556,7 @@ prompt_user() {
 
   while [[ -z "$USER_NAME" ]]; do
     printf "  ${BOLD}Name${RESET}     : "; read -r USER_NAME
+    USER_NAME=$(strip_control_chars "$USER_NAME")
     [[ -z "$USER_NAME" ]] && warn "  name can't be empty"
   done
 
@@ -568,8 +583,8 @@ if [[ "$SKIP_USER" -eq 1 ]]; then
 elif [[ "$NON_INTERACTIVE" -eq 1 ]]; then
   # Use FAGI_ADMIN_* if all three are set; otherwise skip silently.
   if [[ -n "${FAGI_ADMIN_EMAIL:-}" && -n "${FAGI_ADMIN_NAME:-}" && -n "${FAGI_ADMIN_PASSWORD:-}" ]]; then
-    USER_EMAIL="$FAGI_ADMIN_EMAIL"
-    USER_NAME="$FAGI_ADMIN_NAME"
+    USER_EMAIL=$(strip_control_chars "$FAGI_ADMIN_EMAIL")
+    USER_NAME=$(strip_control_chars "$FAGI_ADMIN_NAME")
     USER_PASS="$FAGI_ADMIN_PASSWORD"
     step "Using FAGI_ADMIN_* from environment for first-user creation"
   else
@@ -651,17 +666,26 @@ compose_service_snapshot() {
   fi
 }
 
+count_applied_migrations() {
+  $DC logs --tail 2000 backend 2>/dev/null | grep -ac 'Applying ' || true
+}
+
 bounded_env_int INSTALL_READY_TIMEOUT_SECONDS 600 60 1800
 ready_timeout="$BOUNDED_ENV_INT"
 bounded_env_int INSTALL_STABILITY_SECONDS 15 5 120
 stability_seconds="$BOUNDED_ENV_INT"
+bounded_env_int INSTALL_READY_MAX_SECONDS 2400 300 7200
+ready_max="$BOUNDED_ENV_INT"
 
 # Source .env for BACKEND_PORT so we hit the right host port.
 backend_port=$(grep -E '^BACKEND_PORT=' .env | head -1 | cut -d= -f2- || true)
 backend_port="${backend_port:-8000}"
 deadline=$(( $(date +%s) + ready_timeout ))
+hard_deadline=$(( $(date +%s) + ready_max ))
 ready_since=0
 last_ready_signature=""
+last_migrations_applied=$(count_applied_migrations)
+pending_gate="$GATE_CONTAINERS"
 declare -a catalog_jobs=(
   property-catalog-kafka-volume-init
   property-catalog-runtime-volume-init
@@ -681,6 +705,7 @@ while true; do
   all_ready=1
   fatal_reason=""
   ready_signature=""
+  pending_gate=""
 
   for service in "${catalog_jobs[@]}"; do
     snapshot=$(compose_service_snapshot "$service")
@@ -689,6 +714,7 @@ while true; do
       continue
     fi
     all_ready=0
+    pending_gate="${pending_gate:-bootstrap job $service}"
     if [[ "$status" == "dead" || ( "$status" == "exited" && "$exit_code" != "0" ) ]]; then
       fatal_reason="$service failed with status=$status exit_code=$exit_code"
       break
@@ -701,6 +727,7 @@ while true; do
     ready_signature+="kafka:${container_id}:${restart_count}:${started_at};"
     if [[ "$status" != "running" || "$health" != "healthy" ]]; then
       all_ready=0
+      pending_gate="${pending_gate:-property-catalog-kafka to report healthy}"
       [[ "$status" == "dead" ]] && fatal_reason="property-catalog-kafka entered dead state"
     fi
   fi
@@ -712,13 +739,30 @@ while true; do
       ready_signature+="${service}:${container_id}:${restart_count}:${started_at};"
       if [[ "$status" != "running" || ( "$service" == "property-catalog-supervisor" && "$health" != "healthy" ) ]]; then
         all_ready=0
+        pending_gate="${pending_gate:-$service to report healthy}"
         [[ "$status" == "dead" ]] && fatal_reason="$service entered dead state"
       fi
     done
   fi
 
+  backend_healthy=1
   if ! curl -fsS --max-time 3 "http://localhost:${backend_port}/health/" >/dev/null 2>&1; then
+    backend_healthy=0
     all_ready=0
+    pending_gate="${pending_gate:-backend /health/ on port ${backend_port}}"
+  fi
+
+  # A first install spends most of its readiness budget applying migrations.
+  # Extend only while the backend is itself the unmet gate and its migration
+  # count is still climbing, so a stuck peer service can never hide behind it.
+  if (( backend_healthy == 0 )); then
+    migrations_applied=$(count_applied_migrations)
+    if (( migrations_applied > last_migrations_applied )); then
+      last_migrations_applied="$migrations_applied"
+      say "  ${DIM}migrations in progress (${migrations_applied} applied), extending the readiness window${RESET}"
+      deadline=$(( now + ready_timeout ))
+      (( deadline > hard_deadline )) && deadline=$hard_deadline
+    fi
   fi
 
   if [[ -n "$fatal_reason" ]]; then
@@ -755,7 +799,7 @@ while true; do
       fi-collector fi-property-catalog-sequencer fi-property-catalog-consumer \
       property-catalog-supervisor backend \
       >&3 2>&1 || true
-    die "Stack did not become fully ready within ${ready_timeout}s. Relevant service logs were appended to $LOG_FILE"
+    die "Stack did not become fully ready, still waiting on ${pending_gate:-$GATE_CONTAINERS}. Relevant service logs were appended to $LOG_FILE"
   fi
   sleep 5
 done
@@ -779,14 +823,15 @@ if [[ -n "$USER_EMAIL" ]]; then
   set -eE
 
   if (( cu_rc == 0 )); then
+    ACCOUNT_STATE="$ACCOUNT_CREATED"
     ok "Account created for $USER_EMAIL"
   elif printf '%s' "$cu_out" | grep -qiE "already exists|UNIQUE constraint"; then
+    ACCOUNT_STATE="$ACCOUNT_EXISTS"
     ok "Account already exists for $USER_EMAIL — sign in normally"
   else
+    ACCOUNT_STATE="$ACCOUNT_FAILED"
     warn "create_user failed (exit $cu_rc). Last 6 lines of output:"
     printf '%s\n' "$cu_out" | tail -6 | sed 's|^|      |'
-    warn "Run it manually after the stack settles:"
-    warn "  docker exec -it futureagi-backend-1 python manage.py create_user"
   fi
 fi
 
@@ -839,10 +884,15 @@ say "  ${BOLD}Existing-data catalog backfill${RESET}"
 say "    Restarts do not scan historical data automatically. After an upgrade:"
 say "    ${BOLD}./bin/property-catalog-backfill --execute${RESET}"
 
-if [[ -n "$USER_EMAIL" ]]; then
+if [[ "$ACCOUNT_STATE" == "$ACCOUNT_CREATED" || "$ACCOUNT_STATE" == "$ACCOUNT_EXISTS" ]]; then
   say ""
   say "  ${BOLD}Sign in as${RESET} ${USER_EMAIL}"
   say "    →  http://localhost:${frontend_port}/auth/jwt/login"
+elif [[ "$ACCOUNT_STATE" == "$ACCOUNT_FAILED" ]]; then
+  say ""
+  say "  ${BOLD}${YELLOW}ACTION REQUIRED: no account was created${RESET}"
+  say "    The stack is running, but you cannot sign in until you create one:"
+  say "    ${BOLD}docker exec -it futureagi-backend-1 python manage.py create_user${RESET}"
 fi
 say ""
 say "  ${DIM}Stop:${RESET}        $DC down"
@@ -852,3 +902,6 @@ say "  ${DIM}Install log:${RESET} $LOG_FILE"
 say ""
 say "  ${DIM}★ Star us: https://github.com/future-agi/future-agi${RESET}"
 say ""
+
+[[ "$ACCOUNT_STATE" == "$ACCOUNT_FAILED" ]] && exit 1
+exit 0

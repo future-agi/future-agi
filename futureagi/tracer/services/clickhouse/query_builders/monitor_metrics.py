@@ -66,6 +66,8 @@ _EVAL_SPAN_BUCKET_EXPR = (
 _EVAL_NON_VALUE_STATUSES = ", ".join(
     f"'{s.value}'" for s in EvalEntryStatus if s is not EvalEntryStatus.COMPLETED
 )
+
+
 def _pruned_window(start_param: str, end_param: str) -> str:
     """Half-open exact start_time window ``[start, end)`` + padded created_at guard.
 
@@ -684,7 +686,8 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
         ):
             obs_type = (
                 "tool"
-                if metric_type == MonitorMetricTypeChoices.ERROR_RATES_FOR_FUNCTION_CALLING
+                if metric_type
+                == MonitorMetricTypeChoices.ERROR_RATES_FOR_FUNCTION_CALLING
                 else "llm"
             )
             params["obs_type_ts"] = obs_type
@@ -833,9 +836,7 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
         version_column = eval_logger_version_column(eval_table)
         span_cols = "id, start_time" if include_span_start_time else "id"
         span_projection = (
-            ", sp.start_time AS span_start_time"
-            if include_span_start_time
-            else ""
+            ", sp.start_time AS span_start_time" if include_span_start_time else ""
         )
         return f"""
             (

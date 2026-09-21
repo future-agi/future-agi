@@ -553,7 +553,7 @@ describe("environmentName", () => {
   });
 
   it("lets a caller supply its own fallback for slots that cannot be blank", () => {
-    expect(environmentName({ metadata: {} }, "RL Environment")).toBe("RL Environment");
+    expect(environmentName({ metadata: {} }, "Environment")).toBe("Environment");
   });
 
   // The regression #2427 reintroduced: github jobs submitted without

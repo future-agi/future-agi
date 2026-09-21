@@ -119,7 +119,7 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
             ) from exc
 
     provider = str(os.environ.get("SIMULATOR_LLM_PROVIDER") or "vertex").strip()
-    model = str(os.environ.get("SIMULATOR_LLM_MODEL") or "gemini-2.5-flash").strip()
+    model = str(os.environ.get("SIMULATOR_LLM_MODEL") or "gemini-3.7-flash").strip()
     location = str(os.environ.get("GOOGLE_CLOUD_LOCATION") or "global").strip()
     derived_backend = (
         "vertex-gemini"
@@ -142,6 +142,23 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         "SIMULATOR_LLM_PROVIDER": provider,
         "SIMULATOR_LLM_MODEL": model,
     }
+    if backend == "claude":
+        # Authoring may need a virtual key with model aliases that the platform's internal
+        # service key does not have. The key is platform-owned, never taken from the job.
+        gateway_key = str(
+            os.environ.get("AGENTCC_HARNESS_API_KEY")
+            or os.environ.get("AGENTCC_INTERNAL_API_KEY")
+            or ""
+        ).strip()
+        gateway_url = str(os.environ.get("AGENTCC_BASE_URL") or "").strip()
+        if not gateway_key or not gateway_url:
+            raise HostedHarnessError(
+                "authoring_gateway_not_configured",
+                "Claude authoring requires AGENTCC_HARNESS_API_KEY (or the local internal key) and a sandbox-reachable AGENTCC_BASE_URL",
+                status_code=503,
+            )
+        values["AGENTCC_API_KEY"] = gateway_key
+        values["AGENTCC_BASE_URL"] = gateway_url
     for name in (
         "LIVEKIT_URL",
         "LIVEKIT_API_KEY",
@@ -175,9 +192,7 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
     # The sandbox resolves nothing on our network, so the guest's collector is configured
     # separately and only falls back to ours when they are the same host.
     collector = str(
-        os.environ.get("ALK_HOSTED_FI_BASE_URL")
-        or os.environ.get("FI_BASE_URL")
-        or ""
+        os.environ.get("ALK_HOSTED_FI_BASE_URL") or os.environ.get("FI_BASE_URL") or ""
     ).strip()
     if collector:
         values["FI_BASE_URL"] = collector
@@ -1077,6 +1092,9 @@ def _resolved_egress_domains(
     values: list[str] = [domain for domain in base_domains if isinstance(domain, str)]
     values.extend(_provider_egress_domains(target_secrets))
     values.extend(_provider_egress_domains(simulator_env))
+    gateway_host = _hostname_from_url(simulator_env.get("AGENTCC_BASE_URL"))
+    if gateway_host:
+        values.append(gateway_host)
     # Observe, when the guest is given credentials for it. Derived rather than requested, because a
     # customer cannot be expected to know the collector is a dependency of their own run.
     simulator_values = {str(k).upper(): v for k, v in simulator_env.items()}
@@ -1366,6 +1384,9 @@ class DaytonaHostedGateway:
             "us-east5-aiplatform.googleapis.com",
             "us-central1-aiplatform.googleapis.com",
         ]
+        gateway_host = _hostname_from_url(simulator_env.get("AGENTCC_BASE_URL"))
+        if gateway_host and gateway_host not in default_authoring_egress:
+            default_authoring_egress.insert(0, gateway_host)
         allowed_domains = list(
             dict.fromkeys(
                 getattr(
@@ -1389,7 +1410,9 @@ class DaytonaHostedGateway:
                 for name, value in simulator_env.items()
                 if name not in {"LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"}
             },
-            "CLAUDE_CODE_USE_VERTEX": "1",
+            "CLAUDE_CODE_USE_VERTEX": (
+                "0" if simulator_env.get("AGENTCC_API_KEY") else "1"
+            ),
             "GOOGLE_GENAI_USE_VERTEXAI": "True",
             "CLOUD_ML_REGION": getattr(
                 settings, "ALK_HOSTED_AUTHORING_CLAUDE_REGION", "us-east5"
@@ -1760,6 +1783,9 @@ class DaytonaHostedGateway:
             attempt.provider_ref = sandbox.id
             attempt.state = HostedHarnessAttempt.State.PROVISIONING
             attempt.save(update_fields=["provider_ref", "state", "updated_at"])
+            from simulate.services.harness_usage import record_sandbox_runtime
+
+            record_sandbox_runtime(attempt, started=True)
             sandbox.fs.upload_file(source_archive, "/work/source.tar.gz")
             sandbox.fs.upload_file(
                 json.dumps(
@@ -1785,6 +1811,7 @@ class DaytonaHostedGateway:
                     ).encode(),
                     authoring_secrets_path,
                 )
+            simulator_env["ALK_SIMULATOR_FUNDING"] = "platform"
             sandbox.fs.upload_file(
                 json.dumps(
                     simulator_env, sort_keys=True, separators=(",", ":")
@@ -1857,6 +1884,7 @@ class DaytonaHostedGateway:
                 if name
                 in {
                     "ALK_HARNESS",
+                    "ALK_SIMULATOR_FUNDING",
                     "ALK_HARNESS_MODEL",
                     "ALK_VERTEX_LOCATION",
                     # Authoring writes the scenarios, so the switch is exported here too.
@@ -2246,8 +2274,27 @@ class DaytonaHostedGateway:
         bundle = _json("/work/bundle/manifest.json")
         # Read on every poll, so a sandbox deleted later still leaves its last known total.
         spend = _json("/work/authoring/cost.json")
+        _read_harness_usage(attempt, sandbox)
         job = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id)
         _record_harness_spend(job, spend, attempt.attempt_number)
+        authoring_complete = (
+            isinstance(bundle, dict)
+            and isinstance(scenarios, list)
+            and len(scenarios) == job.scenario_count
+        )
+        if authoring_complete and isinstance(spend, dict):
+            from simulate.services.harness_usage import (
+                record_harness_authoring_usage,
+            )
+
+            try:
+                record_harness_authoring_usage(attempt, spend)
+            except Exception:  # noqa: BLE001 - poll must continue to terminal cleanup
+                logger.exception(
+                    "could not price hosted authoring usage job=%s attempt=%s",
+                    job.id,
+                    attempt.id,
+                )
 
         # Unified hosted execution authors the contract/world/scenarios in the same
         # sandbox that later runs the calls.  Freeze those inputs as soon as Bundle V2
@@ -2258,14 +2305,8 @@ class DaytonaHostedGateway:
         # re-freeze even though a key already exists — gated on its one-shot marker.
         # store_authoring_archive clears that marker in the same save.
         metadata = (job.payload or {}).get("metadata") or {}
-        if (
-            isinstance(bundle, dict)
-            and isinstance(scenarios, list)
-            and len(scenarios) == job.scenario_count
-            and (
-                not metadata.get("authoring_object_key")
-                or metadata.get("scenario_extend")
-            )
+        if authoring_complete and (
+            not metadata.get("authoring_object_key") or metadata.get("scenario_extend")
         ):
             try:
                 packed = sandbox.process.exec(
@@ -2703,6 +2744,7 @@ class DaytonaHostedGateway:
                 self._capture_diagnostics(attempt, sandbox, final=True)
             # The last moment the ledger exists: after the delete there is nothing to ask.
             _read_harness_spend(attempt, sandbox)
+            _read_harness_usage(attempt, sandbox)
             self.client.delete(sandbox, timeout=120, wait=True)
             try:
                 self.client.get(
@@ -3028,7 +3070,10 @@ def prepare_dispatch_payload(
     metadata = dict(dispatched.get("metadata") or {})
     metadata["environment_value_names"] = sorted(
         {
-            *(str(name).upper() for name in metadata.get("environment_value_names", [])),
+            *(
+                str(name).upper()
+                for name in metadata.get("environment_value_names", [])
+            ),
             *(str(name).upper() for name in secrets_map),
         }
     )
@@ -3167,6 +3212,32 @@ def _secret_safe(value: Any, *, key: str = "") -> Any:
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     return str(value)
+
+
+def _read_harness_usage(attempt: HostedHarnessAttempt, sandbox) -> None:
+    """Recover the structured ALK journal during polling and before teardown."""
+    from simulate.serializers.harness_usage import HarnessUsageRequestSerializer
+    from simulate.services.harness_usage import (
+        record_harness_usage,
+        record_sandbox_runtime,
+    )
+
+    record_sandbox_runtime(attempt)
+
+    try:
+        body = sandbox.fs.download_file(
+            "/work/usage.json", _PROGRESS_FILE_TIMEOUT_SECONDS
+        )
+    except Exception:
+        # Early failures and older snapshots have no usage journal.
+        logger.debug("usage journal unavailable attempt=%s", attempt.id, exc_info=True)
+        return
+    try:
+        serializer = HarnessUsageRequestSerializer(data=json.loads(body))
+        serializer.is_valid(raise_exception=True)
+        record_harness_usage(attempt, serializer.validated_data)
+    except Exception:
+        logger.exception("could not recover usage journal attempt=%s", attempt.id)
 
 
 def _read_harness_spend(attempt: HostedHarnessAttempt, sandbox) -> None:

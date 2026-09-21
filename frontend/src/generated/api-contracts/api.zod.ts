@@ -7510,6 +7510,21 @@ export const AgentccRequestLogsExportResponse = zod.object({
 });
 
 /**
+ * Application, service and custom tag values seen in recent requests.
+ */
+
+export const AgentccRequestLogsMetadataValuesResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    application: zod.array(zod.string().min(1)),
+    service: zod.array(zod.string().min(1)),
+    tags: zod
+      .array(zod.string().min(1))
+      .describe("key:value pairs, for keys declared as custom properties."),
+  }),
+});
+
+/**
  * Full-text search across model, provider, error_message, request_id.
  */
 export const AgentccRequestLogsSearchQueryParams = zod.object({
@@ -34924,6 +34939,14 @@ selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
  * @summary Provider-neutral control plane for hosted ALK harness jobs.
  */
 
+export const simulateApiHarnessJobsListResponseConsumptionTextSimTokensMin = 0;
+
+export const simulateApiHarnessJobsListResponseConsumptionVoiceSimMinutesMin = 0;
+
+export const simulateApiHarnessJobsListResponseConsumptionAiCreditsMin = 0;
+
+export const simulateApiHarnessJobsListResponseConsumptionSandboxSecondsMin = 0;
+
 export const SimulateApiHarnessJobsListResponseItem = zod.object({
   job: zod.object({
     job_id: zod.string().uuid(),
@@ -34995,6 +35018,23 @@ export const SimulateApiHarnessJobsListResponseItem = zod.object({
         .optional(),
     })
     .optional(),
+  consumption: zod
+    .object({
+      text_sim_tokens: zod
+        .number()
+        .min(simulateApiHarnessJobsListResponseConsumptionTextSimTokensMin),
+      voice_sim_minutes: zod
+        .number()
+        .min(simulateApiHarnessJobsListResponseConsumptionVoiceSimMinutesMin),
+      ai_credits: zod
+        .number()
+        .min(simulateApiHarnessJobsListResponseConsumptionAiCreditsMin),
+      sandbox_seconds: zod
+        .number()
+        .min(simulateApiHarnessJobsListResponseConsumptionSandboxSecondsMin),
+    })
+    .optional(),
+  usage_limit: zod.object({}).passthrough().optional(),
 });
 export const SimulateApiHarnessJobsListResponse = zod.array(
   SimulateApiHarnessJobsListResponseItem,
@@ -35691,6 +35731,14 @@ export const SimulateApiHarnessJobsReadParams = zod.object({
   id: zod.string(),
 });
 
+export const simulateApiHarnessJobsReadResponseConsumptionTextSimTokensMin = 0;
+
+export const simulateApiHarnessJobsReadResponseConsumptionVoiceSimMinutesMin = 0;
+
+export const simulateApiHarnessJobsReadResponseConsumptionAiCreditsMin = 0;
+
+export const simulateApiHarnessJobsReadResponseConsumptionSandboxSecondsMin = 0;
+
 export const SimulateApiHarnessJobsReadResponse = zod.object({
   job: zod.object({
     job_id: zod.string().uuid(),
@@ -35762,6 +35810,23 @@ export const SimulateApiHarnessJobsReadResponse = zod.object({
         .optional(),
     })
     .optional(),
+  consumption: zod
+    .object({
+      text_sim_tokens: zod
+        .number()
+        .min(simulateApiHarnessJobsReadResponseConsumptionTextSimTokensMin),
+      voice_sim_minutes: zod
+        .number()
+        .min(simulateApiHarnessJobsReadResponseConsumptionVoiceSimMinutesMin),
+      ai_credits: zod
+        .number()
+        .min(simulateApiHarnessJobsReadResponseConsumptionAiCreditsMin),
+      sandbox_seconds: zod
+        .number()
+        .min(simulateApiHarnessJobsReadResponseConsumptionSandboxSecondsMin),
+    })
+    .optional(),
+  usage_limit: zod.object({}).passthrough().optional(),
 });
 
 /**
@@ -35810,6 +35875,14 @@ export const SimulateApiHarnessJobsCancelBody = zod.object({
     .enum(["user_canceled", "ttl_exceeded"])
     .default(simulateApiHarnessJobsCancelBodyReasonDefault),
 });
+
+export const simulateApiHarnessJobsCancelResponseConsumptionTextSimTokensMin = 0;
+
+export const simulateApiHarnessJobsCancelResponseConsumptionVoiceSimMinutesMin = 0;
+
+export const simulateApiHarnessJobsCancelResponseConsumptionAiCreditsMin = 0;
+
+export const simulateApiHarnessJobsCancelResponseConsumptionSandboxSecondsMin = 0;
 
 export const SimulateApiHarnessJobsCancelResponse = zod.object({
   job: zod.object({
@@ -35882,6 +35955,23 @@ export const SimulateApiHarnessJobsCancelResponse = zod.object({
         .optional(),
     })
     .optional(),
+  consumption: zod
+    .object({
+      text_sim_tokens: zod
+        .number()
+        .min(simulateApiHarnessJobsCancelResponseConsumptionTextSimTokensMin),
+      voice_sim_minutes: zod
+        .number()
+        .min(simulateApiHarnessJobsCancelResponseConsumptionVoiceSimMinutesMin),
+      ai_credits: zod
+        .number()
+        .min(simulateApiHarnessJobsCancelResponseConsumptionAiCreditsMin),
+      sandbox_seconds: zod
+        .number()
+        .min(simulateApiHarnessJobsCancelResponseConsumptionSandboxSecondsMin),
+    })
+    .optional(),
+  usage_limit: zod.object({}).passthrough().optional(),
 });
 
 /**
@@ -36308,6 +36398,67 @@ export const SimulateApiHarnessAttemptsScenariosResponse = zod.object({
       }),
     ),
   }),
+});
+
+export const SimulateApiHarnessAttemptsUsageParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessAttemptsUsageBodyRecordsItemScenarioKeyMax = 255;
+
+export const simulateApiHarnessAttemptsUsageBodyRecordsItemAmountMin = 0;
+
+export const simulateApiHarnessAttemptsUsageBodyRecordsItemOutcomeDefault = `completed`;
+
+export const SimulateApiHarnessAttemptsUsageBody = zod.object({
+  operation: zod.enum(["check", "report"]),
+  action: zod.enum(["text_call", "voice_call"]).optional(),
+  schema_version: zod.enum(["futureagi.harness-usage.v1"]).optional(),
+  records: zod
+    .array(
+      zod.object({
+        id: zod.string().uuid(),
+        action: zod.enum(["text_call", "voice_call"]),
+        scenario_key: zod
+          .string()
+          .min(1)
+          .max(simulateApiHarnessAttemptsUsageBodyRecordsItemScenarioKeyMax),
+        amount: zod
+          .number()
+          .min(simulateApiHarnessAttemptsUsageBodyRecordsItemAmountMin),
+        occurred_at: zod.string().datetime({ offset: true }),
+        funding: zod.enum(["platform", "customer"]),
+        outcome: zod
+          .enum(["completed", "failed"])
+          .default(
+            simulateApiHarnessAttemptsUsageBodyRecordsItemOutcomeDefault,
+          ),
+        failure_domain: zod
+          .enum([
+            "agent",
+            "simulator",
+            "environment",
+            "connectivity",
+            "infrastructure",
+            "grading",
+            "artifact",
+            "platform_sync",
+          ])
+          .optional(),
+      }),
+    )
+    .optional(),
+});
+
+export const SimulateApiHarnessAttemptsUsageResponse = zod.object({
+  allowed: zod.boolean().optional(),
+  accepted: zod.boolean().optional(),
+  reason: zod.string().optional(),
+  error_code: zod.string().optional(),
+  dimension: zod.string().optional(),
+  current_usage: zod.number().optional(),
+  limit: zod.number().optional(),
+  upgrade_cta: zod.object({}).passthrough().optional(),
 });
 
 /**

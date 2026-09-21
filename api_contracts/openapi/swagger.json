@@ -13299,6 +13299,38 @@
             },
             "parameters": []
         },
+        "/agentcc/request-logs/metadata-values/": {
+            "get": {
+                "operationId": "agentcc_request-logs_metadata_values",
+                "description": "Application, service and custom tag values seen in recent requests.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentccRequestLogMetadataValuesResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentccErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "agentcc"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
         "/agentcc/request-logs/search/": {
             "get": {
                 "operationId": "agentcc_request-logs_search",
@@ -50767,6 +50799,55 @@
                 }
             ]
         },
+        "/simulate/api/harness/attempts/{id}/usage/": {
+            "post": {
+                "operationId": "simulate_api_harness_attempts_usage",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessUsageRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessUsageResponse"
+                        }
+                    },
+                    "402": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessUsageResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/livekit/call-config/{call_id}/": {
             "get": {
                 "operationId": "simulate_api_livekit_call-config_read",
@@ -85434,6 +85515,54 @@
                 }
             }
         },
+        "AgentccRequestLogMetadataValues": {
+            "required": [
+                "application",
+                "service",
+                "tags"
+            ],
+            "type": "object",
+            "properties": {
+                "application": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "service": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "tags": {
+                    "description": "key:value pairs, for keys declared as custom properties.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "AgentccRequestLogMetadataValuesResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/AgentccRequestLogMetadataValues"
+                }
+            }
+        },
         "AgentccRequestLogDetail": {
             "type": "object",
             "properties": {
@@ -118698,6 +118827,39 @@
                 }
             }
         },
+        "HarnessConsumption": {
+            "required": [
+                "text_sim_tokens",
+                "voice_sim_minutes",
+                "ai_credits",
+                "sandbox_seconds"
+            ],
+            "type": "object",
+            "properties": {
+                "text_sim_tokens": {
+                    "title": "Text sim tokens",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "voice_sim_minutes": {
+                    "title": "Voice sim minutes",
+                    "type": "number",
+                    "minimum": 0
+                },
+                "ai_credits": {
+                    "title": "Ai credits",
+                    "type": "number",
+                    "minimum": 0,
+                    "x-nullable": true
+                },
+                "sandbox_seconds": {
+                    "title": "Sandbox seconds",
+                    "type": "number",
+                    "minimum": 0
+                }
+            },
+            "x-nullable": true
+        },
         "HarnessJobRead": {
             "required": [
                 "job",
@@ -118745,6 +118907,14 @@
                 },
                 "runtime": {
                     "$ref": "#/definitions/HarnessRuntimeRead"
+                },
+                "consumption": {
+                    "$ref": "#/definitions/HarnessConsumption"
+                },
+                "usage_limit": {
+                    "title": "Usage limit",
+                    "type": "object",
+                    "x-nullable": true
                 }
             }
         },
@@ -120069,6 +120239,155 @@
             "properties": {
                 "result": {
                     "$ref": "#/definitions/HarnessScenarioOperationResult"
+                }
+            }
+        },
+        "HarnessUsageRecord": {
+            "required": [
+                "id",
+                "action",
+                "scenario_key",
+                "amount",
+                "occurred_at",
+                "funding"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "action": {
+                    "title": "Action",
+                    "type": "string",
+                    "enum": [
+                        "text_call",
+                        "voice_call"
+                    ]
+                },
+                "scenario_key": {
+                    "title": "Scenario key",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "amount": {
+                    "title": "Amount",
+                    "type": "number",
+                    "minimum": 0
+                },
+                "occurred_at": {
+                    "title": "Occurred at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "funding": {
+                    "title": "Funding",
+                    "type": "string",
+                    "enum": [
+                        "platform",
+                        "customer"
+                    ]
+                },
+                "outcome": {
+                    "title": "Outcome",
+                    "type": "string",
+                    "enum": [
+                        "completed",
+                        "failed"
+                    ],
+                    "default": "completed"
+                },
+                "failure_domain": {
+                    "title": "Failure domain",
+                    "type": "string",
+                    "enum": [
+                        "agent",
+                        "simulator",
+                        "environment",
+                        "connectivity",
+                        "infrastructure",
+                        "grading",
+                        "artifact",
+                        "platform_sync"
+                    ],
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessUsageRequest": {
+            "required": [
+                "operation"
+            ],
+            "type": "object",
+            "properties": {
+                "operation": {
+                    "title": "Operation",
+                    "type": "string",
+                    "enum": [
+                        "check",
+                        "report"
+                    ]
+                },
+                "action": {
+                    "title": "Action",
+                    "type": "string",
+                    "enum": [
+                        "text_call",
+                        "voice_call"
+                    ]
+                },
+                "schema_version": {
+                    "title": "Schema version",
+                    "type": "string",
+                    "enum": [
+                        "futureagi.harness-usage.v1"
+                    ]
+                },
+                "records": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessUsageRecord"
+                    }
+                }
+            }
+        },
+        "HarnessUsageResponse": {
+            "type": "object",
+            "properties": {
+                "allowed": {
+                    "title": "Allowed",
+                    "type": "boolean"
+                },
+                "accepted": {
+                    "title": "Accepted",
+                    "type": "boolean"
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string"
+                },
+                "error_code": {
+                    "title": "Error code",
+                    "type": "string"
+                },
+                "dimension": {
+                    "title": "Dimension",
+                    "type": "string"
+                },
+                "current_usage": {
+                    "title": "Current usage",
+                    "type": "number"
+                },
+                "limit": {
+                    "title": "Limit",
+                    "type": "number"
+                },
+                "upgrade_cta": {
+                    "title": "Upgrade cta",
+                    "type": "object",
+                    "x-nullable": true
                 }
             }
         },

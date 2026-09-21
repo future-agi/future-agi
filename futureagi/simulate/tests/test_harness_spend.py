@@ -196,6 +196,10 @@ def test_the_ledger_is_read_before_the_only_delete_that_exists(monkeypatch):
         gateway, "_read_harness_spend", lambda *_: order.append("read_spend")
     )
     monkeypatch.setattr(gateway, "record_cleanup", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "simulate.services.harness_usage.record_sandbox_runtime",
+        lambda *args, **kwargs: None,
+    )
 
     driver = gateway.DaytonaHostedGateway.__new__(gateway.DaytonaHostedGateway)
     driver.client = _Client()

@@ -525,6 +525,39 @@ def test_daytona_create_rejects_known_egress_overflow_before_persisting(
     start.assert_not_called()
 
 
+@pytest.mark.django_db
+def test_daytona_create_returns_structured_usage_limit_response(user, workspace):
+    from ee.usage.exceptions import UsageLimitExceeded
+    from ee.usage.schemas.events import CheckResult
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+    refusal = CheckResult(
+        allowed=False,
+        error_code="BUDGET_PAUSED",
+        dimension="ai_credits",
+        reason="Authoring is paused by your budget",
+        current_usage=12,
+        limit=12,
+    )
+    with patch(
+        "simulate.services.harness_usage.require_harness_run_usage",
+        side_effect=UsageLimitExceeded(refusal),
+    ):
+        response = client.post(
+            "/simulate/api/harness-jobs/",
+            _v1_payload(),
+            format="json",
+            HTTP_IDEMPOTENCY_KEY="authoring-limit",
+            HTTP_X_WORKSPACE_ID=str(workspace.id),
+        )
+
+    assert response.status_code == 402
+    assert response.json()["error_code"] == "BUDGET_PAUSED"
+    assert response.json()["dimension"] == "ai_credits"
+    assert response.json()["current_usage"] == 12
+
+
 def test_harness_create_cors_preflight_allows_idempotency_key():
     response = APIClient().options(
         "/simulate/api/harness-jobs/",
@@ -680,6 +713,7 @@ def test_daytona_create_starts_gateway_workflow(user, workspace):
             "simulate.services.harness_provider.serialize_job", return_value=serialized
         ),
         patch("simulate.services.harness_provider._validate_required_credential_files"),
+        patch("simulate.services.harness_usage.require_harness_run_usage") as usage,
     ):
         response = client.post(
             "/simulate/api/harness-jobs/",
@@ -694,6 +728,9 @@ def test_daytona_create_starts_gateway_workflow(user, workspace):
     assert create.call_args.kwargs["idempotency_key"] == "key-1"
     assert create.call_args.kwargs["workspace"] == workspace
     assert start.call_args.args[0] == str(_Job.id)
+    usage.assert_called_once()
+    assert usage.call_args.args[0] == str(user.organization.id)
+    assert usage.call_args.args[1]["agent"]["connector"] == "auto"
 
 
 @pytest.mark.django_db

@@ -69,6 +69,12 @@ class EvalTask(BaseModel):
     # pre-dates it) and advances it each pass; persisting it means a task paused
     # for longer than the late-arrival overlap still resumes without a gap.
     continuous_cursor = models.DateTimeField(blank=True, null=True)
+    # Eval-config revision (see ``reconciler._evals_revision``) that the last
+    # cursor-less full reclassification pass covered. A continuous task runs one
+    # full pass per revision; while this matches, every poll is a cheap delta.
+    reclassified_evals_revision = models.CharField(
+        max_length=64, blank=True, null=True
+    )
     evals_details = models.JSONField(default=list, blank=True, null=True)
     evals = models.ManyToManyField(
         CustomEvalConfig, related_name="eval_tasks", blank=True, null=True

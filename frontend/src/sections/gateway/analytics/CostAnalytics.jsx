@@ -13,16 +13,12 @@ import {
 import { useTheme } from "@mui/material/styles";
 import Chart from "react-apexcharts";
 import { useAnalyticsCost } from "./hooks/useAnalyticsCost";
-import { formatCost } from "../utils/formatters";
+import { formatCost, formatCostTick } from "../utils/formatters";
+import { REQUEST_DIMENSION_OPTIONS } from "../constants/requestTags";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-
-const GROUP_BY_OPTIONS = [
-  { value: "model", label: "Model" },
-  { value: "provider", label: "Provider" },
-];
 
 const TOP_N = 10;
 
@@ -93,9 +89,10 @@ function buildBarChartOptions(theme, categories) {
     },
     xaxis: {
       categories,
+      tickAmount: 5,
       labels: {
         style: { colors: theme.palette.text.secondary, fontSize: "11px" },
-        formatter: (val) => formatCost(val),
+        formatter: (val) => formatCostTick(val),
       },
     },
     yaxis: {
@@ -231,6 +228,9 @@ function buildDonutChartOptions(theme, labels) {
 const CostAnalytics = ({ start, end, gatewayId }) => {
   const theme = useTheme();
   const [groupBy, setGroupBy] = useState("model");
+  const groupByLabel = REQUEST_DIMENSION_OPTIONS.find(
+    (opt) => opt.value === groupBy,
+  )?.label;
 
   const { data, isLoading } = useAnalyticsCost({
     start,
@@ -332,7 +332,7 @@ const CostAnalytics = ({ start, end, gatewayId }) => {
             size="small"
             sx={{ flexWrap: "wrap" }}
           >
-            {GROUP_BY_OPTIONS.map((opt) => (
+            {REQUEST_DIMENSION_OPTIONS.map((opt) => (
               <ToggleButton
                 key={opt.value}
                 value={opt.value}
@@ -355,7 +355,7 @@ const CostAnalytics = ({ start, end, gatewayId }) => {
         <Grid item xs={12} md={7}>
           <Card sx={{ p: 3 }}>
             <Typography variant="subtitle1" fontWeight={600} mb={2}>
-              Cost by {groupBy === "model" ? "Model" : "Provider"}
+              Cost by {groupByLabel}
             </Typography>
             {isLoading ? (
               <Skeleton
