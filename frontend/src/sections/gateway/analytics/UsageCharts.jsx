@@ -13,6 +13,7 @@ import {
 import { useTheme } from "@mui/material/styles";
 import Chart from "react-apexcharts";
 import { useAnalyticsUsage } from "./hooks/useAnalyticsUsage";
+import { REQUEST_DIMENSION_OPTIONS } from "../constants/requestTags";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -20,8 +21,7 @@ import { useAnalyticsUsage } from "./hooks/useAnalyticsUsage";
 
 const GROUP_BY_OPTIONS = [
   { value: "", label: "None" },
-  { value: "model", label: "Model" },
-  { value: "provider", label: "Provider" },
+  ...REQUEST_DIMENSION_OPTIONS,
 ];
 
 function computeGranularity(start, end) {
@@ -39,6 +39,17 @@ function computeGranularity(start, end) {
 // Chart option builders
 // ---------------------------------------------------------------------------
 
+function groupPalette(theme) {
+  return [
+    theme.palette.primary.main,
+    theme.palette.secondary.main,
+    theme.palette.warning.main,
+    theme.palette.info.main,
+    theme.palette.success.main,
+    theme.palette.error.main,
+  ];
+}
+
 function buildRequestChartOptions(theme, _series) {
   return {
     chart: {
@@ -47,14 +58,7 @@ function buildRequestChartOptions(theme, _series) {
       zoom: { enabled: false },
       fontFamily: theme.typography.fontFamily,
     },
-    colors: [
-      theme.palette.primary.main,
-      theme.palette.secondary.main,
-      theme.palette.warning.main,
-      theme.palette.info.main,
-      theme.palette.success.main,
-      theme.palette.error.main,
-    ],
+    colors: groupPalette(theme),
     dataLabels: { enabled: false },
     stroke: { curve: "smooth", width: 2 },
     fill: {
@@ -105,7 +109,7 @@ function buildRequestChartOptions(theme, _series) {
   };
 }
 
-function buildTokenChartOptions(theme) {
+function buildTokenChartOptions(theme, isGrouped) {
   return {
     chart: {
       type: "area",
@@ -114,7 +118,9 @@ function buildTokenChartOptions(theme) {
       zoom: { enabled: false },
       fontFamily: theme.typography.fontFamily,
     },
-    colors: [theme.palette.info.main, theme.palette.warning.main],
+    colors: isGrouped
+      ? groupPalette(theme)
+      : [theme.palette.info.main, theme.palette.warning.main],
     dataLabels: { enabled: false },
     stroke: { curve: "smooth", width: 2 },
     fill: {
@@ -246,7 +252,7 @@ const UsageCharts = ({ start, end, gatewayId }) => {
     gatewayId,
   });
 
-  const isGrouped = Boolean(groupBy) && data?.groups;
+  const isGrouped = Boolean(groupBy) && Boolean(data?.groups);
 
   const requestSeries = useMemo(() => {
     if (!data) return [];
@@ -268,8 +274,8 @@ const UsageCharts = ({ start, end, gatewayId }) => {
   );
 
   const tokenChartOptions = useMemo(
-    () => buildTokenChartOptions(theme),
-    [theme],
+    () => buildTokenChartOptions(theme, isGrouped),
+    [theme, isGrouped],
   );
 
   const handleGroupByChange = (_event, newValue) => {

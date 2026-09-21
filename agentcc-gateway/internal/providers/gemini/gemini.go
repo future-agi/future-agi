@@ -75,8 +75,14 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 		headers:   cfg.Headers,
 	}
 
-	if vertexAI && cfg.CredentialsFile != "" {
-		tp, err := gauth.NewTokenProvider(cfg.CredentialsFile, gauth.ScopeCloudPlatform)
+	if vertexAI && (cfg.CredentialsFile != "" || cfg.ServiceAccountJSON != "") {
+		var tp *gauth.TokenProvider
+		var err error
+		if cfg.ServiceAccountJSON != "" {
+			tp, err = gauth.NewTokenProviderJSON([]byte(cfg.ServiceAccountJSON), gauth.ScopeCloudPlatform)
+		} else {
+			tp, err = gauth.NewTokenProvider(cfg.CredentialsFile, gauth.ScopeCloudPlatform)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("gemini: vertex ai credentials: %w", err)
 		}
@@ -157,6 +163,9 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusUnauthorized && p.tokenProvider != nil {
+			p.tokenProvider.Invalidate()
+		}
 		return nil, parseGeminiError(resp.StatusCode, respBody)
 	}
 
@@ -226,6 +235,9 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
+			if resp.StatusCode == http.StatusUnauthorized && p.tokenProvider != nil {
+				p.tokenProvider.Invalidate()
+			}
 			respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
 			if readErr != nil {
 				errs <- models.ErrUpstreamProvider(resp.StatusCode,
@@ -264,6 +276,14 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 				case chunks <- *chunk:
 				case <-ctx.Done():
 					return
+				}
+				// Gemini may keep the HTTP stream open after its terminal candidate.
+				// Close our stream as soon as the finish reason arrives so callers
+				// receive their final message event without waiting for EOF.
+				for _, choice := range chunk.Choices {
+					if choice.FinishReason != nil && *choice.FinishReason != "" {
+						return
+					}
 				}
 			}
 		}

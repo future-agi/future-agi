@@ -544,7 +544,13 @@ class DistributedEvaluationTracker(DistributedStateManager):
         cleaned = 0
         cutoff = datetime.utcnow().timestamp() - (max_age_hours * 3600)
 
-        for info in self.get_all_running():
+        try:
+            running = self.get_all_running()
+        except Exception as exc:
+            logger.error(f"Failed to list running evaluations for stale cleanup: {exc}")
+            return 0
+
+        for info in running:
             try:
                 started = datetime.fromisoformat(info.started_at).timestamp()
                 if started < cutoff:

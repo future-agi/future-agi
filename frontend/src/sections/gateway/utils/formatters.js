@@ -28,6 +28,11 @@ export function formatCost(value) {
   return "$0.00";
 }
 
+// Axis ticks sit on round values, so zeros past the cents only widen the label
+export function formatCostTick(value) {
+  return formatCost(value).replace(/(\.\d{2}\d*?)0+$/, "$1");
+}
+
 export function formatPercent(value, decimals = 1) {
   if (value == null) return "--";
   const num = Number(value);

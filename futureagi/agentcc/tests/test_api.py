@@ -14,15 +14,18 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
 
+from accounts.models.organization import Organization
 from accounts.models.workspace import Workspace
 from agentcc.models import (
     AgentccAPIKey,
+    AgentccCustomPropertySchema,
     AgentccGuardrailPolicy,
     AgentccOrgConfig,
     AgentccProject,
     AgentccProviderCredential,
     AgentccRequestLog,
 )
+from agentcc.services import analytics as analytics_service
 from integrations.services.credentials import CredentialManager
 
 
@@ -427,6 +430,54 @@ class TestAgentccGatewayAPI:
             organization=organization,
             provider_name="standalone-openai",
             deleted=False,
+        ).exists()
+
+    @patch("agentcc.views.gateway.push_org_config", return_value=True)
+    @patch("agentcc.views.gateway._prepare_vertex_provider_config")
+    def test_update_vertex_provider_encrypts_pasted_json(
+        self, mock_prepare, mock_push, auth_client, gateway_id, organization
+    ):
+        mock_prepare.return_value = {
+            "base_url": (
+                "https://us-central1-aiplatform.googleapis.com/v1beta1/"
+                "projects/demo-project/locations/us-central1"
+            ),
+            "api_format": "gemini",
+            "models": ["gemini-3.7-flash"],
+            "service_account_json": '{"type":"service_account"}',
+        }
+        response = auth_client.post(
+            f"/agentcc/gateways/{gateway_id}/update-provider/",
+            {"name": "vertex", "config": {"gcp_project": "demo-project"}},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        credential = AgentccProviderCredential.no_workspace_objects.get(
+            organization=organization, provider_name="vertex", deleted=False
+        )
+        assert CredentialManager.decrypt(bytes(credential.encrypted_credentials)) == {
+            "service_account_json": '{"type":"service_account"}'
+        }
+        assert "service_account_json" not in credential.extra_config
+
+    def test_update_vertex_provider_rejects_invalid_pasted_json(
+        self, auth_client, gateway_id, organization
+    ):
+        response = auth_client.post(
+            f"/agentcc/gateways/{gateway_id}/update-provider/",
+            {
+                "name": "vertex",
+                "config": {
+                    "gcp_project": "demo-project",
+                    "gcp_location": "us-central1",
+                    "service_account_json": "not-json",
+                },
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert not AgentccProviderCredential.no_workspace_objects.filter(
+            organization=organization, provider_name="vertex", deleted=False
         ).exists()
 
     @patch("agentcc.views.gateway.push_org_config", return_value=True)
@@ -1788,6 +1839,256 @@ class TestRequestLogExport:
         assert response["Content-Type"] == "text/csv"
 
 
+@pytest.fixture
+def tagged_logs(organization, workspace):
+    """Request logs tagged with application, service and custom metadata.
+
+    Two more logs belong to another organization and must never surface.
+    """
+    now = timezone.now()
+    own = [
+        # request_id, model, provider, status, error, session, metadata
+        (
+            "tag-001",
+            "gpt-4",
+            "openai",
+            500,
+            "checkout upstream timeout",
+            "sess-checkout",
+            {
+                "application": "checkout",
+                "service": "recommendations",
+                "team": "growth",
+                "env": "prod",
+            },
+        ),
+        (
+            "tag-002",
+            "gpt-4",
+            "openai",
+            200,
+            "",
+            "sess-checkout",
+            {"application": "checkout", "service": "fraud-check", "team": "growth"},
+        ),
+        (
+            "tag-003",
+            "claude-3",
+            "anthropic",
+            429,
+            "search rate limited",
+            "sess-search",
+            {"application": "search", "service": "answer", "team": "core"},
+        ),
+        ("tag-004", "gpt-4", "openai", 200, "", "sess-untagged", {}),
+    ]
+    logs = [
+        AgentccRequestLog.objects.create(
+            organization=organization,
+            workspace=workspace,
+            request_id=request_id,
+            model=model,
+            provider=provider,
+            status_code=status_code,
+            is_error=status_code >= 400,
+            error_message=error_message,
+            latency_ms=100,
+            cost=Decimal("0.001000"),
+            total_tokens=100,
+            session_id=session_id,
+            started_at=now,
+            metadata=metadata,
+        )
+        for request_id, model, provider, status_code, error_message, session_id, metadata in own
+    ]
+
+    foreign_org = Organization.objects.create(name="Tagged Logs Foreign Org")
+    for request_id, metadata in [
+        (
+            "tag-foreign-001",
+            {"application": "checkout", "service": "recommendations", "team": "growth"},
+        ),
+        (
+            "tag-foreign-002",
+            {
+                "application": "foreign-app",
+                "service": "foreign-svc",
+                "team": "foreign-team",
+            },
+        ),
+    ]:
+        AgentccRequestLog.no_workspace_objects.create(
+            organization=foreign_org,
+            workspace=None,
+            request_id=request_id,
+            model="gpt-4",
+            provider="openai",
+            status_code=500,
+            is_error=True,
+            error_message="foreign failure",
+            session_id="sess-foreign",
+            started_at=now,
+            metadata=metadata,
+        )
+    AgentccCustomPropertySchema.no_workspace_objects.create(
+        organization=foreign_org, name="team"
+    )
+    return logs
+
+
+def _request_ids(response):
+    return {row["request_id"] for row in response.json()["results"]}
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestRequestLogTagFilters:
+    """Tests for filtering request logs by application, service and custom tags."""
+
+    def test_filter_by_application(self, auth_client, tagged_logs):
+        response = auth_client.get("/agentcc/request-logs/?application=checkout")
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["count"] == 2
+        assert _request_ids(response) == {"tag-001", "tag-002"}
+        assert {row["metadata"]["application"] for row in data["results"]} == {
+            "checkout"
+        }
+
+    def test_filter_by_multiple_applications_matches_any(
+        self, auth_client, tagged_logs
+    ):
+        response = auth_client.get("/agentcc/request-logs/?application=checkout,search")
+        assert response.status_code == status.HTTP_200_OK
+        assert _request_ids(response) == {"tag-001", "tag-002", "tag-003"}
+
+    def test_filter_by_service(self, auth_client, tagged_logs):
+        response = auth_client.get("/agentcc/request-logs/?service=answer")
+        assert response.status_code == status.HTTP_200_OK
+        assert _request_ids(response) == {"tag-003"}
+
+    def test_filter_by_tag(self, auth_client, tagged_logs):
+        response = auth_client.get("/agentcc/request-logs/?tags=team:growth")
+        assert response.status_code == status.HTTP_200_OK
+        assert _request_ids(response) == {"tag-001", "tag-002"}
+
+    def test_filter_by_same_tag_key_matches_any(self, auth_client, tagged_logs):
+        response = auth_client.get("/agentcc/request-logs/?tags=team:growth,team:core")
+        assert response.status_code == status.HTTP_200_OK
+        assert _request_ids(response) == {"tag-001", "tag-002", "tag-003"}
+
+    def test_filter_by_multiple_tags_requires_all(self, auth_client, tagged_logs):
+        response = auth_client.get("/agentcc/request-logs/?tags=team:growth,env:prod")
+        assert response.status_code == status.HTTP_200_OK
+        assert _request_ids(response) == {"tag-001"}
+
+    def test_filter_by_unknown_application_returns_nothing(
+        self, auth_client, tagged_logs
+    ):
+        response = auth_client.get("/agentcc/request-logs/?application=nope")
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["count"] == 0
+
+    def test_tag_without_key_value_is_rejected(self, auth_client, tagged_logs):
+        response = auth_client.get("/agentcc/request-logs/?tags=team")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_other_org_logs_never_match(self, auth_client, tagged_logs):
+        response = auth_client.get("/agentcc/request-logs/?application=foreign-app")
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["count"] == 0
+
+    def test_sessions_apply_tag_filters(self, auth_client, tagged_logs):
+        response = auth_client.get("/agentcc/request-logs/sessions/?application=search")
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["count"] == 1
+        assert data["results"][0]["session_id"] == "sess-search"
+        assert data["results"][0]["request_count"] == 1
+
+    def test_search_applies_tag_filters(self, auth_client, tagged_logs):
+        response = auth_client.get(
+            "/agentcc/request-logs/search/?q=gpt&application=checkout"
+        )
+        assert response.status_code == status.HTTP_200_OK
+        assert _request_ids(response) == {"tag-001", "tag-002"}
+
+    def test_export_applies_tag_filters(self, auth_client, tagged_logs):
+        response = auth_client.get(
+            "/agentcc/request-logs/export/?export_format=csv&application=search"
+        )
+        assert response.status_code == status.HTTP_200_OK
+        content = b"".join(response.streaming_content).decode()
+        lines = content.strip().split("\n")
+        assert len(lines) == 2  # header + 1 data row
+        assert "tag-003" in lines[1]
+        assert "tag-001" not in content
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestRequestLogMetadataValues:
+    """Tests for GET /agentcc/request-logs/metadata-values/"""
+
+    def test_returns_distinct_application_and_service_values(
+        self, auth_client, tagged_logs
+    ):
+        response = auth_client.get("/agentcc/request-logs/metadata-values/")
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json()["result"]
+        assert result["application"] == ["checkout", "search"]
+        assert result["service"] == ["answer", "fraud-check", "recommendations"]
+
+    def test_tags_only_cover_declared_custom_properties(
+        self, auth_client, organization, tagged_logs
+    ):
+        AgentccCustomPropertySchema.objects.create(
+            organization=organization, name="team"
+        )
+        response = auth_client.get("/agentcc/request-logs/metadata-values/")
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["result"]["tags"] == ["team:core", "team:growth"]
+
+    def test_tags_empty_without_custom_properties(self, auth_client, tagged_logs):
+        response = auth_client.get("/agentcc/request-logs/metadata-values/")
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["result"]["tags"] == []
+
+    def test_values_with_a_comma_are_not_offered(
+        self, auth_client, organization, workspace, tagged_logs
+    ):
+        AgentccRequestLog.objects.create(
+            organization=organization,
+            workspace=workspace,
+            request_id="tag-comma",
+            started_at=timezone.now(),
+            metadata={"application": "billing,payments"},
+        )
+        response = auth_client.get("/agentcc/request-logs/metadata-values/")
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["result"]["application"] == ["checkout", "search"]
+
+    def test_other_org_values_are_excluded(
+        self, auth_client, organization, tagged_logs
+    ):
+        AgentccCustomPropertySchema.objects.create(
+            organization=organization, name="team"
+        )
+        response = auth_client.get("/agentcc/request-logs/metadata-values/")
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json()["result"]
+        assert "foreign-app" not in result["application"]
+        assert "foreign-svc" not in result["service"]
+        assert "team:foreign-team" not in result["tags"]
+
+    def test_metadata_values_unauthenticated(self, api_client):
+        response = api_client.get("/agentcc/request-logs/metadata-values/")
+        assert response.status_code in [
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        ]
+
+
 @pytest.mark.integration
 @pytest.mark.api
 class TestWebhookWithBodies:
@@ -2247,3 +2548,137 @@ class TestAnalyticsModelComparison:
         response = auth_client.get("/agentcc/analytics/model-comparison/")
         assert response.status_code == status.HTTP_200_OK
         assert len(response.json()["result"]["models"]) == 0
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestAnalyticsTagGroupBy:
+    """Tests for grouping analytics by the application and service tags."""
+
+    def test_usage_grouped_by_application(self, auth_client, tagged_logs):
+        response = auth_client.get(
+            "/agentcc/analytics/usage-timeseries/?group_by=application"
+        )
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json()["result"]
+        assert result["group_by"] == "application"
+        totals = {
+            name: sum(point["request_count"] for point in points)
+            for name, points in result["groups"].items()
+        }
+        assert totals == {"checkout": 2, "search": 1, "unknown": 1}
+
+    def test_cost_grouped_by_service(self, auth_client, tagged_logs):
+        response = auth_client.get(
+            "/agentcc/analytics/cost-breakdown/?group_by=service"
+        )
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json()["result"]
+        assert result["group_by"] == "service"
+        counts = {row["name"]: row["request_count"] for row in result["breakdown"]}
+        assert counts == {
+            "recommendations": 1,
+            "fraud-check": 1,
+            "answer": 1,
+            "unknown": 1,
+        }
+
+    def test_errors_grouped_by_application(self, auth_client, tagged_logs):
+        response = auth_client.get(
+            "/agentcc/analytics/error-breakdown/?group_by=application"
+        )
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json()["result"]
+        assert result["group_by"] == "application"
+        breakdown = {row["name"]: row for row in result["breakdown"]}
+        assert set(breakdown) == {"checkout", "search"}
+        assert breakdown["checkout"]["error_count"] == 1
+        assert (
+            breakdown["checkout"]["sample_error_message"] == "checkout upstream timeout"
+        )
+
+    def test_usage_grouped_by_application_sums_the_tail_into_other(
+        self, auth_client, tagged_logs, monkeypatch
+    ):
+        monkeypatch.setattr(analytics_service, "MAX_USAGE_TAG_GROUPS", 1)
+        response = auth_client.get(
+            "/agentcc/analytics/usage-timeseries/?group_by=application"
+        )
+        assert response.status_code == status.HTTP_200_OK
+        totals = {
+            name: sum(point["request_count"] for point in points)
+            for name, points in response.json()["result"]["groups"].items()
+        }
+        assert totals == {"checkout": 2, "Other": 2}
+
+    def test_usage_other_application_never_splits_into_two_series(
+        self, auth_client, organization, workspace, tagged_logs, monkeypatch
+    ):
+        for index in range(3):
+            AgentccRequestLog.objects.create(
+                organization=organization,
+                workspace=workspace,
+                request_id=f"tag-other-{index}",
+                started_at=timezone.now(),
+                latency_ms=100,
+                metadata={"application": "Other"},
+            )
+        monkeypatch.setattr(analytics_service, "MAX_USAGE_TAG_GROUPS", 2)
+
+        response = auth_client.get(
+            "/agentcc/analytics/usage-timeseries/?group_by=application"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        groups = response.json()["result"]["groups"]
+        totals = {
+            name: sum(point["request_count"] for point in points)
+            for name, points in groups.items()
+        }
+        assert totals == {"checkout": 2, "search": 1, "Other": 4}
+        buckets = [point["bucket"] for point in groups["Other"]]
+        assert len(buckets) == len(set(buckets))
+
+    def test_cost_other_application_never_splits_into_two_rows(
+        self, auth_client, organization, workspace, tagged_logs
+    ):
+        for index in range(3):
+            AgentccRequestLog.objects.create(
+                organization=organization,
+                workspace=workspace,
+                request_id=f"cost-other-{index}",
+                started_at=timezone.now(),
+                cost=Decimal("0.001000"),
+                metadata={"application": "Other"},
+            )
+
+        response = auth_client.get(
+            "/agentcc/analytics/cost-breakdown/?group_by=application&top_n=2"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        breakdown = response.json()["result"]["breakdown"]
+        names = [row["name"] for row in breakdown]
+        assert len(names) == len(set(names))
+        counts = {row["name"]: row["request_count"] for row in breakdown}
+        assert counts == {"checkout": 2, "search": 1, "Other": 4}
+
+    def test_empty_application_groups_as_unknown(
+        self, auth_client, organization, workspace, tagged_logs
+    ):
+        AgentccRequestLog.objects.create(
+            organization=organization,
+            workspace=workspace,
+            request_id="tag-empty",
+            started_at=timezone.now(),
+            metadata={"application": ""},
+        )
+        response = auth_client.get(
+            "/agentcc/analytics/cost-breakdown/?group_by=application"
+        )
+        assert response.status_code == status.HTTP_200_OK
+        counts = {
+            row["name"]: row["request_count"]
+            for row in response.json()["result"]["breakdown"]
+        }
+        assert counts == {"checkout": 2, "search": 1, "unknown": 2}

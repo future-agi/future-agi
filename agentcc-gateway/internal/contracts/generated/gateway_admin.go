@@ -16,6 +16,7 @@ type ProviderConfig struct {
 	AWSSecretAccessKey *string  `json:"aws_secret_access_key,omitempty"`
 	AWSRegion          *string  `json:"aws_region,omitempty"`
 	AWSSessionToken    *string  `json:"aws_session_token,omitempty"`
+	ServiceAccountJson *string  `json:"service_account_json,omitempty"`
 }
 
 type GuardrailCheck struct {

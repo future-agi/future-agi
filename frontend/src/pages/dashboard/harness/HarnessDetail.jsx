@@ -422,7 +422,7 @@ export default function HarnessDetail() {
     return (
       <>
         <Helmet>
-          <title>RL Environment | Future AGI</title>
+          <title>Environment | Future AGI</title>
         </Helmet>
         <Box sx={{ p: 2 }}>
           <Alert
@@ -464,7 +464,7 @@ export default function HarnessDetail() {
     <>
       <Helmet>
         <title>
-          {environmentName(current.job, "RL Environment")} | Future AGI
+          {environmentName(current.job, "Environment")} | Future AGI
         </title>
       </Helmet>
 

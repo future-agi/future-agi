@@ -68,7 +68,7 @@ func (c *OrgProviderCache) GetOrCreateWithTenantConfig(orgID, providerID, apiKey
 	}
 
 	baseCfg, ok := c.baseCfgs[providerID]
-	if !ok && tenantCfg != nil {
+	if tenantCfg != nil && (!ok || tenantCfg.ServiceAccountJSON != "") {
 		// Validate base URL to prevent SSRF via tenant-supplied config.
 		if err := validateBaseURL(tenantCfg.BaseURL); err != nil {
 			return nil, fmt.Errorf("org %s provider %s: %w", orgID, providerID, err)
@@ -103,6 +103,7 @@ func (c *OrgProviderCache) GetOrCreateWithTenantConfig(orgID, providerID, apiKey
 			AWSSecretAccessKey: tenantCfg.AWSSecretAccessKey,
 			AWSRegion:          tenantCfg.AWSRegion,
 			AWSSessionToken:    tenantCfg.AWSSessionToken,
+			ServiceAccountJSON: tenantCfg.ServiceAccountJSON,
 		}
 		ok = true
 	}
