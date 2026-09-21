@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.39.0](https://github.com/future-agi/future-agi/compare/v1.38.4...v1.39.0) (2026-09-21)
+
+
+### Features
+
+* **agentcc:** add Vertex provider credentials and deployment guide ([c2ce659](https://github.com/future-agi/future-agi/commit/c2ce65962140895baa051508dc2cd608ba9735fc))
+* **agentcc:** filter request logs and group analytics by application and service ([fd08c00](https://github.com/future-agi/future-agi/commit/fd08c0024bac0f604df86bf4fa1c2be6fddc1883))
+* **agentcc:** filter request logs and group analytics by application and service (TH-8004) ([a98dffd](https://github.com/future-agi/future-agi/commit/a98dffd3c14433a245b4775467c27319b570ddcc))
+* **agentcc:** route Claude Agent SDK requests to Vertex Gemini ([f9d6c50](https://github.com/future-agi/future-agi/commit/f9d6c5035e03bc2bf695201ff7603ccb1e4eab1f))
+* **agentcc:** route Claude-compatible requests to Vertex Gemini ([0622851](https://github.com/future-agi/future-agi/commit/062285197d50b39be164762bc3180da57ad7c194))
+
+
+### Bug Fixes
+
+* **agentcc:** keep a caller's Other application out of the folded tail ([b8440e5](https://github.com/future-agi/future-agi/commit/b8440e5d76314f8e42005326e4eff447fca4e3b9))
+* **agentcc:** preserve schema properties and forward resolved aliases ([99ce18b](https://github.com/future-agi/future-agi/commit/99ce18bc106326d67d37803b9df794e74f0a2e1c))
+* point every Discord link at the one working invite ([96f12d1](https://github.com/future-agi/future-agi/commit/96f12d1e227bde75d6d7a12214e48da19c0a5081))
+* point every Discord link at the one working invite ([d02df8d](https://github.com/future-agi/future-agi/commit/d02df8d96f564253344ed4849435340edd9c52c6))
+* **tests:** stabilize backend CI failure groups ([270a146](https://github.com/future-agi/future-agi/commit/270a1460ce21b560d09e5ce91fdea91c4ff04490))
+
 ## [1.38.4](https://github.com/future-agi/future-agi/compare/v1.38.3...v1.38.4) (2026-09-17)
 
 
