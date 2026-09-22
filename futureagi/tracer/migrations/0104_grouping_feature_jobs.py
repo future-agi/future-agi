@@ -5,7 +5,7 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-    dependencies = [("tracer", "0102_reconcile_report_flags")]
+    dependencies = [("tracer", "0103_merge_error_feed_and_evaltask")]
 
     operations = [
         migrations.CreateModel(
