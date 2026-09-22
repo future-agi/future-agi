@@ -1082,7 +1082,7 @@ def test_offline_delivery_replays_durable_guest_spool(monkeypatch):
 
     sandbox = _Sandbox()
     sandbox.fs.download_file = lambda path, timeout=None: archive_body.getvalue()
-    gateway = object.__new__(DaytonaHostedGateway)
+    gateway = object.__new__(HostedHarnessGateway)
     gateway.client = SimpleNamespace(get=lambda *args, **kwargs: sandbox)
     attempt = SimpleNamespace(
         id="attempt-1",
@@ -1166,7 +1166,7 @@ def test_offline_control_processes_scenario_registration(monkeypatch):
         },
     )
 
-    DaytonaHostedGateway._sync_offline_control(attempt, sandbox)
+    HostedHarnessGateway._sync_offline_control(attempt, sandbox)
 
     assert json.loads(uploads[response_path]) == {
         "result": {
