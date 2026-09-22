@@ -10,8 +10,8 @@ from django.conf import settings
 from django.db import transaction
 from django.db.models import F, Q
 from django.utils import timezone
-from tfc.ee_gating import is_oss
 
+from tfc.ee_gating import is_oss
 from tracer.models.trace_grouping import (
     GroupingAttemptState,
     GroupingFeatureState,
@@ -369,7 +369,22 @@ def claim_grouping_work(*, worker_id: str, limit: int) -> dict:
             previous = work.attempts.order_by("-attempt_number").first()
             try:
                 if previous and previous.claimed_work_ids:
-                    work_by_id = {str(item.id): item for item in works}
+                    current_peers = list(
+                        TraceGroupingWork.no_workspace_objects.select_for_update(
+                            of=("self",)
+                        )
+                        .select_related("report__job", "report__project", "feature_job")
+                        .filter(
+                            id__in=previous.claimed_work_ids,
+                            scope=scope,
+                            state__in=[
+                                GroupingWorkState.PENDING,
+                                GroupingWorkState.RUNNING,
+                            ],
+                            not_before__lte=now,
+                        )
+                    )
+                    work_by_id = {str(item.id): item for item in current_peers}
                     peers = [
                         work_by_id[key]
                         for key in previous.claimed_work_ids
@@ -378,10 +393,27 @@ def claim_grouping_work(*, worker_id: str, limit: int) -> dict:
                     if not peers or peers[0].id != work.id:
                         continue
                 else:
-                    peers = [work] + [
-                        item
-                        for item in works
-                        if item.id != work.id and item.scope_id == scope.id
+                    current_peers = list(
+                        TraceGroupingWork.no_workspace_objects.select_for_update(
+                            of=("self",)
+                        )
+                        .select_related("report__job", "report__project", "feature_job")
+                        .filter(
+                            scope=scope,
+                            state__in=[
+                                GroupingWorkState.PENDING,
+                                GroupingWorkState.RUNNING,
+                            ],
+                            not_before__lte=now,
+                        )
+                        .order_by("not_before", "id")[:20]
+                    )
+                    peer_by_id = {item.id: item for item in current_peers}
+                    current_work = peer_by_id.get(work.id)
+                    if current_work is None:
+                        continue
+                    peers = [current_work] + [
+                        item for item in current_peers if item.id != current_work.id
                     ]
                 for peer in peers:
                     if len(peer_works) >= 20:

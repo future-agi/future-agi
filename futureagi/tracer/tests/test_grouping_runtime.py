@@ -7,6 +7,7 @@ from decimal import Decimal
 
 import pytest
 from django.test import override_settings
+from django.utils import timezone
 
 from tracer.constants.grouping_versions import FEATURE_POLICY_VERSION
 from tracer.models.trace_error_analysis import ErrorClusterTraces
@@ -102,7 +103,13 @@ def _feature_rows(snapshot):
 
 
 def _claimed_runtime(project, monkeypatch):
-    report = _saved_report(project)
+    report = _prepare_runtime(project, monkeypatch)
+    claim = claim_grouping_work(worker_id="test-f6-worker", limit=1)["claims"][0]
+    return report, claim
+
+
+def _prepare_runtime(project, monkeypatch, *, identity=None):
+    report = _saved_report(project, identity=identity)
     job = enqueue_grouping_features(report=report)
     assert job.policy_version == FEATURE_POLICY_VERSION
     feature_claim = claim_feature_jobs(worker_id="test-feature-worker", limit=1)[
@@ -118,8 +125,44 @@ def _claimed_runtime(project, monkeypatch):
     )
     assert prepared["state"] == "ready"
     monkeypatch.setattr(context, "GroupingFeatureStore", FakeFeatureStore)
-    claim = claim_grouping_work(worker_id="test-f6-worker", limit=1)["claims"][0]
-    return report, claim
+    return report
+
+
+@override_settings(
+    ERROR_FEED_GROUPING_ENABLED=True,
+    ERROR_FEED_GROUPING_ALL_PROJECTS=True,
+    ERROR_FEED_GROUPING_DEBOUNCE_SECONDS=0,
+    ERROR_FEED_GROUPING_PROJECT_BUDGET_USD="10",
+    ERROR_FEED_GROUPING_WORK_BUDGET_USD="10",
+    ERROR_FEED_GROUPING_TENANT_BUDGET_USD="10",
+)
+def test_reclaim_does_not_reopen_completed_cohort_peer(observe_project, monkeypatch):
+    first_report = _prepare_runtime(observe_project, monkeypatch, identity="first")
+    second_report = _prepare_runtime(observe_project, monkeypatch, identity="second")
+
+    first_claim = claim_grouping_work(worker_id="test-f6-worker", limit=1)["claims"][0]
+    assert len(first_claim["pending_snapshots"]) == 2
+    update_grouping_attempt(
+        attempt_id=uuid.UUID(first_claim["attempt_id"]),
+        lease_token=first_claim["lease_token"],
+        action="cancel",
+    )
+    TraceGroupingWork.no_workspace_objects.filter(report=first_report).update(
+        not_before=timezone.now()
+    )
+
+    completed = TraceGroupingWork.no_workspace_objects.get(report=second_report)
+    completed.state = "completed"
+    completed.save(update_fields=["state", "updated_at"])
+
+    second_claim = claim_grouping_work(worker_id="test-f6-worker", limit=1)["claims"][0]
+
+    assert [
+        snapshot["report"]["id"]
+        for snapshot in second_claim["pending_snapshots"]
+    ] == [str(first_report.id)]
+    completed.refresh_from_db()
+    assert completed.state == "completed"
 
 
 @override_settings(

@@ -36,10 +36,15 @@ RECORDED_AT = datetime(2026, 9, 18, 10, 11, 12, 123456, tzinfo=UTC)
 READ_CUTOFF = datetime(2026, 9, 18, 10, 10, 0, 1, tzinfo=UTC)
 
 
-def _saved_report(project):
-    trace_id = uuid.UUID("55555555-5555-4555-8555-555555555555")
+def _saved_report(project, *, identity: str | None = None):
+    def record_id(default: str, kind: str) -> uuid.UUID:
+        if identity is None:
+            return uuid.UUID(default)
+        return uuid.uuid5(uuid.NAMESPACE_URL, f"grouping-test:{identity}:{kind}")
+
+    trace_id = record_id("55555555-5555-4555-8555-555555555555", "trace")
     job = TraceInvestigationJob.no_workspace_objects.create(
-        id=uuid.UUID("66666666-6666-4666-8666-666666666666"),
+        id=record_id("66666666-6666-4666-8666-666666666666", "job"),
         organization_id=project.organization_id,
         workspace_id=project.workspace_id,
         project=project,
@@ -51,7 +56,7 @@ def _saved_report(project):
         not_before=READ_CUTOFF,
     )
     attempt = TraceInvestigationAttempt.no_workspace_objects.create(
-        id=uuid.UUID("77777777-7777-4777-8777-777777777777"),
+        id=record_id("77777777-7777-4777-8777-777777777777", "attempt"),
         job=job,
         generation=7,
         worker_id="synthetic-node-worker",
@@ -67,7 +72,7 @@ def _saved_report(project):
         completed_at=RECORDED_AT,
     )
     report = TraceInvestigationReport.no_workspace_objects.create(
-        id=uuid.UUID("11111111-1111-4111-8111-111111111111"),
+        id=record_id("11111111-1111-4111-8111-111111111111", "report"),
         organization_id=project.organization_id,
         workspace_id=project.workspace_id,
         project=project,
@@ -78,7 +83,7 @@ def _saved_report(project):
         has_issues=True,
         job=job,
         attempt=attempt,
-        idempotency_key="synthetic-publication-7",
+        idempotency_key=f"synthetic-publication-7{f'-{identity}' if identity else ''}",
         result_digest=f"sha256:{'b' * 64}",
         contract_version="omega-investigation/v1",
         evidence_digest=f"sha256:{'c' * 64}",
@@ -121,7 +126,7 @@ def _saved_report(project):
         excerpt="deleted excerpt",
     )
     finding = TraceInvestigationFinding.no_workspace_objects.create(
-        id=uuid.UUID("88888888-8888-4888-8888-888888888888"),
+        id=record_id("88888888-8888-4888-8888-888888888888", "finding"),
         report=report,
         finding_id="finding-1",
         ordinal=0,
