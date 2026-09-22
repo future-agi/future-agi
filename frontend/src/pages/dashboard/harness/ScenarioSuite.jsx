@@ -142,6 +142,9 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
   const { enqueueSnackbar } = useSnackbar();
   const [selected, setSelected] = useState(() => new Set());
   const [editing, setEditing] = useState(null);
+  // Which row is open. One at a time: the panel is tall, and a second open row pushes the first
+  // off screen anyway.
+  const [opened, setOpened] = useState("");
   const [busy, setBusy] = useState(false);
   const [waiting, setWaiting] = useState(false);
 
@@ -592,8 +595,19 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
                       .filter(Boolean)
                       .join(" \u00b7 ");
                     return (
-                      <TableRow hover key={scenario.name}>
-                        <TableCell padding="checkbox" sx={{ pl: 1.5, verticalAlign: "top" }}>
+                      <React.Fragment key={scenario.name}>
+                      <TableRow
+                        hover
+                        onClick={() =>
+                          setOpened((open) => (open === scenario.name ? "" : scenario.name))
+                        }
+                        sx={{ cursor: "pointer" }}
+                      >
+                        <TableCell
+                          padding="checkbox"
+                          sx={{ pl: 1.5, verticalAlign: "top" }}
+                          onClick={(event) => event.stopPropagation()}
+                        >
                           <Checkbox
                             size="small"
                             checked={selected.has(scenario.name)}
@@ -705,6 +719,17 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
                           </Tooltip>
                         </TableCell>
                       </TableRow>
+                      {opened === scenario.name && (
+                        <TableRow>
+                          <TableCell
+                            colSpan={COLUMNS.length}
+                            sx={{ p: 0, borderBottom: "1px solid", borderColor: "divider" }}
+                          >
+                            <ScenarioDetail scenario={scenario} persona={persona} />
+                          </TableCell>
+                        </TableRow>
+                      )}
+                      </React.Fragment>
                     );
                   })}
                 </React.Fragment>
@@ -737,6 +762,176 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
 // The four things a voice suite is graded on: who is calling, in what accent and language, over
 // what noise, and whether the call is an attack. Each is already on the scenario; none of it was
 // on screen, so a suite looked like a list of tasks rather than a spread of conditions.
+// A row opens into what the scenario actually is: who calls, what they are told, the moves that
+// settle it, and the reference solution that proves a competent agent could pass. Every field here
+// already travels with the suite; none of it was on screen, so a row was a name and a sentence.
+function Detail({ title, children }) {
+  return (
+    <Stack spacing={0.75} sx={{ minWidth: 0 }}>
+      <Typography
+        sx={{
+          typography: "s3",
+          fontWeight: 700,
+          textTransform: "uppercase",
+          letterSpacing: 0.4,
+          color: "text.subtitle",
+        }}
+      >
+        {title}
+      </Typography>
+      {children}
+    </Stack>
+  );
+}
+
+Detail.propTypes = { title: PropTypes.string, children: PropTypes.node };
+
+function Facts({ pairs }) {
+  const rows = pairs.filter(([, value]) => value !== "" && value !== null && value !== undefined);
+  if (!rows.length) {
+    return <Typography sx={{ typography: "s3", color: "text.subtitle" }}>&mdash;</Typography>;
+  }
+  return (
+    <Stack spacing={0.375}>
+      {rows.map(([label, value]) => (
+        <Stack key={label} direction="row" spacing={1} sx={{ minWidth: 0 }}>
+          <Typography sx={{ typography: "s3", color: "text.subtitle", minWidth: 116, flexShrink: 0 }}>
+            {label}
+          </Typography>
+          <Typography sx={{ typography: "s3", color: "text.secondary", minWidth: 0 }}>
+            {String(value)}
+          </Typography>
+        </Stack>
+      ))}
+    </Stack>
+  );
+}
+
+Facts.propTypes = { pairs: PropTypes.array };
+
+function ScenarioDetail({ scenario, persona }) {
+  const coverage = scenario.coverage || {};
+  const solution = Array.isArray(scenario.solution) ? scenario.solution : [];
+  const noise =
+    typeof scenario.background_noise === "string"
+      ? scenario.background_noise
+      : scenario.background_noise
+        ? "present"
+        : "none";
+  return (
+    <Box sx={{ px: 2.5, py: 2, bgcolor: "background.neutral" }}>
+      <Stack
+        direction={{ xs: "column", lg: "row" }}
+        spacing={3}
+        sx={{ alignItems: "flex-start" }}
+      >
+        <Stack spacing={2} sx={{ flex: 1.2, minWidth: 0 }}>
+          <Detail title="What the caller is told">
+            <Typography sx={{ typography: "s3", color: "text.secondary", whiteSpace: "pre-wrap" }}>
+              {scenario.instruction || "\u2014"}
+            </Typography>
+          </Detail>
+          {persona.initial_message ? (
+            <Detail title="How the call opens">
+              <Typography
+                sx={{ typography: "s3", color: "text.secondary", fontStyle: "italic" }}
+              >
+                &ldquo;{persona.initial_message}&rdquo;
+              </Typography>
+            </Detail>
+          ) : null}
+          <Detail title="Passes when">
+            <Typography sx={{ typography: "s3", color: "text.secondary", whiteSpace: "pre-wrap" }}>
+              {scenario.tests || "\u2014"}
+            </Typography>
+          </Detail>
+          {solution.length ? (
+            <Detail
+              title={`Reference solution \u2014 proves it can be passed, never run against the agent (${solution.length})`}
+            >
+              <Stack spacing={0.375}>
+                {solution.map((step, index) => (
+                  <Stack
+                    key={`${step.tool || step.name || index}-${index}`}
+                    direction="row"
+                    spacing={0.75}
+                  >
+                    <Typography
+                      sx={{
+                        typography: "s3",
+                        color: "text.subtitle",
+                        fontVariantNumeric: "tabular-nums",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {index + 1}.
+                    </Typography>
+                    <Typography sx={{ typography: "s3", color: "text.secondary", minWidth: 0 }}>
+                      {step.tool || step.name || readable(String(step))}
+                    </Typography>
+                  </Stack>
+                ))}
+              </Stack>
+            </Detail>
+          ) : null}
+        </Stack>
+
+        <Stack spacing={2} sx={{ flex: 1, minWidth: 0 }}>
+          <Detail title="The simulated caller">
+            <Facts
+              pairs={[
+                ["Name", persona.name],
+                ["Age", persona.age_group],
+                ["Gender", persona.gender],
+                ["Accent", persona.accent],
+                ["Languages", (persona.languages || []).join(", ")],
+                ["Location", persona.location],
+                ["Personality", persona.personality],
+                ["Style", persona.communication_style],
+                ["Occupation", persona.occupation],
+              ]}
+            />
+          </Detail>
+          <Detail title="Conditions on the line">
+            <Facts
+              pairs={[
+                ["Background", readable(noise)],
+                ["Direction", readable(scenario.call_direction || "")],
+                ["Caller knows", readable(scenario.caller_awareness || "")],
+                ["Answered by", readable(scenario.answered_by || "")],
+                ["Voicemail", readable(scenario.voicemail_style || "")],
+                ["Turn budget", scenario.max_turns],
+              ]}
+            />
+          </Detail>
+          <Detail title="Where it sits on the grid">
+            <Facts
+              pairs={Object.entries(coverage).map(([axis, level]) => [
+                readable(axis),
+                readable(String(level)),
+              ])}
+            />
+          </Detail>
+          {scenario.folder ? (
+            <Detail title="Its folder">
+              <Typography
+                sx={{ typography: "s3", color: "text.subtitle", wordBreak: "break-all" }}
+              >
+                {scenario.folder}
+              </Typography>
+            </Detail>
+          ) : null}
+        </Stack>
+      </Stack>
+    </Box>
+  );
+}
+
+ScenarioDetail.propTypes = {
+  scenario: PropTypes.object,
+  persona: PropTypes.object,
+};
+
 function Levers({ scenario, persona }) {
   const coverage = scenario.coverage || {};
   const overlay = String(coverage.overlay || "").trim();
