@@ -3033,6 +3033,15 @@ class HostedHarnessGateway:
         activities = _activity_events()
         if activities:
             outputs.append({"kind": "activity", "events": activities})
+        if isinstance(scenarios, list) and scenarios:
+            # Index the suite as rows as it is written, not when a call registers one. The tab
+            # exists to read the suite before anything is called, and a filter needs SQL.
+            from simulate.services.harness_scenarios import index_scenarios
+
+            try:
+                index_scenarios(job, scenarios)
+            except Exception:  # noqa: BLE001 - indexing must never stop a run
+                logger.exception("could not index authored scenarios job=%s", job.id)
         stage = "understanding_agent"
         if isinstance(contract, dict):
             stage = "generating_environment"

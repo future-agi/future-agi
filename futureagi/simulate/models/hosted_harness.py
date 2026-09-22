@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 
+from django.contrib.postgres.indexes import GinIndex
 from django.db import models
 
 from accounts.models import Organization
@@ -189,6 +190,11 @@ class HostedHarnessScenario(BaseModel):
         "simulate.Scenarios",
         on_delete=models.CASCADE,
         related_name="hosted_registrations",
+        # An authored scenario is a row from the moment it is written. The platform Scenarios
+        # record is minted when a call is prepared, which is far later, and the suite has to be
+        # readable long before anything is called.
+        null=True,
+        blank=True,
     )
     dataset_row = models.ForeignKey(
         "model_hub.Row",
@@ -208,6 +214,22 @@ class HostedHarnessScenario(BaseModel):
         blank=True,
         related_name="hosted_registration",
     )
+    # The authored scenario, stored so it can be queried. It reached the front end only as a JSON
+    # stage artefact, which is why every filter, every dropdown's options and every keyword count
+    # was computed in the browser over whatever had been downloaded. None of that can move to SQL
+    # until the fields are columns.
+    number = models.PositiveIntegerField(null=True, blank=True)
+    name = models.CharField(max_length=255, blank=True, default="")
+    instruction = models.TextField(blank=True, default="")
+    use_case = models.CharField(max_length=255, blank=True, default="")
+    branch = models.TextField(blank=True, default="")
+    tests = models.TextField(blank=True, default="")
+    folder = models.CharField(max_length=512, blank=True, default="")
+    persona = models.JSONField(null=True, blank=True)
+    coverage = models.JSONField(null=True, blank=True)
+    sub_goals = models.JSONField(null=True, blank=True)
+    background_noise = models.CharField(max_length=64, blank=True, default="")
+    max_turns = models.PositiveIntegerField(null=True, blank=True)
 
     class Meta:
         db_table = "simulate_hosted_harness_scenario"
@@ -215,6 +237,12 @@ class HostedHarnessScenario(BaseModel):
             models.UniqueConstraint(
                 fields=["job", "scenario_key"], name="uniq_harness_scenario_key"
             )
+        ]
+        indexes = [
+            # The suite is read in its own order, and filtered on the two JSON documents.
+            models.Index(fields=["job", "number"], name="idx_harness_scenario_order"),
+            GinIndex(fields=["persona"], name="idx_harness_scenario_persona"),
+            GinIndex(fields=["coverage"], name="idx_harness_scenario_coverage"),
         ]
 
 

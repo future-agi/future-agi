@@ -5,6 +5,8 @@ from typing import Any
 
 from django.conf import settings
 from rest_framework import serializers
+
+from tfc.utils.serializer_fields import JsonValueField
 from simulate.serializers.hosted_harness_conversation import (
     HarnessConversationReadSerializer,
 )
@@ -701,8 +703,15 @@ class HarnessScenarioChangeSerializer(serializers.Serializer):
         child=serializers.CharField(), required=False, allow_empty=False
     )
     field = serializers.CharField(required=False, allow_blank=True)
-    value = serializers.JSONField(required=False, allow_null=True)
-    persona = serializers.DictField(required=False)
+    # A field's new value is whatever that field holds: `tests` is a string, `max_turns` a number,
+    # `background_noise` a place name or false. A plain JSONField is published as `type: object`,
+    # which made the contract reject every real edit before it left the browser.
+    value = JsonValueField(required=False, allow_null=True)
+    # Persona values are strings except `keywords` and `languages`, which are lists. A bare
+    # DictField publishes its values as strings, so those two were rejected the same way.
+    persona = serializers.DictField(
+        required=False, child=JsonValueField(allow_null=True)
+    )
 
 
 class HarnessScenarioAmendSerializer(serializers.Serializer):

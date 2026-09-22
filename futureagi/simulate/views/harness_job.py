@@ -292,6 +292,10 @@ class HarnessJobViewSet(viewsets.ViewSet):
     def scenarios(self, request, pk=None):
         return get_harness_provider().list_scenarios(request, pk)
 
+    @action(detail=True, methods=["get"], url_path="scenarios/coverage")
+    def scenario_coverage(self, request, pk=None):
+        return get_harness_provider().scenario_coverage(request, pk)
+
     @validated_request(
         request_serializer=HarnessScenarioAmendSerializer,
         reject_unknown_fields=True,

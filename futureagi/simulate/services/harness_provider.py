@@ -125,6 +125,27 @@ def _scope_jobs(queryset, request):
     return queryset.filter(workspace=workspace)
 
 
+def _scoped_job(request, pk):
+    """One job, or None, resolved under the caller's full tenant scope.
+
+    Organization alone is not the scope. A job belongs to a workspace, and matching only on the
+    organization let a caller in one workspace read a job from another in the same organization,
+    provided they held its id. Every scenario read and write goes through here so the scope is
+    applied once rather than remembered at each call site.
+    """
+    organization = _organization(request)
+    if organization is None:
+        return None
+    return (
+        _scope_jobs(
+            HostedHarnessJob.no_workspace_objects.filter(organization=organization),
+            request,
+        )
+        .filter(id=pk)
+        .first()
+    )
+
+
 def _validate_secret_refs_hosted(secret_refs: dict) -> None:
     """Reject secret references that the managed gateway cannot materialize.
 
@@ -599,14 +620,20 @@ _ORDINAL_WORDS = {
 }
 
 
-def scenarios_meant(said: Any, suite: list[dict]) -> list[str]:
+def scenarios_meant(
+    said: Any, suite: list[dict], numbering: dict[int, str] | None = None
+) -> list[str]:
     """The scenario names a person meant, from whatever they said.
 
     People point at scenarios the way they read them: "4", "12-30", "12, 15, 18", or the name
-    itself. The number is the scenario's place in its own suite, which the API serves, so the same
-    handle works from the table, from a chat message and from a bulk selection.
+    itself. So "4" has to mean the row the table calls 4, and the table serves the number stored
+    against the scenario, which survives a deletion rather than shifting up to fill the gap.
+    `numbering` is that stored mapping; falling back to list position is only for a suite that has
+    not been indexed yet, where position is all there is.
     """
-    by_number = {position: str(one.get("name") or "") for position, one in enumerate(suite, 1)}
+    by_number = numbering or {
+        position: str(one.get("name") or "") for position, one in enumerate(suite, 1)
+    }
     known = {str(one.get("name") or "") for one in suite}
     keys = {
         str(one.get("scenario_key") or ""): str(one.get("name") or "") for one in suite
@@ -1169,36 +1196,127 @@ class HostedHarnessProvider:
         }
     )
 
+    def _editing_contract(self) -> dict[str, list[str]]:
+        """Which fields an amend will take, and which of them cannot be taken without a re-proof."""
+        return {
+            "editable_fields": sorted(self._DESCRIPTIVE_FIELDS | self._BEHAVIOURAL_FIELDS),
+            "persona_fields": sorted(self._PERSONA_FIELDS),
+            "rework_fields": sorted(self._BEHAVIOURAL_FIELDS | self._PERSONA_FIELDS),
+        }
+
     def list_scenarios(self, request, pk) -> Response:
         """One page of a run's authored scenarios, in the order they were written."""
         from tfc.utils.pagination import ExtendedPageNumberPagination
 
-        organization = _organization(request)
-        if organization is None:
-            return Response(
-                {"detail": "Organization not found"}, status=status.HTTP_404_NOT_FOUND
-            )
-        try:
-            job = HostedHarnessJob.no_workspace_objects.get(
-                id=pk, organization=organization
-            )
-        except HostedHarnessJob.DoesNotExist:
+        job = _scoped_job(request, pk)
+        if job is None:
             return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        queryset = (
-            HostedHarnessScenario.no_workspace_objects.filter(job=job)
-            .select_related("scenario")
-            .order_by("created_at")
+        from simulate.services.harness_scenarios import (
+            apply_filters,
+            index_scenarios,
+            apply_ordering,
+            apply_search,
+            field_catalogue,
+            group_counts,
+            grouped,
+            scenario_row,
         )
+
+        queryset = HostedHarnessScenario.no_workspace_objects.filter(
+            job=job
+        ).select_related("scenario", "call_execution")
+        if not queryset.filter(number__isnull=False).exists():
+            # A run from before the suite was indexed has rows only where a call registered one,
+            # and those carry nothing but a key. Index from the artefact on first read rather than
+            # leaving those jobs permanently thin on this route.
+            # The suite is held in one of two places: its own stage-output row, or the JSON
+            # column on the job that a sealed archive is unpacked into. The detail endpoint falls
+            # back the same way, so indexing has to look in both or it misses every archived run.
+            artefact = (
+                HostedHarnessStageOutput.no_workspace_objects.filter(
+                    job=job, kind="scenarios"
+                )
+                .values_list("data", flat=True)
+                .first()
+            )
+            if not artefact:
+                artefact = next(
+                    (
+                        one.get("data")
+                        for one in (job.stage_outputs or [])
+                        if isinstance(one, dict) and one.get("kind") == "scenarios"
+                    ),
+                    None,
+                )
+            if isinstance(artefact, list) and artefact:
+                index_scenarios(job, artefact)
+                queryset = HostedHarnessScenario.no_workspace_objects.filter(
+                    job=job
+                ).select_related("scenario", "call_execution")
+        # Search first. What the search leaves is the set the filter panel offers values from:
+        # counting them over the FILTERED set instead would drop every value the current filter
+        # excludes, so picking "Canadian" would remove "Indian" from the list and an OR could
+        # never be built. The grid is the same: it describes what the suite holds, not what one
+        # filter left of it.
+        queryset = apply_search(queryset, request.query_params.get("search", ""))
+        offerable = queryset
+        queryset = apply_filters(queryset, request.query_params)
+        queryset = apply_ordering(queryset, request.query_params.get("ordering", ""))
+
         paginator = ExtendedPageNumberPagination()
         page = paginator.paginate_queryset(queryset, request)
-        # The number is the scenario's place in the whole suite, not in this page, so it is the
-        # same handle whatever page it is read on.
-        first = (paginator.page.start_index() if paginator.page else 1) or 1
-        rows = [
-            _scenario_row(reg, first + offset) for offset, reg in enumerate(page or [])
-        ]
-        return paginator.get_paginated_response(rows)
+        from simulate.services.harness_scenarios import DEFAULT_GROUP_BY
+
+        asked = request.query_params.get("group_by")
+        group_by = DEFAULT_GROUP_BY if asked is None else asked
+        rows = grouped([scenario_row(one) for one in page or []], group_by)
+        response = paginator.get_paginated_response(rows)
+        # The sections this page carries, already counted and in row order, so drawing them is a
+        # walk rather than a regrouping.
+        response.data["groups"] = group_counts(rows, queryset, group_by)
+        response.data["group_by"] = group_by
+        # The panel's own field list, counted over the whole filtered suite rather than the page.
+        # Computed here so the client draws its controls without a second call or a second source.
+        response.data["fields"] = field_catalogue(offerable)
+        response.data["scenario_editing"] = self._editing_contract()
+        from simulate.services.harness_scenarios import GROUPINGS
+
+        response.data["groupings"] = [dict(one) for one in GROUPINGS]
+        return response
+
+    def scenario_coverage(self, request, pk) -> Response:
+        """The suite's coverage grid. Its own route because it is its own question.
+
+        The grid describes the whole suite, not a page of it, and its two axes are a filter of a
+        different kind from the list's properties. Folding it into the list recomputed a whole-suite
+        cross-tab on every page turn and every poll, for an answer that had not changed.
+        """
+        job = _scoped_job(request, pk)
+        if job is None:
+            return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        from simulate.services.harness_scenarios import (
+            DEFAULT_COL_AXIS,
+            DEFAULT_ROW_AXIS,
+            apply_filters,
+            apply_search,
+            coverage_grid,
+        )
+
+        # The grid does not move with the page, but it does move with the filter: it describes
+        # whatever the reader has narrowed the suite to. So it takes the list's own search and
+        # filters, and only the paging is absent.
+        queryset = HostedHarnessScenario.no_workspace_objects.filter(job=job)
+        queryset = apply_search(queryset, request.query_params.get("search", ""))
+        queryset = apply_filters(queryset, request.query_params)
+        return Response(
+            coverage_grid(
+                queryset,
+                request.query_params.get("row_axis") or DEFAULT_ROW_AXIS,
+                request.query_params.get("col_axis") or DEFAULT_COL_AXIS,
+            )
+        )
 
     def amend_scenarios(self, request, pk) -> Response:
         """Edit a finished run's authored suite, one receipt per requested change."""
@@ -1207,19 +1325,22 @@ class HostedHarnessProvider:
             rewrite_authoring_scenarios,
         )
 
-        organization = _organization(request)
-        if organization is None:
-            return Response(
-                {"detail": "Organization not found"}, status=status.HTTP_404_NOT_FOUND
-            )
         changes = request.validated_data["changes"]
         rework = bool(request.validated_data.get("rework", True))
         with transaction.atomic():
-            try:
-                job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
-                    id=pk, organization=organization
+            # Scope first, then lock: locking a row the caller may not read would answer "busy"
+            # for a job in another workspace, which is itself an answer about that job.
+            scoped = _scoped_job(request, pk)
+            if scoped is None:
+                return Response(
+                    {"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND
                 )
-            except HostedHarnessJob.DoesNotExist:
+            job = (
+                HostedHarnessJob.no_workspace_objects.select_for_update()
+                .filter(id=scoped.id)
+                .first()
+            )
+            if job is None:
                 return Response(
                     {"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND
                 )
@@ -1257,7 +1378,15 @@ class HostedHarnessProvider:
             spread = []
             for change in changes:
                 said = change.get("scenarios") or change.get("scenario")
-                meant = scenarios_meant(said, suite)
+                # Resolve a number the way the table shows it, not by where the scenario happens
+                # to sit in the list: after a deletion those two stop agreeing.
+                numbering = {
+                    row.number: row.name or row.scenario_key
+                    for row in HostedHarnessScenario.no_workspace_objects.filter(
+                        job=job, number__isnull=False
+                    )
+                }
+                meant = scenarios_meant(said, suite, numbering or None)
                 if not meant:
                     receipts.append(
                         {
@@ -1410,6 +1539,16 @@ class HostedHarnessProvider:
                 # Two places hold the suite: the archive a rerun replays, and the live guest's
                 # own copy, which it re-packs over the archive on a later poll. An edit that
                 # misses either one is an edit that comes back.
+                # The list route serves the indexed rows, not the artefact, so an edit that
+                # skips the index is an edit the table goes on not showing.
+                try:
+                    from simulate.services.harness_scenarios import index_scenarios
+
+                    index_scenarios(job, suite, prune=True)
+                except Exception:  # noqa: BLE001 - the edit itself applied; the index can lag
+                    logger.warning(
+                        "harness_scenario_reindex_failed job_id=%s", job.id, exc_info=True
+                    )
                 rewrite_authoring_scenarios(job, suite)
                 delivered = push_scenarios_into_live_sandbox(job, suite)
                 if delivered:
@@ -1651,6 +1790,15 @@ class SandboxHarnessProvider:
         )
 
     def list_scenarios(self, request, pk) -> Response:
+        return Response(
+            {
+                "error": "scenarios_not_supported",
+                "message": "reading an authored suite is only available on the hosted provider",
+            },
+            status=status.HTTP_501_NOT_IMPLEMENTED,
+        )
+
+    def scenario_coverage(self, request, pk) -> Response:
         return Response(
             {
                 "error": "scenarios_not_supported",
