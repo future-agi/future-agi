@@ -10,8 +10,6 @@
 ╚═════════════════════════════════════════════════════════════════════════════╝
 -->
 
-> ⚠️ **Nightly release for early testing.** Expect rough edges. Stable version coming out soon — please open an issue if you hit anything.
-
 <div align="center">
 
 <!--
@@ -21,7 +19,7 @@
   Size:    1600 × 400, PNG, transparent background.
   Variants: light + dark; swap via <picture>.
 -->
-<a href="https://futureagi.com">
+<a href="https://futureagi.com?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=logo">
   <img alt="Future AGI — make AI agents reliable" src="frontend/public/assets/readme/Logo.png" width="100%">
 </a>
 
@@ -31,18 +29,29 @@
 
 <p>
   <a href="https://github.com/future-agi/future-agi/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square" alt="Apache 2.0 License"></a>
-  <a href="https://pypi.org/project/ai-evaluation/"><img src="https://img.shields.io/pypi/v/ai-evaluation?style=flat-square&label=pypi" alt="PyPI"></a>
-  <a href="https://www.npmjs.com/package/@traceai/fi-core"><img src="https://img.shields.io/npm/v/@traceai/fi-core?style=flat-square&label=npm" alt="npm"></a>
+  <a href="https://github.com/future-agi/future-agi/releases/latest"><img src="https://img.shields.io/github/v/release/future-agi/future-agi?style=flat-square&label=release&color=3fb950" alt="Latest release"></a>
+  <a href="https://github.com/future-agi/future-agi/pulse"><img src="https://img.shields.io/github/commit-activity/m/future-agi/future-agi?style=flat-square&label=commit%20activity&color=3fb950" alt="Commit activity"></a>
+  <a href="#-quickstart"><img src="https://img.shields.io/badge/docker-self--host%20ready-0db7ed?style=flat-square" alt="Docker self-host ready"></a>
   <a href="https://discord.com/invite/n2tCUKBkAw"><img src="https://img.shields.io/badge/discord-join-5865F2?style=flat-square" alt="Discord"></a>
+  <br>
+  <a href="https://pypi.org/project/ai-evaluation/"><img src="https://img.shields.io/pypi/v/ai-evaluation?style=flat-square&label=pypi%20ai-evaluation" alt="PyPI ai-evaluation"></a>
+  <a href="https://www.npmjs.com/package/@traceai/fi-core"><img src="https://img.shields.io/npm/v/@traceai/fi-core?style=flat-square&label=npm%20%40traceai%2Ffi-core" alt="npm @traceai/fi-core"></a>
+  <a href="https://pypi.org/project/agentcc/"><img src="https://img.shields.io/pypi/v/agentcc?style=flat-square&label=pypi%20agentcc" alt="PyPI agentcc"></a>
+  <a href="https://pypi.org/project/ai-evaluation/"><img src="https://img.shields.io/badge/python-3.10%2B-blue?style=flat-square" alt="Python 3.10+"></a>
 </p>
 
 <p>
-  <a href="https://app.futureagi.com/auth/jwt/register"><b>Try Cloud (Free)</b></a> ·
-  <a href="#-quickstart-60-seconds"><b>Self-Host</b></a> ·
-  <a href="https://docs.futureagi.com"><b>Docs</b></a> ·
-  <a href="https://futureagi.com/blog"><b>Blog</b></a> ·
-  <a href="https://discord.com/invite/n2tCUKBkAw"><b>Discord</b></a> ·
-  <a href="https://github.com/orgs/future-agi/discussions"><b>Discussions</b></a>
+  <a href="https://app.futureagi.com/auth/jwt/register?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=header_cta_cloud"><b>Try Cloud (Free)</b></a> ·
+  <a href="#-quickstart"><b>Self-Host</b></a> ·
+  <a href="https://discord.com/invite/n2tCUKBkAw"><b>Support</b></a>
+</p>
+
+<p>
+  <sub>
+    <a href="https://docs.futureagi.com?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=header_docs">Docs</a> ·
+    <a href="https://futureagi.com/blog?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=header_blog">Blogs</a> ·
+    <a href="https://github.com/future-agi/future-agi/issues/new/choose">Report a Bug</a>
+  </sub>
 </p>
 
 </div>
@@ -98,29 +107,25 @@ Go-based gateway with **~9.9 ns weighted routing**, **~29 k req/s on t3.xlarge**
 
 ---
 
-## 🚀 Quickstart (60 seconds)
-
-Two ways, depending on how much you want to install:
-
-The self-host path requires Docker Desktop or Docker Engine with Docker Compose
-available before running the installer.
+## 🚀 Quickstart
 
 <table width="100%">
 <tr>
-<th width="50%">Cloud (fastest)</th>
-<th width="50%">Self-host (Docker)</th>
+<th width="50%">Future AGI Cloud</th>
+<th width="50%">Self Host Future AGI</th>
 </tr>
 <tr valign="top">
 <td width="50%">
 
-**No install. Free tier.**
+No installation required, get started immediately.
 
-```bash
-# Sign up free:
-#   app.futureagi.com
+<div align="center">
+  <a href="https://app.futureagi.com/auth/jwt/register?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=quickstart_cloud_button" target="_blank">
+    <img alt="Create an account" src="https://img.shields.io/badge/Create%20an%20account-6D5AE8?style=for-the-badge">
+  </a>
+</div>
 
-pip install ai-evaluation
-```
+Generous free-tier, no credit card required.
 
 <sub>SOC 2 Type II · HIPAA · data stays in your region.</sub>
 
@@ -165,6 +170,7 @@ self-hosted supervisor and to its rolling 366-day source window.
 </tr>
 </table>
 
+
 ### Instrument your first agent
 
 <table width="100%">
@@ -208,7 +214,7 @@ const response = await openai.chat.completions.create({
 </tr>
 </table>
 
-<sub> [Full docs →](https://docs.futureagi.com)  ·  [Cookbooks →](https://docs.futureagi.com/docs/cookbook)  ·  [API reference →](https://docs.futureagi.com/docs/api)</sub>
+<sub> [Full docs →](https://docs.futureagi.com?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=architecture)  ·  [Cookbooks →](https://docs.futureagi.com/docs/cookbook?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=architecture)  ·  [API reference →](https://docs.futureagi.com/docs/api?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=architecture)</sub>
 
 ---
 
@@ -223,7 +229,7 @@ Six pillars. Each one replaces a tool you probably have.
 ### 🧪 Simulate
 Thousands of multi-turn conversations against realistic personas, adversarial inputs, and edge cases. Text **and voice** (LiveKit, VAPI, Retell, Pipecat).
 
-<sub>[Docs →](https://docs.futureagi.com/docs/simulation)</sub>
+<sub>[Docs →](https://docs.futureagi.com/docs/simulation?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=feature_simulation)</sub>
 
 </td>
 <td width="33%" valign="top">
@@ -231,7 +237,7 @@ Thousands of multi-turn conversations against realistic personas, adversarial in
 ### 📊 Evaluate
 50+ metrics under one `evaluate()` call: groundedness, hallucination, tool-use correctness, PII, tone, custom rubrics. **LLM-as-judge + heuristic + ML.**
 
-<sub>[Docs →](https://docs.futureagi.com/docs/evaluation)</sub>
+<sub>[Docs →](https://docs.futureagi.com/docs/evaluation?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=feature_evaluation)</sub>
 
 </td>
 <td width="33%" valign="top">
@@ -239,7 +245,7 @@ Thousands of multi-turn conversations against realistic personas, adversarial in
 ### 🛡️ Protect
 18 built-in scanners (PII, jailbreak, injection, …) + 15 vendor adapters (Lakera, Presidio, Llama Guard, …). Inline in gateway or standalone SDK.
 
-<sub>[Docs →](https://docs.futureagi.com/docs/protect)</sub>
+<sub>[Docs →](https://docs.futureagi.com/docs/protect?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=feature_protect)</sub>
 
 </td>
 </tr>
@@ -249,7 +255,7 @@ Thousands of multi-turn conversations against realistic personas, adversarial in
 ### 👁️ Monitor
 OpenTelemetry-native tracing across 50+ frameworks (LangChain, LlamaIndex, CrewAI, DSPy…). Span graphs, latency, token cost, live dashboards. Zero-config.
 
-<sub>[Docs →](https://docs.futureagi.com/docs/observe)</sub>
+<sub>[Docs →](https://docs.futureagi.com/docs/observe?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=feature_observe)</sub>
 
 </td>
 <td width="33%" valign="top">
@@ -257,7 +263,7 @@ OpenTelemetry-native tracing across 50+ frameworks (LangChain, LlamaIndex, CrewA
 ### 🎛️ Agent Command Center
 OpenAI-compatible gateway. 100+ providers, 15 routing strategies, semantic caching, virtual keys, MCP, A2A. **~29k req/s, P99 ≤ 21ms with guardrails on.**
 
-<sub>[Docs →](https://docs.futureagi.com/docs/command-center) · [Benchmarks →](./agentcc-gateway/README.md#-benchmarks)</sub>
+<sub>[Docs →](https://docs.futureagi.com/docs/command-center?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=feature_command_center) · [Benchmarks →](./agentcc-gateway/README.md#-benchmarks)</sub>
 
 </td>
 <td width="33%" valign="top">
@@ -265,7 +271,7 @@ OpenAI-compatible gateway. 100+ providers, 15 routing strategies, semantic cachi
 ### 🔁 Optimize
 Six prompt-optimization algorithms (GEPA, PromptWizard, ProTeGi, Bayesian, Meta-Prompt, Random). Production traces feed back as training data.
 
-<sub>[Docs →](https://docs.futureagi.com/docs/optimization)</sub>
+<sub>[Docs →](https://docs.futureagi.com/docs/optimization?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=feature_optimization)</sub>
 
 </td>
 </tr>
@@ -285,7 +291,7 @@ Six prompt-optimization algorithms (GEPA, PromptWizard, ProTeGi, Bayesian, Meta-
 <p align="center">
   <a href="https://render.com/deploy"><img src="https://img.shields.io/badge/deploy%20on-Render-46E3B7?style=for-the-badge&logo=render&logoColor=white" alt="Deploy on Render"></a>
   <a href="https://fly.io/docs/launch/"><img src="https://img.shields.io/badge/deploy%20on-Fly-7A3CEF?style=for-the-badge&logo=flydotio&logoColor=white" alt="Deploy on Fly"></a>
-  <a href="#-quickstart-60-seconds"><img src="https://img.shields.io/badge/docker%20compose-up%20-d-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker Compose"></a>
+  <a href="#-quickstart"><img src="https://img.shields.io/badge/docker%20compose-up%20-d-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker Compose"></a>
 </p>
 -->
 | Target | Status | Notes |
@@ -377,7 +383,7 @@ Future AGI is an **open-source ecosystem** — each SDK is independently usable,
 | **Vector DBs** | Pinecone · Weaviate · Chroma · Milvus · Qdrant · pgvector |
 | **Tools & infra** | Vercel AI SDK · n8n · MongoDB · MCP · A2A · Guardrails AI · Langfuse · HuggingFace Smol-agents |
 
-<sub> [Full integrations catalog →](https://docs.futureagi.com/docs/integrations)</sub>
+<sub> [Full integrations catalog →](https://docs.futureagi.com/docs/integrations?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=integrations_catalog)</sub>
 
 ---
 
@@ -436,7 +442,7 @@ Future AGI is an **open-source ecosystem** — each SDK is independently usable,
 
 ##  Roadmap
 
-[**Vote on the public roadmap →**](https://futureagi.com/roadmap)  ·  [**GitHub Discussions**](https://github.com/orgs/future-agi/discussions/categories/roadmap)  ·  [**Releases**](https://github.com/future-agi/future-agi/releases)  ·  [**Changelog**](https://docs.futureagi.com/docs/release-notes)
+[**Vote on the public roadmap →**](https://futureagi.com/roadmap?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=footer_roadmap)  ·  [**GitHub Discussions**](https://github.com/orgs/future-agi/discussions/categories/roadmap)  ·  [**Releases**](https://github.com/future-agi/future-agi/releases)  ·  [**Changelog**](https://docs.futureagi.com/docs/release-notes?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=footer_roadmap)
 
 <table>
 <tr>
@@ -516,7 +522,7 @@ We love contributions — bug fixes, new evaluators, framework integrations, doc
 | 💬 [**Discord**](https://discord.com/invite/n2tCUKBkAw) | Real-time help from the team and community |
 | 🗨️ [**GitHub Discussions**](https://github.com/orgs/future-agi/discussions) | Ideas, questions, roadmap input |
 | 🐦 [**Twitter / X**](https://x.com/FutureAGI_) | Release announcements |
-| 📝 [**Blog**](https://futureagi.com/blog) | Engineering & research posts |
+| 📝 [**Blog**](https://futureagi.com/blog?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=blog_section) | Engineering & research posts |
 | 📺 [**YouTube**](https://www.youtube.com/@Future_AGI) | Walkthroughs & demos |
 | 📊 [**Status**](https://status.futureagi.com) | Cloud uptime + incident history |
 | 📧 **support@futureagi.com** | Cloud account / billing |
@@ -561,6 +567,6 @@ Future AGI is licensed under the **Apache License 2.0**. See [LICENSE](LICENSE) 
 
 If Future AGI helps you ship better AI, a ⭐ helps more teams find us.
 
-[🌐 futureagi.com](https://futureagi.com) · [📖 docs.futureagi.com](https://docs.futureagi.com) · [☁️ app.futureagi.com](https://app.futureagi.com) · [📊 status.futureagi.com](https://status.futureagi.com)
+[🌐 futureagi.com](https://futureagi.com?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=footer) · [📖 docs.futureagi.com](https://docs.futureagi.com?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=footer) · [☁️ app.futureagi.com](https://app.futureagi.com?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=footer) · [📊 status.futureagi.com](https://status.futureagi.com)
 
 </div>
