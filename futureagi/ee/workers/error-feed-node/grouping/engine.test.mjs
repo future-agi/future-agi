@@ -38,6 +38,7 @@ function validSingleton(prompt) {
   const finding = prompt.findings[0];
   const source = finding.evidence.find(item => item.id === 'report');
   return {groups: [{target_issue_id: null, member_ids: [finding.id],
+    title: 'Refund uses the wrong amount',
     mechanism: 'Refund execution used ten instead of the requested hundred',
     fix_hypothesis: 'Use the checked requested amount in the refund execution step',
     falsifier: 'A captured execution with the correct requested amount would refute this mechanism',
@@ -86,6 +87,7 @@ function groupFor(prompt, ids, {target = null, prototypeIds = []} = {}) {
   const sources = new Map([...prompt.findings, ...(prompt.existing_issues || [])
     .flatMap(issue => issue.prototypes)] .map(item => [item.id, item]));
   return {target_issue_id: target, member_ids: ids,
+    title: 'Refund uses the wrong amount',
     mechanism: 'Refund execution used a smaller amount than the requested amount',
     fix_hypothesis: 'Use the checked requested amount in the refund execution step',
     falsifier: 'The captured execution used the correct requested amount',
@@ -120,6 +122,9 @@ test('bounded F6 engine admits supported singleton and emits typed create comman
   assert.equal(calls, 1);
   assert.equal(result.commands.length, 1);
   assert.equal(result.commands[0].type, 'create');
+  assert.equal(result.commands[0].mechanism.title, 'Refund uses the wrong amount');
+  assert.equal(result.commands[0].mechanism.mechanism,
+    'Refund execution used ten instead of the requested hundred');
   assert.deepEqual(result.commands[0].occurrence_ids, [row.id]);
   assert.deepEqual(result.commands[0].admission,
     {primary_receipt_id:'00000000-0000-4000-8000-000000000001',

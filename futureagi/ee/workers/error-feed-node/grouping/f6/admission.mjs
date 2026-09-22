@@ -7,7 +7,7 @@ const strings = {type: 'array', items: text};
 const object = properties => ({type: 'object', properties, required: Object.keys(properties), additionalProperties: false});
 export const citationSchema = object({finding_id: text, evidence_id: text, evidence_digest: text, quote: text});
 export const groupSchema = object({target_issue_id: {type: ['string', 'null']}, member_ids: strings,
-  mechanism: text, fix_hypothesis: text, falsifier: text, predicted_observations: strings,
+  title: text, mechanism: text, fix_hypothesis: text, falsifier: text, predicted_observations: strings,
   citations: {type: 'array', items: citationSchema}, contradictions: {type: 'array', items: citationSchema},
   alternatives: strings, missing_evidence: strings});
 export const discoverySchema = object({groups: {type: 'array', items: groupSchema},
@@ -32,6 +32,7 @@ Cannot-links and scope restrictions override similarity and transitive chaining.
 Leave uncertain cases deferred. Never assign an unshown occurrence. Do not infer a clean trace from missing evidence or recovered issues.
 Existing issue identity cannot be changed here. Your output is a proposal; only host validation and Registry commands change membership.
 Describe the reusable failure mechanism, not incidental literal entity IDs, names, dates or task instances. Different literal IDs or tools neither prove nor disprove a shared mechanism: compare the faulty decision and the narrow corrective intervention.
+Give each new issue a concise title of 4-12 words naming the specific failing behavior. Keep the detailed causal explanation in mechanism. Do not use an introductory clause, repeat the task context, or copy the full mechanism into title. For attachments, title is required by the schema but does not rename the existing issue.
 Separate an upstream wrong action from a downstream failure to handle its error or falsely reporting success. Sharing a trace or causal chain does not make these the same issue. Classify the specific finding, not the whole incident story.
 Accepted reports can support provisional Emerging issues without raw traces when the report explicitly describes the behavior. A supported singleton Emerging issue is allowed; multiple peers are not mandatory. An outcome-only report cannot inherit an unstated cause from a nearby finding.
 For attachment, explicitly check EVERY supplied target prototype and provide its citation, not merely one representative. If only some proposed groups can be supported, return those and defer the rest.
@@ -41,7 +42,7 @@ export function discoveryPrompt(selection, issues, byId, cannotLinks, policy = {
   return {instructions: instructions+(policy.companion_context?'\n'+companionInstructions:''), findings: selection.selected.map(id => visible(byId.get(id))),
     selected_roles: selection.roles, controls: selection.controls.map(id => visible(byId.get(id))), missing_views: selection.missing,
     existing_issues: issues.map(i => ({id: i.id, mechanism_revision: i.mechanism_revision,
-      mechanism: i.mechanism, fix_hypothesis: i.fix_hypothesis, prototypes: i.prototypes.map(id => visible(byId.get(id)))})),
+      title: i.title || null, mechanism: i.mechanism, fix_hypothesis: i.fix_hypothesis, prototypes: i.prototypes.map(id => visible(byId.get(id)))})),
     cannot_links: cannotLinks, output_schema: discoverySchema};
 }
 
@@ -71,6 +72,8 @@ export function missingOwnReportCitations(group, context) {
 
 function inspectGroup(group, {byId, constraints, allowedMembers, targets = [], shown = allowedMembers, policy = {}}, requireCoverage) {
   exactKeys(group, Object.keys(groupSchema.properties));
+  requireText(group.title, 'title');
+  assert.ok(group.title.length <= 120 && group.title.trim().split(/\s+/).length <= 12, 'Title must be a concise headline');
   for (const k of ['mechanism', 'fix_hypothesis', 'falsifier']) { requireText(group[k], k); assert.ok(group[k].length <= 3000); }
   for (const k of ['predicted_observations', 'alternatives', 'missing_evidence']) assert.ok(Array.isArray(group[k]) && group[k].every(s => typeof s === 'string'));
   assert.ok(group.predicted_observations.length && group.alternatives.length, 'No predictions/competing mechanism');

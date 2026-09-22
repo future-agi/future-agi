@@ -14,6 +14,7 @@ function syntheticGroup(finding) {
   const report = finding.evidence?.find(item => item.id === 'report');
   assert.ok(report?.text && report.digest, 'Fixture needs an accepted report citation');
   return {target_issue_id:null,member_ids:[finding.id],
+    title:'Accepted finding reports a distinct failure',
     mechanism:`Accepted occurrence ${finding.id} reports a distinct failure`,
     fix_hypothesis:'Correct the action described by the accepted finding report',
     falsifier:'A current captured execution of the same action does not reproduce the reported failure',

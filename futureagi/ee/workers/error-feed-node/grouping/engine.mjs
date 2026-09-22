@@ -85,6 +85,7 @@ function hydrateCandidates(window, byId, constraints, policy) {
       active: true,
       scope: scopeKey(firstRow),
       mechanism_revision: offered.revision,
+      title: offered.mechanism.title || offered.mechanism.mechanism,
       mechanism: offered.mechanism.mechanism,
       fix_hypothesis: offered.mechanism.fix_hypothesis,
       falsifier: offered.mechanism.falsifier,
@@ -111,7 +112,7 @@ function citations(receipt) {
 }
 
 function mechanism(issue) {
-  return {mechanism: issue.mechanism, fix_hypothesis: issue.fix_hypothesis,
+  return {title: issue.title, mechanism: issue.mechanism, fix_hypothesis: issue.fix_hypothesis,
     falsifier: issue.falsifier};
 }
 

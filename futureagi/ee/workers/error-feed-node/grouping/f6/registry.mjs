@@ -49,7 +49,7 @@ export function commitCommand(registry, command, context) {
     const id = `issue-${digest([command.key, suffix]).slice(0, 24)}`;
     assert.ok(!next.issues.some(i => i.id === id));
     const issue = {id, active: true, scope: scopeKey(byId.get(group.member_ids[0])), mechanism_revision: 1,
-      mechanism: group.mechanism, fix_hypothesis: group.fix_hypothesis, falsifier: group.falsifier,
+      title: group.title, mechanism: group.mechanism, fix_hypothesis: group.fix_hypothesis, falsifier: group.falsifier,
       members: unique(group.member_ids), prototypes: context.selectPrototypes(group.member_ids),
       evidence_state: admission.state, admission, workflow: 'open', protected: false, aliases: [],
       membership_sequence: next.sequence + 1};
