@@ -3,6 +3,7 @@ import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography, Button } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { BUILD_TONES } from "../buildEnvironment/buildTones";
+import { BUILD_STATUS } from "../myEnvironments.constants";
 import { WORKSPACE_COPY } from "./workspace.constants";
 import { environmentVersions } from "src/api/simulate-environments/_fixtures/versions";
 
@@ -20,7 +21,7 @@ export default function SystemBanners({ env, envState, patch }) {
 
   const buildStatus = env.buildStatus;
   const buildProgress = env.buildProgress;
-  const building = buildStatus === "building";
+  const building = buildStatus === BUILD_STATUS.BUILDING;
 
   if (!building && !offLatest) return null;
 

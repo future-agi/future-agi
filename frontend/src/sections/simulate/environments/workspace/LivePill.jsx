@@ -2,24 +2,39 @@ import PropTypes from "prop-types";
 import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography } from "@mui/material";
 import CustomTooltip from "src/components/tooltip";
-import { BUILD_TONES } from "../buildEnvironment/buildTones";
+import { BUILD_STATUS, STATUS_META } from "../myEnvironments.constants";
 import { WORKSPACE_COPY } from "./workspace.constants";
 
-// The status pill beside an environment's name. Two states keyed on the env's
-// build status: green "Live" once the environment is adopted and answering, and
-// an amber, pulsing "Building" while it is still being derived — you cannot
-// correct a world that isn't done being built.
+// The status pill beside an environment's name. Three states keyed on the env's
+// build status: green "Live" once the environment is adopted and answering, a
+// pulsing "Building" while it is still being derived (you cannot correct a world
+// that isn't done being built), and a static "Failed" once a build stage is
+// terminal-failed — a failed build must not read as still building.
+//
+// Colours come from STATUS_META, the same source the table's StatusPill uses, so
+// the pill inside the workspace matches the chip outside it (Building was amber
+// here vs purple in the table before this).
 export default function LivePill({ env, building }) {
-  const isBuilding = building ?? env?.buildStatus === "building";
-  const tone = isBuilding ? BUILD_TONES.amber : BUILD_TONES.green;
+  const isBuilding = building ?? env?.buildStatus === BUILD_STATUS.BUILDING;
+  const isFailed = !isBuilding && env?.buildStatus === BUILD_STATUS.FAILED;
+  const tone = isFailed
+    ? STATUS_META.failed.color
+    : isBuilding
+      ? STATUS_META.building.color
+      : STATUS_META.passed.color;
+  const label = isFailed
+    ? WORKSPACE_COPY.failedLabel
+    : isBuilding
+      ? WORKSPACE_COPY.buildingLabel
+      : WORKSPACE_COPY.live;
+  const tooltip = isFailed
+    ? WORKSPACE_COPY.failedTooltip
+    : isBuilding
+      ? WORKSPACE_COPY.buildingTooltip
+      : WORKSPACE_COPY.liveTooltip;
 
   return (
-    <CustomTooltip
-      show
-      title={isBuilding ? WORKSPACE_COPY.buildingTooltip : WORKSPACE_COPY.liveTooltip}
-      size="small"
-      arrow
-    >
+    <CustomTooltip show title={tooltip} size="small" arrow>
       <Stack
         direction="row"
         alignItems="center"
@@ -48,7 +63,7 @@ export default function LivePill({ env, building }) {
           }}
         />
         <Typography sx={{ typography: "s3", fontWeight: "fontWeightSemiBold" }}>
-          {isBuilding ? WORKSPACE_COPY.buildingLabel : WORKSPACE_COPY.live}
+          {label}
         </Typography>
       </Stack>
     </CustomTooltip>

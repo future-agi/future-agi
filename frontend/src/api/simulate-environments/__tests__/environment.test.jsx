@@ -332,6 +332,26 @@ describe("harnessJobToEnvironment", () => {
     });
     expect(env.buildProgress.total).toBeGreaterThan(0);
   });
+
+  it("marks a terminal-failed job as failed (not building) and carries the failure", () => {
+    const failed = {
+      ...RUNNING_JOB,
+      status: {
+        stage: "failed",
+        updated_at: "2026-09-21T14:02:13Z",
+        failure: { domain: "infrastructure", stage: "queued", code: "sandbox_launch_failed", message: "boom" },
+      },
+    };
+    const { env } = harnessJobToEnvironment(failed);
+    expect(env.buildStatus).toBe("failed");
+    expect(env.status).toBe(ENV_STATUS.FAILED);
+    expect(env.buildError).toMatchObject({ code: "sandbox_launch_failed", message: "boom" });
+  });
+
+  it("marks a canceled job as failed too", () => {
+    const canceled = { ...RUNNING_JOB, status: { stage: "canceled", updated_at: "2026-09-21T14:02:13Z" } };
+    expect(harnessJobToEnvironment(canceled).env.buildStatus).toBe("failed");
+  });
 });
 
 describe("canRunHeader", () => {

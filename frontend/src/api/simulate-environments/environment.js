@@ -13,6 +13,7 @@ import { useEnvironmentsStore } from "src/sections/simulate/environments/store/u
 import {
   VOICE_CONNECTORS,
   stageToStatus,
+  buildStatusFor,
 } from "src/sections/simulate/environments/helpers/harnessJobToRow";
 import { generatedPool } from "./_fixtures/scenarioPool";
 import { MOCK_WORLD } from "./_fixtures/world";
@@ -248,7 +249,10 @@ export function harnessJobToEnvironment(item) {
     name: environmentName(job),
     agentType: agentTypeFor(item?.credentials?.detected_connectors),
     status: stageToStatus(status.stage),
-    buildStatus: status.stage === "completed" ? "ready" : "building",
+    buildStatus: buildStatusFor(status.stage),
+    // The "whose fault" line for a failed build ({domain, stage, code, message},
+    // see §7). Null unless the job stage is terminal-failed.
+    buildError: status.failure || null,
     buildProgress: {
       done: completedStageCount(status, item?.events),
       total: stages.length,

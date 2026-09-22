@@ -7,6 +7,17 @@ export const ENV_STATUS = {
   COMPLETED: "completed",
 };
 
+// An environment's build lifecycle, distinct from the run-state pill (ENV_STATUS
+// above): "ready" once authoring finished, "failed" on a terminal build failure
+// (a failed/canceled job stage), "building" while it is still deriving. The
+// workspace and its LivePill key off this — see buildStatusFor() in
+// helpers/harnessJobToRow.js for the single derivation from a job stage.
+export const BUILD_STATUS = {
+  READY: "ready",
+  BUILDING: "building",
+  FAILED: "failed",
+};
+
 // Semantic status colours the designer chose for the run-state pill. Kept as
 // literals in this one module — error.main is a different red
 // and accent tokens shift in dark mode, so neither substitutes cleanly.

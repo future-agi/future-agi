@@ -245,6 +245,27 @@ describe("EnvironmentWorkspace route shell", () => {
     expect(screen.getByRole("button", { name: /Run simulation/ })).toBeDisabled();
   });
 
+  it("shows a Failed state (not the build animation) for a terminal-failed job", async () => {
+    getHarnessJob.mockResolvedValue({
+      ...BUILDING_JOB,
+      job: { ...BUILDING_JOB.job, job_id: "job-failed" },
+      status: {
+        stage: "failed",
+        created_at: NOW,
+        failure: { domain: "infrastructure", code: "sandbox_launch_failed", message: "Sandbox launch failed" },
+      },
+    });
+
+    renderWorkspace("/dashboard/simulate/environments/job-failed");
+
+    // The header pill reads Failed, and the failure message shows — not the
+    // build pipeline that used to run forever on a failed job.
+    expect(await screen.findByText("Failed")).toBeInTheDocument();
+    expect(screen.getByText("Sandbox launch failed")).toBeInTheDocument();
+    expect(screen.queryByText(PIPELINE_CHECKS_COPY.heading)).toBeNull();
+    expect(screen.queryByText("Building")).toBeNull();
+  });
+
   it("swaps the build experience for the workspace in place when the job completes", async () => {
     // First poll is still building; the 2s harness-job refetch then lands
     // completed. There is no adopt hand-off — buildStatus flips building→ready
