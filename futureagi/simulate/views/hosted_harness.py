@@ -36,6 +36,11 @@ from simulate.services.hosted_harness_ingestion import (
     ingest_manifest,
     ingest_result_receipt,
 )
+from simulate.serializers.harness_usage import (
+    HarnessUsageRequestSerializer,
+    HarnessUsageResponseSerializer,
+)
+from simulate.services.harness_usage import check_harness_usage, record_harness_usage
 from tfc.utils.api_contracts import validated_request
 
 logger = logging.getLogger(__name__)
@@ -62,6 +67,22 @@ class HostedHarnessAttemptViewSet(viewsets.ViewSet):
     @property
     def _attempt(self):
         return self.request.auth
+
+    @validated_request(
+        request_serializer=HarnessUsageRequestSerializer,
+        responses={
+            200: HarnessUsageResponseSerializer,
+            402: HarnessUsageResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"])
+    def usage(self, request, pk=None):
+        payload = request.validated_data
+        if payload["operation"] == "check":
+            decision = check_harness_usage(self._attempt, payload["action"])
+            return Response(decision, status=200 if decision["allowed"] else 402)
+        return Response(record_harness_usage(self._attempt, payload))
 
     @validated_request(
         request_serializer=HarnessEventBatchSerializer,

@@ -34,6 +34,7 @@ class BillingEventType(str, Enum):
     AI_PROMPT_IMPROVEMENT = "ai_prompt_improvement"
     EVAL_EXPLANATION = "eval_explanation"
     FALCON_AI_CHAT = "falcon_ai_chat"
+    HARNESS_AUTHORING = "harness_authoring"
 
     # ── Storage ──
     OBSERVE_ADD = "observe_add"
