@@ -148,7 +148,8 @@ describe("ScenariosStep — bulk selection", () => {
     const { patch } = renderStep();
     selectFirstRow();
 
-    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    // MUI applies the button's Tooltip title as its accessible name.
+    fireEvent.click(screen.getByRole("button", { name: "Delete selected scenarios" }));
 
     expect(patch).toHaveBeenCalledTimes(1);
     const afterDelete = patch.mock.calls[0][0].scenarios;
@@ -174,9 +175,9 @@ describe("ScenariosStep — bulk selection", () => {
     selectFirstRow();
     expect(getScenarioSelection().ids).toEqual([rows[0].id]);
 
-    // The SelectionBar's Clear button carries a "Deselect all" tooltip, which
-    // MUI applies as its accessible name.
-    fireEvent.click(screen.getByRole("button", { name: "Deselect all" }));
+    // The SelectionBar's clear affordance is the count-pill ✕, labelled
+    // "Clear selection".
+    fireEvent.click(screen.getByRole("button", { name: "Clear selection" }));
     expect(screen.queryByText("scenario selected")).not.toBeInTheDocument();
     expect(getScenarioSelection().ids).toEqual([]);
   });

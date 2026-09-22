@@ -104,3 +104,25 @@ export function runSimulationTarget(env) {
   }
   return paths.dashboard.simulate.test;
 }
+
+// Run target for a scoped run: a subset of scenarios (`ids`) and/or a repeat
+// count (`trials`), from the scenario selection bar or the header run-config
+// dialog. The intent rides on the URL — `?only=<id,id>` for a subset,
+// `&trials=<k>` for repeats.
+//
+// HONEST GAP: our branch has no live-run view yet, so this appends onto the
+// product run page, which does NOT read `only`/`trials` today — the run
+// navigates but neither the subset nor the repeat count takes effect. Wire the
+// params through once the live-run route lands (see the hosted-panel gaps note).
+export function runSelectionTarget(env, ids, trials) {
+  const base = runSimulationTarget(env);
+  const parts = [];
+  const only = (ids || []).filter(Boolean);
+  // Keep the id list comma-readable (?only=a,b), encoding each id rather than
+  // the separators, which URLSearchParams would percent-encode.
+  if (only.length) parts.push(`only=${only.map(encodeURIComponent).join(",")}`);
+  const k = Math.max(1, Math.min(20, Number(trials) || 1));
+  if (k > 1) parts.push(`trials=${k}`);
+  if (!parts.length) return base;
+  return `${base}${base.includes("?") ? "&" : "?"}${parts.join("&")}`;
+}

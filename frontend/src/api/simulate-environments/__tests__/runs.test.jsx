@@ -16,7 +16,7 @@ const axios = axiosMod.default;
 const { endpoints } = axiosMod;
 const { paths } = await import("src/routes/paths");
 const { MOCK_RUNS } = await import("../_fixtures/runs");
-const { useEnvironmentRuns, executionToRun, runSimulationTarget } =
+const { useEnvironmentRuns, executionToRun, runSimulationTarget, runSelectionTarget } =
   await import("../runs");
 
 // Raw executions payload (the product's `results[]` shape) — capitalised
@@ -178,5 +178,35 @@ describe("runSimulationTarget", () => {
   it("routes to the product Run Simulation entry when platform ids are absent", () => {
     expect(runSimulationTarget({})).toBe(paths.dashboard.simulate.test);
     expect(runSimulationTarget(null)).toBe(paths.dashboard.simulate.test);
+  });
+});
+
+describe("runSelectionTarget", () => {
+  const base = paths.dashboard.simulate.test;
+
+  it("returns the plain run target when there is no subset and no repeats", () => {
+    expect(runSelectionTarget({}, [], 1)).toBe(base);
+    expect(runSelectionTarget({}, undefined, undefined)).toBe(base);
+  });
+
+  it("appends the selected ids as ?only=<comma-joined>", () => {
+    expect(runSelectionTarget({}, ["a", "b"], 1)).toBe(`${base}?only=a,b`);
+  });
+
+  it("appends ?trials only when k > 1, joining with the ids", () => {
+    expect(runSelectionTarget({}, [], 3)).toBe(`${base}?trials=3`);
+    expect(runSelectionTarget({}, ["a"], 5)).toBe(`${base}?only=a&trials=5`);
+  });
+
+  it("clamps trials to 1..20 (so an out-of-range k never leaks through)", () => {
+    expect(runSelectionTarget({}, [], 999)).toBe(`${base}?trials=20`);
+    expect(runSelectionTarget({}, [], 0)).toBe(base);
+  });
+
+  it("uses & when the base already carries a query string (bridge ids present)", () => {
+    const env = { platform: { runTestId: "rt1", testExecutionId: "ex1" } };
+    const detail = paths.dashboard.simulate.testCallDetails("rt1", "ex1");
+    const target = runSelectionTarget(env, ["a"], 2);
+    expect(target).toBe(`${detail}${detail.includes("?") ? "&" : "?"}only=a&trials=2`);
   });
 });

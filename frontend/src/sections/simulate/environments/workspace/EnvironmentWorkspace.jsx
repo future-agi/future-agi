@@ -21,6 +21,7 @@ import {
 } from "src/api/simulate-environments/environment";
 import { useBuildProgress } from "src/api/simulate-environments/buildProgress";
 import { useWorkspaceChat } from "src/api/simulate-environments/workspaceChat";
+import { runSelectionTarget } from "src/api/simulate-environments/runs";
 
 import { useEnvironmentsStore } from "../store/useEnvironmentsStore";
 import { useEnvState } from "../store/envState";
@@ -221,6 +222,15 @@ export default function EnvironmentWorkspace() {
 
   const runnable = canRunHeader(source, env, canRun);
 
+  // Start a run scoped to a scenario selection (or all, when ids is empty) ×
+  // trials. The target rides ?only=…&trials=k; the product run page doesn't
+  // honour those yet (see runSelectionTarget's honest-gap note).
+  const startRun = (ids, trials) => navigate(runSelectionTarget(env, ids, trials));
+
+  // A scenario selection on the Scenarios tab owns the primary Run — the header
+  // yields its Run/Repeats while one is active ("one primary at a time").
+  const selectionActive = (selection.count ?? selection.ids.length) > 0;
+
   // While the environment is still deriving, the builder can't accept edits —
   // the console freezes until it goes Live. SystemBanners reads the same value.
   const envLive = env.buildStatus === BUILD_STATUS.READY;
@@ -291,6 +301,8 @@ export default function EnvironmentWorkspace() {
         locked={locked}
         backed={source === "harness"}
         onFork={onFork}
+        onStartRun={startRun}
+        selectionActive={selectionActive}
       />
 
       <SystemBanners env={env} envState={envState} patch={patch} />
@@ -362,6 +374,8 @@ export default function EnvironmentWorkspace() {
             overviewWorld={overviewWorld}
             graphData={graphData}
             executionOutlet={executionMatch ? <Outlet context={{ env, envState }} /> : undefined}
+            onStartRun={startRun}
+            canRun={runnable}
           />
         </Box>
       </Box>
@@ -373,7 +387,7 @@ export default function EnvironmentWorkspace() {
 // console's pre-composer chip re-renders when rows are checked or cleared on
 // the Scenarios tab. The bus fires the current value on subscribe.
 function useScenarioSelection() {
-  const [selection, setSelection] = useState({ ids: [], rows: [] });
+  const [selection, setSelection] = useState({ ids: [], rows: [], count: 0, all: false });
   useEffect(() => subscribeScenarioSelection(setSelection), []);
   return selection;
 }

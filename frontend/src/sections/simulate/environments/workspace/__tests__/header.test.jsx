@@ -1,8 +1,8 @@
 import { useRef, useState } from "react";
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Routes, Route } from "react-router-dom";
+import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import WorkspaceHeader from "../WorkspaceHeader";
@@ -204,24 +204,23 @@ describe("WorkspaceHeader", () => {
     expect(onFork).toHaveBeenCalledTimes(1);
   });
 
-  it("runs the product's run entry when the env can run and has no bridge ids", async () => {
+  it("opens the run-config dialog and starts a run-all (no ids) on confirm", async () => {
     const user = userEvent.setup();
-    render(
-      <QueryClientProvider client={new QueryClient()}>
-        <MemoryRouter initialEntries={["/dashboard/simulate/environments/env-1"]}>
-          <Routes>
-            <Route
-              path="/dashboard/simulate/environments/env-1"
-              element={<WorkspaceHeader {...baseProps} canRun />}
-            />
-            <Route path="/dashboard/simulate/test" element={<div>run entry</div>} />
-          </Routes>
-        </MemoryRouter>
-      </QueryClientProvider>
-    );
+    const onStartRun = vi.fn();
+    render(withRouter(<WorkspaceHeader {...baseProps} canRun onStartRun={onStartRun} />));
 
+    // The header Run opens the config dialog rather than navigating directly.
     await user.click(screen.getByRole("button", { name: "Run simulation" }));
-    expect(screen.getByText("run entry")).toBeInTheDocument();
+    const dialog = screen.getByRole("dialog");
+    // Confirm inside the dialog → run every scenario (ids undefined) × default k.
+    await user.click(within(dialog).getByRole("button", { name: "Run simulation" }));
+    expect(onStartRun).toHaveBeenCalledWith(undefined, 1);
+  });
+
+  it("hides the header Run + Repeats while a scenario selection is active", () => {
+    render(withRouter(<WorkspaceHeader {...baseProps} canRun selectionActive />));
+    expect(screen.queryByRole("button", { name: "Run simulation" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Repeats:/ })).toBeNull();
   });
 
   it("disables Run simulation with a reason tooltip when the env cannot run", async () => {

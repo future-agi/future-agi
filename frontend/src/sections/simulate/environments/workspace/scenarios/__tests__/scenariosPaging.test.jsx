@@ -59,11 +59,10 @@ describe("ScenariosStep — select all matching", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Select all 60 matching/ }));
     // Escalated: the whole-match line replaces the link, and there is a single
-    // Clear (the bar's), not a duplicate in a second banner.
+    // Clear (the bar's ✕), not a duplicate in a second banner.
     expect(screen.getByText(/All 60 matching scenarios selected/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Select all 60 matching/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Deselect all" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Clear selection/ })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Clear selection" })).toHaveLength(1);
   });
 
   it("keeps the whole-match selection across a page change without loading every row", () => {

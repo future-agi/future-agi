@@ -18,6 +18,7 @@ import {
   publishScenarioSelection,
   clearScenarioSelection,
 } from "../../buildEnvironment/console/scenarioSelectionBus";
+import { injectComposerScaffold } from "../../buildEnvironment/console/composerScaffoldBus";
 import { SCENARIOS_COPY, deriveUseCase } from "./scenarios.constants";
 import { ENV_SHAPE, ENV_STATE_SHAPE } from "./scenarios.shapes";
 import useScenarioPage, { PAGE_SIZE } from "./useScenarioPage";
@@ -76,9 +77,13 @@ RoutePlaceholder.propTypes = { onAdd: PropTypes.func, locked: PropTypes.bool };
 // beside the heading and per-row editing behind the pencil. Two views of the
 // same rows share one toolbar so filters survive a view switch, and the coverage
 // matrix below reads the live rows.
-export default function ScenariosStep({ env, envState, patch, locked = false }) {
+export default function ScenariosStep({ env, envState, patch, locked = false, onStartRun, canRun = false }) {
   const { enqueueSnackbar, closeSnackbar } = useSnackbar();
   const [view, setView] = useState("table");
+  // Repeats (k) for a selection run — how many times each selected scenario is
+  // re-run. Lives here (the selection bar is presentational) and rides the run
+  // URL as ?trials=k. Default single-shot.
+  const [trials, setTrials] = useState(1);
   const [query, setQuery] = useState("");
   const [filters, setFilters] = useState({});
   const [adding, setAdding] = useState(false);
@@ -211,6 +216,30 @@ export default function ScenariosStep({ env, envState, patch, locked = false }) 
   const clearFilters = () => { setQuery(""); setFilters({}); setHiddenGroupIds([]); };
   const removeScenario = (id) => patch({ scenarios: selected.filter((s) => s.id !== id) });
 
+  // The concrete id list a bulk action targets — the same predicate bulkDelete
+  // resolves: include-mode is the picked ids; all-mode is every matching id
+  // minus the user's exceptions.
+  const selectedIdsForAction = () => (
+    sel.mode === "all"
+      ? shown.filter((s) => !sel.idList.includes(s.id)).map((s) => s.id)
+      : sel.idList
+  );
+
+  // Edit → hand the selection to the builder chat as a pinned scaffold, so the
+  // user can add an instruction and send it as a bulk edit against those rows.
+  const handleEditSelected = () => {
+    const n = sel.count;
+    injectComposerScaffold(
+      `Edit the ${n} selected ${n === 1 ? "scenario" : "scenarios"}: `,
+    );
+  };
+
+  // Run → start a run scoped to the selection × k. The target rides ?only=…&
+  // trials=k; the product run page doesn't honour those yet (honest gap).
+  const handleRunSelected = (k) => {
+    onStartRun?.(selectedIdsForAction(), k || trials);
+  };
+
   // Mirror the predicate selection into the workspace builder chat. include-mode
   // names the picked rows (looked up in allRows); all-mode can't enumerate the
   // match cheaply, so it publishes just the count and the chip reads
@@ -320,6 +349,13 @@ export default function ScenariosStep({ env, envState, patch, locked = false }) 
         <RoutePlaceholder onAdd={() => setAdding(true)} locked={locked} />
       ) : (
         <>
+          {/* Coverage leads the tab, collapsed — the summary numbers (Axes /
+              Pairs / Forced) are visible on landing without scrolling past the
+              list; the chevron unfurls the full breakdown. */}
+          <Box sx={{ mb: 2 }}>
+            <CoverageMatrix scenarios={selected} env={env} />
+          </Box>
+
           <SectionCard sx={{ mb: 2 }}>
             {/* The bulk-action bar OVERLAYS the toolbar's own row while a
                 selection is active — the toolbar stays mounted underneath and
@@ -359,6 +395,10 @@ export default function ScenariosStep({ env, envState, patch, locked = false }) 
                       count={sel.count}
                       onDelete={bulkDelete}
                       onClear={sel.clear}
+                      onEdit={handleEditSelected}
+                      onRun={canRun && onStartRun ? handleRunSelected : undefined}
+                      trials={trials}
+                      onTrialsChange={setTrials}
                       matching={{
                         mode: sel.mode,
                         total: pageData.total,
@@ -389,8 +429,6 @@ export default function ScenariosStep({ env, envState, patch, locked = false }) 
               locked={locked}
             />
           </SectionCard>
-
-          <CoverageMatrix scenarios={selected} env={env} />
         </>
       )}
 
@@ -417,4 +455,8 @@ ScenariosStep.propTypes = {
   envState: ENV_STATE_SHAPE.isRequired,
   patch: PropTypes.func.isRequired,
   locked: PropTypes.bool,
+  // Starts a run scoped to the selected scenarios × trials — (ids, trials).
+  onStartRun: PropTypes.func,
+  // Whether the env is runnable; gates the selection bar's Run button.
+  canRun: PropTypes.bool,
 };

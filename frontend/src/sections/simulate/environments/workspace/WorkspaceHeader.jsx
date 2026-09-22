@@ -7,7 +7,6 @@ import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import { paths } from "src/routes/paths";
-import { runSimulationTarget } from "src/api/simulate-environments/runs";
 import { useDeleteEnvironment } from "src/api/simulate-environments/environments";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import { ENTRY_TAB } from "../environmentOptions";
@@ -15,6 +14,8 @@ import { DELETE_DIALOG_COPY, DELETE_TONE } from "../myEnvironments.constants";
 import SurfaceIcon from "../components/SurfaceIcon";
 import LivePill from "./LivePill";
 import RenameEnvironmentDialog from "./RenameEnvironmentDialog";
+import TrialsPicker from "./scenarios/TrialsPicker";
+import RunConfigDialog from "./scenarios/RunConfigDialog";
 // EnvVersionPin renders a mock "env v3" version from a fixture fallback
 // (_fixtures/versions.js) — there is no real version field in the environments
 // contract yet. Hidden in the header until the contract exposes one.
@@ -30,17 +31,26 @@ import { WORKSPACE_COPY } from "./workspace.constants";
 // read-only and the overflow is hidden (Fork lives on the Overview card there).
 export default function WorkspaceHeader({
   env,
-  // envState / patch are still passed by the parent for the version pin; re-add
-  // them here when the commented-out <EnvVersionPin> below is restored.
+  // patch is still passed by the parent for the version pin; re-add it here when
+  // the commented-out <EnvVersionPin> below is restored.
+  envState,
   canRun,
   runBlockedReason,
   locked = false,
   backed = false,
   onFork,
+  onStartRun,
+  selectionActive = false,
 }) {
   const navigate = useNavigate();
   const [renameOpen, setRenameOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // Run configuration: the header's Repeats pill (k for a run-all) and the
+  // modal the Run button opens. A scenario selection on the Scenarios tab takes
+  // over the primary Run, so the header yields these while one is active.
+  const [headerTrials, setHeaderTrials] = useState(1);
+  const [runConfigOpen, setRunConfigOpen] = useState(false);
+  const scenarioCount = envState?.scenarios?.length ?? 0;
   const deleteEnv = useDeleteEnvironment();
   // Rename (§8) is live for a real backend-backed env. Its response is the §6
   // body, which the mutation writes back into the §6 cache; the workspace
@@ -104,21 +114,35 @@ export default function WorkspaceHeader({
         </Typography>
       </Box>
 
-      <CustomTooltip show={!canRun} title={runBlockedReason} size="small" arrow>
-        <span>
-          <Button
-            variant="contained"
-            color="primary"
-            size="small"
-            disabled={!canRun}
-            onClick={() => navigate(runSimulationTarget(env))}
-            startIcon={<Iconify icon="solar:play-bold" width={15} />}
-            sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
-          >
-            {WORKSPACE_COPY.run}
-          </Button>
-        </span>
-      </CustomTooltip>
+      {/* Run controls yield to the in-table selection bar: while a scenario
+          selection is active it owns the primary Run, so the header hides its
+          Repeats pill + Run to keep one primary action at a time. */}
+      {!selectionActive && (
+        <Stack direction="row" alignItems="center" spacing={1}>
+          {canRun && (
+            <TrialsPicker
+              trials={headerTrials}
+              onChange={setHeaderTrials}
+              scenarioCount={scenarioCount}
+            />
+          )}
+          <CustomTooltip show={!canRun} title={runBlockedReason} size="small" arrow>
+            <span>
+              <Button
+                variant="contained"
+                color="primary"
+                size="small"
+                disabled={!canRun}
+                onClick={() => setRunConfigOpen(true)}
+                startIcon={<Iconify icon="solar:play-bold" width={15} />}
+                sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
+              >
+                {WORKSPACE_COPY.run}
+              </Button>
+            </span>
+          </CustomTooltip>
+        </Stack>
+      )}
 
       {!locked && (
         <ForkMenu
@@ -165,6 +189,17 @@ export default function WorkspaceHeader({
           }
         />
       )}
+
+      {/* Run-all config: pick repeats, see the estimate, then start a run over
+          every scenario × k. Runs via the parent's scoped-run target (no ids =
+          all); trials ride ?trials=k (honoured once the live-run route lands). */}
+      <RunConfigDialog
+        open={runConfigOpen}
+        onClose={() => setRunConfigOpen(false)}
+        scenarioCount={scenarioCount}
+        defaultTrials={headerTrials}
+        onConfirm={(k) => { setHeaderTrials(k); onStartRun?.(undefined, k); }}
+      />
     </Stack>
   );
 }
@@ -192,4 +227,8 @@ WorkspaceHeader.propTypes = {
   locked: PropTypes.bool,
   backed: PropTypes.bool,
   onFork: PropTypes.func,
+  // Starts a run — (ids, trials); the header run-all passes ids = undefined.
+  onStartRun: PropTypes.func,
+  // True while a scenario selection owns the primary Run; hides the header's.
+  selectionActive: PropTypes.bool,
 };

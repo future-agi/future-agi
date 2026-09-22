@@ -41,6 +41,8 @@ export default function WorkspacePanels({
   overviewWorld,
   graphData,
   executionOutlet,
+  onStartRun,
+  canRun = false,
 }) {
   const navigate = useNavigate();
   const { runs } = useEnvironmentRuns(env, envState);
@@ -76,7 +78,7 @@ export default function WorkspacePanels({
       case "contract":
         return <RlContractPanel env={env} envState={envState} patch={patch} onGo={go} locked={locked} onFork={onFork} graphData={graphData} />;
       case "scenarios":
-        return <ScenariosStep env={env} envState={envState} patch={patch} locked={locked} onFork={onFork} />;
+        return <ScenariosStep env={env} envState={envState} patch={patch} locked={locked} onFork={onFork} onStartRun={onStartRun} canRun={canRun} />;
       case "evals":
         return <EvalsStep env={env} envState={envState} patch={patch} onGo={go} locked={locked} backed={backed} onFork={onFork} />;
       case "runs":
@@ -182,4 +184,8 @@ WorkspacePanels.propTypes = {
   // Real §6 capability-graph data (tools/flows/personas/guardrails) for Contract.
   graphData: PropTypes.object,
   executionOutlet: PropTypes.node,
+  // Starts a run scoped to the scenario selection × trials — (ids, trials).
+  onStartRun: PropTypes.func,
+  // Whether the env is runnable; gates the scenarios selection-bar Run.
+  canRun: PropTypes.bool,
 };
