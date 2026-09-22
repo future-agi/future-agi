@@ -195,6 +195,41 @@ class TestClickHouseSchema:
             assert names.index("spans") < names.index("spans_mv")
             assert names.index("spans_mv") < names.index("span_metrics_hourly")
 
+    def test_replicated_engines_scope_zk_path_by_database(self):
+        """Replicated*MergeTree ZK replica paths must include {database}.
+
+        Without a {database} segment, two databases on the same ClickHouse
+        instance collide on the same ZK replica path when they both create
+        a table with the same name — the second database's CREATE TABLE
+        fails with "Replica ... already exists" (see
+        https://github.com/future-agi/future-agi/issues/2962). {database}
+        is a built-in ClickHouse macro that doesn't require any config
+        entry, so this is safe for both the Helm/ZK-backed prod topology
+        and the single-node test config in .ci/clickhouse-test-config.xml.
+        """
+        import re
+
+        from tracer.services.clickhouse.schema import get_all_schema_ddl
+
+        zk_path_re = re.compile(
+            r"Replicated[A-Za-z]+MergeTree\(\s*'(?P<zk_path>[^']*)'\s*,\s*'\{replica\}'"
+        )
+
+        checked = 0
+        for name, ddl in get_all_schema_ddl():
+            for match in zk_path_re.finditer(ddl):
+                checked += 1
+                zk_path = match.group("zk_path")
+                assert "{database}" in zk_path, (
+                    f"{name}: ZK replica path {zk_path!r} is not scoped by "
+                    "database and will collide across databases on the "
+                    "same ClickHouse instance"
+                )
+        # Guard against the regex silently matching nothing (e.g. after an
+        # unrelated refactor changes the ENGINE syntax) and the test going
+        # green for the wrong reason.
+        assert checked >= 20
+
     def test_dataset_dict_scopes_to_active_datasets(self):
         """Dataset dashboards should not surface soft-deleted datasets."""
         from tracer.services.clickhouse.schema import DATASET_DICT

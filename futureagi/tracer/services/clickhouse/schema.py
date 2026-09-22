@@ -213,7 +213,7 @@ CREATE TABLE IF NOT EXISTS tracer_observation_span (
     INDEX idx_observation_type observation_type TYPE set(100) GRANULARITY 1,
     INDEX idx_status status TYPE set(10) GRANULARITY 1
 )
-ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/tracer_observation_span', '{replica}', _peerdb_version)
+ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/tracer_observation_span', '{replica}', _peerdb_version)
 PARTITION BY toYYYYMM(created_at)
 ORDER BY (project_id, created_at, trace_id, id)
 SETTINGS index_granularity = 8192;
@@ -261,7 +261,7 @@ CREATE TABLE IF NOT EXISTS tracer_trace (
     INDEX idx_session_id session_id TYPE bloom_filter GRANULARITY 1,
     INDEX idx_external_id external_id TYPE bloom_filter GRANULARITY 1
 )
-ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/tracer_trace', '{replica}', _peerdb_version)
+ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/tracer_trace', '{replica}', _peerdb_version)
 PARTITION BY toYYYYMM(created_at)
 ORDER BY (project_id, created_at, id)
 SETTINGS index_granularity = 8192;
@@ -296,7 +296,7 @@ CREATE TABLE IF NOT EXISTS trace_session (
     _peerdb_is_deleted UInt8,
     _peerdb_version Int64
 )
-ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/trace_session', '{replica}', _peerdb_version)
+ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/trace_session', '{replica}', _peerdb_version)
 PARTITION BY toYYYYMM(created_at)
 ORDER BY (project_id, created_at, id)
 SETTINGS index_granularity = 8192;
@@ -374,7 +374,7 @@ CREATE TABLE IF NOT EXISTS tracer_eval_logger (
     INDEX idx_target_type target_type TYPE bloom_filter GRANULARITY 1,
     INDEX idx_custom_eval_config_id custom_eval_config_id TYPE bloom_filter GRANULARITY 1
 )
-ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/tracer_eval_logger', '{replica}', _peerdb_version)
+ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/tracer_eval_logger', '{replica}', _peerdb_version)
 PARTITION BY toYYYYMM(created_at)
 -- ORDER BY uses ``coalesce(trace_id, trace_session_id, id)`` would be ideal
 -- but ClickHouse requires ORDER BY columns to be deterministic. Keeping the
@@ -424,7 +424,7 @@ CREATE TABLE IF NOT EXISTS trace_annotation (
     INDEX idx_observation_span_id observation_span_id TYPE bloom_filter GRANULARITY 1,
     INDEX idx_annotation_label_id annotation_label_id TYPE bloom_filter GRANULARITY 1
 )
-ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/trace_annotation', '{replica}', _peerdb_version)
+ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/trace_annotation', '{replica}', _peerdb_version)
 PARTITION BY toYYYYMM(created_at)
 ORDER BY (annotation_label_id, created_at, id)
 SETTINGS index_granularity = 8192;
@@ -482,7 +482,7 @@ CREATE TABLE IF NOT EXISTS model_hub_score (
     INDEX idx_label_id label_id TYPE bloom_filter GRANULARITY 1,
     INDEX idx_span_id observation_span_id TYPE bloom_filter GRANULARITY 1
 )
-ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/model_hub_score', '{replica}', _peerdb_version)
+ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/model_hub_score', '{replica}', _peerdb_version)
 PARTITION BY toYYYYMM(created_at)
 ORDER BY (label_id, created_at, id)
 SETTINGS index_granularity = 8192;
@@ -557,7 +557,7 @@ CREATE TABLE IF NOT EXISTS tracer_enduser (
     deleted UInt8 DEFAULT 0,
     deleted_at Nullable(DateTime64(3))
 )
-ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/tracer_enduser', '{replica}', _peerdb_version)
+ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/tracer_enduser', '{replica}', _peerdb_version)
 ORDER BY (id)
 SETTINGS index_granularity = 8192;
 """
@@ -609,7 +609,7 @@ CREATE TABLE IF NOT EXISTS model_hub_promptversion (
     _peerdb_synced_at DateTime64(6),
     _peerdb_is_deleted UInt8,
     _peerdb_version Int64
-) ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/model_hub_promptversion', '{replica}', _peerdb_version)
+) ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/model_hub_promptversion', '{replica}', _peerdb_version)
 ORDER BY id;
 """
 
@@ -632,7 +632,7 @@ CREATE TABLE IF NOT EXISTS model_hub_prompttemplate (
     _peerdb_synced_at DateTime64(6),
     _peerdb_is_deleted UInt8,
     _peerdb_version Int64
-) ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/model_hub_prompttemplate', '{replica}', _peerdb_version)
+) ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/model_hub_prompttemplate', '{replica}', _peerdb_version)
 ORDER BY id;
 """
 
@@ -651,7 +651,7 @@ CREATE TABLE IF NOT EXISTS model_hub_promptlabel (
     _peerdb_synced_at DateTime64(6),
     _peerdb_is_deleted UInt8,
     _peerdb_version Int64
-) ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/model_hub_promptlabel', '{replica}', _peerdb_version)
+) ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/model_hub_promptlabel', '{replica}', _peerdb_version)
 ORDER BY id;
 """
 
@@ -667,7 +667,7 @@ CREATE TABLE IF NOT EXISTS prompt_lookup (
     template_id Nullable(UUID),
     commit_message Nullable(String)
 )
-ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/prompt_lookup', '{replica}')
+ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/prompt_lookup', '{replica}')
 ORDER BY (prompt_version_id)
 SETTINGS index_granularity = 8192;
 """
@@ -703,7 +703,7 @@ CREATE TABLE IF NOT EXISTS prompt_label_lookup (
     name String,
     type Nullable(String)
 )
-ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/prompt_label_lookup', '{replica}')
+ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/prompt_label_lookup', '{replica}')
 ORDER BY (id)
 SETTINGS index_granularity = 8192;
 """
@@ -822,7 +822,7 @@ CREATE TABLE IF NOT EXISTS spans (
         ORDER BY (project_id, _peerdb_is_deleted, parent_span_id, start_time)
     )
 )
-ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/spans', '{replica}', _peerdb_version)
+ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/spans', '{replica}', _peerdb_version)
 PARTITION BY toYYYYMM(created_at)
 ORDER BY (project_id, toDate(created_at), trace_id, id)
 SETTINGS index_granularity = 8192, deduplicate_merge_projection_mode = 'drop';
@@ -998,7 +998,7 @@ CREATE TABLE IF NOT EXISTS span_metrics_hourly (
     -- Cost
     total_cost SimpleAggregateFunction(sum, Float64)
 )
-ENGINE = ReplicatedAggregatingMergeTree('/clickhouse/tables/{shard}/span_metrics_hourly', '{replica}')
+ENGINE = ReplicatedAggregatingMergeTree('/clickhouse/tables/{shard}/{database}/span_metrics_hourly', '{replica}')
 PARTITION BY toYYYYMM(hour)
 ORDER BY (project_id, hour, observation_type, model, status)
 SETTINGS index_granularity = 8192, allow_nullable_key = 1;
@@ -1059,7 +1059,7 @@ CREATE TABLE IF NOT EXISTS eval_metrics_hourly (
     bool_fail SimpleAggregateFunction(sum, UInt64),
     error_count SimpleAggregateFunction(sum, UInt64)
 )
-ENGINE = ReplicatedAggregatingMergeTree('/clickhouse/tables/{shard}/eval_metrics_hourly', '{replica}')
+ENGINE = ReplicatedAggregatingMergeTree('/clickhouse/tables/{shard}/{database}/eval_metrics_hourly', '{replica}')
 PARTITION BY toYYYYMM(hour)
 ORDER BY (project_id, custom_eval_config_id, hour)
 SETTINGS index_granularity = 8192, allow_nullable_key = 1;
@@ -1129,7 +1129,7 @@ CREATE TABLE IF NOT EXISTS model_hub_dataset (
     _peerdb_synced_at DateTime64(6),
     _peerdb_is_deleted Int8 DEFAULT 0,
     _peerdb_version Int64
-) ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/model_hub_dataset', '{replica}', _peerdb_version)
+) ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/model_hub_dataset', '{replica}', _peerdb_version)
 ORDER BY id;
 """
 
@@ -1150,7 +1150,7 @@ CREATE TABLE IF NOT EXISTS model_hub_column (
     _peerdb_synced_at DateTime64(6),
     _peerdb_is_deleted Int8 DEFAULT 0,
     _peerdb_version Int64
-) ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/model_hub_column', '{replica}', _peerdb_version)
+) ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/model_hub_column', '{replica}', _peerdb_version)
 ORDER BY (dataset_id, id);
 """
 
@@ -1167,7 +1167,7 @@ CREATE TABLE IF NOT EXISTS model_hub_row (
     _peerdb_synced_at DateTime64(6),
     _peerdb_is_deleted Int8 DEFAULT 0,
     _peerdb_version Int64
-) ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/model_hub_row', '{replica}', _peerdb_version)
+) ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/model_hub_row', '{replica}', _peerdb_version)
 ORDER BY (dataset_id, id);
 """
 
@@ -1192,7 +1192,7 @@ CREATE TABLE IF NOT EXISTS model_hub_cell (
     _peerdb_synced_at DateTime64(6),
     _peerdb_is_deleted Int8 DEFAULT 0,
     _peerdb_version Int64
-) ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/model_hub_cell', '{replica}', _peerdb_version)
+) ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/model_hub_cell', '{replica}', _peerdb_version)
 ORDER BY (dataset_id, column_id, row_id);
 """
 
@@ -1325,7 +1325,7 @@ CREATE TABLE IF NOT EXISTS simulate_test_execution (
     INDEX idx_agent_version_id agent_version_id TYPE bloom_filter GRANULARITY 1,
     INDEX idx_status status TYPE set(10) GRANULARITY 1
 )
-ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/simulate_test_execution', '{replica}', _peerdb_version)
+ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/simulate_test_execution', '{replica}', _peerdb_version)
 PARTITION BY toYYYYMM(created_at)
 ORDER BY (agent_definition_id, created_at, id)
 SETTINGS index_granularity = 8192, allow_nullable_key = 1;
@@ -1433,7 +1433,7 @@ CREATE TABLE IF NOT EXISTS simulate_call_execution (
     INDEX idx_status status TYPE set(10) GRANULARITY 1,
     INDEX idx_call_type simulation_call_type TYPE set(5) GRANULARITY 1
 )
-ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/simulate_call_execution', '{replica}', _peerdb_version)
+ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/simulate_call_execution', '{replica}', _peerdb_version)
 PARTITION BY toYYYYMM(created_at)
 ORDER BY (scenario_id, created_at, id)
 SETTINGS index_granularity = 8192;
@@ -1555,7 +1555,7 @@ CREATE TABLE IF NOT EXISTS simulate_scenarios (
     _peerdb_synced_at DateTime64(6),
     _peerdb_is_deleted UInt8,
     _peerdb_version Int64
-) ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/simulate_scenarios', '{replica}', _peerdb_version)
+) ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/simulate_scenarios', '{replica}', _peerdb_version)
 ORDER BY id;
 """
 
@@ -1588,7 +1588,7 @@ CREATE TABLE IF NOT EXISTS simulate_agent_definition (
     _peerdb_synced_at DateTime64(6),
     _peerdb_is_deleted UInt8,
     _peerdb_version Int64
-) ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/simulate_agent_definition', '{replica}', _peerdb_version)
+) ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/simulate_agent_definition', '{replica}', _peerdb_version)
 ORDER BY id;
 """
 
@@ -1615,7 +1615,7 @@ CREATE TABLE IF NOT EXISTS simulate_agent_version (
     _peerdb_synced_at DateTime64(6),
     _peerdb_is_deleted UInt8,
     _peerdb_version Int64
-) ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/simulate_agent_version', '{replica}', _peerdb_version)
+) ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/simulate_agent_version', '{replica}', _peerdb_version)
 ORDER BY (agent_definition_id, id);
 """
 
@@ -1641,7 +1641,7 @@ CREATE TABLE IF NOT EXISTS simulate_run_test (
     _peerdb_synced_at DateTime64(6),
     _peerdb_is_deleted UInt8,
     _peerdb_version Int64
-) ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/simulate_run_test', '{replica}', _peerdb_version)
+) ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/simulate_run_test', '{replica}', _peerdb_version)
 ORDER BY id;
 """
 
@@ -1798,7 +1798,7 @@ CREATE TABLE IF NOT EXISTS usage_apicalllog (
     INDEX idx_status status TYPE set(10) GRANULARITY 1,
     INDEX idx_eval_score eval_score TYPE minmax GRANULARITY 1
 )
-ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/usage_apicalllog', '{replica}', _peerdb_version)
+ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/usage_apicalllog', '{replica}', _peerdb_version)
 PARTITION BY toYYYYMM(created_at)
 ORDER BY (organization_id, source_id, created_at, id)
 SETTINGS index_granularity = 8192;
