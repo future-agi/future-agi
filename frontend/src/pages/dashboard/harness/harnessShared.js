@@ -2,7 +2,23 @@ import { format, isToday } from "date-fns";
 
 import { STATUS_TYPES } from "src/utils/statusUtils";
 
-export const terminalStages = new Set(["completed", "failed", "canceled"]);
+// The stage strings we branch on by name. "completed" is the successful outcome;
+// "failed"/"canceled" are the terminal-failure outcomes (they are not members of
+// `stages`, which only holds pipeline positions). Kept as one enum so callers
+// stop hardcoding these literals.
+export const HARNESS_STAGE = {
+  QUEUED: "queued",
+  RUNNING: "running",
+  COMPLETED: "completed",
+  FAILED: "failed",
+  CANCELED: "canceled",
+};
+
+export const terminalStages = new Set([
+  HARNESS_STAGE.COMPLETED,
+  HARNESS_STAGE.FAILED,
+  HARNESS_STAGE.CANCELED,
+]);
 
 // The ordered pipeline, by when the runner reaches each stage rather than by the declaration
 // order of HarnessStage in the ALK wheel (fi/alk/harness/job.py): validating_environment runs

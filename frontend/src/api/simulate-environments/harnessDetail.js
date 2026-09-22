@@ -1,5 +1,9 @@
 import { environmentName } from "src/pages/dashboard/harness/harnessShared";
-import { stageToStatus } from "src/sections/simulate/environments/helpers/harnessJobToRow";
+import {
+  stageToStatus,
+  buildStatusFor,
+} from "src/sections/simulate/environments/helpers/harnessJobToRow";
+import { BUILD_STATUS } from "src/sections/simulate/environments/myEnvironments.constants";
 
 /**
  * §6 environment-detail adapter.
@@ -105,7 +109,7 @@ export function harnessDetailToEnvironment(detail) {
     agentType: AGENT_TYPE[overview.agent_type] || overview.agent_type || "text",
     surface: contract?.modality || overview.agent_type || undefined,
     status: overview.status ? stageToStatus(overview.status) : undefined,
-    buildStatus: overview.status === "completed" ? "ready" : "building",
+    buildStatus: overview.status ? buildStatusFor(overview.status) : BUILD_STATUS.BUILDING,
     tools: derivedWorld.tools,
     rules: derivedWorld.rules,
     seed: derivedWorld.seed,

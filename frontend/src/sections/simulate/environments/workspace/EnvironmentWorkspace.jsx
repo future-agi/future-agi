@@ -22,6 +22,7 @@ import { useWorkspaceChat } from "src/api/simulate-environments/workspaceChat";
 
 import { useEnvironmentsStore } from "../store/useEnvironmentsStore";
 import { useEnvState } from "../store/envState";
+import { BUILD_STATUS } from "../myEnvironments.constants";
 import SectionCard from "../components/SectionCard";
 import EmptyState from "../components/EmptyState";
 import BuilderConsole from "../buildEnvironment/console/BuilderConsole";
@@ -74,7 +75,8 @@ export default function EnvironmentWorkspace() {
   // (generated-pool scenarios, a v1 stub) — and useEnvState seeds byEnv once, so
   // seeding it now would lock that placeholder in even after the real world lands.
   // Seed only once the env is ready; the build view below never reads envState.
-  const building = !!env && env.buildStatus === "building";
+  const building = !!env && env.buildStatus === BUILD_STATUS.BUILDING;
+  const buildFailed = !!env && env.buildStatus === BUILD_STATUS.FAILED;
   const { envState, patch, canRun } = useEnvState(
     envId,
     building ? undefined : bootstrapState,
@@ -187,6 +189,42 @@ export default function EnvironmentWorkspace() {
     );
   }
 
+  // Terminal-failed build: the job never reached a live world, so there is no
+  // workspace to show and — crucially — no build animation to keep running. The
+  // header reads "Failed" (LivePill) and the body states the failure, with the
+  // "whose fault" line from env.buildError when the job carried one.
+  if (buildFailed) {
+    return (
+      <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+        <WorkspaceHeader
+          env={env}
+          envState={envState}
+          patch={patch}
+          canRun={false}
+          runBlockedReason={WORKSPACE_COPY.failedTooltip}
+          locked
+        />
+        <Box sx={{ flex: 1, minHeight: 0, overflow: "auto", p: 2 }}>
+          <EmptyState
+            icon="solar:danger-triangle-linear"
+            title={WORKSPACE_COPY.buildFailed.title}
+            body={env.buildError?.message || WORKSPACE_COPY.buildFailed.body}
+            action={
+              <Button
+                variant="contained"
+                color="primary"
+                size="small"
+                onClick={() => navigate(paths.dashboard.simulate.environments.root)}
+              >
+                {WORKSPACE_COPY.buildFailed.action}
+              </Button>
+            }
+          />
+        </Box>
+      </Box>
+    );
+  }
+
   // A template-seeded env stays locked until forked: the version pin is
   // read-only, the header overflow is hidden and Overview offers Fork instead.
   const locked = source === "client" && !!envState.seededFromTemplate;
@@ -209,7 +247,7 @@ export default function EnvironmentWorkspace() {
 
   // While the environment is still deriving, the builder can't accept edits —
   // the console freezes until it goes Live. SystemBanners reads the same value.
-  const envLive = env.buildStatus !== "building";
+  const envLive = env.buildStatus === BUILD_STATUS.READY;
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>

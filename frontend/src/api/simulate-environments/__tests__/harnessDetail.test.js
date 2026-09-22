@@ -218,4 +218,14 @@ describe("harnessDetailToEnvironment", () => {
     expect(envState.evals).toEqual([]);
     expect(envState.scenarios).toBeUndefined();
   });
+
+  it("marks a failed overview as failed, not building", () => {
+    const failed = {
+      id: "j1",
+      overview: { id: "j1", name: "broke", status: "failed" },
+      contract: null,
+      world: null,
+    };
+    expect(harnessDetailToEnvironment(failed).env.buildStatus).toBe("failed");
+  });
 });

@@ -69,8 +69,17 @@ export const WORKSPACE_COPY = {
   back: "All environments",
   live: "Live",
   buildingLabel: "Building",
+  failedLabel: "Failed",
   liveTooltip: "Environment is live. You can edit via the builder or inline.",
   buildingTooltip: "Environment is still being built…",
+  failedTooltip: "This environment failed to build.",
+  // Shown in place of the build animation once a job stage is terminal-failed:
+  // the status stays "Failed", not a forever-spinning "Building".
+  buildFailed: {
+    title: "This environment failed to build",
+    body: "The build didn’t finish. Start a new build from your source, or go back to your environments.",
+    action: "Back to environments",
+  },
   run: "Run simulation",
   moreActions: "More actions",
   fork: "Fork environment",

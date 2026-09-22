@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { harnessJobToRow, harnessEnvToRow } from "../harnessJobToRow";
-import { ENV_STATUS } from "../../myEnvironments.constants";
+import { harnessJobToRow, harnessEnvToRow, buildStatusFor } from "../harnessJobToRow";
+import { ENV_STATUS, BUILD_STATUS } from "../../myEnvironments.constants";
 
 const item = ({ stage, connectors, metadata, jobId = "job-1", updatedAt } = {}) => ({
   job: { job_id: jobId, metadata },
@@ -134,5 +134,22 @@ describe("harnessEnvToRow", () => {
     expect(row.status).toBeUndefined();
     expect(row.agentType).toBeUndefined();
     expect(row.updatedAt).toBeNull();
+  });
+});
+
+describe("buildStatusFor", () => {
+  it("maps completed → ready", () => {
+    expect(buildStatusFor("completed")).toBe(BUILD_STATUS.READY);
+  });
+
+  it("maps failed and canceled → failed (the bug: they used to read as building)", () => {
+    expect(buildStatusFor("failed")).toBe(BUILD_STATUS.FAILED);
+    expect(buildStatusFor("canceled")).toBe(BUILD_STATUS.FAILED);
+  });
+
+  it("maps every in-progress stage → building", () => {
+    ["queued", "running", "generating_environment", undefined].forEach((s) =>
+      expect(buildStatusFor(s)).toBe(BUILD_STATUS.BUILDING),
+    );
   });
 });

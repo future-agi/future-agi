@@ -2,7 +2,7 @@ import PropTypes from "prop-types";
 import { alpha, keyframes } from "@mui/material/styles";
 import { Box, Stack, Typography } from "@mui/material";
 import CustomTooltip from "src/components/tooltip";
-import { STATUS_META } from "../myEnvironments.constants";
+import { STATUS_META, ENV_STATUS } from "../myEnvironments.constants";
 
 const pulse = keyframes`
   0%,100% { opacity: 0.55; }
@@ -12,10 +12,10 @@ const pulse = keyframes`
 export default function StatusPill({ status, progress }) {
   const meta = STATUS_META[status] || STATUS_META.not_run;
   const detail =
-    status === "building" && progress
+    status === ENV_STATUS.BUILDING && progress
       ? `${progress.done}/${progress.total} steps`
       : "";
-  const isAnimated = status === "building" || status === "running";
+  const isAnimated = status === ENV_STATUS.BUILDING || status === ENV_STATUS.RUNNING;
 
   return (
     <CustomTooltip show={!!detail} arrow size="small" title={detail}>

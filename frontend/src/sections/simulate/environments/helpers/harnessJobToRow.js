@@ -1,6 +1,6 @@
 import { AGENT_TYPES } from "src/sections/agents/constants";
-import { environmentName } from "src/pages/dashboard/harness/harnessShared";
-import { ENV_STATUS } from "../myEnvironments.constants";
+import { environmentName, HARNESS_STAGE } from "src/pages/dashboard/harness/harnessShared";
+import { ENV_STATUS, BUILD_STATUS } from "../myEnvironments.constants";
 
 // ALK reports the transports it detected in the source under
 // credentials.detected_connectors (see `agentTypeIcon` in harnessShared). A
@@ -18,10 +18,20 @@ export const VOICE_CONNECTORS = [
 // outcomes the pill draws in red, and every stage before the terminal ones is
 // still assembling the environment.
 export const stageToStatus = (stage) => {
-  if (stage === "completed") return ENV_STATUS.COMPLETED;
-  if (stage === "failed" || stage === "canceled") return ENV_STATUS.FAILED;
-  if (stage === "running") return ENV_STATUS.RUNNING;
+  if (stage === HARNESS_STAGE.COMPLETED) return ENV_STATUS.COMPLETED;
+  if (stage === HARNESS_STAGE.FAILED || stage === HARNESS_STAGE.CANCELED) return ENV_STATUS.FAILED;
+  if (stage === HARNESS_STAGE.RUNNING) return ENV_STATUS.RUNNING;
   return ENV_STATUS.BUILDING;
+};
+
+// The environment's build lifecycle from a job stage. Three-way, unlike the old
+// inline `stage === "completed" ? "ready" : "building"` which mislabelled a
+// terminal-failed job as still building (the header stuck on "Building" with the
+// animation never stopping). A failed/canceled stage is now BUILD_STATUS.FAILED.
+export const buildStatusFor = (stage) => {
+  if (stage === HARNESS_STAGE.COMPLETED) return BUILD_STATUS.READY;
+  if (stage === HARNESS_STAGE.FAILED || stage === HARNESS_STAGE.CANCELED) return BUILD_STATUS.FAILED;
+  return BUILD_STATUS.BUILDING;
 };
 
 const agentTypeFor = (connectors = []) =>

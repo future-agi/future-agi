@@ -3,6 +3,7 @@ import { Box, Stack, Typography, Button, IconButton, Tooltip } from "@mui/materi
 import Iconify from "src/components/iconify";
 import { getEval } from "src/api/simulate-environments/_fixtures/evalCatalog";
 import { useRemoveAppliedEvaluation } from "src/api/simulate-environments/environments";
+import { BUILD_STATUS } from "../../myEnvironments.constants";
 import SectionCard from "../../components/SectionCard";
 import EmptyState from "../../components/EmptyState";
 import EvalRow from "./EvalRow";
@@ -47,7 +48,7 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
   // on (HARNESS_DETAIL_ENABLED); with it off the rows are fixture/preset-seeded,
   // so the DELETE fires with a fixture id and 404s until §6 is also enabled.
   const removeEval = useRemoveAppliedEvaluation();
-  const building = env.buildStatus === "building";
+  const building = env.buildStatus === BUILD_STATUS.BUILDING;
   const removeDisabled = locked || (backed && (building || removeEval.isPending));
   const onRemove = (id) => {
     if (!backed) {

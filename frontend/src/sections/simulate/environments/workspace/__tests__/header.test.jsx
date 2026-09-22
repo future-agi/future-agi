@@ -42,6 +42,13 @@ describe("LivePill", () => {
     render(<LivePill env={{ buildStatus: "ready" }} building />);
     expect(screen.getByText("Building")).toBeInTheDocument();
   });
+
+  it("shows a static Failed for a terminal-failed build (not Building/Live)", () => {
+    render(<LivePill env={{ buildStatus: "failed" }} />);
+    expect(screen.getByText("Failed")).toBeInTheDocument();
+    expect(screen.queryByText("Live")).toBeNull();
+    expect(screen.queryByText("Building")).toBeNull();
+  });
 });
 
 describe("EnvVersionPin", () => {
