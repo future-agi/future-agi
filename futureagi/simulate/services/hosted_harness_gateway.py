@@ -2356,21 +2356,15 @@ class HostedHarnessGateway:
         workspace_archive = load_workspace_archive(conversation)
         if workspace_archive is None:
             workspace_archive = _authoring_archive_for(job)
-        control_only = workspace_archive is None and job.state not in terminal_states
+        control_only = workspace_archive is None
         if workspace_archive is None:
-            if not control_only:
-                raise HostedHarnessError(
-                    "conversation_workspace_not_ready",
-                    "ALK chat requires a saved authoring workspace",
-                    status_code=409,
-                    retryable=False,
-                )
             workspace_archive = _empty_workspace_archive()
         active_attempt = (
             HostedHarnessAttempt.no_workspace_objects.filter(
-                job=job, attempt_number=job.current_attempt_number
+                job=job,
+                attempt_number=job.current_attempt_number,
             ).first()
-            if control_only
+            if control_only and job.state not in terminal_states
             else None
         )
 

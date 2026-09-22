@@ -1,3 +1,6 @@
+import Markdown from "react-markdown";
+import rehypeSanitize from "rehype-sanitize";
+import remarkGfm from "remark-gfm";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import {
@@ -1359,15 +1362,34 @@ export default function HarnessDetail() {
                               {readable(displayText(item.stage))}
                             </Typography>
                           </Stack>
-                          <Typography
-                            variant="body2"
+                          <Box
                             sx={{
-                              whiteSpace: "pre-wrap",
-                              overflowWrap: "anywhere",
+                              "& p": { m: 0, mb: 0.75 },
+                              "& p:last-child": { mb: 0 },
+                              "& ul, & ol": { mb: 0.75, mt: 0.5, pl: 2.5 },
+                              "& li": { mb: 0.25 },
+                              "& pre": {
+                                bgcolor: "action.hover",
+                                borderRadius: 0.75,
+                                m: 0.5,
+                                overflowX: "auto",
+                                p: 1,
+                              },
+                              "& code": {
+                                bgcolor: "action.hover",
+                                borderRadius: 0.5,
+                                px: 0.35,
+                              },
+                              "& pre code": { bgcolor: "transparent", p: 0 },
                             }}
                           >
-                            {displayText(item.content)}
-                          </Typography>
+                            <Markdown
+                              remarkPlugins={[remarkGfm]}
+                              rehypePlugins={[rehypeSanitize]}
+                            >
+                              {displayText(item.content)}
+                            </Markdown>
+                          </Box>
                           {["queued", "delivered", "streaming"].includes(
                             item.state,
                           ) && (

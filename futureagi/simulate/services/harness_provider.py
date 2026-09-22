@@ -29,6 +29,7 @@ from simulate.models import (
     TestExecution,
 )
 from simulate.services.hosted_harness_conversation import serialize_conversation
+from tfc.utils.api_errors import build_error_envelope
 
 logger = logging.getLogger(__name__)
 
@@ -812,7 +813,7 @@ class HostedHarnessProvider:
         job = self._job(request, pk)
         if job is None:
             return Response(
-                {"detail": "Hosted harness job not found"},
+                build_error_envelope("Hosted harness job not found", status_code=404),
                 status=status.HTTP_404_NOT_FOUND,
             )
         try:
@@ -853,7 +854,7 @@ class HostedHarnessProvider:
                 metadata.get("authoring_object_key")
                 or getattr(conversation, "latest_workspace_object_key", None)
             )
-            if not has_archive:
+            if job.state == HostedHarnessJob.State.COMPLETED and not has_archive:
                 return Response(
                     {
                         "error": "conversation_workspace_not_ready",
@@ -1411,10 +1412,16 @@ class SandboxHarnessProvider:
         try:
             return Response(self._client().adjust(str(pk), request.validated_data))
         except HarnessSandboxRejected as exc:
-            return Response({"detail": str(exc)}, status=exc.status_code)
+            return Response(
+                build_error_envelope(str(exc), status_code=exc.status_code),
+                status=exc.status_code,
+            )
         except HarnessSandboxUnavailable as exc:
             return Response(
-                {"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE
+                build_error_envelope(
+                    str(exc), status_code=status.HTTP_503_SERVICE_UNAVAILABLE
+                ),
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
     def send_message(self, request, pk) -> Response:

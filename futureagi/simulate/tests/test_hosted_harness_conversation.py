@@ -140,6 +140,7 @@ def test_active_control_conversation_is_available_before_workspace_is_sealed(
     assert serialized["runtime"]["state"] == "starting"
 
 
+
 @pytest.mark.django_db
 def test_guest_command_and_event_channel_projects_streamed_reply(organization):
     job, _ = create_hosted_job(
