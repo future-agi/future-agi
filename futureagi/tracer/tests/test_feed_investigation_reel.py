@@ -36,6 +36,25 @@ def test_omega_report_without_key_moments_shows_evidence_receipts():
     assert reel[0]["raw"] == "The requested item was not delivered"
 
 
+def test_json_receipt_has_short_breadcrumb_and_preserves_raw_evidence():
+    excerpt = (
+        '{"name":"ChatAnthropic","observation_type":"llm","input.value":"'
+        + ("long prompt " * 500)
+        + '"}'
+    )
+    report = SimpleNamespace(
+        key_moments=_RelatedRows([]),
+        evidence_receipts=_RelatedRows(
+            [SimpleNamespace(deleted=False, excerpt=excerpt, span_id="span-1")]
+        ),
+    )
+
+    reel = _investigation_reel(report)
+
+    assert reel[0]["text"] == "llm · ChatAnthropic"
+    assert reel[0]["raw"] == excerpt
+
+
 def test_legacy_key_moments_take_precedence_over_receipts():
     report = SimpleNamespace(
         key_moments=_RelatedRows(

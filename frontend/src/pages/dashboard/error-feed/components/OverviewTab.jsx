@@ -824,7 +824,11 @@ export function TraceGraphView({ traceId, mode }) {
 
   if (isError) {
     return (
-      <Typography fontSize="12px" color="error.main" sx={{ py: 2, textAlign: "center" }}>
+      <Typography
+        fontSize="12px"
+        color="error.main"
+        sx={{ py: 2, textAlign: "center" }}
+      >
         Could not load trace spans. Please retry.
       </Typography>
     );
@@ -1107,7 +1111,11 @@ function TraceGraphCompare({ failingTraceId, workingTraceId, mode }) {
     }
     if (failed) {
       return (
-        <Stack alignItems="center" justifyContent="center" sx={{ height: 360, p: 2 }}>
+        <Stack
+          alignItems="center"
+          justifyContent="center"
+          sx={{ height: 360, p: 2 }}
+        >
           <Typography fontSize="12px" color="error.main" textAlign="center">
             Could not load {label} spans. Please retry.
           </Typography>
@@ -1169,14 +1177,24 @@ function TraceGraphCompare({ failingTraceId, workingTraceId, mode }) {
           accentColor="#DB2F2D"
           traceShortId={failingTraceId ? failingTraceId.slice(0, 8) : null}
         >
-          {renderSide(failRenderGraph, failLoading, failQ.isError, "failing trace")}
+          {renderSide(
+            failRenderGraph,
+            failLoading,
+            failQ.isError,
+            "failing trace",
+          )}
         </CompareColumn>
         <CompareColumn
           title="Working trace"
           accentColor="#5ACE6D"
           traceShortId={workingTraceId ? workingTraceId.slice(0, 8) : null}
         >
-          {renderSide(passRenderGraph, passLoading, passQ.isError, "working trace")}
+          {renderSide(
+            passRenderGraph,
+            passLoading,
+            passQ.isError,
+            "working trace",
+          )}
         </CompareColumn>
       </Box>
     </Stack>
@@ -1405,46 +1423,49 @@ function ReelStep({ step, isFailReel, isLast }) {
           )}
         </Box>
       ) : (
-        <>
-          {header}
-          {raw && (
-            <Box
-              onClick={() => setShowRaw((v) => !v)}
-              sx={{
-                fontSize: "10.5px",
-                color: "text.disabled",
-                mt: 0.4,
-                cursor: "pointer",
-                userSelect: "none",
-                "&:hover": { color: "text.secondary" },
-              }}
-            >
-              {showRaw ? "− raw JSON" : "+ raw JSON ▾"}
-            </Box>
-          )}
-          {raw && showRaw && (
-            <Box
-              component="pre"
-              sx={{
-                m: 0,
-                mt: 0.5,
-                p: 1,
-                borderRadius: "6px",
-                bgcolor: isDark ? alpha("#fff", 0.03) : alpha("#000", 0.03),
-                fontFamily: "ui-monospace, SFMono-Regular, monospace",
-                fontSize: "11px",
-                lineHeight: 1.5,
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-                color: "text.secondary",
-                maxHeight: 200,
-                overflow: "auto",
-              }}
-            >
-              {typeof raw === "string" ? raw : JSON.stringify(raw, null, 2)}
-            </Box>
-          )}
-        </>
+        header
+      )}
+      {raw && (
+        <Box
+          component="button"
+          type="button"
+          aria-expanded={showRaw}
+          onClick={() => setShowRaw((v) => !v)}
+          sx={{
+            border: 0,
+            p: 0,
+            bgcolor: "transparent",
+            fontSize: "10.5px",
+            color: "text.disabled",
+            mt: 0.4,
+            cursor: "pointer",
+            "&:hover": { color: "text.secondary" },
+          }}
+        >
+          {showRaw ? "Hide full receipt" : "Show full receipt"}
+        </Box>
+      )}
+      {raw && showRaw && (
+        <Box
+          component="pre"
+          sx={{
+            m: 0,
+            mt: 0.5,
+            p: 1,
+            borderRadius: "6px",
+            bgcolor: isDark ? alpha("#fff", 0.03) : alpha("#000", 0.03),
+            fontFamily: "ui-monospace, SFMono-Regular, monospace",
+            fontSize: "11px",
+            lineHeight: 1.5,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            color: "text.secondary",
+            maxHeight: 200,
+            overflow: "auto",
+          }}
+        >
+          {typeof raw === "string" ? raw : JSON.stringify(raw, null, 2)}
+        </Box>
       )}
     </Box>
   );

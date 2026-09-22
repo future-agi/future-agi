@@ -5,6 +5,7 @@ Returns typed dataclasses from tracer.types.feed_types — no raw dicts.
 Pure data-access layer: no HTTP, no business logic. Service layer composes.
 """
 
+import json
 import re
 import statistics
 from collections import Counter
@@ -1939,7 +1940,9 @@ def _investigation_reel(
     return [
         {
             "label": "RECEIPT",
-            "text": _highlight_text(receipt.excerpt, highlight_terms or [], "error"),
+            "text": _highlight_text(
+                _receipt_preview(receipt.excerpt), highlight_terms or [], "error"
+            ),
             "span": receipt.span_id,
             "status": "ok",
             "isFailure": False,
@@ -1953,6 +1956,26 @@ def _investigation_reel(
         )
         if not receipt.deleted and receipt.excerpt
     ][:8]
+
+
+def _receipt_preview(excerpt: str) -> str:
+    """Keep a full receipt in `raw` while making its timeline row scannable."""
+    if excerpt.lstrip().startswith("{") and len(excerpt) > 131_072:
+        return "Trace receipt"
+    if excerpt.lstrip().startswith("{"):
+        try:
+            payload = json.loads(excerpt)
+        except ValueError:
+            pass
+        else:
+            if isinstance(payload, dict):
+                operation = payload.get("name") or payload.get("operation_name")
+                kind = payload.get("observation_type")
+                parts = [str(value)[:120] for value in (kind, operation) if value]
+                if parts:
+                    return " · ".join(parts)
+                return "Trace receipt"
+    return excerpt[:240] + ("…" if len(excerpt) > 240 else "")
 
 
 def _highlight_text(text: str, terms: list[str], hl: str) -> object:
