@@ -587,10 +587,18 @@ def _new_issue(
     scope: TraceGroupingScope, mechanism: dict, prototype_ids: list[str]
 ) -> TraceGroupingIssueState:
     cluster_id = uuid.uuid4()
+    for width in (8, 12, 16):
+        display_id = f"S-{cluster_id.hex[:width].upper()}"
+        if not TraceErrorGroup.no_workspace_objects.filter(
+            project_id=scope.project_id, cluster_id=display_id, deleted=False
+        ).exists():
+            break
+    else:
+        raise GroupingConflict("could not allocate a unique issue ID")
     cluster = TraceErrorGroup.no_workspace_objects.create(
         id=cluster_id,
         project_id=scope.project_id,
-        cluster_id=f"S-{cluster_id.hex[:16].upper()}",
+        cluster_id=display_id,
         source="scanner",
         issue_group="Investigation findings",
         eval_target_type=None,
