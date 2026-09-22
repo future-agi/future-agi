@@ -101,6 +101,10 @@ export function projectConversation(conversation) {
     if (item.src === "msg") {
       const m = item.data;
       if (m.role === "user") {
+        // Control commands (Stop / cancel) are stored as user messages with a
+        // command_kind — they are not chat turns, so keep them out of the transcript.
+        const cmd = m.payload?.command_kind;
+        if (cmd === "interrupt" || cmd === "cancel_operation") continue;
         endBuilder();
         turns.push({ id: m.message_id, role: "user", text: m.content });
         continue;

@@ -138,6 +138,18 @@ describe("projectConversation", () => {
     expect(turns.flatMap((t) => t.steps).some((s) => s.kind === "heartbeat")).toBe(false);
   });
 
+  it("omits interrupt/cancel control messages from the transcript", () => {
+    const turns = projectConversation({
+      messages: [
+        msg({ message_id: "u1", role: "user", content: "hi", created_at: "2026-09-22T10:00:00Z", sequence: 1 }),
+        msg({ message_id: "s1", role: "user", content: "Stop", payload: { command_kind: "interrupt" }, created_at: "2026-09-22T10:00:02Z", sequence: 2 }),
+      ],
+      events: [],
+    });
+    const userTexts = turns.filter((t) => t.role === "user").map((t) => t.text);
+    expect(userTexts).toEqual(["hi"]);
+  });
+
   it("gives every turn and step a stable id", () => {
     const turns = projectConversation({
       messages: [msg({ message_id: "a1", content: "x" })],
