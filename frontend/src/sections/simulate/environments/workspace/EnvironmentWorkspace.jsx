@@ -12,10 +12,12 @@ import {
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import { paths } from "src/routes/paths";
+import { useQuery } from "@tanstack/react-query";
 import {
   useEnvironment,
   canRunHeader,
   stageOutputsToWorld,
+  harnessEnvironmentQuery,
 } from "src/api/simulate-environments/environment";
 import { useBuildProgress } from "src/api/simulate-environments/buildProgress";
 import { useWorkspaceChat } from "src/api/simulate-environments/workspaceChat";
@@ -50,10 +52,11 @@ const EXECUTION_PATTERN = {
 // The named reason a run is blocked, in the designer's order: an agent first,
 // then scenarios, then evals, then a generic fallback. Only read when the header
 // button is disabled, so it never shows for a runnable environment.
+// Evals are intentionally not a run blocker — canRun needs only an agent and
+// scenarios, so a run without evals is allowed (it just isn't scored).
 const blockedReason = (envState) => {
   if (!envState.agent) return WORKSPACE_COPY.runBlocked.agent;
   if (!envState.scenarios?.length) return WORKSPACE_COPY.runBlocked.scenarios;
-  if (!envState.evals?.length) return WORKSPACE_COPY.runBlocked.evals;
   return WORKSPACE_COPY.runBlocked.generic;
 };
 
@@ -71,6 +74,12 @@ export default function EnvironmentWorkspace() {
   const navigate = useNavigate();
   const { envId } = useParams();
   const { env, source, bootstrapState, notFound, error, refetch } = useEnvironment(envId);
+  // A real (backed) env's applied evals live on §6 (evaluations.selected), not
+  // the client store — so the Evaluations tab count + the "no evals" gap must
+  // read §6, or they'd disagree with the panel and never clear after an add.
+  // Shares the ["harness-environment", id] cache the Evals tab already uses.
+  const backed = source === "harness";
+  const evalDetailQuery = useQuery(harnessEnvironmentQuery(envId, { enabled: backed }));
   // While the job is still deriving, the harness bootstrap is only a placeholder
   // (generated-pool scenarios, a v1 stub) — and useEnvState seeds byEnv once, so
   // seeding it now would lock that placeholder in even after the real world lands.
@@ -216,6 +225,16 @@ export default function EnvironmentWorkspace() {
   // the console freezes until it goes Live. SystemBanners reads the same value.
   const envLive = env.buildStatus === BUILD_STATUS.READY;
 
+  // The tab count + "no evals" gap read the applied eval set. For a backed env
+  // that set is §6 evaluations.selected (what the Evals panel shows), not the
+  // client store — so overlay it here so the badge matches the panel and clears
+  // after an add. Scenarios/runs keep their existing sources.
+  const backedSelected = evalDetailQuery.data?.evaluations?.selected;
+  const badgeEnvState =
+    backed && Array.isArray(backedSelected)
+      ? { ...envState, evals: backedSelected }
+      : envState;
+
   return (
     <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       <WorkspaceHeader
@@ -292,8 +311,8 @@ export default function EnvironmentWorkspace() {
             locked={locked}
             backed={source === "harness"}
             onFork={onFork}
-            gapsByTab={gapsByTab(env, envState)}
-            counts={counts(envState)}
+            gapsByTab={gapsByTab(env, badgeEnvState)}
+            counts={counts(badgeEnvState)}
             executionOutlet={executionMatch ? <Outlet context={{ env, envState }} /> : undefined}
           />
         </Box>

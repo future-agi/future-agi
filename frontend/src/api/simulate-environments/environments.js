@@ -116,16 +116,17 @@ export function useAvailableEvaluations(envId, { enabled = true } = {}) {
 
 // §10 add an evaluation by name (mapping is resolved server-side by modality).
 // The 201 body is the full §6 detail with the new row in evaluations.selected,
-// so seed the detail cache from it and refresh the available list (the added
-// name drops out of it). Idempotent server-side; 409 at the 8-eval cap or while
-// building; the caller surfaces the failure.
+// so seed the detail cache from it — the picker reads that to flip the row to
+// "Added". We deliberately do NOT invalidate the available list here: refetching
+// it reshuffles/flashes the whole list, and the added row reads better staying in
+// place marked "Added" (it drops out naturally on the next open). Idempotent
+// server-side; 409 at the 8-eval cap or while building; the caller surfaces it.
 export function useAddEvaluation() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ id, name }) => addEvaluation(id, name),
     onSuccess: (detail, { id }) => {
       if (detail) queryClient.setQueryData(harnessEnvironmentKey(id), detail);
-      queryClient.invalidateQueries({ queryKey: availableEvaluationsKey(id) });
     },
   });
 }

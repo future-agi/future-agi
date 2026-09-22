@@ -120,11 +120,14 @@ const GAP_ENV = {
 };
 
 describe("gapsByTab", () => {
-  it("buckets only blocking gaps and drops assumed Contract gaps", () => {
+  it("buckets only blocking gaps — missing evals is no longer one, and assumed gaps are dropped", () => {
     const byTab = gapsByTab(GAP_ENV, { evals: [] });
-    expect(byTab.evals).toHaveLength(1);
-    expect(byTab.evals[0].id).toBe("no-evals");
+    // "no evaluations" used to be a blocking gap that badged the Evaluations tab;
+    // it isn't anymore (a run is allowed without evals), and the remaining gaps
+    // (stub/manifest/prompt-only) are all "assumed", which never badge a tab.
+    expect(byTab.evals).toBeUndefined();
     expect(byTab.contract).toBeUndefined();
+    expect(byTab).toEqual({});
   });
 
   it("has no gaps once an evaluation is added", () => {

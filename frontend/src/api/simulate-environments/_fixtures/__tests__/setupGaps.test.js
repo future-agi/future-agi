@@ -17,28 +17,26 @@ describe("setupGaps", () => {
     });
   });
 
-  it("raises exactly one blocking Grading gap when no evals are added", () => {
+  it("does not flag missing evaluations as a blocking gap — a run is allowed without them", () => {
     const gaps = setupGaps(env, { evals: [] });
-    const blocking = gaps.filter((g) => g.status === "blocking");
-    expect(blocking).toHaveLength(1);
-    expect(blocking[0].area).toBe("Grading");
-    expect(blocking[0].id).toBe("no-evals");
-    expect(gapCounts(gaps).blocking).toBe(1);
+    expect(gaps.find((g) => g.id === "no-evals")).toBeUndefined();
+    // No gap is blocking: a run only needs an agent + scenarios, so nothing here
+    // claims "a run cannot start". Missing evals mean an unscored run, not a block.
+    expect(gapCounts(gaps).blocking).toBe(0);
   });
 
-  it("raises no blocking gap once evals are present", () => {
-    const gaps = setupGaps(env, { evals: [{ id: "task_success" }] });
-    expect(gapCounts(gaps).blocking).toBe(0);
+  it("stays free of blocking gaps whether or not evals are present", () => {
+    expect(gapCounts(setupGaps(env, { evals: [] })).blocking).toBe(0);
+    expect(gapCounts(setupGaps(env, { evals: [{ id: "task_success" }] })).blocking).toBe(0);
   });
 
   it("flips a gap to resolved when gapsResolved answers it", () => {
     const gaps = setupGaps(env, {
       evals: [],
-      gapsResolved: { "no-evals": "Added task success" },
+      gapsResolved: { manifest: "Reviewed the contract" },
     });
-    const gap = gaps.find((g) => g.id === "no-evals");
+    const gap = gaps.find((g) => g.id === "manifest");
     expect(gap.status).toBe("resolved");
-    expect(gap.answered).toBe("Added task success");
-    expect(gapCounts(gaps).blocking).toBe(0);
+    expect(gap.answered).toBe("Reviewed the contract");
   });
 });

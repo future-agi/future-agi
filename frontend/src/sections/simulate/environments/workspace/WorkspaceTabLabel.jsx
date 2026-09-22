@@ -1,6 +1,5 @@
 import PropTypes from "prop-types";
 import { Box, Stack, Typography, Tooltip } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 import { BUILD_TONES } from "../buildEnvironment/buildTones";
 import { WORKSPACE_COPY } from "./workspace.constants";
 
@@ -25,26 +24,18 @@ export default function WorkspaceTabLabel({ label, count, gaps }) {
         </Typography>
       )}
       {hasGaps && (
+        // An amber attention dot, not a number — a setup gap is a "needs input"
+        // signal, and rendering it as a count read as an item count next to the
+        // real count badges. The tooltip (below) lists what's missing.
         <Box
           sx={{
-            display: "grid",
-            placeItems: "center",
+            width: 7,
+            height: 7,
+            borderRadius: "50%",
             flexShrink: 0,
-            minWidth: 16,
-            height: 16,
-            px: "5px",
-            borderRadius: "8px",
-            bgcolor: (th) => alpha(BUILD_TONES.red, th.palette.mode === "dark" ? 0.2 : 0.12),
-            color: BUILD_TONES.red,
-            typography: "s3",
-            fontWeight: "fontWeightBold",
-            lineHeight: 1,
-            fontVariantNumeric: "tabular-nums",
-            fontSize: 10,
+            bgcolor: BUILD_TONES.amber,
           }}
-        >
-          {gaps.length}
-        </Box>
+        />
       )}
     </Stack>
   );
