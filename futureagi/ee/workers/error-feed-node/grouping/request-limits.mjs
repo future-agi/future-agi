@@ -5,7 +5,11 @@ export const MAX_INPUT_TOKENS = 1_000_000;
 // AgentCC's shipped transport default is 10 MiB (local deployment uses 100 MiB).
 // This is an HTTP/memory guard, not a token estimate.
 export const MAX_REQUEST_BYTES = 10 * 1024 * 1024;
-export const MAX_EVIDENCE_BYTES = (MAX_REQUEST_BYTES - 8192) / 2;
+// F6 serializes the evidence prompt once, then the gateway JSON-escapes that
+// string again. AgentCC does not expose Gemini countTokens, so keep the packed
+// prompt comfortably below the 1M-byte conservative token fallback. The
+// packer records every example/candidate it cannot show for later review.
+export const MAX_EVIDENCE_BYTES = 400_000;
 
 function limitError(message, diagnostics) {
   return Object.assign(new Error(message), {diagnostics});

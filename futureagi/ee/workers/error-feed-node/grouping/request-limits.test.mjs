@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {measureRequest, requestLimits, reservationUsd} from './request-limits.mjs';
+import {MAX_EVIDENCE_BYTES, measureRequest, requestLimits, reservationUsd} from './request-limits.mjs';
 
 const config={baseUrl:'http://gateway/v1',model:'vertex_ai/gemini-3.8-flash',apiKey:'fixture'};
 const body={messages:[{role:'system',content:'rules'},{role:'user',content:'evidence'}],
@@ -31,6 +31,14 @@ test('gateway without native token count uses a bounded UTF-8 upper bound',async
   await assert.rejects(measureRequest({body,config,
     limits:{...requestLimits({}),inputTokens:result.input_tokens-1},
     fetchImpl:async()=>new Response('',{status:404})}),/unavailable/);
+});
+test('a packed evidence prompt leaves room for gateway JSON escaping without native token count',async()=>{
+  const prompt=JSON.stringify({evidence:'x'.repeat(MAX_EVIDENCE_BYTES-100)});
+  assert.ok(Buffer.byteLength(prompt)<=MAX_EVIDENCE_BYTES);
+  const packed={...body,messages:[body.messages[0],{role:'user',content:prompt}]};
+  const measured=await measureRequest({body:packed,config,
+    fetchImpl:async()=>new Response('',{status:404})});
+  assert.ok(measured.input_tokens<requestLimits({}).inputTokens);
 });
 test('transport bound rejects before any remote call; configuration cannot exceed model ceiling',async()=>{
   await assert.rejects(measureRequest({body,config,limits:{...requestLimits({}),requestBytes:1},

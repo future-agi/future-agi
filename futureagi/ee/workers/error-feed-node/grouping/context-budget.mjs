@@ -7,7 +7,7 @@ export function migrateContextBudget(state, inputs) {
   if (!state || inputs.policy.max_input_bytes !== MAX_EVIDENCE_BYTES) return state;
   const binding = digest(inputs);
   if (state.binding === binding) return state;
-  for (const oldLimit of [60000, 240000]) {
+  for (const oldLimit of [60000, 240000, (10 * 1024 * 1024 - 8192) / 2]) {
     const previous = {...inputs.policy, max_input_bytes: oldLimit};
     delete previous.digest;
     previous.digest = digest(previous);
@@ -16,7 +16,7 @@ export function migrateContextBudget(state, inputs) {
     return {...state, binding, resource_transitions: [...(state.resource_transitions ?? []), {
       from_binding: previousBinding, to_binding: binding,
       from_max_input_bytes: oldLimit, to_max_input_bytes: MAX_EVIDENCE_BYTES,
-      reason: 'Token-counted Gemini context with a separate transport ceiling',
+      reason: 'Pack complete examples within the gateway token-count fallback',
     }]};
   }
   return state;
