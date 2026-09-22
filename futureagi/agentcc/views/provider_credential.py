@@ -5,7 +5,6 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
-from integrations.services.credentials import CredentialManager
 from agentcc.models.org_config import AgentccOrgConfig
 from agentcc.models.provider_credential import AgentccProviderCredential
 from agentcc.serializers.provider_credential import (
@@ -15,6 +14,7 @@ from agentcc.serializers.provider_credential import (
 )
 from agentcc.services.config_push import push_org_config
 from agentcc.services.url_safety import build_ssrf_safe_session, ensure_public_http_url
+from integrations.services.credentials import CredentialManager
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.general_methods import GeneralMethods
 
@@ -219,33 +219,34 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
                 organization=organization,
                 deleted=False,
             ).first()
-            if cred:
-                try:
-                    decrypted = CredentialManager.decrypt(cred.encrypted_credentials)
-                except Exception:
-                    logger.warning(
-                        "provider_credential_decrypt_failed",
-                        provider_name=provider_name,
-                        organization_id=str(organization.id),
-                        exc_info=True,
-                    )
-                    return self._gm.bad_request(
-                        "Saved provider credential could not be decrypted. "
-                        "Rotate the credential or check the encryption configuration."
-                    )
-                api_key = decrypted.get("api_key", "")
-                base_url = cred.base_url.rstrip("/") if cred.base_url else ""
-                api_format = cred.api_format
-
-        # Raw values from request body override or fill gaps.
-        base_url = (request.data.get("base_url") or base_url or "").rstrip("/")
-        api_key = request.data.get("api_key") or api_key or ""
-        api_format = request.data.get("api_format") or api_format or "openai"
+            if cred is None:
+                return self._gm.bad_request(
+                    f"No saved credential found for provider '{provider_name}'."
+                )
+            try:
+                decrypted = CredentialManager.decrypt(cred.encrypted_credentials)
+            except Exception:
+                logger.warning(
+                    "provider_credential_decrypt_failed",
+                    provider_name=provider_name,
+                    organization_id=str(organization.id),
+                    exc_info=True,
+                )
+                return self._gm.bad_request(
+                    "Saved provider credential could not be decrypted. "
+                    "Rotate the credential or check the encryption configuration."
+                )
+            api_key = decrypted.get("api_key", "")
+            base_url = cred.base_url.rstrip("/") if cred.base_url else ""
+            api_format = cred.api_format
+        else:
+            base_url = (request.data.get("base_url") or "").rstrip("/")
+            api_key = request.data.get("api_key") or ""
+            api_format = request.data.get("api_format") or "openai"
 
         if not api_key:
             msg = (
-                f"No saved credential found for provider '{provider_name}'. "
-                "Provide an api_key to fetch models."
+                f"Saved credential for provider '{provider_name}' has no api_key."
                 if provider_name
                 else "api_key is required"
             )
@@ -308,8 +309,16 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
             data = resp.json()
             return sorted(m["id"] for m in data.get("data", []))
 
-        if name in ("google", "gemini", "google_gemini") or api_format in ("gemini", "google"):
-            url = "https://generativelanguage.googleapis.com/v1beta/models"
+        if name in ("google", "gemini", "google_gemini") or api_format in (
+            "gemini",
+            "google",
+        ):
+            base = (base_url or "https://generativelanguage.googleapis.com").rstrip("/")
+            url = (
+                f"{base}/models"
+                if base.endswith("/v1beta")
+                else f"{base}/v1beta/models"
+            )
             resp = http.get(
                 url,
                 params={"key": api_key},
