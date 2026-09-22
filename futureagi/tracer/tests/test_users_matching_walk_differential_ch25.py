@@ -62,6 +62,11 @@ USER_N1, USER_N2, USER_N3, USER_N4, USER_N5, USER_N6 = (
 USER_Q1, USER_Q2, USER_Q3, USER_Q4 = (
     str(uuid.UUID(int=n)) for n in (111, 112, 113, 114)
 )
+# Picked JSON-looking strings: R* carry a JSON object as a STRING value.
+USER_R1, USER_R2, USER_R3, USER_R4, USER_R5 = (
+    str(uuid.UUID(int=n)) for n in (121, 122, 123, 124, 125)
+)
+PICKED_JSON = '{"plan":"gold","seat":2}'
 WINDOW_START = datetime(2026, 8, 1, tzinfo=UTC)
 WINDOW_END = WINDOW_START + timedelta(days=3)
 SERVICE = "tracer.services.users_list_manager.V2AnalyticsQueryService"
@@ -277,6 +282,19 @@ def seeded_tables(ch_client):
         [span("t-q3", "q3", USER_Q3, None, 1, hours=30, flag=True)],
         [span("t-q4", "q4", USER_Q4, None, 1, hours=31, flag=False)],
         [span("t-q4", "q4", USER_Q4, None, 2, hours=31, flag=False, deleted=1)],
+        # Picked JSON-looking string, filter ``tag in [PICKED_JSON]`` with
+        # string provenance. R1: the stored string itself at hour 14 (and a
+        # stale copy at hour 58 that v2 replaced). R2: a case variant at hour
+        # 9: raw and case-insensitive, a member. R3: another key order, R4:
+        # other whitespace: strings that only PARSE to the same JSON, not the
+        # picked string. R5: the same JSON in json storage only.
+        [span("t-r1a", "r1a", USER_R1, PICKED_JSON, 1, hours=14)],
+        [span("t-r1b", "r1b", USER_R1, PICKED_JSON, 1, hours=58)],
+        [span("t-r1b", "r1b", USER_R1, "silver", 2, hours=58, cost=2.0)],
+        [span("t-r2", "r2", USER_R2, '{"PLAN":"Gold","seat":2}', 1, hours=9, cost=3.0)],
+        [span("t-r3", "r3", USER_R3, '{"seat":2,"plan":"gold"}', 1, hours=16)],
+        [span("t-r4", "r4", USER_R4, '{"plan": "gold", "seat": 2}', 1, hours=17)],
+        [span("t-r5", "r5", USER_R5, None, 1, hours=19, extra='{"tag": ' + PICKED_JSON + "}")],
     ]
     for batch in batches:
         ch_client.execute(f"INSERT INTO {spans} ({columns}) VALUES", batch)
@@ -319,6 +337,11 @@ def seeded_tables(ch_client):
                 (USER_Q2, "quebec-2"),
                 (USER_Q3, "quebec-3"),
                 (USER_Q4, "quebec-4"),
+                (USER_R1, "romeo-1"),
+                (USER_R2, "romeo-2"),
+                (USER_R3, "romeo-3"),
+                (USER_R4, "romeo-4"),
+                (USER_R5, "romeo-5"),
             )
         ],
     )
@@ -393,6 +416,27 @@ BOOLEAN = {
         "filter_type": "boolean",
         "filter_op": "equals",
         "filter_value": False,
+    },
+}
+
+
+PICKED = {
+    "column_id": "tag",
+    "filter_config": {
+        "col_type": "SPAN_ATTRIBUTE",
+        "filter_type": "text",
+        "filter_op": "in",
+        "filter_value": [PICKED_JSON],
+        "attribute_value_types": ["string"],
+    },
+}
+TYPED_JSON = {
+    "column_id": "tag",
+    "filter_config": {
+        "col_type": "SPAN_ATTRIBUTE",
+        "filter_type": "text",
+        "filter_op": "equals",
+        "filter_value": PICKED_JSON,
     },
 }
 
@@ -630,3 +674,51 @@ def test_typed_walk_matches_the_seeded_page_set_and_totals(
             assert rows[user_id]["num_traces"] == traces, user_id
         for field in ("total_cost", "num_traces", "total_tokens", "last_active"):
             assert seeded_rows[user_id].get(field) == walk_rows[user_id].get(field)
+
+
+def test_a_picked_json_looking_string_walks_and_matches_the_seeded_page(
+    ch_client, seeded_tables
+):
+    """Picker provenance: the stored string, raw and case-insensitive, on both paths.
+
+    R1 (key hour 14: the hour-58 copy is stale) and R2 (the case variant) are
+    members; R3 and R4 only parse to the same JSON and R5 holds it in json
+    storage: none is the picked string. The walk discovers through the value
+    bloom witness on ``attrs_string`` and certifies on the picked values; the
+    seeded page prunes its candidates on the same values. Same set, same
+    totals.
+    """
+    walk_pages, statements = _walk_all(ch_client, seeded_tables, PICKED, page_size=1)
+    order = [row["user_id"] for page in walk_pages for row in page]
+    assert order == ["romeo-1", "romeo-2"]
+    slices = [s for s in statements if "AS raw_end_user_id" in s]
+    assert slices and all("attrs_string[" in s for s in slices)
+    enrichments = [s for s in statements if "latest_candidate_attribute_values" in s]
+    assert enrichments and all("candidate_attribute_values_0" in s for s in enrichments)
+
+    walk_rows = {row["user_id"]: row for page in walk_pages for row in page}
+    seeded_rows, seeded_statements = _seeded_all(ch_client, seeded_tables, PICKED)
+    assert any("scalar_witness_identities" in s for s in seeded_statements)
+    assert set(seeded_rows) == set(walk_rows), sorted(set(seeded_rows) ^ set(walk_rows))
+    for user_id, (cost, traces) in {"romeo-1": (3.0, 2), "romeo-2": (3.0, 1)}.items():
+        for rows in (walk_rows, seeded_rows):
+            assert rows[user_id]["total_cost"] == cost, user_id
+            assert rows[user_id]["num_traces"] == traces, user_id
+        for field in ("total_cost", "num_traces", "total_tokens", "last_active"):
+            assert seeded_rows[user_id].get(field) == walk_rows[user_id].get(field)
+
+
+def test_typed_json_looking_text_keeps_the_seeded_page_and_canonical_matching(
+    ch_client, seeded_tables
+):
+    """Text a user typed is canonicalised: R3 and R4 match too, and no walk serves it."""
+    manager = _manager(TYPED_JSON)
+    executor = _LiveExecutor(ch_client, seeded_tables)
+    with patch(SERVICE, return_value=executor):
+        read = manager.list_cursor_payload(page_size=25, cursor=None)
+    assert read.payload["query_provenance"] != "matching_activity_walk"
+    assert not any("AS raw_end_user_id" in s for s in executor.statements)
+    assert not any("scalar_witness_identities" in s for s in executor.statements)
+    members = {row["user_id"] for row in read.payload["table"]}
+    assert members == {"romeo-1", "romeo-2", "romeo-3", "romeo-4"}
+

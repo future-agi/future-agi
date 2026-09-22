@@ -387,6 +387,66 @@ def test_filtered_page_orders_by_newest_matching_activity_and_never_seeds():
     assert set(_kinds(engine)) <= {"slice", "remap", "enrich", "replay", "probe"}
 
 
+PICKED_JSON = '{"user":"u-1","stage":"final","note":"a long picked value"}'
+
+
+@pytest.mark.parametrize(
+    "picked",
+    [[PICKED_JSON], [PICKED_JSON, "[1,2]"], ["true"]],
+    ids=["json-object", "json-object-and-array", "boolean-word"],
+)
+def test_a_picked_json_looking_string_walks_through_the_text_witness(picked):
+    """Picker provenance admits JSON- and boolean-looking strings to the walk.
+
+    A picked string is the stored string and compares raw (the classifier's
+    picker branch), so the exact-text lane's witness - the deployed value
+    bloom over ``lower()`` of the stored values - is exhaustive for it: the
+    page walks exactly as a plain-text filter does, narrows its certification
+    on the picked values and never issues the whole-window statement. Typed
+    JSON-looking text keeps the seeded page (below).
+    """
+    filters = _filters(
+        attribute=_attribute_filter(
+            filter_type="text",
+            filter_op="in",
+            filter_value=list(picked),
+            attribute_value_types=["string"] * len(picked),
+        )
+    )
+    world = World()
+    world.user(
+        1,
+        key=minutes_before_end(30),
+        raw=(minutes_before_end(30),),
+        typed_values=[("string", '"' + picked[0].replace('"', '\\"') + '"')],
+    )
+    world.user(2, key=None, raw=(minutes_before_end(5),))
+    manager = _manager(filters)
+    builder = UserListQueryBuilderV2(
+        organization_id=ORG, project_ids=[PROJECT], filters=filters, empty_scope=False
+    )
+    assert manager.matching_activity_walk_applies(builder) is True
+    assert manager._walked_typed_filter is None
+    assert manager.attribute_exact_text_filters == {
+        "tag": tuple(dict.fromkeys(value.lower() for value in picked))
+    }
+
+    read, engine = _page(world, page_size=25, filters=filters)
+
+    assert _names(read) == ["user-1"]
+    assert read.payload["query_provenance"] == "matching_activity_walk"
+    slices = [call for call in engine.calls if kind_of(call) == "slice"]
+    assert slices and all("attrs_string[" in call for call in slices)
+    enrichments = [call for call in engine.calls if kind_of(call) == "enrich"]
+    assert enrichments and all(
+        "candidate_attribute_values_0" in call for call in enrichments
+    )
+    assert not any(
+        hashlib.sha256(call.encode()).hexdigest() == UNFILTERED_PAGE_DIGEST
+        for call in engine.calls
+    )
+
+
 def test_populated_slice_resolves_aliases_through_the_bounded_survivor_statement():
     """The slice reads spans alone; a populated slice is followed by one remap.
 
@@ -1142,6 +1202,28 @@ def test_a_typed_row_the_sql_matches_but_python_rejects_is_never_published():
                 filter_type="text", filter_op="equals", filter_value="gôld"
             )
         ),
+        # JSON-looking text a user TYPED: Users canonicalises it, and no raw
+        # witness is exhaustive for that comparison.
+        _filters(
+            attribute=_attribute_filter(
+                filter_type="text", filter_op="equals", filter_value='{"a":1,"b":2}'
+            )
+        ),
+        # The same JSON-looking text in an ``in`` without picker provenance.
+        _filters(
+            attribute=_attribute_filter(
+                filter_type="text", filter_op="in", filter_value=['{"a":1,"b":2}']
+            )
+        ),
+        # A picked string whose script is not ASCII: raw, but Python-lowered.
+        _filters(
+            attribute=_attribute_filter(
+                filter_type="text",
+                filter_op="in",
+                filter_value=['{"a":"gôld"}'],
+                attribute_value_types=["string"],
+            )
+        ),
     ],
     ids=[
         "two-items-one-key",
@@ -1151,6 +1233,9 @@ def test_a_typed_row_the_sql_matches_but_python_rejects_is_never_published():
         "number-not_equals",
         "number-less_than-default-matches",
         "non-ascii-text",
+        "typed-json-looking-equals",
+        "typed-json-looking-in",
+        "picked-non-ascii-json-looking",
     ],
 )
 def test_shapes_the_walk_cannot_serve_keep_the_seeded_page(filters):

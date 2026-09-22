@@ -69,8 +69,19 @@ def builder(items, days=7):
         (LONG, "equals"),
         (["Alpha", "Beta"], "in"),
         (["123456"], "typed_in"),
+        # A picked string is the stored string and compares raw, whatever it
+        # looks like: the value bloom witnesses it exactly.
+        (["true"], "typed_in"),
+        (['{"a":1,"b":2}', "[1,2]"], "typed_in"),
     ],
-    ids=["digit-string", "long-text", "multi-value", "picker"],
+    ids=[
+        "digit-string",
+        "long-text",
+        "multi-value",
+        "picker",
+        "picked-boolean-word",
+        "picked-json-looking",
+    ],
 )
 def test_plain_text_witness_prunes_groups_not_latest_activity(value, op):
     sql, params = builder([leaf(value, op)]).build_dimension_candidate_query(limit=65)
@@ -97,7 +108,10 @@ def test_plain_text_witness_prunes_groups_not_latest_activity(value, op):
         (None, "is_null"),
         ("value", "contains"),
         (["safe", "true"], "in"),
-        (["true"], "typed_in"),
+        (['{"a":1}'], "in"),
+        # A picked string is exact under the raw witness, but its lowering
+        # is still Python's: a non-ASCII picked string keeps the complete path.
+        (["gôld"], "typed_in"),
     ],
 )
 def test_unproven_text_shapes_keep_existing_complete_path(value, op):

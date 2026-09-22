@@ -3,9 +3,11 @@
 The seeded candidate statement decides an attribute-filtered page by
 aggregating the whole window; on the largest tenants it materialises two
 planning-time sets over the sorting key and dies before it starts. This walk
-replaces it for one scalar span-attribute filter - plain-text
-``equals``/``in``, boolean ``equals``/``in``, or a number comparison - when
-that filter is the only item on its key:
+replaces it for one scalar span-attribute filter - exact-text
+``equals``/``in`` (plain ASCII text, or any ASCII string the value picker
+selected, which compares raw whatever it looks like), boolean
+``equals``/``in``, or a number comparison - when that filter is the only item
+on its key:
 
 * discover: one bounded statement per time slice, newest-first, through the
   deployed key and value blooms, grouped by the RAW user id the span carries

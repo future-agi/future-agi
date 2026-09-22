@@ -538,9 +538,22 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 witness = plan.raw_witness_predicate or ""
             raw_values = config.get("filter_value", config.get("filterValue"))
             values = raw_values if isinstance(raw_values, list) else [raw_values]
-            # Users canonicalizes boolean/JSON-looking text and uses Python's
-            # Unicode lower(). Do not narrow those domains with a raw string
-            # comparison. Unsupported shapes keep the complete existing path.
+            picker_types = config.get(
+                "attribute_value_types", config.get("attributeValueTypes")
+            )
+            picked_types = (
+                list(picker_types)
+                if operation == "in"
+                and isinstance(picker_types, list)
+                and len(picker_types) == len(values)
+                else [None] * len(values)
+            )
+            # Users canonicalizes boolean/JSON-looking text a user TYPED and
+            # uses Python's Unicode lower(): a raw string comparison cannot
+            # narrow those domains. A string the picker selected is the stored
+            # string and compares raw (``UsersListManager._picked_value_matches``),
+            # so only its script decides. Unsupported shapes keep the complete
+            # existing path.
             plain_text = (
                 (config.get("filter_type") or config.get("filterType"))
                 in {"text", "string"}
@@ -550,9 +563,14 @@ class UserListQueryBuilder(BaseQueryBuilder):
                     isinstance(value, str)
                     and value
                     and value.isascii()
-                    and value.strip().lower() not in {"true", "false"}
-                    and not value.strip().startswith(("{", "["))
-                    for value in values
+                    and (
+                        value_type == "string"
+                        or (
+                            value.strip().lower() not in {"true", "false"}
+                            and not value.strip().startswith(("{", "["))
+                        )
+                    )
+                    for value, value_type in zip(values, picked_types, strict=True)
                 )
             )
             # One typed map, compared by value (``column[key]``), nothing else.

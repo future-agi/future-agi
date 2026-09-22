@@ -557,16 +557,37 @@ class UsersListManager:
                 raw_value = config.get("filter_value", config.get("filterValue"))
                 raw_values = raw_value if isinstance(raw_value, list) else [raw_value]
                 value_types = config.get("attribute_value_types")
+                # Picker provenance is read only by ``in`` (the classifier's
+                # picker branch); anywhere else every value counts as typed.
+                picked_types = (
+                    list(value_types)
+                    if operation == "in"
+                    and isinstance(value_types, list)
+                    and len(value_types) == len(raw_values)
+                    else [None] * len(raw_values)
+                )
                 if (
                     operation not in {"equals", "in"}
                     or filter_type not in {"text", "string"}
                     or not raw_values
                     or any(not isinstance(value, str) for value in raw_values)
+                    # Text a user typed is canonicalised before it is compared
+                    # (JSON key order and whitespace, boolean words), which a
+                    # raw value comparison cannot witness: such values keep
+                    # the complete path. A PICKED string is the stored string
+                    # and compares raw (``_picked_value_matches``), so the raw
+                    # witness is exact for it whatever it looks like.
                     or any(
-                        value.strip().lower() in {"true", "false"}
-                        or value.strip().startswith(("{", "["))
-                        or self._canonical_filter_value(value).lower() != value.lower()
-                        for value in raw_values
+                        value_type != "string"
+                        and (
+                            value.strip().lower() in {"true", "false"}
+                            or value.strip().startswith(("{", "["))
+                            or self._canonical_filter_value(value).lower()
+                            != value.lower()
+                        )
+                        for value, value_type in zip(
+                            raw_values, picked_types, strict=True
+                        )
                         if isinstance(value, str)
                     )
                     or (
