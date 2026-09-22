@@ -313,6 +313,33 @@ def test_feed_human_edits_fence_f6_but_leave_legacy_updates_alone(omega_issue, u
     assert scope.registry_revision == old_registry + 2
 
 
+def test_repeated_severity_edit_does_not_churn_f6_versions(omega_issue, user):
+    _report, cluster, state, _finding = omega_issue
+    scope = state.scope
+    payload = FeedUpdatePayload(
+        status=FeedIssueStatus.ACKNOWLEDGED,
+        severity="high",
+        assignee=user.email,
+        assignee_provided=True,
+    )
+    with patch.object(feed, "get_cluster_detail", return_value="detail"):
+        feed.update_cluster(cluster.cluster_id, [str(cluster.project_id)], payload)
+        state.refresh_from_db()
+        scope.refresh_from_db()
+        first_revision = state.revision
+        first_registry_revision = scope.registry_revision
+
+        feed.update_cluster(cluster.cluster_id, [str(cluster.project_id)], payload)
+
+    cluster.refresh_from_db()
+    state.refresh_from_db()
+    scope.refresh_from_db()
+    assert cluster.priority == Priority.HIGH
+    assert state.protected is True
+    assert state.revision == first_revision
+    assert scope.registry_revision == first_registry_revision
+
+
 def test_linear_link_protects_f6_before_mocked_external_call(
     omega_issue, user, monkeypatch
 ):
