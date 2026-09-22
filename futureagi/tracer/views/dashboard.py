@@ -1468,11 +1468,25 @@ def _dashboard_degraded_payload(
     return payload
 
 
+def _dashboard_refresh_is_running(refresh_state):
+    """Report whether an exact refresh is actually computing this identity.
+
+    ``read_or_schedule_exact_snapshot`` answers every cold identity with the
+    pending envelope, including the ones whose refresh failed or was never
+    enqueued; only the decorated ``query_refreshing`` flag distinguishes them.
+    """
+
+    return (
+        isinstance(refresh_state, dict)
+        and refresh_state.get("query_refreshing") is True
+    )
+
+
 def _dashboard_refresh_or_degraded(query_config, *, refresh_state, error_code):
     """Keep polling an exact refresh; expose unavailability only without one."""
 
     if (
-        isinstance(refresh_state, dict)
+        _dashboard_refresh_is_running(refresh_state)
         and refresh_state.get("query_status") == "pending"
     ):
         return deepcopy(refresh_state)
@@ -1837,6 +1851,12 @@ def _read_public_dashboard_query(
             )
         if _dashboard_snapshot_is_renderable(snapshot):
             return _decorate_dashboard_exact_payload(snapshot)
+        if isinstance(snapshot, dict) and snapshot.get("query_status") == "pending":
+            return _dashboard_refresh_or_degraded(
+                query_config,
+                refresh_state=snapshot,
+                error_code="read_budget_exceeded",
+            )
         return snapshot
     try:
         # Snapshot scheduling may spend up to two seconds in Redis/Temporal.
@@ -6928,7 +6948,7 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
                     return self._gm.success_response(
                         _decorate_dashboard_exact_payload(cached)
                     )
-            elif isinstance(cached, dict) and cached.get("query_refreshing") is True:
+            elif _dashboard_refresh_is_running(cached):
                 return self._gm.success_response(cached)
 
             # Independently refreshed rollups cannot establish latest physical
