@@ -5,7 +5,10 @@ from unittest.mock import patch
 
 from tracer.models.trace_scan import TraceScanConfig
 from tracer.queries.trace_scanner import get_scan_config
-from tracer.serializers.trace_investigation import PublishInvestigationRequestSerializer
+from tracer.serializers.trace_investigation import (
+    FindingAttributionRoleSerializer,
+    PublishInvestigationRequestSerializer,
+)
 from tracer.services.trace_investigation import canonical_wire_result_digest
 
 
@@ -17,6 +20,30 @@ def test_legacy_scanner_rejects_omega_project_config():
         return_value=(config, False),
     ):
         assert get_scan_config("project-id") is None
+
+
+def test_attribution_explanation_is_optional_and_only_for_supported_roles():
+    old = FindingAttributionRoleSerializer(
+        data={"status": "supported", "span_id": "span-1", "evidence_ids": ["ev-1"]}
+    )
+    assert old.is_valid(), old.errors
+    assert "explanation" not in old.validated_data
+
+    explained = FindingAttributionRoleSerializer(
+        data={
+            "status": "supported",
+            "span_id": "span-1",
+            "evidence_ids": ["ev-1"],
+            "explanation": "This call returned the wrong amount.",
+        }
+    )
+    assert explained.is_valid(), explained.errors
+    assert explained.validated_data["explanation"] == "This call returned the wrong amount."
+
+    unsupported = FindingAttributionRoleSerializer(
+        data={"status": "unknown", "span_id": None, "evidence_ids": [], "explanation": "Guess"}
+    )
+    assert not unsupported.is_valid()
 
 
 def test_queued_legacy_task_skips_omega_project_before_embedding():

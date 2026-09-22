@@ -1958,7 +1958,10 @@ def _investigation_reel(
 ) -> list[dict]:
     if selected_findings is not None:
         return _omega_findings_to_reel(
-            selected_findings, highlight_terms or [], span_context or {}
+            selected_findings,
+            highlight_terms or [],
+            span_context or {},
+            trace_id=str(report.trace_id) if report is not None else None,
         )
     moments = (
         []
@@ -2032,7 +2035,11 @@ def _receipt_operation(excerpt: str) -> str | None:
 
 
 def _omega_findings_to_reel(
-    findings: list, highlight_terms: list[str], span_context: dict | None = None
+    findings: list,
+    highlight_terms: list[str],
+    span_context: dict | None = None,
+    *,
+    trace_id: str | None = None,
 ) -> list[dict]:
     steps = []
     for finding, citations in findings:
@@ -2044,20 +2051,16 @@ def _omega_findings_to_reel(
             "raw": first.excerpt if first else None,
             "evidence_id": first.evidence_id if first else None, "role": None, "meta": None,
         })
-        seen_spans = set()
         roles = {a.role: a for a in finding.attributions.all() if not a.deleted}
         for role in ("origin", "decisive", "symptom"):
             attribution = roles.get(role)
             if not attribution or attribution.status != "supported" or not attribution.span_id:
                 continue
-            if attribution.span_id in seen_spans:
-                continue
-            seen_spans.add(attribution.span_id)
             receipt = next(
                 (e for e in citations.get(role, []) if e.span_id == attribution.span_id and e.excerpt),
                 None,
             )
-            context = (span_context or {}).get(attribution.span_id) or {}
+            context = (span_context or {}).get((trace_id, attribution.span_id)) or {}
             operation = (context.get("name") or context.get("operation_name"))
             if not operation and receipt:
                 operation = _receipt_operation(receipt.excerpt)
@@ -2070,11 +2073,12 @@ def _omega_findings_to_reel(
                 output_value = context["output"]
             steps.append({
                 "label": role.upper(),
-                "text": operation or "Attributed span",
+                "text": getattr(attribution, "explanation", "") or operation or "Attributed span",
                 "span": attribution.span_id, "status": "neutral", "isFailure": False,
                 "raw": receipt.excerpt if receipt else None,
                 "evidence_id": receipt.evidence_id if receipt else None,
                 "role": role,
+                "operation": operation,
                 "input_preview": input_value[:240] if input_value is not None else None,
                 "output_preview": output_value[:240] if output_value is not None else None,
                 "io_source": "recorded_span" if context else None,

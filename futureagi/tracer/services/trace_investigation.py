@@ -767,6 +767,7 @@ def _persist_investigation_details(
                 role=role,
                 status=value["status"],
                 span_id=value.get("span_id"),
+                explanation=value.get("explanation", ""),
             )
             attributions.append(attribution)
             attribution_citations.append((attribution, cited_ids(value)))

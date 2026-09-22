@@ -137,6 +137,14 @@ class FindingAttributionRoleSerializer(StrictInputSerializer):
     evidence_ids = serializers.ListField(
         child=serializers.CharField(max_length=128), max_length=100
     )
+    explanation = serializers.CharField(max_length=600, required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        if attrs.get("explanation") and attrs["status"] != "supported":
+            raise serializers.ValidationError(
+                "Only a supported attribution can have an explanation"
+            )
+        return attrs
 
 
 class FindingAttributionSerializer(StrictInputSerializer):

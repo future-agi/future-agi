@@ -1442,7 +1442,7 @@ function ReelStep({ step, isFailReel, isLast }) {
             "&:hover": { color: "text.secondary" },
           }}
         >
-          {showRaw ? "Hide full receipt" : "Show full receipt"}
+          {showRaw ? "Hide cited excerpt" : "Show cited excerpt"}
         </Box>
       )}
       {raw && showRaw && (
@@ -1464,6 +1464,7 @@ function ReelStep({ step, isFailReel, isLast }) {
             overflow: "auto",
           }}
         >
+          {step.evidence_id && `Evidence ${step.evidence_id}\n`}
           {typeof raw === "string" ? raw : JSON.stringify(raw, null, 2)}
         </Box>
       )}
