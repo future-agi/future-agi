@@ -302,7 +302,7 @@ def add_selected_eval(
     # both see room and both bind. The run row is the thing they contend for,
     # so it is the thing to hold.
     with transaction.atomic():
-        type(run_test).objects.select_for_update().filter(pk=run_test.pk).first()
+        type(run_test).objects.select_for_update(of=("self",)).filter(pk=run_test.pk).first()
         current = selected_eval_configs(run_test)
         for config in current:
             if str(config.name or "") == wanted:
