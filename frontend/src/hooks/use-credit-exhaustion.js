@@ -12,12 +12,32 @@ const CREDIT_ERROR_CODES = [
 ];
 
 /**
+ * Extract the billing/usage error code from an API error.
+ *
+ * The axios layer spreads the response body onto the rejected error, so the
+ * backend envelope's top-level `code` ("FREE_TIER_LIMIT", …) is what arrives
+ * here, with nested `result` shapes as fallbacks. There is deliberately no
+ * `error.errorCode` read: the axios layer never sets that field, so keying
+ * off it (the previous implementation) matched nothing for real responses.
+ */
+function extractCreditErrorCode(error) {
+  if (!error) return undefined;
+  return (
+    error.code ||
+    error.error_code ||
+    error.result?.error_code ||
+    error.result?.errorCode
+  );
+}
+
+/**
  * Check if an API error is a credit/usage exhaustion error.
  */
 export function isCreditExhaustionError(error) {
   if (!error) return false;
   return (
-    error.statusCode === 402 || CREDIT_ERROR_CODES.includes(error.errorCode)
+    error.statusCode === 402 ||
+    CREDIT_ERROR_CODES.includes(extractCreditErrorCode(error))
   );
 }
 
@@ -49,7 +69,7 @@ export function useCreditExhaustion({ feature = "unknown" } = {}) {
         setExhaustionError(error);
         trackPostHogEvent("credits_nudge_shown", {
           feature,
-          error_code: error.errorCode,
+          error_code: extractCreditErrorCode(error),
           dimension: error.dimension,
           current_usage: error.currentUsage,
           limit: error.limit,
@@ -67,7 +87,7 @@ export function useCreditExhaustion({ feature = "unknown" } = {}) {
     // if an attacker-controlled string ever landed in the payload.
     trackPostHogEvent("credits_upgrade_clicked", {
       feature,
-      error_code: exhaustionError?.errorCode,
+      error_code: extractCreditErrorCode(exhaustionError),
       target_plan: exhaustionError?.upgradeCta?.plan,
     });
     navigate(paths.dashboard.settings.pricing);
@@ -77,7 +97,7 @@ export function useCreditExhaustion({ feature = "unknown" } = {}) {
   const handleDismiss = useCallback(() => {
     trackPostHogEvent("credits_nudge_dismissed", {
       feature,
-      error_code: exhaustionError?.errorCode,
+      error_code: extractCreditErrorCode(exhaustionError),
     });
     setExhaustionError(null);
   }, [exhaustionError, feature]);
