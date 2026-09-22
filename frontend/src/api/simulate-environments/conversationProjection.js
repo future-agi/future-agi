@@ -105,6 +105,9 @@ export function projectConversation(conversation) {
         // command_kind — they are not chat turns, so keep them out of the transcript.
         const cmd = m.payload?.command_kind;
         if (cmd === "interrupt" || cmd === "cancel_operation") continue;
+        // A reply to a blocking question is already surfaced in that question's
+        // resolved ask card (answerText) — don't also render it as a bubble.
+        if (m.reply_to) continue;
         endBuilder();
         turns.push({ id: m.message_id, role: "user", text: m.content });
         continue;

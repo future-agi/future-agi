@@ -238,6 +238,7 @@ export default function BuilderConsole({
               <IconButton
                 aria-label="Stop"
                 title={CONSOLE_COPY.stop}
+                disabled={running}
                 onClick={onStop}
                 sx={{
                   width: 30, height: 30, borderRadius: 1, mr: 0.5,

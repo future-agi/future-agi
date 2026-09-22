@@ -22,11 +22,14 @@ import {
   getScenarioSelection,
   clearScenarioSelection,
 } from "src/sections/simulate/environments/buildEnvironment/console/scenarioSelectionBus";
+import { terminalStages } from "src/pages/dashboard/harness/harnessShared";
 import { harnessJobQuery } from "./environment";
 import { projectConversation, conversationInFlight } from "./conversationProjection";
 
 const RUNTIME_WARMING =
   "The agent runtime is warming up — chat opens once it's ready.";
+const NO_WORKSPACE =
+  "This run has no saved workspace to restore, so chat isn't available.";
 const NOT_A_HARNESS_ENV = "Chat connects once this environment is built.";
 
 // A harness-origin env carries the job id as env.id (env.id === job.job_id). Only
@@ -65,9 +68,20 @@ export function useWorkspaceChat(env, { source } = {}) {
         prev ? { ...prev, conversation: value } : prev,
       );
     },
-    onError: (_err, { requestId }) => {
+    onError: (err, { requestId }) => {
+      // Surface the backend's structured error ({message, retryable}); the axios
+      // interceptor spreads the response body onto the rejected error.
       setPending((prev) =>
-        prev.map((p) => (p.id === requestId ? { ...p, failed: true } : p)),
+        prev.map((p) =>
+          p.id === requestId
+            ? {
+                ...p,
+                failed: true,
+                errorMessage: err?.message,
+                retryable: err?.retryable !== false,
+              }
+            : p,
+        ),
       );
     },
   });
@@ -165,6 +179,15 @@ export function useWorkspaceChat(env, { source } = {}) {
     });
   }, [conversation, send]);
 
+  // Retry a failed send: drop its marker and re-send the same text.
+  const retry = useCallback(
+    (id, text) => {
+      setPending((prev) => prev.filter((p) => p.id !== id));
+      send(text);
+    },
+    [send],
+  );
+
   // Optimistic user turns (+ any failed-send markers) tack onto the end.
   const withPending = useMemo(() => {
     if (!pending.length) return turns;
@@ -176,14 +199,19 @@ export function useWorkspaceChat(env, { source } = {}) {
               id: `${p.id}-e`,
               role: "builder",
               steps: [
-                { id: `${p.id}-es`, kind: "error", text: "Couldn't send — try again." },
+                {
+                  id: `${p.id}-es`,
+                  kind: "error",
+                  text: p.errorMessage || "Couldn't send that message.",
+                  onRetry: p.retryable ? () => retry(p.id, p.text) : undefined,
+                },
               ],
             },
           ]
         : [{ id: `${p.id}-u`, role: "user", text: p.text }],
     );
     return [...turns, ...extra];
-  }, [turns, pending]);
+  }, [turns, pending, retry]);
 
   // `running` blocks the composer only for the brief POST round-trip, so the user
   // can still interject while the agent works autonomously (the heartbeat step is
@@ -193,11 +221,16 @@ export function useWorkspaceChat(env, { source } = {}) {
   const runtimeUnavailable = conversation
     ? conversation.runtime?.available === false
     : false;
+  // A terminal run with no saved workspace is permanently unavailable (send 409s
+  // retryable:false); a live run that's merely cold is still warming up.
+  const terminal = terminalStages.has(jobQuery.data?.status?.stage);
   const frozen = !jobId || runtimeUnavailable;
   const frozenReason = !jobId
     ? NOT_A_HARNESS_ENV
     : runtimeUnavailable
-      ? RUNTIME_WARMING
+      ? terminal
+        ? NO_WORKSPACE
+        : RUNTIME_WARMING
       : undefined;
 
   return {

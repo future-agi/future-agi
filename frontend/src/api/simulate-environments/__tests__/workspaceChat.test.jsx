@@ -151,6 +151,38 @@ describe("useWorkspaceChat (real)", () => {
     expect(sendHarnessConversationMessage.mock.calls[0][1].payload.scenario_ids).toEqual(["s1", "s2"]);
   });
 
+  it("answers a confirmation with kind:approval", async () => {
+    sendHarnessConversationMessage.mockResolvedValue(conversationWith());
+    const { result } = renderChat(
+      conversationWith({
+        state: "waiting_for_user",
+        blocking_input: { message_id: "cf1", kind: "confirmation_requested" },
+        messages: [{ message_id: "cf1", role: "assistant", kind: "confirmation", state: "completed", content: "Proceed?", payload: { options: ["Yes"] }, created_at: "2026-09-22T10:00:00Z", sequence: 1 }],
+      }),
+    );
+    await act(async () => result.current.send("Yes"));
+    const payload = sendHarnessConversationMessage.mock.calls[0][1];
+    expect(payload.kind).toBe("approval");
+    expect(payload.reply_to).toBe("cf1");
+  });
+
+  it("surfaces the backend error message on a failed send and offers retry only when retryable", async () => {
+    sendHarnessConversationMessage.mockRejectedValue({ message: "reply_to does not identify the open harness question", retryable: false, statusCode: 409 });
+    const { result } = renderChat(conversationWith());
+    await act(async () => result.current.send("hi"));
+    await waitFor(() => {
+      const errStep = result.current.turns.flatMap((t) => t.steps || []).find((s) => s.kind === "error");
+      expect(errStep?.text).toContain("does not identify the open harness question");
+      expect(errStep?.onRetry).toBeUndefined();
+    });
+  });
+
+  it("uses the no-workspace frozen reason for a terminal run with no runtime", () => {
+    const { result } = renderChat(conversationWith({ runtime: { available: false } }));
+    expect(result.current.frozen).toBe(true);
+    expect(result.current.frozenReason).toMatch(/no saved workspace/i);
+  });
+
   it("freezes for a non-harness env and when the runtime is unavailable", () => {
     const nonHarness = renderHook(() => useWorkspaceChat({ id: "x" }, { source: "template" }), { wrapper: wrapper().Wrapper });
     expect(nonHarness.result.current.frozen).toBe(true);

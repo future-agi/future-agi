@@ -44,6 +44,7 @@ const STEP_SHAPE = PropTypes.shape({
   answerText: PropTypes.string,
   onSubmit: PropTypes.func,
   onSkip: PropTypes.func,
+  onRetry: PropTypes.func,
 });
 
 /* ── one turn ────────────────────────────────────────────────────────────── */
@@ -219,6 +220,19 @@ export function Step({ step }) {
         <Typography sx={{ typography: "s2", color: "text.primary", flex: 1, minWidth: 0 }}>
           {step.text}
         </Typography>
+        {step.onRetry && (
+          <Typography
+            component="button"
+            onClick={step.onRetry}
+            sx={{
+              flexShrink: 0, border: "none", background: "none", cursor: "pointer",
+              typography: "s3", fontWeight: "fontWeightSemiBold", color: BUILD_TONES.accent,
+              "&:hover": { textDecoration: "underline" },
+            }}
+          >
+            Retry
+          </Typography>
+        )}
       </QuietRow>
     );
   }
