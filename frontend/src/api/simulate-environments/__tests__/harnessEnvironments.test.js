@@ -5,6 +5,7 @@ vi.mock("src/utils/axios", () => ({
     get: vi.fn(() => Promise.resolve({ data: { results: [] } })),
     delete: vi.fn(() => Promise.resolve({ data: null })),
     patch: vi.fn(() => Promise.resolve({ data: { id: "e1" } })),
+    post: vi.fn(() => Promise.resolve({ data: { id: "e1" } })),
   },
 }));
 
@@ -15,6 +16,8 @@ import {
   getHarnessEnvironment,
   renameHarnessEnvironment,
   deleteAppliedEvaluation,
+  getAvailableEvaluations,
+  addEvaluation,
 } from "../harnessEnvironments";
 
 const BASE = "/simulate/api/harness-environments/";
@@ -75,13 +78,30 @@ describe("renameHarnessEnvironment (§8)", () => {
 });
 
 describe("deleteAppliedEvaluation (§9)", () => {
-  // The evaluation path is new and not yet in the generated Swagger surface, so
-  // apiPath() throws until the backend lands the endpoint and contracts:generate
-  // runs. This documents that pending state; flip it to assert the DELETE once
-  // the surface includes the path.
-  it("throws until the eval path is in the generated contract", async () => {
-    await expect(deleteAppliedEvaluation("env-9", "eval-1")).rejects.toThrow(
-      /not in generated contract/,
-    );
+  beforeEach(() => axios.delete.mockClear());
+
+  it("DELETEs the eval config by id (path now in the generated contract)", async () => {
+    await deleteAppliedEvaluation("env-9", "cfg-1");
+    expect(axios.delete).toHaveBeenCalledWith(`${BASE}env-9/evaluations/cfg-1/`);
+  });
+});
+
+describe("getAvailableEvaluations (§10)", () => {
+  beforeEach(() => axios.get.mockClear());
+
+  it("GETs the available-evals catalogue for the environment", async () => {
+    await getAvailableEvaluations("env-10");
+    expect(axios.get).toHaveBeenCalledWith(`${BASE}env-10/evaluations/available/`);
+  });
+});
+
+describe("addEvaluation (§10)", () => {
+  beforeEach(() => axios.post.mockClear());
+
+  it("POSTs the eval name only (mapping is resolved server-side)", async () => {
+    await addEvaluation("env-10", "advice_authority_boundary");
+    expect(axios.post).toHaveBeenCalledWith(`${BASE}env-10/evaluations/`, {
+      name: "advice_authority_boundary",
+    });
   });
 });

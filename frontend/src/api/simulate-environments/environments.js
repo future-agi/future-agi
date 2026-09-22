@@ -15,6 +15,8 @@ import {
   deleteHarnessEnvironment,
   renameHarnessEnvironment,
   deleteAppliedEvaluation,
+  getAvailableEvaluations,
+  addEvaluation,
 } from "src/api/simulate-environments/harnessEnvironments";
 import { harnessEnvironmentKey } from "src/api/simulate-environments/environment";
 import { harnessEnvToRow } from "src/sections/simulate/environments/helpers/harnessJobToRow";
@@ -91,6 +93,39 @@ export function useRemoveAppliedEvaluation() {
       deleteAppliedEvaluation(id, evalConfigId),
     onSuccess: (_data, { id }) => {
       queryClient.invalidateQueries({ queryKey: harnessEnvironmentKey(id) });
+    },
+  });
+}
+
+// §10 the evaluations this environment can still add (catalogue filtered to its
+// modality, minus what is already selected). Drives the add-eval picker.
+export const availableEvaluationsKey = (envId) => [
+  ...SIMULATE_ENVIRONMENTS_KEY,
+  "available-evals",
+  envId,
+];
+
+export function useAvailableEvaluations(envId, { enabled = true } = {}) {
+  return useQuery({
+    queryKey: availableEvaluationsKey(envId),
+    queryFn: () => getAvailableEvaluations(envId),
+    enabled: Boolean(envId) && enabled,
+    select: (data) => (Array.isArray(data?.evaluations) ? data.evaluations : []),
+  });
+}
+
+// §10 add an evaluation by name (mapping is resolved server-side by modality).
+// The 201 body is the full §6 detail with the new row in evaluations.selected,
+// so seed the detail cache from it and refresh the available list (the added
+// name drops out of it). Idempotent server-side; 409 at the 8-eval cap or while
+// building; the caller surfaces the failure.
+export function useAddEvaluation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, name }) => addEvaluation(id, name),
+    onSuccess: (detail, { id }) => {
+      if (detail) queryClient.setQueryData(harnessEnvironmentKey(id), detail);
+      queryClient.invalidateQueries({ queryKey: availableEvaluationsKey(id) });
     },
   });
 }

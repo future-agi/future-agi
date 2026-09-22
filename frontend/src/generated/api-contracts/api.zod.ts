@@ -35263,6 +35263,12 @@ export const SimulateApiHarnessJobsCreateBody = zod.object({
     mode: zod
       .enum(["connect_only", "environment_backed", "provider_import"])
       .optional(),
+    call_direction: zod
+      .enum(["inbound", "outbound"])
+      .optional()
+      .describe(
+        "inbound: the simulated caller dials the agent. outbound: the agent dials the simulated caller. Voice connectors only.",
+      ),
     config: zod
       .record(zod.string(), zod.string())
       .default(simulateApiHarnessJobsCreateBodyAgentConfigDefault),
@@ -35584,6 +35590,12 @@ export const SimulateApiHarnessJobsPreflightBody = zod.object({
     mode: zod
       .enum(["connect_only", "environment_backed", "provider_import"])
       .optional(),
+    call_direction: zod
+      .enum(["inbound", "outbound"])
+      .optional()
+      .describe(
+        "inbound: the simulated caller dials the agent. outbound: the agent dials the simulated caller. Voice connectors only.",
+      ),
     config: zod
       .record(zod.string(), zod.string())
       .default(simulateApiHarnessJobsPreflightBodyAgentConfigDefault),
@@ -35766,6 +35778,30 @@ export const SimulateApiHarnessJobsPreflightBody = zod.object({
     .describe(
       "Target-provider values to verify live; used for this check only.",
     ),
+});
+
+export const SimulateApiHarnessJobsPreflightResponse = zod.object({
+  ready_to_submit: zod.boolean(),
+  state: zod.enum(["connected", "failed"]),
+  checks: zod.array(
+    zod.object({
+      id: zod.string().min(1),
+      label: zod.string().min(1),
+      status: zod.enum(["passed", "failed", "skipped"]),
+      detail: zod.string(),
+      missing: zod.array(zod.string().min(1)),
+      fix: zod.string().min(1),
+    }),
+  ),
+  credentials: zod.object({
+    scanned_files: zod.number(),
+    detected_connectors: zod.array(zod.string().min(1)),
+    requirements: zod.array(zod.object({}).passthrough()),
+    credential_choices: zod.array(zod.object({}).passthrough()),
+    probe: zod.array(zod.object({}).passthrough()),
+  }),
+  effective_parallelism: zod.number(),
+  snapshot: zod.object({}).passthrough(),
 });
 
 /**
@@ -64489,10 +64525,7 @@ export const UsageAdminInvoiceGenerateCreateResponse = zod.object({
 });
 
 /**
- * Creates no invoice and deducts no credits, but does backfill missing
-``UsageSummary`` rows for the usage period. Open to staff so the admin's
-read-only Generate Invoice page can show what would be billed.
- * @summary Preview invoice for an org+period.
+ * Preview invoice for an org+period (no side effects).
  */
 
 export const usageAdminInvoicePreviewCreateBodyPeriodRegExp = new RegExp(
