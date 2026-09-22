@@ -905,12 +905,10 @@ ERROR_FEED_OMEGA_LEASE_SECONDS = int(os.getenv("ERROR_FEED_OMEGA_LEASE_SECONDS",
 ERROR_FEED_OMEGA_PROJECT_CONCURRENCY = int(
     os.getenv("ERROR_FEED_OMEGA_PROJECT_CONCURRENCY", "2")
 )
-# Grouping rollout remains disabled by default.
-ERROR_FEED_GROUPING_ENABLED = (
-    os.getenv("ERROR_FEED_GROUPING_ENABLED", "false") == "true"
-)
+# Group completed Omega findings by default. Explicit rollout overrides remain available.
+ERROR_FEED_GROUPING_ENABLED = os.getenv("ERROR_FEED_GROUPING_ENABLED", "true") == "true"
 ERROR_FEED_GROUPING_ALL_PROJECTS = (
-    os.getenv("ERROR_FEED_GROUPING_ALL_PROJECTS", "false") == "true"
+    os.getenv("ERROR_FEED_GROUPING_ALL_PROJECTS", "true") == "true"
 )
 ERROR_FEED_GROUPING_PROJECT_IDS = tuple(
     project_id.strip()
