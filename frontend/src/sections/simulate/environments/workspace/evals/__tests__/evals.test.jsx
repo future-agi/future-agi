@@ -13,8 +13,10 @@ vi.mock("src/api/simulate-environments/harnessEnvironments", () => ({
   renameHarnessEnvironment: vi.fn(),
   getHarnessEnvironment: vi.fn(),
   deleteAppliedEvaluation: vi.fn(() => Promise.resolve()),
+  getAvailableEvaluations: vi.fn(() => Promise.resolve({ evaluations: [] })),
+  addEvaluation: vi.fn(),
 }));
-const { deleteAppliedEvaluation } = await import(
+const { deleteAppliedEvaluation, getHarnessEnvironment } = await import(
   "src/api/simulate-environments/harnessEnvironments"
 );
 
@@ -204,26 +206,37 @@ describe("EvalsStep — template lock (read-only until forked)", () => {
 });
 
 describe("EvalsStep — §9 remove on a backend-backed env", () => {
-  const state = { scenarios: [{ id: "s1" }], evals: [{ id: "task_success", name: "Task success" }] };
+  // A backed env's applied set comes from §6 detail (evaluations.selected), not
+  // the store — so mock the detail fetch to supply the real selected row.
+  const detailWith = (selected) => ({ evaluations: { selected } });
+  const state = { scenarios: [{ id: "s1" }], evals: [] };
 
-  it("fires the real DELETE and drops the row on success", async () => {
-    const patchSpy = vi.fn();
-    render(<Harness backed initial={state} patchSpy={patchSpy} />);
+  beforeEach(() => {
+    getHarnessEnvironment.mockResolvedValue(
+      detailWith([{ id: "cfg-1", name: "Task success", description: "Did it work" }]),
+    );
+  });
 
+  it("lists the §6 selected evals and fires the real DELETE with the config id", async () => {
+    render(<Harness backed initial={state} patchSpy={vi.fn()} />);
+
+    // The applied row comes from §6 detail, not the store.
+    expect(await screen.findByText("Task success")).toBeInTheDocument();
     fireEvent.click(screen.getAllByRole("button", { name: EVALS_COPY.remove })[0]);
 
     await waitFor(() =>
-      expect(deleteAppliedEvaluation).toHaveBeenCalledWith("env-1", "task_success"),
-    );
-    // onSuccess removes the row from the store (patch with the eval gone).
-    await waitFor(() =>
-      expect(patchSpy).toHaveBeenCalledWith(expect.objectContaining({ evals: [] })),
+      expect(deleteAppliedEvaluation).toHaveBeenCalledWith("env-1", "cfg-1"),
     );
   });
 
   it("stays store-only (no DELETE) when the env is not backend-backed", () => {
     const patchSpy = vi.fn();
-    render(<Harness initial={state} patchSpy={patchSpy} />);
+    render(
+      <Harness
+        initial={{ scenarios: [{ id: "s1" }], evals: [{ id: "task_success", name: "Task success" }] }}
+        patchSpy={patchSpy}
+      />,
+    );
 
     fireEvent.click(screen.getAllByRole("button", { name: EVALS_COPY.remove })[0]);
 
@@ -231,15 +244,11 @@ describe("EvalsStep — §9 remove on a backend-backed env", () => {
     expect(patchSpy).toHaveBeenCalledWith(expect.objectContaining({ evals: [] }));
   });
 
-  it("disables remove while a backed env is still building", () => {
+  it("disables remove while a backed env is still building", async () => {
     render(
-      <Harness
-        backed
-        env={{ ...ENV, buildStatus: "building" }}
-        initial={state}
-        patchSpy={vi.fn()}
-      />,
+      <Harness backed env={{ ...ENV, buildStatus: "building" }} initial={state} patchSpy={vi.fn()} />,
     );
+    expect(await screen.findByText("Task success")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: EVALS_COPY.remove })[0]).toBeDisabled();
   });
 });

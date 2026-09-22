@@ -1,13 +1,16 @@
 import { useMemo, useState, useEffect, useRef } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Box, Stack, Typography, Button, IconButton, Tooltip } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { getEval } from "src/api/simulate-environments/_fixtures/evalCatalog";
 import { useRemoveAppliedEvaluation } from "src/api/simulate-environments/environments";
+import { harnessEnvironmentQuery } from "src/api/simulate-environments/environment";
 import { BUILD_STATUS } from "../../myEnvironments.constants";
 import SectionCard from "../../components/SectionCard";
 import EmptyState from "../../components/EmptyState";
 import EvalRow from "./EvalRow";
 import AddEvalsDrawer from "./AddEvalsDrawer";
+import AddEvaluationDrawer from "./AddEvaluationDrawer";
 import { useAppliedEvals } from "./useAppliedEvals";
 import { EVALS_COPY, ENV_SHAPE, ENV_STATE_SHAPE } from "./evals.constants";
 import PropTypes from "prop-types";
@@ -35,27 +38,38 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
   // is the backstop if it is ever rendered directly without them.
   const needsScenarios = (envState?.scenarios?.length || 0) === 0;
 
-  const { appliedEvals, appliedIds, add, remove } = useAppliedEvals(envState, patch);
+  const store = useAppliedEvals(envState, patch);
 
-  // §9 remove. On a real backend-backed env (`backed`), removal is a server
-  // soft-delete of `evaluations.selected[].id`: the store row is dropped only
-  // once the DELETE succeeds, and the detail query is invalidated so the real
-  // selected set is the source of truth. Disabled while building (409). A
-  // forked/template env has no backend counterpart, so it stays store-only.
-  // There is no add endpoint (§9), so "Add evaluations" is client-side either way.
-  //
-  // NB: the row `id` is a real `eval_config_id` only when the §6 detail read is
-  // on (HARNESS_DETAIL_ENABLED); with it off the rows are fixture/preset-seeded,
-  // so the DELETE fires with a fixture id and 404s until §6 is also enabled.
+  // A real backend-backed env drives its applied set from §6 detail
+  // (evaluations.selected) — the authoritative list the add (§10) and remove
+  // (§9) endpoints mutate. A forked/template env has no backend counterpart, so
+  // it stays store-driven (fixture-seeded preset). The §6 query shares its cache
+  // with useAddEvaluation's setQueryData, so an add/remove reflects immediately.
+  const detailQuery = useQuery(harnessEnvironmentQuery(env.id, { enabled: backed }));
+  const selectedFromDetail = useMemo(() => {
+    const selected = detailQuery.data?.evaluations?.selected;
+    return Array.isArray(selected)
+      ? selected.map((e) => ({ id: e.id, name: e.name, blurb: e.description, runnable: e.runnable }))
+      : [];
+  }, [detailQuery.data]);
+
+  const appliedEvals = backed ? selectedFromDetail : store.appliedEvals;
+  const appliedIds = store.appliedIds;
+  const { add } = store;
+
+  // §9 remove. On a backed env, removal is a server soft-delete of
+  // `evaluations.selected[].id`; the §6 query is invalidated so the real set is
+  // the source of truth. Disabled while building (409). A forked/template env
+  // stays store-only.
   const removeEval = useRemoveAppliedEvaluation();
   const building = env.buildStatus === BUILD_STATUS.BUILDING;
   const removeDisabled = locked || (backed && (building || removeEval.isPending));
   const onRemove = (id) => {
     if (!backed) {
-      remove(id);
+      store.remove(id);
       return;
     }
-    removeEval.mutate({ id: env.id, evalConfigId: id }, { onSuccess: () => remove(id) });
+    removeEval.mutate({ id: env.id, evalConfigId: id });
   };
 
   // The env's preset evals, minus anything already added — the set that gets
@@ -75,6 +89,8 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
   const seededRef = useRef(false);
   useEffect(() => {
     if (seededRef.current) return;
+    // A backed env's applied set is real (§6) — never seed fixtures into it.
+    if (backed) { seededRef.current = true; return; }
     if (needsScenarios) return;
     if (appliedEvals.length > 0) { seededRef.current = true; return; }
     if (suggested.length === 0) { seededRef.current = true; return; }
@@ -195,14 +211,25 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
         )}
       </SectionCard>
 
-      <AddEvalsDrawer
-        open={pickerOpen}
-        onClose={() => setPickerOpen(false)}
-        env={env}
-        envState={envState}
-        existingIds={appliedIds}
-        onAdd={add}
-      />
+      {/* A backed env adds through the real §10 picker (available list + the
+          modality input mapping); a forked/template env keeps the store-only
+          product picker. */}
+      {backed ? (
+        <AddEvaluationDrawer
+          open={pickerOpen}
+          env={env}
+          onClose={() => setPickerOpen(false)}
+        />
+      ) : (
+        <AddEvalsDrawer
+          open={pickerOpen}
+          onClose={() => setPickerOpen(false)}
+          env={env}
+          envState={envState}
+          existingIds={appliedIds}
+          onAdd={add}
+        />
+      )}
     </Box>
   );
 }

@@ -19,6 +19,10 @@ import { apiPath } from "src/api/contracts/api-surface";
 const environmentsPath = () => apiPath("/simulate/api/harness-environments/");
 const environmentPath = (id) =>
   apiPath("/simulate/api/harness-environments/{id}/", { id });
+const environmentEvaluationsPath = (id) =>
+  apiPath("/simulate/api/harness-environments/{id}/evaluations/", { id });
+const environmentEvaluationsAvailablePath = (id) =>
+  apiPath("/simulate/api/harness-environments/{id}/evaluations/available/", { id });
 const environmentEvaluationPath = (id, evalConfigId) =>
   apiPath(
     "/simulate/api/harness-environments/{id}/evaluations/{eval_config_id}/",
@@ -51,3 +55,15 @@ export const renameHarnessEnvironment = async (id, name) =>
 // re-fetch §6 and read `evaluations.selected` rather than removing locally.
 export const deleteAppliedEvaluation = async (id, evalConfigId) =>
   (await axios.delete(environmentEvaluationPath(id, evalConfigId))).data;
+
+// §10 the evals this environment can still add — the catalogue filtered to its
+// modality and minus what is already selected. Each: { name, description,
+// required_keys, modality }. Every entry is addable as-is (no client filtering).
+export const getAvailableEvaluations = async (id) =>
+  (await axios.get(environmentEvaluationsAvailablePath(id))).data;
+
+// §10 add one evaluation by name. The body is `{ name }` only — the input
+// mapping is resolved server-side by modality. The 201 body is the full §6
+// detail, already updated, so the caller seeds the detail cache from it.
+export const addEvaluation = async (id, name) =>
+  (await axios.post(environmentEvaluationsPath(id), { name })).data;

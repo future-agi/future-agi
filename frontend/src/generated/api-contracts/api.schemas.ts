@@ -16870,13 +16870,17 @@ export interface HarnessEnvironmentApi {
   /** @minLength 1 */
   description: string;
   /** @minLength 1 */
+  domain: string;
+  /** @minLength 1 */
   source_kind: string;
   agent_type: HarnessEnvironmentApiAgentType;
   status: HarnessEnvironmentApiStatus;
   /** @minLength 1 */
   stage: string;
   scenario_count: number;
+  sub_goals_count: number;
   tools_count: number;
+  runs_count: number;
   last_updated: string;
   created_at: string;
 }
@@ -16890,6 +16894,367 @@ export interface HarnessEnvironmentListResponseApi {
   total_pages: number;
   current_page: number;
   results: HarnessEnvironmentApi[];
+}
+
+export type HarnessEnvironmentOverviewApiAgentType =
+  (typeof HarnessEnvironmentOverviewApiAgentType)[keyof typeof HarnessEnvironmentOverviewApiAgentType];
+
+export const HarnessEnvironmentOverviewApiAgentType = {
+  voice: "voice",
+  chat: "chat",
+} as const;
+
+export type HarnessEnvironmentOverviewApiStatus =
+  (typeof HarnessEnvironmentOverviewApiStatus)[keyof typeof HarnessEnvironmentOverviewApiStatus];
+
+export const HarnessEnvironmentOverviewApiStatus = {
+  building: "building",
+  running: "running",
+  completed: "completed",
+  failed: "failed",
+} as const;
+
+export interface HarnessEnvironmentRunLinkApi {
+  run_test_id: string;
+  test_execution_id: string;
+  /** @minLength 1 */
+  simulation_url: string;
+}
+
+export interface HarnessEnvironmentOverviewApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  description: string;
+  /** @minLength 1 */
+  domain: string;
+  /** @minLength 1 */
+  source_kind: string;
+  agent_type: HarnessEnvironmentOverviewApiAgentType;
+  status: HarnessEnvironmentOverviewApiStatus;
+  /** @minLength 1 */
+  stage: string;
+  scenario_count: number;
+  sub_goals_count: number;
+  tools_count: number;
+  runs_count: number;
+  last_updated: string;
+  created_at: string;
+  flows_count: number;
+  guardrails_count: number;
+  personas_count: number;
+  evaluations_count: number;
+  run: HarnessEnvironmentRunLinkApi;
+}
+
+export interface HarnessEnvironmentAmendmentApi {
+  subject: string;
+  /** @minLength 1 */
+  note: string;
+}
+
+export type HarnessEnvironmentCatalogueSubGoalApiKind =
+  (typeof HarnessEnvironmentCatalogueSubGoalApiKind)[keyof typeof HarnessEnvironmentCatalogueSubGoalApiKind];
+
+export const HarnessEnvironmentCatalogueSubGoalApiKind = {
+  checkpoint: "checkpoint",
+  judge: "judge",
+} as const;
+
+export interface HarnessEnvironmentCatalogueSubGoalApi {
+  /** @minLength 1 */
+  name: string;
+  what: string;
+  kind: HarnessEnvironmentCatalogueSubGoalApiKind;
+  claim: string;
+  check: string;
+}
+
+export type HarnessEnvironmentEndConditionsApiClock =
+  (typeof HarnessEnvironmentEndConditionsApiClock)[keyof typeof HarnessEnvironmentEndConditionsApiClock];
+
+export const HarnessEnvironmentEndConditionsApiClock = {
+  "real-time": "real-time",
+  stepped: "stepped",
+} as const;
+
+export interface HarnessEnvironmentEndConditionsApi {
+  max_turns: number;
+  max_duration_seconds: number;
+  clock: HarnessEnvironmentEndConditionsApiClock;
+  ended_reasons: string[];
+}
+
+export type HarnessEnvironmentProvenanceApiBuiltBy =
+  (typeof HarnessEnvironmentProvenanceApiBuiltBy)[keyof typeof HarnessEnvironmentProvenanceApiBuiltBy];
+
+export const HarnessEnvironmentProvenanceApiBuiltBy = {
+  alk: "alk",
+  repository: "repository",
+} as const;
+
+export type HarnessEnvironmentProvenanceApiSource = { [key: string]: string };
+
+export type HarnessEnvironmentProvenanceApiDigests = { [key: string]: string };
+
+export type HarnessEnvironmentProvenanceApiAuthoredAt = {
+  [key: string]: string;
+};
+
+export interface HarnessEnvironmentProvenanceApi {
+  source: HarnessEnvironmentProvenanceApiSource;
+  built_by: HarnessEnvironmentProvenanceApiBuiltBy;
+  attempt: number;
+  /** @minLength 1 */
+  snapshot: string;
+  digests: HarnessEnvironmentProvenanceApiDigests;
+  authored_at: HarnessEnvironmentProvenanceApiAuthoredAt;
+}
+
+export type HarnessEnvironmentContractApiToolsItem = { [key: string]: unknown };
+
+export type HarnessEnvironmentContractApiRuntime = { [key: string]: unknown };
+
+export type HarnessEnvironmentContractApiDependenciesItem = {
+  [key: string]: unknown;
+};
+
+export type HarnessEnvironmentContractApiRuntimeDependenciesItem = {
+  [key: string]: unknown;
+};
+
+export type HarnessEnvironmentContractApiToolEntrypointsItem = {
+  [key: string]: unknown;
+};
+
+export type HarnessEnvironmentContractApiDataStore = { [key: string]: unknown };
+
+export interface HarnessEnvironmentContractApi {
+  agent?: string;
+  one_liner?: string;
+  modality?: string;
+  call_direction?: string;
+  system_prompt_excerpt?: string;
+  tools?: HarnessEnvironmentContractApiToolsItem[];
+  real_use_cases?: string[];
+  hard_constraints?: string[];
+  runtime?: HarnessEnvironmentContractApiRuntime;
+  dependencies?: HarnessEnvironmentContractApiDependenciesItem[];
+  runtime_dependencies?: HarnessEnvironmentContractApiRuntimeDependenciesItem[];
+  implementation?: string;
+  tool_entrypoints?: HarnessEnvironmentContractApiToolEntrypointsItem[];
+  data_store?: HarnessEnvironmentContractApiDataStore;
+  open_questions?: string[];
+  amendments: HarnessEnvironmentAmendmentApi[];
+  sub_goals: HarnessEnvironmentCatalogueSubGoalApi[];
+  end_conditions: HarnessEnvironmentEndConditionsApi;
+  notes?: string;
+  chosen_evals?: string[];
+  provenance: HarnessEnvironmentProvenanceApi;
+}
+
+export interface HarnessEnvironmentPersonaApi {
+  name?: string;
+  scenario_keys: string[];
+}
+
+export interface HarnessEnvironmentStoreTableApi {
+  /** @minLength 1 */
+  name: string;
+  rows: number;
+}
+
+export interface HarnessEnvironmentStoreApi {
+  capability: string;
+  engine: string;
+  strategy: string;
+  tables: HarnessEnvironmentStoreTableApi[];
+  total_rows: number;
+}
+
+export type HarnessEnvironmentWorldApiRuntime = { [key: string]: string };
+
+export interface HarnessEnvironmentWorldApi {
+  runtime: HarnessEnvironmentWorldApiRuntime;
+  personas: HarnessEnvironmentPersonaApi[];
+  stores: HarnessEnvironmentStoreApi[];
+}
+
+export type HarnessEnvironmentSubGoalApiKind =
+  (typeof HarnessEnvironmentSubGoalApiKind)[keyof typeof HarnessEnvironmentSubGoalApiKind];
+
+export const HarnessEnvironmentSubGoalApiKind = {
+  checkpoint: "checkpoint",
+  judge: "judge",
+} as const;
+
+export interface HarnessEnvironmentSubGoalApi {
+  /** @minLength 1 */
+  name: string;
+  what?: string;
+  kind?: HarnessEnvironmentSubGoalApiKind;
+  claim?: string;
+}
+
+export type HarnessEnvironmentScenarioApiFixture = { [key: string]: string };
+
+export type HarnessEnvironmentScenarioApiPersona = { [key: string]: string };
+
+export interface HarnessEnvironmentScenarioApi {
+  /** @minLength 1 */
+  scenario_key: string;
+  scenario_id: string;
+  name: string;
+  instruction: string;
+  /** @minLength 1 */
+  use_case: string;
+  /** @minLength 1 */
+  branch: string;
+  /** @minLength 1 */
+  tests: string;
+  fixture: HarnessEnvironmentScenarioApiFixture;
+  steps: number;
+  sub_goals: HarnessEnvironmentSubGoalApi[];
+  persona: HarnessEnvironmentScenarioApiPersona;
+  /** @minLength 1 */
+  situation: string;
+  /** @minLength 1 */
+  outcome: string;
+  /** @minLength 1 */
+  status: string;
+  call_execution_id: string;
+}
+
+export interface HarnessEnvironmentSelectedEvalApi {
+  id: string;
+  name: string;
+  description: string;
+  runnable: boolean;
+}
+
+export type HarnessEnvironmentResultApiEvaluationsItem = {
+  [key: string]: unknown;
+};
+
+export type HarnessEnvironmentResultApiCoverage = { [key: string]: string };
+
+export interface HarnessEnvironmentResultApi {
+  /** @minLength 1 */
+  scenario_key: string;
+  /** @minLength 1 */
+  status: string;
+  attempt_number: number;
+  evaluations: HarnessEnvironmentResultApiEvaluationsItem[];
+  coverage: HarnessEnvironmentResultApiCoverage;
+}
+
+export interface HarnessEnvironmentEvaluationsApi {
+  selected: HarnessEnvironmentSelectedEvalApi[];
+  results: HarnessEnvironmentResultApi[];
+}
+
+export interface HarnessEnvironmentCredentialFileApi {
+  /** @minLength 1 */
+  environment_name: string;
+}
+
+export type HarnessEnvironmentAgentSettingsApiConfig = {
+  [key: string]: string;
+};
+
+export interface HarnessEnvironmentAgentSettingsApi {
+  /** @minLength 1 */
+  connector: string;
+  /** @minLength 1 */
+  mode: string;
+  /** @minLength 1 */
+  call_direction: string;
+  config: HarnessEnvironmentAgentSettingsApiConfig;
+  secret_refs: string[];
+  secrets: string[];
+  credential_files: HarnessEnvironmentCredentialFileApi[];
+}
+
+export type HarnessEnvironmentSettingsApiSource = { [key: string]: string };
+
+export type HarnessEnvironmentSettingsApiRuntime = { [key: string]: string };
+
+export type HarnessEnvironmentSettingsApiSecurity = { [key: string]: string };
+
+export type HarnessEnvironmentSettingsApiArtifacts = { [key: string]: string };
+
+export interface HarnessEnvironmentSettingsApi {
+  /** @minLength 1 */
+  schema_version: string;
+  source: HarnessEnvironmentSettingsApiSource;
+  agent: HarnessEnvironmentAgentSettingsApi;
+  runtime: HarnessEnvironmentSettingsApiRuntime;
+  security: HarnessEnvironmentSettingsApiSecurity;
+  artifacts: HarnessEnvironmentSettingsApiArtifacts;
+  scenario_count: number;
+  seed: number;
+}
+
+export interface HarnessEnvironmentDetailApi {
+  id: string;
+  overview: HarnessEnvironmentOverviewApi;
+  contract: HarnessEnvironmentContractApi;
+  world: HarnessEnvironmentWorldApi;
+  scenarios: HarnessEnvironmentScenarioApi[];
+  evaluations: HarnessEnvironmentEvaluationsApi;
+  settings: HarnessEnvironmentSettingsApi;
+}
+
+export interface HarnessEnvironmentRenameApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
+}
+
+export interface HarnessEnvironmentAddEvaluationApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
+}
+
+export type HarnessEnvironmentOfferedEvalApiModality =
+  (typeof HarnessEnvironmentOfferedEvalApiModality)[keyof typeof HarnessEnvironmentOfferedEvalApiModality];
+
+export const HarnessEnvironmentOfferedEvalApiModality = {
+  voice: "voice",
+  text: "text",
+  any: "any",
+} as const;
+
+export interface HarnessEnvironmentOfferedEvalApi {
+  /** @minLength 1 */
+  name: string;
+  description: string;
+  required_keys: string[];
+  modality: HarnessEnvironmentOfferedEvalApiModality;
+}
+
+export interface HarnessEnvironmentAvailableEvalsApi {
+  evaluations: HarnessEnvironmentOfferedEvalApi[];
+}
+
+export interface HarnessEnvironmentRunApi {
+  [key: string]: unknown;
+}
+
+export interface HarnessEnvironmentRunResponseApi {
+  environment_id: string;
+  job_id: string;
+  run_id: string;
+  /** @minLength 1 */
+  state: string;
+  /** @minLength 1 */
+  stage: string;
 }
 
 export type HarnessJobReadApiReceiptsItem = { [key: string]: unknown };
@@ -17075,6 +17440,17 @@ export const HarnessAgentApiMode = {
   provider_import: "provider_import",
 } as const;
 
+/**
+ * inbound: the simulated caller dials the agent. outbound: the agent dials the simulated caller. Voice connectors only.
+ */
+export type HarnessAgentApiCallDirection =
+  (typeof HarnessAgentApiCallDirection)[keyof typeof HarnessAgentApiCallDirection];
+
+export const HarnessAgentApiCallDirection = {
+  inbound: "inbound",
+  outbound: "outbound",
+} as const;
+
 export type SecretReferenceApiManager =
   (typeof SecretReferenceApiManager)[keyof typeof SecretReferenceApiManager];
 
@@ -17114,6 +17490,8 @@ export type HarnessAgentApiSecretRefs = { [key: string]: SecretReferenceApi };
 export interface HarnessAgentApi {
   connector: HarnessAgentApiConnector;
   mode?: HarnessAgentApiMode;
+  /** inbound: the simulated caller dials the agent. outbound: the agent dials the simulated caller. Voice connectors only. */
+  call_direction?: HarnessAgentApiCallDirection;
   config?: HarnessAgentApiConfig;
   secret_refs?: HarnessAgentApiSecretRefs;
 }
@@ -17274,6 +17652,66 @@ export interface HarnessPreflightApi {
   metadata?: HarnessPreflightApiMetadata;
   /** Target-provider values to verify live; used for this check only. */
   credential_values?: HarnessPreflightApiCredentialValues;
+}
+
+export type HarnessPreflightResponseApiState =
+  (typeof HarnessPreflightResponseApiState)[keyof typeof HarnessPreflightResponseApiState];
+
+export const HarnessPreflightResponseApiState = {
+  connected: "connected",
+  failed: "failed",
+} as const;
+
+export type HarnessPreflightResponseApiSnapshot = { [key: string]: unknown };
+
+export type HarnessPreflightCheckApiStatus =
+  (typeof HarnessPreflightCheckApiStatus)[keyof typeof HarnessPreflightCheckApiStatus];
+
+export const HarnessPreflightCheckApiStatus = {
+  passed: "passed",
+  failed: "failed",
+  skipped: "skipped",
+} as const;
+
+export interface HarnessPreflightCheckApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  label: string;
+  status: HarnessPreflightCheckApiStatus;
+  detail: string;
+  missing: string[];
+  /** @minLength 1 */
+  fix: string;
+}
+
+export type HarnessPreflightCredentialsApiRequirementsItem = {
+  [key: string]: unknown;
+};
+
+export type HarnessPreflightCredentialsApiCredentialChoicesItem = {
+  [key: string]: unknown;
+};
+
+export type HarnessPreflightCredentialsApiProbeItem = {
+  [key: string]: unknown;
+};
+
+export interface HarnessPreflightCredentialsApi {
+  scanned_files: number;
+  detected_connectors: string[];
+  requirements: HarnessPreflightCredentialsApiRequirementsItem[];
+  credential_choices: HarnessPreflightCredentialsApiCredentialChoicesItem[];
+  probe: HarnessPreflightCredentialsApiProbeItem[];
+}
+
+export interface HarnessPreflightResponseApi {
+  ready_to_submit: boolean;
+  state: HarnessPreflightResponseApiState;
+  checks: HarnessPreflightCheckApi[];
+  credentials: HarnessPreflightCredentialsApi;
+  effective_parallelism: number;
+  snapshot: HarnessPreflightResponseApiSnapshot;
 }
 
 export interface HarnessSecretFileUploadResponseApi {
