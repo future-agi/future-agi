@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {processFeatureClaim, processGroupingClaim, engineInput} from './coordinator.mjs';
+import {MAX_CHECKPOINT_BYTES, processFeatureClaim, processGroupingClaim, engineInput} from './coordinator.mjs';
 import {makeGroupingSnapshotFixture} from './snapshot-fixture.mjs';
 import {adaptGroupingSnapshot} from './snapshot.mjs';
 import {FEATURE_VERSION, featureDigest} from './features.mjs';
@@ -98,7 +98,7 @@ test('oversized checkpoint fails before write and cannot publish',async()=>{
     control:async(path)=>{writes.push(path);return {checkpoint_revision:1};},
     createInvestigator:async()=>({investigate:()=>{},receiptIds:()=>[]}),
     engine:async({store})=>{
-      await store.save('checkpoint.json',{large_source:'x'.repeat(2*1024*1024)});
+      await store.save('checkpoint.json',{large_source:'x'.repeat(MAX_CHECKPOINT_BYTES)});
       return {status:'complete',commands:[],dispositions:[]};
     },
   }),/checkpoint exceeds bound/);
@@ -140,7 +140,7 @@ test('after a failed checkpoint, a settled receipt resumes without another paid 
     engine:async({investigate,store})=>{
       await investigate({same:'proposal'},{type:'object'});
       await store.save('checkpoint.json',failCheckpoint
-        ? {large_source:'x'.repeat(2*1024*1024)}:{phase:'complete'});
+        ? {large_source:'x'.repeat(MAX_CHECKPOINT_BYTES)}:{phase:'complete'});
       return {status:'complete',commands:[],dispositions:[{state:'deferred',
         occurrence_id:work.pending_ids[0],reason:'No supported mechanism'}]};
     }};

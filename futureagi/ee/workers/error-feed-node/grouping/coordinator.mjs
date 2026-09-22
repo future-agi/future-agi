@@ -9,6 +9,10 @@ import {validateEmbeddingModel} from './embedding-client.mjs';
 import {assessSeverity} from './severity.mjs';
 
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+// The control client permits 8 MiB grouping payloads. Leave 1 MiB for the
+// envelope while allowing long, lossless cohort runs to retain their durable
+// receipts and Registry history.
+export const MAX_CHECKPOINT_BYTES = 7 * 1024 * 1024;
 
 async function withLease(claim, path, {control, signal, heartbeatMs = 15000}, run) {
   if (typeof claim.lease_token !== 'string' || !claim.lease_token) throw new Error('Missing lease');
@@ -119,7 +123,7 @@ function checkpointStore(claim, control, signal) {
         throw new Error('Unsupported grouping checkpoint file');
       }
       const next = {...files,[name]:structuredClone(value)};
-      if (Buffer.byteLength(JSON.stringify(next)) > 2*1024*1024) throw new Error('Grouping checkpoint exceeds bound');
+      if (Buffer.byteLength(JSON.stringify(next)) > MAX_CHECKPOINT_BYTES) throw new Error('Grouping checkpoint exceeds bound');
       const reply = await control(`/grouping/attempts/${claim.attempt_id}/checkpoint/`, {
         lease_token:claim.lease_token,expected_revision:revision,checkpoint:{files:next},
       }, {method:'PUT',signal});
