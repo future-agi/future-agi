@@ -88,7 +88,7 @@ export default function WorkspacePanels({
           />
         );
       case "settings":
-        return <SettingsPanel env={env} envState={envState} patch={patch} locked={locked} />;
+        return <SettingsPanel env={env} locked={locked} backed={backed} />;
       default:
         return (
           <OverviewPanel

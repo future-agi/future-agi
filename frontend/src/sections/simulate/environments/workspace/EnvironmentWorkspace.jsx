@@ -235,10 +235,17 @@ export default function EnvironmentWorkspace() {
       ? { ...envState, evals: backedSelected }
       : envState;
 
+  // A §8 rename writes the fresh detail back into the §6 cache, but `env` here
+  // is derived from the job poll (name from job metadata), so it would keep the
+  // old name in the header. Overlay §6's name for a backed env so a rename shows
+  // everywhere the moment it lands, not only in the Settings field.
+  const backedName = evalDetailQuery.data?.overview?.name;
+  const displayEnv = env && backed && backedName ? { ...env, name: backedName } : env;
+
   return (
     <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       <WorkspaceHeader
-        env={env}
+        env={displayEnv}
         envState={envState}
         patch={patch}
         canRun={runnable}
@@ -303,7 +310,7 @@ export default function EnvironmentWorkspace() {
           }}
         >
           <WorkspacePanels
-            env={env}
+            env={displayEnv}
             envState={envState}
             patch={patch}
             tab={activeTab}

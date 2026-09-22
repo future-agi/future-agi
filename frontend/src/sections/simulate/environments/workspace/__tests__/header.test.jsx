@@ -156,6 +156,26 @@ describe("WorkspaceHeader", () => {
     expect(screen.queryByText(/env v3/i)).toBeNull();
   });
 
+  it("shows the rename pencil for a backend-backed env and opens the dialog", async () => {
+    const user = userEvent.setup();
+    render(withRouter(<WorkspaceHeader {...baseProps} backed />));
+
+    const pencil = screen.getByRole("button", { name: "Rename environment" });
+    expect(pencil).toBeInTheDocument();
+    await user.click(pencil);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("hides the rename pencil for a non-backed env (no §8 row to PATCH)", () => {
+    render(withRouter(<WorkspaceHeader {...baseProps} />));
+    expect(screen.queryByRole("button", { name: "Rename environment" })).toBeNull();
+  });
+
+  it("hides the rename pencil when locked", () => {
+    render(withRouter(<WorkspaceHeader {...baseProps} backed locked />));
+    expect(screen.queryByRole("button", { name: "Rename environment" })).toBeNull();
+  });
+
   it("offers Delete in the overflow for a backend-backed env and opens the confirm", async () => {
     const user = userEvent.setup();
     render(withRouter(<WorkspaceHeader {...baseProps} backed />));
