@@ -736,6 +736,7 @@ def _run_link(job: HostedHarnessJob) -> dict[str, Any]:
 
 def _settings(job: HostedHarnessJob) -> dict[str, Any]:
     """The request the environment was built from, with every secret value removed."""
+    from simulate.services.harness_credentials import is_credential_file_ref
     from simulate.services.hosted_harness_gateway import _secret_safe
 
     payload = job.payload or {}
@@ -748,11 +749,21 @@ def _settings(job: HostedHarnessJob) -> dict[str, Any]:
         for field in _SOURCE_FIELDS
         if source.get(field) is not None
     }
+    refs = agent.get("secret_refs") or {}
     settings["agent"] = {
         "connector": agent.get("connector"),
         "mode": agent.get("mode"),
         "call_direction": agent.get("call_direction"),
         "config": _secret_safe(agent.get("config") or {}),
-        "secret_refs": sorted(str(name) for name in (agent.get("secret_refs") or {})),
+        "secret_refs": sorted(str(name) for name in refs),
+        "secrets": sorted(
+            str(name) for name, ref in refs.items() if not is_credential_file_ref(ref)
+        ),
+        "credential_files": [
+            {"environment_name": str(name)}
+            for name in sorted(
+                name for name, ref in refs.items() if is_credential_file_ref(ref)
+            )
+        ],
     }
     return settings

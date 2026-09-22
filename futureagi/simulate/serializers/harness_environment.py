@@ -326,12 +326,33 @@ class HarnessEnvironmentEvaluationsSerializer(serializers.Serializer):
     results = HarnessEnvironmentResultSerializer(many=True)
 
 
+class HarnessEnvironmentCredentialFileSerializer(serializers.Serializer):
+    """One uploaded credential file, named by where it is mounted.
+
+    The filename is not carried: on a managed sandbox the file crosses as an
+    encrypted JSON secret rather than a stored file, so the environment variable
+    it mounts under is the only name that survives.
+    """
+
+    environment_name = serializers.CharField()
+
+
 class HarnessEnvironmentAgentSettingsSerializer(serializers.Serializer):
+    """How the agent was reached, with every credential reduced to its name.
+
+    ``secrets`` and ``credential_files`` partition ``secret_refs`` into typed
+    values and uploaded files, which are replaced differently: a file cannot be
+    shown or re-entered as text. ``secret_refs`` keeps every alias for callers
+    written before the split.
+    """
+
     connector = serializers.CharField(allow_null=True)
     mode = serializers.CharField(allow_null=True)
     call_direction = serializers.CharField(allow_null=True)
     config = serializers.DictField()
     secret_refs = serializers.ListField(child=serializers.CharField())
+    secrets = serializers.ListField(child=serializers.CharField())
+    credential_files = HarnessEnvironmentCredentialFileSerializer(many=True)
 
 
 class HarnessEnvironmentSettingsSerializer(serializers.Serializer):
