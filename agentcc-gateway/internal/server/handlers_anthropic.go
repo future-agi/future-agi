@@ -42,6 +42,8 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 	rc.RequestHeaders = cloneRequestHeaders(r)
 	body, err := io.ReadAll(io.LimitReader(r.Body, h.maxBodySize+1))
 	if err != nil {
+		slog.Warn("failed to read anthropic request body", "request_id", rc.RequestID,
+			"content_length", r.ContentLength, "error", err)
 		anthropicfmt.WriteError(w, http.StatusBadRequest, "invalid_request_error", "Failed to read request body")
 		return
 	}
@@ -240,6 +242,8 @@ func (h *Handlers) AnthropicCountTokens(w http.ResponseWriter, r *http.Request) 
 	rc.RequestHeaders = cloneRequestHeaders(r)
 	body, err := io.ReadAll(io.LimitReader(r.Body, h.maxBodySize+1))
 	if err != nil {
+		slog.Warn("failed to read anthropic token-count request body", "request_id", rc.RequestID,
+			"content_length", r.ContentLength, "error", err)
 		anthropicfmt.WriteError(w, http.StatusBadRequest, "invalid_request_error", "Failed to read request body")
 		return
 	}

@@ -229,6 +229,10 @@ class E2BSandboxRuntimeProvider(SandboxRuntimeProvider):
     supports_adjustments = True
     supports_public_ingress = True
 
+    def renew_ttl(self, sandbox: E2BSandbox, ttl_seconds: int) -> None:
+        self.validate_requested_resources(*self.configured_resources(), ttl_seconds)
+        _call(sandbox._sandbox.set_timeout, ttl_seconds)
+
     def __init__(self) -> None:
         self.api_key = str(getattr(settings, "E2B_API_KEY", "") or "")
         self.runtime_name = str(

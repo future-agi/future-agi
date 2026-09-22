@@ -32,6 +32,7 @@ from simulate.models import (
 )
 from simulate.services.hosted_harness import (
     HostedHarnessError,
+    activate_attempt_capability,
     record_cleanup,
     register_attempt,
     request_cancellation,
@@ -1769,6 +1770,13 @@ class HostedHarnessGateway:
                     simulator_vertex_credentials,
                     _SIMULATOR_VERTEX_CREDENTIALS_PATH,
                 )
+            # Provider creation and uploads can consume much of the initial lease. Re-arm
+            # providers with mutable leases before exposing a full-duration capability.
+            self.client.renew_ttl(sandbox, ttl_seconds)
+            # The guest has not received its token yet. Start the runnable deadline here,
+            # after E2B/Daytona creation and source/secret uploads, which can consume many
+            # minutes without any guest work. Never refresh it after the guest starts.
+            capability = activate_attempt_capability(capability)
             sandbox.fs.upload_file(
                 json.dumps(
                     capability.document, sort_keys=True, separators=(",", ":")

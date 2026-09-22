@@ -14,6 +14,7 @@ from simulate.models import CallExecution, HostedHarnessJob, HostedHarnessReceip
 from simulate.models.chat_message import ChatMessageModel
 from simulate.services.hosted_harness import (
     HostedHarnessError,
+    activate_attempt_capability,
     canonical_digest,
     create_hosted_job,
     record_cleanup,
@@ -667,6 +668,49 @@ def test_registering_attempt_supersedes_old_capability(organization):
     assert job.current_stage == "queued"
     assert job.failure is None
     assert job.terminal_at is None
+
+
+@pytest.mark.django_db
+def test_capability_budget_starts_after_sandbox_provisioning(organization):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="late-sandbox-provisioning"
+    )
+    registered_at = django_timezone.now()
+    with patch(
+        "simulate.services.hosted_harness.timezone.now", return_value=registered_at
+    ):
+        capability = register_attempt(
+            job.id, endpoint_base_url="https://platform.example"
+        )
+    attempt = capability.attempt
+    attempt.provider_ref = "sandbox-created-after-long-delay"
+    attempt.state = attempt.State.PROVISIONING
+    attempt.save(update_fields=["provider_ref", "state", "updated_at"])
+
+    activated_at = registered_at + timedelta(minutes=30)
+    with patch(
+        "simulate.services.hosted_harness.timezone.now", return_value=activated_at
+    ):
+        activated = activate_attempt_capability(capability)
+
+    job.refresh_from_db()
+    attempt.refresh_from_db()
+    assert activated.token == capability.token
+    assert activated.fence == capability.fence
+    assert job.deadline_at == activated_at + timedelta(
+        seconds=job.payload["runtime"]["max_duration_seconds"]
+    )
+    assert attempt.expires_at == job.deadline_at + timedelta(seconds=420)
+    assert activated.document["expires_at"] == attempt.expires_at.isoformat(
+        timespec="milliseconds"
+    ).replace("+00:00", "Z")
+    assert activated.document["expires_at"] != capability.document["expires_at"]
+
+    attempt.state = attempt.State.RUNNING
+    attempt.save(update_fields=["state", "updated_at"])
+    with pytest.raises(HostedHarnessError) as exc:
+        activate_attempt_capability(activated)
+    assert exc.value.code == "attempt_capability_activation_invalid"
 
 
 @pytest.mark.django_db

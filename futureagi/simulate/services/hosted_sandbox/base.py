@@ -81,6 +81,16 @@ class SandboxRuntimeProvider(ABC):
     supports_adjustments = False
     supports_public_ingress = False
 
+    def renew_ttl(self, sandbox: Any, ttl_seconds: int) -> None:
+        """Re-arm the sandbox lease after provisioning, when supported.
+
+        Providers without a mutable lease must provision enough lifetime for the
+        whole job in ``create``. The guest capability is activated only after this
+        hook succeeds.
+        """
+
+        return None
+
     @abstractmethod
     def create(self, spec: SandboxLaunchSpec, *, timeout: int) -> Any:
         raise NotImplementedError

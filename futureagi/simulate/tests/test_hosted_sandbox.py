@@ -215,6 +215,10 @@ class _E2BSandbox:
         self.files = _E2BFiles()
         self.commands = _E2BCommands()
         self.killed = False
+        self.renewed_timeout = None
+
+    def set_timeout(self, timeout):
+        self.renewed_timeout = timeout
 
     def kill(self):
         self.killed = True
@@ -297,6 +301,9 @@ def test_e2b_adapter_combines_domain_and_cidr_egress(settings, monkeypatch):
     preview = provider.create_preview_url(sandbox, 8080, expires_in_seconds=600)
     assert preview.url.startswith("https://platform.example.com/simulate/api/harness-ingress/")
     assert "private-e2b-traffic-token" not in preview.url
+
+    provider.renew_ttl(sandbox, 7200)
+    assert _E2BSandboxClass.sandbox.renewed_timeout == 7200
 
     assert provider.delete(sandbox, timeout=1, wait=True) is True
     assert sandbox._sandbox.killed is True

@@ -997,6 +997,9 @@ class _Daytona:
         self.params = params
         return self.sandbox
 
+    def renew_ttl(self, sandbox, ttl_seconds):
+        self.lifecycle.append("renew_ttl")
+
     def get(self, sandbox_id, request_timeout=None):
         if self.deleted:
             raise SandboxNotFoundError("sandbox not found", status_code=404)

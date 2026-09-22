@@ -242,6 +242,53 @@ def register_attempt(
     )
 
 
+def activate_attempt_capability(capability: AttemptCapability) -> AttemptCapability:
+    """Start the guest's time budget immediately before its capability is uploaded.
+
+    A managed sandbox can take a long time to create or accept source uploads. The
+    token is not available to the guest during that work, so charging that time
+    against the guest's deadline can expire an otherwise healthy run before its
+    first call. This is only for the unissued, provisioning capability; it must
+    never extend a running guest's access.
+    """
+
+    with transaction.atomic():
+        job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+            id=capability.attempt.job_id
+        )
+        attempt = HostedHarnessAttempt.no_workspace_objects.select_for_update().get(
+            id=capability.attempt.id, job_id=job.id
+        )
+        if (
+            attempt.state != HostedHarnessAttempt.State.PROVISIONING
+            or not attempt.provider_ref
+            or job.current_attempt_number != attempt.attempt_number
+        ):
+            raise HostedHarnessError(
+                "attempt_capability_activation_invalid",
+                "Only the current, provisioned attempt can be activated",
+            )
+        runnable_deadline = timezone.now() + timedelta(
+            seconds=job.payload["runtime"]["max_duration_seconds"]
+        )
+        attempt.expires_at = runnable_deadline + timedelta(
+            seconds=_TOKEN_TAIL_SECONDS
+        )
+        attempt.save(update_fields=["expires_at", "updated_at"])
+        job.deadline_at = runnable_deadline
+        job.save(update_fields=["deadline_at", "updated_at"])
+
+    return AttemptCapability(
+        attempt=attempt,
+        token=capability.token,
+        fence=capability.fence,
+        document={
+            **capability.document,
+            "expires_at": _rfc3339(attempt.expires_at),
+        },
+    )
+
+
 def request_cancellation(job: HostedHarnessJob, reason: str) -> HostedHarnessJob:
     with transaction.atomic():
         locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
