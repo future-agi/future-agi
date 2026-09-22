@@ -163,7 +163,7 @@ export default function PromptItem({
           >
             All Prompts
           </Typography>
-          <ShowComponent condition={extraData?.prompt_folderName}>
+          <ShowComponent condition={extraData?.prompt_folder_name}>
             <SvgColor
               sx={{ height: 16, width: 16, color: "text.primary" }}
               src="/assets/icons/custom/lucide--chevron-right.svg"
@@ -173,7 +173,7 @@ export default function PromptItem({
               fontWeight={"fontWeightMedium"}
               color={"text.primary"}
             >
-              {extraData?.prompt_folderName}
+              {extraData?.prompt_folder_name}
             </Typography>
           </ShowComponent>
         </Stack>
