@@ -52485,17 +52485,23 @@ export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemAttribu
 
 export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemAttributionOriginEvidenceIdsMax = 100;
 
+export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemAttributionOriginExplanationMax = 600;
+
 export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemAttributionDecisiveSpanIdMax = 64;
 
 export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemAttributionDecisiveEvidenceIdsItemMax = 128;
 
 export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemAttributionDecisiveEvidenceIdsMax = 100;
 
+export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemAttributionDecisiveExplanationMax = 600;
+
 export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemAttributionSymptomSpanIdMax = 64;
 
 export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemAttributionSymptomEvidenceIdsItemMax = 128;
 
 export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemAttributionSymptomEvidenceIdsMax = 100;
+
+export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemAttributionSymptomExplanationMax = 600;
 
 export const tracerInternalErrorFeedV2ReportsCreateBodyResultRequirementChecksItemRequirementIdMax = 128;
 
@@ -52650,6 +52656,12 @@ export const TracerInternalErrorFeedV2ReportsCreateBody = zod.object({
               .max(
                 tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemAttributionOriginEvidenceIdsMax,
               ),
+            explanation: zod
+              .string()
+              .max(
+                tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemAttributionOriginExplanationMax,
+              )
+              .optional(),
           }),
           decisive: zod.object({
             status: zod.enum(["supported", "unsupported", "unknown"]),
@@ -52672,6 +52684,12 @@ export const TracerInternalErrorFeedV2ReportsCreateBody = zod.object({
               .max(
                 tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemAttributionDecisiveEvidenceIdsMax,
               ),
+            explanation: zod
+              .string()
+              .max(
+                tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemAttributionDecisiveExplanationMax,
+              )
+              .optional(),
           }),
           symptom: zod.object({
             status: zod.enum(["supported", "unsupported", "unknown"]),
@@ -52694,6 +52712,12 @@ export const TracerInternalErrorFeedV2ReportsCreateBody = zod.object({
               .max(
                 tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemAttributionSymptomEvidenceIdsMax,
               ),
+            explanation: zod
+              .string()
+              .max(
+                tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemAttributionSymptomExplanationMax,
+              )
+              .optional(),
           }),
         }),
       }),

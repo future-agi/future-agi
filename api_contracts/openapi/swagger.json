@@ -135446,6 +135446,11 @@
                         "minLength": 1
                     },
                     "maxItems": 100
+                },
+                "explanation": {
+                    "title": "Explanation",
+                    "type": "string",
+                    "maxLength": 600
                 }
             }
         },
