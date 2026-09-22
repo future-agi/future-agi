@@ -228,6 +228,10 @@ class HostedHarnessScenario(BaseModel):
     persona = models.JSONField(null=True, blank=True)
     coverage = models.JSONField(null=True, blank=True)
     sub_goals = models.JSONField(null=True, blank=True)
+    # How somebody finds a scenario in a large suite. A column of its own because they describe the
+    # situation, not the caller: reading them out of the persona document tied them to a field that
+    # a suite without callers does not have.
+    keywords = models.JSONField(null=True, blank=True)
     background_noise = models.CharField(max_length=64, blank=True, default="")
     max_turns = models.PositiveIntegerField(null=True, blank=True)
 
@@ -243,6 +247,7 @@ class HostedHarnessScenario(BaseModel):
             models.Index(fields=["job", "number"], name="idx_harness_scenario_order"),
             GinIndex(fields=["persona"], name="idx_harness_scenario_persona"),
             GinIndex(fields=["coverage"], name="idx_harness_scenario_coverage"),
+            GinIndex(fields=["keywords"], name="idx_harness_scenario_keywords"),
         ]
 
 

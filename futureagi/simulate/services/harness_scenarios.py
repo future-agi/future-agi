@@ -54,15 +54,7 @@ FIELDS: tuple[dict[str, Any], ...] = (
         "type": "enum",
         "category": "persona",
     },
-    # The suite's own vocabulary, written onto each persona at generation. It used to sit above the
-    # table as a row of chips that filtered only what had been downloaded; as a field it filters the
-    # whole suite and its values come back counted, like any other property.
-    {
-        "value": "persona.keywords",
-        "label": "Keyword",
-        "type": "enum",
-        "category": "persona",
-    },
+
     {
         "value": "background_noise",
         "label": "Background",
@@ -83,13 +75,16 @@ FIELDS: tuple[dict[str, Any], ...] = (
     },
     {"value": "coverage.task", "label": "Task", "type": "enum", "category": "coverage"},
     {"value": "sub_goals", "label": "Sub-goal", "type": "enum", "category": "scenario"},
+    # The suite's own vocabulary for finding a scenario. It describes the situation, not the
+    # caller, which is why it is a scenario property and not a persona one.
+    {"value": "keywords", "label": "Keywords", "type": "enum", "category": "scenario"},
     {"value": "status", "label": "Status", "type": "enum", "category": "run"},
 )
 
 _BY_VALUE = {field["value"]: field for field in FIELDS}
 
 # Columns holding many values for one scenario, where a filter means membership.
-_LIST_FIELDS = frozenset({"sub_goals", "persona.languages", "persona.keywords"})
+_LIST_FIELDS = frozenset({"sub_goals", "persona.languages", "keywords"})
 
 # Which model column a dotted property reads from, and the key path inside it.
 _COLUMNS = {"persona": "persona", "coverage": "coverage"}
@@ -203,6 +198,11 @@ def index_scenarios(
             "persona": doc.get("persona") or None,
             "coverage": doc.get("coverage") or None,
             "sub_goals": doc.get("sub_goals") or None,
+            # Suites written before keywords moved off the persona still carry them there, and
+            # those documents are durable: sealed archives a rerun replays are never rewritten.
+            "keywords": (
+                doc.get("keywords") or (doc.get("persona") or {}).get("keywords") or None
+            ),
             "background_noise": (
                 noise if isinstance(noise, str) else "present" if noise else "quiet line"
             )[:64],
@@ -389,6 +389,7 @@ def scenario_row(row: HostedHarnessScenario) -> dict[str, Any]:
         "persona": persona,
         "coverage": row.coverage or {},
         "sub_goals": row.sub_goals or [],
+        "keywords": row.keywords or [],
         "background_noise": row.background_noise,
         "max_turns": row.max_turns,
         "status": scenario_status(row),
