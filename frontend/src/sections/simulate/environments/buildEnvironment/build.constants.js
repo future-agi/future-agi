@@ -12,6 +12,9 @@ export const DERIVING_LABEL = {
   idle: "Reading your agent…",
   // Preflight already passed inline; this stage is the create call landing.
   creating: "Creating your environment…",
+  // Terminal-failed build: the hero reads as failed (the specific reason shows
+  // on the failed pipeline step below), not the raw stage name.
+  failed: "Build failed — the environment couldn’t be assembled",
   // Fallback for the source-panel header before a source label is known.
   readingSource: "reading source…",
 };

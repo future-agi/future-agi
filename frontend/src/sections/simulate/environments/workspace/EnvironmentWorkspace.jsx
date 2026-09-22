@@ -79,7 +79,7 @@ export default function EnvironmentWorkspace() {
   const buildFailed = !!env && env.buildStatus === BUILD_STATUS.FAILED;
   const { envState, patch, canRun } = useEnvState(
     envId,
-    building ? undefined : bootstrapState,
+    building || buildFailed ? undefined : bootstrapState,
   );
   const { tab, setTab } = useWorkspaceTab();
   const chat = useWorkspaceChat(env);
@@ -94,7 +94,7 @@ export default function EnvironmentWorkspace() {
   const progress = useBuildProgress({
     envId,
     agentRef: env?.name,
-    enabled: building,
+    enabled: building || buildFailed,
     mockMode: false,
   });
   // Real derived world from the running job's stage outputs (never the MOCK_WORLD
@@ -160,10 +160,13 @@ export default function EnvironmentWorkspace() {
     return <Box sx={{ height: "100%", minHeight: 420, display: "grid", placeItems: "center" }} />;
   }
 
-  // Still deriving: the workspace header over the two-pane build stage (console +
-  // hero/pipeline). Run is gated off and Fork is hidden (locked) until it goes
-  // Live — at which point buildStatus flips and the branch below takes over.
-  if (building) {
+  // Still deriving OR terminally failed: the workspace header over the two-pane
+  // build stage (console + hero/pipeline). A failed build keeps this layout —
+  // the chat stays usable and the pipeline shows which stage failed — but the
+  // hero animation freezes and the header reads "Failed" (LivePill), rather than
+  // a dead-end error page. Run is gated off and Fork is hidden (locked) until it
+  // goes Live, at which point buildStatus flips and the branch below takes over.
+  if (building || buildFailed) {
     return (
       <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
         <WorkspaceHeader
@@ -171,7 +174,7 @@ export default function EnvironmentWorkspace() {
           envState={envState}
           patch={patch}
           canRun={false}
-          runBlockedReason={WORKSPACE_COPY.buildingTooltip}
+          runBlockedReason={buildFailed ? WORKSPACE_COPY.failedTooltip : WORKSPACE_COPY.buildingTooltip}
           locked
         />
         <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden", p: 2 }}>
@@ -183,42 +186,6 @@ export default function EnvironmentWorkspace() {
             primed={false}
             source={env.name}
             world={derivedWorld}
-          />
-        </Box>
-      </Box>
-    );
-  }
-
-  // Terminal-failed build: the job never reached a live world, so there is no
-  // workspace to show and — crucially — no build animation to keep running. The
-  // header reads "Failed" (LivePill) and the body states the failure, with the
-  // "whose fault" line from env.buildError when the job carried one.
-  if (buildFailed) {
-    return (
-      <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
-        <WorkspaceHeader
-          env={env}
-          envState={envState}
-          patch={patch}
-          canRun={false}
-          runBlockedReason={WORKSPACE_COPY.failedTooltip}
-          locked
-        />
-        <Box sx={{ flex: 1, minHeight: 0, overflow: "auto", p: 2 }}>
-          <EmptyState
-            icon="solar:danger-triangle-linear"
-            title={WORKSPACE_COPY.buildFailed.title}
-            body={env.buildError?.message || WORKSPACE_COPY.buildFailed.body}
-            action={
-              <Button
-                variant="contained"
-                color="primary"
-                size="small"
-                onClick={() => navigate(paths.dashboard.simulate.environments.root)}
-              >
-                {WORKSPACE_COPY.buildFailed.action}
-              </Button>
-            }
           />
         </Box>
       </Box>
