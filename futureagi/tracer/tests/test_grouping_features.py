@@ -28,6 +28,28 @@ from tracer.tests.test_trace_investigation_control import (
 pytestmark = pytest.mark.django_db
 
 
+@pytest.fixture(autouse=True)
+def grouping_test_budgets(settings):
+    settings.ERROR_FEED_GROUPING_PROJECT_BUDGET_USD = "10"
+    settings.ERROR_FEED_GROUPING_WORK_BUDGET_USD = "10"
+    settings.ERROR_FEED_GROUPING_TENANT_BUDGET_USD = "10"
+
+
+@override_settings(
+    ERROR_FEED_GROUPING_ENABLED=True,
+    ERROR_FEED_GROUPING_ALL_PROJECTS=True,
+    ERROR_FEED_OMEGA_DELAY_SECONDS=0,
+)
+def test_unconfigured_budgets_and_oss_do_not_enqueue_paid_work(observe_project):
+    _configure(observe_project)
+    with override_settings(ERROR_FEED_GROUPING_PROJECT_BUDGET_USD="0"):
+        report, _, _ = publish(observe_project)
+        assert enqueue_grouping_features(report=report) is None
+    with patch("tracer.services.grouping.control.is_oss", return_value=True):
+        assert enqueue_grouping_features(report=report) is None
+    assert not TraceGroupingFeatureJob.no_workspace_objects.exists()
+
+
 @pytest.mark.parametrize("deleted_record", ["report", "finding"])
 @override_settings(ERROR_FEED_OMEGA_DELAY_SECONDS=0)
 def test_managers_exclude_soft_deleted_preparation_inputs(

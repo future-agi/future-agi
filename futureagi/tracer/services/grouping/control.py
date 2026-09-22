@@ -4,11 +4,13 @@ import hashlib
 import secrets
 import uuid
 from datetime import timedelta
+from decimal import Decimal, InvalidOperation
 
 from django.conf import settings
 from django.db import transaction
 from django.db.models import F, Q
 from django.utils import timezone
+from tfc.ee_gating import is_oss
 
 from tracer.models.trace_grouping import (
     GroupingAttemptState,
@@ -54,8 +56,22 @@ def _token_hash(token: str) -> str:
 
 
 def _eligible_project(project_id: uuid.UUID) -> bool:
-    if not getattr(settings, "ERROR_FEED_GROUPING_ENABLED", False):
+    if is_oss() or not getattr(settings, "ERROR_FEED_GROUPING_ENABLED", False):
         return False
+    if getattr(settings, "ERROR_FEED_GROUPING_BUDGET_ENFORCED", True):
+        try:
+            caps = (
+                Decimal(str(getattr(settings, name, "0")))
+                for name in (
+                    "ERROR_FEED_GROUPING_PROJECT_BUDGET_USD",
+                    "ERROR_FEED_GROUPING_WORK_BUDGET_USD",
+                    "ERROR_FEED_GROUPING_TENANT_BUDGET_USD",
+                )
+            )
+            if not all(cap.is_finite() and cap > 0 for cap in caps):
+                return False
+        except (InvalidOperation, ValueError):
+            return False
     return getattr(settings, "ERROR_FEED_GROUPING_ALL_PROJECTS", False) or str(
         project_id
     ) in getattr(settings, "ERROR_FEED_GROUPING_PROJECT_IDS", ())
@@ -132,7 +148,7 @@ def lock_attempt_scope(
 def claim_feature_jobs(*, worker_id: str, limit: int) -> dict:
     if not worker_id or not 1 <= limit <= 10:
         raise GroupingControlError("invalid feature claim request")
-    if not getattr(settings, "ERROR_FEED_GROUPING_ENABLED", False):
+    if is_oss() or not getattr(settings, "ERROR_FEED_GROUPING_ENABLED", False):
         return {"claims": []}
     now = timezone.now()
     claims = []
@@ -296,7 +312,7 @@ def mark_feature_ready(
 def claim_grouping_work(*, worker_id: str, limit: int) -> dict:
     if not worker_id or not 1 <= limit <= 10:
         raise GroupingControlError("invalid grouping claim request")
-    if not getattr(settings, "ERROR_FEED_GROUPING_ENABLED", False):
+    if is_oss() or not getattr(settings, "ERROR_FEED_GROUPING_ENABLED", False):
         return {"claims": []}
     now = timezone.now()
     claimed = []
