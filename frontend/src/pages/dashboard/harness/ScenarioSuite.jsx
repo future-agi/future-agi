@@ -45,6 +45,7 @@ const COLUMNS = [
   "#",
   "Scenario",
   "Persona",
+  "Levers",
   "Situation",
   "Sub-goals",
   "Passes when",
@@ -582,7 +583,9 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
 
                   {rows.map((scenario) => {
                     const persona = scenario.persona || {};
-                    const who = [persona.gender, persona.age_group].filter(Boolean).join(" \u00b7 ");
+                    const who = [persona.gender, persona.age_group, persona.location]
+                      .filter(Boolean)
+                      .join(" \u00b7 ");
                     return (
                       <TableRow hover key={scenario.name}>
                         <TableCell padding="checkbox" sx={{ pl: 1.5, verticalAlign: "top" }}>
@@ -620,6 +623,9 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
                           <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
                             {who}
                           </Typography>
+                        </TableCell>
+                        <TableCell sx={{ maxWidth: 220, verticalAlign: "top" }}>
+                          <Levers scenario={scenario} persona={persona} />
                         </TableCell>
                         <TableCell sx={{ maxWidth: 320, verticalAlign: "top" }}>
                           <Clamped text={scenario.instruction} />
@@ -713,6 +719,68 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
 // Numbered rather than chipped, because sub-goals are an ordered set of things the agent has to
 // reach and a row of chips throws that order away. Three, then a count, so one scenario with nine
 // of them cannot make every other row tall.
+// The four things a voice suite is graded on: who is calling, in what accent and language, over
+// what noise, and whether the call is an attack. Each is already on the scenario; none of it was
+// on screen, so a suite looked like a list of tasks rather than a spread of conditions.
+function Levers({ scenario, persona }) {
+  const coverage = scenario.coverage || {};
+  const overlay = String(coverage.overlay || "").trim();
+  const noise =
+    typeof scenario.background_noise === "string"
+      ? scenario.background_noise.trim()
+      : scenario.background_noise
+        ? "present"
+        : "";
+  const spoken = (persona.languages || []).filter((one) => one && one !== "English");
+  const chips = [
+    persona.accent && { key: `a-${persona.accent}`, label: persona.accent, tone: "default" },
+    spoken.length && { key: `l-${spoken[0]}`, label: spoken[0], tone: "default" },
+    noise && { key: `n-${noise}`, label: readable(noise), tone: "default" },
+    overlay &&
+      overlay !== "none" && {
+        key: `o-${overlay}`,
+        label: readable(overlay),
+        tone: "adversarial",
+      },
+  ].filter(Boolean);
+
+  if (!chips.length) {
+    return <Typography sx={{ typography: "s3", color: "text.subtitle" }}>&mdash;</Typography>;
+  }
+  const intensity = String(coverage.overlay_intensity || "").trim();
+  return (
+    <Stack direction="row" spacing={0.5} sx={{ flexWrap: "wrap", gap: 0.5 }}>
+      {chips.map((chip) => (
+        <Tooltip
+          key={chip.key}
+          title={
+            chip.tone === "adversarial" && intensity && intensity !== "absent"
+              ? `${chip.label} \u00b7 ${intensity}`
+              : ""
+          }
+        >
+          <Chip
+            size="small"
+            label={chip.label}
+            sx={{
+              height: 20,
+              typography: "s3",
+              ...(chip.tone === "adversarial"
+                ? { bgcolor: "warning.lighter", color: "warning.darker" }
+                : { bgcolor: "action.hover", color: "text.secondary" }),
+            }}
+          />
+        </Tooltip>
+      ))}
+    </Stack>
+  );
+}
+
+Levers.propTypes = {
+  scenario: PropTypes.object,
+  persona: PropTypes.object,
+};
+
 function SubGoals({ names }) {
   const list = names || [];
   if (!list.length) {
