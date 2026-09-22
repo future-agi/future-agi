@@ -90,7 +90,12 @@ export default function BuildingPane({
 
       {/* body */}
       <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "auto" }}>
-        <DerivingAnimation label={derivingLabel(done)} source={source} world={world} />
+        <DerivingAnimation
+          label={failure ? DERIVING_LABEL.failed : derivingLabel(done)}
+          source={source}
+          world={world}
+          failed={!!failure}
+        />
         <PipelineChecks pipeline={pipelineStatus(done, running, "setup", failure)} />
       </Box>
     </Stack>

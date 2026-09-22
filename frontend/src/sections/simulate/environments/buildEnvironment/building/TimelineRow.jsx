@@ -180,8 +180,13 @@ export default function TimelineRow({ step, first, last, elapsed, index }) {
             </Typography>
           )}
         </Stack>
-        <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>
-          {step.detail}
+        <Typography
+          sx={{ typography: "s3", color: failed ? BUILD_TONES.red : "text.subtitle", mt: 0.25 }}
+        >
+          {/* On the failed step, show why it failed (the job's failure message)
+              rather than the generic step description — this is the "status part"
+              that must read as stuck/failed. */}
+          {failed ? step.failure?.detail || step.detail : step.detail}
         </Typography>
       </Box>
     </Stack>
@@ -194,6 +199,7 @@ TimelineRow.propTypes = {
     status: PropTypes.string,
     label: PropTypes.string,
     detail: PropTypes.string,
+    failure: PropTypes.shape({ detail: PropTypes.string }),
   }),
   first: PropTypes.bool,
   last: PropTypes.bool,

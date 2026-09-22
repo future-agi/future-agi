@@ -3,7 +3,7 @@ import { alpha, useTheme, keyframes } from "@mui/material/styles";
 import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 
-import { SURFACE_INK, TRAFFIC_LIGHTS } from "../buildTones";
+import { SURFACE_INK, TRAFFIC_LIGHTS, BUILD_TONES } from "../buildTones";
 import { DERIVING_LABEL } from "../build.constants";
 import { LandedChip, MiniCount, KIND_COLOR } from "./LandedChip";
 
@@ -89,9 +89,13 @@ function chipsFromWorld(world) {
 
 const SKELETON_WIDTHS = [64, 92, 48, 76, 58, 84];
 
-export default function DerivingAnimation({ label, source, world = null }) {
+export default function DerivingAnimation({ label, source, world = null, failed = false }) {
   const theme = useTheme();
   const dark = theme.palette.mode === "dark";
+  // A terminal-failed build freezes the illustration: the beam, particles,
+  // conveyor and skeleton shimmer all stop, so the hero reads as halted rather
+  // than a build still churning. `motion` gates every looping animation on it.
+  const motion = (value) => (failed ? "none" : value);
 
   const { chips, counts } = chipsFromWorld(world);
   const hasReal = chips.length > 0;
@@ -106,8 +110,8 @@ export default function DerivingAnimation({ label, source, world = null }) {
         <Box
           sx={{
             width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
-            bgcolor: "text.disabled",
-            animation: `${pulseSoft} 1.4s ease-in-out infinite`,
+            bgcolor: failed ? BUILD_TONES.red : "text.disabled",
+            animation: motion(`${pulseSoft} 1.4s ease-in-out infinite`),
           }}
         />
         <Typography sx={{ typography: "s2", fontWeight: "fontWeightSemiBold", color: "text.secondary" }}>
@@ -188,65 +192,97 @@ export default function DerivingAnimation({ label, source, world = null }) {
               </Box>
             ))}
 
-            {/* the scanning beam */}
-            <Box
-              sx={{
-                position: "absolute", left: 8, right: 8, top: 0, height: 14, pointerEvents: "none",
-                animation: `${beamMove} 3.2s ease-in-out infinite`,
-              }}
-            >
+            {/* the scanning beam — removed entirely when failed, since a frozen
+                beam just sits as a bright band stuck over the first line */}
+            {!failed && (
               <Box
                 sx={{
-                  height: "100%", borderRadius: 999,
-                  background: `linear-gradient(90deg, transparent, ${alpha(theme.palette.text.primary, dark ? 0.55 : 0.45)}, transparent)`,
-                  boxShadow: `0 0 10px ${alpha(theme.palette.text.primary, dark ? 0.3 : 0.2)}`,
+                  position: "absolute", left: 8, right: 8, top: 0, height: 14, pointerEvents: "none",
+                  animation: `${beamMove} 3.2s ease-in-out infinite`,
                 }}
-              />
-            </Box>
+              >
+                <Box
+                  sx={{
+                    height: "100%", borderRadius: 999,
+                    background: `linear-gradient(90deg, transparent, ${alpha(theme.palette.text.primary, dark ? 0.55 : 0.45)}, transparent)`,
+                    boxShadow: `0 0 10px ${alpha(theme.palette.text.primary, dark ? 0.3 : 0.2)}`,
+                  }}
+                />
+              </Box>
+            )}
           </Box>
         </Box>
 
         {/* ─── conveyor (middle) ─── */}
-        <Box
-          sx={{
-            position: "absolute", top: "50%", left: 224, right: 224, height: 2,
-            transform: "translateY(-50%)",
-            background: `linear-gradient(90deg,
-              transparent 0%,
-              ${alpha(theme.palette.text.primary, dark ? 0.28 : 0.22)} 50%,
-              transparent 100%)`,
-          }}
-        />
-        <Box
-          sx={{
-            position: "absolute", top: "50%", left: 224, right: 224, height: 20,
-            transform: "translateY(-50%)",
-            background: `linear-gradient(90deg,
-              transparent 0%,
-              ${alpha(theme.palette.text.primary, dark ? 0.08 : 0.05)} 50%,
-              transparent 100%)`,
-            backgroundSize: "200% 100%",
-            animation: `${shimmerBg} 2s linear infinite`,
-          }}
-        />
+        {failed ? (
+          <>
+            {/* the transfer broke: a dimmed red belt ruptured at the centre by
+                the glyph that sits on top of it — nothing crossed to the sandbox */}
+            <Box
+              sx={{
+                position: "absolute", top: "50%", left: 224, right: 224, height: 2,
+                transform: "translateY(-50%)",
+                background: `linear-gradient(90deg, transparent 0%, ${alpha(BUILD_TONES.red, 0.45)} 50%, transparent 100%)`,
+              }}
+            />
+            <Box
+              sx={{
+                position: "absolute", top: "50%", left: "50%",
+                transform: "translate(-50%, -50%)",
+                display: "grid", placeItems: "center",
+                width: 30, height: 30, borderRadius: "50%",
+                bgcolor: dark ? SURFACE_INK.panelDark : SURFACE_INK.panelLight,
+                border: `1.5px solid ${alpha(BUILD_TONES.red, 0.65)}`,
+                boxShadow: `0 0 0 5px ${alpha(BUILD_TONES.red, dark ? 0.16 : 0.1)}`,
+              }}
+            >
+              <Iconify icon="solar:close-circle-bold" width={18} sx={{ color: BUILD_TONES.red }} />
+            </Box>
+          </>
+        ) : (
+          <>
+            <Box
+              sx={{
+                position: "absolute", top: "50%", left: 224, right: 224, height: 2,
+                transform: "translateY(-50%)",
+                background: `linear-gradient(90deg,
+                  transparent 0%,
+                  ${alpha(theme.palette.text.primary, dark ? 0.28 : 0.22)} 50%,
+                  transparent 100%)`,
+              }}
+            />
+            <Box
+              sx={{
+                position: "absolute", top: "50%", left: 224, right: 224, height: 20,
+                transform: "translateY(-50%)",
+                background: `linear-gradient(90deg,
+                  transparent 0%,
+                  ${alpha(theme.palette.text.primary, dark ? 0.08 : 0.05)} 50%,
+                  transparent 100%)`,
+                backgroundSize: "200% 100%",
+                animation: motion(`${shimmerBg} 2s linear infinite`),
+              }}
+            />
 
-        {/* particles emitted from the beam */}
-        {[0, 0.3, 0.6, 0.9, 1.2, 1.5, 1.8, 2.1].map((delay, i) => (
-          <Box
-            key={i}
-            sx={{
-              position: "absolute", top: "50%", left: 210,
-              width: 5, height: 5, borderRadius: "50%",
-              bgcolor: alpha(theme.palette.text.primary, dark ? 0.7 : 0.6),
-              boxShadow: `0 0 6px ${alpha(theme.palette.text.primary, dark ? 0.35 : 0.25)}`,
-              transform: "translate(0, 0)",
-              "--dx": `${310}px`,
-              "--dy": `${(i % 2 === 0 ? -1 : 1) * 8}px`,
-              animation: `${particleFly} 1.6s linear infinite`,
-              animationDelay: `${delay}s`,
-            }}
-          />
-        ))}
+            {/* particles emitted from the beam */}
+            {[0, 0.3, 0.6, 0.9, 1.2, 1.5, 1.8, 2.1].map((delay, i) => (
+              <Box
+                key={i}
+                sx={{
+                  position: "absolute", top: "50%", left: 210,
+                  width: 5, height: 5, borderRadius: "50%",
+                  bgcolor: alpha(theme.palette.text.primary, dark ? 0.7 : 0.6),
+                  boxShadow: `0 0 6px ${alpha(theme.palette.text.primary, dark ? 0.35 : 0.25)}`,
+                  transform: "translate(0, 0)",
+                  "--dx": `${310}px`,
+                  "--dy": `${(i % 2 === 0 ? -1 : 1) * 8}px`,
+                  animation: motion(`${particleFly} 1.6s linear infinite`),
+                  animationDelay: `${delay}s`,
+                }}
+              />
+            ))}
+          </>
+        )}
 
         {/* ─── sandbox (right) ─── */}
         <Box
@@ -255,7 +291,11 @@ export default function DerivingAnimation({ label, source, world = null }) {
             borderRadius: 1.5, overflow: "hidden",
             bgcolor: dark ? SURFACE_INK.sandboxDark : SURFACE_INK.panelLight,
             border: "1px solid",
-            borderColor: alpha(theme.palette.text.primary, dark ? 0.15 : 0.12),
+            // Nothing reached the sandbox on a failed build — mark it with a faint
+            // red edge so the empty container reads as failed, not still loading.
+            borderColor: failed
+              ? alpha(BUILD_TONES.red, 0.4)
+              : alpha(theme.palette.text.primary, dark ? 0.15 : 0.12),
             boxShadow: dark ? "0 8px 32px rgba(0,0,0,0.45)" : "0 8px 32px rgba(16,24,40,0.08)",
           }}
         >
@@ -264,15 +304,27 @@ export default function DerivingAnimation({ label, source, world = null }) {
             direction="row" alignItems="center" spacing={0.75}
             sx={{
               px: 1.25, py: 0.75, borderBottom: "1px solid",
-              borderColor: alpha(theme.palette.text.primary, dark ? 0.08 : 0.06),
+              borderColor: failed
+                ? alpha(BUILD_TONES.red, 0.25)
+                : alpha(theme.palette.text.primary, dark ? 0.08 : 0.06),
             }}
           >
-            <Iconify icon="solar:box-linear" width={12} sx={{ color: "text.subtitle" }} />
+            <Iconify
+              icon={failed ? "solar:danger-triangle-bold" : "solar:box-linear"}
+              width={12}
+              sx={{ color: failed ? BUILD_TONES.red : "text.subtitle" }}
+            />
             <Typography sx={{ typography: "s3", color: "text.secondary", fontWeight: "fontWeightBold", letterSpacing: 0.5 }}>
               SANDBOX
             </Typography>
             <Box flex={1} />
-            <Typography sx={{ typography: "s3", color: "text.disabled", fontVariantNumeric: "tabular-nums", fontSize: 10 }}>
+            <Typography
+              sx={{
+                typography: "s3",
+                color: failed ? BUILD_TONES.red : "text.disabled",
+                fontVariantNumeric: "tabular-nums", fontSize: 10,
+              }}
+            >
               {counts.tool + counts.rule + counts.data}
             </Typography>
           </Stack>
@@ -293,7 +345,7 @@ export default function DerivingAnimation({ label, source, world = null }) {
                           ${alpha(theme.palette.text.primary, dark ? 0.12 : 0.09)} 50%,
                           ${alpha(theme.palette.text.primary, dark ? 0.06 : 0.05)} 100%)`,
                         backgroundSize: "200% 100%",
-                        animation: `${shimmerBg} 1.8s linear infinite`,
+                        animation: motion(`${shimmerBg} 1.8s linear infinite`),
                       }}
                     />
                   ))}
@@ -317,6 +369,8 @@ export default function DerivingAnimation({ label, source, world = null }) {
 
 DerivingAnimation.propTypes = {
   label: PropTypes.string,
+  // Terminal-failed build: freeze every looping animation and redden the dot.
+  failed: PropTypes.bool,
   // The real source being read (repo/spec) — shown in the file header.
   source: PropTypes.string,
   // The real derived world from stage outputs: { tools:[{name}], rules:[str],
