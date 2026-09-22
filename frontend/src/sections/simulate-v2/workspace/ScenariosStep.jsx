@@ -18,9 +18,20 @@ import AddScenariosDrawer from "./scenarios/AddScenariosDrawer";
 import ScenarioEditor from "./scenarios/ScenarioEditor";
 import ScenarioTable from "./scenarios/ScenarioTable";
 import SelectionBar from "./scenarios/SelectionBar";
+import RecentAdditionsStrip from "./scenarios/RecentAdditionsStrip";
 import GateRejects from "./scenarios/GateRejects";
 import { PickRouteIllustration } from "./scenarios/RouteThumbs";
 import { publishScenarioSelection, clearScenarioSelection } from "../_mock/scenarioSelectionBus";
+import { stampProvenance, defaultBatchId, ensureProvenance, provenanceLabel, sourceOf, groupByBatch, relativeTime } from "../_mock/scenarioProvenance";
+
+/* AddScenariosDrawer emits `route` ids (twin | production | dataset |
+   script); provenance vocab is different, so translate at the boundary. */
+const SOURCE_MAP = {
+  twin: "template",
+  production: "production",
+  dataset: "dataset-import",
+  script: "manual",
+};
 import { FilterPanel } from "src/components/filter-panel";
 
 
@@ -37,7 +48,7 @@ import { FilterPanel } from "src/components/filter-panel";
  * by side on the derived axes, which is the view you want when the question is
  * what is in here rather than what is this.
  */
-export default function ScenariosStep({ env, envState, patch, buildMode, onBuilderPrompt, locked = false, onFork }) {
+export default function ScenariosStep({ env, envState, patch, buildMode, onBuilderPrompt, onStartRun, locked = false, onFork }) {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState(null);
   const { enqueueSnackbar, closeSnackbar } = useSnackbar();
@@ -213,7 +224,16 @@ export default function ScenariosStep({ env, envState, patch, buildMode, onBuild
         );
         return;
       }
-      patch({ scenarios: [...selected, ...fresh], scenarioSource: source });
+      /* Stamp provenance so the row provenance form + "Recent
+         additions" strip can attribute this batch. The `source` arg
+         from the drawer maps 1:1 onto our source vocabulary; if the
+         drawer passes something we don't recognise, fall back to
+         manual (the honest thing to say when a human clicked add). */
+      const stampSource = SOURCE_MAP[source] || "manual";
+      const stampAt = new Date().toISOString();
+      const batchId = defaultBatchId(stampSource, stampAt);
+      const fresh2 = fresh.map((r) => stampProvenance(r, { source: stampSource, at: stampAt, batchId }));
+      patch({ scenarios: [...selected, ...fresh2], scenarioSource: source });
       const base = fresh.length === 1
         ? "1 scenario added"
         : `${fresh.length} scenarios added`;
@@ -251,6 +271,18 @@ export default function ScenariosStep({ env, envState, patch, buildMode, onBuild
   /* Clear the bus subscription on unmount so navigating off the tab
      doesn't leave stale "N selected" state hanging in the chat. */
   useEffect(() => () => clearScenarioSelection(), []);
+
+  /* Edit with builder — sends the selection to the workspace's chat
+     composer as a scaffold, so the builder-chat reply can carry the
+     keep/undo strip on affected rows (Phase 5 follow-up). Pre-fills
+     with a soft-nudge so the input is not blank when the composer
+     focuses. */
+  const handleEditSelected = () => {
+    if (!onBuilderPrompt || selectedRows.length === 0) return;
+    const names = selectedRows.slice(0, 3).map((r) => r.name).join(", ");
+    const more = selectedRows.length > 3 ? `, +${selectedRows.length - 3} more` : "";
+    onBuilderPrompt(`Edit these ${selectedRows.length} scenarios (${names}${more}): `);
+  };
 
   const bulkDelete = () => {
     if (selectedIds.length === 0) return;
@@ -363,7 +395,11 @@ export default function ScenariosStep({ env, envState, patch, buildMode, onBuild
           same action read as noise (same pattern the Evaluations tab
           uses).
         */}
-        {selected.length > 0 && (
+        {/* Hidden while any scenario is checked — the toolbar has
+            transformed into the SelectionBar and "Add scenarios" is
+            not a selection-scoped action, so it would just add
+            visual noise beside "Run N selected". */}
+        {selected.length > 0 && selectedIds.length === 0 && (
           <Tooltip arrow title={locked ? "Fork this environment to add scenarios." : ""}>
             <span>
               <Button
@@ -434,10 +470,33 @@ export default function ScenariosStep({ env, envState, patch, buildMode, onBuild
           toolbar (search · filter · list/table tabs) that both views
           read from, so filters survive a view switch.
         */
-        <SectionCard sx={{ mb: 2 }}>
+        <SectionCard sx={{ mb: 2, overflow: "visible" }}>
+          {/*
+            Sticky toolbar row. It pins to the top of the scenarios
+            viewport as the user scrolls through 88+ rows, so when
+            the row transforms into the SelectionBar the actions are
+            always in reach — no floating pill over content, no
+            scroll-hunting to find the toolbar. Same slot handles
+            both states, which is why nothing feels "in a random
+            place" any more.
+          */}
+          <Box sx={{
+            position: "sticky", top: 0, zIndex: 3,
+            bgcolor: "background.paper",
+            borderBottom: "1px solid", borderColor: "divider",
+          }}>
+          {!locked && selectedIds.length > 0 ? (
+            <SelectionBar
+              count={selectedIds.length}
+              onRun={onStartRun ? () => onStartRun(selectedIds) : undefined}
+              onEdit={onBuilderPrompt ? handleEditSelected : undefined}
+              onDelete={bulkDelete}
+              onClear={clearSelection}
+            />
+          ) : (
           <Stack
             direction="row" alignItems="center" spacing={1}
-            sx={{ px: 2.5, py: 1.25, borderBottom: "1px solid", borderColor: "divider" }}
+            sx={{ px: 2.5, py: 1.25 }}
           >
             <TextField
               size="small"
@@ -541,6 +600,8 @@ export default function ScenariosStep({ env, envState, patch, buildMode, onBuild
               <Tab value="list" label="List" />
             </SegmentedTabs>
           </Stack>
+          )}
+          </Box>
 
           {shownGroups.length === 0 ? (
             <Box sx={{ px: 2.5, py: 6, textAlign: "center" }}>
@@ -552,44 +613,33 @@ export default function ScenariosStep({ env, envState, patch, buildMode, onBuild
             </Box>
           ) : (
             <>
-              {!locked && selectedIds.length > 0 && (
-                <Box sx={{ px: 2, pt: 2 }}>
-                  <SelectionBar
-                    count={selectedIds.length}
-                    onDelete={bulkDelete}
-                    onClear={clearSelection}
-                  />
-                </Box>
-              )}
-              {view === "table" ? (
-                <ScenarioTable
-                  rows={shown}
-                  groups={shownGroups}
-                  env={env}
-                  onEdit={setEditing}
-                  onRemove={removeScenario}
-                  onHideGroup={toggleGroupHidden}
-                  selectedIds={selectedIds}
-                  onSelectionChange={handleSelectionChange}
-                  locked={locked}
-                />
-              ) : (
-                <GroupedScenarioList
-                  groups={shownGroups}
-                  env={env}
-                  envState={envState}
-                  buildMode={buildMode}
-                  onEdit={setEditing}
-                  onRemove={removeScenario}
-                  onHideGroup={toggleGroupHidden}
-                  selectedIds={selectedIds}
-                  onSelectionChange={handleSelectionChange}
-                  locked={locked}
-                />
-              )}
+              {/* Batches are rendered as separate cards below this
+                  toolbar card. The toolbar card only contains the
+                  search / filter / group-by / view toggle; each batch
+                  gets its own card so authorship (added by · when)
+                  stays visually attached to its scenarios. */}
             </>
           )}
         </SectionCard>
+      )}
+
+      {/* v2 timeline: batches as chronological events on a vertical
+          spine with a node per batch. v1 (BatchCardsList) is kept in
+          this file for a one-line revert if v2 doesn't stick. */}
+      {shown.length > 0 && (
+        <BatchTimeline
+          groups={shownGroups}
+          view={view}
+          env={env}
+          envState={envState}
+          buildMode={buildMode}
+          selectedIds={selectedIds}
+          onSelectionChange={handleSelectionChange}
+          onEdit={setEditing}
+          onRemove={removeScenario}
+          onHideGroup={toggleGroupHidden}
+          locked={locked}
+        />
       )}
 
       {/*
@@ -634,6 +684,7 @@ ScenariosStep.propTypes = {
   patch: PropTypes.func.isRequired,
   buildMode: PropTypes.bool,
   onBuilderPrompt: PropTypes.func,
+  onStartRun: PropTypes.func,
   locked: PropTypes.bool,
   onFork: PropTypes.func,
 };
@@ -765,6 +816,46 @@ ScenarioRow.propTypes = {
   selectable: PropTypes.bool, checked: PropTypes.bool, onToggle: PropTypes.func,
 };
 
+/**
+ * Provenance form on a scenario row — the visual mark that PRD §6.1.2
+ * mandates. Three variants:
+ *   - "user"      → filled amber square  ("you started this")
+ *   - "auto"      → hollow ring           ("we started this")
+ *   - "assistant" → filled green dot     ("the assistant did this")
+ * Hover tooltip carries the full attribution.
+ */
+export function ProvenanceGlyph({ scenario, size = 10 }) {
+  const s = ensureProvenance(scenario);
+  const src = sourceOf(s.source);
+  const label = provenanceLabel(s);
+  return (
+    <Tooltip title={`${src.label} · ${label}`} arrow>
+      <Box sx={{ display: "flex", alignItems: "center", justifyContent: "center", width: 14, height: 14, flexShrink: 0 }}>
+        {src.formKind === "user" && (
+          <Box sx={{
+            width: size, height: size, borderRadius: 0.375,
+            bgcolor: "#F59E0B",
+          }} />
+        )}
+        {src.formKind === "auto" && (
+          <Box sx={{
+            width: size, height: size, borderRadius: "50%",
+            border: "1.5px solid",
+            borderColor: (t) => alpha(t.palette.text.primary, 0.35),
+          }} />
+        )}
+        {src.formKind === "assistant" && (
+          <Box sx={{
+            width: size, height: size, borderRadius: "50%",
+            bgcolor: "#16A34A",
+          }} />
+        )}
+      </Box>
+    </Tooltip>
+  );
+}
+ProvenanceGlyph.propTypes = { scenario: PropTypes.object, size: PropTypes.number };
+
 /* ── grouping ────────────────────────────────────────────────────────────── */
 
 /**
@@ -847,25 +938,454 @@ const groupKeyOf = (row, mode, env) => {
     const slug = first.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
     return { id: `subgoal:${slug}`, label: first };
   }
+  if (mode === "source") {
+    const s = ensureProvenance(row);
+    const src = sourceOf(s.source);
+    return { id: `source:${src.id}`, label: src.label };
+  }
+  if (mode === "addedBy") {
+    const s = ensureProvenance(row);
+    const who = s.addedBy?.name || "System";
+    return { id: `addedBy:${who.toLowerCase()}`, label: `Added by ${who}` };
+  }
+  if (mode === "batch") {
+    const s = ensureProvenance(row);
+    const src = sourceOf(s.source);
+    const when = new Date(s.addedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    return { id: `batch:${s.batchId}`, label: `${src.label} · ${when}` };
+  }
   return deriveUseCase(row);
 };
 
+/* Batches are ALWAYS the outer grouping — this dropdown selects the
+   INNER grouping shown within each batch. "Batch" itself is not an
+   option here because everything is batched by default. */
 export const SCENARIO_GROUPINGS = [
-  { id: "goal", label: "Goal", icon: "solar:target-linear" },
-  { id: "persona", label: "Persona", icon: "solar:user-rounded-linear" },
+  { id: "goal",    label: "Goal",     icon: "solar:target-linear" },
+  { id: "persona", label: "Persona",  icon: "solar:user-rounded-linear" },
   { id: "subgoal", label: "Sub-goal", icon: "solar:map-linear" },
+  { id: "source",  label: "Source",   icon: "solar:magic-stick-3-linear" },
+  { id: "addedBy", label: "Added by", icon: "solar:user-plus-linear" },
 ];
 
 const groupScenarios = (rows, mode = "goal", env) => {
-  const buckets = new Map();
-  rows.forEach((r) => {
-    const key = groupKeyOf(r, mode, env);
-    if (!buckets.has(key.id)) buckets.set(key.id, { id: key.id, label: key.label, rows: [] });
-    buckets.get(key.id).rows.push(r);
+  /* Two-level grouping (per user directive 2026-09-22): batches are
+     always the outer container carrying who added them + when. The
+     inner grouping is the current `mode` (Goal / Persona / Sub-goal /
+     Source / Added by). We flatten to a single sorted list of groups,
+     each tagged with its `batchMeta`, and let the renderers insert a
+     batch-header row on batch transitions — that avoids rewriting the
+     whole table/list to a nested-structure API. */
+  const batches = groupByBatch(rows);
+  const out = [];
+  batches.forEach((batch) => {
+    const buckets = new Map();
+    batch.scenarios.forEach((r) => {
+      const key = groupKeyOf(r, mode, env);
+      if (!buckets.has(key.id)) buckets.set(key.id, { id: `${batch.batchId}__${key.id}`, label: key.label, rows: [], batchMeta: batch });
+      buckets.get(key.id).rows.push(r);
+    });
+    /* Within a batch, bigger inner groups first. */
+    [...buckets.values()]
+      .sort((a, b) => b.rows.length - a.rows.length)
+      .forEach((g) => out.push(g));
   });
-  /* Bigger groups first — the tail of one-off adversarial/edge titles
-     shouldn't push the meaty use-case groups out of view. */
-  return [...buckets.values()].sort((a, b) => b.rows.length - a.rows.length);
+  return out;
+};
+
+/**
+ * Batches as separate cards. Takes the flat list of inner groups
+ * (produced by groupScenarios), bundles them back by batch, and
+ * renders one card per batch with a prominent authorship header.
+ *
+ * Per user directive (2026-09-22): "Show each batches separately …
+ * where is the added by / added at details for the batch?" Batches
+ * are the outer container; scenarios within a batch use the inner
+ * group-by (goal / persona / etc.).
+ */
+function BatchCardsList({ groups, view, env, envState, buildMode, selectedIds, onSelectionChange, onEdit, onRemove, onHideGroup, locked }) {
+  /* Rebundle flat groups into batches so each batch gets its own
+     card. Groups arrive already sorted (batch → inner group) from
+     groupScenarios, so a simple sweep is enough. */
+  const batches = useMemo(() => {
+    const out = [];
+    let current = null;
+    groups.forEach((g) => {
+      const meta = g.batchMeta;
+      if (!meta) return;
+      if (!current || current.meta.batchId !== meta.batchId) {
+        current = { meta, innerGroups: [], rows: [] };
+        out.push(current);
+      }
+      current.innerGroups.push(g);
+      current.rows.push(...g.rows);
+    });
+    return out;
+  }, [groups]);
+
+  if (batches.length === 0) return null;
+
+  return (
+    <Stack spacing={3}>
+      {batches.map((b) => (
+        <BatchCard
+          key={b.meta.batchId}
+          batch={b.meta}
+          rowCount={b.rows.length}
+          innerGroups={b.innerGroups}
+          view={view}
+          env={env}
+          envState={envState}
+          buildMode={buildMode}
+          selectedIds={selectedIds}
+          onSelectionChange={onSelectionChange}
+          onEdit={onEdit}
+          onRemove={onRemove}
+          onHideGroup={onHideGroup}
+          locked={locked}
+        />
+      ))}
+    </Stack>
+  );
+}
+BatchCardsList.propTypes = {
+  groups: PropTypes.array, view: PropTypes.string,
+  env: PropTypes.object, envState: PropTypes.object, buildMode: PropTypes.bool,
+  selectedIds: PropTypes.array, onSelectionChange: PropTypes.func,
+  onEdit: PropTypes.func, onRemove: PropTypes.func, onHideGroup: PropTypes.func,
+  locked: PropTypes.bool,
+};
+
+function BatchCard({ batch, rowCount, innerGroups, view, env, envState, buildMode, selectedIds, onSelectionChange, onEdit, onRemove, onHideGroup, locked }) {
+  const [open, setOpen] = useState(true);
+  const src = sourceOf(batch.source);
+  const initials = (batch.addedBy?.name || "System").split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
+  return (
+    <SectionCard sx={{ mb: 0 }}>
+      {/* Batch header: prominent authorship info + collapsible chevron */}
+      <Stack
+        direction="row" alignItems="center" spacing={2}
+        onClick={() => setOpen((v) => !v)}
+        sx={{
+          px: 2.5, py: 2, cursor: "pointer",
+          borderBottom: open ? "1px solid" : "none",
+          borderColor: "divider",
+          "&:hover": { bgcolor: "action.hover" },
+        }}
+      >
+        <Box sx={{
+          width: 36, height: 36, borderRadius: "50%",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.1 : 0.06),
+          color: "text.primary", fontSize: 12, fontWeight: 700, letterSpacing: 0.4,
+          flexShrink: 0,
+        }}>
+          {batch.addedBy?.kind === "user" ? initials : (
+            <Iconify icon={src.icon} width={16} />
+          )}
+        </Box>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Stack direction="row" alignItems="center" spacing={1}>
+            <Typography sx={{ typography: "s1", fontWeight: 700, fontSize: 14 }}>
+              Added by {batch.addedBy?.name || "System"}
+            </Typography>
+            <Typography sx={{ typography: "s3", color: "text.subtitle", fontSize: 12 }}>
+              · {relativeTime(batch.addedAt)}
+            </Typography>
+          </Stack>
+          <Stack direction="row" alignItems="center" spacing={0.75} sx={{ mt: 0.375 }}>
+            <Iconify icon={src.icon} width={11} sx={{ color: "text.subtitle" }} />
+            <Typography sx={{ typography: "s3", color: "text.subtitle", fontSize: 11.5 }}>
+              {src.label} · {new Date(batch.addedAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+            </Typography>
+          </Stack>
+        </Box>
+        <Typography sx={{
+          typography: "s2", fontWeight: 700, fontVariantNumeric: "tabular-nums",
+          color: "text.primary", fontSize: 13, flexShrink: 0,
+        }}>
+          {rowCount} {rowCount === 1 ? "scenario" : "scenarios"}
+        </Typography>
+        <Iconify
+          icon={open ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"}
+          width={16} sx={{ color: "text.subtitle", flexShrink: 0 }}
+        />
+      </Stack>
+      {open && (
+        view === "table" ? (
+          <ScenarioTable
+            rows={innerGroups.flatMap((g) => g.rows)}
+            groups={innerGroups}
+            env={env}
+            onEdit={onEdit}
+            onRemove={onRemove}
+            onHideGroup={onHideGroup}
+            selectedIds={selectedIds}
+            onSelectionChange={onSelectionChange}
+            locked={locked}
+          />
+        ) : (
+          <GroupedScenarioList
+            groups={innerGroups}
+            env={env}
+            envState={envState}
+            buildMode={buildMode}
+            onEdit={onEdit}
+            onRemove={onRemove}
+            onHideGroup={onHideGroup}
+            selectedIds={selectedIds}
+            onSelectionChange={onSelectionChange}
+            locked={locked}
+          />
+        )
+      )}
+    </SectionCard>
+  );
+}
+BatchCard.propTypes = {
+  batch: PropTypes.object, rowCount: PropTypes.number, innerGroups: PropTypes.array,
+  view: PropTypes.string, env: PropTypes.object, envState: PropTypes.object, buildMode: PropTypes.bool,
+  selectedIds: PropTypes.array, onSelectionChange: PropTypes.func,
+  onEdit: PropTypes.func, onRemove: PropTypes.func, onHideGroup: PropTypes.func,
+  locked: PropTypes.bool,
+};
+
+/* ── v2 · timeline view ────────────────────────────────────────────
+   An alternative to BatchCardsList (v1). Batches read as events on a
+   vertical spine — like a git-log or activity feed. Each batch node
+   carries author, time, source label and count; expanded, its
+   scenarios sit indented to the right of the spine under the current
+   inner group-by. Kept in the same file so swapping v1 ↔ v2 is a
+   one-line edit at the callsite. */
+
+function BatchTimeline({ groups, view, env, envState, buildMode, selectedIds, onSelectionChange, onEdit, onRemove, onHideGroup, locked }) {
+  const batches = useMemo(() => {
+    const out = [];
+    let current = null;
+    groups.forEach((g) => {
+      const meta = g.batchMeta;
+      if (!meta) return;
+      if (!current || current.meta.batchId !== meta.batchId) {
+        current = { meta, innerGroups: [], rows: [] };
+        out.push(current);
+      }
+      current.innerGroups.push(g);
+      current.rows.push(...g.rows);
+    });
+    return out;
+  }, [groups]);
+
+  if (batches.length === 0) return null;
+
+  return (
+    <Box sx={{ position: "relative", pl: 3.5, pr: 0.5 }}>
+      {/* Vertical spine down the left. Tucked behind the nodes so the
+          nodes appear to sit on the line. */}
+      <Box sx={{
+        position: "absolute", left: 15, top: 12, bottom: 12, width: "2px",
+        bgcolor: "divider",
+        borderRadius: 1,
+      }} />
+      <Stack spacing={4}>
+        {batches.map((b, i) => (
+          <TimelineNode
+            key={b.meta.batchId}
+            batch={b.meta}
+            rowCount={b.rows.length}
+            innerGroups={b.innerGroups}
+            view={view}
+            env={env}
+            envState={envState}
+            buildMode={buildMode}
+            selectedIds={selectedIds}
+            onSelectionChange={onSelectionChange}
+            onEdit={onEdit}
+            onRemove={onRemove}
+            onHideGroup={onHideGroup}
+            locked={locked}
+            defaultOpen={i === 0}
+          />
+        ))}
+      </Stack>
+    </Box>
+  );
+}
+BatchTimeline.propTypes = {
+  groups: PropTypes.array, view: PropTypes.string,
+  env: PropTypes.object, envState: PropTypes.object, buildMode: PropTypes.bool,
+  selectedIds: PropTypes.array, onSelectionChange: PropTypes.func,
+  onEdit: PropTypes.func, onRemove: PropTypes.func, onHideGroup: PropTypes.func,
+  locked: PropTypes.bool,
+};
+
+function TimelineNode({ batch, rowCount, innerGroups, view, env, envState, buildMode, selectedIds, onSelectionChange, onEdit, onRemove, onHideGroup, locked, defaultOpen }) {
+  const [open, setOpen] = useState(!!defaultOpen);
+  const src = sourceOf(batch.source);
+  const initials = (batch.addedBy?.name || "System").split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
+  /* First few scenario names to show inline under the header — makes
+     it obvious there IS content in this batch, so the "Show N" button
+     doesn't have to carry the whole discovery load. */
+  const previewNames = innerGroups.flatMap((g) => g.rows).slice(0, 3).map((r) => r.name || r.title || r.id);
+  return (
+    <Box sx={{ position: "relative" }}>
+      <Box sx={{
+        position: "absolute", left: -22, top: 8,
+        width: 20, height: 20, borderRadius: "50%",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        bgcolor: "background.paper",
+        border: "2px solid",
+        borderColor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.35 : 0.25),
+      }}>
+        <Box sx={{
+          width: 8, height: 8, borderRadius: "50%",
+          bgcolor: "text.primary",
+        }} />
+      </Box>
+
+      {/* Batch header. Whole row is clickable so the affordance is
+          redundant with the explicit Show/Hide button on the right —
+          per user callout that a tiny chevron was too easy to miss. */}
+      <Stack
+        direction="row" alignItems="flex-start" spacing={1.5}
+        onClick={() => setOpen((v) => !v)}
+        sx={{
+          px: 1.5, py: 1.25, borderRadius: 1.25, cursor: "pointer",
+          "&:hover": { bgcolor: "action.hover" },
+        }}
+      >
+        <Box sx={{
+          width: 28, height: 28, borderRadius: "50%",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.14 : 0.08),
+          color: "text.primary", fontSize: 10.5, fontWeight: 700, letterSpacing: 0.4,
+          flexShrink: 0,
+        }}>
+          {initials}
+        </Box>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap">
+            <Typography sx={{ typography: "s2", fontWeight: 700, fontSize: 13.5 }}>
+              {batch.addedBy?.name || "System"}
+            </Typography>
+            <Typography sx={{ typography: "s3", color: "text.subtitle", fontSize: 12 }}>
+              added {rowCount} {rowCount === 1 ? "scenario" : "scenarios"}
+            </Typography>
+            <Typography sx={{ typography: "s3", color: "text.subtitle", fontSize: 12 }}>
+              · via {src.label.toLowerCase()}
+            </Typography>
+          </Stack>
+          <Typography sx={{ typography: "s3", color: "text.subtitle", fontSize: 11, mt: 0.25 }}>
+            {relativeTime(batch.addedAt)} · {new Date(batch.addedAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+          </Typography>
+          {/* Preview chips of the first few scenario names — hidden
+              when expanded (the full list carries the same content). */}
+          {!open && previewNames.length > 0 && (
+            <Stack direction="row" spacing={0.75} sx={{ mt: 1, flexWrap: "wrap", rowGap: 0.75 }}>
+              {previewNames.map((n) => (
+                <Box key={n} sx={{
+                  px: 1, py: 0.375, borderRadius: 0.75,
+                  border: "1px solid", borderColor: "divider",
+                  bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.03 : 0.02),
+                }}>
+                  <Typography noWrap sx={{
+                    typography: "s3", fontSize: 11, color: "text.subtitle",
+                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                    maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis",
+                  }} title={n}>
+                    {n}
+                  </Typography>
+                </Box>
+              ))}
+              {rowCount > previewNames.length && (
+                <Typography sx={{
+                  typography: "s3", fontSize: 11, color: "text.subtitle",
+                  alignSelf: "center", ml: 0.25,
+                }}>
+                  +{rowCount - previewNames.length} more
+                </Typography>
+              )}
+            </Stack>
+          )}
+        </Box>
+        {/* Explicit expand affordance — button-styled with border so it
+            reads as an action, not a static count. Whole row is still
+            clickable for a big hit area. */}
+        <Stack
+          direction="row" alignItems="center" spacing={0.75}
+          onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
+          sx={{
+            px: 1.25, py: 0.5, borderRadius: 0.875,
+            border: "1px solid", borderColor: "divider",
+            bgcolor: "background.paper",
+            cursor: "pointer", flexShrink: 0,
+            transition: "border-color 120ms, background-color 120ms",
+            "&:hover": {
+              borderColor: (t) => alpha(t.palette.text.primary, 0.4),
+              bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.06 : 0.03),
+            },
+          }}
+        >
+          <Typography sx={{
+            typography: "s2", fontWeight: 600, fontSize: 12,
+            color: "text.primary", whiteSpace: "nowrap",
+          }}>
+            {open ? `Hide ${rowCount}` : `Show ${rowCount} scenarios`}
+          </Typography>
+          <Iconify
+            icon={open ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"}
+            width={13} sx={{ color: "text.subtitle" }}
+          />
+        </Stack>
+      </Stack>
+
+      {/* Expanded batch body — sits indented under the node, still
+          right of the spine. Rendered as a lightly bordered surface
+          so it reads as "this batch's payload" without competing with
+          the batch header. */}
+      {open && (
+        <Box sx={{
+          mt: 1, ml: 0.5,
+          border: "1px solid", borderColor: "divider", borderRadius: 1.5,
+          bgcolor: "background.paper",
+          overflow: "hidden",
+        }}>
+          {view === "table" ? (
+            <ScenarioTable
+              rows={innerGroups.flatMap((g) => g.rows)}
+              groups={innerGroups}
+              env={env}
+              onEdit={onEdit}
+              onRemove={onRemove}
+              onHideGroup={onHideGroup}
+              selectedIds={selectedIds}
+              onSelectionChange={onSelectionChange}
+              locked={locked}
+            />
+          ) : (
+            <GroupedScenarioList
+              groups={innerGroups}
+              env={env}
+              envState={envState}
+              buildMode={buildMode}
+              onEdit={onEdit}
+              onRemove={onRemove}
+              onHideGroup={onHideGroup}
+              selectedIds={selectedIds}
+              onSelectionChange={onSelectionChange}
+              locked={locked}
+            />
+          )}
+        </Box>
+      )}
+    </Box>
+  );
+}
+TimelineNode.propTypes = {
+  batch: PropTypes.object, rowCount: PropTypes.number, innerGroups: PropTypes.array,
+  view: PropTypes.string, env: PropTypes.object, envState: PropTypes.object, buildMode: PropTypes.bool,
+  selectedIds: PropTypes.array, onSelectionChange: PropTypes.func,
+  onEdit: PropTypes.func, onRemove: PropTypes.func, onHideGroup: PropTypes.func,
+  locked: PropTypes.bool, defaultOpen: PropTypes.bool,
 };
 
 /**

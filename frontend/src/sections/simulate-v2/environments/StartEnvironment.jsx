@@ -1435,12 +1435,17 @@ function ContactInformation({
         </Stack>
       )}
 
-      <ToggleRow
-        checked={inboundCalls}
-        onChange={onInboundCalls}
-        title="Inbound Calls"
-        body="Allows the agent to take inbound calls."
-      />
+      {/* Inbound Calls only belongs to the Phone mode — a WebRTC
+          simulation has no phone number for anyone to dial in on. */}
+      {effectiveMode === "phone" && (
+        <ToggleRow
+          checked={inboundCalls}
+          onChange={onInboundCalls}
+          title="Inbound Calls"
+          body="Allows the agent to take inbound calls."
+        />
+      )}
+
       <ToggleRow
         checked={agentSpeaksFirst}
         onChange={onAgentSpeaksFirst}

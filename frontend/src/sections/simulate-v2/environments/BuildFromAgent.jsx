@@ -21,6 +21,7 @@ import {
 } from "../_mock/builder";
 import { ADAPTERS } from "../_mock/rlContract";
 import { generatedPool } from "../_mock/scenarios";
+import { stampProvenance as provStamp, defaultBatchId as provDefaultBatchId } from "../_mock/scenarioProvenance";
 import { parseCurl, describeFill } from "../_mock/curl";
 import { detectEndpoints, CONFIDENCE } from "../_mock/endpoints";
 import AssistantConsole from "../assistant/AssistantConsole";
@@ -286,8 +287,48 @@ export default function BuildFromAgent() {
 
   const onSend = (text) => {
     setTurns((prev) => [...prev, { id: `u-${Date.now()}`, role: "user", text }]);
+    /* Prototype: recognise "add N scenarios" here too, so the demo
+       works while the env is still in the build phase (not yet the
+       full workspace). Mirrors the intent detect in
+       EnvironmentWorkspace.sendChat. */
+    const intent = detectAddScenariosIntent(text);
+    if (intent && env?.id && envPatch) {
+      const existing = new Set((envState?.scenarios || []).map((s) => s.id));
+      const pool = generatedPool(env).filter((s) => !existing.has(s.id));
+      const fresh = pool.slice(0, intent.count);
+      if (fresh.length > 0) {
+        const at = new Date().toISOString();
+        const batchId = provDefaultBatchId("builder-chat", at);
+        const stamped = fresh.map((r) => provStamp(r, {
+          source: "builder-chat",
+          actor: { kind: "user", id: "u_vel", name: "Vel", email: "velalagan@futureagi.com" },
+          at, batchId,
+        }));
+        envPatch({ scenarios: [...(envState?.scenarios || []), ...stamped] });
+      }
+      setTurns((prev) => [...prev, {
+        id: `a-${Date.now()}`,
+        role: "assistant",
+        steps: [{ kind: "note", text: fresh.length > 0
+          ? `Added ${fresh.length} scenarios as a new batch on the Scenarios tab.`
+          : "This environment has already used every derived scenario in the pool — delete a few first, or connect a fresh source." }],
+      }]);
+      return;
+    }
     const reply = builderRun("ask", source, text);
     play(null, reply.steps, asideChips(reply.chips.length ? reply.chips : chips), null);
+  };
+
+  const detectAddScenariosIntent = (t) => {
+    const s = (t || "").toLowerCase();
+    const isAdd = /(^|\s)(add|generate|create|make|give me|write|produce)\s+/.test(s)
+      && /scenar/.test(s)
+      && !/where\s+the/.test(s);
+    if (!isAdd) return null;
+    const num = s.match(/\b(\d{1,3})\b/);
+    const wordCount = /a few|some|another|couple/.test(s) ? 5 : null;
+    const count = num ? Math.min(50, parseInt(num[1], 10)) : (wordCount || 8);
+    return { count };
   };
 
   /*
@@ -620,6 +661,7 @@ export default function BuildFromAgent() {
             scenarios={scenarios}
             evalIds={evalIds} onAddEvals={() => setAddingEvals(true)}
             onBuilderTurn={runBuilderTurn}
+            onRun={runNow}
           />
         )}
       </Box>
@@ -723,6 +765,12 @@ function Header({
   name, setName, editingName, setEditingName,
   onRun, canGo, blockedReason,
 }) {
+  /* Hide the header's Run simulation when the Scenarios toolbar has
+     transformed into the SelectionBar — its "Run N selected" is
+     the primary in that state, and keeping the header CTA visible
+     duplicates the affordance in two places. */
+  const scenarioSelection = useSyncExternalStore(subscribeScenarioSelection, getScenarioSelection, getScenarioSelection);
+  const selectionCount = scenarioSelection?.ids?.length || 0;
   /*
     The environment stage builds three things — tool handlers, a seeded world
     and coded checks — none of which are "sub-goals" as this product uses the
@@ -927,13 +975,16 @@ function Header({
         </>
       )}
 
-      {source && setupDone && (
+      {source && setupDone && selectionCount === 0 && (
         /*
           Only once the environment is actually built. Before that — connecting,
           the read-audit, the derivation still streaming — there is nothing to
           run yet, so the button is absent rather than present-but-disabled.
           The path out of setup is running the simulation; the environment gets
           filed under My environments the moment the first run lands.
+
+          Also hidden when the Scenarios SelectionBar owns the primary
+          run action ("Run N selected"). One primary at a time.
         */
         <RunButton onRun={onRun} canGo={canGo} blockedReason={blockedReason} />
       )}
@@ -941,29 +992,22 @@ function Header({
   );
 }
 
-/* Header's Run button — subscribes to the scenario selection bus via
-   useSyncExternalStore so its label + click payload reflect whatever
-   the Scenarios tab has currently checked. Kept as a small sibling
-   component so the effect only re-runs the button when the selection
-   changes, not the whole Header. */
+/* Header's Run button — kept plain "Run simulation" (run-all) per
+   PRD §6.1.2: "hand-curation and chat-curation must not share a
+   control". Selection-scoped actions live in the SelectionBar; the
+   env header stays context-free. */
 function RunButton({ onRun, canGo, blockedReason }) {
-  const selection = useSyncExternalStore(
-    subscribeScenarioSelection,
-    getScenarioSelection,
-    getScenarioSelection,
-  );
-  const count = selection.ids.length;
   return (
     <Tooltip arrow title={canGo ? "" : (blockedReason || "")}>
       <span>
         <Button
           variant="contained" color="primary"
           disabled={!canGo}
-          onClick={() => onRun(count > 0 ? selection.ids : undefined)}
+          onClick={() => onRun()}
           startIcon={<Iconify icon="solar:play-bold" width={14} />}
           sx={{ flexShrink: 0, typography: "s2", fontWeight: 700 }}
         >
-          {count > 0 ? `Run ${count} selected` : "Run simulation"}
+          Run simulation
         </Button>
       </span>
     </Tooltip>
@@ -2046,7 +2090,7 @@ const difficultyForDepth = (d) => (d === "focused" ? "Basic" : d === "comprehens
 
 function Deriving({
   turns, running, chips, onSend, onChip, done, source, env, envState, patch, scenarios,
-  evalIds, onAddEvals, onBuilderTurn,
+  evalIds, onAddEvals, onBuilderTurn, onRun,
 }) {
   return (
     <Box
@@ -2087,6 +2131,8 @@ function Deriving({
           evalIds={evalIds}
           onAddEvals={onAddEvals}
           onBuilderTurn={onBuilderTurn}
+          onBuilderPrompt={onSend}
+          onStartRun={onRun}
         />
         </PanelBoundary>
       </SectionCard>
@@ -2152,6 +2198,7 @@ Deriving.propTypes = {
   scenarios: PropTypes.array,
   evalIds: PropTypes.array, onAddEvals: PropTypes.func,
   onBuilderTurn: PropTypes.func,
+  onRun: PropTypes.func,
 };
 
 /*

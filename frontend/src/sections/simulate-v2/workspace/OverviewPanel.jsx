@@ -249,101 +249,6 @@ export default function OverviewPanel({ buildMode, env, envState, patch, onGo, a
       )}
       <Grid container spacing={2} alignItems="flex-start" sx={{ mb: 3 }}>
         <Grid item xs={12} md={7}>
-          <SectionCard
-            title="Tools"
-            subtitle={
-              agentConnected
-                ? `${env.tools.length} actions your agent declared, with the arguments it really takes`
-                : "Read from your agent once it connects"
-            }
-          >
-            {!agentConnected ? (
-              /*
-                Compact empty state — the full EmptyState with 8-unit
-                vertical padding stretched the card past 500px, which
-                MUI Grid then propagated to the row's siblings. Slim
-                row keeps the card ~72px tall and its Grid neighbours
-                free to size to their own content.
-              */
-              <Stack direction="row" alignItems="center" spacing={1.5} sx={{ px: 2.5, py: 2 }}>
-                <Iconify icon="solar:settings-minimalistic-linear" width={16} sx={{ color: "text.subtitle", flexShrink: 0 }} />
-                <Box flex={1} minWidth={0}>
-                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>No tools yet</Typography>
-                  <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                    Tool definitions come from the agent.
-                  </Typography>
-                </Box>
-                <Button
-                  size="small" variant="outlined"
-                  onClick={() => onGo("agent")}
-                  sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider" }}
-                >
-                  Connect agent
-                </Button>
-              </Stack>
-            ) : (
-              <Stack
-                divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}
-                sx={{ maxHeight: 360, overflowY: "auto" }}
-              >
-                {env.tools.map((t) => (
-                  <Stack key={t.name} direction="row" alignItems="center" spacing={2} sx={{ px: 2.5, py: 1.125 }}>
-                    <Box flex={1} minWidth={0}>
-                      <Typography sx={{ typography: "s2", fontWeight: 600, fontFamily: "ui-monospace, Menlo, monospace" }}>
-                        {t.name}
-                      </Typography>
-                      <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{t.desc}</Typography>
-                    </Box>
-                    <Typography
-                      noWrap
-                      sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0, fontFamily: "ui-monospace, Menlo, monospace" }}
-                    >
-                      {t.args?.length ? t.args.join(", ") : "no arguments"}
-                    </Typography>
-                  </Stack>
-                ))}
-              </Stack>
-            )}
-          </SectionCard>
-        </Grid>
-
-        <Grid item xs={12} md={5}>
-          <SectionCard
-            title="Hard rules"
-            subtitle="Told to the agent, graded afterwards — hover a badge for where it was found"
-            action={
-              held.length > 0 && (
-                <Button
-                  size="small"
-                  onClick={() => onGo("build")}
-                  sx={{ typography: "s2", fontWeight: 700, color: "#DC2626" }}
-                >
-                  {held.length} held
-                </Button>
-              )
-            }
-          >
-            <Stack sx={{ p: 2.5 }} spacing={1.25}>
-              {ruleProv.length === 0 && (
-                <Stack direction="row" alignItems="center" spacing={1.25}>
-                  <Iconify icon="solar:shield-check-linear" width={15} sx={{ color: "text.subtitle", flexShrink: 0 }} />
-                  <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
-                    No rules yet — add them on the Contract tab or as the agent introduces them.
-                  </Typography>
-                </Stack>
-              )}
-              {ruleProv.map((r) => (
-                <Stack key={r.id} direction="row" spacing={1.25} alignItems="flex-start">
-                  <Iconify icon="solar:shield-check-linear" width={15} sx={{ color: "primary.main", flexShrink: 0, mt: "1px" }} />
-                  <Typography sx={{ typography: "s2", color: "text.secondary", flex: 1, minWidth: 0 }}>{r.subject}</Typography>
-                  <OriginChip origin={r.origin} file={r.file} line={r.line} showPath={false} />
-                </Stack>
-              ))}
-            </Stack>
-          </SectionCard>
-        </Grid>
-
-        <Grid item xs={12} md={7}>
           <SectionCard title="Use cases" subtitle="What it is actually for">
             <Stack sx={{ p: 2.5 }} spacing={1}>
               {contract.useCases.map((u) => (
@@ -700,7 +605,7 @@ function AgentRefreshBanner({ env, envState, patch }) {
           "&:hover": { borderColor: "text.disabled", bgcolor: "action.hover" },
         }}
       >
-        Refresh environment
+        Rebuild environment
       </Button>
     </Stack>
   );

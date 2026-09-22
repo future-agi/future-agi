@@ -7,6 +7,8 @@ import Iconify from "src/components/iconify";
 import { CustomTabs } from "src/components/tabs/tabs";
 import { paths } from "src/routes/paths";
 import { protoRunId } from "../_mock/executionAdapter";
+import { generatedPool } from "../_mock/scenarios";
+import { stampProvenance, defaultBatchId } from "../_mock/scenarioProvenance";
 import { getEnvironment } from "../_mock/environments";
 import { getSurface } from "../_mock/surfaces";
 import { BOOT_STEPS } from "../_mock/runStream";
@@ -481,8 +483,47 @@ export default function EnvironmentWorkspace() {
       return;
     }
 
+    /* Prototype: detect "add N scenarios" intent and actually append
+       a fresh batch to envState.scenarios. Without this, "add 10 more
+       scenarios" was a no-op — the reply landed in chat, nothing
+       appeared on the Scenarios tab, and the demo couldn't be run. */
+    const addIntent = !hasSelection ? detectAddScenariosIntent(trimmed) : null;
+
     setTimeout(() => {
       setChatRunning(false);
+      if (addIntent) {
+        const existing = new Set((envState.scenarios || []).map((s) => s.id));
+        const pool = generatedPool(env).filter((s) => !existing.has(s.id));
+        const fresh = pool.slice(0, addIntent.count);
+        if (fresh.length === 0) {
+          setTurns((prev) => [...prev, {
+            id: `a-${Date.now()}`,
+            role: "assistant",
+            steps: [{ kind: "note", text: "This environment has already used every derived scenario in the pool — nothing left to add. Delete a few first, or connect a fresh source." }],
+          }]);
+          return;
+        }
+        const at = new Date().toISOString();
+        const batchId = defaultBatchId("builder-chat", at);
+        const stamped = fresh.map((r) => stampProvenance(r, {
+          source: "builder-chat",
+          actor: { kind: "user", id: "u_vel", name: "Vel", email: "velalagan@futureagi.com" },
+          at, batchId,
+        }));
+        patch({ scenarios: [...(envState.scenarios || []), ...stamped] });
+        const added = stamped.length;
+        const requested = addIntent.count;
+        const shortfall = added < requested;
+        const line = shortfall
+          ? `Added ${added} scenarios (the derivation pool only had ${added} unused rows left).`
+          : `Added ${added} scenarios — they're stamped as a new batch on the Scenarios tab.`;
+        setTurns((prev) => [...prev, {
+          id: `a-${Date.now()}`,
+          role: "assistant",
+          steps: [{ kind: "note", text: line }],
+        }]);
+        return;
+      }
       const reply = hasSelection
         ? mockBulkEditReply(trimmed, sel.rows)
         : mockWorkspaceReply(trimmed);
@@ -492,6 +533,27 @@ export default function EnvironmentWorkspace() {
         steps: [{ kind: "note", text: reply }],
       }]);
     }, 900);
+  };
+
+  /* Recognise a request to add scenarios. Returns { count } or null.
+     Kept intentionally lenient — the prototype only needs to notice
+     the intent, not disambiguate every phrasing. */
+  const detectAddScenariosIntent = (text) => {
+    const t = text.toLowerCase();
+    /* Add-intent verbs. `generate` and `create` are variations users
+       reach for; `write more` is common too. Explicitly excludes
+       "add scenario where…" (that's a specific edit, not a batch). */
+    const isAdd = /(^|\s)(add|generate|create|make|give me|write|produce)\s+/i.test(t)
+      && /scenar/i.test(t)
+      && !/where\s+the/i.test(t);
+    if (!isAdd) return null;
+    /* Try to pull an explicit count. Falls back to a demo-friendly
+       default when the user says "add more scenarios" without a
+       number. */
+    const num = t.match(/\b(\d{1,3})\b/);
+    const wordCount = /a few|some|another|couple/i.test(t) ? 5 : null;
+    const count = num ? Math.min(50, parseInt(num[1], 10)) : (wordCount || 8);
+    return { count };
   };
 
   return (
@@ -658,23 +720,25 @@ export default function EnvironmentWorkspace() {
           envState={envState}
           onGo={() => go("agent")}
         />
-        <Tooltip title={canRun ? "" : runBlockedReason} arrow>
-          <span>
-            <Button
-              variant="contained"
-              color="primary"
-              size="small"
-              disabled={!canRun}
-              onClick={() => startRun(scenarioSelection.ids.length > 0 ? scenarioSelection.ids : undefined)}
-              startIcon={<Iconify icon="solar:play-bold" width={15} />}
-              sx={{ typography: "s2", fontWeight: 700 }}
-            >
-              {scenarioSelection.ids.length > 0
-                ? `Run ${scenarioSelection.ids.length} selected`
-                : "Run simulation"}
-            </Button>
-          </span>
-        </Tooltip>
+        {/* Hidden while the Scenarios SelectionBar owns the primary
+            run action ("Run N selected"). One primary at a time. */}
+        {(scenarioSelection?.ids?.length || 0) === 0 && (
+          <Tooltip title={canRun ? "" : runBlockedReason} arrow>
+            <span>
+              <Button
+                variant="contained"
+                color="primary"
+                size="small"
+                disabled={!canRun}
+                onClick={() => startRun()}
+                startIcon={<Iconify icon="solar:play-bold" width={15} />}
+                sx={{ typography: "s2", fontWeight: 700 }}
+              >
+                Run simulation
+              </Button>
+            </span>
+          </Tooltip>
+        )}
 
         {/*
           Template-seeded envs surface Fork inside the Test-subject card on
@@ -871,7 +935,7 @@ export default function EnvironmentWorkspace() {
             {panel === "agent" ? (
               <AgentsPanel env={env} envState={envState} patch={patch} onGo={go} locked={isSeededTemplate} onFork={forkEnvironment} />
             ) : panel === "scenarios" ? (
-              <ScenariosStep env={env} envState={envState} patch={patch} onGo={go} onBuilderPrompt={sendChat} locked={isSeededTemplate} onFork={forkEnvironment} />
+              <ScenariosStep env={env} envState={envState} patch={patch} onGo={go} onBuilderPrompt={sendChat} onStartRun={startRun} locked={isSeededTemplate} onFork={forkEnvironment} />
             ) : panel === "evals" ? (
               <EvalsStep env={env} envState={envState} patch={patch} onGo={go} locked={isSeededTemplate} onFork={forkEnvironment} />
             ) : panel === "runs" ? (

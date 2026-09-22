@@ -7,6 +7,8 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { subTasksFor } from "../../_mock/contract";
+import { ProvenanceGlyph } from "../ScenariosStep";
+import { sourceOf, relativeTime } from "../../_mock/scenarioProvenance";
 
 /* Neutral white-on-selected checkbox — no primary colour, keeps the
    table's monochrome treatment. */
@@ -162,34 +164,24 @@ export default function ScenarioTable({ rows, groups, env, onEdit, onRemove, onH
             <Fragment key={section.id}>
               {section.label && (
                 <TableRow>
-
-                  {/*
-                    Group header spans the whole table — sticky under
-                    the column headers. Fill is a step stronger than
-                    the column-header neutral (a subtle text-primary
-                    tint over the paper base) so the two header rows
-                    are clearly distinguishable at a glance: column
-                    headers frame the columns, group headers frame the
-                    use-case sections.
-                  */}
                   <TableCell
                     colSpan={columns.length}
                     sx={{
-                      position: "sticky", top: 0, zIndex: 1,
                       bgcolor: (t) => alpha(
                         t.palette.text.primary,
-                        t.palette.mode === "dark" ? 0.08 : 0.05,
+                        t.palette.mode === "dark" ? 0.06 : 0.04,
                       ),
-                      borderTop: "1px solid", borderBottom: "1px solid", borderColor: "divider",
-                      py: 1.125, px: 2,
+                      borderBottom: "1px solid", borderColor: "divider",
+                      py: 1, px: 2,
                     }}
                   >
                     <Stack direction="row" alignItems="center" spacing={1.25}>
-                      <Typography sx={{ typography: "s2", fontWeight: 700, color: "text.primary", flex: 1, minWidth: 0 }}>
+                      <Iconify icon="solar:alt-arrow-down-linear" width={11} sx={{ color: "text.subtitle" }} />
+                      <Typography sx={{ typography: "s2", fontWeight: 600, color: "text.primary", flex: 1, minWidth: 0, fontSize: 12.5 }}>
                         {section.label}
                       </Typography>
-                      <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
-                        {section.rows.length} {section.rows.length === 1 ? "scenario" : "scenarios"}
+                      <Typography sx={{ typography: "s3", fontWeight: 600, color: "text.subtitle", fontVariantNumeric: "tabular-nums", fontSize: 11 }}>
+                        {section.rows.length}
                       </Typography>
                       {onHideGroup && (
                         <Tooltip arrow title="Hide this group">
@@ -198,7 +190,7 @@ export default function ScenarioTable({ rows, groups, env, onEdit, onRemove, onH
                             onClick={(e) => { e.stopPropagation(); onHideGroup(section.id); }}
                             sx={{ p: 0.25, color: "text.subtitle", "&:hover": { color: "text.primary" } }}
                           >
-                            <Iconify icon="solar:eye-closed-linear" width={14} />
+                            <Iconify icon="solar:eye-closed-linear" width={12} />
                           </IconButton>
                         </Tooltip>
                       )}

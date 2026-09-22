@@ -84,6 +84,7 @@ function firstReadyTab(done) {
 
 export default function DerivedPanels({
   env, envState, patch, source, done, running, onBuilderTurn, onTabChange,
+  onBuilderPrompt, onStartRun,
 }) {
   const [tab, setTab] = useState(() => firstReadyTab(done));
   const [touched, setTouched] = useState(false);
@@ -144,9 +145,9 @@ export default function DerivedPanels({
   };
 
   const rendered = useMemo(() => renderPanel(current.id, {
-    env, envState, patch, source, onBuilderTurn, onGo: go,
+    env, envState, patch, source, onBuilderTurn, onGo: go, onBuilderPrompt, onStartRun,
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [current.id, env, envState, patch, source, onBuilderTurn]);
+  }), [current.id, env, envState, patch, source, onBuilderTurn, onBuilderPrompt, onStartRun]);
 
   if (!env) return null;
 
@@ -305,6 +306,8 @@ DerivedPanels.propTypes = {
   onAddEvals: PropTypes.func,
   onBuilderTurn: PropTypes.func,
   onTabChange: PropTypes.func,
+  onBuilderPrompt: PropTypes.func,
+  onStartRun: PropTypes.func,
 };
 
 /* Which panels are meaningful to edit before a run. */
@@ -330,11 +333,11 @@ function badgeCountFor(kind, envState) {
 }
 
 function renderPanel(id, ctx) {
-  const { env, envState, patch, source, onBuilderTurn, onGo } = ctx;
+  const { env, envState, patch, source, onBuilderTurn, onGo, onBuilderPrompt, onStartRun } = ctx;
   switch (id) {
     case "agent":     return <AgentsPanel env={env} envState={envState} patch={patch} onGo={onGo} buildMode onBuilderTurn={onBuilderTurn} />;
     case "contract":  return <RlContractPanel env={env} envState={envState} patch={patch} onGo={onGo} buildMode />;
-    case "scenarios": return <ScenariosStep env={env} envState={envState} patch={patch} onGo={onGo} buildMode />;
+    case "scenarios": return <ScenariosStep env={env} envState={envState} patch={patch} onGo={onGo} buildMode onBuilderPrompt={onBuilderPrompt} onStartRun={onStartRun} />;
     case "evals":     return <EvalsStep env={env} envState={envState} patch={patch} onGo={onGo} buildMode />;
     case "settings":  return <SettingsPanel env={env} envState={envState} patch={patch} />;
     default:          return <OverviewPanel env={env} envState={envState} patch={patch} onGo={onGo} agentConnected={!!envState?.agent} source={source} buildMode />;
