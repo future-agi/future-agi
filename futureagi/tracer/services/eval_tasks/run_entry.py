@@ -105,13 +105,12 @@ def _reseed_eval_clustering(entry: EvalLogger, project_id) -> None:
     A coalesced trigger is dropped by design; the drain it folds into keeps
     re-fetching until empty, so the rows behind that trigger are still picked up.
     """
-    # Mirror _FAILING_EVAL_Q's failure clause. A failing eval with no explanation
-    # has nothing to embed/cluster, so skip the no-op dispatch RPC.
-    is_clusterable_failure = (
-        entry.output_bool is False
-        or (entry.output_float is not None and entry.output_float < 1.0)
-    ) and entry.eval_explanation
-    if not is_clusterable_failure:
+    # Keep the trigger gate aligned with the fetch query. This also handles
+    # choice-scored templates whose score is stored in output_str/list and
+    # resolved through the template config.
+    from tracer.queries.eval_clustering import is_clusterable_eval_failure
+
+    if not is_clusterable_eval_failure(entry):
         return
     # Lazy import: the tasks module pulls the tracer task graph, so importing at
     # module top risks a cycle (mirrors eval.py).

@@ -98,6 +98,57 @@ def test_clustering_includes_eval_task_failures(
 
 
 @pytest.mark.django_db
+def test_clustering_includes_choice_score_failures(
+    project, trace, observation_span, custom_eval_config
+):
+    """A choice result is clusterable when its template maps it below 1.0."""
+    custom_eval_config.eval_template.config = {
+        "output": "choices",
+        "choice_scores": {"Good": 1.0, "Bad": 0.0},
+    }
+    custom_eval_config.eval_template.save(update_fields=["config"])
+    ev = EvalLogger.objects.create(
+        trace=trace,
+        observation_span=observation_span,
+        custom_eval_config=custom_eval_config,
+        target_type="span",
+        output_str='{"choice": "Bad"}',
+        output_str_list=["Bad"],
+        eval_explanation="the response missed the requirement",
+        eval_task_id="et-choice-score",
+    )
+
+    results = get_unclustered_eval_results(str(project.id))
+
+    assert [result.eval_logger_id for result in results] == [str(ev.id)]
+    assert results[0].score == 0.0
+
+
+@pytest.mark.django_db
+def test_clustering_excludes_mapped_passing_choice(
+    project, trace, observation_span, custom_eval_config
+):
+    """Mapped passing choices must not be swept into the failure cluster."""
+    custom_eval_config.eval_template.config = {
+        "output": "choices",
+        "choice_scores": {"Good": 1.0, "Bad": 0.0},
+    }
+    custom_eval_config.eval_template.save(update_fields=["config"])
+    EvalLogger.objects.create(
+        trace=trace,
+        observation_span=observation_span,
+        custom_eval_config=custom_eval_config,
+        target_type="span",
+        output_str='{"choice": "Good"}',
+        output_str_list=["Good"],
+        eval_explanation="the response met the requirement",
+        eval_task_id="et-choice-pass",
+    )
+
+    assert get_unclustered_eval_results(str(project.id)) == []
+
+
+@pytest.mark.django_db
 def test_clustering_excludes_non_eval_task_failures(
     project, trace, observation_span, custom_eval_config
 ):

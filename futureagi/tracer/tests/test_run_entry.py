@@ -7,6 +7,8 @@ from unittest.mock import patch
 import pytest
 from temporalio.common import WorkflowIDConflictPolicy
 
+from model_hub.models.evals_metric import EvalTemplate
+from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.observation_span import (
     EvalEntryStatus,
     EvalLogger,
@@ -220,6 +222,25 @@ class TestReseedEvalClusteringHook:
     def test_dispatches_on_float_below_one(self):
         entry = EvalLogger(
             target_type=EvalTargetType.SPAN, output_float=0.4, eval_explanation="meh"
+        )
+        with patch(_APPLY_ASYNC) as m:
+            _reseed_eval_clustering(entry, _PID)
+        m.assert_called_once()
+
+    def test_dispatches_on_template_mapped_choice_score(self):
+        template = EvalTemplate(
+            config={
+                "output": "choices",
+                "choice_scores": {"Good": 1.0, "Bad": 0.0},
+            }
+        )
+        config = CustomEvalConfig(eval_template=template)
+        entry = EvalLogger(
+            target_type=EvalTargetType.SPAN,
+            custom_eval_config=config,
+            output_str='{"choice": "Bad"}',
+            output_str_list=["Bad"],
+            eval_explanation="bad",
         )
         with patch(_APPLY_ASYNC) as m:
             _reseed_eval_clustering(entry, _PID)
