@@ -172,3 +172,92 @@ def test_raw_eval_score_attribute_keeps_its_own_witness(op):
     for stored, matches in [([], False), ([("string", "ALPHA")], True)]:
         manager, row = collected([item], {"eval_score": stored})
         assert manager._row_matches_filters(row) is matches
+
+
+PICKED_JSON = '{"a":1,"b":2}'
+
+
+@pytest.mark.parametrize(
+    "stored,expected",
+    [
+        # The stored string itself, and its case variant: what every other
+        # list surface admits for string storage (lowerUTF8 ... IN).
+        ([("string", PICKED_JSON)], True),
+        ([("string", '{"A":1,"B":2}')], True),
+        # Strings that only PARSE to the same JSON are other stored strings.
+        ([("string", '{"b":2,"a":1}')], False),
+        ([("string", '{"a": 1, "b": 2}')], False),
+        # The same JSON in json storage is not the picked string.
+        ([("json", {"a": 1, "b": 2})], False),
+        ([], False),
+    ],
+    ids=["exact", "case", "key-order", "whitespace", "json-storage", "absent"],
+)
+def test_a_picked_json_looking_string_matches_the_stored_string_raw(stored, expected):
+    """Picker provenance means "this stored value": raw, case-insensitive.
+
+    The picked value is the stored string the picker read from string
+    storage. Comparing it after JSON canonicalisation would also admit
+    strings that merely parse alike, which no deployed index can witness and
+    which no other list surface admits; comparing it raw is witnessed exactly
+    by the value bloom and keeps Users in step with the trace, span and
+    session lists.
+    """
+    item = leaf("picker", [PICKED_JSON], op="in", types=["string"])
+    manager, row = collected([item], {"picker": stored})
+    assert manager._row_matches_filters(row) is expected
+
+
+@pytest.mark.parametrize(
+    "stored,expected",
+    [
+        ([("string", '{"b":2,"a":1}')], True),
+        ([("string", '{"a": 1, "b": 2}')], True),
+        ([("string", PICKED_JSON)], True),
+        ([("string", '{"a":1,"b":3}')], False),
+    ],
+    ids=["key-order", "whitespace", "exact", "other"],
+)
+def test_typed_json_looking_text_still_matches_canonically(stored, expected):
+    """Text a user typed keeps the canonical comparison it always had."""
+    item = leaf("picker", PICKED_JSON)
+    manager, row = collected([item], {"picker": stored})
+    assert manager._row_matches_filters(row) is expected
+
+
+@pytest.mark.parametrize(
+    "picked,stored,expected",
+    [
+        ("true", [("string", "TRUE")], True),
+        ("true", [("string", " true ")], False),
+        ("true", [("boolean", True)], False),
+        ("7", [("string", "7")], True),
+        ("7", [("string", "7.0")], False),
+        ("7", [("number", 7)], False),
+    ],
+    ids=[
+        "bool-word-case",
+        "bool-word-padded",
+        "bool-storage",
+        "digits",
+        "digits-other-spelling",
+        "number-storage",
+    ],
+)
+def test_a_picked_boolean_or_number_looking_string_is_still_a_string(
+    picked, stored, expected
+):
+    item = leaf("picker", [picked], op="in", types=["string"])
+    manager, row = collected([item], {"picker": stored})
+    assert manager._row_matches_filters(row) is expected
+
+
+def test_a_picked_number_keeps_the_canonical_comparison_of_its_domain():
+    item = leaf("picker", ["7"], op="in", types=["number"])
+    for stored, expected in [
+        ([("number", 7)], True),
+        ([("number", 7.0)], True),
+        ([("string", "7")], False),
+    ]:
+        manager, row = collected([item], {"picker": stored})
+        assert manager._row_matches_filters(row) is expected

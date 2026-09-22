@@ -1661,12 +1661,7 @@ class UsersListManager:
             expected_values = expected if isinstance(expected, list) else [expected]
             matches = any(
                 selected_type in storage_types(value)
-                and self._candidate_value_matches(
-                    value,
-                    "equals",
-                    expected_value,
-                    case_insensitive=selected_type == "string",
-                )
+                and self._picked_value_matches(value, expected_value, selected_type)
                 for value in candidate_values
                 for expected_value, selected_type in zip(
                     expected_values,
@@ -1811,6 +1806,34 @@ class UsersListManager:
             operation,
             expected,
             case_insensitive=default_storage_type == "string",
+        )
+
+    @staticmethod
+    def _picked_value_matches(value: Any, expected: Any, selected_type: str) -> bool:
+        """One value the picker selected against one stored value of that storage.
+
+        A value that carries picker provenance (``attribute_value_types``) is a
+        stored value, read from the storage type it names. A picked STRING is
+        therefore the stored string itself, and it matches string storage the
+        way every other list surface matches it (the compiler's
+        ``lowerUTF8(toString(span_attr_str[key])) IN``): as text,
+        case-insensitively, never through the JSON/boolean canonicalisation
+        ``_canonical_filter_value`` applies to text a user typed. That
+        canonicalisation admits a stored string that merely parses to the same
+        JSON (another key order, other whitespace, other escapes), which no
+        deployed index can witness, so a page filtered on such a value can only
+        read every value in its window; the raw comparison is witnessed exactly
+        by the value bloom. A picked number or boolean keeps the canonical
+        comparison of its own domain, unchanged.
+        """
+        if (
+            selected_type == "string"
+            and isinstance(value, str)
+            and isinstance(expected, str)
+        ):
+            return value.lower() == expected.lower()
+        return UsersListManager._candidate_value_matches(
+            value, "equals", expected, case_insensitive=selected_type == "string"
         )
 
     @staticmethod
