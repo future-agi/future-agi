@@ -77,31 +77,67 @@ const matches = (scenario, chosen) =>
 
 // The axes a suite can be filtered by, taken from the scenarios' own coordinates. A level count of
 // one is dropped, since a filter every row matches is not one.
-const axesOf = (scenarios) => {
-  const levels = new Map();
-  scenarios.forEach((one) =>
-    Object.entries(one?.coverage || {}).forEach(([axis, level]) => {
-      const value = String(level ?? "").trim();
+// What a person filters a suite by. The eight axes are the harness's own taxonomy: `counterparty`,
+// `overlay_vector` and `overlay_intensity` mean something to the generator and nothing to someone
+// reading the suite. These are the facets the design uses instead, each one a question somebody
+// actually asks: who is calling, in what accent, in what language, over what noise, is it an
+// attack, what does it have to settle, what is it for.
+const FACETS = [
+  { key: "persona", label: "Persona", of: (one) => (one?.persona || {}).name },
+  { key: "accent", label: "Accent", of: (one) => (one?.persona || {}).accent },
+  {
+    key: "language",
+    label: "Language",
+    of: (one) => ((one?.persona || {}).languages || [])[0],
+  },
+  {
+    key: "noise",
+    label: "Background",
+    of: (one) =>
+      typeof one?.background_noise === "string"
+        ? one.background_noise
+        : one?.background_noise
+          ? "present"
+          : "quiet line",
+  },
+  {
+    key: "attack",
+    label: "Attack",
+    of: (one) => {
+      const overlay = String((one?.coverage || {}).overlay || "").trim();
+      return !overlay || overlay === "none" ? "none" : overlay;
+    },
+  },
+  { key: "task", label: "Task", of: (one) => (one?.coverage || {}).task },
+  { key: "subgoal", label: "Sub-goal", of: (one) => (one?.sub_goals || [])[0] },
+];
+
+const axesOf = (scenarios) =>
+  FACETS.map(({ key, label, of }) => {
+    const counts = new Map();
+    scenarios.forEach((one) => {
+      const value = String(of(one) ?? "").trim();
       if (!value) return;
-      if (!levels.has(axis)) levels.set(axis, new Map());
-      const counts = levels.get(axis);
       counts.set(value, (counts.get(value) || 0) + 1);
-    }),
-  );
-  return [...levels.entries()]
-    .filter(([, counts]) => counts.size > 1)
-    .map(([axis, counts]) => ({
-      axis,
-      levels: [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
-    }))
-    .sort((a, b) => a.axis.localeCompare(b.axis));
-};
+    });
+    return {
+      axis: key,
+      label,
+      levels: [...counts.entries()].sort(
+        (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]),
+      ),
+    };
+    // A facet the suite does not vary on is not worth a dropdown.
+  }).filter(({ levels }) => levels.length > 1);
 
 const onAxes = (scenario, picked) =>
-  Object.entries(picked).every(([axis, level]) => {
+  Object.entries(picked).every(([key, level]) => {
     if (!level) return true;
-    const held = String((scenario?.coverage || {})[axis] ?? "").trim();
-    return !held || held === level;
+    const facet = FACETS.find((one) => one.key === key);
+    if (!facet) return true;
+    // A blank value used to pass every filter, so filtering by an attack kept the rows that carry
+    // no attack at all. A row that does not hold the level is simply not in it.
+    return String(facet.of(scenario) ?? "").trim() === level;
   });
 
 // Searched over what is on screen plus the situation, because a person looking for "refund" is as
@@ -361,12 +397,12 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
 
       {axes.length > 0 && (
         <Stack direction="row" gap={1} flexWrap="wrap" alignItems="center">
-          {axes.map(({ axis, levels }) => (
+          {axes.map(({ axis, label, levels }) => (
             <TextField
               key={axis}
               select
               size="small"
-              label={String(axis).replace(/[_-]+/g, " ")}
+              label={label}
               value={picked[axis] || ""}
               onChange={(event) =>
                 setPicked((prev) => ({ ...prev, [axis]: event.target.value }))
