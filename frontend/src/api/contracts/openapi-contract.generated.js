@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1015,
+  endpointCount: 1026,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -33493,6 +33493,325 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/tracer/internal/error-feed-v2/grouping/attempts/{attempt_id}/": {
+      patch: {
+        operationId:
+          "tracer_internal_error-feed-v2_grouping_attempts_partial_update",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/UpdateGroupingAttempt",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/GroupingControlResponse",
+          },
+          400: {
+            $ref: "#/definitions/GroupingError",
+          },
+          404: {
+            $ref: "#/definitions/GroupingError",
+          },
+          409: {
+            $ref: "#/definitions/GroupingError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/internal/error-feed-v2/grouping/attempts/{attempt_id}/checkpoint/":
+      {
+        put: {
+          operationId:
+            "tracer_internal_error-feed-v2_grouping_attempts_checkpoint_update",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/GroupingCheckpoint",
+          },
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/GroupingControlResponse",
+            },
+            400: {
+              $ref: "#/definitions/GroupingError",
+            },
+            404: {
+              $ref: "#/definitions/GroupingError",
+            },
+            409: {
+              $ref: "#/definitions/GroupingError",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/tracer/internal/error-feed-v2/grouping/attempts/{attempt_id}/publish/": {
+      post: {
+        operationId:
+          "tracer_internal_error-feed-v2_grouping_attempts_publish_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/PublishGrouping",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/GroupingControlResponse",
+          },
+          400: {
+            $ref: "#/definitions/GroupingError",
+          },
+          404: {
+            $ref: "#/definitions/GroupingError",
+          },
+          409: {
+            $ref: "#/definitions/GroupingError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/internal/error-feed-v2/grouping/attempts/{attempt_id}/reserve/": {
+      post: {
+        operationId:
+          "tracer_internal_error-feed-v2_grouping_attempts_reserve_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/ReserveGroupingCall",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/GroupingControlResponse",
+          },
+          400: {
+            $ref: "#/definitions/GroupingError",
+          },
+          404: {
+            $ref: "#/definitions/GroupingError",
+          },
+          409: {
+            $ref: "#/definitions/GroupingError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/internal/error-feed-v2/grouping/attempts/{attempt_id}/settle/": {
+      post: {
+        operationId:
+          "tracer_internal_error-feed-v2_grouping_attempts_settle_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/SettleGroupingCall",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/GroupingControlResponse",
+          },
+          400: {
+            $ref: "#/definitions/GroupingError",
+          },
+          404: {
+            $ref: "#/definitions/GroupingError",
+          },
+          409: {
+            $ref: "#/definitions/GroupingError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/internal/error-feed-v2/grouping/claims/": {
+      post: {
+        operationId: "tracer_internal_error-feed-v2_grouping_claims_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/ClaimGroupingRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/GroupingClaimsResponse",
+          },
+          400: {
+            $ref: "#/definitions/GroupingError",
+          },
+          404: {
+            $ref: "#/definitions/GroupingError",
+          },
+          409: {
+            $ref: "#/definitions/GroupingError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/internal/error-feed-v2/grouping/feature-attempts/{feature_job_id}/":
+      {
+        patch: {
+          operationId:
+            "tracer_internal_error-feed-v2_grouping_feature-attempts_partial_update",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/RenewGroupingFeature",
+          },
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/GroupingControlResponse",
+            },
+            400: {
+              $ref: "#/definitions/GroupingError",
+            },
+            404: {
+              $ref: "#/definitions/GroupingError",
+            },
+            409: {
+              $ref: "#/definitions/GroupingError",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/tracer/internal/error-feed-v2/grouping/feature-attempts/{feature_job_id}/complete/":
+      {
+        post: {
+          operationId:
+            "tracer_internal_error-feed-v2_grouping_feature-attempts_complete_create",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/CompleteGroupingFeature",
+          },
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/GroupingControlResponse",
+            },
+            400: {
+              $ref: "#/definitions/GroupingError",
+            },
+            404: {
+              $ref: "#/definitions/GroupingError",
+            },
+            409: {
+              $ref: "#/definitions/GroupingError",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/tracer/internal/error-feed-v2/grouping/feature-claims/": {
+      post: {
+        operationId:
+          "tracer_internal_error-feed-v2_grouping_feature-claims_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/ClaimGroupingRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/GroupingClaimsResponse",
+          },
+          400: {
+            $ref: "#/definitions/GroupingError",
+          },
+          404: {
+            $ref: "#/definitions/GroupingError",
+          },
+          409: {
+            $ref: "#/definitions/GroupingError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/internal/error-feed-v2/grouping/outbox/": {
+      post: {
+        operationId: "tracer_internal_error-feed-v2_grouping_outbox_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/GroupingOutboxRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/GroupingOutboxResponse",
+          },
+          400: {
+            $ref: "#/definitions/GroupingError",
+          },
+          404: {
+            $ref: "#/definitions/GroupingError",
+          },
+          409: {
+            $ref: "#/definitions/GroupingError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/internal/error-feed-v2/grouping/outbox/{event_id}/ack/": {
+      post: {
+        operationId: "tracer_internal_error-feed-v2_grouping_outbox_ack_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/GroupingOutboxAck",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/GroupingControlResponse",
+          },
+          400: {
+            $ref: "#/definitions/GroupingError",
+          },
+          404: {
+            $ref: "#/definitions/GroupingError",
+          },
+          409: {
+            $ref: "#/definitions/GroupingError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/tracer/internal/error-feed-v2/grouping/severity/attempts/{job_id}/": {
       patch: {
         operationId:
@@ -51451,6 +51770,36 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    CompleteGroupingFeature: {
+      required: ["lease_token", "status", "features"],
+      type: "object",
+      properties: {
+        lease_token: {
+          title: "Lease token",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["ready", "failed"],
+        },
+        features: {
+          type: "array",
+          items: {
+            type: "object",
+          },
+          maxItems: 200,
+        },
+        error_code: {
+          title: "Error code",
+          type: "string",
+          default: "",
+          maxLength: 100,
+        },
+      },
+    },
     CompositeEvalAdhocExecuteRequest: {
       required: ["mapping", "child_template_ids"],
       type: "object",
@@ -59487,6 +59836,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    GroupingCheckpoint: {
+      required: ["lease_token", "expected_revision", "checkpoint"],
+      type: "object",
+      properties: {
+        lease_token: {
+          title: "Lease token",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        expected_revision: {
+          title: "Expected revision",
+          type: "integer",
+          minimum: 0,
+        },
+        checkpoint: {
+          title: "Checkpoint",
+          type: "object",
+        },
+      },
+    },
     GroupingClaimsResponse: {
       required: ["claims"],
       type: "object",
@@ -59536,6 +59906,34 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Detail",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    GroupingOutboxAck: {
+      type: "object",
+      properties: {},
+    },
+    GroupingOutboxRequest: {
+      required: ["limit"],
+      type: "object",
+      properties: {
+        limit: {
+          title: "Limit",
+          type: "integer",
+          maximum: 100,
+          minimum: 1,
+        },
+      },
+    },
+    GroupingOutboxResponse: {
+      required: ["events"],
+      type: "object",
+      properties: {
+        events: {
+          type: "array",
+          items: {
+            type: "object",
+          },
         },
       },
     },
@@ -67874,6 +68272,57 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    PublishGrouping: {
+      required: [
+        "lease_token",
+        "idempotency_key",
+        "snapshot_digest",
+        "registry_revision",
+        "commands",
+        "receipt_ids",
+      ],
+      type: "object",
+      properties: {
+        lease_token: {
+          title: "Lease token",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        idempotency_key: {
+          title: "Idempotency key",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        snapshot_digest: {
+          title: "Snapshot digest",
+          type: "string",
+          pattern: "^sha256:[a-f0-9]{64}$",
+          minLength: 1,
+        },
+        registry_revision: {
+          title: "Registry revision",
+          type: "integer",
+          minimum: 0,
+        },
+        commands: {
+          type: "array",
+          items: {
+            type: "object",
+          },
+          maxItems: 1000,
+        },
+        receipt_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          maxItems: 100,
+        },
+      },
+    },
     PublishInvestigationRequest: {
       required: ["idempotency_key", "lease_token", "result"],
       type: "object",
@@ -75378,6 +75827,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Error localizer enabled",
           type: "boolean",
           "x-nullable": true,
+        },
+      },
+    },
+    UpdateGroupingAttempt: {
+      required: ["lease_token", "action"],
+      type: "object",
+      properties: {
+        lease_token: {
+          title: "Lease token",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        action: {
+          title: "Action",
+          type: "string",
+          enum: ["renew", "cancel"],
         },
       },
     },

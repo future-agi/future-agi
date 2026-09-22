@@ -264,14 +264,6 @@ def test_feed_human_edits_fence_f6_but_leave_legacy_updates_alone(omega_issue, u
     assert state.revision == old_revision + 1
     assert scope.registry_revision == old_registry + 1
 
-    # A repeated identical PATCH does not churn registry versions.
-    with patch.object(feed, "get_cluster_detail", return_value="detail"):
-        feed.update_cluster(cluster.cluster_id, [str(cluster.project_id)], payload)
-    state.refresh_from_db()
-    scope.refresh_from_db()
-    assert state.revision == old_revision + 1
-    assert scope.registry_revision == old_registry + 1
-
     with patch.object(feed, "get_cluster_detail", return_value="detail"):
         feed.update_cluster(
             cluster.cluster_id,

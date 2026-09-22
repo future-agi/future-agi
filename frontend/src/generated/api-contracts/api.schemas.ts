@@ -23298,6 +23298,243 @@ export interface ClaimInvestigationsResponseApi {
   claims: InvestigationClaimApi[];
 }
 
+export type UpdateGroupingAttemptApiAction =
+  (typeof UpdateGroupingAttemptApiAction)[keyof typeof UpdateGroupingAttemptApiAction];
+
+export const UpdateGroupingAttemptApiAction = {
+  renew: "renew",
+  cancel: "cancel",
+} as const;
+
+export interface UpdateGroupingAttemptApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  lease_token: string;
+  action: UpdateGroupingAttemptApiAction;
+}
+
+export interface GroupingControlResponseApi {
+  /** @minLength 1 */
+  state?: string;
+  /** @minLength 1 */
+  status?: string;
+  checkpoint_revision?: number;
+  receipt_id?: string;
+}
+
+export interface GroupingErrorApi {
+  /** @minLength 1 */
+  code: string;
+  /** @minLength 1 */
+  detail: string;
+}
+
+export type GroupingCheckpointApiCheckpoint = { [key: string]: unknown };
+
+export interface GroupingCheckpointApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  lease_token: string;
+  /** @minimum 0 */
+  expected_revision: number;
+  checkpoint: GroupingCheckpointApiCheckpoint;
+}
+
+export type PublishGroupingApiCommandsItem = { [key: string]: unknown };
+
+export interface PublishGroupingApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  lease_token: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  idempotency_key: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  snapshot_digest: string;
+  /** @minimum 0 */
+  registry_revision: number;
+  /** @maxItems 1000 */
+  commands: PublishGroupingApiCommandsItem[];
+  /** @maxItems 100 */
+  receipt_ids: string[];
+}
+
+export interface GroupingRepairIntentApi {
+  /**
+   * @minLength 1
+   * @pattern ^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$
+   */
+  primary_receipt_id: string;
+  /**
+   * @minimum 0
+   * @maximum 99
+   */
+  group_index: number;
+  /**
+   * @minItems 1
+   * @maxItems 100
+   */
+  missing_own_report_ids: string[];
+}
+
+export interface ReserveGroupingCallApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  lease_token: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  request_key: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  request_digest: string;
+  max_cost_usd: string;
+  repair_intent?: GroupingRepairIntentApi;
+}
+
+export type SettleGroupingCallApiStatus =
+  (typeof SettleGroupingCallApiStatus)[keyof typeof SettleGroupingCallApiStatus];
+
+export const SettleGroupingCallApiStatus = {
+  settled: "settled",
+  unknown: "unknown",
+} as const;
+
+export type SettleGroupingCallApiResult = { [key: string]: unknown };
+
+export interface SettleGroupingCallApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  lease_token: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  request_key: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  request_digest: string;
+  status: SettleGroupingCallApiStatus;
+  result?: SettleGroupingCallApiResult;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  model_used?: string;
+  /** @minimum 0 */
+  input_tokens?: number;
+  /** @minimum 0 */
+  output_tokens?: number;
+  cost_usd?: string;
+  /** @maxLength 100 */
+  failure_code?: string;
+}
+
+export interface ClaimGroupingRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  worker_id: string;
+  /**
+   * @minimum 1
+   * @maximum 10
+   */
+  limit: number;
+}
+
+export type GroupingClaimsResponseApiClaimsItem = { [key: string]: unknown };
+
+export interface GroupingClaimsResponseApi {
+  claims: GroupingClaimsResponseApiClaimsItem[];
+}
+
+export type RenewGroupingFeatureApiAction =
+  (typeof RenewGroupingFeatureApiAction)[keyof typeof RenewGroupingFeatureApiAction];
+
+export const RenewGroupingFeatureApiAction = {
+  renew: "renew",
+} as const;
+
+export interface RenewGroupingFeatureApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  lease_token: string;
+  action: RenewGroupingFeatureApiAction;
+}
+
+export type CompleteGroupingFeatureApiStatus =
+  (typeof CompleteGroupingFeatureApiStatus)[keyof typeof CompleteGroupingFeatureApiStatus];
+
+export const CompleteGroupingFeatureApiStatus = {
+  ready: "ready",
+  failed: "failed",
+} as const;
+
+export type CompleteGroupingFeatureApiFeaturesItem = { [key: string]: unknown };
+
+export interface CompleteGroupingFeatureApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  lease_token: string;
+  status: CompleteGroupingFeatureApiStatus;
+  /** @maxItems 200 */
+  features: CompleteGroupingFeatureApiFeaturesItem[];
+  /** @maxLength 100 */
+  error_code?: string;
+}
+
+export interface GroupingOutboxRequestApi {
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit: number;
+}
+
+export type GroupingOutboxResponseApiEventsItem = { [key: string]: unknown };
+
+export interface GroupingOutboxResponseApi {
+  events: GroupingOutboxResponseApiEventsItem[];
+}
+
+export interface GroupingOutboxAckApi {
+  [key: string]: unknown;
+}
+
+export interface PublishSeverityApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  lease_token: string;
+  receipt_id: string;
+}
+
 export type TraceAvailableDeliveryApiTopic =
   (typeof TraceAvailableDeliveryApiTopic)[keyof typeof TraceAvailableDeliveryApiTopic];
 
@@ -28573,146 +28810,6 @@ export interface ActivationResponseApi {
   allowed_services: string[];
   allowed_models: string[];
   scope: ActivationResponseApiScope;
-}
-
-export type RenewGroupingFeatureApiAction =
-  (typeof RenewGroupingFeatureApiAction)[keyof typeof RenewGroupingFeatureApiAction];
-
-export const RenewGroupingFeatureApiAction = {
-  renew: "renew",
-} as const;
-
-export interface RenewGroupingFeatureApi {
-  /**
-   * @minLength 1
-   * @maxLength 255
-   */
-  lease_token: string;
-  action: RenewGroupingFeatureApiAction;
-}
-
-export interface GroupingControlResponseApi {
-  /** @minLength 1 */
-  state?: string;
-  /** @minLength 1 */
-  status?: string;
-  checkpoint_revision?: number;
-  receipt_id?: string;
-}
-
-export interface GroupingErrorApi {
-  /** @minLength 1 */
-  code: string;
-  /** @minLength 1 */
-  detail: string;
-}
-
-export interface PublishSeverityApi {
-  /**
-   * @minLength 1
-   * @maxLength 255
-   */
-  lease_token: string;
-  receipt_id: string;
-}
-
-export interface GroupingRepairIntentApi {
-  /**
-   * @minLength 1
-   * @pattern ^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$
-   */
-  primary_receipt_id: string;
-  /**
-   * @minimum 0
-   * @maximum 99
-   */
-  group_index: number;
-  /**
-   * @minItems 1
-   * @maxItems 100
-   */
-  missing_own_report_ids: string[];
-}
-
-export interface ReserveGroupingCallApi {
-  /**
-   * @minLength 1
-   * @maxLength 255
-   */
-  lease_token: string;
-  /**
-   * @minLength 1
-   * @maxLength 255
-   */
-  request_key: string;
-  /**
-   * @minLength 1
-   * @pattern ^sha256:[a-f0-9]{64}$
-   */
-  request_digest: string;
-  max_cost_usd: string;
-  repair_intent?: GroupingRepairIntentApi;
-}
-
-export type SettleGroupingCallApiStatus =
-  (typeof SettleGroupingCallApiStatus)[keyof typeof SettleGroupingCallApiStatus];
-
-export const SettleGroupingCallApiStatus = {
-  settled: "settled",
-  unknown: "unknown",
-} as const;
-
-export type SettleGroupingCallApiResult = { [key: string]: unknown };
-
-export interface SettleGroupingCallApi {
-  /**
-   * @minLength 1
-   * @maxLength 255
-   */
-  lease_token: string;
-  /**
-   * @minLength 1
-   * @maxLength 255
-   */
-  request_key: string;
-  /**
-   * @minLength 1
-   * @pattern ^sha256:[a-f0-9]{64}$
-   */
-  request_digest: string;
-  status: SettleGroupingCallApiStatus;
-  result?: SettleGroupingCallApiResult;
-  /**
-   * @minLength 1
-   * @maxLength 255
-   */
-  model_used?: string;
-  /** @minimum 0 */
-  input_tokens?: number;
-  /** @minimum 0 */
-  output_tokens?: number;
-  cost_usd?: string;
-  /** @maxLength 100 */
-  failure_code?: string;
-}
-
-export interface ClaimGroupingRequestApi {
-  /**
-   * @minLength 1
-   * @maxLength 255
-   */
-  worker_id: string;
-  /**
-   * @minimum 1
-   * @maximum 10
-   */
-  limit: number;
-}
-
-export type GroupingClaimsResponseApiClaimsItem = { [key: string]: unknown };
-
-export interface GroupingClaimsResponseApi {
-  claims: GroupingClaimsResponseApiClaimsItem[];
 }
 
 export type AccountsAwsMarketplaceLaunchSoftwareCreateBody = {

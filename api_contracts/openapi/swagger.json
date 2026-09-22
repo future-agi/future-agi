@@ -60150,6 +60150,954 @@
             },
             "parameters": []
         },
+        "/tracer/internal/error-feed-v2/grouping/attempts/{attempt_id}/": {
+            "patch": {
+                "operationId": "tracer_internal_error-feed-v2_grouping_attempts_partial_update",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/UpdateGroupingAttempt"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingControlResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "attempt_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/internal/error-feed-v2/grouping/attempts/{attempt_id}/checkpoint/": {
+            "put": {
+                "operationId": "tracer_internal_error-feed-v2_grouping_attempts_checkpoint_update",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/GroupingCheckpoint"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingControlResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "attempt_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/internal/error-feed-v2/grouping/attempts/{attempt_id}/publish/": {
+            "post": {
+                "operationId": "tracer_internal_error-feed-v2_grouping_attempts_publish_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/PublishGrouping"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingControlResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "attempt_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/internal/error-feed-v2/grouping/attempts/{attempt_id}/reserve/": {
+            "post": {
+                "operationId": "tracer_internal_error-feed-v2_grouping_attempts_reserve_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/ReserveGroupingCall"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingControlResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "attempt_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/internal/error-feed-v2/grouping/attempts/{attempt_id}/settle/": {
+            "post": {
+                "operationId": "tracer_internal_error-feed-v2_grouping_attempts_settle_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SettleGroupingCall"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingControlResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "attempt_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/internal/error-feed-v2/grouping/claims/": {
+            "post": {
+                "operationId": "tracer_internal_error-feed-v2_grouping_claims_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/ClaimGroupingRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingClaimsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/internal/error-feed-v2/grouping/feature-attempts/{feature_job_id}/": {
+            "patch": {
+                "operationId": "tracer_internal_error-feed-v2_grouping_feature-attempts_partial_update",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/RenewGroupingFeature"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingControlResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "feature_job_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/internal/error-feed-v2/grouping/feature-attempts/{feature_job_id}/complete/": {
+            "post": {
+                "operationId": "tracer_internal_error-feed-v2_grouping_feature-attempts_complete_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/CompleteGroupingFeature"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingControlResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "feature_job_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/internal/error-feed-v2/grouping/feature-claims/": {
+            "post": {
+                "operationId": "tracer_internal_error-feed-v2_grouping_feature-claims_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/ClaimGroupingRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingClaimsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/internal/error-feed-v2/grouping/outbox/": {
+            "post": {
+                "operationId": "tracer_internal_error-feed-v2_grouping_outbox_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/GroupingOutboxRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingOutboxResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/internal/error-feed-v2/grouping/outbox/{event_id}/ack/": {
+            "post": {
+                "operationId": "tracer_internal_error-feed-v2_grouping_outbox_ack_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/GroupingOutboxAck"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingControlResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "event_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/internal/error-feed-v2/grouping/severity/attempts/{job_id}/": {
+            "patch": {
+                "operationId": "tracer_internal_error-feed-v2_grouping_severity_attempts_partial_update",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/RenewGroupingFeature"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingControlResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "job_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/internal/error-feed-v2/grouping/severity/attempts/{job_id}/publish/": {
+            "post": {
+                "operationId": "tracer_internal_error-feed-v2_grouping_severity_attempts_publish_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/PublishSeverity"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingControlResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "job_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/internal/error-feed-v2/grouping/severity/attempts/{job_id}/reserve/": {
+            "post": {
+                "operationId": "tracer_internal_error-feed-v2_grouping_severity_attempts_reserve_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/ReserveGroupingCall"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingControlResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "job_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/internal/error-feed-v2/grouping/severity/attempts/{job_id}/settle/": {
+            "post": {
+                "operationId": "tracer_internal_error-feed-v2_grouping_severity_attempts_settle_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SettleGroupingCall"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingControlResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "job_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/internal/error-feed-v2/grouping/severity/claims/": {
+            "post": {
+                "operationId": "tracer_internal_error-feed-v2_grouping_severity_claims_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/ClaimGroupingRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingClaimsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GroupingError"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
         "/tracer/internal/error-feed-v2/notifications/": {
             "post": {
                 "operationId": "tracer_internal_error-feed-v2_notifications_create",
@@ -76744,304 +77692,6 @@
                 "tags": [
                     "v1"
                 ]
-            },
-            "parameters": []
-        },
-        "/tracer/internal/error-feed-v2/grouping/severity/attempts/{job_id}/": {
-            "patch": {
-                "operationId": "tracer_internal_error-feed-v2_grouping_severity_attempts_partial_update",
-                "description": "",
-                "parameters": [
-                    {
-                        "name": "data",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/RenewGroupingFeature"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/GroupingControlResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/GroupingError"
-                        }
-                    },
-                    "404": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/GroupingError"
-                        }
-                    },
-                    "409": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/GroupingError"
-                        }
-                    },
-                    "default": {
-                        "description": "Default error response",
-                        "schema": {
-                            "$ref": "#/definitions/ManagementAPIErrorResponse"
-                        }
-                    }
-                },
-                "tags": [
-                    "tracer"
-                ],
-                "x-runtime-request-validation": true,
-                "x-runtime-response-validation": true
-            },
-            "parameters": [
-                {
-                    "name": "job_id",
-                    "in": "path",
-                    "required": true,
-                    "type": "string"
-                }
-            ]
-        },
-        "/tracer/internal/error-feed-v2/grouping/severity/attempts/{job_id}/publish/": {
-            "post": {
-                "operationId": "tracer_internal_error-feed-v2_grouping_severity_attempts_publish_create",
-                "description": "",
-                "parameters": [
-                    {
-                        "name": "data",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/PublishSeverity"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/GroupingControlResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/GroupingError"
-                        }
-                    },
-                    "404": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/GroupingError"
-                        }
-                    },
-                    "409": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/GroupingError"
-                        }
-                    },
-                    "default": {
-                        "description": "Default error response",
-                        "schema": {
-                            "$ref": "#/definitions/ManagementAPIErrorResponse"
-                        }
-                    }
-                },
-                "tags": [
-                    "tracer"
-                ],
-                "x-runtime-request-validation": true,
-                "x-runtime-response-validation": true
-            },
-            "parameters": [
-                {
-                    "name": "job_id",
-                    "in": "path",
-                    "required": true,
-                    "type": "string"
-                }
-            ]
-        },
-        "/tracer/internal/error-feed-v2/grouping/severity/attempts/{job_id}/reserve/": {
-            "post": {
-                "operationId": "tracer_internal_error-feed-v2_grouping_severity_attempts_reserve_create",
-                "description": "",
-                "parameters": [
-                    {
-                        "name": "data",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/ReserveGroupingCall"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/GroupingControlResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/GroupingError"
-                        }
-                    },
-                    "404": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/GroupingError"
-                        }
-                    },
-                    "409": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/GroupingError"
-                        }
-                    },
-                    "default": {
-                        "description": "Default error response",
-                        "schema": {
-                            "$ref": "#/definitions/ManagementAPIErrorResponse"
-                        }
-                    }
-                },
-                "tags": [
-                    "tracer"
-                ],
-                "x-runtime-request-validation": true,
-                "x-runtime-response-validation": true
-            },
-            "parameters": [
-                {
-                    "name": "job_id",
-                    "in": "path",
-                    "required": true,
-                    "type": "string"
-                }
-            ]
-        },
-        "/tracer/internal/error-feed-v2/grouping/severity/attempts/{job_id}/settle/": {
-            "post": {
-                "operationId": "tracer_internal_error-feed-v2_grouping_severity_attempts_settle_create",
-                "description": "",
-                "parameters": [
-                    {
-                        "name": "data",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/SettleGroupingCall"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/GroupingControlResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/GroupingError"
-                        }
-                    },
-                    "404": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/GroupingError"
-                        }
-                    },
-                    "409": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/GroupingError"
-                        }
-                    },
-                    "default": {
-                        "description": "Default error response",
-                        "schema": {
-                            "$ref": "#/definitions/ManagementAPIErrorResponse"
-                        }
-                    }
-                },
-                "tags": [
-                    "tracer"
-                ],
-                "x-runtime-request-validation": true,
-                "x-runtime-response-validation": true
-            },
-            "parameters": [
-                {
-                    "name": "job_id",
-                    "in": "path",
-                    "required": true,
-                    "type": "string"
-                }
-            ]
-        },
-        "/tracer/internal/error-feed-v2/grouping/severity/claims/": {
-            "post": {
-                "operationId": "tracer_internal_error-feed-v2_grouping_severity_claims_create",
-                "description": "",
-                "parameters": [
-                    {
-                        "name": "data",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/ClaimGroupingRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/GroupingClaimsResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/GroupingError"
-                        }
-                    },
-                    "404": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/GroupingError"
-                        }
-                    },
-                    "409": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/GroupingError"
-                        }
-                    },
-                    "default": {
-                        "description": "Default error response",
-                        "schema": {
-                            "$ref": "#/definitions/ManagementAPIErrorResponse"
-                        }
-                    }
-                },
-                "tags": [
-                    "tracer"
-                ],
-                "x-runtime-request-validation": true,
-                "x-runtime-response-validation": true
             },
             "parameters": []
         }
@@ -134065,6 +134715,437 @@
                 }
             }
         },
+        "UpdateGroupingAttempt": {
+            "required": [
+                "lease_token",
+                "action"
+            ],
+            "type": "object",
+            "properties": {
+                "lease_token": {
+                    "title": "Lease token",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "action": {
+                    "title": "Action",
+                    "type": "string",
+                    "enum": [
+                        "renew",
+                        "cancel"
+                    ]
+                }
+            }
+        },
+        "GroupingControlResponse": {
+            "type": "object",
+            "properties": {
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "checkpoint_revision": {
+                    "title": "Checkpoint revision",
+                    "type": "integer"
+                },
+                "receipt_id": {
+                    "title": "Receipt id",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
+        "GroupingError": {
+            "required": [
+                "code",
+                "detail"
+            ],
+            "type": "object",
+            "properties": {
+                "code": {
+                    "title": "Code",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "detail": {
+                    "title": "Detail",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "GroupingCheckpoint": {
+            "required": [
+                "lease_token",
+                "expected_revision",
+                "checkpoint"
+            ],
+            "type": "object",
+            "properties": {
+                "lease_token": {
+                    "title": "Lease token",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "expected_revision": {
+                    "title": "Expected revision",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "checkpoint": {
+                    "title": "Checkpoint",
+                    "type": "object"
+                }
+            }
+        },
+        "PublishGrouping": {
+            "required": [
+                "lease_token",
+                "idempotency_key",
+                "snapshot_digest",
+                "registry_revision",
+                "commands",
+                "receipt_ids"
+            ],
+            "type": "object",
+            "properties": {
+                "lease_token": {
+                    "title": "Lease token",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "idempotency_key": {
+                    "title": "Idempotency key",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "snapshot_digest": {
+                    "title": "Snapshot digest",
+                    "type": "string",
+                    "pattern": "^sha256:[a-f0-9]{64}$",
+                    "minLength": 1
+                },
+                "registry_revision": {
+                    "title": "Registry revision",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "commands": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    },
+                    "maxItems": 1000
+                },
+                "receipt_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "maxItems": 100
+                }
+            }
+        },
+        "GroupingRepairIntent": {
+            "required": [
+                "primary_receipt_id",
+                "group_index",
+                "missing_own_report_ids"
+            ],
+            "type": "object",
+            "properties": {
+                "primary_receipt_id": {
+                    "title": "Primary receipt id",
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$",
+                    "minLength": 1
+                },
+                "group_index": {
+                    "title": "Group index",
+                    "type": "integer",
+                    "maximum": 99,
+                    "minimum": 0
+                },
+                "missing_own_report_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$",
+                        "minLength": 1
+                    },
+                    "maxItems": 100,
+                    "minItems": 1
+                }
+            },
+            "x-nullable": true
+        },
+        "ReserveGroupingCall": {
+            "required": [
+                "lease_token",
+                "request_key",
+                "request_digest",
+                "max_cost_usd"
+            ],
+            "type": "object",
+            "properties": {
+                "lease_token": {
+                    "title": "Lease token",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "request_key": {
+                    "title": "Request key",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "request_digest": {
+                    "title": "Request digest",
+                    "type": "string",
+                    "pattern": "^sha256:[a-f0-9]{64}$",
+                    "minLength": 1
+                },
+                "max_cost_usd": {
+                    "title": "Max cost usd",
+                    "type": "string",
+                    "format": "decimal"
+                },
+                "repair_intent": {
+                    "$ref": "#/definitions/GroupingRepairIntent"
+                }
+            }
+        },
+        "SettleGroupingCall": {
+            "required": [
+                "lease_token",
+                "request_key",
+                "request_digest",
+                "status"
+            ],
+            "type": "object",
+            "properties": {
+                "lease_token": {
+                    "title": "Lease token",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "request_key": {
+                    "title": "Request key",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "request_digest": {
+                    "title": "Request digest",
+                    "type": "string",
+                    "pattern": "^sha256:[a-f0-9]{64}$",
+                    "minLength": 1
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "settled",
+                        "unknown"
+                    ]
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "model_used": {
+                    "title": "Model used",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "input_tokens": {
+                    "title": "Input tokens",
+                    "type": "integer",
+                    "minimum": 0,
+                    "x-nullable": true
+                },
+                "output_tokens": {
+                    "title": "Output tokens",
+                    "type": "integer",
+                    "minimum": 0,
+                    "x-nullable": true
+                },
+                "cost_usd": {
+                    "title": "Cost usd",
+                    "type": "string",
+                    "format": "decimal",
+                    "x-nullable": true
+                },
+                "failure_code": {
+                    "title": "Failure code",
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 100
+                }
+            }
+        },
+        "ClaimGroupingRequest": {
+            "required": [
+                "worker_id",
+                "limit"
+            ],
+            "type": "object",
+            "properties": {
+                "worker_id": {
+                    "title": "Worker id",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "limit": {
+                    "title": "Limit",
+                    "type": "integer",
+                    "maximum": 10,
+                    "minimum": 1
+                }
+            }
+        },
+        "GroupingClaimsResponse": {
+            "required": [
+                "claims"
+            ],
+            "type": "object",
+            "properties": {
+                "claims": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                }
+            }
+        },
+        "RenewGroupingFeature": {
+            "required": [
+                "lease_token",
+                "action"
+            ],
+            "type": "object",
+            "properties": {
+                "lease_token": {
+                    "title": "Lease token",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "action": {
+                    "title": "Action",
+                    "type": "string",
+                    "enum": [
+                        "renew"
+                    ]
+                }
+            }
+        },
+        "CompleteGroupingFeature": {
+            "required": [
+                "lease_token",
+                "status",
+                "features"
+            ],
+            "type": "object",
+            "properties": {
+                "lease_token": {
+                    "title": "Lease token",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "ready",
+                        "failed"
+                    ]
+                },
+                "features": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    },
+                    "maxItems": 200
+                },
+                "error_code": {
+                    "title": "Error code",
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 100
+                }
+            }
+        },
+        "GroupingOutboxRequest": {
+            "required": [
+                "limit"
+            ],
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "title": "Limit",
+                    "type": "integer",
+                    "maximum": 100,
+                    "minimum": 1
+                }
+            }
+        },
+        "GroupingOutboxResponse": {
+            "required": [
+                "events"
+            ],
+            "type": "object",
+            "properties": {
+                "events": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                }
+            }
+        },
+        "GroupingOutboxAck": {
+            "type": "object",
+            "properties": {}
+        },
+        "PublishSeverity": {
+            "required": [
+                "lease_token",
+                "receipt_id"
+            ],
+            "type": "object",
+            "properties": {
+                "lease_token": {
+                    "title": "Lease token",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "receipt_id": {
+                    "title": "Receipt id",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
         "TraceAvailableItem": {
             "required": [
                 "trace_id",
@@ -146845,269 +147926,6 @@
                         "oss",
                         "enterprise"
                     ]
-                }
-            }
-        },
-        "RenewGroupingFeature": {
-            "required": [
-                "lease_token",
-                "action"
-            ],
-            "type": "object",
-            "properties": {
-                "lease_token": {
-                    "title": "Lease token",
-                    "type": "string",
-                    "maxLength": 255,
-                    "minLength": 1
-                },
-                "action": {
-                    "title": "Action",
-                    "type": "string",
-                    "enum": [
-                        "renew"
-                    ]
-                }
-            }
-        },
-        "GroupingControlResponse": {
-            "type": "object",
-            "properties": {
-                "state": {
-                    "title": "State",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "status": {
-                    "title": "Status",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "checkpoint_revision": {
-                    "title": "Checkpoint revision",
-                    "type": "integer"
-                },
-                "receipt_id": {
-                    "title": "Receipt id",
-                    "type": "string",
-                    "format": "uuid"
-                }
-            }
-        },
-        "GroupingError": {
-            "required": [
-                "code",
-                "detail"
-            ],
-            "type": "object",
-            "properties": {
-                "code": {
-                    "title": "Code",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "detail": {
-                    "title": "Detail",
-                    "type": "string",
-                    "minLength": 1
-                }
-            }
-        },
-        "PublishSeverity": {
-            "required": [
-                "lease_token",
-                "receipt_id"
-            ],
-            "type": "object",
-            "properties": {
-                "lease_token": {
-                    "title": "Lease token",
-                    "type": "string",
-                    "maxLength": 255,
-                    "minLength": 1
-                },
-                "receipt_id": {
-                    "title": "Receipt id",
-                    "type": "string",
-                    "format": "uuid"
-                }
-            }
-        },
-        "GroupingRepairIntent": {
-            "required": [
-                "primary_receipt_id",
-                "group_index",
-                "missing_own_report_ids"
-            ],
-            "type": "object",
-            "properties": {
-                "primary_receipt_id": {
-                    "title": "Primary receipt id",
-                    "type": "string",
-                    "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$",
-                    "minLength": 1
-                },
-                "group_index": {
-                    "title": "Group index",
-                    "type": "integer",
-                    "maximum": 99,
-                    "minimum": 0
-                },
-                "missing_own_report_ids": {
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$",
-                        "minLength": 1
-                    },
-                    "maxItems": 100,
-                    "minItems": 1
-                }
-            },
-            "x-nullable": true
-        },
-        "ReserveGroupingCall": {
-            "required": [
-                "lease_token",
-                "request_key",
-                "request_digest",
-                "max_cost_usd"
-            ],
-            "type": "object",
-            "properties": {
-                "lease_token": {
-                    "title": "Lease token",
-                    "type": "string",
-                    "maxLength": 255,
-                    "minLength": 1
-                },
-                "request_key": {
-                    "title": "Request key",
-                    "type": "string",
-                    "maxLength": 255,
-                    "minLength": 1
-                },
-                "request_digest": {
-                    "title": "Request digest",
-                    "type": "string",
-                    "pattern": "^sha256:[a-f0-9]{64}$",
-                    "minLength": 1
-                },
-                "max_cost_usd": {
-                    "title": "Max cost usd",
-                    "type": "string",
-                    "format": "decimal"
-                },
-                "repair_intent": {
-                    "$ref": "#/definitions/GroupingRepairIntent"
-                }
-            }
-        },
-        "SettleGroupingCall": {
-            "required": [
-                "lease_token",
-                "request_key",
-                "request_digest",
-                "status"
-            ],
-            "type": "object",
-            "properties": {
-                "lease_token": {
-                    "title": "Lease token",
-                    "type": "string",
-                    "maxLength": 255,
-                    "minLength": 1
-                },
-                "request_key": {
-                    "title": "Request key",
-                    "type": "string",
-                    "maxLength": 255,
-                    "minLength": 1
-                },
-                "request_digest": {
-                    "title": "Request digest",
-                    "type": "string",
-                    "pattern": "^sha256:[a-f0-9]{64}$",
-                    "minLength": 1
-                },
-                "status": {
-                    "title": "Status",
-                    "type": "string",
-                    "enum": [
-                        "settled",
-                        "unknown"
-                    ]
-                },
-                "result": {
-                    "title": "Result",
-                    "type": "object",
-                    "x-nullable": true
-                },
-                "model_used": {
-                    "title": "Model used",
-                    "type": "string",
-                    "maxLength": 255,
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "input_tokens": {
-                    "title": "Input tokens",
-                    "type": "integer",
-                    "minimum": 0,
-                    "x-nullable": true
-                },
-                "output_tokens": {
-                    "title": "Output tokens",
-                    "type": "integer",
-                    "minimum": 0,
-                    "x-nullable": true
-                },
-                "cost_usd": {
-                    "title": "Cost usd",
-                    "type": "string",
-                    "format": "decimal",
-                    "x-nullable": true
-                },
-                "failure_code": {
-                    "title": "Failure code",
-                    "type": "string",
-                    "default": "",
-                    "maxLength": 100
-                }
-            }
-        },
-        "ClaimGroupingRequest": {
-            "required": [
-                "worker_id",
-                "limit"
-            ],
-            "type": "object",
-            "properties": {
-                "worker_id": {
-                    "title": "Worker id",
-                    "type": "string",
-                    "maxLength": 255,
-                    "minLength": 1
-                },
-                "limit": {
-                    "title": "Limit",
-                    "type": "integer",
-                    "maximum": 10,
-                    "minimum": 1
-                }
-            }
-        },
-        "GroupingClaimsResponse": {
-            "required": [
-                "claims"
-            ],
-            "type": "object",
-            "properties": {
-                "claims": {
-                    "type": "array",
-                    "items": {
-                        "type": "object"
-                    }
                 }
             }
         }
