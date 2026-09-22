@@ -504,7 +504,12 @@ def _record_target_agent_facts(
     if named and agent_definition.agent_name == "alk-sdk-agent":
         agent_definition.agent_name = named[:255]
         changed.append("agent_name")
-    direction = str(authored.get("call_direction") or "").strip().lower()
+    declared = (
+        str((job.payload.get("agent") or {}).get("call_direction") or "")
+        .strip()
+        .lower()
+    )
+    direction = declared or str(authored.get("call_direction") or "").strip().lower()
     if direction in {"inbound", "outbound"}:
         inbound = direction == "inbound"
         if agent_definition.inbound != inbound:
