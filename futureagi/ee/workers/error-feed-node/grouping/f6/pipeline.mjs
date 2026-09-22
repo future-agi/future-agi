@@ -48,7 +48,11 @@ export function packInvestigation(selection, candidates, byId, constraints, poli
     // Remove complete examples, never clip evidence or silently omit part of a source.
     // Trim candidate issue count before dropping representatives or verified comparisons.
     if (issues.length > 1) { issues.pop(); selected.missing.push('candidate_issue_omitted_by_context_budget'); }
-    else if (selected.selected.length > 3) { const id = selected.selected.pop(); selected.unreviewed.push(id); delete selected.roles[id]; }
+    // A singleton finding is a valid Emerging issue. Keep shrinking the cohort
+    // until one complete finding fits instead of repeatedly pausing the whole
+    // durable work item when three lossless reports exceed the context budget.
+    // Removed findings remain unreviewed and are selected by a later seed.
+    else if (selected.selected.length > 1) { const id = selected.selected.pop(); selected.unreviewed.push(id); delete selected.roles[id]; }
     else if (selected.controls.length > 1) selected.controls.pop();
     else throw new Paused('Minimum complete evidence selection exceeds context budget; no evidence was truncated');
   }
