@@ -108,19 +108,11 @@ def _authoring_ttl_seconds(provider_name: str | None = None) -> int:
 
 
 def _execution_ttl_seconds(runtime: Mapping[str, Any]) -> int:
-    authoring_seconds = max(
-        0,
-        int(
-            getattr(
-                settings,
-                "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS",
-                3600,
-            )
-        ),
-    )
+    # One sandbox authors and then runs, so its lifetime is the granted window plus launch
+    # overhead. Reserving the authoring budget on top asked for a box no provider would sell.
     return max(
         int(getattr(settings, "ALK_HOSTED_SANDBOX_TTL_SECONDS", 7200)),
-        authoring_seconds + int(runtime["max_duration_seconds"]) + 120,
+        int(runtime["max_duration_seconds"]) + 120,
     )
 
 
@@ -2343,6 +2335,7 @@ class HostedHarnessGateway:
         bundle = _json("/work/bundle/manifest.json")
         # Read on every poll, so a sandbox deleted later still leaves its last known total.
         spend = _json("/work/authoring/cost.json")
+        coverage = _json("/work/authoring/coverage.json")
         job = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id)
         _record_harness_spend(job, spend, attempt.attempt_number)
 
@@ -2388,6 +2381,7 @@ class HostedHarnessGateway:
             environment,
             scenarios,
             bundle if isinstance(bundle, dict) else authored_bundle,
+            coverage=coverage,
         )
         stage = "understanding_agent"
         if isinstance(contract, dict):
@@ -3449,6 +3443,7 @@ def authoring_stage_outputs(
     certification: Any = None,
     repair_history: Any = None,
     action_certification: Any = None,
+    coverage: Any = None,
 ) -> list[dict[str, Any]]:
     """Build the complete, secret-safe snapshots shown by the hosted-run UI."""
     outputs: list[dict[str, Any]] = []
@@ -3487,6 +3482,19 @@ def authoring_stage_outputs(
                 "title": "Generated scenarios",
                 "summary": f"{len(scenarios)} grounded scenarios",
                 "data": _secret_safe(scenarios),
+            }
+        )
+    if isinstance(coverage, dict):
+        placed = coverage.get("placed")
+        total = coverage.get("scenarios")
+        axes = coverage.get("axes") or {}
+        outputs.append(
+            {
+                "id": "00000000-0000-0000-0000-000000000005",
+                "kind": "coverage",
+                "title": "Coverage",
+                "summary": f"{placed} of {total} placed across {len(axes)} axes",
+                "data": _secret_safe(coverage),
             }
         )
     if isinstance(certification, dict):
@@ -3532,6 +3540,7 @@ def authoring_stage_outputs_from_archive(
         "certification.json",
         "repair-history.json",
         "action-certification.json",
+        "coverage.json",
     }
     with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
         for member in archive.getmembers():
@@ -3576,7 +3585,131 @@ def authoring_stage_outputs_from_archive(
         certification=documents.get("certification.json"),
         repair_history=documents.get("repair-history.json"),
         action_certification=documents.get("action-certification.json"),
+        coverage=documents.get("coverage.json"),
     )
+
+
+def push_scenarios_into_live_sandbox(job: HostedHarnessJob, suite: list[dict]) -> bool:
+    """Land an edited suite on the running guest as well as in the sealed archive.
+
+    A live attempt re-packs `/work/authoring` on a later poll, so an edit that only reached the
+    archive would be overwritten by the sandbox's own copy.
+    """
+    attempt = (
+        HostedHarnessAttempt.no_workspace_objects.filter(
+            job=job, attempt_number=job.current_attempt_number
+        )
+        .exclude(provider_ref__isnull=True)
+        .first()
+    )
+    if attempt is None or not attempt.provider_ref:
+        return False
+    if attempt.state in {
+        HostedHarnessAttempt.State.FAILED,
+        HostedHarnessAttempt.State.SUPERSEDED,
+        HostedHarnessAttempt.State.CLEANING_UP,
+    }:
+        return False
+    try:
+        sandbox = HostedHarnessGateway().client.get(
+            str(attempt.provider_ref), request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS
+        )
+    except Exception:  # noqa: BLE001 - no live guest is the ordinary case, not a failure
+        return False
+    keep = {str(one.get("scenario_key") or one.get("name") or "") for one in suite}
+    try:
+        listed = sandbox.process.exec(
+            "ls -1 /work/authoring/scenarios 2>/dev/null", timeout=60
+        )
+        present = {name for name in (listed.result or "").split() if name}
+        for folder in sorted(present - keep):
+            sandbox.process.exec(
+                f"rm -rf /work/authoring/scenarios/{folder}", timeout=60
+            )
+        for one in suite:
+            folder = str(one.get("scenario_key") or one.get("name") or "")
+            if not folder or folder not in present:
+                continue
+            sandbox.fs.upload_file(
+                json.dumps(one, indent=2).encode("utf-8"),
+                f"/work/authoring/scenarios/{folder}/scenario.json",
+            )
+        sandbox.fs.upload_file(
+            json.dumps(suite, indent=2).encode("utf-8"),
+            "/work/authoring/scenarios.json",
+        )
+    except Exception:  # noqa: BLE001 - the archive is still the durable record
+        logger.exception("could not deliver edited suite to the live guest job=%s", job.id)
+        return False
+    return True
+
+
+def rewrite_authoring_scenarios(job: HostedHarnessJob, suite: list[dict]) -> str | None:
+    """Write an edited suite back into the sealed archive a rerun replays.
+
+    Scenarios dropped from the suite lose their folder; the rest keep everything the guest wrote
+    and take only the edited fields, so an edit cannot quietly discard a proof.
+    """
+    metadata = (job.payload or {}).get("metadata") or {}
+    object_key = str(metadata.get("authoring_object_key") or "").strip()
+    if not object_key:
+        return None
+    client = get_storage_client()
+    response = None
+    try:
+        response = client.get_object(UPLOAD_BUCKET_NAME, object_key)
+        body = response.read()
+    except Exception:  # noqa: BLE001 - an unreadable archive leaves the stage output as the record
+        logger.exception("could not read authoring archive for amend job=%s", job.id)
+        return None
+    finally:
+        if response is not None:
+            response.close()
+            response.release_conn()
+
+    edited = {str(one.get("name") or ""): one for one in suite}
+    keys = {str(one.get("scenario_key") or one.get("name") or "") for one in suite}
+    out = io.BytesIO()
+    with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as source, tarfile.open(
+        fileobj=out, mode="w:gz"
+    ) as target:
+        for member in source.getmembers():
+            path = Path(member.name)
+            in_scenarios = "scenarios" in path.parts
+            folder = path.parts[path.parts.index("scenarios") + 1] if in_scenarios and len(
+                path.parts
+            ) > path.parts.index("scenarios") + 1 else ""
+            if folder and folder not in keys:
+                continue
+            handle = source.extractfile(member) if member.isfile() else None
+            if handle is None:
+                target.addfile(member)
+                continue
+            payload = handle.read()
+            if path.name == "scenario.json" and folder:
+                document = json.loads(payload.decode("utf-8"))
+                replacement = edited.get(str(document.get("name") or "")) or edited.get(folder)
+                if replacement is not None:
+                    document.update(
+                        {
+                            key: value
+                            for key, value in replacement.items()
+                            if key not in {"scenario_key", "scenario_id"}
+                        }
+                    )
+                    payload = json.dumps(document, indent=2).encode("utf-8")
+            elif path.name == "scenarios.json":
+                payload = json.dumps(suite, indent=2).encode("utf-8")
+            member.size = len(payload)
+            target.addfile(member, io.BytesIO(payload))
+    client.put_object(
+        bucket_name=UPLOAD_BUCKET_NAME,
+        object_name=object_key,
+        data=io.BytesIO(out.getvalue()),
+        length=len(out.getvalue()),
+        content_type="application/gzip",
+    )
+    return object_key
 
 
 def store_authoring_archive(

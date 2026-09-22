@@ -434,17 +434,10 @@ class HarnessJobCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {"runtime": "configured sandbox lifetime exceeds the provider limit"}
             )
-        authoring_seconds = max(
-            0,
-            int(
-                getattr(
-                    settings,
-                    "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS",
-                    3600,
-                )
-            ),
-        )
-        execution_limit = policy.max_ttl_seconds - authoring_seconds - 120
+        # The window is what the sandbox can actually run for. Reserving the authoring budget
+        # here charged every run for time it might not spend, and the capability grant is minted
+        # against this number, so a guest that authored quickly was still killed early.
+        execution_limit = policy.max_ttl_seconds - 120
         if execution_limit < 60:
             raise serializers.ValidationError(
                 {"runtime": "sandbox lifetime leaves no supported execution window"}
@@ -695,6 +688,24 @@ class HarnessJobEventSerializer(serializers.Serializer):
     type = serializers.CharField()
     payload = serializers.JSONField(allow_null=True)
     emitted_at = serializers.CharField()
+
+
+class HarnessScenarioChangeSerializer(serializers.Serializer):
+    op = serializers.ChoiceField(choices=["drop", "set_field", "set_persona"])
+    # A name, a scenario key, a number, a range ("12-30") or a comma list; `scenarios` carries a
+    # selection sent from the table.
+    scenario = serializers.CharField(required=False, allow_blank=True)
+    scenarios = serializers.ListField(
+        child=serializers.CharField(), required=False, allow_empty=False
+    )
+    field = serializers.CharField(required=False, allow_blank=True)
+    value = serializers.JSONField(required=False, allow_null=True)
+    persona = serializers.DictField(required=False)
+
+
+class HarnessScenarioAmendSerializer(serializers.Serializer):
+    changes = HarnessScenarioChangeSerializer(many=True, allow_empty=False)
+    rework = serializers.BooleanField(required=False, default=True)
 
 
 class HarnessStageOutputSerializer(serializers.Serializer):

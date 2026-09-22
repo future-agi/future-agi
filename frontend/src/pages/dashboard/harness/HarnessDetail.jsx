@@ -319,17 +319,26 @@ export default function HarnessDetail() {
   // ALK reports one artifact per stage group. "Runs" is the catch-all so a new kind never
   // disappears: anything that is not a named tab lands there alongside the activity feed.
   const stageOutputs = current?.stage_outputs || [];
-  const selectedOutputs = stageOutputs.filter((output) =>
-    detailTab === "runs"
-      ? !["contract", "environment", "scenarios"].includes(output.kind)
-      : output.kind === detailTab,
+  // The coverage grid cross-tabulates the suite, which arrives as its own stage output.
+  const suiteScenarios =
+    stageOutputs.find((output) => output.kind === "scenarios")?.data || [];
+  // Coverage describes the suite, so it belongs beside it rather than in the catch-all.
+  const tabOf = (kind) =>
+    kind === "coverage"
+      ? "scenarios"
+      : ["contract", "environment", "scenarios"].includes(kind)
+        ? kind
+        : "runs";
+  const selectedOutputs = stageOutputs.filter(
+    (output) => tabOf(output.kind) === detailTab,
   );
-  const outputCounts = stageOutputs.reduce((counts, output) => {
-    const key = ["contract", "environment", "scenarios"].includes(output.kind)
-      ? output.kind
-      : "runs";
-    return { ...counts, [key]: (counts[key] || 0) + 1 };
-  }, {});
+  const outputCounts = stageOutputs.reduce(
+    (counts, output) => ({
+      ...counts,
+      [tabOf(output.kind)]: (counts[tabOf(output.kind)] || 0) + 1,
+    }),
+    {},
+  );
 
   const tabStates = DETAIL_TABS.reduce(
     (states, tab) => ({
@@ -933,7 +942,11 @@ export default function HarnessDetail() {
                 <Stack spacing={1.5}>
                   {selectedOutputs.length ? (
                     selectedOutputs.map((output) => (
-                      <StageOutput key={output.id} output={output} />
+                      <StageOutput
+                        key={output.id}
+                        output={output}
+                        scenarios={suiteScenarios}
+                      />
                     ))
                   ) : (
                     <Typography variant="body2" color="text.secondary">
@@ -946,7 +959,11 @@ export default function HarnessDetail() {
               ) : (
                 <Stack spacing={1.5}>
                   {selectedOutputs.map((output) => (
-                    <StageOutput key={output.id} output={output} />
+                    <StageOutput
+                      key={output.id}
+                      output={output}
+                      scenarios={suiteScenarios}
+                    />
                   ))}
                   {current.credentials && (
                     <Paper

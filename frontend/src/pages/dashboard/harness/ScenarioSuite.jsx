@@ -305,7 +305,13 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
     );
   }
 
-  let counter = 0;
+  // The number belongs to the scenario, not to the row it happens to be drawn on. Numbering the
+  // rendered rows renumbered the suite from 1 every time a filter narrowed it, so the same
+  // scenario answered to a different number depending on what else was on screen.
+  const numbers = useMemo(
+    () => new Map(scenarios.map((one, index) => [one.name, index + 1])),
+    [scenarios],
+  );
 
   return (
     <Stack spacing={1.5} sx={{ minWidth: 0 }}>
@@ -575,7 +581,6 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
                   </TableRow>
 
                   {rows.map((scenario) => {
-                    counter += 1;
                     const persona = scenario.persona || {};
                     const who = [persona.gender, persona.age_group].filter(Boolean).join(" \u00b7 ");
                     return (
@@ -596,7 +601,7 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
                             verticalAlign: "top",
                           }}
                         >
-                          {counter}
+                          {numbers.get(scenario.name)}
                         </TableCell>
                         <TableCell sx={{ maxWidth: 280, verticalAlign: "top" }}>
                           <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>
