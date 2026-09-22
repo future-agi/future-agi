@@ -55,4 +55,6 @@ GROUPING_POLICY_VERSION: Final[str] = "f6-minilm/v1"
 # Post-grouping impact assessment. Independent of F6 membership decisions.
 # Bump for rubric, evidence selection, or model changes; old receipts retain
 # their original meaning. No count-based severity floor in this policy.
-SEVERITY_POLICY_VERSION: Final[str] = "feed-severity/v1"
+# v2 adds an independently evidenced fix-layer recommendation to the same call.
+# v1 receipts remain severity-only; never reinterpret them as layer assessments.
+SEVERITY_POLICY_VERSION: Final[str] = "feed-severity/v2"

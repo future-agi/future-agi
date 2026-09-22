@@ -1,4 +1,4 @@
-"""Independent, revision-fenced Feed severity work. Never changes memberships."""
+"""Revision-fenced Feed severity and fix-layer assessment; never changes memberships."""
 
 import json
 import secrets
@@ -37,6 +37,7 @@ MAX_MEMBERS = 5
 MAX_INPUT_BYTES = 200_000
 LEASE_SECONDS = 180
 MAX_ATTEMPTS = 3
+FIX_LAYERS = {"prompt", "tools", "orchestration", "guardrails", "data", "memory"}
 
 
 def account_call(
@@ -55,25 +56,29 @@ def account_call(
 def enqueue_severity(
     *, issue: TraceGroupingIssueState, attempt: TraceGroupingAttempt
 ) -> None:
-    """Called under the publication scope lock; coalesce unclaimed revisions."""
+    """Called under the scope lock; fence superseded revisions and policies."""
     cluster = issue.cluster
     if issue.retired or issue.dirty or cluster.severity_source == "manual":
         return
     now = timezone.now()
     TraceGroupingSeverityJob.no_workspace_objects.filter(
-        issue=issue, state="pending"
-    ).exclude(issue_revision=issue.revision).update(state="superseded", updated_at=now)
-    TraceGroupingSeverityJob.no_workspace_objects.get_or_create(
+        issue=issue, state__in=["pending", "running"]
+    ).exclude(
+        issue_revision=issue.revision, policy_version=SEVERITY_POLICY_VERSION
+    ).update(state="superseded", updated_at=now)
+    job, _ = TraceGroupingSeverityJob.no_workspace_objects.get_or_create(
         issue=issue,
         issue_revision=issue.revision,
         policy_version=SEVERITY_POLICY_VERSION,
         defaults={"source_attempt": attempt, "not_before": now + timedelta(seconds=10)},
     )
-    cluster.severity_assessment_status = "pending"
+    cluster.severity_assessment_status = job.state
     cluster.save(update_fields=["severity_assessment_status", "updated_at"])
 
 
-def _snapshot(issue: TraceGroupingIssueState) -> dict:
+def _snapshot(
+    issue: TraceGroupingIssueState, *, policy_version: str = SEVERITY_POLICY_VERSION
+) -> dict:
     """Prototype-first deterministic sample, plus oldest members; no text truncation.
 
     Counts and selection scope are disclosed. Whole linked evidence packets are
@@ -135,7 +140,7 @@ def _snapshot(issue: TraceGroupingIssueState) -> dict:
             }
         )
     value = {
-        "policy_version": SEVERITY_POLICY_VERSION,
+        "policy_version": policy_version,
         "issue_id": str(issue.cluster_id),
         "issue_revision": issue.revision,
         "mechanism": issue.mechanism,
@@ -210,7 +215,7 @@ def claim_severity(*, worker_id: str, limit: int) -> dict:
                 ).update(severity_assessment_status="failed")
             else:
                 try:
-                    snapshot = _snapshot(job.issue)
+                    snapshot = _snapshot(job.issue, policy_version=job.policy_version)
                 except GroupingSnapshotError:
                     job.state, job.failure_code = (
                         "failed",
@@ -297,11 +302,13 @@ def renew_severity(*, job_id: uuid.UUID, lease_token: str, action: str) -> dict:
 
 
 def _validate_result(result: object, snapshot: dict) -> dict:
-    if not isinstance(result, dict) or set(result) != {
-        "severity",
-        "reason",
-        "citations",
-    }:
+    version = snapshot["policy_version"]
+    if version not in {"feed-severity/v1", SEVERITY_POLICY_VERSION}:
+        raise GroupingControlError("unsupported assessment policy")
+    expected = {"severity", "reason", "citations"}
+    if version == SEVERITY_POLICY_VERSION:
+        expected.add("fix_layer")
+    if not isinstance(result, dict) or set(result) != expected:
         raise GroupingControlError("invalid severity result")
     if not isinstance(result["severity"], str) or result["severity"] not in {
         "critical",
@@ -313,7 +320,33 @@ def _validate_result(result: object, snapshot: dict) -> dict:
         raise GroupingControlError("invalid severity grade")
     if not isinstance(result["reason"], str) or not 1 <= len(result["reason"]) <= 2000:
         raise GroupingControlError("invalid severity reason")
-    citations = result["citations"]
+    _validate_citations(result["citations"], snapshot)
+    if result["severity"] != "insufficient_evidence" and not result["citations"]:
+        raise GroupingControlError("severity requires evidence")
+    if version == SEVERITY_POLICY_VERSION:
+        layer = result["fix_layer"]
+        if not isinstance(layer, dict) or set(layer) != {
+            "layer",
+            "reason",
+            "citations",
+        }:
+            raise GroupingControlError("invalid fix-layer assessment")
+        if not isinstance(layer["layer"], str) or layer["layer"] not in (
+            FIX_LAYERS | {"insufficient_evidence"}
+        ):
+            raise GroupingControlError("invalid fix layer")
+        if (
+            not isinstance(layer["reason"], str)
+            or not 1 <= len(layer["reason"]) <= 2000
+        ):
+            raise GroupingControlError("invalid fix-layer reason")
+        _validate_citations(layer["citations"], snapshot)
+        if layer["layer"] != "insufficient_evidence" and not layer["citations"]:
+            raise GroupingControlError("fix layer requires evidence")
+    return result
+
+
+def _validate_citations(citations: object, snapshot: dict) -> None:
     if not isinstance(citations, list) or len(citations) > 30:
         raise GroupingControlError("invalid severity citations")
     allowed = {
@@ -334,9 +367,6 @@ def _validate_result(result: object, snapshot: dict) -> dict:
             != citation["digest"]
         ):
             raise GroupingConflict("severity citation is not in assessed evidence")
-    if result["severity"] != "insufficient_evidence" and not citations:
-        raise GroupingControlError("severity requires evidence")
-    return result
 
 
 def publish_severity(
@@ -357,7 +387,12 @@ def publish_severity(
             or job.lease_expires_at <= timezone.now()
         ):
             raise GroupingConflict("severity result is stale")
-        if canonical_snapshot_digest(_snapshot(job.issue)) != job.snapshot_digest:
+        if (
+            canonical_snapshot_digest(
+                _snapshot(job.issue, policy_version=job.policy_version)
+            )
+            != job.snapshot_digest
+        ):
             raise GroupingConflict("severity source evidence changed")
         call = TraceGroupingCall.no_workspace_objects.filter(
             pk=receipt_id,
@@ -381,6 +416,14 @@ def publish_severity(
         cluster.severity_assessment_status = job.state
         cluster.severity_reason = result["reason"]
         fields = ["severity_assessment_status", "severity_reason", "updated_at"]
+        if job.policy_version == SEVERITY_POLICY_VERSION and not job.issue.protected:
+            layer = result["fix_layer"]["layer"]
+            # Clear stale automatic recommendations when current evidence is
+            # inconclusive. Keep the reason/citations in the versioned job result.
+            cluster.fix_layer = (
+                None if layer == "insufficient_evidence" else layer.capitalize()
+            )
+            fields.append("fix_layer")
         if grade != "insufficient_evidence":
             cluster.priority = "urgent" if grade == "critical" else grade
             cluster.combined_impact = (

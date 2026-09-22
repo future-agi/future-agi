@@ -46,7 +46,7 @@ def assessment(observe_project, monkeypatch):
         yield issue, attempt, severity_claim
 
 
-def _receipt(attempt, claim, grade="high", citations=None):
+def _receipt(attempt, claim, grade="high", citations=None, layer="prompt"):
     evidence = claim["snapshot"]["members"][0]
     item = evidence["evidence"][0]
     result = {
@@ -62,6 +62,14 @@ def _receipt(attempt, claim, grade="high", citations=None):
             }
         ],
     }
+    if claim["policy_version"] == severity.SEVERITY_POLICY_VERSION:
+        result["fix_layer"] = {
+            "layer": layer
+            if grade != "insufficient_evidence"
+            else "insufficient_evidence",
+            "reason": "Require checking the identifier against the supplied evidence.",
+            "citations": result["citations"],
+        }
     args = {
         "attempt_id": attempt.id,
         "severity_job_id": uuid.UUID(claim["attempt_id"]),
@@ -85,7 +93,7 @@ def _receipt(attempt, claim, grade="high", citations=None):
     "grade,priority",
     [("critical", "urgent"), ("high", "high"), ("medium", "medium"), ("low", "low")],
 )
-def test_assessment_updates_only_severity_and_replays_idempotently(
+def test_assessment_updates_metadata_and_replays_idempotently(
     assessment, grade, priority
 ):
     issue, attempt, claim = assessment
@@ -102,6 +110,10 @@ def test_assessment_updates_only_severity_and_replays_idempotently(
     assert issue.cluster.priority == priority
     assert issue.cluster.status == original_status
     assert issue.cluster.severity_source == "llm"
+    assert issue.cluster.fix_layer == "Prompt"
+    severity.enqueue_severity(issue=issue, attempt=attempt)
+    issue.cluster.refresh_from_db()
+    assert issue.cluster.severity_assessment_status == "completed"
     attempt.work.scope.refresh_from_db()
     assert attempt.work.scope.reserved_usd == Decimal("0.10")
 
@@ -118,6 +130,94 @@ def test_insufficient_evidence_retains_existing_severity(assessment):
     assert issue.cluster.priority == "medium"
     assert issue.cluster.severity_source == "default"
     assert issue.cluster.severity_assessment_status == "insufficient_evidence"
+
+
+@pytest.mark.parametrize("layer", sorted(severity.FIX_LAYERS))
+def test_fix_layer_persists_and_feed_returns_supported_lowercase(assessment, layer):
+    from tracer.queries.feed import _row_from_cluster
+
+    issue, attempt, claim = assessment
+    receipt = _receipt(attempt, claim, layer=layer)
+    severity.publish_severity(
+        job_id=uuid.UUID(claim["attempt_id"]),
+        lease_token=claim["lease_token"],
+        receipt_id=receipt,
+    )
+    issue.cluster.refresh_from_db()
+    assert issue.cluster.fix_layer == layer.capitalize()
+    row = _row_from_cluster(
+        issue.cluster, trends=[], users_affected=0, sessions=0, latest_trace_id=None
+    )
+    assert row.fix_layer == layer
+
+
+def test_unknown_layer_clears_stale_automatic_layer_without_losing_severity(assessment):
+    issue, attempt, claim = assessment
+    issue.cluster.fix_layer = "Tools"
+    issue.cluster.save(update_fields=["fix_layer"])
+    receipt = _receipt(attempt, claim, layer="insufficient_evidence")
+    severity.publish_severity(
+        job_id=uuid.UUID(claim["attempt_id"]),
+        lease_token=claim["lease_token"],
+        receipt_id=receipt,
+    )
+    issue.cluster.refresh_from_db()
+    assert issue.cluster.fix_layer is None
+    assert issue.cluster.priority == "high"
+
+
+def test_protected_issue_layer_is_not_overwritten(assessment):
+    issue, attempt, claim = assessment
+    issue.protected = True
+    issue.save(update_fields=["protected"])
+    issue.cluster.fix_layer = "Tools"
+    issue.cluster.save(update_fields=["fix_layer"])
+    receipt = _receipt(attempt, claim)
+    severity.publish_severity(
+        job_id=uuid.UUID(claim["attempt_id"]),
+        lease_token=claim["lease_token"],
+        receipt_id=receipt,
+    )
+    issue.cluster.refresh_from_db()
+    assert issue.cluster.fix_layer == "Tools"
+
+
+@pytest.mark.parametrize("change", ["missing", "invalid", "no_citations", "fabricated"])
+def test_fix_layer_validation_is_independent_of_severity(assessment, change):
+    _, attempt, claim = assessment
+    receipt = _receipt(attempt, claim)
+    call = severity.TraceGroupingCall.no_workspace_objects.get(pk=receipt)
+    if change == "missing":
+        del call.result["fix_layer"]
+    elif change == "invalid":
+        call.result["fix_layer"]["layer"] = "backend"
+    elif change == "no_citations":
+        call.result["fix_layer"]["citations"] = []
+    else:
+        call.result["fix_layer"]["citations"] = [
+            {"occurrence_id": "fake", "ref": "fake", "digest": "fake"}
+        ]
+    with pytest.raises((GroupingControlError, GroupingConflict)):
+        severity._validate_result(call.result, claim["snapshot"])
+
+
+def test_legacy_job_keeps_its_snapshot_and_severity_only_contract(assessment):
+    issue, attempt, claim = assessment
+    job = TraceGroupingSeverityJob.no_workspace_objects.get(pk=claim["attempt_id"])
+    job.policy_version = "feed-severity/v1"
+    job.snapshot = severity._snapshot(issue, policy_version=job.policy_version)
+    job.snapshot_digest = severity.canonical_snapshot_digest(job.snapshot)
+    job.save()
+    legacy = {**claim, "policy_version": job.policy_version, "snapshot": job.snapshot}
+    receipt = _receipt(attempt, legacy)
+    severity.publish_severity(
+        job_id=job.id,
+        lease_token=claim["lease_token"],
+        receipt_id=receipt,
+    )
+    issue.cluster.refresh_from_db()
+    assert issue.cluster.priority == "high"
+    assert issue.cluster.fix_layer is None
 
 
 def test_manual_override_and_stale_revision_cannot_be_overwritten(assessment):
