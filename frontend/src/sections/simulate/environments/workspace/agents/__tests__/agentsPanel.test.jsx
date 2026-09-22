@@ -3,8 +3,6 @@ import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { render } from "src/utils/test-utils";
-import { MOCK_WORLD } from "src/api/simulate-environments/_fixtures/world";
-import OverviewPanel from "../../overview/OverviewPanel";
 import AgentsPanel from "../AgentsPanel";
 
 // A3's AddAgentDrawer already covers its own form (reach picker, field
@@ -70,47 +68,9 @@ const stateWith = (agent) => ({
   scenarios: [],
 });
 
-const renderOverview = (props = {}) =>
-  render(
-    <OverviewPanel
-      env={MOCK_WORLD}
-      envState={stateWith(twoVersionAgent())}
-      patch={vi.fn()}
-      onGo={vi.fn()}
-      agentConnected
-      {...props}
-    />
-  );
-
-describe("AgentsPanel via Overview 'Manage versions'", () => {
-  it("opens the drawer with the version list when Manage versions is clicked", async () => {
-    const user = userEvent.setup();
-    renderOverview();
-
-    // keepMounted renders the drawer's content underneath, so "closed" means
-    // hidden rather than absent.
-    expect(screen.getByText("Version history")).not.toBeVisible();
-
-    await user.click(screen.getByRole("button", { name: /manage versions/i }));
-
-    expect(await screen.findByText("Version history")).toBeInTheDocument();
-    // Both versions are listed in the drawer's timeline.
-    expect(screen.getAllByText("v1").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("v2").length).toBeGreaterThan(0);
-  });
-
-  it("does not open AgentsPanel (or offer Manage versions) for a locked env", () => {
-    renderOverview({ locked: true });
-
-    // A locked template never mounts the version-management drawer; the single
-    // fork affordance lives in the workspace-level TemplateLockBanner, not here.
-    expect(
-      screen.queryByRole("button", { name: /manage versions/i })
-    ).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /fork to edit/i })).toBeNull();
-    expect(screen.queryByText("Version history")).not.toBeInTheDocument();
-  });
-});
+// The "via Overview 'Manage versions'" entry path is commented out in
+// OverviewPanel (the agent card + version drawer, to be picked up later), so its
+// two tests were removed. AgentsPanel itself is still exercised directly below.
 
 describe("AgentsPanel recipes", () => {
   it("fires the set-active patch when a non-active version is picked", async () => {

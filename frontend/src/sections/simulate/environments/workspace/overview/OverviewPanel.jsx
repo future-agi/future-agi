@@ -1,20 +1,34 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
 import { Box, Stack, Typography, Grid } from "@mui/material";
-import Iconify from "src/components/iconify";
 import { getSurface, getDomain } from "src/api/simulate-environments/_fixtures/surfaces";
 import { contractFor } from "src/api/simulate-environments/_fixtures/contract";
-import SideDrawer from "../../components/SideDrawer";
-import AgentsPanel from "../agents/AgentsPanel";
-import { ENV_SHAPE, ENV_STATE_SHAPE, OVERVIEW_COPY, AGENT_SUMMARY_COPY, effectiveEnv, packStatsFor } from "./overview.constants";
+import { ENV_SHAPE, ENV_STATE_SHAPE, OVERVIEW_COPY } from "./overview.constants";
+// Manage-versions (the agent "test subject" card + its version drawer) is
+// commented out below, to be picked up later — its imports go with it:
+// import Iconify from "src/components/iconify";
+// import SideDrawer from "../../components/SideDrawer";
+// import AgentsPanel from "../agents/AgentsPanel";
+// import AgentSummarySection from "./AgentSummarySection";
+// (AGENT_SUMMARY_COPY dropped from the overview.constants import with it)
 import { GroupHeading, Fact } from "./OverviewPrimitives";
-import AgentSummarySection from "./AgentSummarySection";
 import AgentRefreshBanner from "./AgentRefreshBanner";
 import NextStepsChecklist from "./NextStepsChecklist";
 import SourceToSandboxMap from "./SourceToSandboxMap";
 import StateSummary from "./StateSummary";
 import { ToolsCard, HardRulesCard, UseCasesCard, AmendmentsCard } from "./OverviewCards";
 import { SeededDataCard, DependsOnCard } from "./WorldCards";
+
+// Display names for the real connector (§1/§6 `settings.agent.connector`,
+// surfaced here as `envState.agent.typeId` — the job poll's detected connector).
+// Falls back to the raw value for anything unmapped.
+const CONNECTOR_LABEL = {
+  livekit: "LiveKit",
+  vapi: "Vapi",
+  retell: "Retell",
+  retell_chat: "Retell (chat)",
+  phone: "Phone",
+  auto: "Auto",
+};
 
 /**
  * What this environment is.
@@ -32,23 +46,24 @@ import { SeededDataCard, DependsOnCard } from "./WorldCards";
  * side drawer overlaid on this tab (the user never leaves Overview); a locked
  * template env keeps "Fork to edit" instead.
  */
-export default function OverviewPanel({ env, envState, patch, onGo, agentConnected, locked = false, buildMode }) {
-  const [agentDrawerOpen, setAgentDrawerOpen] = useState(false);
-  // AgentsPanel opens its own "Add new version" drawer; while it is open the
-  // outer drawer closes so the two don't stack. keepMounted preserves the
-  // AgentsPanel state underneath.
-  const [nestedAgentDrawer, setNestedAgentDrawer] = useState(false);
+export default function OverviewPanel({ env, envState, patch, onGo, agentConnected, locked = false, buildMode, counts }) {
+  // Manage-versions drawer state — commented with the card + drawer below,
+  // to be picked up later.
+  // const [agentDrawerOpen, setAgentDrawerOpen] = useState(false);
+  // const [nestedAgentDrawer, setNestedAgentDrawer] = useState(false);
   const surface = getSurface(env.surface);
   const domain = getDomain(env.domain);
-  const shown = effectiveEnv(env, envState);
-  const stats = packStatsFor(shown);
   const contract = contractFor(env);
+  // The real connector for a backed env (envState.agent.typeId = the job poll's
+  // detected connector, e.g. "livekit"). No transports field is served, so this
+  // replaces the old hardcoded transports fact.
+  const connector = envState?.agent?.typeId;
+  const connectorLabel = connector ? CONNECTOR_LABEL[connector] || connector : "—";
 
   const hasDerivedWorld = (env.rules?.length || 0) > 0
     || (envState?.scenarios?.length || 0) > 0
     || (env.tools?.length || 0) > 0;
   const showRichOverview = agentConnected || hasDerivedWorld;
-  const scenarioCount = envState?.scenarios?.length || stats.scenarios;
 
   return (
     <Box sx={{ p: 2 }}>
@@ -67,24 +82,26 @@ export default function OverviewPanel({ env, envState, patch, onGo, agentConnect
       >
         <Fact label={OVERVIEW_COPY.facts.channel} value={surface.label} />
         <Fact label={OVERVIEW_COPY.facts.domain} value={domain?.label || "—"} />
-        <Fact label={OVERVIEW_COPY.facts.transports} value={surface.transports.join(" · ")} />
-        <Fact label={OVERVIEW_COPY.facts.scenarioPacks} value={`${stats.packs} packs · ${scenarioCount} scenarios`} />
+        <Fact label={OVERVIEW_COPY.facts.connector} value={connectorLabel} />
       </Stack>
 
+      {/* Manage-versions container (agent "test subject" card + "Manage
+          versions") — commented out, to be picked up later.
       <AgentSummarySection
         envState={envState}
         agentConnected={agentConnected}
         locked={locked}
         onManageVersions={() => setAgentDrawerOpen(true)}
-      />
+      /> */}
 
       {/* Optional re-derive prompt when the attached agent has moved ahead of
           the world; only an unlocked env can re-derive. */}
       {!locked && <AgentRefreshBanner env={env} envState={envState} patch={patch} />}
 
       {/* State-of-the-env summary tiles + latest run — the "how's this env doing
-          right now?" answer. Each tile jumps to the tab it summarises. */}
-      <StateSummary env={env} envState={envState} onGo={onGo} />
+          right now?" answer. Each tile jumps to the tab it summarises. For a
+          backed env the numbers come from §6 (summaryCounts). */}
+      <StateSummary env={env} envState={envState} counts={counts} onGo={onGo} />
 
       {/* Getting-started checklist for envs that haven't been seeded yet. A
           scratch env arrives carrying a derived world, so the same checklist
@@ -132,42 +149,12 @@ export default function OverviewPanel({ env, envState, patch, onGo, agentConnect
         </Grid>
       </Grid>
 
-      {/*
-        Agent version-management drawer. Uses the shared SideDrawer so it matches
-        every other drawer in this feature (transparent backdrop, background.paper
-        surface, subtle shadow) and overlays Overview so the user never leaves the
-        tab. While AgentsPanel's own "Add new version" drawer is open this outer
-        one closes (keepMounted preserves its state) so the two never stack.
-      */}
-      {/* Only unlocked envs manage versions; a locked template never mounts it. */}
-      {!locked && (
-        <SideDrawer
-          open={agentDrawerOpen && !nestedAgentDrawer}
-          onClose={() => setAgentDrawerOpen(false)}
-          width={{ xs: "100%", sm: 720, md: 880 }}
-          keepMounted
-        >
-          <Stack sx={{ height: "100%", minHeight: 0 }}>
-            <Stack
-              direction="row" alignItems="center" spacing={1.5}
-              sx={{ px: 2.5, py: 1.5, pr: 6, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
-            >
-              <Iconify icon="solar:cpu-bolt-linear" width={18} sx={{ color: "text.secondary" }} />
-              <Box flex={1} minWidth={0}>
-                <Typography sx={{ typography: "s1", fontWeight: "fontWeightBold" }}>
-                  {AGENT_SUMMARY_COPY.label}
-                </Typography>
-                <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                  {OVERVIEW_COPY.manageVersionsSubtitle}
-                </Typography>
-              </Box>
-            </Stack>
-            <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
-              <AgentsPanel envState={envState} patch={patch} onNestedDrawerChange={setNestedAgentDrawer} />
-            </Box>
-          </Stack>
-        </SideDrawer>
-      )}
+      {/* Agent version-management drawer — commented out with the "Manage
+          versions" card above, to be picked up later. When revived, restore the
+          imports (Iconify, SideDrawer, AgentsPanel, AGENT_SUMMARY_COPY), the
+          agentDrawerOpen / nestedAgentDrawer state, and the shared SideDrawer
+          that mounted a version-history header over the AgentsPanel for an
+          unlocked env. Full markup is in git history for this file. */}
     </Box>
   );
 }
@@ -180,4 +167,7 @@ OverviewPanel.propTypes = {
   agentConnected: PropTypes.bool,
   locked: PropTypes.bool,
   buildMode: PropTypes.bool,
+  // Real §6 summary counts for a backed env (from EnvironmentWorkspace); the
+  // client-store fallback in StateSummary covers non-backed envs.
+  counts: PropTypes.object,
 };

@@ -11,8 +11,7 @@ export const OVERVIEW_COPY = {
   facts: {
     channel: "Channel",
     domain: "Domain",
-    transports: "Transports",
-    scenarioPacks: "Scenario packs",
+    connector: "Connector",
   },
   capabilities: "Capabilities",
   world: "The world",

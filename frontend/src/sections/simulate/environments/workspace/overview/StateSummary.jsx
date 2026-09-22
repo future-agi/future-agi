@@ -11,18 +11,21 @@ import Iconify from "src/components/iconify";
  * comes from the same state the Runs/Scenarios/Evaluations tabs read from, so
  * the summary and the detail can't drift.
  */
-export default function StateSummary({ env, envState, onGo }) {
-  const scenarioCount = envState?.scenarios?.length || 0;
-  const evalCount = envState?.evals?.length || 0;
+export default function StateSummary({ env, envState, counts, onGo }) {
+  // A backed env passes real §6 counts; otherwise derive from the client store.
+  // `??` (not `||`) so a real 0 is respected rather than falling back.
+  const scenarioCount = counts?.scenarios ?? (envState?.scenarios?.length || 0);
+  const evalCount = counts?.evaluations ?? (envState?.evals?.length || 0);
   const runs = envState?.runs || [];
-  const ruleCount = env?.rules?.length || 0;
+  const runCount = counts?.runs ?? runs.length;
+  const ruleCount = counts?.hardRules ?? (env?.rules?.length || 0);
   const latest = runs[0] || null;
   const latestPassRate = latest?.passRate != null ? Math.round(latest.passRate) : null;
 
   const tiles = [
     { id: "scenarios", label: "Scenarios", value: scenarioCount, icon: "solar:layers-minimalistic-linear", to: "scenarios" },
     { id: "evals", label: "Evaluations", value: evalCount, icon: "solar:shield-check-linear", to: "evals" },
-    { id: "runs", label: "Runs", value: runs.length, icon: "solar:play-circle-linear", to: "runs", disabled: runs.length === 0 },
+    { id: "runs", label: "Runs", value: runCount, icon: "solar:play-circle-linear", to: "runs", disabled: !runCount },
     { id: "rules", label: "Hard rules", value: ruleCount, icon: "solar:shield-keyhole-linear", to: "contract" },
   ];
 
@@ -115,5 +118,11 @@ export default function StateSummary({ env, envState, onGo }) {
 StateSummary.propTypes = {
   env: PropTypes.object,
   envState: PropTypes.object,
+  counts: PropTypes.shape({
+    scenarios: PropTypes.number,
+    evaluations: PropTypes.number,
+    runs: PropTypes.number,
+    hardRules: PropTypes.number,
+  }),
   onGo: PropTypes.func,
 };

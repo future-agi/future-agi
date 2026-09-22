@@ -1,6 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
 import { screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 
 import { render } from "src/utils/test-utils";
 import { MOCK_WORLD } from "src/api/simulate-environments/_fixtures/world";
@@ -8,7 +7,7 @@ import OverviewPanel from "../OverviewPanel";
 import { HardRulesCard } from "../OverviewCards";
 
 const connectedState = {
-  agent: { via: "endpoint", values: {} },
+  agent: { via: "endpoint", typeId: "livekit", values: {} },
   agentVersions: [{ label: "v1", note: "First build." }],
   activeAgentVersion: "v1",
   scenarios: [],
@@ -27,17 +26,20 @@ const renderPanel = (props = {}) =>
   );
 
 describe("OverviewPanel", () => {
-  it("shows the description and the four facts", () => {
+  it("shows the description and the three facts (Channel, Domain, Connector)", () => {
     renderPanel();
 
     expect(screen.getByText(MOCK_WORLD.description)).toBeInTheDocument();
     expect(screen.getByText("Channel")).toBeInTheDocument();
     expect(screen.getByText("Domain")).toBeInTheDocument();
-    expect(screen.getByText("Transports")).toBeInTheDocument();
-    expect(screen.getByText("Scenario packs")).toBeInTheDocument();
-    // fact values read from the surface + domain fixtures
+    expect(screen.getByText("Connector")).toBeInTheDocument();
+    // The invented Transports + Scenario-packs facts are gone.
+    expect(screen.queryByText("Transports")).toBeNull();
+    expect(screen.queryByText("Scenario packs")).toBeNull();
+    // fact values: channel + domain from fixtures, connector from agent.typeId.
     expect(screen.getByText("Voice")).toBeInTheDocument();
     expect(screen.getByText("E-commerce")).toBeInTheDocument();
+    expect(screen.getByText("LiveKit")).toBeInTheDocument();
   });
 
   it("renders the tools list with monospace names and an arguments column", () => {
@@ -83,35 +85,7 @@ describe("OverviewPanel", () => {
     expect(screen.getByText("610")).toBeInTheDocument();
   });
 
-  it("keeps 'Attach agent' disabled behind the coming-soon tooltip when no agent is attached", () => {
-    renderPanel({
-      envState: { ...connectedState, agent: null },
-      agentConnected: false,
-    });
-
-    expect(screen.getByRole("button", { name: /attach agent/i })).toBeDisabled();
-  });
-
-  it("opens the version-management drawer from 'Manage versions' when unlocked", async () => {
-    const user = userEvent.setup();
-    renderPanel();
-
-    const button = screen.getByRole("button", { name: /manage versions/i });
-    expect(button).toBeEnabled();
-
-    await user.click(button);
-    expect(await screen.findByText("Version history")).toBeInTheDocument();
-  });
-
-  it("shows the seeded-baseline copy when locked, with no competing fork button (the banner owns it)", () => {
-    renderPanel({ locked: true });
-
-    expect(
-      screen.getByText(/Seeded baseline shipped with this template/)
-    ).toBeInTheDocument();
-
-    // The single "Fork to edit" affordance lives in the workspace-level
-    // TemplateLockBanner, not on the agent card — so the panel has none.
-    expect(screen.queryByRole("button", { name: /fork to edit/i })).toBeNull();
-  });
+  // The "Manage versions" agent card + its version drawer are commented out
+  // (picked up later), so their tests — attach-agent disabled, open the drawer,
+  // seeded-baseline copy — were removed with the feature.
 });

@@ -242,6 +242,21 @@ export default function EnvironmentWorkspace() {
   const backedName = evalDetailQuery.data?.overview?.name;
   const displayEnv = env && backed && backedName ? { ...env, name: backedName } : env;
 
+  // Overview summary tiles need the real §6 counts: the job poll (which drives
+  // env/envState here) carries the scenarios list but not the eval or run
+  // counts. Reuse the §6 detail already fetched above rather than a second read.
+  const backedDetail = evalDetailQuery.data;
+  const overviewCounts =
+    backed && backedDetail
+      ? {
+          scenarios: backedDetail.overview?.scenario_count ?? backedDetail.scenarios?.length,
+          evaluations:
+            backedDetail.overview?.evaluations_count ?? backedDetail.evaluations?.selected?.length,
+          runs: backedDetail.overview?.runs_count,
+          hardRules: backedDetail.contract?.hard_constraints?.length,
+        }
+      : undefined;
+
   return (
     <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       <WorkspaceHeader
@@ -320,6 +335,7 @@ export default function EnvironmentWorkspace() {
             onFork={onFork}
             gapsByTab={gapsByTab(env, badgeEnvState)}
             counts={counts(badgeEnvState)}
+            overviewCounts={overviewCounts}
             executionOutlet={executionMatch ? <Outlet context={{ env, envState }} /> : undefined}
           />
         </Box>
