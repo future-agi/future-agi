@@ -10,7 +10,7 @@ from django.db import close_old_connections
 
 logger = structlog.get_logger(__name__)
 try:
-    from ee.evals.localizer.error_localizer import ErrorLocalizer
+    from ee.evals.localizer.claude_harness import create_localizer as ErrorLocalizer
 except ImportError:
     # Activity-aware stub: runs inside Temporal evaluation activities.
     from tfc.ee_stub import _ee_activity_stub
@@ -1150,6 +1150,11 @@ def trigger_error_localization_for_simulate(
             uuid.NAMESPACE_OID,
             f"simulate:{call_execution.id}:{eval_config.id}",
         )
+        from ee.evals.localizer.conversation_audio import simulation_audio_snapshot
+
+        simulation_audio = simulation_audio_snapshot(
+            call_execution, eval_config, input_type_dict
+        )
         task, _created = ErrorLocalizerTask.no_workspace_objects.update_or_create(
             source_id=source_id,
             deleted=False,
@@ -1168,6 +1173,7 @@ def trigger_error_localization_for_simulate(
                     "log_id": log_id,
                     "call_execution_id": str(call_execution.id),
                     "eval_config_id": str(eval_config.id),
+                    "simulation_audio": simulation_audio,
                     "pass_threshold": resolve_pass_threshold(eval_template, config),
                 },
                 "status": initial_status,
@@ -1270,7 +1276,18 @@ def process_single_error_localization(task_id):
                 input_type=task.input_types,
                 evaluation_result=task.eval_result,
                 evaluation_explanation=task.eval_explanation,
+                simulation_audio=(
+                    (task.metadata or {}).get("simulation_audio") or {}
+                    if task.source == ErrorLocalizerSource.SIMULATE
+                    and "audio" in (task.input_types or {}).values()
+                    else None
+                ),
             )
+            localizer.gateway_metadata = {
+                "organization_id": str(task.organization_id),
+                "workspace_id": str(task.workspace_id),
+                "error_localizer_task_id": str(task.id),
+            }
 
             result = localizer.localize_errors()
         except Exception as e:
