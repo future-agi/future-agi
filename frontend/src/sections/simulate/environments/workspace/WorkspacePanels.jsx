@@ -39,6 +39,7 @@ export default function WorkspacePanels({
   counts,
   overviewCounts,
   overviewWorld,
+  graphData,
   executionOutlet,
 }) {
   const navigate = useNavigate();
@@ -73,7 +74,7 @@ export default function WorkspacePanels({
     if (executionOutlet && current.id === "runs") return executionOutlet;
     switch (current.id) {
       case "contract":
-        return <RlContractPanel env={env} envState={envState} patch={patch} onGo={go} locked={locked} onFork={onFork} />;
+        return <RlContractPanel env={env} envState={envState} patch={patch} onGo={go} locked={locked} onFork={onFork} graphData={graphData} />;
       case "scenarios":
         return <ScenariosStep env={env} envState={envState} patch={patch} locked={locked} onFork={onFork} />;
       case "evals":
@@ -178,5 +179,7 @@ WorkspacePanels.propTypes = {
   overviewCounts: PropTypes.object,
   // Real §6 world content (stores/amendments/dependencies) for the Overview.
   overviewWorld: PropTypes.object,
+  // Real §6 capability-graph data (tools/flows/personas/guardrails) for Contract.
+  graphData: PropTypes.object,
   executionOutlet: PropTypes.node,
 };

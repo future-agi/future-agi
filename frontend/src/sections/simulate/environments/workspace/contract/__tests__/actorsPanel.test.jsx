@@ -68,10 +68,9 @@ describe("ActorsPanel", () => {
 });
 
 describe("RlContractPanel actors slot", () => {
-  it("mounts the actors panel, not the deferred empty state", () => {
-    render(<RlContractPanel env={voiceEnv} envState={{ evals: [] }} patch={vi.fn()} onGo={vi.fn()} />);
-    expect(screen.getAllByText("Colleague with a different plan").length).toBeGreaterThan(0);
-    expect(screen.queryByText("Actors land with the next phase")).toBeNull();
+  it("no longer mounts the dummy Actors section (commented out on the panel)", () => {
+    render(<RlContractPanel env={voiceEnv} envState={{ evals: [] }} patch={vi.fn()} />);
+    expect(screen.queryByText("Colleague with a different plan")).toBeNull();
   });
 });
 

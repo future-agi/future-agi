@@ -267,6 +267,18 @@ export default function EnvironmentWorkspace() {
           dependencies: backedDetail.contract?.dependencies ?? [],
         }
       : undefined;
+  // Real §6 capability-graph branches for a backed env: tools names,
+  // real_use_cases (flows), world.personas names, hard_constraints (guardrails).
+  // Empty arrays render the graph's honest "none yet" instead of a fixture.
+  const graphData =
+    backed && backedDetail
+      ? {
+          tools: (backedDetail.contract?.tools ?? []).map((t) => t?.name).filter(Boolean),
+          flows: backedDetail.contract?.real_use_cases ?? [],
+          personas: (backedDetail.world?.personas ?? []).map((p) => p?.name).filter(Boolean),
+          guardrails: backedDetail.contract?.hard_constraints ?? [],
+        }
+      : undefined;
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
@@ -348,6 +360,7 @@ export default function EnvironmentWorkspace() {
             counts={counts(badgeEnvState)}
             overviewCounts={overviewCounts}
             overviewWorld={overviewWorld}
+            graphData={graphData}
             executionOutlet={executionMatch ? <Outlet context={{ env, envState }} /> : undefined}
           />
         </Box>
