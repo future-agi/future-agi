@@ -1,8 +1,9 @@
 """Pins the Feed's normalized investigation evidence projection."""
 
 from types import SimpleNamespace
+from unittest.mock import patch
 
-from tracer.queries.feed import _investigation_reel
+from tracer.queries.feed import _finding_span_context, _investigation_reel
 
 
 class _RelatedRows:
@@ -36,23 +37,88 @@ def test_omega_report_without_key_moments_shows_evidence_receipts():
     assert reel[0]["raw"] == "The requested item was not delivered"
 
 
-def test_json_receipt_has_short_breadcrumb_and_preserves_raw_evidence():
-    excerpt = (
-        '{"name":"ChatAnthropic","observation_type":"llm","input.value":"'
-        + ("long prompt " * 500)
-        + '"}'
+def test_omega_reel_uses_finding_and_supported_attribution_only():
+    excerpt = '{"name":"ChatAnthropic","input.value":"prompt"}'
+    receipt = SimpleNamespace(excerpt=excerpt, span_id="span-1", evidence_id="ev-1")
+    finding = SimpleNamespace(
+        statement="The assistant failed to deliver the requested item",
+        attributions=_RelatedRows([
+            SimpleNamespace(deleted=False, role="decisive", status="supported", span_id="span-1"),
+            SimpleNamespace(deleted=False, role="symptom", status="supported", span_id="span-1"),
+            SimpleNamespace(deleted=False, role="origin", status="unknown", span_id="span-2"),
+        ]),
     )
     report = SimpleNamespace(
-        key_moments=_RelatedRows([]),
+        key_moments=_RelatedRows([SimpleNamespace(
+            deleted=False, kevinified="Unrelated", verbatim="Unrelated",
+            role="origin", span_id="other", status="ok", is_failure=False,
+        )]),
         evidence_receipts=_RelatedRows(
-            [SimpleNamespace(deleted=False, excerpt=excerpt, span_id="span-1")]
+            [SimpleNamespace(deleted=False, excerpt="Unrelated", span_id="other")]
         ),
     )
 
-    reel = _investigation_reel(report)
+    reel = _investigation_reel(
+        report, selected_findings=[(finding, {"decisive": [receipt]})],
+        span_context={"span-1": {
+            "name": "Recorded operation", "attrs_string": {
+                "input.value": "false", "output.value": "0"
+            },
+        }},
+    )
 
-    assert reel[0]["text"] == "llm · ChatAnthropic"
-    assert reel[0]["raw"] == excerpt
+    assert [step["label"] for step in reel] == ["FINDING", "DECISIVE"]
+    assert reel[0]["text"] == finding.statement
+    assert reel[1]["text"] == "Recorded operation"
+    assert reel[1]["raw"] == excerpt
+    assert reel[1]["evidence_id"] == "ev-1"
+    assert reel[1]["status"] == "neutral"
+    assert reel[1]["input_preview"] == "false"
+    assert reel[1]["output_preview"] == "0"
+    assert reel[1]["io_source"] == "recorded_span"
+    assert not any("Unrelated" in str(step) for step in reel)
+
+
+def test_omega_attribution_without_receipt_is_not_treated_as_false():
+    finding = SimpleNamespace(
+        statement="A failed handoff", attributions=_RelatedRows([
+            SimpleNamespace(deleted=False, role="origin", status="supported", span_id="span-1")
+        ]),
+    )
+    reel = _investigation_reel(None, selected_findings=[(finding, {})])
+    assert [step["label"] for step in reel] == ["FINDING", "ORIGIN"]
+    assert reel[1]["span"] == "span-1"
+    assert reel[1]["raw"] is None
+    assert reel[1]["status"] == "neutral"
+
+
+def test_recorded_span_read_is_project_scoped_and_rejects_other_trace():
+    finding = SimpleNamespace(
+        statement="Failure", attributions=_RelatedRows([
+            SimpleNamespace(deleted=False, role="decisive", status="supported", span_id="span-1")
+        ]),
+    )
+
+    class Reader:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            pass
+
+        def list_by_ids(self, ids, **kwargs):
+            assert ids == ["span-1"]
+            assert kwargs["project_id"] == "project-1"
+            assert kwargs["include_heavy"] is False
+            assert "attrs_string" in kwargs["columns"]
+            return [
+                {"id": "span-1", "trace_id": "trace-1", "attrs_string": {}},
+                {"id": "span-1", "trace_id": "other-trace", "attrs_string": {}},
+            ]
+
+    with patch("tracer.queries.feed.get_reader", return_value=Reader()):
+        context = _finding_span_context({"trace-1": [(finding, {})]}, "project-1")
+    assert list(context) == [("trace-1", "span-1")]
 
 
 def test_legacy_key_moments_take_precedence_over_receipts():
