@@ -345,3 +345,74 @@ def test_typed_text_still_matches_the_string_variant_canonically(typed, stored):
     item = leaf("picker", typed)
     manager, row = collected([item], {"picker": stored})
     assert manager._row_matches_filters(row) is True
+
+
+@pytest.mark.parametrize(
+    "stored,expected",
+    [
+        # The stored string (or its case variant) is excluded; a string that
+        # only parses to the picked JSON is present and not the pick: kept.
+        ([("string", PICKED_JSON)], False),
+        ([("string", '{"A":1,"B":2}')], False),
+        ([("string", '{"b":2,"a":1}')], True),
+        ([("string", '{"a": 1, "b": 2}')], True),
+        # Present only in another storage: nothing of the selected storage to
+        # exclude from, so not a member (pre-existing not_in semantics).
+        ([("json", {"a": 1, "b": 2})], False),
+        ([], False),
+        # The unions of the storage-type fix: the other storage's value must
+        # not lend the string variant a match that excludes it.
+        ([("string", '{"a": 1, "b": 2}'), ("json", {"a": 1, "b": 2})], True),
+        ([("json", {"a": 1, "b": 2}), ("string", '{"a": 1, "b": 2}')], True),
+        ([("string", PICKED_JSON), ("json", {"a": 1, "b": 2})], False),
+    ],
+    ids=[
+        "exact",
+        "case",
+        "key-order",
+        "whitespace",
+        "json-storage-only",
+        "absent",
+        "whitespace-json-and-json-storage",
+        "json-storage-and-whitespace-json",
+        "exact-json-and-json-storage",
+    ],
+)
+def test_a_picked_not_in_excludes_only_the_stored_string_raw(stored, expected):
+    """``not_in`` is the picker branch's complement: raw for a picked string.
+
+    A picked ``not_in`` excludes the stored string and its case variants and
+    keeps a string that only parses to the picked JSON, as the other lists
+    do; it inherits the storage-type fix, so a json copy beside a whitespace
+    variant does not turn the variant into an exclusion.
+    """
+    item = leaf("picker", [PICKED_JSON], op="not_in", types=["string"])
+    manager, row = collected([item], {"picker": stored})
+    assert manager._row_matches_filters(row) is expected
+
+
+@pytest.mark.parametrize(
+    "stored,expected",
+    [
+        ([("string", "TRUE")], False),
+        ([("string", " true ")], True),
+        ([("boolean", True)], False),
+        ([("string", " true "), ("boolean", True)], True),
+        ([("boolean", True), ("string", " true ")], True),
+        ([("string", "true"), ("boolean", True)], False),
+    ],
+    ids=[
+        "word-case",
+        "word-padded",
+        "boolean-only",
+        "padded-word-and-boolean",
+        "boolean-and-padded-word",
+        "exact-word-and-boolean",
+    ],
+)
+def test_a_picked_not_in_boolean_word_excludes_only_the_stored_word_raw(
+    stored, expected
+):
+    item = leaf("picker", ["true"], op="not_in", types=["string"])
+    manager, row = collected([item], {"picker": stored})
+    assert manager._row_matches_filters(row) is expected
