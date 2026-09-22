@@ -7,7 +7,7 @@ import { useRenameEnvironment } from "src/api/simulate-environments/environments
 import SectionCard from "../../components/SectionCard";
 import CopyField from "../../components/CopyField";
 import { validateEnvName, MAX_ENV_NAME } from "../renameEnvironment";
-import { envVarGroups, envVarsEmpty } from "./envVarGroups";
+import { envVarGroups } from "./envVarGroups";
 
 const MONO = "ui-monospace, SFMono-Regular, Menlo, monospace";
 
@@ -147,6 +147,53 @@ export default function SettingsPanel({ env, backed = false, locked = false }) {
             <EnvVarsBody loading={detailQuery.isLoading} groups={groups} />
           </SectionCard>
 
+          {/* Credential files are mounted files, not env variables — a separate
+              section (§11). Shown only when the environment has any. */}
+          {groups.credentialFiles.length > 0 && (
+            <SectionCard
+              title="Credential files"
+              subtitle="Mounted into the environment by name — contents and the original filename are not stored."
+            >
+              <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
+                {groups.credentialFiles.map((f) => (
+                  <Stack
+                    key={f.environment_name}
+                    direction="row"
+                    alignItems="center"
+                    spacing={1.5}
+                    sx={{ px: 2.5, py: 1.375 }}
+                  >
+                    <Typography
+                      sx={{
+                        flex: 1,
+                        minWidth: 0,
+                        typography: "s2",
+                        fontWeight: 600,
+                        fontFamily: MONO,
+                        overflowWrap: "anywhere",
+                      }}
+                    >
+                      {f.environment_name}
+                    </Typography>
+                    <Chip
+                      size="small"
+                      label="File"
+                      sx={{
+                        height: 19,
+                        borderRadius: 0.5,
+                        color: "text.secondary",
+                        border: "1px solid",
+                        borderColor: "divider",
+                        bgcolor: "transparent",
+                        "& .MuiChip-label": { px: 0.75, typography: "s3", fontWeight: 600 },
+                      }}
+                    />
+                  </Stack>
+                ))}
+              </Stack>
+            </SectionCard>
+          )}
+
           {/*
             Run defaults, Build arguments and Versions were here. They are sample
             UI — §6 `settings` is read-only and carries no run-default, build-arg
@@ -165,12 +212,36 @@ SettingsPanel.propTypes = {
   locked: PropTypes.bool,
 };
 
+const MASK = "••••••••••••";
+
 /**
- * The §11 environment-variables view: three read-only groups. Secrets and
- * credential files are names only (no value is ever returned, so there is no
- * reveal control); config is the one group with values.
+ * Flatten the two variable groups into the single key · value · kind list Vel's
+ * design uses. Secrets have no value returned (encrypted, addressed by name), so
+ * they render masked; config carries real values. Credential files are NOT env
+ * variables — they are mounted files, so they get their own section, not a row
+ * here. `kind` fills the chip slot the design has (its mock `usedBy` field is not
+ * in the §6 payload, so the honest signal is which group the variable came from).
+ */
+function envVarRows(groups) {
+  return [
+    ...groups.secrets.map((name) => ({ key: name, kind: "Secret", masked: true })),
+    ...Object.entries(groups.config).map(([key, value]) => ({
+      key,
+      value: String(value),
+      kind: "Config",
+      masked: false,
+    })),
+  ];
+}
+
+/**
+ * The §11 environment-variables view (Secrets + Config only). Matches the
+ * design's flat list (key · value · kind chip) but read-only: no add row, no
+ * delete, and no eye — a secret's value is never returned, so there is nothing
+ * a reveal could show.
  */
 function EnvVarsBody({ loading, groups }) {
+  const rows = envVarRows(groups);
   if (loading) {
     return (
       <Box sx={{ p: 2.5 }}>
@@ -178,7 +249,7 @@ function EnvVarsBody({ loading, groups }) {
       </Box>
     );
   }
-  if (envVarsEmpty(groups)) {
+  if (!rows.length) {
     return (
       <Box sx={{ p: 2.5 }}>
         <Typography sx={{ typography: "s2", color: "text.secondary" }}>
@@ -187,103 +258,59 @@ function EnvVarsBody({ loading, groups }) {
       </Box>
     );
   }
-  const configEntries = Object.entries(groups.config);
   return (
     <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
-      {groups.secrets.length > 0 && (
-        <VarGroup
-          title="Secrets"
-          caption="Encrypted at rest and addressed by name — the value is never returned."
+      {rows.map((v) => (
+        <Stack
+          key={`${v.kind}:${v.key}`}
+          direction="row"
+          alignItems="center"
+          spacing={1.5}
+          sx={{ px: 2.5, py: 1.375 }}
         >
-          {groups.secrets.map((name) => (
-            <NameRow key={name} name={name} tag="Secret" />
-          ))}
-        </VarGroup>
-      )}
-      {configEntries.length > 0 && (
-        <VarGroup title="Configuration" caption="Non-secret values passed into the environment.">
-          {configEntries.map(([k, v]) => (
-            <Stack
-              key={k}
-              direction="row"
-              alignItems="center"
-              spacing={1.5}
-              sx={{ px: 2.5, py: 1.375 }}
-            >
-              <Typography
-                sx={{ typography: "s2", fontWeight: 600, fontFamily: MONO, width: 220, flexShrink: 0 }}
-              >
-                {k}
-              </Typography>
-              <Box sx={{ flex: 1, minWidth: 0 }}>
-                <CopyField value={String(v)} />
-              </Box>
-            </Stack>
-          ))}
-        </VarGroup>
-      )}
-      {groups.credentialFiles.length > 0 && (
-        <VarGroup
-          title="Credential files"
-          caption="Mounted under this name — the contents and original filename are not stored."
-        >
-          {groups.credentialFiles.map((f) => (
-            <NameRow key={f.environment_name} name={f.environment_name} tag="File" />
-          ))}
-        </VarGroup>
-      )}
+          <Typography
+            sx={{
+              typography: "s2",
+              fontWeight: 600,
+              fontFamily: MONO,
+              width: 220,
+              flexShrink: 0,
+              pr: 1,
+              // A long unbroken identifier (GOOGLE_APPLICATION_CREDENTIALS_JSON)
+              // has no space to wrap on, so let it break within the column
+              // instead of overflowing into the value.
+              overflowWrap: "anywhere",
+            }}
+          >
+            {v.key}
+          </Typography>
+          <Typography
+            noWrap
+            sx={{ flex: 1, minWidth: 0, typography: "s2", fontFamily: MONO, color: "text.subtitle" }}
+          >
+            {v.masked ? MASK : v.value}
+          </Typography>
+          <Chip
+            size="small"
+            label={v.kind}
+            sx={{
+              height: 19,
+              borderRadius: 0.5,
+              color: "text.secondary",
+              border: "1px solid",
+              borderColor: "divider",
+              bgcolor: "transparent",
+              "& .MuiChip-label": { px: 0.75, typography: "s3", fontWeight: 600 },
+            }}
+          />
+        </Stack>
+      ))}
     </Stack>
   );
 }
 EnvVarsBody.propTypes = {
   loading: PropTypes.bool,
   groups: PropTypes.object,
-};
-
-function VarGroup({ title, caption, children }) {
-  return (
-    <Box sx={{ py: 0.5 }}>
-      <Box sx={{ px: 2.5, pt: 1.5, pb: 0.5 }}>
-        <Typography sx={{ typography: "s2", fontWeight: 700 }}>{title}</Typography>
-        {caption && (
-          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{caption}</Typography>
-        )}
-      </Box>
-      {children}
-    </Box>
-  );
-}
-VarGroup.propTypes = {
-  title: PropTypes.string,
-  caption: PropTypes.string,
-  children: PropTypes.node,
-};
-
-function NameRow({ name, tag }) {
-  return (
-    <Stack direction="row" alignItems="center" spacing={1.5} sx={{ px: 2.5, py: 1.375 }}>
-      <Typography sx={{ typography: "s2", fontWeight: 600, fontFamily: MONO, flex: 1, minWidth: 0 }}>
-        {name}
-      </Typography>
-      <Chip
-        size="small"
-        label={tag}
-        sx={{
-          height: 19,
-          borderRadius: 0.5,
-          color: "text.secondary",
-          border: "1px solid",
-          borderColor: "divider",
-          bgcolor: "transparent",
-          "& .MuiChip-label": { px: 0.75, typography: "s3", fontWeight: 600 },
-        }}
-      />
-    </Stack>
-  );
-}
-NameRow.propTypes = {
-  name: PropTypes.string,
-  tag: PropTypes.string,
 };
 
 /*

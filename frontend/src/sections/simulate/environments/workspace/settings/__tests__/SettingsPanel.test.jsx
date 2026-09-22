@@ -42,24 +42,30 @@ function renderPanel({ backed = true, locked = false, seedDetail = true } = {}) 
 beforeEach(() => mutate.mockClear());
 
 describe("SettingsPanel — environment variables (§11, read-only)", () => {
-  it("renders the three groups from settings.agent", () => {
+  it("renders secrets + config in the flat env-vars list with a kind chip", () => {
     renderPanel();
-    expect(screen.getByText("Secrets")).toBeInTheDocument();
-    expect(screen.getByText("Configuration")).toBeInTheDocument();
-    expect(screen.getByText("Credential files")).toBeInTheDocument();
-
-    // Secret + credential-file names show; config shows key and value.
     expect(screen.getByText("DEEPGRAM_API_KEY")).toBeInTheDocument();
-    expect(screen.getByText("GOOGLE_APPLICATION_CREDENTIALS_JSON")).toBeInTheDocument();
     expect(screen.getByText("agent_name")).toBeInTheDocument();
     expect(screen.getByText("my-agent")).toBeInTheDocument();
+
+    // Env-vars chips: two secrets, two config. Credential files are NOT here.
+    expect(screen.getAllByText("Secret")).toHaveLength(2);
+    expect(screen.getAllByText("Config")).toHaveLength(2);
   });
 
-  it("never shows a secret value, a reveal control, or any edit affordance", () => {
+  it("puts credential files in their own section, not the env-vars list", () => {
     renderPanel();
-    // No masked value stand-in (a dotted value implies a hidden value exists).
-    expect(screen.queryByText(/•/)).toBeNull();
-    // No add/delete/version controls survive from the old mock UI.
+    expect(screen.getByText("Credential files")).toBeInTheDocument();
+    expect(screen.getByText("GOOGLE_APPLICATION_CREDENTIALS_JSON")).toBeInTheDocument();
+    // A file is not an env variable — one File chip, in its own section.
+    expect(screen.getAllByText("File")).toHaveLength(1);
+  });
+
+  it("masks secret values and keeps the lists read-only", () => {
+    renderPanel();
+    // Two secrets are masked; the two config values show in clear.
+    expect(screen.getAllByText("••••••••••••")).toHaveLength(2);
+    // No reveal / add / delete / version affordances.
     expect(screen.queryByRole("button", { name: /^Add$/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /New version/ })).toBeNull();
     expect(screen.queryByText("Run defaults")).toBeNull();
