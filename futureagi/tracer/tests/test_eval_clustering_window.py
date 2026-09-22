@@ -13,6 +13,11 @@ import pytest
 from django.utils import timezone
 
 from tracer.models.observation_span import EvalLogger
+from tracer.models.trace_error_analysis import (
+    ClusterSource,
+    ErrorClusterTraces,
+    TraceErrorGroup,
+)
 from tracer.queries.eval_clustering import (
     _CLUSTER_WINDOW_DAYS,
     get_unclustered_eval_results,
@@ -146,6 +151,31 @@ def test_clustering_excludes_mapped_passing_choice(
     )
 
     assert get_unclustered_eval_results(str(project.id)) == []
+
+
+@pytest.mark.django_db
+def test_soft_deleted_membership_does_not_suppress_eval(
+    project, trace, observation_span, custom_eval_config
+):
+    ev = _make_failing_eval(
+        trace,
+        observation_span,
+        custom_eval_config,
+        "failure with a soft-deleted membership",
+        age_days=1,
+        eval_task_id="et-soft-deleted-membership",
+    )
+    cluster = TraceErrorGroup.objects.create(
+        project=project,
+        source=ClusterSource.EVAL,
+        cluster_id="E-soft-delete",
+    )
+    membership = ErrorClusterTraces.objects.create(cluster=cluster, eval_logger=ev)
+    ErrorClusterTraces.objects.filter(pk=membership.pk).update(deleted=True)
+
+    results = get_unclustered_eval_results(str(project.id))
+
+    assert [result.eval_logger_id for result in results] == [str(ev.id)]
 
 
 @pytest.mark.django_db

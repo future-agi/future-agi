@@ -17,7 +17,7 @@ from typing import List, Optional, Tuple
 
 import structlog
 from django.db import IntegrityError, transaction
-from django.db.models import Q
+from django.db.models import Exists, OuterRef, Q
 from django.utils import timezone
 
 from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
@@ -207,7 +207,15 @@ def get_unclustered_eval_results(
             created_at__gte=since,
         )
         .select_related("custom_eval_config", "custom_eval_config__eval_template")
-        .exclude(cluster_memberships__cluster__project_id=project_id)
+        .filter(
+            ~Exists(
+                ErrorClusterTraces.objects.filter(
+                    eval_logger_id=OuterRef("pk"),
+                    cluster__project_id=project_id,
+                    deleted=False,
+                )
+            )
+        )
         .only(
             "id",
             "created_at",
@@ -225,7 +233,6 @@ def get_unclustered_eval_results(
             "custom_eval_config__eval_template__choice_scores",
             "custom_eval_config__eval_template__pass_threshold",
         )
-        .distinct()
         .order_by("created_at")
     )
 
