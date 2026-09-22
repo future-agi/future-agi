@@ -30,6 +30,28 @@ If any required value is empty, compose exits with `must be set for production` 
 - (Optional) Managed Postgres and S3-compatible object store if you don't want the bundled `postgres` / `minio` containers
 - 16 GB RAM minimum on the host (8 GB is OK for smoke tests; ClickHouse and the worker each hold ~1 GB)
 
+## Claude Agent SDK authoring through hosted AgentCC
+
+For hosted ALK jobs, the Claude Agent SDK talks to AgentCC's Anthropic-compatible endpoint;
+AgentCC routes the Claude-shaped model alias to Vertex Gemini. Configure these values on
+**both the backend and simulation-runner worker** (the shared `x-backend-env` in this Compose
+stack forwards them):
+
+```dotenv
+ALK_HARNESS=claude
+ALK_HARNESS_MODEL=vertex_ai/gemini-3.7-flash
+AGENTCC_BASE_URL=https://gateway.futureagi.com
+AGENTCC_HARNESS_API_KEY=<production-virtual-key>
+```
+
+Keep `AGENTCC_INTERNAL_API_KEY` unchanged: it authenticates platform-to-local-gateway
+traffic, not the remote authoring run. Set the production virtual key through your secret
+manager; do not commit it. The production gateway must grant that key access to a Vertex
+provider and map the Claude SDK's `claude-sonnet-4-6` alias to the desired Gemini model.
+Verify the mapping with one
+short authoring run before moving full suites. The simulated caller's model is configured
+separately by `SIMULATOR_LLM_PROVIDER` and `SIMULATOR_LLM_MODEL`.
+
 ## 1. Generate secrets
 
 ```bash
