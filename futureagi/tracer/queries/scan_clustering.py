@@ -555,7 +555,7 @@ def assign_to_cluster(
     """Assign an issue to an existing cluster and update centroid incrementally."""
     cluster = TraceErrorGroup.objects.get(cluster_id=cluster_id, project_id=project_id)
     if is_grouping_issue(cluster.pk):
-        raise ValueError("legacy scanner cannot assign to an F6-owned issue")
+        raise ValueError("legacy scanner cannot assign to an Omega-owned issue")
 
     # Link issue → cluster. Both membership writes are idempotent: re-running the
     # scan over a trace updates the issue row it already owns, and matches the
