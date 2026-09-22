@@ -23324,11 +23324,39 @@ export interface GroupingControlResponseApi {
   receipt_id?: string;
 }
 
+export type GroupingErrorApiType =
+  (typeof GroupingErrorApiType)[keyof typeof GroupingErrorApiType];
+
+export const GroupingErrorApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type GroupingErrorApiDetails = { [key: string]: string[] };
+
 export interface GroupingErrorApi {
+  status?: boolean;
+  type?: GroupingErrorApiType;
   /** @minLength 1 */
   code: string;
   /** @minLength 1 */
   detail: string;
+  result?: string;
+  message?: string;
+  error?: string;
+  attr?: string;
+  details?: GroupingErrorApiDetails;
 }
 
 export type GroupingCheckpointApiCheckpoint = { [key: string]: unknown };
