@@ -1113,10 +1113,11 @@ func loadFromEnv(cfg *Config) {
 		// — and could re-type — an operator's explicit entry.
 		if !authKeyConfigured(cfg.Auth.Keys, v) {
 			cfg.Auth.Keys = append(cfg.Auth.Keys, AuthKeyConfig{
-				Name:    "internal-backend",
-				Key:     v,
-				Owner:   "futureagi-backend",
-				KeyType: "internal",
+				Name:     "internal-backend",
+				Key:      v,
+				Owner:    "futureagi-backend",
+				KeyType:  "internal",
+				Metadata: map[string]string{"access_groups": "internal"},
 			})
 		}
 	}
