@@ -6,6 +6,7 @@ from rest_framework.views import APIView
 
 from simulate.authentication import InternalServiceAuthentication
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_errors import build_error_envelope
 from tracer.serializers.trace_investigation import (
     ClaimInvestigationsRequestSerializer,
     ClaimInvestigationsResponseSerializer,
@@ -35,7 +36,10 @@ def _error_response(error: InvestigationControlError) -> Response:
         response_status = status.HTTP_409_CONFLICT
     else:
         response_status = status.HTTP_400_BAD_REQUEST
-    return Response({"code": error.code, "detail": str(error)}, status=response_status)
+    return Response(
+        build_error_envelope(str(error), status_code=response_status, code=error.code),
+        status=response_status,
+    )
 
 
 class InternalInvestigationView(APIView):

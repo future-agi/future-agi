@@ -23159,11 +23159,39 @@ export interface UpdateInvestigationAttemptResponseApi {
   job_state: string;
 }
 
+export type InvestigationControlErrorApiType =
+  (typeof InvestigationControlErrorApiType)[keyof typeof InvestigationControlErrorApiType];
+
+export const InvestigationControlErrorApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type InvestigationControlErrorApiDetails = { [key: string]: string[] };
+
 export interface InvestigationControlErrorApi {
+  status?: boolean;
+  type?: InvestigationControlErrorApiType;
   /** @minLength 1 */
   code: string;
   /** @minLength 1 */
   detail: string;
+  result?: string;
+  message?: string;
+  error?: string;
+  attr?: string;
+  details?: InvestigationControlErrorApiDetails;
 }
 
 export interface ClaimInvestigationsRequestApi {
