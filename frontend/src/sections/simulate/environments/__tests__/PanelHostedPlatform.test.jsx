@@ -94,11 +94,35 @@ describe("PanelHostedPlatform", () => {
     expect(screen.getByPlaceholderText("sk-…").value).toBe("");
   });
 
-  it("only shows call direction for voice", () => {
+  it("shows the voice contact block (Web/Phone + Agent speaks first) only for voice", () => {
     render(<PanelHostedPlatform />);
-    expect(screen.getByText("Call direction")).toBeInTheDocument();
+    expect(screen.getByText("Web simulation (WebRTC)")).toBeInTheDocument();
+    expect(screen.getByText("Agent speaks first")).toBeInTheDocument();
     fireEvent.click(screen.getByText("Chat"));
-    expect(screen.queryByText("Call direction")).toBeNull();
+    expect(screen.queryByText("Agent speaks first")).toBeNull();
+    expect(screen.queryByText("Web simulation (WebRTC)")).toBeNull();
+  });
+
+  it("switches the voice sim to Phone and reveals Country Code + Contact Number + Inbound Calls", () => {
+    render(<PanelHostedPlatform />);
+    expect(screen.queryByText("Country Code")).toBeNull();
+    fireEvent.click(screen.getByText("Phone"));
+    expect(screen.getByText("Telephony simulation (PSTN)")).toBeInTheDocument();
+    expect(screen.getByText("Country Code")).toBeInTheDocument();
+    expect(screen.getByText("Contact Number")).toBeInTheDocument();
+    expect(screen.getByText("Inbound Calls")).toBeInTheDocument();
+  });
+
+  it("selects Others → System prompt instead of ID/key, phone-only contact, gated on the prompt", () => {
+    render(<PanelHostedPlatform />);
+    fireEvent.click(screen.getByText("Others"));
+    expect(screen.getByText("System prompt")).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("asst_9f2c…")).toBeNull();
+    // Others has no WebRTC path — the Web/Phone header is hidden and the number
+    // is required.
+    expect(screen.queryByText("Web simulation (WebRTC)")).toBeNull();
+    expect(screen.getByText("Contact Number")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run preflight" })).toBeDisabled();
   });
 
   it("gates both actions until both credential fields are filled", () => {

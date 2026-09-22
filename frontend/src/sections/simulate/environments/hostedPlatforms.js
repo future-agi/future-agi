@@ -54,6 +54,18 @@ export const HOSTED_PLATFORMS_BY_TYPE = {
       idPlaceholder: "returns-line-agent",
       keyLabel: "LiveKit API key",
     },
+    {
+      // "Others" — describe the agent by a system prompt and run it against the
+      // LLM directly (no endpoint/key). Rendered with a Solar icon, not a brand
+      // logo. NOTE: no backend connector exists for this path yet (see plan).
+      id: "other",
+      name: "Others",
+      isOther: true,
+      icon: "solar:dialog-2-linear",
+      idLabel: "Endpoint URL",
+      idPlaceholder: "https://your-agent.example.com",
+      keyLabel: "API key",
+    },
   ],
   [AGENT_TYPES.CHAT]: [
     {

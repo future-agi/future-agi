@@ -147,6 +147,16 @@ describe("draftToPreflightPayload — platform", () => {
     expect(payload.metadata.name).toBe("asst_1");
   });
 
+  it("emits agent.call_direction when the panel collected one (inert backend-side)", () => {
+    const { payload } = draftToPreflightPayload(platformDraft({ callDirection: "outbound" }));
+    expect(payload.agent.call_direction).toBe("outbound");
+  });
+
+  it("omits call_direction when the draft has none", () => {
+    const { payload } = draftToPreflightPayload(platformDraft());
+    expect(payload.agent.call_direction).toBeUndefined();
+  });
+
   it("maps retell and livekit to agent_id", () => {
     const retell = draftToPreflightPayload(platformDraft({ provider: "retell" })).payload;
     expect(retell.agent.connector).toBe("retell");

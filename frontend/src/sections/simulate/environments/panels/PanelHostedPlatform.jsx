@@ -7,22 +7,31 @@ import ChipCard from "../components/ChipCard";
 import ContinueRow from "../components/ContinueRow";
 import PlatformLogo from "../components/PlatformLogo";
 import { PLATFORM_LOGOS } from "../components/platformLogos";
+import { COUNTRY_BY_ISO } from "../components/countryCodes";
+import ContactInformation from "./ContactInformation";
 import RuntimePreflight from "./RuntimePreflight";
 import usePanelBuild from "../hooks/usePanelBuild";
-import { ENTRY_AGENT_TYPES, CALL_DIRECTION, CALL_DIRECTION_LABEL } from "../agentTypes";
+import { ENTRY_AGENT_TYPES } from "../agentTypes";
 import { HOSTED_PLATFORMS_BY_TYPE, HOSTED_EMPTY_ROSTER_COPY } from "../hostedPlatforms";
 
-/* Type gate first — the platform roster only makes sense once we know what
-   kind of agent is being connected. Default to voice because that's what the
-   codebase actually integrates with today, and seed the platform to that
-   type's first entry so the picker opens with a selection. */
+/* Type gate first — the platform roster only makes sense once we know what kind
+   of agent is being connected. Default to voice (what we integrate with today)
+   and seed the platform to that type's first entry. `simMode` is web (WebRTC) or
+   phone (PSTN); `inboundCalls` is the old call-direction binary (on = inbound);
+   `agentSpeaksFirst` waits for the agent's greeting. `otherPrompt` is the
+   Others-only system prompt. */
 const initial = {
   agentType: AGENT_TYPES.VOICE,
   platform: (HOSTED_PLATFORMS_BY_TYPE[AGENT_TYPES.VOICE] || [])[0]?.id || "",
   id: "",
   key: "",
   repoUrl: "",
-  callDirection: CALL_DIRECTION.INBOUND,
+  simMode: "web",
+  countryIso: "US",
+  contactNumber: "",
+  inboundCalls: true,
+  agentSpeaksFirst: false,
+  otherPrompt: "",
 };
 
 function reducer(s, a) {
@@ -39,12 +48,14 @@ export default function PanelHostedPlatform() {
     dispatch({ field, value });
     build.resetPreflight();
   };
-  const { agentType, platform, id, key, repoUrl, callDirection } = form;
+  const {
+    agentType, platform, id, key, repoUrl,
+    simMode, countryIso, contactNumber, inboundCalls, agentSpeaksFirst, otherPrompt,
+  } = form;
   const platforms = HOSTED_PLATFORMS_BY_TYPE[agentType] || [];
 
-  /* When agent type flips, the current platform selection is likely stale.
-     Snap to the first platform of the new type and clear the credentials so
-     we do not carry an OpenAI key into a Retell form. */
+  /* When agent type flips, snap to the first platform of the new type and clear
+     the credentials so we do not carry a key into another provider's form. */
   const pickAgentType = (nextType) => {
     const first = (HOSTED_PLATFORMS_BY_TYPE[nextType] || [])[0];
     set("agentType")(nextType);
@@ -52,19 +63,46 @@ export default function PanelHostedPlatform() {
     set("id")("");
     set("key")("");
     set("repoUrl")("");
+    set("otherPrompt")("");
   };
 
   const chosen = platforms.find((p) => p.id === platform) || platforms[0];
-  const canGo = !!chosen && !!id.trim() && !!key.trim();
+  const isOther = !!chosen?.isOther;
+  // Others has no WebRTC path, so it requires a number regardless of simMode;
+  // other voice envs only require it in Phone mode.
+  const phoneRequired = agentType === AGENT_TYPES.VOICE && (isOther || simMode === "phone");
+  const phoneOk = !phoneRequired || !!contactNumber.trim();
+  const credsOk = isOther ? !!otherPrompt.trim() : (!!id.trim() && !!key.trim());
+  const canGo = !!chosen && credsOk && phoneOk;
 
   const buildSource = () => ({
     kind: "platform",
     agentType,
     provider: chosen?.id,
-    agentId: id.trim(),
-    apiKey: key.trim(),
+    ...(isOther
+      ? { agentMode: "prompt", prompt: otherPrompt.trim() }
+      : { agentId: id.trim(), apiKey: key.trim() }),
     ...(repoUrl.trim() ? { repoUrl: repoUrl.trim() } : {}),
-    ...(agentType === AGENT_TYPES.VOICE ? { callDirection } : {}),
+    ...(agentType === AGENT_TYPES.VOICE
+      ? (() => {
+          const contactMode = isOther ? "phone" : simMode;
+          return {
+            callDirection: inboundCalls ? "inbound" : "outbound",
+            contact: {
+              mode: contactMode,
+              inboundCalls,
+              agentSpeaksFirst,
+              ...(contactMode === "phone"
+                ? {
+                    countryIso,
+                    countryCode: COUNTRY_BY_ISO[countryIso]?.dial || "",
+                    number: contactNumber.trim(),
+                  }
+                : {}),
+            },
+          };
+        })()
+      : {}),
   });
 
   return (
@@ -95,7 +133,9 @@ export default function PanelHostedPlatform() {
             {platforms.map((p) => (
               <ChipCard
                 key={p.id}
-                logo={<PlatformLogo id={p.id} name={p.name} brand={p.brand} />}
+                /* "Others" has no brand logo — render its Solar icon instead. */
+                icon={p.isOther ? p.icon : undefined}
+                logo={p.isOther ? undefined : <PlatformLogo id={p.id} name={p.name} brand={p.brand} />}
                 /* Wordmark logos already spell the name — don't repeat it. */
                 label={PLATFORM_LOGOS[p.id]?.type === "wordmark" ? null : p.name}
                 on={platform === p.id}
@@ -107,23 +147,46 @@ export default function PanelHostedPlatform() {
       </Box>
       {chosen && (
         <>
-          <Field
-            label={chosen.idLabel || "Agent ID"}
-            required
-            placeholder={chosen.idPlaceholder}
-            value={id} onChange={set("id")}
-            mono
-          />
-          <Field
-            label={chosen.keyLabel || "API key"}
-            required
-            placeholder="sk-…"
-            value={key} onChange={set("key")}
-            type="password"
-            autoComplete="off"
-            mono
-            helper="Stored encrypted; used only to invoke the agent on your behalf."
-          />
+          {isOther ? (
+            <Field
+              label="System prompt"
+              required
+              placeholder="You are a friendly returns agent for Acme…"
+              value={otherPrompt} onChange={set("otherPrompt")}
+              multiline
+              helper="We seed matching scenarios from the prompt and run it against the LLM directly — no external endpoint or API key needed."
+            />
+          ) : (
+            <>
+              <Field
+                label={chosen.idLabel || "Agent ID"}
+                required
+                placeholder={chosen.idPlaceholder}
+                value={id} onChange={set("id")}
+                mono
+              />
+              <Field
+                label={chosen.keyLabel || "API key"}
+                required
+                placeholder="sk-…"
+                value={key} onChange={set("key")}
+                type="password"
+                autoComplete="off"
+                mono
+                helper="Stored encrypted; used only to invoke the agent on your behalf."
+              />
+            </>
+          )}
+          {agentType === AGENT_TYPES.VOICE && (
+            <ContactInformation
+              mode={simMode} onMode={set("simMode")}
+              countryIso={countryIso} onCountryIso={set("countryIso")}
+              contactNumber={contactNumber} onContactNumber={set("contactNumber")}
+              inboundCalls={inboundCalls} onInboundCalls={set("inboundCalls")}
+              agentSpeaksFirst={agentSpeaksFirst} onAgentSpeaksFirst={set("agentSpeaksFirst")}
+              phoneOnly={isOther}
+            />
+          )}
           <Field
             label="GitHub repo"
             placeholder="https://github.com/your-org/your-agent"
@@ -131,15 +194,6 @@ export default function PanelHostedPlatform() {
             mono
             helper="Optional. Lets us read the agent's tools + prompts to seed matching scenarios."
           />
-          {agentType === AGENT_TYPES.VOICE && (
-            <Box>
-              <Label>Call direction</Label>
-              <Box sx={{ display: "grid", gap: 0.75, gridTemplateColumns: "1fr 1fr", mt: 0.75 }}>
-                <ChipCard label={CALL_DIRECTION_LABEL[CALL_DIRECTION.INBOUND]} on={callDirection === CALL_DIRECTION.INBOUND} onClick={() => set("callDirection")(CALL_DIRECTION.INBOUND)} />
-                <ChipCard label={CALL_DIRECTION_LABEL[CALL_DIRECTION.OUTBOUND]} on={callDirection === CALL_DIRECTION.OUTBOUND} onClick={() => set("callDirection")(CALL_DIRECTION.OUTBOUND)} />
-              </Box>
-            </Box>
-          )}
         </>
       )}
       <RuntimePreflight

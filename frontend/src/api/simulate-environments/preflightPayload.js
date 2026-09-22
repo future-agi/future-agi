@@ -141,6 +141,10 @@ function platformPayload(draft, name) {
         // opaque `{alias: reference}` map before the draft is persisted. Absent
         // (a provider with no single-key exchange), the schema default applies.
         secret_refs: draft.secret_refs || {},
+        // The panel collects call direction (Inbound Calls); send it so it is at
+        // least recorded. Backend accepts it but treats it as inert today (§4f) —
+        // do not present it as changing who speaks first until the backend honours it.
+        ...(draft.callDirection ? { call_direction: draft.callDirection } : {}),
       },
     },
   };
