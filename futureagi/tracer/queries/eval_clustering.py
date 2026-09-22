@@ -102,8 +102,10 @@ def _eval_result_score(entry: EvalLogger) -> Optional[float]:
     if score is not None:
         return score
 
-    template_config = getattr(entry.custom_eval_config.eval_template, "config", {}) or {}
-    choice_scores = template_config.get("choice_scores") or {}
+    template = getattr(getattr(entry, "custom_eval_config", None), "eval_template", None)
+    if template is None:
+        return None
+    choice_scores = getattr(template, "choice_scores", None) or {}
 
     raw = entry.output_str
     if raw:
@@ -112,14 +114,20 @@ def _eval_result_score(entry: EvalLogger) -> Optional[float]:
         except (TypeError, ValueError):
             pass
         if isinstance(raw, dict):
+            choice = raw.get("choice", raw.get("choices"))
+            score = _mapped_choice_score(choice, choice_scores)
+            if score is not None:
+                return score
             score = _numeric_score(raw.get("score"))
             if score is not None:
                 return score
-            raw = raw.get("choice", raw.get("choices"))
-        score = _numeric_score(raw)
+            raw = choice
+        # A numeric-looking choice label must be mapped before treating it as
+        # a literal score (e.g. choice "2" can intentionally map to 0.0).
+        score = _mapped_choice_score(raw, choice_scores)
         if score is not None:
             return score
-        score = _mapped_choice_score(raw, choice_scores)
+        score = _numeric_score(raw)
         if score is not None:
             return score
 
@@ -133,7 +141,17 @@ def is_clusterable_eval_failure(entry: EvalLogger) -> bool:
     if entry.output_bool is False:
         return True
     score = _eval_result_score(entry)
-    return score is not None and score < 1.0
+    if score is None:
+        return False
+    # Typed numeric scores retain the historical perfect-score failure gate.
+    # Structured and choice-mapped outputs use the template's pass threshold.
+    if entry.output_float is not None:
+        return score < 1.0
+    template = getattr(getattr(entry, "custom_eval_config", None), "eval_template", None)
+    if template is None:
+        return False
+    threshold = getattr(template, "pass_threshold", None)
+    return score < (threshold if isinstance(threshold, (int, float)) else 0.5)
 
 
 # ---------------------------------------------------------------------------

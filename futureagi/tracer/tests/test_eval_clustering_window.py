@@ -102,11 +102,11 @@ def test_clustering_includes_choice_score_failures(
     project, trace, observation_span, custom_eval_config
 ):
     """A choice result is clusterable when its template maps it below 1.0."""
-    custom_eval_config.eval_template.config = {
-        "output": "choices",
-        "choice_scores": {"Good": 1.0, "Bad": 0.0},
-    }
-    custom_eval_config.eval_template.save(update_fields=["config"])
+    custom_eval_config.eval_template.choice_scores = {"Good": 1.0, "Bad": 0.0}
+    custom_eval_config.eval_template.pass_threshold = 0.5
+    custom_eval_config.eval_template.save(
+        update_fields=["choice_scores", "pass_threshold"]
+    )
     ev = EvalLogger.objects.create(
         trace=trace,
         observation_span=observation_span,
@@ -129,11 +129,11 @@ def test_clustering_excludes_mapped_passing_choice(
     project, trace, observation_span, custom_eval_config
 ):
     """Mapped passing choices must not be swept into the failure cluster."""
-    custom_eval_config.eval_template.config = {
-        "output": "choices",
-        "choice_scores": {"Good": 1.0, "Bad": 0.0},
-    }
-    custom_eval_config.eval_template.save(update_fields=["config"])
+    custom_eval_config.eval_template.choice_scores = {"Good": 1.0, "Bad": 0.0}
+    custom_eval_config.eval_template.pass_threshold = 0.5
+    custom_eval_config.eval_template.save(
+        update_fields=["choice_scores", "pass_threshold"]
+    )
     EvalLogger.objects.create(
         trace=trace,
         observation_span=observation_span,
@@ -146,6 +146,56 @@ def test_clustering_excludes_mapped_passing_choice(
     )
 
     assert get_unclustered_eval_results(str(project.id)) == []
+
+
+@pytest.mark.django_db
+def test_clustering_maps_numeric_choice_labels_before_numeric_parse(
+    project, trace, observation_span, custom_eval_config
+):
+    """A label such as ``"2"`` must use its configured choice score."""
+    custom_eval_config.eval_template.choice_scores = {"2": 0.0, "10": 1.0}
+    custom_eval_config.eval_template.pass_threshold = 0.5
+    custom_eval_config.eval_template.save(
+        update_fields=["choice_scores", "pass_threshold"]
+    )
+    ev = EvalLogger.objects.create(
+        trace=trace,
+        observation_span=observation_span,
+        custom_eval_config=custom_eval_config,
+        target_type="span",
+        output_str="2",
+        output_str_list=["2"],
+        eval_explanation="the selected choice failed",
+        eval_task_id="et-numeric-label",
+    )
+
+    results = get_unclustered_eval_results(str(project.id))
+
+    assert [result.eval_logger_id for result in results] == [str(ev.id)]
+    assert results[0].score == 0.0
+
+
+@pytest.mark.django_db
+def test_structured_score_uses_template_pass_threshold(
+    project, trace, observation_span, custom_eval_config
+):
+    """Structured scores below the configured threshold are clusterable."""
+    custom_eval_config.eval_template.pass_threshold = 0.75
+    custom_eval_config.eval_template.save(update_fields=["pass_threshold"])
+    ev = EvalLogger.objects.create(
+        trace=trace,
+        observation_span=observation_span,
+        custom_eval_config=custom_eval_config,
+        target_type="span",
+        output_str='{"score": 0.6, "choice": "Fair"}',
+        eval_explanation="the response was only partially correct",
+        eval_task_id="et-structured-threshold",
+    )
+
+    results = get_unclustered_eval_results(str(project.id))
+
+    assert [result.eval_logger_id for result in results] == [str(ev.id)]
+    assert results[0].score == 0.6
 
 
 @pytest.mark.django_db
