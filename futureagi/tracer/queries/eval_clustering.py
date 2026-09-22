@@ -70,7 +70,7 @@ _FAILING_EVAL_Q = (
 )
 
 
-def _numeric_score(value) -> Optional[float]:
+def _numeric_score(value) -> float | None:
     """Return a finite numeric score, or ``None`` for an unscorable value."""
     if isinstance(value, bool):
         return None
@@ -81,7 +81,7 @@ def _numeric_score(value) -> Optional[float]:
     return score if math.isfinite(score) else None
 
 
-def _mapped_choice_score(value, choice_scores: dict) -> Optional[float]:
+def _mapped_choice_score(value, choice_scores: dict) -> float | None:
     if not choice_scores:
         return None
     if isinstance(value, str):
@@ -96,7 +96,7 @@ def _mapped_choice_score(value, choice_scores: dict) -> Optional[float]:
     return None
 
 
-def _eval_result_score(entry: EvalLogger) -> Optional[float]:
+def _eval_result_score(entry: EvalLogger) -> float | None:
     """Resolve an eval's normalized score, including config-mapped choices."""
     score = _numeric_score(entry.output_float)
     if score is not None:
