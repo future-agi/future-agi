@@ -4,28 +4,15 @@ import { useShallow } from "zustand/react/shallow";
 import { CURRENT_ENVIRONMENT } from "src/config-global";
 import { emptyEnvState } from "./envState";
 
-// The client build-stage enum lives here (re-exported by build/build.constants.js)
-// so the store and the build modules share one source with no import ordering.
-export const BUILD_STAGE = { PREFLIGHT: "preflight", BUILDING: "building" };
-
-const INITIAL_BUILD_PROGRESS = { done: [], running: false, failure: null };
-
 export const useEnvironmentsStore = create(
   devtools(
     persist(
       (set, get, store) => ({
         choice: null, // OPTION_ID of the open entry card | null
-        draft: null, // source object a panel CTA produced | null
-
-        buildStage: null, // BUILD_STAGE | null (null = not on the build page)
-        envId: null, // minted by useBuildEnvironment when the audit is accepted
-        // A one-shot build ticket the panel hands to /build after inline preflight
-        // passes: { draft (redacted, exchanged), preflight (the passing response) }.
-        // NEVER persisted — the build page consumes it once on mount so a refresh
-        // mid-build can't re-fire create with a fresh idempotency key.
-        pendingBuild: null,
-        readerAnswers: null, // accepted-audit answers; always {} now (no reader UI)
-        buildProgress: { ...INITIAL_BUILD_PROGRESS },
+        // The last passing source draft a panel committed. Persisted so the panel
+        // form rehydrates on a back-navigation from the workspace; the create call
+        // itself happens in the panel (usePanelBuild) and routes to the workspace.
+        draft: null,
 
         // Adopted environment records, keyed by id (build/template/fork envs).
         workspaceEnvs: {},
@@ -36,53 +23,6 @@ export const useEnvironmentsStore = create(
         clearChoice: () => set({ choice: null }, false, "clearChoice"),
         setDraft: (source) => set({ draft: source }, false, "setDraft"),
         clearDraft: () => set({ draft: null }, false, "clearDraft"),
-
-        // Stage a passing inline preflight for the build page. Mirrors the draft
-        // into the persisted `draft` slot so the existing rehydrate paths keep
-        // working; the ticket itself is not persisted (see pendingBuild above).
-        beginBuild: ({ draft, preflight }) =>
-          set({ pendingBuild: { draft, preflight }, draft }, false, "beginBuild"),
-
-        // Read-and-clear the build ticket. The build page calls this once on
-        // mount; a remount (refresh) then finds null and bounces instead of
-        // re-creating the job.
-        consumePendingBuild: () => {
-          const ticket = get().pendingBuild;
-          if (ticket) set({ pendingBuild: null }, false, "consumePendingBuild");
-          return ticket;
-        },
-
-        // A fresh visit to /build must never inherit a stale building state, so
-        // the whole build slice resets here — only draft (persisted) survives.
-        startPreflight: () =>
-          set(
-            {
-              buildStage: BUILD_STAGE.PREFLIGHT,
-              envId: null,
-              readerAnswers: null,
-              buildProgress: { ...INITIAL_BUILD_PROGRESS },
-            },
-            false,
-            "startPreflight",
-          ),
-
-        acceptAudit: ({ envId, answers }) =>
-          set(
-            {
-              buildStage: BUILD_STAGE.BUILDING,
-              envId,
-              readerAnswers: answers,
-            },
-            false,
-            "acceptAudit",
-          ),
-
-        setBuildProgress: (patch) =>
-          set(
-            (s) => ({ buildProgress: { ...s.buildProgress, ...patch } }),
-            false,
-            "setBuildProgress",
-          ),
 
         // Register an environment. Prepend so the newest is first; idempotent by
         // id so a re-adopt (e.g. a stale remount at 7/7) never overwrites the
@@ -189,22 +129,10 @@ export const useEnvironmentsStore = create(
             "forkEnvironment",
           ),
 
-        // Clear only the entry + build slice. The env slices (byEnv,
-        // workspaceEnvs) survive, so visiting Home never wipes a workspace.
+        // Clear only the entry slice (open card + staged draft). The env slices
+        // (byEnv, workspaceEnvs) survive, so visiting Home never wipes a workspace.
         resetEntryState: () =>
-          set(
-            {
-              choice: null,
-              draft: null,
-              buildStage: null,
-              envId: null,
-              pendingBuild: null,
-              readerAnswers: null,
-              buildProgress: { ...INITIAL_BUILD_PROGRESS },
-            },
-            false,
-            "resetEntryState",
-          ),
+          set({ choice: null, draft: null }, false, "resetEntryState"),
 
         reset: () => set(store.getInitialState(), false, "reset"),
       }),
@@ -212,9 +140,8 @@ export const useEnvironmentsStore = create(
         name: "simulate-environments-draft",
         storage: createJSONStorage(() => sessionStorage),
         // The draft and the env slices survive a refresh so a workspace deep
-        // link (or the in-place workspace on /build) can rehydrate. The build
-        // slice must NOT persist, or the reset-on-mount / startPreflight
-        // semantics would break (decision 5).
+        // link rehydrates and the panel form can be restored after a
+        // back-navigation. `choice` is deliberately not persisted.
         partialize: (state) => ({
           draft: state.draft,
           byEnv: state.byEnv,

@@ -84,7 +84,7 @@ export default function RunsPanel({ env, envState, runs, onStart, onOpenRun, onG
             icon="solar:cpu-bolt-linear"
             color={BUILD_TONES.accent}
             ok={!!agent}
-            onFix={() => onGo("summary")}
+            onFix={() => onGo("overview")}
           />
           <PreflightItem
             xs={6}

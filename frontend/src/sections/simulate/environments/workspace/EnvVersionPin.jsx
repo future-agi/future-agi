@@ -66,6 +66,8 @@ export default function EnvVersionPin({ env, envState, patch, readOnly = false }
         }}
       >
         <Iconify icon="solar:code-linear" width={11} sx={{ opacity: 0.75 }} />
+        {/* MOCK DATA: the env version label ("env v3") is seeded client-side —
+            env versioning has no backend yet, so this is placeholder data. */}
         <Typography sx={{ typography: "s3", fontWeight: "fontWeightBold" }}>
           {WORKSPACE_COPY.versionBar.envPrefix} {active.label}
         </Typography>

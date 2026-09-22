@@ -22,8 +22,9 @@ import {
 // useMcpConnect, and submit only builds a record. No store access.
 //
 // The form lives in a child gated on `open` so it mounts fresh every time the
-// drawer opens (fields reset, no stale prefill). The drawer relies on
-// SideDrawer's own close (X) — it renders no header close of its own.
+// drawer opens, and (matching the designer) seeds from the current version's
+// connection so a new version starts as an edit of the last rather than a blank
+// form. The drawer relies on SideDrawer's own close (X) — no header close.
 export default function AddAgentDrawer({ open, onClose, agent, type, onAdd }) {
   return (
     <SideDrawer open={open} onClose={onClose} width={640}>
@@ -43,10 +44,13 @@ AddAgentDrawer.propTypes = {
 };
 
 function AddVersionForm({ agent, type, onAdd, onClose }) {
-  const [reach, setReach] = useState("endpoint");
-  const [values, setValues] = useState({});
-  const [refKind, setRefKind] = useState("branch");
-  const [refValue, setRefValue] = useState("");
+  // Seed from the current version's connection so a new version opens as an edit
+  // of the last (designer parity), falling back to a blank endpoint form.
+  const prev = agent?.values || {};
+  const [reach, setReach] = useState(agent?.reach || "endpoint");
+  const [values, setValues] = useState({ ...prev });
+  const [refKind, setRefKind] = useState(prev.ref?.kind || "branch");
+  const [refValue, setRefValue] = useState(prev.ref?.value || "");
   const [note, setNote] = useState("");
   const [mcpConnected, setMcpConnected] = useState(false);
 

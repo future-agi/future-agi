@@ -30,6 +30,10 @@ export const PRESSURE_KINDS = [
   { id: "noise", label: "Distraction", color: BUILD_TONES.amber, blurb: "No agenda against you — just pulls attention." },
 ];
 
+// The modalities an actor can speak in — offered as toggle chips in the actor
+// editor. Ported from the designer's _mock/actors.js.
+export const MODALITIES = ["voice", "chat", "cua", "coding"];
+
 export const ACTOR_LIBRARY = [
   {
     id: "act-competing-colleague",

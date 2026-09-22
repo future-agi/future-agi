@@ -44,7 +44,7 @@ describe("RunsPanel pre-flight", () => {
     renderPanel({ envState: agentMissingState, onGo });
     expect(screen.getByText(RUNS_COPY.agentNotConnected)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: RUNS_COPY.fix }));
-    expect(onGo).toHaveBeenCalledWith("summary");
+    expect(onGo).toHaveBeenCalledWith("overview");
   });
 
   it("shows the scenario count as N tasks", () => {

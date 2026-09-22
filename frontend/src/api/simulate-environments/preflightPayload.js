@@ -56,7 +56,11 @@ export function environmentNameFor(draft) {
     return lastSegment(repository) || "agent";
   }
   if (draft.kind === "platform") return draft.agentId || "agent";
-  if (draft.kind === "upload") return draft.entry || draft.files?.[0]?.name || "agent";
+  // An upload is a folder, so name it after the folder — not the entry path or
+  // some file inside it (which produced names like "requirements.txt").
+  if (draft.kind === "upload") {
+    return draft.folderName || draft.entry || draft.files?.[0]?.name || "agent";
+  }
   return "agent";
 }
 

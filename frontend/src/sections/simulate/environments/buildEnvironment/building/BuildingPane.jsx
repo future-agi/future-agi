@@ -44,8 +44,10 @@ export default function BuildingPane({
   envState,
   patch,
   primed = false,
+  source,
+  world = null,
 }) {
-  const [tab, setTab] = useState("summary");
+  const [tab, setTab] = useState("overview");
 
   const isLoading = !done.includes("scenarios") || !primed;
 
@@ -88,7 +90,7 @@ export default function BuildingPane({
 
       {/* body */}
       <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "auto" }}>
-        <DerivingAnimation label={derivingLabel(done)} />
+        <DerivingAnimation label={derivingLabel(done)} source={source} world={world} />
         <PipelineChecks pipeline={pipelineStatus(done, running, "setup", failure)} />
       </Box>
     </Stack>
@@ -108,4 +110,6 @@ BuildingPane.propTypes = {
   envState: ENV_STATE_SHAPE,
   patch: PropTypes.func,
   primed: PropTypes.bool,
+  source: PropTypes.string,
+  world: PropTypes.object,
 };

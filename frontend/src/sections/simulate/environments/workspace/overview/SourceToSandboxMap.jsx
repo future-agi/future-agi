@@ -3,7 +3,7 @@ import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import OriginChip from "../../components/OriginChip";
-import { ENV_SHAPE, ENV_STATE_SHAPE } from "./overview.constants";
+import { ENV_SHAPE } from "./overview.constants";
 import {
   MAP_COPY,
   toolMapRows,
@@ -11,31 +11,31 @@ import {
   storeMapRows,
   actorMapRows,
 } from "./sourceToSandbox.constants";
-import { InlineResolve, NeedsAnswerLabel, ConfirmedChip } from "./SourceToSandboxResolve";
 
 const MONO = "ui-monospace, Menlo, monospace";
 // Shared grid template so column headers, group headers and every row land on
 // the same tracks; min-content right-aligns each origin chip to its widest peer.
-const MAP_GRID = "minmax(0, 1fr) min-content 24px minmax(0, 1fr)";
+// The arrow sits in its own fixed track wide enough that the centred glyph keeps
+// clear air on both sides — the origin chip must never read as fused to the
+// arrow, however short the row's target is. The name (col 1) and target (col 4)
+// are minmax(0, 1fr), so a long value ellipsis-clips inside its cell rather than
+// pushing the chip or the arrow.
+const MAP_GRID = "minmax(0, 1fr) min-content 44px minmax(0, 1fr)";
 const MAP_PX = 3;
 
 // A two-column ledger: what was read from source, and what it became in the
-// sandbox. Rows the reader could not classify from static analysis carry an
-// inline resolve control anchored below the fact it belongs to. This is the
-// artifact someone returns to weeks later to see which decisions a human made
-// and which the reader made itself.
-export default function SourceToSandboxMap({ env, envState, patch }) {
+// sandbox. Read-only — the read/write classification is a verb-heuristic guess,
+// and resolving/overriding it lives on the Contract tab — but this map REFLECTS
+// a Contract override: a resolved tool shows the overridden target and a "you
+// confirmed" mark. This is the artifact someone returns to weeks later to see
+// which decisions a human made and which the reader made itself.
+export default function SourceToSandboxMap({ env, envState }) {
   const toolRows = toolMapRows(env, envState);
   const ruleRows = ruleMapRows(env);
   const storeRows = storeMapRows(env);
   const actors = actorMapRows(env);
 
-  const toAnswer = toolRows.filter((r) => r.isUnresolved).length;
   const actorMapped = actors.filter((a) => a.mapped).length;
-
-  const resolutions = envState?.toolResolutions || {};
-  const setToolResolution = (name, choice) =>
-    patch?.({ toolResolutions: { ...resolutions, [name]: choice } });
 
   return (
     <Box
@@ -68,8 +68,7 @@ export default function SourceToSandboxMap({ env, envState, patch }) {
       <MapGroup
         label={MAP_COPY.groups.tools.label}
         hint={MAP_COPY.groups.tools.hint}
-        right={MAP_COPY.toolsRight(toolRows.length, toAnswer)}
-        toAnswer={toAnswer}
+        right={MAP_COPY.toolsRight(toolRows.length)}
         first
       >
         {toolRows.map((r, i) => (
@@ -78,13 +77,9 @@ export default function SourceToSandboxMap({ env, envState, patch }) {
             index={i}
             name={r.name}
             origin={r.origin}
-            target={r.isUnresolved ? <NeedsAnswerLabel /> : r.target}
+            target={r.target}
             mono
-            highlight={r.isUnresolved}
-            trailing={r.confirmed && <ConfirmedChip />}
-            below={r.isUnresolved && (
-              <InlineResolve toolName={r.name} onPick={(choice) => setToolResolution(r.name, choice)} />
-            )}
+            trailing={r.confirmed ? <ConfirmedChip /> : null}
           />
         ))}
       </MapGroup>
@@ -132,9 +127,26 @@ export default function SourceToSandboxMap({ env, envState, patch }) {
 }
 SourceToSandboxMap.propTypes = {
   env: ENV_SHAPE.isRequired,
-  envState: ENV_STATE_SHAPE,
-  patch: PropTypes.func,
+  envState: PropTypes.shape({ toolResolutions: PropTypes.objectOf(PropTypes.string) }),
 };
+
+// A small "you confirmed" pill for a tool row whose read/write effect was
+// overridden by a human on the Contract tab — the map reflects that decision.
+function ConfirmedChip() {
+  return (
+    <Box
+      component="span"
+      sx={{
+        px: 0.625, py: 0.125, borderRadius: 0.75, flexShrink: 0,
+        typography: "s3", fontWeight: "fontWeightSemiBold",
+        color: "success.dark",
+        bgcolor: (t) => alpha(t.palette.success.main, t.palette.mode === "dark" ? 0.16 : 0.1),
+      }}
+    >
+      {MAP_COPY.confirmed}
+    </Box>
+  );
+}
 
 function ColHead({ children }) {
   return (

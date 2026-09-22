@@ -152,6 +152,7 @@ export default function PanelHostedPlatform() {
       />
       <ContinueRow
         disabled={!build.readyToSubmit}
+        busy={build.committing}
         hint={build.status === "done" ? "Resolve the checks above" : "Run preflight to continue"}
         onClick={build.commitBuild}
       />

@@ -15,9 +15,8 @@ import { EVALS_COPY, ENV_SHAPE, ENV_STATE_SHAPE } from "./evals.constants";
  * once per eval with a completion bar and a primary button that reads "Next"
  * until the last — so a batch of evals is one trip through the picker.
  *
- * A single row "Add" still works on its own: it maps that one eval and, because
- * the drawer stays open, the user can keep adding without re-opening it. Every
- * saved eval flows through `onAdd`.
+ * A single row "Add" still works on its own: it maps that one eval and closes
+ * the drawer. Every saved eval flows through `onAdd`.
  */
 export default function AddEvalsDrawer({
   open,
@@ -106,18 +105,28 @@ export default function AddEvalsDrawer({
       key={mapping ? queue[index]?.id : "list"}
       open={open}
       onClose={close}
+      // Same surface as every other drawer in this flow — the theme rule has to
+      // be outranked to keep the paper background.
+      paperSx={{ backgroundColor: "background.paper", backgroundImage: "none" }}
       source="create-simulate"
       sourceId={env?.id || ""}
       sourcePreviewData={previewData}
       existingEvals={[...(existingIds || [])].map((id) => ({ id }))}
       onEvalAdded={
-        mapping ? onQueueEvalAdded : (config) => onAdd([entry(config)])
+        mapping
+          ? onQueueEvalAdded
+          : (config) => {
+              onAdd([entry(config)]);
+              close();
+            }
       }
       initialEval={mapping ? queue[index] : null}
-      // The picker must not close itself after each save — a single add keeps
-      // the list open for more, and the queue closes only once the last eval
-      // is done.
-      keepOpenAfterSave
+      // In a queue the drawer must not close itself after each save — this
+      // component decides when the last eval is done. A single add closes.
+      keepOpenAfterSave={mapping}
+      // A queued mapping runs in edit mode (initialEval is set), and this
+      // drawer gates the edit-mode close on its own prop rather than
+      // keepOpenAfterSave — so the queue's close has to be surfaced here too.
       keepOpenAfterEditSave={mapping}
       // The config step hides the picker's own header, so during a queued
       // mapping the close control has to be surfaced here.

@@ -1,21 +1,28 @@
-import { Box } from "@mui/material";
-import TestRunDetailView from "src/sections/test-detail/TestRunDetailView";
+import { useOutletContext, useParams } from "react-router-dom";
+import RunDetail from "./detail/RunDetail";
 
-// The reused product execution detail, mounted inside the workspace Runs tab.
-// TestRunDetailView owns a `height: 100vh` root sized for its standalone page;
-// the child selector here out-specifies it so the detail fills the Runs body
-// instead of the viewport — no edit to the product file is needed for layout.
+// The run/execution detail mounted inside the workspace Runs tab. The
+// environment (and its client-side state) are resolved once by
+// EnvironmentWorkspace and handed down through the Outlet context, so this
+// route element only reads the run identity from the URL and renders the
+// designer-style RunDetail — no second environment resolution.
+//
+// The nested `call-details` / `performance` / `analytics` child routes are now
+// unused: RunDetail owns its own internal tabs. They are left registered for
+// backwards-compatible deep links (they render nothing without an Outlet here)
+// and can be removed in a follow-up.
 export default function WorkspaceExecutionDetail() {
+  const { env, envState } = useOutletContext() || {};
+  const { testId, executionId } = useParams();
+
+  if (!env) return null;
+
   return (
-    <Box
-      sx={{
-        height: "100%",
-        minHeight: 0,
-        overflow: "hidden",
-        "& > *:first-of-type": { height: "100%" },
-      }}
-    >
-      <TestRunDetailView />
-    </Box>
+    <RunDetail
+      env={env}
+      envState={envState}
+      testId={testId}
+      executionId={executionId}
+    />
   );
 }

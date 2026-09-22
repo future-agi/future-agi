@@ -1,19 +1,26 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { Box, Typography, IconButton, Menu, MenuItem } from "@mui/material";
+import { Box, Typography, IconButton, Menu, MenuItem, Divider } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import { WORKSPACE_COPY } from "./workspace.constants";
+import { DELETE_TONE } from "../myEnvironments.constants";
 
 // The header overflow menu. A regular environment keeps Fork tucked inside the
 // overflow; a template-seeded env surfaces Fork inside the Overview card
 // instead, so the shell hides this menu for those (renders nothing when locked).
-export default function ForkMenu({ onFork }) {
+// `onDelete` is supplied only for real backend-backed environments (§2 DELETE);
+// forked/template envs have no backend row to remove, so it is omitted for them.
+export default function ForkMenu({ onFork, onDelete }) {
   const [anchor, setAnchor] = useState(null);
   const close = () => setAnchor(null);
   const fork = () => {
     close();
     onFork();
+  };
+  const del = () => {
+    close();
+    onDelete?.();
   };
 
   return (
@@ -51,6 +58,28 @@ export default function ForkMenu({ onFork }) {
             </Typography>
           </Box>
         </MenuItem>
+
+        {onDelete && <Divider sx={{ my: 0.5 }} />}
+        {onDelete && (
+          <MenuItem
+            onClick={del}
+            sx={{ alignItems: "flex-start", gap: 1.25, py: 1, color: DELETE_TONE.main }}
+          >
+            <Iconify
+              icon="solar:trash-bin-trash-linear"
+              width={16}
+              sx={{ mt: "2px", flexShrink: 0 }}
+            />
+            <Box minWidth={0}>
+              <Typography sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}>
+                {WORKSPACE_COPY.deleteEnv}
+              </Typography>
+              <Typography sx={{ typography: "s3", color: "text.subtitle", whiteSpace: "normal" }}>
+                {WORKSPACE_COPY.deleteEnvHint}
+              </Typography>
+            </Box>
+          </MenuItem>
+        )}
       </Menu>
     </>
   );
@@ -58,4 +87,5 @@ export default function ForkMenu({ onFork }) {
 
 ForkMenu.propTypes = {
   onFork: PropTypes.func.isRequired,
+  onDelete: PropTypes.func,
 };

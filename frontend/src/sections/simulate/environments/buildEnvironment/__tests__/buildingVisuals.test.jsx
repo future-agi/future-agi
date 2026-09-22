@@ -8,61 +8,40 @@ import { DERIVING_LABEL, PIPELINE_CHECKS_COPY } from "../build.constants";
 import { pipelineStatus } from "../buildPipeline.constants";
 
 describe("DerivingAnimation", () => {
-  beforeEach(() => vi.useFakeTimers());
-  afterEach(() => vi.useRealTimers());
-
-  // The emit loop reads a mutable tick counter inside a functional setState.
-  // With real timers a render flushes between ticks; under fake timers we must
-  // advance one 850ms interval at a time to reproduce that per-tick flush,
-  // otherwise React batches every queued updater and they all read the final
-  // counter value (three copies of the last token). One tick per act mirrors
-  // production exactly.
-  const emitTicks = (n) => {
-    for (let i = 0; i < n; i += 1) {
-      act(() => vi.advanceTimersByTime(850));
-    }
+  const WORLD = {
+    tools: [{ name: "verify_identity" }, { name: "issue_refund" }],
+    rules: ["The fix must not edit the test files."],
+    seed: { tables: [{ name: "customers", rows: 240 }] },
   };
 
-  it("renders the idle label, the sandbox header and a zero count", () => {
-    render(<DerivingAnimation />);
-    expect(screen.getByText(DERIVING_LABEL.idle)).toBeInTheDocument();
+  it("shows the real source and a neutral skeleton (no invented names) before the world lands", () => {
+    render(<DerivingAnimation source="ride-voice-agent" />);
     expect(screen.getByText("SANDBOX")).toBeInTheDocument();
-    expect(screen.getByText("0")).toBeInTheDocument();
-  });
-
-  it("lands three chips and updates the legend after three emit ticks", () => {
-    render(<DerivingAnimation />);
-    emitTicks(3);
-
-    expect(screen.getByText("verify_identity")).toBeInTheDocument();
-    expect(screen.getByText("return-window rule")).toBeInTheDocument();
-    expect(screen.getByText("lookup_order")).toBeInTheDocument();
-
-    // The legend is three separate MiniCount nodes, not one string.
-    expect(screen.getByText("2 tools")).toBeInTheDocument();
-    expect(screen.getByText("1 rules")).toBeInTheDocument();
+    // the real source in the file header — not the old hardcoded filename
+    expect(screen.getByText("ride-voice-agent")).toBeInTheDocument();
+    expect(screen.queryByText("handlers/refunds.py")).not.toBeInTheDocument();
+    // no canned token chips, and the legend is genuinely zero
+    expect(screen.queryByText("verify_identity")).not.toBeInTheDocument();
+    expect(screen.getByText("0 tools")).toBeInTheDocument();
+    expect(screen.getByText("0 rules")).toBeInTheDocument();
     expect(screen.getByText("0 tables")).toBeInTheDocument();
   });
 
-  it("caps the emitted count at twelve", () => {
-    render(<DerivingAnimation />);
-    emitTicks(20);
-
-    // The 12th (last) token has landed and the legend totals the full set.
-    expect(screen.getByText("get_refund_quote")).toBeInTheDocument();
-    expect(screen.getByText("6 tools")).toBeInTheDocument();
-    expect(screen.getByText("3 rules")).toBeInTheDocument();
-    expect(screen.getByText("3 tables")).toBeInTheDocument();
-
-    // "12" appears twice: the source-panel line number and the sandbox count.
-    expect(screen.getAllByText("12")).toHaveLength(2);
+  it("renders the real derived tools/tables and real counts once the world is available", () => {
+    render(<DerivingAnimation source="ride-voice-agent" world={WORLD} />);
+    expect(screen.getByText("verify_identity")).toBeInTheDocument();
+    expect(screen.getByText("issue_refund")).toBeInTheDocument();
+    expect(screen.getByText("customers × 240")).toBeInTheDocument();
+    // legend totals the full real world (rules counted even if clipped as a chip)
+    expect(screen.getByText("2 tools")).toBeInTheDocument();
+    expect(screen.getByText("1 rules")).toBeInTheDocument();
+    expect(screen.getByText("1 tables")).toBeInTheDocument();
   });
 
-  it("clears the emit interval on unmount", () => {
-    const { unmount } = render(<DerivingAnimation />);
-    expect(vi.getTimerCount()).toBeGreaterThan(0);
-    unmount();
-    expect(vi.getTimerCount()).toBe(0);
+  it("falls back to a neutral source label and the idle phase line when nothing is passed", () => {
+    render(<DerivingAnimation />);
+    expect(screen.getByText(DERIVING_LABEL.readingSource)).toBeInTheDocument();
+    expect(screen.getByText(DERIVING_LABEL.idle)).toBeInTheDocument();
   });
 });
 

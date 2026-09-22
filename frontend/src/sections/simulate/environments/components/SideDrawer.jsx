@@ -42,11 +42,14 @@ export default function SideDrawer({ open, onClose, width = 480, keepMounted = f
         BackdropProps: { style: { backgroundColor: "transparent" } },
       }}
     >
+      {/* The single close affordance for every drawer built on this shell — the
+          plain line X. Drawer contents must NOT add their own close button, or
+          the two stack up in the same corner. */}
       <IconButton
         aria-label="Close"
         onClick={onClose}
         size="small"
-        sx={{ position: "absolute", top: 8, right: 8, zIndex: 1 }}
+        sx={{ position: "absolute", top: 8, right: 8, zIndex: 1, color: "text.subtitle" }}
       >
         <Iconify icon="mingcute:close-line" width={18} />
       </IconButton>

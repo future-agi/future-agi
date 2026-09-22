@@ -1,8 +1,8 @@
 import PropTypes from "prop-types";
-import { Box, Stack, Typography, Button } from "@mui/material";
+import { Box, Stack, Typography, Button, CircularProgress } from "@mui/material";
 import Iconify from "src/components/iconify";
 
-export default function ContinueRow({ disabled, hint, label = "Build environment", onClick }) {
+export default function ContinueRow({ disabled, busy = false, hint, label = "Build environment", onClick }) {
   return (
     <Stack
       direction="row"
@@ -19,15 +19,25 @@ export default function ContinueRow({ disabled, hint, label = "Build environment
       <Button
         variant="contained"
         color="primary"
-        disabled={disabled}
+        disabled={disabled || busy}
         onClick={onClick}
-        startIcon={<Iconify icon="solar:magic-stick-3-linear" width={14} />}
-        endIcon={<Iconify icon="solar:alt-arrow-right-linear" width={14} />}
+        startIcon={
+          busy
+            ? <CircularProgress size={14} color="inherit" />
+            : <Iconify icon="solar:magic-stick-3-linear" width={14} />
+        }
+        endIcon={busy ? null : <Iconify icon="solar:alt-arrow-right-linear" width={14} />}
         sx={{ typography: "s1", fontWeight: "fontWeightBold", px: 2, flexShrink: 0 }}
       >
-        {label}
+        {busy ? "Building…" : label}
       </Button>
     </Stack>
   );
 }
-ContinueRow.propTypes = { disabled: PropTypes.bool, hint: PropTypes.node, label: PropTypes.node, onClick: PropTypes.func };
+ContinueRow.propTypes = {
+  disabled: PropTypes.bool,
+  busy: PropTypes.bool,
+  hint: PropTypes.node,
+  label: PropTypes.node,
+  onClick: PropTypes.func,
+};

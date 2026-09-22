@@ -99,13 +99,15 @@ describe("AgentsPanel via Overview 'Manage versions'", () => {
     expect(screen.getAllByText("v2").length).toBeGreaterThan(0);
   });
 
-  it("keeps 'Fork to edit' and does not open AgentsPanel for a locked env", () => {
+  it("does not open AgentsPanel (or offer Manage versions) for a locked env", () => {
     renderOverview({ locked: true });
 
-    expect(screen.getByRole("button", { name: /fork to edit/i })).toBeInTheDocument();
+    // A locked template never mounts the version-management drawer; the single
+    // fork affordance lives in the workspace-level TemplateLockBanner, not here.
     expect(
       screen.queryByRole("button", { name: /manage versions/i })
     ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /fork to edit/i })).toBeNull();
     expect(screen.queryByText("Version history")).not.toBeInTheDocument();
   });
 });
@@ -141,5 +143,28 @@ describe("AgentsPanel recipes", () => {
     expect(arg.activeAgentVersion).toBe("v2");
     expect(arg.agent.activeVersionId).toBe("v2");
     expect(arg.agent.versions).toHaveLength(2);
+  });
+});
+
+describe("AgentsPanel — template lock (read-only until forked)", () => {
+  const LOCK_TOOLTIP = "Fork this environment to edit.";
+
+  // OverviewPanel gates the whole version-management drawer behind !locked, so
+  // this is only reachable by a direct render — but the panel still defends the
+  // controls itself.
+  it("disables Add new version and roll-back with the fork tooltip", () => {
+    render(<AgentsPanel envState={stateWith(twoVersionAgent())} patch={vi.fn()} locked />);
+
+    expect(screen.getByRole("button", { name: /add new version/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /roll back to this/i })).toBeDisabled();
+    expect(screen.getAllByLabelText(LOCK_TOOLTIP).length).toBeGreaterThan(0);
+  });
+
+  it("keeps those controls enabled when not locked", () => {
+    render(<AgentsPanel envState={stateWith(twoVersionAgent())} patch={vi.fn()} locked={false} />);
+
+    expect(screen.getByRole("button", { name: /add new version/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /roll back to this/i })).toBeEnabled();
+    expect(screen.queryByLabelText(LOCK_TOOLTIP)).toBeNull();
   });
 });

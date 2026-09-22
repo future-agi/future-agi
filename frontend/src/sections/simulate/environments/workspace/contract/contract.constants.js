@@ -82,6 +82,7 @@ export const CONTRACT_COPY = {
     calloutBody:
       "The persona is who your agent is serving — the one whose goal the task is. An actor is someone else: you are trying to book a cab, and your colleague is saying let's get pizza instead.",
     calloutLink: "See scenarios",
+    create: "Create actor",
     castTitle: (n) => `In this environment (${n})`,
     castSubtitle: "Injected into every run, at the version pinned here",
     emptyIcon: "solar:users-group-two-rounded-linear",

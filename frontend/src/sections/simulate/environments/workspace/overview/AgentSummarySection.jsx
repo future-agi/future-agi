@@ -15,7 +15,7 @@ import { ENV_STATE_SHAPE, AGENT_SUMMARY_COPY, OVERVIEW_COPY } from "./overview.c
   agent yet) stays deferred behind the coming-soon tooltip — the add-version
   drawer mints versions of an existing agent, not a first one.
 */
-export default function AgentSummarySection({ envState, agentConnected, locked, onFork, onManageVersions }) {
+export default function AgentSummarySection({ envState, agentConnected, locked, onManageVersions }) {
   const agent = envState?.agent;
   const versions = envState?.agentVersions || [];
   const activeLabel = envState?.activeAgentVersion || versions[versions.length - 1]?.label || "v1";
@@ -27,28 +27,24 @@ export default function AgentSummarySection({ envState, agentConnected, locked, 
   if (locked) body = AGENT_SUMMARY_COPY.lockedBody;
   else if (agent) body = AGENT_SUMMARY_COPY.attachedBody(versionCount, endpoint);
 
-  // A locked template offers a fork; an editable env with an agent gets a live
-  // "Manage versions" that opens the AgentsPanel drawer; attaching a first agent
-  // stays deferred behind the coming-soon tooltip.
-  let action;
+  // A locked template offers no action here — the template banner owns the
+  // single "Fork to edit" path, so this card just states why it's read-only. An
+  // editable env with an agent gets a live "Manage versions" that opens the
+  // AgentsPanel drawer; attaching a first agent stays deferred behind the
+  // coming-soon tooltip.
+  let action = null;
   if (locked) {
-    action = (
-      <Button
-        variant="outlined" size="small"
-        onClick={onFork}
-        startIcon={<Iconify icon="solar:copy-linear" width={14} />}
-        sx={{ typography: "s2", fontWeight: "fontWeightBold", color: "text.primary", borderColor: "divider" }}
-      >
-        {AGENT_SUMMARY_COPY.fork}
-      </Button>
-    );
+    action = null;
   } else if (agent) {
     action = (
       <Button
-        variant="outlined" size="small"
+        variant="contained" size="small"
         onClick={onManageVersions}
-        startIcon={<Iconify icon="solar:layers-minimalistic-linear" width={14} />}
-        sx={{ typography: "s2", fontWeight: "fontWeightBold", color: "text.primary", borderColor: "divider" }}
+        sx={{
+          typography: "s2", fontWeight: "fontWeightBold",
+          bgcolor: "common.white", color: "common.black",
+          "&:hover": { bgcolor: alpha("#FFFFFF", 0.88) },
+        }}
       >
         {manageLabel}
       </Button>
@@ -116,6 +112,5 @@ AgentSummarySection.propTypes = {
   envState: ENV_STATE_SHAPE,
   agentConnected: PropTypes.bool,
   locked: PropTypes.bool,
-  onFork: PropTypes.func,
   onManageVersions: PropTypes.func,
 };

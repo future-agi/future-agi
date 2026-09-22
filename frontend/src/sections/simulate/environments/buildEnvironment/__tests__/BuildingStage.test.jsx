@@ -40,7 +40,7 @@ describe("BuildingStage", () => {
     BUILDING_TABS.forEach((t) => {
       expect(screen.getByText(t.label)).toBeInTheDocument();
     });
-    expect(screen.getAllByRole("tab")).toHaveLength(5);
+    expect(screen.getAllByRole("tab")).toHaveLength(BUILDING_TABS.length);
     expect(screen.getByPlaceholderText("Reply to the builder…")).toBeInTheDocument();
   });
 

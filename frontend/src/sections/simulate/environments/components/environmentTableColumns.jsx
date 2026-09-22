@@ -4,11 +4,11 @@ import { relativeTime } from "src/utils/format-time";
 import StatusPill from "./StatusPill";
 import RunsPill from "./RunsPill";
 import { NumberCell, AgentTypeCell } from "./environmentTableCells";
-import DummyHeaderLabel from "./DummyHeaderLabel";
 
 // Rows arrive pre-flattened (see harnessJobToRow), so column accessors stay
-// simple. Columns the harness-jobs list has no field for render a placeholder
-// cell and a "dummy" header pill until the real endpoint lands.
+// simple. Every column now maps to a real field on the §1 list contract
+// (domain, sub_goals_count, runs_count included); a value the backend has not
+// authored yet arrives null and its cell renders a dash.
 export function buildEnvironmentColumns({ onRowActions }) {
   return [
     {
@@ -30,6 +30,20 @@ export function buildEnvironmentColumns({ onRowActions }) {
       meta: { flex: 1.6 },
       minSize: 240,
       enableSorting: false,
+      cell: ({ getValue }) => (
+        <Typography noWrap sx={{ typography: "s2", color: "text.secondary" }}>
+          {getValue() || "—"}
+        </Typography>
+      ),
+    },
+    {
+      id: "domain",
+      accessorKey: "domain",
+      header: "Domain",
+      size: 150,
+      enableSorting: false,
+      // §1 `domain` is verbatim from metadata.domain and is null whenever the
+      // submitter sent none — render the blank placeholder rather than a guess.
       cell: ({ getValue }) => (
         <Typography noWrap sx={{ typography: "s2", color: "text.secondary" }}>
           {getValue() || "—"}
@@ -70,7 +84,6 @@ export function buildEnvironmentColumns({ onRowActions }) {
       id: "subgoals",
       accessorKey: "subgoals",
       header: "Sub-goals",
-      renderHeader: () => <DummyHeaderLabel label="Sub-goals" />,
       size: 150,
       cell: NumberCell,
     },
@@ -78,7 +91,6 @@ export function buildEnvironmentColumns({ onRowActions }) {
       id: "runs",
       accessorKey: "runsTotal",
       header: "Runs",
-      renderHeader: () => <DummyHeaderLabel label="Runs" />,
       size: 128,
       cell: ({ row }) => <RunsPill total={row?.original?.runsTotal} />,
     },

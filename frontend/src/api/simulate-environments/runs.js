@@ -56,16 +56,20 @@ export function executionToRun(raw) {
 }
 
 // Maps + sorts the raw payload newest-first, then assigns ordinal labels
-// (newest = highest number, matching the MOCK_RUNS convention).
-function mapExecutions(payload) {
+// (newest = highest number, matching the MOCK_RUNS convention). The `ordinal`
+// is stamped alongside the label so the run-detail header can key its identity
+// chip (letter + colour) off the same number the history list shows — one
+// identity, assigned once at the source. Exported so `useRunDetail` reuses this
+// exact derivation rather than renumbering by its own.
+export function mapExecutions(payload) {
   const rows = (payload?.results ?? []).map(executionToRun);
   rows.sort(
     (a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime(),
   );
-  return rows.map((run, index) => ({
-    ...run,
-    label: `Run ${rows.length - index}`,
-  }));
+  return rows.map((run, index) => {
+    const ordinal = rows.length - index;
+    return { ...run, ordinal, label: `Run ${ordinal}` };
+  });
 }
 
 export function useEnvironmentRuns(env, envState) {

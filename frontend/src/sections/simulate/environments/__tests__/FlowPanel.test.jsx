@@ -22,7 +22,7 @@ vi.mock("src/api/harness/harness", () => ({
   uploadHarnessSource: vi.fn(),
 }));
 
-const { preflightHarnessJob } = await import("src/api/harness/harness");
+const { preflightHarnessJob, createHarnessJob } = await import("src/api/harness/harness");
 const { useEnvironmentsStore, resetEnvironmentsStore } = await import(
   "../store/useEnvironmentsStore"
 );
@@ -95,13 +95,14 @@ describe("FlowPanel", () => {
 
     const build = await screen.findByRole("button", { name: /Build environment/ });
     await waitFor(() => expect(build).toBeEnabled());
+    createHarnessJob.mockResolvedValue({ job: { job_id: "job-flow" } });
     await user.click(build);
 
-    await waitFor(() => {
-      expect(useEnvironmentsStore.getState().pendingBuild?.draft?.kind).toBe("repo");
-    });
-    expect(navigate).toHaveBeenCalledWith(
-      "/dashboard/simulate/environments/build",
+    await waitFor(() =>
+      expect(navigate).toHaveBeenCalledWith(
+        "/dashboard/simulate/environments/job-flow",
+      ),
     );
+    expect(useEnvironmentsStore.getState().draft?.kind).toBe("repo");
   });
 });

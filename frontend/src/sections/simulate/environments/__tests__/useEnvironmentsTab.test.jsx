@@ -24,8 +24,8 @@ describe("useEnvironmentsTab", () => {
   });
 
   it("reads a valid tab param", () => {
-    const { result } = renderTab("/x?tab=my");
-    expect(result.current.tab).toBe("my");
+    const { result } = renderTab("/x?tab=my-environments");
+    expect(result.current.tab).toBe("my-environments");
   });
 
   it("falls back to build for an unknown tab param", () => {
@@ -35,8 +35,8 @@ describe("useEnvironmentsTab", () => {
 
   it("setTab writes the tab to the url", () => {
     const { result } = renderTab("/x");
-    act(() => result.current.setTab("my"));
-    expect(result.current.tab).toBe("my");
-    expect(result.current.location.search).toContain("tab=my");
+    act(() => result.current.setTab("my-environments"));
+    expect(result.current.tab).toBe("my-environments");
+    expect(result.current.location.search).toContain("tab=my-environments");
   });
 });

@@ -19,7 +19,7 @@ vi.mock("src/api/harness/harness", () => ({
   listHarnessJobs: vi.fn(),
 }));
 
-const { preflightHarnessJob, storeHarnessSecretValues } = await import(
+const { preflightHarnessJob, storeHarnessSecretValues, createHarnessJob } = await import(
   "src/api/harness/harness"
 );
 const { default: PanelHostedPlatform } = await import("../panels/PanelHostedPlatform");
@@ -135,10 +135,14 @@ describe("PanelHostedPlatform", () => {
       }),
     );
 
+    createHarnessJob.mockResolvedValue({ job: { job_id: "job-plat" } });
     await waitFor(() => expect(buildBtn()).toBeEnabled());
     fireEvent.click(buildBtn());
 
-    const staged = useEnvironmentsStore.getState().pendingBuild.draft;
+    await waitFor(() =>
+      expect(navigate).toHaveBeenCalledWith("/dashboard/simulate/environments/job-plat"),
+    );
+    const staged = useEnvironmentsStore.getState().draft;
     expect(staged).toMatchObject({
       kind: "platform",
       provider: "vapi",
@@ -148,7 +152,6 @@ describe("PanelHostedPlatform", () => {
     });
     // The raw key is redacted out of the staged draft.
     expect(staged.apiKey).toBeUndefined();
-    expect(navigate).toHaveBeenCalledWith("/dashboard/simulate/environments/build");
   });
 
   it("discards an in-flight exchange when a credential is edited before it resolves", async () => {

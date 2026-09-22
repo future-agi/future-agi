@@ -1,8 +1,30 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useState } from "react";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render as rtlRender, screen, fireEvent, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import EvalsStep from "../EvalsStep";
 import { EVALS_COPY } from "../evals.constants";
+
+// §9 client, mocked so a backed-env remove exercises the real DELETE path
+// without the apiPath contract throw.
+vi.mock("src/api/simulate-environments/harnessEnvironments", () => ({
+  listHarnessEnvironments: vi.fn(),
+  deleteHarnessEnvironment: vi.fn(),
+  renameHarnessEnvironment: vi.fn(),
+  getHarnessEnvironment: vi.fn(),
+  deleteAppliedEvaluation: vi.fn(() => Promise.resolve()),
+}));
+const { deleteAppliedEvaluation } = await import(
+  "src/api/simulate-environments/harnessEnvironments"
+);
+
+// EvalsStep now uses a react-query mutation (§9 remove-eval), so every render
+// needs a client. Wrap the library render once so the call sites stay unchanged.
+const render = (ui, options) =>
+  rtlRender(
+    <QueryClientProvider client={new QueryClient()}>{ui}</QueryClientProvider>,
+    options,
+  );
 
 // The product eval picker is a large real drawer with its own data fetching;
 // stub it with a marker that exposes the callbacks the wrapper wires up.
@@ -34,119 +56,118 @@ const ENV = {
 };
 
 // eslint-disable-next-line react/prop-types
-function Harness({ initial, onGo, patchSpy }) {
+function Harness({ env = ENV, initial, onGo, patchSpy, backed = false }) {
   const [envState, setEnvState] = useState(initial);
   const patch = (p) => {
     patchSpy?.(p);
     setEnvState((s) => ({ ...s, ...p }));
   };
-  return <EvalsStep env={ENV} envState={envState} patch={patch} onGo={onGo} />;
+  return <EvalsStep env={env} envState={envState} patch={patch} onGo={onGo} backed={backed} />;
 }
 
 beforeEach(() => {
+  deleteAppliedEvaluation.mockClear();
   picker.calls.length = 0;
 });
 
-describe("EvalsStep — Suggested / Added split", () => {
-  it("shows Suggested = preset minus applied and 'Add all N' adds them", () => {
+describe("EvalsStep — preset auto-seeds into Added (no Suggested card)", () => {
+  it("seeds the whole preset into Added on first empty mount", () => {
     const patchSpy = vi.fn();
-    render(
-      <Harness
-        initial={{ scenarios: [{ id: "s1" }], evals: [{ id: "policy_adherence" }] }}
-        patchSpy={patchSpy}
-      />
-    );
+    render(<Harness initial={{ scenarios: [{ id: "s1" }], evals: [] }} patchSpy={patchSpy} />);
 
-    // preset has 3, one applied → 2 suggested.
-    expect(screen.getByText("Suggested evaluations (2)")).toBeInTheDocument();
-    expect(screen.getByText("Added evaluations (1)")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Add all 2" }));
-
+    // The preset was added for the user — no separate Suggested card to click.
+    expect(screen.queryByText(/Suggested evaluations/)).not.toBeInTheDocument();
     expect(patchSpy).toHaveBeenCalledTimes(1);
     const { evals } = patchSpy.mock.calls[0][0];
-    expect(evals).toHaveLength(3);
     expect(evals).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ id: "policy_adherence" }),
         expect.objectContaining({ id: "task_success" }),
+        expect.objectContaining({ id: "policy_adherence" }),
         expect.objectContaining({ id: "pii_leakage" }),
-      ])
+      ]),
     );
-
-    // Nothing left to suggest → the Suggested card disappears.
-    expect(screen.queryByText(/Suggested evaluations/)).not.toBeInTheDocument();
     expect(screen.getByText("Added evaluations (3)")).toBeInTheDocument();
   });
 
-  it("removing an added eval returns it to Suggested", () => {
+  it("does not seed when evals already exist", () => {
     const patchSpy = vi.fn();
     render(
-      <Harness
-        initial={{ scenarios: [{ id: "s1" }], evals: [{ id: "task_success" }] }}
-        patchSpy={patchSpy}
-      />
+      <Harness initial={{ scenarios: [{ id: "s1" }], evals: [{ id: "policy_adherence" }] }} patchSpy={patchSpy} />,
     );
 
-    expect(screen.getByText("Suggested evaluations (2)")).toBeInTheDocument();
+    // Already has one → the seed is skipped, and there is no Suggested card.
+    expect(patchSpy).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Suggested evaluations/)).not.toBeInTheDocument();
     expect(screen.getByText("Added evaluations (1)")).toBeInTheDocument();
-    // task_success is applied, so it only appears in the Added list.
-    expect(screen.getByText("Task success")).toBeInTheDocument();
+  });
+
+  it("does not re-seed after the user removes an added eval", () => {
+    const patchSpy = vi.fn();
+    render(
+      <Harness initial={{ scenarios: [{ id: "s1" }], evals: [{ id: "task_success" }] }} patchSpy={patchSpy} />,
+    );
 
     fireEvent.click(screen.getByRole("button", { name: EVALS_COPY.remove }));
 
     expect(patchSpy).toHaveBeenCalledWith({ evals: [] });
-    // Back to all three suggested, none added.
-    expect(screen.getByText("Suggested evaluations (3)")).toBeInTheDocument();
+    // The ref-guard keeps the suggestions from looping straight back in.
     expect(screen.getByText("Added evaluations (0)")).toBeInTheDocument();
+    expect(screen.getByText(EVALS_COPY.emptyTitle)).toBeInTheDocument();
   });
 });
 
 describe("EvalsStep — locked when scenarios are missing", () => {
-  it("routes the empty state to onGo('scenarios') and never patches", () => {
+  it("does not seed, and routes the empty state to onGo('scenarios')", () => {
     const patchSpy = vi.fn();
     const onGo = vi.fn();
-    render(
-      <Harness initial={{ scenarios: [], evals: [] }} onGo={onGo} patchSpy={patchSpy} />
-    );
+    render(<Harness initial={{ scenarios: [], evals: [] }} onGo={onGo} patchSpy={patchSpy} />);
 
-    // No Suggested card while locked.
     expect(screen.queryByText(/Suggested evaluations/)).not.toBeInTheDocument();
     expect(screen.getByText(EVALS_COPY.lockedTitle)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: EVALS_COPY.addScenarios }));
 
     expect(onGo).toHaveBeenCalledWith("scenarios");
+    // No auto-seed while scenarios are missing.
     expect(patchSpy).not.toHaveBeenCalled();
   });
 });
 
 describe("EvalsStep — AddEvalsDrawer over the product picker", () => {
-  it("flows each saved eval through onAdd and keeps the drawer open", () => {
+  // An env with no preset so nothing auto-seeds — this test is about the picker.
+  const noPreset = { ...ENV, evalPreset: [] };
+
+  it("flows each saved eval through onAdd and closes the drawer on a single add", () => {
     const patchSpy = vi.fn();
     render(
       <Harness
+        env={noPreset}
         initial={{ scenarios: [{ id: "s1" }], evals: [], agent: { typeId: "voice" } }}
         patchSpy={patchSpy}
-      />
+      />,
     );
 
     // Empty state (no preset) → open the picker from its Add button.
     fireEvent.click(screen.getByRole("button", { name: EVALS_COPY.add }));
     expect(screen.getByTestId("eval-picker")).toBeInTheDocument();
 
+    // A single, non-queued add maps that eval and closes the drawer.
     fireEvent.click(screen.getByRole("button", { name: "save-a" }));
     expect(patchSpy).toHaveBeenCalledTimes(1);
     expect(patchSpy.mock.calls[0][0].evals).toEqual([
       expect.objectContaining({ id: "a", custom: true }),
     ]);
-    // Wrapper does not close the drawer — the product's keepOpenAfterSave keeps it.
-    expect(screen.getByTestId("eval-picker")).toBeInTheDocument();
+    expect(screen.queryByTestId("eval-picker")).not.toBeInTheDocument();
 
+    // Single-add mode: the picker is told not to keep itself open.
     const afterFirst = picker.calls.at(-1);
-    expect(afterFirst.keepOpenAfterSave).toBe(true);
-    expect(afterFirst.existingEvals).toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: "a" })])
+    expect(afterFirst.keepOpenAfterSave).toBe(false);
+
+    // Re-open to add a second eval — the first flows back in as existing.
+    fireEvent.click(screen.getByRole("button", { name: EVALS_COPY.add }));
+    const reopened = picker.calls.at(-1);
+    expect(reopened.existingEvals).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "a" })]),
     );
 
     fireEvent.click(screen.getByRole("button", { name: "save-b" }));
@@ -155,13 +176,70 @@ describe("EvalsStep — AddEvalsDrawer over the product picker", () => {
       expect.objectContaining({ id: "a" }),
       expect.objectContaining({ id: "b", custom: true }),
     ]);
-
-    // Re-saving an already-added eval (the drawer stays on its list) is a no-op:
-    // useAppliedEvals filters by id, so no extra patch.
-    fireEvent.click(screen.getByRole("button", { name: "save-a" }));
-    expect(patchSpy).toHaveBeenCalledTimes(2);
-
-    fireEvent.click(screen.getByRole("button", { name: "picker-close" }));
     expect(screen.queryByTestId("eval-picker")).not.toBeInTheDocument();
+  });
+});
+
+describe("EvalsStep — template lock (read-only until forked)", () => {
+  const LOCK_TOOLTIP = "Fork this environment to edit.";
+  // One applied eval so the header Add and the per-row remove both render.
+  const lockedState = { scenarios: [{ id: "s1" }], evals: [{ id: "policy_adherence" }] };
+
+  const renderLocked = (locked) =>
+    render(<EvalsStep env={ENV} envState={lockedState} patch={vi.fn()} onGo={vi.fn()} locked={locked} />);
+
+  it("disables the add/remove controls with the fork tooltip", () => {
+    renderLocked(true);
+    expect(screen.getByRole("button", { name: EVALS_COPY.add })).toBeDisabled();
+    expect(screen.getAllByRole("button", { name: EVALS_COPY.remove })[0]).toBeDisabled();
+    expect(screen.getAllByLabelText(LOCK_TOOLTIP).length).toBeGreaterThan(0);
+  });
+
+  it("keeps the same controls enabled when not locked", () => {
+    renderLocked(false);
+    expect(screen.getByRole("button", { name: EVALS_COPY.add })).toBeEnabled();
+    expect(screen.getAllByRole("button", { name: EVALS_COPY.remove })[0]).toBeEnabled();
+    expect(screen.queryByLabelText(LOCK_TOOLTIP)).toBeNull();
+  });
+});
+
+describe("EvalsStep — §9 remove on a backend-backed env", () => {
+  const state = { scenarios: [{ id: "s1" }], evals: [{ id: "task_success", name: "Task success" }] };
+
+  it("fires the real DELETE and drops the row on success", async () => {
+    const patchSpy = vi.fn();
+    render(<Harness backed initial={state} patchSpy={patchSpy} />);
+
+    fireEvent.click(screen.getAllByRole("button", { name: EVALS_COPY.remove })[0]);
+
+    await waitFor(() =>
+      expect(deleteAppliedEvaluation).toHaveBeenCalledWith("env-1", "task_success"),
+    );
+    // onSuccess removes the row from the store (patch with the eval gone).
+    await waitFor(() =>
+      expect(patchSpy).toHaveBeenCalledWith(expect.objectContaining({ evals: [] })),
+    );
+  });
+
+  it("stays store-only (no DELETE) when the env is not backend-backed", () => {
+    const patchSpy = vi.fn();
+    render(<Harness initial={state} patchSpy={patchSpy} />);
+
+    fireEvent.click(screen.getAllByRole("button", { name: EVALS_COPY.remove })[0]);
+
+    expect(deleteAppliedEvaluation).not.toHaveBeenCalled();
+    expect(patchSpy).toHaveBeenCalledWith(expect.objectContaining({ evals: [] }));
+  });
+
+  it("disables remove while a backed env is still building", () => {
+    render(
+      <Harness
+        backed
+        env={{ ...ENV, buildStatus: "building" }}
+        initial={state}
+        patchSpy={vi.fn()}
+      />,
+    );
+    expect(screen.getAllByRole("button", { name: EVALS_COPY.remove })[0]).toBeDisabled();
   });
 });

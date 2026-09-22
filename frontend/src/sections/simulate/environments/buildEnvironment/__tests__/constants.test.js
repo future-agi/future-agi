@@ -92,13 +92,14 @@ describe("build pipeline constants", () => {
 });
 
 describe("build stage constants", () => {
-  it("labels the five building tabs (Runs added in Phase-3)", () => {
+  it("labels the building tabs in rail order (Overview first, Settings last)", () => {
     expect(BUILDING_TABS.map((t) => t.label)).toEqual([
+      "Overview",
       "Contract",
       "Scenarios",
       "Evaluations",
-      "Summary",
       "Runs",
+      "Settings",
     ]);
   });
 

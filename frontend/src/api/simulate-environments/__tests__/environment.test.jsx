@@ -30,7 +30,7 @@ const COMPLETED_JOB = {
     scenario_count: 5,
     agent: { connector: "livekit" },
   },
-  status: { stage: "completed", created_at: "2026-09-15T09:00:00Z" },
+  status: { stage: "completed", updated_at: "2026-09-15T09:00:00Z" },
   credentials: { detected_connectors: ["livekit"] },
   platform: { run_test_id: "rt1", test_execution_id: "ex1" },
   stage_outputs: [
@@ -44,6 +44,7 @@ const COMPLETED_JOB = {
         hard_constraints: ["Verify identity before changing an account."],
       },
     },
+    { id: "o2", kind: "environment", data: { services: ["postgres", "redis"] } },
   ],
 };
 
@@ -54,14 +55,28 @@ const RUNNING_JOB = {
     scenario_count: 5,
     agent: { connector: "livekit" },
   },
-  status: { stage: "running", created_at: "2026-09-15T09:00:00Z" },
+  status: { stage: "running", updated_at: "2026-09-15T09:00:00Z" },
   credentials: { detected_connectors: ["livekit"] },
   stage_outputs: [],
 };
 
+// A completed job that also carries top-level registered scenarios, to exercise
+// the job.scenarios[] fallback in harnessEnvState.
+const JOB_WITH_SCENARIOS = {
+  job: { job_id: "job-sc", metadata: { name: "Scenario Env" }, scenario_count: 9 },
+  status: { stage: "completed", updated_at: "2026-09-15T09:00:00Z" },
+  credentials: { detected_connectors: ["vapi"] },
+  scenarios: [
+    { scenario_key: "sk1", name: "sc_one", instruction: "Track a delivery", use_case: "UC1" },
+    { scenario_key: "sk2", name: "sc_two", instruction: "Dispute a charge", use_case: "UC2" },
+  ],
+  stage_outputs: [],
+};
+
 const notFoundError = () => {
-  const err = new Error("Not found");
-  err.response = { status: 404 };
+  // The axios interceptor rejects with statusCode (not response.status).
+  const err = new Error("job not found");
+  err.statusCode = 404;
   return err;
 };
 
@@ -219,8 +234,8 @@ describe("useEnvironment resolution order", () => {
 });
 
 describe("stageOutputsToWorld", () => {
-  it("parses a contract output into world fields", () => {
-    const world = stageOutputsToWorld(COMPLETED_JOB.stage_outputs);
+  it("parses a contract output into world fields and marks them real", () => {
+    const { world, real } = stageOutputsToWorld(COMPLETED_JOB.stage_outputs);
     expect(world.tools.map((t) => t.name)).toEqual([
       "lookup_order",
       "issue_refund",
@@ -228,11 +243,17 @@ describe("stageOutputsToWorld", () => {
     expect(world.rules).toEqual([
       "Verify identity before changing an account.",
     ]);
+    // Contract + environment.services are real; there are no real seed tables.
+    expect(real.has("tools")).toBe(true);
+    expect(real.has("rules")).toBe(true);
+    expect(real.has("seedServices")).toBe(true);
+    expect(real.has("seedTables")).toBe(false);
   });
 
-  it("returns null when nothing is parseable", () => {
-    expect(stageOutputsToWorld([])).toBeNull();
-    expect(stageOutputsToWorld([{ kind: "runs", data: {} }])).toBeNull();
+  it("returns a null world when nothing is parseable", () => {
+    expect(stageOutputsToWorld([]).world).toBeNull();
+    expect(stageOutputsToWorld([{ kind: "runs", data: {} }]).world).toBeNull();
+    expect(stageOutputsToWorld([]).real.size).toBe(0);
   });
 
   it("maps scenario output rows into table-ready scenarios", () => {
@@ -246,13 +267,50 @@ describe("stageOutputsToWorld", () => {
     ];
     const state = harnessEnvState(
       { job: { job_id: "j", scenario_count: 1 }, status: {} },
-      stageOutputsToWorld(outputs),
+      stageOutputsToWorld(outputs).world,
     );
     expect(state.scenarios[0]).toMatchObject({
       id: "happy_path",
       name: "happy_path",
       task: "Answer a delivery query.",
       useCase: "Track a delivery",
+    });
+  });
+
+  it("falls back to the job's registered scenarios when outputs carry none", () => {
+    const { world } = harnessJobToEnvironment(JOB_WITH_SCENARIOS);
+    const state = harnessEnvState(JOB_WITH_SCENARIOS, world);
+    // Neither stage_outputs scenarios nor a pool — the two registered scenarios win.
+    expect(state.scenarios.map((s) => s.id)).toEqual(["sk1", "sk2"]);
+  });
+});
+
+describe("harnessJobToEnvironment — real-first / mock-fill + provenance", () => {
+  it("keeps mock seed tables while surfacing real services (field-aware merge)", () => {
+    const { env } = harnessJobToEnvironment(COMPLETED_JOB);
+    // Real environment.services surface…
+    expect(env.seed.services).toEqual(["postgres", "redis"]);
+    // …but the empty real seed does not blank the sandbox card: mock tables fill.
+    expect(env.seed.tables).toEqual(MOCK_WORLD.seed.tables);
+    expect(env.seed.tables.length).toBeGreaterThan(0);
+  });
+
+  it("marks each field real or mock in env.provenance", () => {
+    const { env } = harnessJobToEnvironment(COMPLETED_JOB);
+    expect(env.provenance).toMatchObject({
+      tools: "real",
+      rules: "real",
+      description: "real",
+      seedServices: "real",
+      seedTables: "mock", // backend gave no tables → mock-filled
+    });
+
+    // A job with no parseable outputs is all mock.
+    const { env: mock } = harnessJobToEnvironment(RUNNING_JOB);
+    expect(mock.provenance).toMatchObject({
+      tools: "mock",
+      rules: "mock",
+      seedTables: "mock",
     });
   });
 });

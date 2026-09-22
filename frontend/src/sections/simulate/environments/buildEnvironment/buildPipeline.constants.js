@@ -5,6 +5,14 @@
 // `done` milestone set the builder publishes, so the popover and the header
 // cannot drift. Ported verbatim from the designer's _mock/buildPipeline.js.
 
+import {
+  stages,
+  stageState,
+  STAGE_STATE,
+  terminalStages,
+  readable,
+} from "src/pages/dashboard/harness/harnessShared";
+
 export const PIPELINE_PHASE = { SETUP: "setup", RUN: "run" };
 
 export const MILESTONE = {
@@ -160,6 +168,59 @@ export const pipelineStatus = (done = [], running = false, currentPhase = "setup
     }
     return { ...step, status };
   });
+};
+
+// The backend stages that make up each build milestone — the same grouping the
+// product uses for its tabs (harnessShared TAB_STAGES / EVENT_STAGE_GROUPS).
+const MILESTONE_STAGES = {
+  understand: ["understanding_agent"],
+  build: ["generating_environment", "building_environment", "generating_data"],
+  scenarios: ["generating_scenarios", "validating_environment", "validating_scenarios"],
+};
+
+// Map a real harness job (getHarnessJob) into the `{ done, running, failure }`
+// slice the header + building pane read — the live replacement for the mock
+// timers. `done` stays milestone-keyed (understand|build|scenarios) so
+// STAGE_ORDER.every and the deriving labels keep working. Reuses the product's
+// `stageState` verbatim: an early/unknown stage (queued/admitted) credits
+// nothing, and a failure anchors on `status.failure.stage` exactly as the
+// product stepper does.
+export const jobToBuildProgress = (job) => {
+  const status = job?.status;
+  if (!status) return { done: [], running: false, failure: null };
+  const events = job.events || [];
+  const stage = status.stage;
+
+  const done = [];
+  Object.entries(MILESTONE_STAGES).forEach(([milestone, group]) => {
+    const groupStates = group.map((name) =>
+      stageState(status, stages.indexOf(name), events),
+    );
+    const complete =
+      stage === "completed" ||
+      (groupStates.length && groupStates.every((s) => s === STAGE_STATE.DONE));
+    if (complete) done.push(milestone);
+  });
+
+  const running = !terminalStages.has(stage);
+
+  let failure = null;
+  if (stage === "failed") {
+    const failStage = status.failure?.stage;
+    const milestone =
+      Object.keys(MILESTONE_STAGES).find((m) =>
+        MILESTONE_STAGES[m].includes(failStage),
+      ) || BUILD_PIPELINE.find((s) => !done.includes(s.milestone))?.milestone;
+    const step = BUILD_PIPELINE.find((s) => s.milestone === milestone);
+    failure = {
+      stepId: step?.id || BUILD_PIPELINE[0].id,
+      title: readable(failStage || "build"),
+      detail: status.failure?.message || readable(failStage || ""),
+      retryable: status.failure?.domain === "infrastructure",
+    };
+  }
+
+  return { done, running, failure };
 };
 
 export const pipelineSummary = (steps) => {

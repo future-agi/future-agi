@@ -1,8 +1,8 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { Box, Stack, Typography, Button, IconButton, Tooltip } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import { getEval } from "src/api/simulate-environments/_fixtures/evalCatalog";
+import { useRemoveAppliedEvaluation } from "src/api/simulate-environments/environments";
 import SectionCard from "../../components/SectionCard";
 import EmptyState from "../../components/EmptyState";
 import EvalRow from "./EvalRow";
@@ -11,18 +11,24 @@ import { useAppliedEvals } from "./useAppliedEvals";
 import { EVALS_COPY, ENV_SHAPE, ENV_STATE_SHAPE } from "./evals.constants";
 import PropTypes from "prop-types";
 
+// A seeded-from-template env is read-only until forked; every add/remove control
+// carries this on its tooltip while locked.
+const LOCK_TOOLTIP = "Fork this environment to edit.";
+
 /**
  * Evaluations tab.
  *
- * A Suggested/Added split: Suggested is the environment's preset minus anything
- * already applied, so adding a suggestion moves it into Added and removing it
- * from Added returns it here — the Suggested list is derived, not stored.
+ * The environment's preset evals are auto-seeded into Added on first empty
+ * mount — nobody ever wanted the suggestions to *not* be scored, so a separate
+ * "Suggested" card the user had to click "Add all" on was a formality. The
+ * seed is ref-guarded, so deliberately clearing everything doesn't re-add them;
+ * the user removes any of them from Added or opens the library for more.
  * "Add evaluations" opens the product's eval picker for the rest of the library.
  *
  * The designer's twin-backed suggestions and clone-eval editor are out of
  * scope for this phase and are not ported.
  */
-export default function EvalsStep({ env, envState, patch, onGo }) {
+export default function EvalsStep({ env, envState, patch, onGo, locked = false, backed = false }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   // The workspace routes away from this tab when there are no scenarios; this
   // is the backstop if it is ever rendered directly without them.
@@ -30,7 +36,30 @@ export default function EvalsStep({ env, envState, patch, onGo }) {
 
   const { appliedEvals, appliedIds, add, remove } = useAppliedEvals(envState, patch);
 
-  // Suggested = the environment's preset MINUS anything already added.
+  // §9 remove. On a real backend-backed env (`backed`), removal is a server
+  // soft-delete of `evaluations.selected[].id`: the store row is dropped only
+  // once the DELETE succeeds, and the detail query is invalidated so the real
+  // selected set is the source of truth. Disabled while building (409). A
+  // forked/template env has no backend counterpart, so it stays store-only.
+  // There is no add endpoint (§9), so "Add evaluations" is client-side either way.
+  //
+  // NB: the row `id` is a real `eval_config_id` only when the §6 detail read is
+  // on (HARNESS_DETAIL_ENABLED); with it off the rows are fixture/preset-seeded,
+  // so the DELETE fires with a fixture id and 404s until §6 is also enabled.
+  const removeEval = useRemoveAppliedEvaluation();
+  const building = env.buildStatus === "building";
+  const removeDisabled = locked || (backed && (building || removeEval.isPending));
+  const onRemove = (id) => {
+    if (!backed) {
+      remove(id);
+      return;
+    }
+    removeEval.mutate({ id: env.id, evalConfigId: id }, { onSuccess: () => remove(id) });
+  };
+
+  // The env's preset evals, minus anything already added — the set that gets
+  // auto-seeded into Added, and the reason the empty state may still appear
+  // (a preset with nothing left to seed).
   const suggested = useMemo(() => {
     const presetIds = env.evalPreset || [];
     return presetIds
@@ -39,6 +68,19 @@ export default function EvalsStep({ env, envState, patch, onGo }) {
       .filter((e) => !appliedIds.has(e.id))
       .filter((e, i, arr) => arr.findIndex((x) => x.id === e.id) === i);
   }, [env.evalPreset, appliedIds]);
+
+  // Auto-seed the preset into Added on first empty mount. Ref-guarded so a
+  // deliberate "remove all" doesn't loop the suggestions straight back in.
+  const seededRef = useRef(false);
+  useEffect(() => {
+    if (seededRef.current) return;
+    if (needsScenarios) return;
+    if (appliedEvals.length > 0) { seededRef.current = true; return; }
+    if (suggested.length === 0) { seededRef.current = true; return; }
+    seededRef.current = true;
+    add(suggested);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needsScenarios, suggested.length, appliedEvals.length]);
 
   return (
     <Box sx={{ p: 2 }}>
@@ -62,13 +104,13 @@ export default function EvalsStep({ env, envState, patch, onGo }) {
           — two CTAs for one action read as noise.
         */}
         {appliedEvals.length > 0 && (
-          <Tooltip arrow title={needsScenarios ? EVALS_COPY.needsScenariosHint : ""}>
+          <Tooltip arrow title={locked ? LOCK_TOOLTIP : needsScenarios ? EVALS_COPY.needsScenariosHint : ""}>
             <span>
               <Button
                 variant="contained"
                 color="primary"
                 size="small"
-                disabled={needsScenarios}
+                disabled={needsScenarios || locked}
                 onClick={() => setPickerOpen(true)}
                 startIcon={<Iconify icon="solar:add-circle-linear" width={15} />}
                 sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
@@ -79,60 +121,6 @@ export default function EvalsStep({ env, envState, patch, onGo }) {
           </Tooltip>
         )}
       </Stack>
-
-      {suggested.length > 0 && !needsScenarios && (
-        <SectionCard
-          title={EVALS_COPY.suggestedTitle(suggested.length)}
-          subtitle={EVALS_COPY.suggestedSubtitle}
-          sx={{ mb: 2 }}
-          action={
-            <Button
-              size="small"
-              variant="outlined"
-              onClick={() => add(suggested)}
-              startIcon={<Iconify icon="solar:add-circle-linear" width={14} />}
-              sx={{
-                typography: "s2",
-                fontWeight: "fontWeightBold",
-                textTransform: "none",
-                color: "primary.main",
-                borderColor: (t) => alpha(t.palette.primary.main, 0.4),
-                "&:hover": {
-                  borderColor: "primary.main",
-                  bgcolor: (t) =>
-                    alpha(t.palette.primary.main, t.palette.mode === "dark" ? 0.08 : 0.04),
-                },
-              }}
-            >
-              {EVALS_COPY.addAll(suggested.length)}
-            </Button>
-          }
-        >
-          <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
-            {suggested.map((e) => (
-              <EvalRow
-                key={e.id}
-                item={e}
-                action={
-                  <Button
-                    size="small"
-                    onClick={() => add([e])}
-                    startIcon={<Iconify icon="solar:add-circle-linear" width={13} />}
-                    sx={{
-                      typography: "s2",
-                      fontWeight: "fontWeightBold",
-                      color: "primary.main",
-                      minWidth: 0,
-                    }}
-                  >
-                    {EVALS_COPY.addOne}
-                  </Button>
-                }
-              />
-            ))}
-          </Stack>
-        </SectionCard>
-      )}
 
       <SectionCard
         title={EVALS_COPY.addedTitle(appliedEvals.length)}
@@ -146,26 +134,28 @@ export default function EvalsStep({ env, envState, patch, onGo }) {
                 : "solar:shield-check-linear"
             }
             title={needsScenarios ? EVALS_COPY.lockedTitle : EVALS_COPY.emptyTitle}
-            body={
-              needsScenarios
-                ? EVALS_COPY.lockedBody
-                : suggested.length > 0
-                  ? EVALS_COPY.emptyWithSuggestions
-                  : EVALS_COPY.emptyNoSuggestions
-            }
+            body={needsScenarios ? EVALS_COPY.lockedBody : EVALS_COPY.emptyNoSuggestions}
             action={
-              <Button
-                variant="contained"
-                color="primary"
-                size="small"
-                onClick={() => (needsScenarios ? onGo?.("scenarios") : setPickerOpen(true))}
-                endIcon={
-                  needsScenarios ? <Iconify icon="solar:arrow-right-linear" width={15} /> : null
-                }
-                sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
-              >
-                {needsScenarios ? EVALS_COPY.addScenarios : EVALS_COPY.add}
-              </Button>
+              // The needsScenarios branch is a nav to the Scenarios tab, not a
+              // mutation, so it stays live even on a locked template; only the
+              // "add evaluations" branch is gated behind a fork.
+              <Tooltip arrow title={locked && !needsScenarios ? LOCK_TOOLTIP : ""}>
+                <Box component="span" sx={{ display: "inline-flex" }}>
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    size="small"
+                    disabled={locked && !needsScenarios}
+                    onClick={() => (needsScenarios ? onGo?.("scenarios") : setPickerOpen(true))}
+                    endIcon={
+                      needsScenarios ? <Iconify icon="solar:arrow-right-linear" width={15} /> : null
+                    }
+                    sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
+                  >
+                    {needsScenarios ? EVALS_COPY.addScenarios : EVALS_COPY.add}
+                  </Button>
+                </Box>
+              </Tooltip>
             }
           />
         ) : (
@@ -175,14 +165,28 @@ export default function EvalsStep({ env, envState, patch, onGo }) {
                 key={e.id}
                 item={e}
                 action={
-                  // No always-on evals. Every added row is removable.
-                  <IconButton size="small" aria-label={EVALS_COPY.remove} onClick={() => remove(e.id)}>
-                    <Iconify
-                      icon="solar:close-circle-linear"
-                      width={16}
-                      sx={{ color: "text.subtitle" }}
-                    />
-                  </IconButton>
+                  // No always-on evals. Every added row is removable — except on
+                  // a locked template, where every edit is gated behind a fork.
+                  <Tooltip
+                    arrow
+                    title={
+                      locked
+                        ? LOCK_TOOLTIP
+                        : backed && building
+                          ? "Available once the environment finishes building."
+                          : ""
+                    }
+                  >
+                    <Box component="span" sx={{ display: "inline-flex" }}>
+                      <IconButton size="small" disabled={removeDisabled} aria-label={EVALS_COPY.remove} onClick={() => onRemove(e.id)}>
+                        <Iconify
+                          icon="solar:trash-bin-trash-linear"
+                          width={16}
+                          sx={{ color: "text.subtitle" }}
+                        />
+                      </IconButton>
+                    </Box>
+                  </Tooltip>
                 }
               />
             ))}
@@ -207,4 +211,6 @@ EvalsStep.propTypes = {
   envState: ENV_STATE_SHAPE.isRequired,
   patch: PropTypes.func.isRequired,
   onGo: PropTypes.func,
+  locked: PropTypes.bool,
+  backed: PropTypes.bool,
 };

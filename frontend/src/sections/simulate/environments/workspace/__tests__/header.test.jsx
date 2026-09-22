@@ -3,8 +3,10 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import WorkspaceHeader from "../WorkspaceHeader";
+import LivePill from "../LivePill";
 import EnvVersionPin from "../EnvVersionPin";
 import SystemBanners from "../SystemBanners";
 
@@ -16,7 +18,31 @@ const ENV = {
   buildStatus: "ready",
 };
 
-const withRouter = (ui) => <MemoryRouter>{ui}</MemoryRouter>;
+// WorkspaceHeader now uses a react-query mutation (§2 delete), so wrap in a client.
+const withRouter = (ui) => (
+  <QueryClientProvider client={new QueryClient()}>
+    <MemoryRouter>{ui}</MemoryRouter>
+  </QueryClientProvider>
+);
+
+describe("LivePill", () => {
+  it("shows Live for a ready environment", () => {
+    render(<LivePill env={{ buildStatus: "ready" }} />);
+    expect(screen.getByText("Live")).toBeInTheDocument();
+    expect(screen.queryByText("Building")).toBeNull();
+  });
+
+  it("shows Building while the environment is still deriving", () => {
+    render(<LivePill env={{ buildStatus: "building" }} />);
+    expect(screen.getByText("Building")).toBeInTheDocument();
+    expect(screen.queryByText("Live")).toBeNull();
+  });
+
+  it("honours an explicit building override", () => {
+    render(<LivePill env={{ buildStatus: "ready" }} building />);
+    expect(screen.getByText("Building")).toBeInTheDocument();
+  });
+});
 
 describe("EnvVersionPin", () => {
   it("is read-only for a seeded template — no chevron, clicking opens nothing", async () => {
@@ -118,6 +144,29 @@ describe("WorkspaceHeader", () => {
     expect(screen.queryByRole("button", { name: "More actions" })).toBeNull();
   });
 
+  it("does not render the mock env-version pin (hidden until the contract has a real version)", () => {
+    render(withRouter(<WorkspaceHeader {...baseProps} />));
+    expect(screen.queryByText(/env v3/i)).toBeNull();
+  });
+
+  it("offers Delete in the overflow for a backend-backed env and opens the confirm", async () => {
+    const user = userEvent.setup();
+    render(withRouter(<WorkspaceHeader {...baseProps} backed />));
+
+    await user.click(screen.getByRole("button", { name: "More actions" }));
+    await user.click(screen.getByRole("menuitem", { name: /Delete environment/ }));
+    expect(screen.getByText("Delete environment?")).toBeInTheDocument();
+  });
+
+  it("omits Delete for a non-backed env (nothing to remove on the server)", async () => {
+    const user = userEvent.setup();
+    render(withRouter(<WorkspaceHeader {...baseProps} />));
+
+    await user.click(screen.getByRole("button", { name: "More actions" }));
+    expect(screen.queryByRole("menuitem", { name: /Delete environment/ })).toBeNull();
+    expect(screen.getByRole("menuitem", { name: /Fork environment/ })).toBeInTheDocument();
+  });
+
   it("forks from the overflow menu when unlocked", async () => {
     const user = userEvent.setup();
     const onFork = vi.fn();
@@ -131,15 +180,17 @@ describe("WorkspaceHeader", () => {
   it("runs the product's run entry when the env can run and has no bridge ids", async () => {
     const user = userEvent.setup();
     render(
-      <MemoryRouter initialEntries={["/dashboard/simulate/environments/env-1"]}>
-        <Routes>
-          <Route
-            path="/dashboard/simulate/environments/env-1"
-            element={<WorkspaceHeader {...baseProps} canRun />}
-          />
-          <Route path="/dashboard/simulate/test" element={<div>run entry</div>} />
-        </Routes>
-      </MemoryRouter>
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter initialEntries={["/dashboard/simulate/environments/env-1"]}>
+          <Routes>
+            <Route
+              path="/dashboard/simulate/environments/env-1"
+              element={<WorkspaceHeader {...baseProps} canRun />}
+            />
+            <Route path="/dashboard/simulate/test" element={<div>run entry</div>} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
     );
 
     await user.click(screen.getByRole("button", { name: "Run simulation" }));

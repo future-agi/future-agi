@@ -49,12 +49,15 @@ const HARNESS_ENVS = {
       id: "job-support",
       name: "Customer Support Line",
       description: "Handles inbound billing calls",
+      domain: "Logistics",
       source_kind: "provider",
       agent_type: "voice",
       status: "completed",
       stage: "completed",
       scenario_count: 8,
+      sub_goals_count: 12,
       tools_count: 3,
+      runs_count: 1,
       last_updated: "2026-09-15T09:00:00Z",
       created_at: "2026-09-10T09:00:00Z",
     },
@@ -173,21 +176,30 @@ describe("MyEnvironmentsTable", () => {
     expect(screen.getAllByText("Chat")).toHaveLength(2);
   });
 
-  it("marks only the columns the environments list cannot fill with a dummy header pill", async () => {
+  it("renders every column from the real §1 list contract, no dummy headers", async () => {
     renderTab();
     await screen.findByText("Customer Support Line");
 
-    // Description, Tools and Scenarios are real now; only Sub-goals and Runs
-    // stay behind a dummy header.
-    expect(screen.getAllByText("Dummy")).toHaveLength(2);
-    // The real description renders for the first row; its tool/scenario counts show.
-    expect(
-      within(rowFor("Customer Support Line")).getByText("Handles inbound billing calls"),
-    ).toBeInTheDocument();
-    // The sub-goals / runs placeholder cells still render a dash.
-    expect(
-      within(rowFor("Customer Support Line")).getAllByText("—").length,
-    ).toBeGreaterThan(0);
+    // Every column now maps to a real §1 field, so no "Dummy" header pill remains.
+    expect(screen.queryByText("Dummy")).toBeNull();
+
+    const row = within(rowFor("Customer Support Line"));
+    // Real description, domain, sub-goals count and run state for the first row.
+    expect(row.getByText("Handles inbound billing calls")).toBeInTheDocument();
+    expect(row.getByText("Logistics")).toBeInTheDocument();
+    expect(row.getByText("12")).toBeInTheDocument();
+    // runs_count 1 → has-run state.
+    expect(row.getByText("Ran")).toBeInTheDocument();
+  });
+
+  it("renders dashes and the never-run state when the §1 additions are absent", async () => {
+    renderTab();
+    await screen.findByText("Repo Triage Bot");
+
+    // A row the backend has not authored these fields for: domain and sub-goals
+    // fall back to a dash, and a null runs_count reads as a dash too.
+    const row = within(rowFor("Repo Triage Bot"));
+    expect(row.getAllByText("—").length).toBeGreaterThan(0);
   });
 
   it("shows the empty state when the environments list resolves empty", async () => {
@@ -198,7 +210,7 @@ describe("MyEnvironmentsTable", () => {
     expect(screen.queryByText("Dummy")).toBeNull();
   });
 
-  it("offers Open + Run + Delete on a completed environment", async () => {
+  it("offers Open + Re-run + Delete on a completed environment that has run", async () => {
     const user = userEvent.setup();
     renderTab();
     await screen.findByText("Customer Support Line");
@@ -208,10 +220,10 @@ describe("MyEnvironmentsTable", () => {
     const menu = screen.getByRole("menu");
     expect(within(menu).getAllByRole("menuitem")).toHaveLength(3);
     expect(within(menu).getByText("Open")).toBeInTheDocument();
-    // Every harness row starts at runsTotal 0, so the run action reads "Run
-    // simulation", never "Re-run".
+    // §1 runs_count 1 means this environment has run, so the run action reads
+    // "Re-run simulation" (RowActionsMenu switches on runsTotal > 0).
     expect(
-      within(menu).getByRole("menuitem", { name: /Run simulation/ }),
+      within(menu).getByRole("menuitem", { name: /Re-run simulation/ }),
     ).toBeInTheDocument();
     expect(within(menu).getByText("Delete")).toBeInTheDocument();
 
@@ -221,14 +233,14 @@ describe("MyEnvironmentsTable", () => {
     );
   });
 
-  it("fetches the job then routes to the run target on Run simulation", async () => {
+  it("fetches the job then routes to the run target on Re-run simulation", async () => {
     const user = userEvent.setup();
     renderTab();
     await screen.findByText("Customer Support Line");
 
     await openMenu(user, "Customer Support Line");
     await user.click(
-      within(screen.getByRole("menu")).getByText("Run simulation"),
+      within(screen.getByRole("menu")).getByText("Re-run simulation"),
     );
 
     // The list payload has no platform, so the row action fetches the detail
@@ -251,7 +263,7 @@ describe("MyEnvironmentsTable", () => {
 
     await openMenu(user, "Customer Support Line");
     await user.click(
-      within(screen.getByRole("menu")).getByText("Run simulation"),
+      within(screen.getByRole("menu")).getByText("Re-run simulation"),
     );
 
     await waitFor(() =>

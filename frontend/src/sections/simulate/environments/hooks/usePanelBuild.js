@@ -4,6 +4,7 @@ import { enqueueSnackbar } from "notistack";
 import { paths } from "src/routes/paths";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import { useRuntimePreflight } from "src/api/simulate-environments/useRuntimePreflight";
+import { useBuildEnvironment } from "src/api/simulate-environments/environments";
 import { useEnvironmentsStore } from "../store/useEnvironmentsStore";
 import { prepareSourceForBuild } from "./prepareSourceForBuild";
 
@@ -15,12 +16,18 @@ import { prepareSourceForBuild } from "./prepareSourceForBuild";
  *   - `resetPreflight()` on any form edit — a green result for one source must
  *     never build a different one.
  *   - `commitBuild()` on "Build environment" (only enabled once `readyToSubmit`)
- *     — stages the passing draft as a one-shot ticket and navigates to /build.
+ *     — creates the real harness job and navigates straight to the environment
+ *     workspace (`/environments/:jobId`), which hosts the build experience and
+ *     then becomes the live workspace. There is no separate /build page.
  */
 export default function usePanelBuild() {
   const navigate = useNavigate();
-  const beginBuild = useEnvironmentsStore((s) => s.beginBuild);
+  const setDraft = useEnvironmentsStore((s) => s.setDraft);
   const preflight = useRuntimePreflight();
+  const build = useBuildEnvironment();
+  // The create POST is a real network step, so the CTA shows a pending state
+  // through it and the guard blocks a second submit until it resolves.
+  const [committing, setCommitting] = useState(false);
   // The redacted + exchanged draft of the last successful run — reused verbatim
   // at commit so the built job is the one that passed preflight.
   const [prepared, setPrepared] = useState(null);
@@ -67,10 +74,31 @@ export default function usePanelBuild() {
   }, [preflight]);
 
   const commitBuild = useCallback(() => {
-    if (!prepared || !preflight.data?.ready_to_submit) return;
-    beginBuild({ draft: prepared, preflight: preflight.data });
-    navigate(paths.dashboard.simulate.environments.build);
-  }, [prepared, preflight.data, beginBuild, navigate]);
+    if (!prepared || !preflight.data?.ready_to_submit || committing) return;
+    // Keep the passing draft in the persisted slot so the panel form rehydrates
+    // on a back-navigation; the create call below is what actually builds it.
+    setDraft(prepared);
+    setCommitting(true);
+    build.mutate(prepared, {
+      onSuccess: ({ envId, skipped }) => {
+        // A skipped (un-preflightable) draft never reaches here — preflight
+        // rejects it before ready_to_submit — but guard rather than route to an
+        // id the workspace can't resolve.
+        if (skipped || !envId) {
+          setCommitting(false);
+          enqueueSnackbar("This source can't be built yet.", { variant: "error" });
+          return;
+        }
+        navigate(paths.dashboard.simulate.environments.detail(envId));
+      },
+      // A create failure (e.g. the sandbox is unavailable) must surface, not
+      // silently strand the user on the form.
+      onError: (error) => {
+        setCommitting(false);
+        enqueueSnackbar(errorMessage(error), { variant: "error" });
+      },
+    });
+  }, [prepared, preflight.data, committing, setDraft, build, navigate]);
 
   const status = preparing || preflight.isPending
     ? "running"
@@ -85,6 +113,7 @@ export default function usePanelBuild() {
     checks: preflight.data?.checks,
     state: preflight.data?.state,
     readyToSubmit: !!preflight.data?.ready_to_submit,
+    committing,
     error: preflight.error,
     runPreflight,
     resetPreflight,

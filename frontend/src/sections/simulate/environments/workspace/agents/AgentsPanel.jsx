@@ -21,7 +21,7 @@ import {
 // no backend: minting a version and switching the active one are local shape
 // changes; the scripted "re-derivation" narration lives behind MOCK_DERIVATION
 // in the helpers and is not wired here.
-export default function AgentsPanel({ envState, patch, onNestedDrawerChange }) {
+export default function AgentsPanel({ envState, patch, onNestedDrawerChange, locked = false }) {
   // Normalise so a legacy agent stored before versioning wraps as its own v1;
   // downstream cards read `versions[]` + `activeVersionId` unconditionally.
   const source = useMemo(() => normalizeAgentVersions(envState?.agent), [envState?.agent]);
@@ -75,10 +75,10 @@ export default function AgentsPanel({ envState, patch, onNestedDrawerChange }) {
         </Typography>
       </Box>
 
-      <AgentHeroCard agent={source} onAddVersion={() => setAddingVersion(true)} />
+      <AgentHeroCard agent={source} onAddVersion={() => setAddingVersion(true)} locked={locked} />
 
       <Box sx={{ mt: 2 }}>
-        <VersionHistoryCard agent={source} onSetActiveVersion={setActiveVersion} />
+        <VersionHistoryCard agent={source} onSetActiveVersion={setActiveVersion} locked={locked} />
       </Box>
 
       <AddAgentDrawer
@@ -100,4 +100,5 @@ AgentsPanel.propTypes = {
   }),
   patch: PropTypes.func.isRequired,
   onNestedDrawerChange: PropTypes.func,
+  locked: PropTypes.bool,
 };

@@ -51,7 +51,7 @@ export default function TimelineRow({ step, first, last, elapsed, index }) {
         {!first && (
           <Box
             sx={{
-              position: "absolute", top: 0, height: 12, width: 2, borderRadius: 999,
+              position: "absolute", top: 0, height: 16, width: 2, borderRadius: 999,
               bgcolor: done ? alpha(BUILD_TONES.green, 0.45) : (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.1 : 0.08),
             }}
           />
@@ -72,7 +72,7 @@ export default function TimelineRow({ step, first, last, elapsed, index }) {
         */}
         <Box
           sx={{
-            mt: first ? 0 : 1.5,
+            mt: first ? 0.5 : 2,
             width: 24, height: 24, borderRadius: "50%", display: "grid", placeItems: "center",
             flexShrink: 0,
             bgcolor: done ? (t) => alpha(BUILD_TONES.green, t.palette.mode === "dark" ? 0.2 : 0.14)
@@ -146,7 +146,7 @@ export default function TimelineRow({ step, first, last, elapsed, index }) {
         sx={{
           flex: 1, minWidth: 0,
           mt: first ? 0 : 1.5,
-          px: 1.5, py: 1.125, borderRadius: 1.25,
+          px: 1.5, py: 0.5, borderRadius: 1.25,
           bgcolor: running ? (t) => alpha(BUILD_TONES.accent, t.palette.mode === "dark" ? 0.08 : 0.04) : "transparent",
           border: running ? "1px solid" : "1px solid transparent",
           borderColor: running ? alpha(BUILD_TONES.accent, 0.3) : "transparent",

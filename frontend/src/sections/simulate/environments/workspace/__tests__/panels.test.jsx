@@ -32,7 +32,7 @@ function renderPanels(props = {}) {
     env: ENV,
     envState: baseEnvState(),
     patch: vi.fn(),
-    tab: "summary",
+    tab: "overview",
     onTabChange: vi.fn(),
     ...props,
   };
@@ -47,9 +47,9 @@ function renderPanels(props = {}) {
 }
 
 describe("WorkspacePanels", () => {
-  it("renders all five tabs", () => {
+  it("renders all workspace tabs with Overview first and Settings last", () => {
     renderPanels();
-    ["Summary", "Contract", "Scenarios", "Evaluations", "Runs"].forEach((label) => {
+    ["Overview", "Contract", "Scenarios", "Evaluations", "Runs", "Settings"].forEach((label) => {
       expect(screen.getByRole("tab", { name: new RegExp(label) })).toBeInTheDocument();
     });
   });
@@ -89,7 +89,7 @@ describe("WorkspacePanels", () => {
   it("falls back to the Overview body for an unknown tab", () => {
     renderPanels({ tab: "not-a-tab" });
     expect(screen.getByText("overview-body")).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Summary" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("renders the body for the active tab", () => {
@@ -169,9 +169,9 @@ describe("useWorkspaceTab", () => {
     expect(screen.getByTestId("tab")).toHaveTextContent("scenarios");
   });
 
-  it("falls back to summary for an unknown ?tab=", () => {
+  it("falls back to overview for an unknown ?tab=", () => {
     renderProbe("/env?tab=bogus");
-    expect(screen.getByTestId("tab")).toHaveTextContent("summary");
+    expect(screen.getByTestId("tab")).toHaveTextContent("overview");
   });
 
   it("writes the tab into the query on setTab", async () => {

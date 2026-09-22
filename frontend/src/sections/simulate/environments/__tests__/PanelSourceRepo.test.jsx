@@ -22,7 +22,7 @@ vi.mock("src/api/harness/harness", () => ({
   listHarnessJobs: vi.fn(),
 }));
 
-const { preflightHarnessJob } = await import("src/api/harness/harness");
+const { preflightHarnessJob, createHarnessJob } = await import("src/api/harness/harness");
 const { default: PanelSourceRepo } = await import("../panels/PanelSourceRepo");
 const { useEnvironmentsStore, resetEnvironmentsStore } = await import(
   "../store/useEnvironmentsStore"
@@ -152,8 +152,9 @@ describe("PanelSourceRepo", () => {
     expect(buildBtn()).toBeDisabled();
   });
 
-  it("stages the redacted draft and navigates when Build is clicked after a pass", async () => {
+  it("creates the job and navigates to its workspace when Build is clicked after a pass", async () => {
     preflightHarnessJob.mockResolvedValue(PASS);
+    createHarnessJob.mockResolvedValue({ job: { job_id: "job-123" } });
     renderPanel();
     typeRepo("owner/repo");
     runPreflight();
@@ -161,16 +162,25 @@ describe("PanelSourceRepo", () => {
 
     fireEvent.click(buildBtn());
 
-    const state = useEnvironmentsStore.getState();
-    expect(state.pendingBuild).toMatchObject({
-      draft: { kind: "repo", provider: "github", value: "owner/repo", visibility: "public" },
-      preflight: PASS,
-    });
-    // beginBuild mirrors the draft into the persisted slot too.
-    expect(state.draft?.kind).toBe("repo");
-    expect(navigate).toHaveBeenCalledWith(
-      "/dashboard/simulate/environments/build",
+    // The create builds the passing draft and we route straight to the workspace.
+    await waitFor(() =>
+      expect(navigate).toHaveBeenCalledWith(
+        "/dashboard/simulate/environments/job-123",
+      ),
     );
+    expect(createHarnessJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: expect.objectContaining({ kind: "github", repository: "owner/repo" }),
+      }),
+      "idem-test",
+    );
+    // The passing draft is kept in the persisted slot for form rehydrate.
+    expect(useEnvironmentsStore.getState().draft).toMatchObject({
+      kind: "repo",
+      provider: "github",
+      value: "owner/repo",
+      visibility: "public",
+    });
   });
 
   it("resets a passing preflight when a field is edited (stale-green guard)", async () => {
@@ -201,6 +211,7 @@ describe("PanelSourceRepo", () => {
 
   it("carries visibility and installation id into the staged draft when Private", async () => {
     preflightHarnessJob.mockResolvedValue(PASS);
+    createHarnessJob.mockResolvedValue({ job: { job_id: "job-priv" } });
     renderPanel();
     typeRepo("owner/repo");
     fireEvent.click(screen.getByText("Private"));
@@ -209,7 +220,8 @@ describe("PanelSourceRepo", () => {
     await waitFor(() => expect(buildBtn()).toBeEnabled());
     fireEvent.click(buildBtn());
 
-    expect(useEnvironmentsStore.getState().pendingBuild.draft).toMatchObject({
+    // setDraft runs synchronously on click, before the create resolves.
+    expect(useEnvironmentsStore.getState().draft).toMatchObject({
       visibility: "private",
       installationId: "42",
     });

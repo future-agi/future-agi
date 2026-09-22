@@ -2,18 +2,19 @@
 // EnvironmentWorkspace.jsx and DerivedPanels.jsx. Strings live here rather than
 // inline so the shell, the build-page in-place swap and the tests share them.
 
-// The five workspace tabs, in rail order. Runs is last. Overview and Contract
-// are views of the environment itself, so they carry no count badge; Scenarios,
-// Evaluations and Runs badge the length of their matching env-state slice.
-// The summary (world + agent) reads as a wrap-up of the setup, so it sits after
-// the setup tabs; Runs stays last. The tab id is "summary" (so the URL reads
-// ?tab=summary), while the OverviewPanel component/folder keep their name.
+// The workspace tabs, in rail order (matching the designer). Overview is first
+// and is the default landing tab. Overview and Contract are views of the
+// environment itself, so they carry no count badge; Scenarios, Evaluations and
+// Runs badge the length of their matching env-state slice. Settings is last.
+// The Overview tab id is "overview" (URL reads ?tab=overview), and its panel
+// component/folder keep the OverviewPanel name.
 export const WORKSPACE_TABS = [
+  { id: "overview", label: "Overview", icon: "solar:widget-5-linear" },
   { id: "contract", label: "Contract", icon: "solar:document-text-linear" },
   { id: "scenarios", label: "Scenarios", icon: "solar:layers-minimalistic-linear", badge: "scenarios" },
   { id: "evals", label: "Evaluations", icon: "solar:shield-check-linear", badge: "evals" },
-  { id: "summary", label: "Summary", icon: "solar:widget-5-linear" },
   { id: "runs", label: "Runs", icon: "solar:play-circle-linear", badge: "runs" },
+  { id: "settings", label: "Settings", icon: "solar:settings-linear" },
 ];
 
 // Suggested builder prompts per tab — the same console the build screen uses.
@@ -47,6 +48,11 @@ export const CHIPS_BY_TAB = {
     "Summarise the last run",
     "Which scenarios fail most often?",
   ],
+  settings: [
+    "Rotate my OpenAI key",
+    "Which env vars are the grader reading?",
+    "Change the task timeout to 10 minutes",
+  ],
 };
 
 // Setup-gap areas map onto the tab that owns the underlying answer, so a
@@ -62,14 +68,33 @@ export const GAP_AREA_TO_TAB = {
 export const WORKSPACE_COPY = {
   back: "All environments",
   live: "Live",
+  buildingLabel: "Building",
+  liveTooltip: "Environment is live. You can edit via the builder or inline.",
+  buildingTooltip: "Environment is still being built…",
   run: "Run simulation",
   moreActions: "More actions",
   fork: "Fork environment",
   forkHint: "Duplicate the world for a different agent or team. Agent + runs reset.",
+  deleteEnv: "Delete environment",
+  deleteEnvHint: "Remove this environment and cancel any live run. This can't be undone.",
   notFound: {
     title: "Environment not found",
     body: "It may have been removed from your workspace.",
     action: "Back to environments",
+  },
+  // Shown when the environment can't be loaded for a reason other than a clean
+  // 404 (a server error, a network failure) — recoverable, so it offers a retry.
+  loadError: {
+    title: "Couldn’t load this environment",
+    body: "Something went wrong fetching it. Retry, or go back to your environments.",
+    retry: "Retry",
+  },
+  // The route-level error boundary fallback: a render error was caught instead of
+  // blanking the page.
+  crashed: {
+    title: "This environment couldn’t be displayed",
+    body: "Something went wrong rendering this page. Reload to try again, or go back to your environments.",
+    reload: "Reload",
   },
   runBlocked: {
     agent: "Connect an agent on the Agents tab",

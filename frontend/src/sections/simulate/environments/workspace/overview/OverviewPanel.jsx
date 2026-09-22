@@ -12,7 +12,7 @@ import AgentSummarySection from "./AgentSummarySection";
 import AgentRefreshBanner from "./AgentRefreshBanner";
 import NextStepsChecklist from "./NextStepsChecklist";
 import SourceToSandboxMap from "./SourceToSandboxMap";
-import CapabilityGraph from "./CapabilityGraph";
+import StateSummary from "./StateSummary";
 import { ToolsCard, HardRulesCard, UseCasesCard, AmendmentsCard } from "./OverviewCards";
 import { SeededDataCard, DependsOnCard } from "./WorldCards";
 
@@ -32,7 +32,7 @@ import { SeededDataCard, DependsOnCard } from "./WorldCards";
  * side drawer overlaid on this tab (the user never leaves Overview); a locked
  * template env keeps "Fork to edit" instead.
  */
-export default function OverviewPanel({ env, envState, patch, onGo, agentConnected, locked = false, onFork, buildMode }) {
+export default function OverviewPanel({ env, envState, patch, onGo, agentConnected, locked = false, buildMode }) {
   const [agentDrawerOpen, setAgentDrawerOpen] = useState(false);
   // AgentsPanel opens its own "Add new version" drawer; while it is open the
   // outer drawer closes so the two don't stack. keepMounted preserves the
@@ -75,13 +75,16 @@ export default function OverviewPanel({ env, envState, patch, onGo, agentConnect
         envState={envState}
         agentConnected={agentConnected}
         locked={locked}
-        onFork={onFork}
         onManageVersions={() => setAgentDrawerOpen(true)}
       />
 
       {/* Optional re-derive prompt when the attached agent has moved ahead of
           the world; only an unlocked env can re-derive. */}
       {!locked && <AgentRefreshBanner env={env} envState={envState} patch={patch} />}
+
+      {/* State-of-the-env summary tiles + latest run — the "how's this env doing
+          right now?" answer. Each tile jumps to the tab it summarises. */}
+      <StateSummary env={env} envState={envState} onGo={onGo} />
 
       {/* Getting-started checklist for envs that haven't been seeded yet. A
           scratch env arrives carrying a derived world, so the same checklist
@@ -90,8 +93,9 @@ export default function OverviewPanel({ env, envState, patch, onGo, agentConnect
         <NextStepsChecklist env={env} envState={envState} onGo={onGo} />
       )}
 
+      {/* CapabilityGraph moved to the Contract tab — that's where the shape of
+          the environment belongs. Overview keeps the summary, not the definition. */}
       <GroupHeading>{OVERVIEW_COPY.capabilities}</GroupHeading>
-      {showRichOverview && <CapabilityGraph env={env} envState={envState} onGo={onGo} />}
 
       {/* The reviewability record: every derived fact with its origin and its
           sandbox target, side by side, with unresolved rows carrying an inline
@@ -106,10 +110,15 @@ export default function OverviewPanel({ env, envState, patch, onGo, agentConnect
           <HardRulesCard env={env} />
         </Grid>
         <Grid item xs={12} md={7}>
-          <UseCasesCard useCases={contract.useCases} />
+          {/* Prefer the real §6 fields (contract.real_use_cases / amendments)
+              when the detail endpoint has authored them; fall back to the
+              fixture derivation while it has not (or is disabled). */}
+          <UseCasesCard useCases={env.useCases ?? contract.useCases} />
         </Grid>
         <Grid item xs={12} md={5}>
-          {!buildMode && <AmendmentsCard amendments={contract.amendments} />}
+          {!buildMode && (
+            <AmendmentsCard amendments={env.amendments ?? contract.amendments} />
+          )}
         </Grid>
       </Grid>
 
@@ -170,6 +179,5 @@ OverviewPanel.propTypes = {
   onGo: PropTypes.func,
   agentConnected: PropTypes.bool,
   locked: PropTypes.bool,
-  onFork: PropTypes.func,
   buildMode: PropTypes.bool,
 };

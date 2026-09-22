@@ -103,11 +103,21 @@ describe("harnessEnvToRow", () => {
     expect(row.updatedAt).toBe("2026-09-10T09:00:00Z");
   });
 
-  it("keeps sub-goals and total runs null (absent from the list)", () => {
+  it("keeps sub-goals, runs and domain null when the backend omits them", () => {
     const row = harnessEnvToRow(env());
     expect(row.subgoals).toBeNull();
     expect(row.runsTotal).toBeNull();
+    expect(row.domain).toBeNull();
     expect(row.buildProgress).toBeNull();
+  });
+
+  it("reads the §1 domain, sub_goals_count and runs_count once served", () => {
+    const row = harnessEnvToRow(
+      env({ domain: "billing", sub_goals_count: 3, runs_count: 7 }),
+    );
+    expect(row.domain).toBe("billing");
+    expect(row.subgoals).toBe(3);
+    expect(row.runsTotal).toBe(7);
   });
 
   it("passes a null description and tool count through unchanged", () => {
