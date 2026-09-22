@@ -143,7 +143,9 @@ test('real Omega controller, child, return and verifier use file tools and prese
       requirement: 'Refund 10', status: 'violated', evidence_ids: [evidenceId]}],
       findings: [{finding_id: 'f1', kind: 'incorrect refund amount', statement: 'Only 5 refunded instead of 10',
         requirement_id: 'refund-amount', recovery: 'not_recovered', evidence_ids: [evidenceId],
-        attribution: {origin: {status: 'supported', span_id: row.id, evidence_ids: [evidenceId]}, decisive: unknownRole, symptom: unknownRole}}]};
+        attribution: {origin: {status: 'supported', span_id: row.id, evidence_ids: [evidenceId],
+          explanation: 'The refund span records 5 refunded against the request for 10, making it the first observed mismatch.'},
+        decisive: unknownRole, symptom: unknownRole}}]};
     const phases = [];
     const result = await investigateTrace(claim, {scratchRoot: scratch,
       fetchEvidence: async (c, path) => storeEvidence([Buffer.from(raw + '\n')], path, c),
@@ -152,6 +154,8 @@ test('real Omega controller, child, return and verifier use file tools and prese
           const request = JSON.parse(init.body);
           const system = request.messages.find(message => message.role === 'system').content;
           const phase = system.includes('Independently check') ? 'verifier' : system.includes('Focused assignment') ? 'child' : 'controller';
+          assert.match(system, /one concise sentence \(at most 600 characters\)/);
+          if (phase === 'verifier') assert.match(system, /matches its cited evidence/);
           phases.push(phase);
           const toolMessage = request.messages.find(message => message.role === 'tool');
           const hasChildren = request.messages.some(message => message.role === 'user' && message.content.includes('"question":"Check refund amount"'));
@@ -171,6 +175,8 @@ test('real Omega controller, child, return and verifier use file tools and prese
     assert.equal(result.usage.cost_usd, 0.0007);
     assert.equal(result.evidence_receipts[0].excerpt, raw);
     assert.equal(result.findings[0].attribution.origin.span_id, row.id);
+    assert.match(result.findings[0].attribution.origin.explanation, /5 refunded against the request for 10/);
+    assert.equal(result.findings[0].attribution.decisive.explanation, undefined);
     assert.deepEqual(await readdir(scratch), []);
     const {result_digest, ...body} = result;
     assert.equal(result_digest, canonicalDigest(body));
@@ -188,6 +194,25 @@ test('unobserved citations, unsupported success and guessed origin cannot publis
   assert.throws(() => validateAssessment({outcome: 'success', findings: [], requirement_checks: [
     {requirement_id: 'r1', status: 'satisfied', evidence_ids: ['e1']}],
   }, [{evidence_id: 'e1', span_id: 'right'}], {read_complete: false}), /incomplete evidence coverage/);
+});
+
+test('role explanations are optional for legacy reports but only valid on supported roles', () => {
+  const role = {status: 'supported', span_id: 'span-1', evidence_ids: ['e1']};
+  const finding = {finding_id: 'f1', requirement_id: null, evidence_ids: ['e1'], attribution: {origin: role}};
+  const report = {outcome: 'unknown', findings: [finding], requirement_checks: []};
+  const receipts = [{evidence_id: 'e1', span_id: 'span-1'}];
+  assert.doesNotThrow(() => validateAssessment(report, receipts));
+  assert.doesNotThrow(() => validateAssessment({...report, findings: [{...finding, attribution: {
+    origin: {...role, explanation: 'This span records the first observed mismatch.'}}}]}, receipts));
+  for (const explanation of ['', '   ', 'x'.repeat(601), null, 7]) {
+    assert.throws(() => validateAssessment({...report, findings: [{...finding, attribution: {
+      origin: {...role, explanation}}}]}, receipts), /Invalid role explanation/);
+  }
+  for (const status of ['unknown', 'unsupported']) {
+    assert.throws(() => validateAssessment({...report, findings: [{...finding, attribution: {
+      origin: {status, span_id: null, evidence_ids: [], explanation: 'A guessed cause.'}}}]}, receipts),
+    /Unsupported role explanation/);
+  }
 });
 
 test('Node report digest matches the Django wire fixture', () => {
