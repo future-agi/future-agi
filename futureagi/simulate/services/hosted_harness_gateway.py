@@ -204,6 +204,8 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         # How many scenario writers the orchestrator may run at once. Authoring is the expensive
         # half of a run, so this is the lever that decides whether a large suite fits the hour.
         "ALK_HARNESS_WORKERS_AT_ONCE",
+        # Validation lanes; unset, the guest checks the suite one scenario at a time.
+        "ALK_VALIDATION_INSTANCES",
     ):
         value = str(os.environ.get(name) or "").strip()
         if value:
@@ -1862,6 +1864,7 @@ class HostedHarnessGateway:
                     "ALK_VOICEMAIL_SCENARIOS",
                     # Authoring is where the writers fan out, so the ceiling belongs here.
                     "ALK_HARNESS_WORKERS_AT_ONCE",
+                    "ALK_VALIDATION_INSTANCES",
                     "GOOGLE_APPLICATION_CREDENTIALS",
                     "GOOGLE_CLOUD_LOCATION",
                     "GOOGLE_CLOUD_PROJECT",
@@ -2336,6 +2339,9 @@ class HostedHarnessGateway:
         # Read on every poll, so a sandbox deleted later still leaves its last known total.
         spend = _json("/work/authoring/cost.json")
         coverage = _json("/work/authoring/coverage.json")
+        # Validation writes these in order, and their presence is what says it has begun.
+        invariants = _json("/work/authoring/source-data-invariants.json")
+        certified = _json("/work/authoring/generic-harness/certification.json")
         job = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id)
         _record_harness_spend(job, spend, attempt.attempt_number)
 
@@ -2389,7 +2395,17 @@ class HostedHarnessGateway:
         if isinstance(environment, dict):
             stage = "generating_scenarios"
         if isinstance(scenarios, list):
-            stage = "validating_environment"
+            # scenarios.json exists from the first save, so it cannot mean checking has begun.
+            written = len(scenarios) >= (job.scenario_count or len(scenarios))
+            if certified is not None:
+                stage = "validating_scenarios"
+            elif invariants is not None:
+                stage = "validating_environment"
+            else:
+                stage = "generating_scenarios"
+            if written and invariants is None:
+                # Suite complete, checking not started: the guest is sealing it.
+                stage = "generating_scenarios"
         HostedHarnessGateway._sync_adjustment_progress(job, sandbox)
         if not outputs:
             return

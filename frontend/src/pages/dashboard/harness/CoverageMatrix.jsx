@@ -16,24 +16,32 @@ const titled = (raw) =>
     .replace(/[_-]+/g, " ")
     .replace(/^./, (first) => first.toUpperCase());
 
-const levelsOf = (scenarios, axis) => [
-  ...new Set(
-    scenarios
-      .map((one) => String((one?.coverage || {})[axis] ?? "").trim())
-      .filter(Boolean),
-  ),
-].sort();
+// The dealt levels and the occupied ones are read at different moments, so take the union.
+const levelsOf = (scenarios, axis, coverage) => {
+  const fromScenarios = scenarios
+    .map((one) => String((one?.coverage || {})[axis] ?? "").trim())
+    .filter(Boolean);
+  const reported = coverage?.axes?.[axis] || {};
+  const fromReport = [
+    ...Object.keys(reported.counts || {}),
+    ...(reported.unused || []),
+  ].map((one) => String(one ?? "").trim());
+  return [...new Set([...fromScenarios, ...fromReport].filter(Boolean))].sort();
+};
 
 export default function CoverageMatrix({ scenarios, coverage }) {
   const rows = useMemo(() => (Array.isArray(scenarios) ? scenarios : []), [scenarios]);
   const axes = useMemo(
     () =>
       [
-        ...new Set(
-          rows.flatMap((one) => Object.keys(one?.coverage || {})).filter(Boolean),
-        ),
-      ].sort(),
-    [rows],
+        ...new Set([
+          ...rows.flatMap((one) => Object.keys(one?.coverage || {})),
+          ...Object.keys(coverage?.axes || {}),
+        ]),
+      ]
+        .filter(Boolean)
+        .sort(),
+    [rows, coverage],
   );
 
   const [rowAxis, setRowAxis] = useState(axes[0] || "");
@@ -43,8 +51,8 @@ export default function CoverageMatrix({ scenarios, coverage }) {
 
   const matrix = useMemo(() => {
     if (!rowAxis || !colAxis) return null;
-    const rowKeys = levelsOf(rows, rowAxis);
-    const colKeys = levelsOf(rows, colAxis);
+    const rowKeys = levelsOf(rows, rowAxis, coverage);
+    const colKeys = levelsOf(rows, colAxis, coverage);
     const counts = {};
     rows.forEach((one) => {
       const r = String((one?.coverage || {})[rowAxis] ?? "").trim();
@@ -62,7 +70,7 @@ export default function CoverageMatrix({ scenarios, coverage }) {
       empty: cells.filter((n) => n === 0).length,
       total: cells.length,
     };
-  }, [rows, rowAxis, colAxis]);
+  }, [rows, rowAxis, colAxis, coverage]);
 
   if (!axes.length || !matrix) {
     return (
