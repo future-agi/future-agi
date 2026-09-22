@@ -36,7 +36,7 @@ export const OVERVIEW_COPY = {
   dependsEmpty: "No dependencies recorded for this environment.",
   seedBlurb: (rows) =>
     `${rows.toLocaleString()} rows that fill this environment before your agent arrives — the world it actually works in. Rebuilt for every task, so nothing carries over.`,
-  usedBy: (name) => `used by ${name}`,
+  usedBy: (name) => `used by ${Array.isArray(name) ? name.join(", ") : name}`,
 };
 
 // The agent summary (test-subject) card copy.

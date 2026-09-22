@@ -57,7 +57,15 @@ export function DependsOnCard({ dependsOn }) {
               <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{d.kind}</Typography>
             </Stack>
             <Typography sx={{ typography: "s2", color: "text.secondary", mt: 0.25 }}>{d.provides}</Typography>
-            <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.5, fontFamily: MONO }}>
+            <Typography
+              sx={{
+                typography: "s3",
+                color: "text.subtitle",
+                mt: 0.5,
+                fontFamily: MONO,
+                overflowWrap: "anywhere",
+              }}
+            >
               {OVERVIEW_COPY.usedBy(d.usedBy)}
             </Typography>
           </Box>
