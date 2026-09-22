@@ -119,6 +119,26 @@ describe("useWorkspaceChat (real)", () => {
     );
   });
 
+  it("sends a NEW message (not a reply) when the blocking question is already answered", async () => {
+    sendHarnessConversationMessage.mockResolvedValue(conversationWith());
+    const { result } = renderChat(
+      conversationWith({
+        state: "waiting_for_user",
+        blocking_input: { message_id: "q1", kind: "question_requested" },
+        messages: [
+          { message_id: "q1", role: "assistant", kind: "question", state: "completed", content: "How strict?", payload: { options: ["Strict"] }, created_at: "2026-09-22T10:00:00Z", sequence: 1 },
+          { message_id: "u1", role: "user", kind: "message", state: "queued", content: "Strict", reply_to: "q1", created_at: "2026-09-22T10:00:05Z", sequence: 2 },
+        ],
+      }),
+    );
+
+    await act(async () => result.current.send("explain the tools"));
+
+    const payload = sendHarnessConversationMessage.mock.calls[0][1];
+    expect(payload.kind).toBe("user_message");
+    expect(payload.reply_to).toBeUndefined();
+  });
+
   it("carries selected scenario ids and clears the selection on send", async () => {
     sendHarnessConversationMessage.mockResolvedValue(conversationWith());
     publishScenarioSelection({ ids: ["s1", "s2"], rows: [{ name: "a" }, { name: "b" }] });

@@ -81,15 +81,22 @@ export function useWorkspaceChat(env, { source } = {}) {
       const id = jobIdRef.current;
       if (!content || !id) return;
 
-      // A blocking question turns the next message into a reply. A confirmation is
-      // answered with `approval`, a plain question with `user_response`.
-      const blocking = conversationRef.current?.blocking_input || null;
-      const kind = blocking
-        ? blocking.kind === "confirmation_requested"
+      // A blocking question turns the next message into a reply — but only while
+      // it is genuinely open. If a message already answers it (the reply hasn't
+      // been processed by the agent yet, so blocking_input is still set), send a
+      // fresh user_message instead: the backend 409s a second reply to an
+      // already-answered question ("reply_to does not identify the open question").
+      const conv = conversationRef.current;
+      const blocking = conv?.blocking_input || null;
+      const answered =
+        blocking && (conv?.messages || []).some((m) => m.reply_to === blocking.message_id);
+      const open = blocking && !answered ? blocking : null;
+      const kind = open
+        ? open.kind === "confirmation_requested"
           ? "approval"
           : "user_response"
         : "user_message";
-      const replyTo = blocking ? blocking.message_id : null;
+      const replyTo = open ? open.message_id : null;
 
       // A message sent with scenario rows selected is a bulk edit against exactly
       // those rows; snapshot and clear so the "Editing N scenarios" chip drops.
