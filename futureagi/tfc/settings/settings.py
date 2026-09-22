@@ -1010,19 +1010,11 @@ HARNESS_PARALLELISM_ENABLED = os.getenv("HARNESS_PARALLELISM_ENABLED", "").lower
     "yes",
 )
 HARNESS_MAX_WORLD_SLOTS = int(os.getenv("HARNESS_MAX_WORLD_SLOTS", "8"))
-HARNESS_EXPERIMENTAL_TWO_SLOTS_ON_2CPU = os.getenv(
-    "HARNESS_EXPERIMENTAL_TWO_SLOTS_ON_2CPU", "false"
-).lower() in ("1", "true", "yes")
 # Each profile is an operator-certified size/connector/snapshot combination.
 HARNESS_RESOURCE_PROFILES = json.loads(os.getenv("HARNESS_RESOURCE_PROFILES", "[]"))
-# Comma-separated provider-neutral allowlist of guest runtime digests certified
-# for W>1. Empty (the default) fails closed for pinned runtimes.
-HARNESS_PARALLEL_RUNTIME_DIGESTS = [
-    digest.strip()
-    for digest in os.getenv("HARNESS_PARALLEL_RUNTIME_DIGESTS", "").split(",")
-    if digest.strip()
-]
-# Legacy Daytona setting remains accepted during migration.
+# Comma-separated allowlist of provider runtime identifiers certified for W>1.
+# For Daytona these are snapshot digests; for E2B they are template build IDs.
+# Empty (the default) fails closed for pinned runtimes.
 HARNESS_PARALLEL_SNAPSHOT_DIGESTS = [
     digest.strip()
     for digest in os.getenv("HARNESS_PARALLEL_SNAPSHOT_DIGESTS", "").split(",")

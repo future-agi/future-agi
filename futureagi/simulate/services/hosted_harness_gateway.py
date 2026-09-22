@@ -1860,10 +1860,6 @@ class HostedHarnessGateway:
                     "GOOGLE_GENAI_USE_VERTEXAI",
                 }
             }
-            from simulate.services.hosted_sandbox import sandbox_runtime_policy
-
-            if sandbox_runtime_policy().experimental_two_slots_on_2cpu:
-                authoring_exports["ALK_EXPERIMENTAL_TWO_SLOTS_ON_2CPU"] = "1"
             provider_profile_args = (
                 f"--target-secrets {authoring_secrets_path} "
                 "--provider-profile-cache /work/provider-import-profile.json "

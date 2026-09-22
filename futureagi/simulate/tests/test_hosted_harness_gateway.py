@@ -1170,8 +1170,9 @@ def _launch_and_read_job_json(
     payload["runtime"]["parallelism"] = requested_parallelism
     payload["scenario_count"] = requested_parallelism
     payload["runtime"].update(
-        cpu_units=2 if provider_name == "e2b" else 8,
-        memory_mb=4096 if provider_name == "e2b" else 8192,
+        cpu_units=4 if provider_name == "e2b" else 8,
+        memory_mb=8192,
+        disk_gb=10,
     )
     job, _ = create_hosted_job(
         organization, payload, idempotency_key=f"parallelism-{requested_parallelism}"
@@ -1250,29 +1251,23 @@ def test_daytona_launch_passes_admitted_parallelism_when_enabled(
 
 
 @pytest.mark.django_db
-def test_e2b_two_cpu_experiment_reaches_guest_admission(organization, settings):
+def test_e2b_standard_resources_reach_guest_admission(organization, settings):
     settings.HOSTED_SANDBOX_PROVIDER = "e2b"
     settings.HARNESS_PARALLELISM_ENABLED = True
-    settings.HARNESS_EXPERIMENTAL_TWO_SLOTS_ON_2CPU = True
     settings.HARNESS_RESOURCE_PROFILES = []
-    settings.HARNESS_PARALLEL_RUNTIME_DIGESTS = ["build-123"]
-    settings.HARNESS_PARALLEL_SNAPSHOT_DIGESTS = []
+    settings.HARNESS_PARALLEL_SNAPSHOT_DIGESTS = ["build-123"]
     settings.ALK_E2B_TEMPLATE_REFERENCE = "alk-hosted-e2b:build-123"
     settings.ALK_E2B_TEMPLATE_BUILD_ID = "build-123"
-    settings.ALK_E2B_TEMPLATE_CPU_UNITS = 2
-    settings.ALK_E2B_TEMPLATE_MEMORY_MB = 4096
+    settings.ALK_E2B_TEMPLATE_CPU_UNITS = 4
+    settings.ALK_E2B_TEMPLATE_MEMORY_MB = 8192
     settings.ALK_E2B_TEMPLATE_DISK_GB = 10
 
-    job, dispatched, client = _launch_and_read_job_json(
+    job, dispatched, _client = _launch_and_read_job_json(
         organization, settings, requested_parallelism=2, provider_name="e2b"
     )
 
     assert job.payload["runtime"]["parallelism"] == 2
     assert dispatched["runtime"]["parallelism"] == 2
-    assert (
-        client.sandbox.process.session_request.env["ALK_EXPERIMENTAL_TWO_SLOTS_ON_2CPU"]
-        == "1"
-    )
 
 
 @pytest.mark.django_db

@@ -30,8 +30,8 @@ def configured_capacity(payload: Mapping[str, Any]) -> SandboxCapacity:
     ):
         raise ValueError("resource profiles must be a JSON array of objects")
     allowed_digests = set(
-        getattr(settings, "HARNESS_PARALLEL_RUNTIME_DIGESTS", ()) or ()
-    ) | set(getattr(settings, "HARNESS_PARALLEL_SNAPSHOT_DIGESTS", ()) or ())
+        getattr(settings, "HARNESS_PARALLEL_SNAPSHOT_DIGESTS", ()) or ()
+    )
     if profiles and not unpinned:
         # An unqualified image can only offer one slot, even if its hardware fits more.
         profiles = [
@@ -63,7 +63,6 @@ def configured_capacity(payload: Mapping[str, Any]) -> SandboxCapacity:
         profiles=profiles,
         ceiling=getattr(settings, "HARNESS_MAX_WORLD_SLOTS", 8),
         dockerfile=unpinned,
-        experimental_two_slots_on_2cpu=policy.experimental_two_slots_on_2cpu,
     )
     if not policy.supports_runtime_selection and (
         (capacity.snapshot_name and capacity.snapshot_name != policy.name)
@@ -93,13 +92,10 @@ class SandboxCapacity:
     snapshot_digest: str | None = None
 
 
-def _resource_slots(
-    cpu_units: int, memory_mb: int, *, experimental_two_slots_on_2cpu: bool = False
-) -> int:
+def _resource_slots(cpu_units: int, memory_mb: int) -> int:
     """Match guest admission's control-process reserve and per-world budget."""
-    cpu_reserve = 0.4 if experimental_two_slots_on_2cpu and cpu_units == 2 else 0.5
     return min(
-        math.floor((cpu_units - cpu_reserve) / 0.8),
+        math.floor((cpu_units - 0.5) / 0.8),
         math.floor((memory_mb / 1024 - 1) / 0.95),
     )
 
@@ -112,7 +108,6 @@ def select_capacity(
     profiles: Sequence[Mapping[str, Any]],
     ceiling: int = 8,
     dockerfile: bool = False,
-    experimental_two_slots_on_2cpu: bool = False,
 ) -> SandboxCapacity:
     """Profiles bound resource spending; no catalog means fixed-size execution."""
     requested = int(runtime.get("parallelism", 1))
@@ -123,14 +118,7 @@ def select_capacity(
         # Preserve the existing fixed-size lane until measured profiles are supplied.
         cpu = int(runtime.get("cpu_units", 4))
         memory = int(runtime.get("memory_mb", 8192))
-        width = min(
-            target,
-            _resource_slots(
-                cpu,
-                memory,
-                experimental_two_slots_on_2cpu=experimental_two_slots_on_2cpu,
-            ),
-        )
+        width = min(target, _resource_slots(cpu, memory))
         if width < 1:
             raise ValueError("insufficient sandbox resources")
         disk = int(runtime.get("disk_gb", 10))
@@ -156,11 +144,7 @@ def select_capacity(
                 raise ValueError
             if memory < 1024 or width > min(cpu, 8):
                 raise ValueError
-            resource_slots = _resource_slots(
-                cpu,
-                memory,
-                experimental_two_slots_on_2cpu=experimental_two_slots_on_2cpu,
-            )
+            resource_slots = _resource_slots(cpu, memory)
             if resource_slots < 1:
                 raise ValueError
             name = profile["name"]

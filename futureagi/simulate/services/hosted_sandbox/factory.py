@@ -16,7 +16,6 @@ class SandboxRuntimePolicy:
     permits_unpinned_parallelism: bool = False
     fixed_resources: tuple[int, int, int] | None = None
     supports_runtime_selection: bool = False
-    experimental_two_slots_on_2cpu: bool = False
     max_ttl_seconds: int | None = None
 
 
@@ -60,9 +59,6 @@ def sandbox_runtime_policy() -> SandboxRuntimePolicy:
             name,
             digest,
             fixed_resources=E2BSandboxRuntimeProvider.configured_resources(),
-            experimental_two_slots_on_2cpu=bool(
-                getattr(settings, "HARNESS_EXPERIMENTAL_TWO_SLOTS_ON_2CPU", False)
-            ),
             max_ttl_seconds=int(getattr(settings, "ALK_E2B_MAX_TTL_SECONDS", 0)),
         )
     return SandboxRuntimePolicy(

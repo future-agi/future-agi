@@ -574,8 +574,7 @@ def test_e2b_build_id_is_certified_without_daytona_dockerfile_bypass():
         HOSTED_SANDBOX_PROVIDER="e2b",
         ALK_DAYTONA_DOCKERFILE="/hosted/Dockerfile",
         HARNESS_PARALLELISM_ENABLED=True,
-        HARNESS_PARALLEL_RUNTIME_DIGESTS=["e2b-build"],
-        HARNESS_PARALLEL_SNAPSHOT_DIGESTS=[],
+        HARNESS_PARALLEL_SNAPSHOT_DIGESTS=["e2b-build"],
     ):
         assert clamp_parallelism(4, "e2b-build") == (4, False)
         assert clamp_parallelism(4, "other-build") == (1, True)
@@ -593,8 +592,7 @@ def test_e2b_create_time_admission_uses_template_build_id():
         ALK_E2B_TEMPLATE_DISK_GB=12,
         HARNESS_RESOURCE_PROFILES=[],
         HARNESS_PARALLELISM_ENABLED=True,
-        HARNESS_PARALLEL_RUNTIME_DIGESTS=["build-123"],
-        HARNESS_PARALLEL_SNAPSHOT_DIGESTS=[],
+        HARNESS_PARALLEL_SNAPSHOT_DIGESTS=["build-123"],
     ):
         data = _create_data(parallelism=4)
         data["runtime"].update(cpu_units=4, memory_mb=8192)
