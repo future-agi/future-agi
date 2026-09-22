@@ -34,23 +34,21 @@ def _validate_phone_connectivity(payload) -> None:
     """A phone-only target uses platform telephony, never customer SIP credentials."""
     if payload["agent"]["connector"] != "phone":
         return
-    from simulate.services.hosted_harness import HostedHarnessError
+    from simulate.services.phone_telephony import platform_phone_telephony
 
-    required = (
-        "LIVEKIT_URL",
-        "LIVEKIT_API_KEY",
-        "LIVEKIT_API_SECRET",
-        "SIP_OUTBOUND_TRUNK_ID",
-        "SIP_OUTBOUND_FROM_NUMBER",
-    )
-    missing = [name for name in required if not os.environ.get(name, "").strip()]
+    telephony = platform_phone_telephony()
+    missing = [name for name, value in telephony.items() if not value]
     if missing:
+        from simulate.services.hosted_harness import HostedHarnessError
+
         raise HostedHarnessError(
             "phone_dialer_not_configured",
             "Platform outbound calling is not configured: " + ", ".join(missing),
             status_code=503,
         )
-    if not _E164_PHONE.fullmatch(os.environ["SIP_OUTBOUND_FROM_NUMBER"].strip()):
+    if not _E164_PHONE.fullmatch(telephony["SIP_OUTBOUND_FROM_NUMBER"]):
+        from simulate.services.hosted_harness import HostedHarnessError
+
         raise HostedHarnessError(
             "phone_dialer_caller_id_invalid",
             "Platform SIP_OUTBOUND_FROM_NUMBER must be an E.164 caller ID",

@@ -209,6 +209,7 @@ class _E2BCommands:
 
 class _E2BSandbox:
     sandbox_id = "e2b-sandbox"
+    traffic_access_token = "private-e2b-traffic-token"
 
     def __init__(self):
         self.files = _E2BFiles()
@@ -261,6 +262,7 @@ def test_e2b_adapter_combines_domain_and_cidr_egress(settings, monkeypatch):
     settings.ALK_E2B_TEMPLATE_MEMORY_MB = 8192
     settings.ALK_E2B_TEMPLATE_DISK_GB = 10
     settings.ALK_E2B_MAX_TTL_SECONDS = 86400
+    settings.HARNESS_PUBLIC_BASE_URL = "https://platform.example.com"
 
     provider = E2BSandboxRuntimeProvider()
     sandbox = provider.create(_spec(), timeout=300)
@@ -292,8 +294,9 @@ def test_e2b_adapter_combines_domain_and_cidr_egress(settings, monkeypatch):
         "test -x /usr/local/bin/uv && test -x /usr/local/bin/uvx"
     )
     assert bootstrap_options["user"] == "root"
-    with pytest.raises(SandboxProviderError, match="bounded no-header callback"):
-        provider.create_preview_url(sandbox, 8080, expires_in_seconds=600)
+    preview = provider.create_preview_url(sandbox, 8080, expires_in_seconds=600)
+    assert preview.url.startswith("https://platform.example.com/simulate/api/harness-ingress/")
+    assert "private-e2b-traffic-token" not in preview.url
 
     assert provider.delete(sandbox, timeout=1, wait=True) is True
     assert sandbox._sandbox.killed is True

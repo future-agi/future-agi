@@ -102,6 +102,7 @@ from .views.agent_version import (
 from .views.alk_simulate_ingestion import ALKSimulateIngestionViewSet
 from .views.harness_job import HarnessJobViewSet
 from .views.hosted_harness import HostedHarnessAttemptViewSet
+from .services.hosted_sandbox.ingress_relay import relay_ingress
 from .views.livekit_api import (
     CallConfigView,
     CallExecutionUpdateView,
@@ -137,6 +138,8 @@ router.register(
 )
 
 urlpatterns = [
+    path("api/harness-ingress/<str:token>/", relay_ingress),
+    path("api/harness-ingress/<str:token>/<path:path>", relay_ingress),
     path("api/", include(router.urls)),
     # Persona duplicate endpoint with custom URL pattern
     path(

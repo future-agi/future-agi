@@ -177,22 +177,27 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         "SIMULATOR_LLM_MODEL": model,
     }
     if backend == "claude":
-        gateway_key = str(os.environ.get("AGENTCC_INTERNAL_API_KEY") or "").strip()
+        # The internal gateway key authenticates the platform's own gateway. A
+        # hosted authoring run may instead use a production AgentCC virtual key;
+        # do not change the internal key just to point ALK at a remote gateway.
+        gateway_key = str(
+            os.environ.get("AGENTCC_HARNESS_API_KEY")
+            or os.environ.get("AGENTCC_INTERNAL_API_KEY")
+            or ""
+        ).strip()
         gateway_url = str(os.environ.get("AGENTCC_BASE_URL") or "").strip()
         if not gateway_key or not gateway_url:
             raise HostedHarnessError(
                 "authoring_gateway_not_configured",
-                "Claude authoring requires AGENTCC_INTERNAL_API_KEY and a sandbox-reachable AGENTCC_BASE_URL",
+                "Claude authoring requires AGENTCC_HARNESS_API_KEY (or the local internal key) and a sandbox-reachable AGENTCC_BASE_URL",
                 status_code=503,
             )
         values["AGENTCC_API_KEY"] = gateway_key
         values["AGENTCC_BASE_URL"] = gateway_url
+    from simulate.services.phone_telephony import platform_phone_telephony
+
+    values.update({name: value for name, value in platform_phone_telephony().items() if value})
     for name in (
-        "LIVEKIT_URL",
-        "LIVEKIT_API_KEY",
-        "LIVEKIT_API_SECRET",
-        "SIP_OUTBOUND_TRUNK_ID",
-        "SIP_OUTBOUND_FROM_NUMBER",
         "CARTESIA_API_KEY",
         "DEEPGRAM_API_KEY",
         "GEMINI_API_KEY",
@@ -2560,7 +2565,11 @@ class HostedHarnessGateway:
             "/run/futureagi/cancel.json",
         )
         sandbox.process.exec(
-            "pkill -TERM -f 'fi.alk.harness.hosted_entrypoint' || true",
+            # The bracketed first character still matches the guest entrypoint,
+            # but not this shell's own command line. An unbracketed `pkill -f`
+            # terminates its invoking shell and E2B reports command exit -1,
+            # leaving cancellation stuck before sandbox deletion.
+            "pkill -TERM -f '[f]i.alk.harness.hosted_entrypoint' || true",
             timeout=30,
         )
         # Cancellation is terminal. Once the signal is sent, delete the sandbox immediately;

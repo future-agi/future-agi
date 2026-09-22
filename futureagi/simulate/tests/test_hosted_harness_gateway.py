@@ -88,6 +88,8 @@ def test_platform_simulator_material_uses_deployment_credentials_only(
     monkeypatch.setenv("LIVEKIT_URL", "wss://platform-livekit.example")
     monkeypatch.setenv("LIVEKIT_API_KEY", "platform-livekit-key")
     monkeypatch.setenv("LIVEKIT_API_SECRET", "platform-livekit-secret")
+    monkeypatch.setenv("LIVEKIT_OUTBOUND_TRUNK_ID", "ST_platform-outbound")
+    monkeypatch.setenv("PSTN_CALLER_NUMBER", "+14155550123")
 
     values, credential_bytes = _platform_simulator_material()
 
@@ -99,6 +101,8 @@ def test_platform_simulator_material_uses_deployment_credentials_only(
     assert values["LIVEKIT_URL"] == "wss://platform-livekit.example"
     assert values["LIVEKIT_API_KEY"] == "platform-livekit-key"
     assert values["LIVEKIT_API_SECRET"] == "platform-livekit-secret"
+    assert values["SIP_OUTBOUND_TRUNK_ID"] == "ST_platform-outbound"
+    assert values["SIP_OUTBOUND_FROM_NUMBER"] == "+14155550123"
     assert values["ALK_HARNESS"] == "vertex-gemini"
     assert credential_bytes == credentials.read_bytes()
 
@@ -122,6 +126,7 @@ def test_platform_simulator_defaults_to_approved_vertex_model(monkeypatch):
 def test_platform_authoring_backend_is_independent_from_simulated_caller(
     tmp_path, monkeypatch
 ):
+    monkeypatch.delenv("AGENTCC_HARNESS_API_KEY", raising=False)
     credentials = tmp_path / "vertex.json"
     credentials.write_text('{"project_id":"platform-project"}', encoding="utf-8")
     monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", str(credentials))
@@ -141,6 +146,7 @@ def test_platform_authoring_backend_is_independent_from_simulated_caller(
 
 
 def test_claude_authoring_uses_platform_gateway_only(monkeypatch):
+    monkeypatch.delenv("AGENTCC_HARNESS_API_KEY", raising=False)
     monkeypatch.setenv("ALK_HARNESS", "claude")
     monkeypatch.setenv("ALK_HARNESS_MODEL", "vertex_ai/gemini-3.7-flash")
     monkeypatch.setenv("AGENTCC_INTERNAL_API_KEY", "platform-gateway-key")
@@ -158,6 +164,19 @@ def test_claude_authoring_uses_platform_gateway_only(monkeypatch):
         values,
         None,
     )
+
+
+def test_claude_authoring_uses_separate_remote_gateway_key(monkeypatch):
+    monkeypatch.setenv("ALK_HARNESS", "claude")
+    monkeypatch.setenv("ALK_HARNESS_MODEL", "vertex_ai/gemini-3.7-flash")
+    monkeypatch.setenv("AGENTCC_INTERNAL_API_KEY", "local-internal-key")
+    monkeypatch.setenv("AGENTCC_HARNESS_API_KEY", "remote-virtual-key")
+    monkeypatch.setenv("AGENTCC_BASE_URL", "https://gateway.futureagi.com")
+
+    values, _ = _platform_simulator_material()
+
+    assert values["AGENTCC_API_KEY"] == "remote-virtual-key"
+    assert values["AGENTCC_BASE_URL"] == "https://gateway.futureagi.com"
 
 
 def test_provider_egress_includes_vertex_auth_and_both_model_regions():
@@ -1627,7 +1646,8 @@ def test_cancel_signals_guest_before_provider_delete(organization, monkeypatch):
         in client.sandbox.fs.uploads["/run/futureagi/cancel.json"]
     )
     assert any(
-        "pkill -TERM" in command for command in client.sandbox.process.exec_calls
+        "pkill -TERM -f '[f]i.alk.harness.hosted_entrypoint'" in command
+        for command in client.sandbox.process.exec_calls
     )
     attempt = HostedHarnessAttempt.no_workspace_objects.get(job=job)
     assert attempt.terminal_stage == "canceled"

@@ -111,7 +111,7 @@ def test_e2b_health_exposes_public_ingress_limitation(settings):
         "configured": True,
         "provider": "e2b",
         "sandbox_provider": "e2b",
-        "public_ingress": False,
+        "public_ingress": True,
     }
 
 

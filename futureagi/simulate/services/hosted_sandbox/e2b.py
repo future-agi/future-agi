@@ -227,7 +227,7 @@ class E2BSandboxRuntimeProvider(SandboxRuntimeProvider):
     name = "e2b"
     max_egress_domains = None
     supports_adjustments = True
-    supports_public_ingress = False
+    supports_public_ingress = True
 
     def __init__(self) -> None:
         self.api_key = str(getattr(settings, "E2B_API_KEY", "") or "")
@@ -371,12 +371,14 @@ class E2BSandboxRuntimeProvider(SandboxRuntimeProvider):
     def create_preview_url(
         self, sandbox: E2BSandbox, port: int, *, expires_in_seconds: int
     ) -> SandboxPreview:
-        del sandbox, port, expires_in_seconds
-        raise SandboxProviderError(
-            "E2B public URLs require a traffic-access-token header; the hosted ingress "
-            "contract requires a bounded no-header callback URL, so E2B ingress is disabled "
-            "until a platform relay is configured",
-            status_code=501,
+        from simulate.services.hosted_sandbox.ingress_relay import mint_ingress_url
+
+        return SandboxPreview(
+            url=mint_ingress_url(
+                sandbox_id=sandbox._sandbox.sandbox_id,
+                port=port,
+                expires_in_seconds=expires_in_seconds,
+            )
         )
 
 
