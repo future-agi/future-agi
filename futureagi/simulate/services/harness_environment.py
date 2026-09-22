@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from django.db.models import Count, F, Prefetch, Q, QuerySet
+from django.db.models import Count, Prefetch, Q, QuerySet
 
 from simulate.models import (
     HostedHarnessJob,
@@ -89,10 +89,9 @@ def annotate_for_list(
                 to_attr="row_outputs",
             )
         )
-        # Newest change first. The column is nullable for any row a backfill
-        # could not date, and Postgres sorts nulls first on DESC, which would
-        # float exactly the least-informative rows to the top of the list.
-        .order_by(F("content_updated_at").desc(nulls_last=True), "-created_at")
+        # Newest environment first. Creation order is stable: a list sorted by
+        # last change reshuffles under the reader while background stages land.
+        .order_by("-created_at")
     )
 
 
