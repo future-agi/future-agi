@@ -1,5 +1,6 @@
 // Independent from F6 membership inference. Django owns input and publication.
-export const SEVERITY_POLICY_VERSION = 'feed-severity/v1';
+export const SEVERITY_POLICY_VERSION = 'feed-severity/v2';
+const supportedPolicies = new Set(['feed-severity/v1', SEVERITY_POLICY_VERSION]);
 export const SEVERITY_SCHEMA = {
   type:'object', additionalProperties:false, required:['severity','reason','citations'],
   properties:{
@@ -11,12 +12,24 @@ export const SEVERITY_SCHEMA = {
       }}},
   },
 };
+const ASSESSMENT_SCHEMA = {
+  ...SEVERITY_SCHEMA,
+  required:[...SEVERITY_SCHEMA.required,'fix_layer'],
+  properties:{...SEVERITY_SCHEMA.properties,fix_layer:{
+    type:'object',additionalProperties:false,required:['layer','reason','citations'],
+    properties:{
+      layer:{type:'string',enum:['prompt','tools','orchestration','guardrails','data','memory','insufficient_evidence']},
+      reason:{type:'string',minLength:1,maxLength:2000},
+      citations:SEVERITY_SCHEMA.properties.citations,
+    },
+  }},
+};
 
 export function severityPrompt(snapshot) {
-  if (snapshot?.policy_version !== SEVERITY_POLICY_VERSION || !Array.isArray(snapshot.members)
+  if (!supportedPolicies.has(snapshot?.policy_version) || !Array.isArray(snapshot.members)
       || !snapshot.members.length || snapshot.members.length > 5
       || Buffer.byteLength(JSON.stringify(snapshot)) > 200000) throw new Error('Invalid severity snapshot');
-  return {
+  const prompt = {
     task:'Assess the supported user impact of this Feed issue. Do not change grouping or issue status.',
     rubric:{
       critical:'Supported severe harm, sensitive-data exposure, or destructive consequences.',
@@ -35,11 +48,31 @@ export function severityPrompt(snapshot) {
     ],
     evidence:snapshot,
   };
+  if (snapshot.policy_version === SEVERITY_POLICY_VERSION) {
+    prompt.fix_layer_rubric = {
+      prompt:'Agent instructions, reasoning guidance, or response wording.',
+      tools:'Tool implementation, contract, availability, or invocation arguments.',
+      orchestration:'Workflow routing, sequencing, retries, or escalation.',
+      guardrails:'Explicit safety, policy, or output-validation enforcement.',
+      data:'Source data correctness, freshness, completeness, or retrieval/index content.',
+      memory:'Persistent remembered state, its updates, or cross-turn recall.',
+      insufficient_evidence:'No single primary corrective layer is supported.',
+    };
+    prompt.rules.push(
+      'Also return fix_layer with layer, reason, and its own evidence citations. Assess it independently from severity.',
+      'Choose the single primary layer for the narrow corrective intervention supported by the mechanism and member evidence, not a broad symptom or the mere presence of a tool.',
+      'Explain how the proposed intervention addresses the supported faulty behavior; a recommendation is not proof of root cause.',
+      'Do not guess missing causes or assume incomplete tool output means a Tools fix. If layers are ambiguous or member evidence conflicts, use insufficient_evidence for fix_layer.',
+      'Cite exact supplied occurrence_id, ref and digest for every supported fix-layer recommendation. Do not change memberships.',
+    );
+  }
+  return prompt;
 }
 
 export async function assessSeverity(claim, {gateway,control,signal}) {
-  if (claim.policy_version !== SEVERITY_POLICY_VERSION) throw new Error('Unsupported severity policy');
-  const result = await gateway.investigate(severityPrompt(claim.snapshot),SEVERITY_SCHEMA,[]);
+  if (!supportedPolicies.has(claim.policy_version) || claim.snapshot?.policy_version !== claim.policy_version) throw new Error('Unsupported severity policy');
+  const schema = claim.policy_version === SEVERITY_POLICY_VERSION ? ASSESSMENT_SCHEMA : SEVERITY_SCHEMA;
+  const result = await gateway.investigate(severityPrompt(claim.snapshot),schema,[]);
   const receiptId = gateway.investigate.receiptFor(result);
   if (!receiptId) throw new Error('Missing severity receipt');
   return control(`/grouping/severity/attempts/${claim.attempt_id}/publish/`,{
