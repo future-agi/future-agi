@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1006,
+  endpointCount: 1010,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -33449,6 +33449,100 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/tracer/internal/error-feed-v2/attempts/{attempt_id}/": {
+      patch: {
+        operationId: "tracer_internal_error-feed-v2_attempts_partial_update",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/UpdateInvestigationAttemptRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/UpdateInvestigationAttemptResponse",
+          },
+          404: {
+            $ref: "#/definitions/InvestigationControlError",
+          },
+          409: {
+            $ref: "#/definitions/InvestigationControlError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/internal/error-feed-v2/claims/": {
+      post: {
+        operationId: "tracer_internal_error-feed-v2_claims_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/ClaimInvestigationsRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/ClaimInvestigationsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/internal/error-feed-v2/notifications/": {
+      post: {
+        operationId: "tracer_internal_error-feed-v2_notifications_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/RecordTraceNotificationsRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/RecordTraceNotificationsResponse",
+          },
+          404: {
+            $ref: "#/definitions/InvestigationControlError",
+          },
+          409: {
+            $ref: "#/definitions/InvestigationControlError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/internal/error-feed-v2/reports/": {
+      post: {
+        operationId: "tracer_internal_error-feed-v2_reports_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/PublishInvestigationRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/PublishInvestigationResponse",
+          },
+          404: {
+            $ref: "#/definitions/InvestigationControlError",
+          },
+          409: {
+            $ref: "#/definitions/InvestigationControlError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/tracer/observability-provider/": {
       get: {
         operationId: "tracer_observability-provider_list",
@@ -50636,6 +50730,42 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    ClaimInvestigationsRequest: {
+      required: ["worker_id", "engine_version", "limit"],
+      type: "object",
+      properties: {
+        worker_id: {
+          title: "Worker id",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        engine_version: {
+          title: "Engine version",
+          type: "string",
+          maxLength: 20,
+          minLength: 1,
+        },
+        limit: {
+          title: "Limit",
+          type: "integer",
+          maximum: 50,
+          minimum: 1,
+        },
+      },
+    },
+    ClaimInvestigationsResponse: {
+      required: ["claims"],
+      type: "object",
+      properties: {
+        claims: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/InvestigationClaim",
+          },
+        },
+      },
+    },
     ClassifyColumnRequest: {
       required: ["column_id", "labels"],
       type: "object",
@@ -60561,6 +60691,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    InvestigationControlError: {
+      required: ["code", "detail"],
+      type: "object",
+      properties: {
+        code: {
+          title: "Code",
+          type: "string",
+          minLength: 1,
+        },
+        detail: {
+          title: "Detail",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
     InviteCancel: {
       required: ["invite_id"],
       type: "object",
@@ -67454,6 +67600,55 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    PublishInvestigationRequest: {
+      required: ["idempotency_key", "lease_token", "result"],
+      type: "object",
+      properties: {
+        idempotency_key: {
+          title: "Idempotency key",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        lease_token: {
+          title: "Lease token",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        result: {
+          $ref: "#/definitions/InvestigationResult",
+        },
+      },
+    },
+    PublishInvestigationResponse: {
+      required: ["status", "report_id", "occurrence_ids", "grouping_status"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["accepted", "duplicate"],
+        },
+        report_id: {
+          title: "Report id",
+          type: "string",
+          format: "uuid",
+        },
+        occurrence_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+        },
+        grouping_status: {
+          title: "Grouping status",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
     QueueAddItemsResponse: {
       required: ["result"],
       type: "object",
@@ -68159,6 +68354,40 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         result: {
           $ref: "#/definitions/UsageRateLimitCreate",
+        },
+      },
+    },
+    RecordTraceNotificationsRequest: {
+      required: ["deliveries"],
+      type: "object",
+      properties: {
+        deliveries: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/TraceAvailableDelivery",
+          },
+        },
+      },
+    },
+    RecordTraceNotificationsResponse: {
+      required: ["accepted_events", "duplicate_events", "pending"],
+      type: "object",
+      properties: {
+        accepted_events: {
+          title: "Accepted events",
+          type: "integer",
+          minimum: 0,
+        },
+        duplicate_events: {
+          title: "Duplicate events",
+          type: "integer",
+          minimum: 0,
+        },
+        pending: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/PendingInvestigation",
+          },
         },
       },
     },
@@ -74742,6 +74971,93 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    UpdateInvestigationAttemptRequest: {
+      required: [
+        "organization_id",
+        "workspace_id",
+        "project_id",
+        "job_id",
+        "lease_token",
+        "action",
+      ],
+      type: "object",
+      properties: {
+        organization_id: {
+          title: "Organization id",
+          type: "string",
+          format: "uuid",
+        },
+        workspace_id: {
+          title: "Workspace id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        job_id: {
+          title: "Job id",
+          type: "string",
+          format: "uuid",
+        },
+        lease_token: {
+          title: "Lease token",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        action: {
+          title: "Action",
+          type: "string",
+          enum: ["renew", "cancel"],
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          default: "",
+          maxLength: 2000,
+        },
+      },
+    },
+    UpdateInvestigationAttemptResponse: {
+      required: [
+        "attempt_id",
+        "status",
+        "lease_expires_at",
+        "cancellation_requested",
+        "job_state",
+      ],
+      type: "object",
+      properties: {
+        attempt_id: {
+          title: "Attempt id",
+          type: "string",
+          format: "uuid",
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          minLength: 1,
+        },
+        lease_expires_at: {
+          title: "Lease expires at",
+          type: "string",
+          format: "date-time",
+        },
+        cancellation_requested: {
+          title: "Cancellation requested",
+          type: "boolean",
+        },
+        job_state: {
+          title: "Job state",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
     UpdateNode: {
       type: "object",
       properties: {
@@ -80732,6 +81048,108 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Message",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    InvestigationClaim: {
+      required: [
+        "organization_id",
+        "workspace_id",
+        "project_id",
+        "job_id",
+        "trace_id",
+        "generation",
+        "attempt_id",
+        "lease_token",
+        "lease_expires_at",
+        "read_cutoff",
+        "engine_version",
+        "contract_version",
+        "memory",
+        "limits",
+        "verification_capabilities",
+        "feature_enabled",
+      ],
+      type: "object",
+      properties: {
+        organization_id: {
+          title: "Organization id",
+          type: "string",
+          format: "uuid",
+        },
+        workspace_id: {
+          title: "Workspace id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        job_id: {
+          title: "Job id",
+          type: "string",
+          format: "uuid",
+        },
+        trace_id: {
+          title: "Trace id",
+          type: "string",
+          format: "uuid",
+        },
+        generation: {
+          title: "Generation",
+          type: "integer",
+          minimum: 1,
+        },
+        attempt_id: {
+          title: "Attempt id",
+          type: "string",
+          format: "uuid",
+        },
+        lease_token: {
+          title: "Lease token",
+          type: "string",
+          minLength: 1,
+        },
+        lease_expires_at: {
+          title: "Lease expires at",
+          type: "string",
+          format: "date-time",
+        },
+        read_cutoff: {
+          title: "Read cutoff",
+          type: "string",
+          format: "date-time",
+        },
+        engine_version: {
+          title: "Engine version",
+          type: "string",
+          maxLength: 20,
+          minLength: 1,
+        },
+        contract_version: {
+          title: "Contract version",
+          type: "string",
+          minLength: 1,
+        },
+        memory: {
+          $ref: "#/definitions/InvestigationMemory",
+        },
+        limits: {
+          $ref: "#/definitions/InvestigationLimits",
+        },
+        verification_capabilities: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        feature_enabled: {
+          title: "Feature enabled",
+          type: "boolean",
         },
       },
     },
@@ -90639,6 +91057,158 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    InvestigationResult: {
+      required: [
+        "contract_version",
+        "organization_id",
+        "workspace_id",
+        "project_id",
+        "job_id",
+        "generation",
+        "attempt_id",
+        "trace_id",
+        "engine_version",
+        "read_cutoff",
+        "memory_snapshot_id",
+        "memory_digest",
+        "evidence_digest",
+        "execution_status",
+        "outcome",
+        "findings",
+        "requirement_checks",
+        "evidence_receipts",
+        "verification_receipts",
+        "coverage",
+        "usage",
+        "gateway_accounting",
+        "result_digest",
+      ],
+      type: "object",
+      properties: {
+        contract_version: {
+          title: "Contract version",
+          type: "string",
+          enum: ["omega-investigation/v1"],
+        },
+        organization_id: {
+          title: "Organization id",
+          type: "string",
+          format: "uuid",
+        },
+        workspace_id: {
+          title: "Workspace id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        job_id: {
+          title: "Job id",
+          type: "string",
+          format: "uuid",
+        },
+        generation: {
+          title: "Generation",
+          type: "integer",
+          minimum: 1,
+        },
+        attempt_id: {
+          title: "Attempt id",
+          type: "string",
+          format: "uuid",
+        },
+        trace_id: {
+          title: "Trace id",
+          type: "string",
+          format: "uuid",
+        },
+        engine_version: {
+          title: "Engine version",
+          type: "string",
+          maxLength: 20,
+          minLength: 1,
+        },
+        read_cutoff: {
+          title: "Read cutoff",
+          type: "string",
+          format: "date-time",
+        },
+        memory_snapshot_id: {
+          title: "Memory snapshot id",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        memory_digest: {
+          title: "Memory digest",
+          type: "string",
+          maxLength: 71,
+          minLength: 1,
+        },
+        evidence_digest: {
+          title: "Evidence digest",
+          type: "string",
+          pattern: "^sha256:[a-f0-9]{64}$",
+          minLength: 1,
+        },
+        execution_status: {
+          title: "Execution status",
+          type: "string",
+          enum: ["completed", "failed"],
+        },
+        outcome: {
+          title: "Outcome",
+          type: "string",
+          enum: ["success", "failure", "unknown"],
+        },
+        findings: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/InvestigationFinding",
+          },
+        },
+        requirement_checks: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/InvestigationRequirementCheck",
+          },
+        },
+        evidence_receipts: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/InvestigationEvidenceReceipt",
+          },
+        },
+        verification_receipts: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/InvestigationVerificationReceipt",
+          },
+        },
+        coverage: {
+          $ref: "#/definitions/InvestigationCoverage",
+        },
+        usage: {
+          $ref: "#/definitions/InvestigationUsage",
+        },
+        gateway_accounting: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/GatewayAccounting",
+          },
+        },
+        result_digest: {
+          title: "Result digest",
+          type: "string",
+          pattern: "^sha256:[a-f0-9]{64}$",
+          minLength: 1,
+        },
+      },
+    },
     QueueAddItemsResult: {
       required: ["added", "duplicates", "errors", "queue_status"],
       type: "object",
@@ -91357,6 +91927,86 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Subscription tier",
           type: "string",
           readOnly: true,
+        },
+      },
+    },
+    TraceAvailableDelivery: {
+      required: ["topic", "partition", "offset", "value"],
+      type: "object",
+      properties: {
+        topic: {
+          title: "Topic",
+          type: "string",
+          enum: ["error-feed.trace-available.v1"],
+        },
+        partition: {
+          title: "Partition",
+          type: "integer",
+          minimum: 0,
+        },
+        offset: {
+          title: "Offset",
+          type: "integer",
+          minimum: 0,
+        },
+        value: {
+          $ref: "#/definitions/TraceAvailableEvent",
+        },
+      },
+    },
+    PendingInvestigation: {
+      required: [
+        "organization_id",
+        "workspace_id",
+        "project_id",
+        "trace_id",
+        "job_id",
+        "generation",
+        "state",
+        "not_before",
+      ],
+      type: "object",
+      properties: {
+        organization_id: {
+          title: "Organization id",
+          type: "string",
+          format: "uuid",
+        },
+        workspace_id: {
+          title: "Workspace id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        trace_id: {
+          title: "Trace id",
+          type: "string",
+          format: "uuid",
+        },
+        job_id: {
+          title: "Job id",
+          type: "string",
+          format: "uuid",
+        },
+        generation: {
+          title: "Generation",
+          type: "integer",
+          minimum: 1,
+        },
+        state: {
+          title: "State",
+          type: "string",
+          minLength: 1,
+        },
+        not_before: {
+          title: "Not before",
+          type: "string",
+          format: "date-time",
         },
       },
     },
@@ -96911,6 +97561,85 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    InvestigationLimits: {
+      required: [
+        "deadline_seconds",
+        "max_model_calls",
+        "max_children",
+        "max_parallel_children",
+        "max_input_tokens_total",
+        "max_output_tokens_total",
+        "max_evidence_bytes",
+        "max_tool_result_bytes",
+      ],
+      type: "object",
+      properties: {
+        deadline_seconds: {
+          title: "Deadline seconds",
+          type: "integer",
+          minimum: 1,
+        },
+        max_model_calls: {
+          title: "Max model calls",
+          type: "integer",
+          minimum: 1,
+        },
+        max_children: {
+          title: "Max children",
+          type: "integer",
+          minimum: 0,
+        },
+        max_parallel_children: {
+          title: "Max parallel children",
+          type: "integer",
+          minimum: 0,
+        },
+        max_input_tokens_total: {
+          title: "Max input tokens total",
+          type: "integer",
+          minimum: 1,
+        },
+        max_output_tokens_total: {
+          title: "Max output tokens total",
+          type: "integer",
+          minimum: 1,
+        },
+        max_evidence_bytes: {
+          title: "Max evidence bytes",
+          type: "integer",
+          minimum: 1,
+        },
+        max_tool_result_bytes: {
+          title: "Max tool result bytes",
+          type: "integer",
+          minimum: 1,
+        },
+      },
+    },
+    InvestigationMemory: {
+      required: ["snapshot_id", "digest", "entries"],
+      type: "object",
+      properties: {
+        snapshot_id: {
+          title: "Snapshot id",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        digest: {
+          title: "Digest",
+          type: "string",
+          maxLength: 71,
+          minLength: 1,
+        },
+        entries: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/InvestigationMemoryEntry",
+          },
+        },
+      },
+    },
     ColumnValuesItem: {
       required: ["column_id", "column_name", "values"],
       type: "object",
@@ -102410,6 +103139,251 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    GatewayAccounting: {
+      required: ["model_used", "cost"],
+      type: "object",
+      properties: {
+        request_id: {
+          title: "Request id",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        model_used: {
+          title: "Model used",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        cost: {
+          title: "Cost",
+          type: "number",
+          minimum: 0,
+          "x-nullable": true,
+        },
+        input_tokens: {
+          title: "Input tokens",
+          type: "integer",
+          minimum: 0,
+        },
+        output_tokens: {
+          title: "Output tokens",
+          type: "integer",
+          minimum: 0,
+        },
+        raw: {
+          title: "Raw",
+          type: "object",
+          "x-nullable": true,
+        },
+      },
+    },
+    InvestigationCoverage: {
+      required: [
+        "scope",
+        "observed_span_count",
+        "read_complete",
+        "future_arrivals_known",
+      ],
+      type: "object",
+      properties: {
+        scope: {
+          title: "Scope",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        observed_span_count: {
+          title: "Observed span count",
+          type: "integer",
+          minimum: 0,
+        },
+        read_complete: {
+          title: "Read complete",
+          type: "boolean",
+        },
+        future_arrivals_known: {
+          title: "Future arrivals known",
+          type: "boolean",
+        },
+      },
+    },
+    InvestigationEvidenceReceipt: {
+      required: ["evidence_id", "span_id", "excerpt"],
+      type: "object",
+      properties: {
+        evidence_id: {
+          title: "Evidence id",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        span_id: {
+          title: "Span id",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+        },
+        parent_span_id: {
+          title: "Parent span id",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        excerpt: {
+          title: "Excerpt",
+          type: "string",
+          maxLength: 8000,
+          minLength: 1,
+        },
+        end_time: {
+          title: "End time",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+      },
+    },
+    InvestigationFinding: {
+      required: [
+        "finding_id",
+        "kind",
+        "statement",
+        "evidence_ids",
+        "recovery",
+        "attribution",
+      ],
+      type: "object",
+      properties: {
+        finding_id: {
+          title: "Finding id",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+        },
+        statement: {
+          title: "Statement",
+          type: "string",
+          maxLength: 8000,
+          minLength: 1,
+        },
+        requirement_id: {
+          title: "Requirement id",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        evidence_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 128,
+            minLength: 1,
+          },
+          maxItems: 100,
+        },
+        recovery: {
+          title: "Recovery",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+        },
+        attribution: {
+          $ref: "#/definitions/FindingAttribution",
+        },
+      },
+    },
+    InvestigationRequirementCheck: {
+      required: ["requirement_id", "requirement", "status", "evidence_ids"],
+      type: "object",
+      properties: {
+        requirement_id: {
+          title: "Requirement id",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        requirement: {
+          title: "Requirement",
+          type: "string",
+          maxLength: 8000,
+          minLength: 1,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+        },
+        evidence_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 128,
+            minLength: 1,
+          },
+          maxItems: 100,
+        },
+      },
+    },
+    InvestigationUsage: {
+      required: ["model_calls", "input_tokens", "output_tokens", "cost_status"],
+      type: "object",
+      properties: {
+        model_calls: {
+          title: "Model calls",
+          type: "integer",
+          minimum: 0,
+        },
+        input_tokens: {
+          title: "Input tokens",
+          type: "integer",
+          minimum: 0,
+        },
+        output_tokens: {
+          title: "Output tokens",
+          type: "integer",
+          minimum: 0,
+        },
+        cost_usd: {
+          title: "Cost usd",
+          type: "number",
+          minimum: 0,
+          "x-nullable": true,
+        },
+        cost_status: {
+          title: "Cost status",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+        },
+      },
+    },
+    InvestigationVerificationReceipt: {
+      required: ["receipt_id", "executed"],
+      type: "object",
+      properties: {
+        receipt_id: {
+          title: "Receipt id",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        executed: {
+          title: "Executed",
+          type: "boolean",
+        },
+      },
+    },
     QueueLabelResult: {
       required: [
         "id",
@@ -102850,6 +103824,64 @@ export const OPENAPI_CONTRACT = Object.freeze({
         progress_pct: {
           title: "Progress pct",
           type: "number",
+        },
+      },
+    },
+    TraceAvailableEvent: {
+      required: [
+        "version",
+        "event_id",
+        "organization_id",
+        "workspace_id",
+        "project_id",
+        "event_kind",
+        "traces",
+        "emitted_at",
+      ],
+      type: "object",
+      properties: {
+        version: {
+          title: "Version",
+          type: "integer",
+          maximum: 1,
+          minimum: 1,
+        },
+        event_id: {
+          title: "Event id",
+          type: "string",
+          format: "uuid",
+        },
+        organization_id: {
+          title: "Organization id",
+          type: "string",
+          format: "uuid",
+        },
+        workspace_id: {
+          title: "Workspace id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        event_kind: {
+          title: "Event kind",
+          type: "string",
+          enum: ["root_span_written"],
+        },
+        traces: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/TraceAvailableItem",
+          },
+        },
+        emitted_at: {
+          title: "Emitted at",
+          type: "string",
+          format: "date-time",
         },
       },
     },
@@ -105301,6 +106333,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    InvestigationMemoryEntry: {
+      required: ["id", "text"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        text: {
+          title: "Text",
+          type: "string",
+          maxLength: 4000,
+          minLength: 1,
+        },
+        source_feedback_id: {
+          title: "Source feedback id",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
     MessageContentItem: {
       description: "Array of content items",
       required: ["type"],
@@ -106141,6 +107198,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    FindingAttribution: {
+      required: ["origin", "decisive", "symptom"],
+      type: "object",
+      properties: {
+        origin: {
+          $ref: "#/definitions/FindingAttributionRole",
+        },
+        decisive: {
+          $ref: "#/definitions/FindingAttributionRole",
+        },
+        symptom: {
+          $ref: "#/definitions/FindingAttributionRole",
+        },
+      },
+    },
     QueueAnalyticsThroughputDaily: {
       required: ["date", "count"],
       type: "object",
@@ -106153,6 +107225,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
         count: {
           title: "Count",
           type: "integer",
+        },
+      },
+    },
+    TraceAvailableItem: {
+      required: ["trace_id", "root_span_id", "root_end_time"],
+      type: "object",
+      properties: {
+        trace_id: {
+          title: "Trace id",
+          type: "string",
+          format: "uuid",
+        },
+        root_span_id: {
+          title: "Root span id",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+        },
+        root_end_time: {
+          title: "Root end time",
+          type: "string",
+          format: "date-time",
         },
       },
     },
@@ -106552,6 +107646,33 @@ export const OPENAPI_CONTRACT = Object.freeze({
         traces_with_tools: {
           title: "Traces with tools",
           type: "integer",
+        },
+      },
+    },
+    FindingAttributionRole: {
+      required: ["status", "evidence_ids"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["supported", "unsupported", "unknown"],
+        },
+        span_id: {
+          title: "Span id",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        evidence_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 128,
+            minLength: 1,
+          },
+          maxItems: 100,
         },
       },
     },
