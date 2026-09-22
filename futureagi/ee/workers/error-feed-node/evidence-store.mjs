@@ -18,8 +18,11 @@ export function validateClaim(claim) {
 // The project ownership proof comes from Django's claimed job, never the model.
 // created_at/updated_at cutoff excludes later rows but is not an MVCC snapshot:
 // a replacement merge may remove an earlier version between attempts.
-export async function downloadEvidence(claim, path, {baseUrl, database, username, password, signal, fetchImpl = fetch}) {
+export async function downloadEvidence(claim, path, {baseUrl, database, username, password, signal,
+  maxQueryMemoryBytes = 256 * 1024 * 1024, fetchImpl = fetch}) {
   validateClaim(claim);
+  if (!Number.isSafeInteger(maxQueryMemoryBytes) || maxQueryMemoryBytes < 128 * 1024 * 1024
+      || maxQueryMemoryBytes > 1024 * 1024 * 1024) throw new Error('Invalid ClickHouse query memory budget');
   if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(database)) throw new Error('Invalid ClickHouse database');
   const endpoint = new URL(baseUrl);
   if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password || endpoint.search || endpoint.hash) throw new Error('Invalid ClickHouse endpoint');
@@ -35,7 +38,7 @@ PREWHERE project_id = {project:UUID} AND trace_id = {trace:String}
 WHERE (org_id = {org:UUID} OR isNull(org_id)) AND is_deleted = 0
 AND created_at <= {cutoff:DateTime64(6)} AND updated_at <= {cutoff:DateTime64(6)}
 ORDER BY start_time, id LIMIT ${maxRows + 1}
-SETTINGS max_execution_time=30, max_result_bytes=${maxBytes}, result_overflow_mode='throw', max_threads=1, max_memory_usage=134217728
+SETTINGS max_execution_time=30, max_result_bytes=${maxBytes}, result_overflow_mode='throw', max_threads=1, max_memory_usage=${maxQueryMemoryBytes}
 FORMAT JSONEachRow`;
   const response = await fetchImpl(endpoint, {method: 'POST', body: query, signal, redirect: 'error',
     headers: {'Content-Type': 'text/plain', 'X-ClickHouse-User': username, 'X-ClickHouse-Key': password}});

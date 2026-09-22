@@ -168,7 +168,12 @@ export async function investigateTrace(claim, {gatewayConfig, clickhouse, scratc
       const left = claim.limits.max_output_tokens_total - outputTokens;
       if (left < 1) throw new Error('Output token budget exhausted');
       const available = left - (phase === 'verifier' ? 0 : verifierOutputReserve);
-      if (available < 1) throw new StageOutputBudgetReached('Verifier output budget reserved');
+      // A near-empty controller/child call can return more usage than its tiny
+      // requested cap. Hand control to the reserved verifier before making it.
+      if (phase !== 'verifier' && available < Math.min(512, Math.floor(claim.limits.max_output_tokens_total / 20))) {
+        throw new StageOutputBudgetReached('Verifier output budget reserved');
+      }
+      if (available < 1) throw new Error('Output token budget exhausted');
       const maxOutputTokens = Math.min(available, 4096);
       const response = await gateway.provider.generate({...request, maxOutputTokens});
       const used = response.raw?.usage?.completion_tokens ?? response.usage?.outputTokens

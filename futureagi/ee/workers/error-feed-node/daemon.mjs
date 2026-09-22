@@ -27,7 +27,8 @@ export async function runDaemon(env = process.env, signal) {
   const config = await gatewayConfig(env);
   const control = createControlClient({baseUrl: env.OMEGA_DJANGO_URL, token: await secret(env, 'OMEGA_INTERNAL_API_SECRET')});
   const clickhouse = {baseUrl: env.OMEGA_CLICKHOUSE_URL, database: env.OMEGA_CLICKHOUSE_DATABASE || 'default',
-    username: env.OMEGA_CLICKHOUSE_USERNAME, password: await secret(env, 'OMEGA_CLICKHOUSE_PASSWORD')};
+    username: env.OMEGA_CLICKHOUSE_USERNAME, password: await secret(env, 'OMEGA_CLICKHOUSE_PASSWORD'),
+    maxQueryMemoryBytes: Number(env.OMEGA_CLICKHOUSE_MAX_QUERY_MEMORY_BYTES || 256 * 1024 * 1024)};
   const audioOrigins = (env.OMEGA_AUDIO_ALLOWED_ORIGINS ?? '').split(',').map(value => value.trim()).filter(Boolean);
   const resolveRecording = audioOrigins.length
     ? createStorageRecordingResolver({allowedOrigins: audioOrigins}) : undefined;
