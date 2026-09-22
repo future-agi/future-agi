@@ -12113,6 +12113,18 @@ export type ExperimentTableRowsColumnConfigApiAverageScore = {
   [key: string]: unknown;
 };
 
+export type ExperimentTableRowsColumnConfigApiMinScore = {
+  [key: string]: unknown;
+};
+
+export type ExperimentTableRowsColumnConfigApiMaxScore = {
+  [key: string]: unknown;
+};
+
+export type ExperimentTableRowsColumnConfigApiMedianScore = {
+  [key: string]: unknown;
+};
+
 export type ExperimentTableRowsColumnConfigApiChoicesMap = {
   [key: string]: unknown;
 };
@@ -12127,6 +12139,9 @@ export interface ExperimentTableRowsColumnConfigApi {
   status?: string;
   group?: ExperimentTableRowsColumnConfigApiGroup;
   average_score?: ExperimentTableRowsColumnConfigApiAverageScore;
+  min_score?: ExperimentTableRowsColumnConfigApiMinScore;
+  max_score?: ExperimentTableRowsColumnConfigApiMaxScore;
+  median_score?: ExperimentTableRowsColumnConfigApiMedianScore;
   dataset_id?: string;
   choices_map?: ExperimentTableRowsColumnConfigApiChoicesMap;
   is_base_column?: boolean;
