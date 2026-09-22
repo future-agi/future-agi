@@ -1392,6 +1392,8 @@ def test_positive_user_cursor_uses_exact_keyset_pages_without_duplicates():
     builder.supports_candidate_first_page.return_value = True
     builder.supports_candidate_cursor_page.return_value = True
     builder.supports_bounded_filter_scan.return_value = True
+    # Match the real builder: the insert-only rollup seed is retired.
+    builder.filter_candidate_seed_is_sampled.return_value = False
     builder.parse_time_range.return_value = (window_start, window_end)
     builder.build_candidate_cursor_page_query.side_effect = [
         ("candidate cursor first", {}),
@@ -1534,6 +1536,8 @@ def test_positive_user_cursor_uses_exact_keyset_pages_without_duplicates():
         "query_complete": True,
         "query_status": "complete",
         "query_error_code": None,
+        "query_exact": True,
+        "ordering_exact": True,
         **applied_filter_attestation(
             project_id=project_id,
             observe_type="session",
@@ -1550,6 +1554,8 @@ def test_positive_user_cursor_uses_exact_keyset_pages_without_duplicates():
         "query_complete": True,
         "query_status": "complete",
         "query_error_code": None,
+        "query_exact": True,
+        "ordering_exact": True,
         **applied_filter_attestation(
             project_id=project_id,
             observe_type="session",
@@ -1754,3 +1760,133 @@ def test_string_page_public_dispatch_and_old_order_token(org, cursor, kind, pref
                                                        side_effect=AssertionError("Old order must fail before reading")):
             TraceSessionView._select_session_page(view, request, validated_data={**data, "cursor": token}, **kwargs)
         analytics.execute_ch_query.assert_not_called()
+
+
+def _session_list_outcome(*, complete: bool, seed_is_sampled: bool):
+    """Drive one bounded session page and return the view's raw outcome."""
+    from tracer.views.trace_session import TraceSessionView
+
+    view, request = _view_and_request()
+    session_id = str(uuid.uuid4())
+    start_time = datetime(2026, 7, 31, 12, 0)
+
+    builder = mock.MagicMock()
+    builder.supports_candidate_first_page.return_value = False
+    builder.supports_bounded_filter_scan.return_value = True
+    builder.recommended_filter_classify_batch_size.return_value = 50
+    builder.prefers_bounded_filter_page.return_value = True
+    builder.filter_candidate_seed_is_sampled.return_value = seed_is_sampled
+    builder.build_page_metrics_query.return_value = ("page metrics", {})
+    builder.build_content_query.return_value = ("page content", {})
+    builder.build_span_attributes_query.return_value = ("page attributes", {})
+    builder.format_sessions.side_effect = lambda rows, columns: [
+        dict(zip(columns, row, strict=True)) for row in rows
+    ]
+
+    def _execute(query, _params, **_kwargs):
+        if query == "page metrics":
+            return SimpleNamespace(
+                data=[
+                    {
+                        "session_id": session_id,
+                        "session_start": start_time,
+                        "session_end": start_time,
+                        "duration": 0,
+                        "total_cost": 0,
+                        "total_tokens": 0,
+                        "traces_count": 1,
+                    }
+                ]
+            )
+        return SimpleNamespace(data=[])
+
+    analytics = mock.MagicMock()
+    analytics.execute_ch_query.side_effect = _execute
+    view._fetch_session_names = mock.MagicMock(return_value={})
+    view._fetch_end_user_info = mock.MagicMock(return_value={})
+
+    bounded = _bounded_page(
+        rows=[{"session_id": session_id, "start_time": start_time}],
+        complete=complete,
+        # No continuation: an unfinished read that can still be resumed is
+        # published as a complete cursor page with ``has_more``, so the truly
+        # degraded page is the one with nowhere left to go.
+        continuation_slice_end=None,
+        total_rows_lower_bound=1,
+    )
+    with (
+        mock.patch(
+            "tracer.views.trace_session.SessionListQueryBuilderV2",
+            _builder_class_mock(return_value=builder),
+        ),
+        mock.patch(
+            "tracer.views.trace_session.read_bounded_filter_page",
+            return_value=bounded,
+        ),
+        mock.patch(
+            "tracer.views.trace_session.AnnotationsLabels.objects.filter",
+            return_value=[],
+        ),
+    ):
+        outcome = TraceSessionView._list_sessions_clickhouse(
+            view,
+            request,
+            project_id=str(uuid.uuid4()),
+            project=None,
+            analytics=analytics,
+            validated_data={
+                "filters": [_attribute_filter()],
+                "sort_params": [],
+                "page_number": 0,
+                "page_size": 25,
+                "cursor_mode": True,
+            },
+        )
+    return outcome
+
+
+def _session_list_metadata(*, complete: bool, seed_is_sampled: bool) -> dict:
+    """The metadata a bounded session page published, or the failure it raised."""
+
+    outcome = _session_list_outcome(complete=complete, seed_is_sampled=seed_is_sampled)
+    assert outcome[0] == "ok", outcome
+    return outcome[1]["metadata"]
+
+
+@pytest.mark.unit
+def test_complete_session_page_states_it_is_exact_not_only_complete():
+    metadata = _session_list_metadata(complete=True, seed_is_sampled=False)
+
+    assert metadata["query_complete"] is True
+    assert metadata["query_exact"] is True
+    assert metadata["ordering_exact"] is True
+    assert "query_provenance" not in metadata
+
+
+@pytest.mark.unit
+def test_sampled_candidate_seed_page_states_it_is_inexact():
+    metadata = _session_list_metadata(complete=True, seed_is_sampled=True)
+
+    assert metadata["query_complete"] is True
+    assert metadata["query_exact"] is False
+    assert metadata["ordering_exact"] is False
+    assert metadata["query_provenance"] == "spans_per_session_candidate"
+
+
+@pytest.mark.unit
+def test_unfinished_session_read_is_refused_rather_than_published_as_exact():
+    """The session list is the one list that cannot publish an unfinished page.
+
+    An incomplete bounded read with nowhere to continue is refused with 503
+    (``trace_session.py`` ``session_list_bounded_read_incomplete``), and one
+    that can continue is published as a complete cursor page with
+    ``has_more``.  So no session page reaches the exactness publisher with
+    ``complete=False``, and the degraded case that does change CSV output is
+    the trace/span/voice one, pinned in ``test_bounded_trace_filter_reads``.
+    """
+
+    outcome = _session_list_outcome(complete=False, seed_is_sampled=False)
+
+    assert outcome[0] == "error"
+    assert outcome[1] == 503
+    assert outcome[3] == "service_unavailable"

@@ -16104,3 +16104,65 @@ def test_attempt_ledger_exposes_separate_timing_query_rows_and_bytes() -> None:
         sum(attempt.result_payload_bytes for attempt in page.attempts)
         == page.result_payload_bytes
     )
+
+
+def test_degraded_voice_page_publishes_inexactness_with_its_completeness() -> None:
+    """The unfinished page is the one that changes the published contract.
+
+    ``tracer/utils/bounded_csv.py`` keys its truncation marker on
+    ``query_exact is False``, so the degraded page — not the finished one — is
+    what a client and an export see differently after this change.  The voice
+    list is the list view that can publish one: the session list refuses an
+    unfinished read with 503 instead (see
+    ``test_unfinished_session_read_is_refused_rather_than_published_as_exact``).
+    """
+
+    from tracer.serializers.trace import TraceVoiceCallListResponseSerializer
+    from tracer.views.trace import TraceView
+
+    view = TraceView.__new__(TraceView)
+    view._gm = SimpleNamespace(
+        custom_error_response=lambda *args, **kwargs: ("error", args, kwargs),
+    )
+    analytics = mock.MagicMock()
+
+    with (
+        mock.patch(
+            "tracer.views.trace.get_project_eval_configs", return_value=([], [])
+        ),
+        mock.patch(
+            "tracer.views.trace.get_annotation_labels_for_project", return_value=[]
+        ),
+        mock.patch(
+            "tracer.views.trace._build_annotation_map_from_scores", return_value={}
+        ),
+        mock.patch(
+            "tracer.selectors.trace_filter_reads.read_bounded_filter_page",
+            return_value=_incomplete_empty_page(),
+        ),
+    ):
+        response = view._list_voice_calls_clickhouse(
+            SimpleNamespace(query_params={"allow_sampled": "true"}),
+            project_id=PROJECT_ID,
+            validated_data={
+                "filters": [
+                    _short_time_filter(),
+                    _attribute_filter("final_status", "Rejected"),
+                ],
+                "page": 1,
+                "page_size": 15,
+                "allow_sampled": True,
+            },
+            remove_simulation_calls=False,
+            analytics=analytics,
+        )
+
+    assert response.status_code == 200
+    assert response.data["query_complete"] is False
+    assert response.data["query_status"] == "degraded"
+    assert response.data["query_exact"] is False
+    assert response.data["ordering_exact"] is False
+    # No row was hydrated, so the page cost only the selector's statements.
+    assert response.data["query_count"] == 8
+    response_serializer = TraceVoiceCallListResponseSerializer(data=response.data)
+    assert response_serializer.is_valid(), response_serializer.errors

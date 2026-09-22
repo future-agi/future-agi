@@ -113,6 +113,7 @@ from tracer.services.clickhouse.list_cursor import (
     frozen_window_filter,
     list_cursor_boundary_fingerprint,
 )
+from tracer.services.clickhouse.list_page_contract import list_page_exactness
 from tracer.services.clickhouse.query_builders.base import NIL_UUID, BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.eval_status import (
     non_terminal_eval_marker,
@@ -3504,6 +3505,18 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
 
         cursor_seen_rows, next_cursor, cursor_has_more = selection.cursor(total_count)
 
+        # Candidate order can come from the insert-only session rollup; every
+        # returned row is still replayed through finite latest state, but that
+        # ordering source cannot retract historical versions, so a page built
+        # on it is inexact however complete the read was.  This qualifies the
+        # page, not the pagination mode, so it applies to both branches below.
+        candidate_seed_is_sampled = getattr(
+            builder, "filter_candidate_seed_is_sampled", None
+        )
+        ordering_source_exact = not (
+            callable(candidate_seed_is_sampled) and candidate_seed_is_sampled()
+        )
+
         metadata = {"total_rows": total_count}
         if candidate_cursor:
             metadata.update(
@@ -3518,6 +3531,10 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     "query_complete": True,
                     "query_status": "complete",
                     "query_error_code": None,
+                    **list_page_exactness(
+                        complete=True,
+                        ordering_source_exact=ordering_source_exact,
+                    ),
                 }
             )
         elif bounded_page is not None:
@@ -3542,28 +3559,16 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     "query_error_code": (
                         None if public_chunk_complete else bounded_page.error_code
                     ),
+                    **list_page_exactness(
+                        complete=public_chunk_complete,
+                        ordering_source_exact=ordering_source_exact,
+                    ),
                 }
             )
-            candidate_seed_is_sampled = getattr(
-                builder, "filter_candidate_seed_is_sampled", None
-            )
-            if callable(candidate_seed_is_sampled) and candidate_seed_is_sampled():
-                # Candidate order came from the insert-only session rollup;
-                # every returned row was still replayed through finite latest
-                # state, but the full ordering source cannot retract historical
-                # versions. Expose that distinction instead of labelling the
-                # fast page exact.
-                metadata.update(
-                    {
-                        "query_complete": public_chunk_complete,
-                        "query_status": (
-                            "complete" if public_chunk_complete else bounded_page.status
-                        ),
-                        "query_exact": False,
-                        "query_provenance": "spans_per_session_candidate",
-                        "ordering_exact": False,
-                    }
-                )
+        # Provenance names the source of an inexact page, so it belongs only
+        # where a page contract was published at all.
+        if not ordering_source_exact and (candidate_cursor or bounded_page is not None):
+            metadata["query_provenance"] = "spans_per_session_candidate"
         if not candidate_cursor:
             metadata.update(
                 cursor_page_metadata(
