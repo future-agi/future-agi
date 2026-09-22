@@ -32,6 +32,15 @@ _LITERAL_TEXT_MATCH_OPS = frozenset(
     {"contains", "not_contains", "starts_with", "ends_with"}
 )
 
+# ``has_eval`` / ``has_annotation`` / ``my_annotations`` are derived per row
+# from the authoritative eval and Score relations.  The flag is computed for
+# every row and is therefore never NULL, so ``is_not_null`` constrains nothing
+# and ``is_null`` matches nothing.  ``not_equals`` is compiled by negating the
+# requested value, never by inferring intent from the value alone.
+_BOOLEAN_META_PRESENCE_CONDITIONS = {"is_null": "0 = 1", "is_not_null": "1 = 1"}
+
+_BOOLEAN_META_VALUE_OPS = frozenset({"equals", "not_equals"})
+
 
 class EvalFilterMetadata(NamedTuple):
     """Authoritative PostgreSQL metadata for one eval-value filter id."""
@@ -133,6 +142,62 @@ def normalize_filter_op(op: str | None) -> str | None:
     if op is None:
         return None
     return _LEGACY_OP_ALIAS.get(op, op)
+
+
+def _unsupported_filter_shape(message: str) -> ValueError:
+    """Build the shared bad-filter error that public readers map to HTTP 400.
+
+    ``latest_filter_predicates`` imports this module, so the exception it owns
+    can only be resolved at call time.  Raising a bare ``ValueError`` here
+    would reach the views' generic handler and answer HTTP 500 for a filter
+    the caller can correct.
+    """
+
+    from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
+        UnsupportedFilterShapeError,
+    )
+
+    return UnsupportedFilterShapeError(message)
+
+
+def boolean_meta_presence_condition(filter_op: str | None) -> str | None:
+    """Compile a presence operator on a derived boolean flag.
+
+    Returns the finished constant predicate for ``is_null`` / ``is_not_null``,
+    and ``None`` for every other operator — which the caller then resolves with
+    :func:`parse_boolean_meta_filter`.
+    """
+
+    return _BOOLEAN_META_PRESENCE_CONDITIONS.get(normalize_filter_op(filter_op) or "")
+
+
+def parse_boolean_meta_filter(
+    column_id: str,
+    filter_value: Any,
+    filter_op: str | None,
+) -> bool:
+    """Resolve one boolean meta-filter to the presence its operator requires.
+
+    Presence operators are deliberately not accepted here: they carry no value
+    and callers compile them through :func:`boolean_meta_presence_condition`
+    first.
+    """
+
+    operation = normalize_filter_op(filter_op)
+    if operation not in _BOOLEAN_META_VALUE_OPS:
+        raise _unsupported_filter_shape(
+            f"{column_id} supports only equals, not_equals, is_null and is_not_null"
+        )
+    if isinstance(filter_value, bool):
+        wanted = filter_value
+    elif isinstance(filter_value, str) and filter_value.strip().lower() in {
+        "true",
+        "false",
+    }:
+        wanted = filter_value.strip().lower() == "true"
+    else:
+        raise _unsupported_filter_shape(f"{column_id} requires a boolean value")
+    return wanted if operation == "equals" else not wanted
 
 
 def build_literal_text_predicate(
@@ -2798,24 +2863,6 @@ class ClickHouseFilterBuilder:
     # Boolean metric filter handlers (has_eval, has_annotation)
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _parse_boolean_meta_filter(
-        column_id: str,
-        filter_value: Any,
-        filter_op: str | None,
-    ) -> bool:
-        """Parse one boolean meta-filter without implicit operator inversion."""
-
-        if normalize_filter_op(filter_op) != "equals":
-            raise ValueError(f"{column_id} supports only the equals operation")
-        if isinstance(filter_value, bool):
-            return filter_value
-        if isinstance(filter_value, str):
-            normalized_value = filter_value.strip().lower()
-            if normalized_value in {"true", "false"}:
-                return normalized_value == "true"
-        raise ValueError(f"{column_id} requires a boolean value")
-
     def _build_has_eval_condition(
         self,
         filter_value: Any,
@@ -2826,9 +2873,10 @@ class ClickHouseFilterBuilder:
         Generates a ``trace_id IN (SELECT ...)`` subquery against the
         ``tracer_eval_logger`` CDC table.
         """
-        wants_eval = self._parse_boolean_meta_filter(
-            "has_eval", filter_value, filter_op
-        )
+        presence = boolean_meta_presence_condition(filter_op)
+        if presence is not None:
+            return presence
+        wants_eval = parse_boolean_meta_filter("has_eval", filter_value, filter_op)
         if (
             not wants_eval
             and self.candidate_ids_param is None
@@ -2837,7 +2885,9 @@ class ClickHouseFilterBuilder:
             # Absence has no positive row witness. Public list readers compile
             # this predicate only after producing a <=200 candidate batch. Do
             # not silently widen a negative filter into a whole-table anti-scan.
-            raise ValueError("has_eval=false requires bounded candidate scope")
+            raise _unsupported_filter_shape(
+                "has_eval=false requires bounded candidate scope"
+            )
         membership_op = "IN" if wants_eval else "NOT IN"
         # The eval table has no ``project_id`` column, so scope the subquery by
         # INNER JOIN to the spans table (which does) — otherwise we would match
@@ -2952,7 +3002,10 @@ class ClickHouseFilterBuilder:
         stored against observation_span_id. Resolve through ``spans`` so this
         filter sees the same annotations rendered in trace rows.
         """
-        wants_annotation = self._parse_boolean_meta_filter(
+        presence = boolean_meta_presence_condition(filter_op)
+        if presence is not None:
+            return presence
+        wants_annotation = parse_boolean_meta_filter(
             "has_annotation", filter_value, filter_op
         )
 
@@ -2981,7 +3034,13 @@ class ClickHouseFilterBuilder:
         """Handle ``my_annotations`` filter: check if the current user has
         any annotation on the trace.  ``filter_value`` should be truthy and
         the user_id is expected inside ``config``."""
-        wants_my_annotations = self._parse_boolean_meta_filter(
+        presence = boolean_meta_presence_condition(filter_op)
+        if presence is not None:
+            # The flag is derived from the caller's own Score rows, so the
+            # presence operators are answered without a principal: neither
+            # constant exposes another user's annotations.
+            return presence
+        wants_my_annotations = parse_boolean_meta_filter(
             "my_annotations", filter_value, filter_op
         )
         user_id = config.get("user_id")

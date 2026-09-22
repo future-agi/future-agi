@@ -39,6 +39,7 @@ from tracer.services.clickhouse.query_builders.expressions import (
     annotation_numeric_value_expr,
 )
 from tracer.services.clickhouse.query_builders.filters import (
+    boolean_meta_presence_condition,
     resolve_annotation_label_output_type,
     resolve_eval_filter_metadata,
 )
@@ -174,6 +175,16 @@ PRESENCE_SYSTEM_METRIC_FILTERS = frozenset({"has_eval", "has_annotation"})
 # Eval-row dimensions answered from ``usage_apicalllog`` itself, not from spans.
 EVAL_SOURCE_DIMENSIONS = frozenset({"source", "eval_source"})
 EVAL_DATASET_DIMENSION = "dataset"
+
+# Dashboard widgets carry their own operator vocabulary
+# (``DASHBOARD_FILTER_OP_TO_INTERNAL`` in ``tracer/views/dashboard.py``). Map it
+# onto the list vocabulary the shared boolean meta-filter parser speaks.
+_PRESENCE_FILTER_OP_ALIAS = {
+    "equal_to": "equals",
+    "not_equal_to": "not_equals",
+    "is_set": "is_not_null",
+    "is_not_set": "is_null",
+}
 
 METRIC_UNITS: dict[str, str] = {
     "latency": "ms",
@@ -893,18 +904,39 @@ class DashboardQueryBuilder:
         return cls._presence_filter_name(payload) in PRESENCE_SYSTEM_METRIC_FILTERS
 
     @staticmethod
-    def _presence_filter_value(payload: dict, metric_name: str) -> bool:
+    def _presence_filter_operation(payload: dict) -> str:
         operation = str(payload.get("operator") or "")
-        if operation not in {"equal_to", "equals"}:
+        return _PRESENCE_FILTER_OP_ALIAS.get(operation, operation)
+
+    @classmethod
+    def _presence_filter_constant(cls, payload: dict) -> str | None:
+        """Compile a presence operator on one derived relational flag.
+
+        ``has_eval`` / ``has_annotation`` are computed for every row and are
+        never NULL, so ``is_not_null`` constrains nothing and ``is_null``
+        matches nothing. Returns ``None`` for a value comparison.
+        """
+
+        return boolean_meta_presence_condition(cls._presence_filter_operation(payload))
+
+    @classmethod
+    def _presence_filter_value(cls, payload: dict, metric_name: str) -> bool:
+        operation = cls._presence_filter_operation(payload)
+        if operation not in {"equals", "not_equals"}:
             raise InvalidMetricCombinationError(
-                f"{metric_name} supports only the equals operation"
+                f"{metric_name} supports only equals, not_equals, is_null "
+                "and is_not_null"
             )
         value = payload.get("value")
         if isinstance(value, bool):
-            return value
-        if isinstance(value, str) and value.strip().lower() in {"true", "false"}:
-            return value.strip().lower() == "true"
-        raise InvalidMetricCombinationError(f"{metric_name} requires a boolean value")
+            wanted = value
+        elif isinstance(value, str) and value.strip().lower() in {"true", "false"}:
+            wanted = value.strip().lower() == "true"
+        else:
+            raise InvalidMetricCombinationError(
+                f"{metric_name} requires a boolean value"
+            )
+        return wanted if operation == "equals" else not wanted
 
     def _eval_presence_relation(self) -> str:
         """Return exact project+trace identities with a latest-live eval row."""
@@ -1108,6 +1140,10 @@ class DashboardQueryBuilder:
                 continue
             metric_name = self._presence_filter_name(payload)
             if metric_name not in PRESENCE_SYSTEM_METRIC_FILTERS:
+                continue
+            constant = self._presence_filter_constant(payload)
+            if constant is not None:
+                predicates.append(constant)
                 continue
             required = self._presence_filter_value(payload, metric_name)
             relation = (

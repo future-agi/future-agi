@@ -17,7 +17,7 @@ from tracer.services.clickhouse.v2.query_builders.dashboard import (
 from tracer.views.dashboard import _normalize_dashboard_query_filters
 
 
-def _presence_filter(name: str, value: bool) -> dict:
+def _presence_filter(name: str, value: bool, filter_op: str = "equals") -> dict:
     return {
         "column_id": name,
         "property_id": f"system_attribute:traces:{name}",
@@ -25,7 +25,7 @@ def _presence_filter(name: str, value: bool) -> dict:
         "filter_config": {
             "col_type": "SYSTEM_METRIC",
             "filter_type": "boolean",
-            "filter_op": "equals",
+            "filter_op": filter_op,
             "filter_value": value,
         },
     }
@@ -182,9 +182,36 @@ def test_f7_conjoins_custom_eval_annotation_values_and_both_presence_filters():
 
 
 @pytest.mark.parametrize("name", ["has_eval", "has_annotation"])
-def test_presence_filter_rejects_non_boolean_or_non_equals_without_fallback(name):
-    config = _validated_query([_presence_filter(name, True)])
-    config["filters"][0]["operator"] = "not_equal_to"
+@pytest.mark.parametrize("required", [True, False])
+def test_presence_filter_not_equals_negates_the_requested_value(name, required):
+    config = _validated_query([_presence_filter(name, required, "not_equals")])
 
-    with pytest.raises(InvalidMetricCombinationError, match="only the equals"):
+    sql, _params, _metric = DashboardQueryBuilderV2(config).build_all_queries()[0]
+
+    assert (" IN " if not required else " NOT IN ") in sql
+
+
+@pytest.mark.parametrize("name", ["has_eval", "has_annotation"])
+@pytest.mark.parametrize(
+    ("operator", "expected"), [("is_null", "0 = 1"), ("is_not_null", "1 = 1")]
+)
+def test_presence_filter_presence_operators_compile_a_total_flag(
+    name, operator, expected
+):
+    # has_eval / has_annotation are derived per row and never NULL, so
+    # is_not_null constrains nothing and is_null matches nothing.
+    config = _validated_query([_presence_filter(name, True, operator)])
+
+    sql, _params, _metric = DashboardQueryBuilderV2(config).build_all_queries()[0]
+
+    assert expected in sql
+    assert "dashboard_presence_traces" not in sql
+
+
+@pytest.mark.parametrize("name", ["has_eval", "has_annotation"])
+def test_presence_filter_rejects_an_uncompilable_operation(name):
+    config = _validated_query([_presence_filter(name, True)])
+    config["filters"][0]["operator"] = "str_contains"
+
+    with pytest.raises(InvalidMetricCombinationError, match="supports only equals"):
         DashboardQueryBuilder(config).build_all_queries()
