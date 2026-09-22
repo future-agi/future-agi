@@ -22,9 +22,9 @@ import { WORKSPACE_TABS } from "./workspace.constants";
 //
 // The rail reuses the product tab treatment Phase-1 established (ENV_TABS_SX)
 // rather than the designer's CustomTabs px:1. Numeric counts are hidden while
-// the builder streams — the parent passes `counts={null}` then. When an
-// execution is open in the URL the parent passes `executionOutlet`, which
-// replaces the Runs body with the nested product run detail.
+// the builder streams — the parent passes `counts={null}` then. A deep-linked
+// run detail is a full page (the workspace early-returns the Outlet), so the
+// panels never host the run detail themselves.
 export default function WorkspacePanels({
   env,
   envState,
@@ -40,7 +40,6 @@ export default function WorkspacePanels({
   overviewCounts,
   overviewWorld,
   graphData,
-  executionOutlet,
   onStartRun,
   canRun = false,
 }) {
@@ -73,7 +72,6 @@ export default function WorkspacePanels({
   };
 
   const renderBody = () => {
-    if (executionOutlet && current.id === "runs") return executionOutlet;
     switch (current.id) {
       case "contract":
         return <RlContractPanel env={env} envState={envState} patch={patch} onGo={go} locked={locked} onFork={onFork} graphData={graphData} />;
@@ -183,7 +181,6 @@ WorkspacePanels.propTypes = {
   overviewWorld: PropTypes.object,
   // Real §6 capability-graph data (tools/flows/personas/guardrails) for Contract.
   graphData: PropTypes.object,
-  executionOutlet: PropTypes.node,
   // Starts a run scoped to the scenario selection × trials — (ids, trials).
   onStartRun: PropTypes.func,
   // Whether the env is runnable; gates the scenarios selection-bar Run.

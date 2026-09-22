@@ -8,21 +8,29 @@ import EmptyState from "../../components/EmptyState";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 import PreflightItem from "./PreflightItem";
 import EstimateRow from "./EstimateRow";
-import RunHistoryRow from "./RunHistoryRow";
+import RunsSummary from "./summary/RunsSummary";
 import { RUNS_COPY, estimatedMinutes, estimatedCost } from "./runs.constants";
 
-// Pre-flight + run history.
-//
-// Before a run costs anyone real money this shows exactly what is about to
-// happen: how many tasks, against which agent, graded by what. Data is injected
-// (no hook here) — `runs` is the real executions list for a completed harness
-// job, empty for a client-only environment.
-//
-// NOTE: the designer's RunsPanel also carried a populated history block, but it
-// is dead code (the component returns RunsSummary the moment a run exists), so
-// it is not ported. The history below is a deliberately minimal, real-data list
-// (see RunHistoryRow), not a RunsSummary port.
+// The Runs tab. Before the first run it is a pre-flight card (what is about to
+// happen, and whether the environment is ready to run at all). Once at least one
+// run exists it becomes the run summary — the eval-score trend graph over a
+// comparison table — matching the designer, where pre-flight moves into "Add
+// more runs". `runs` is the real executions list for a completed harness job,
+// empty for a client-only environment.
 export default function RunsPanel({ env, envState, runs, onStart, onOpenRun, onGo }) {
+  // A populated environment lands on the summary rather than the launcher.
+  if (runs.length > 0) {
+    return (
+      <RunsSummary
+        env={env}
+        envState={envState}
+        onStart={onStart}
+        onOpenRun={onOpenRun}
+        onGo={onGo}
+      />
+    );
+  }
+
   const surface = getSurface(env.surface);
   const agent = envState.agent;
   const scenarioCount = envState.scenarios.length;
@@ -140,23 +148,15 @@ export default function RunsPanel({ env, envState, runs, onStart, onOpenRun, onG
         </Stack>
       </SectionCard>
 
+      {/* Runs > 0 lands on RunsSummary above, so this history card is only ever
+          the empty state — the run summary replaces it the moment a run lands. */}
       <Box sx={{ mt: 3 }}>
-        <SectionCard title={RUNS_COPY.history(runs.length)}>
-          {runs.length === 0 ? (
-            <EmptyState
-              icon="solar:play-circle-linear"
-              title={RUNS_COPY.empty.title}
-              body={RUNS_COPY.empty.body}
-            />
-          ) : (
-            <Stack
-              divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}
-            >
-              {runs.map((run) => (
-                <RunHistoryRow key={run.id} run={run} onOpenRun={onOpenRun} />
-              ))}
-            </Stack>
-          )}
+        <SectionCard title={RUNS_COPY.history(0)}>
+          <EmptyState
+            icon="solar:play-circle-linear"
+            title={RUNS_COPY.empty.title}
+            body={RUNS_COPY.empty.body}
+          />
         </SectionCard>
       </Box>
     </Box>

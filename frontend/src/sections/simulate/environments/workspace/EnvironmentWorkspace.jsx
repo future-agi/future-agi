@@ -68,8 +68,8 @@ const blockedReason = (envState) => {
  * template) and lays out the shared workspace: header, system banners, the
  * version pairing strip, the builder console on the left and the tabbed panels
  * on the right — the same composition the build page swaps in at 7/7. A deep
- * link to `runs/:testId/:executionId` forces the Runs tab and renders the reused
- * product execution detail (the Outlet) inside its body.
+ * link to `runs/:testId/:executionId` renders the run detail as its own full
+ * page instead (the workspace chrome is replaced by the nested Outlet).
  */
 export default function EnvironmentWorkspace() {
   const navigate = useNavigate();
@@ -202,17 +202,25 @@ export default function EnvironmentWorkspace() {
     );
   }
 
+  // A deep-linked run detail is its own full page: the workspace chrome (header,
+  // builder console, tab rail) makes way for the run view, matching the designer
+  // — a run opens as a page, not a body swapped inside the tabbed workspace. The
+  // env is already resolved above, so the nested Outlet still receives it via
+  // context and RunDetail owns the viewport (its own header + Test-runs tabs).
+  if (executionMatch) {
+    return (
+      <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+        <Outlet context={{ env, envState }} />
+      </Box>
+    );
+  }
+
   // A template-seeded env stays locked until forked: the version pin is
   // read-only, the header overflow is hidden and Overview offers Fork instead.
   const locked = source === "client" && !!envState.seededFromTemplate;
 
-  // The execution route forces the Runs tab and hands the panels the nested
-  // product detail; switching tabs from there leaves the execution behind.
-  const activeTab = executionMatch ? "runs" : tab;
-  const onTabChange = (id) =>
-    executionMatch
-      ? navigate(paths.dashboard.simulate.environments.workspaceTab(env.id, id))
-      : setTab(id);
+  const activeTab = tab;
+  const onTabChange = (id) => setTab(id);
 
   const onFork = () => {
     const fork = buildFork(env, envState, new Date().toISOString());
@@ -373,7 +381,6 @@ export default function EnvironmentWorkspace() {
             overviewCounts={overviewCounts}
             overviewWorld={overviewWorld}
             graphData={graphData}
-            executionOutlet={executionMatch ? <Outlet context={{ env, envState }} /> : undefined}
             onStartRun={startRun}
             canRun={runnable}
           />

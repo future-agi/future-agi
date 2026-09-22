@@ -1,6 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { fDateTime } from "src/utils/format-time";
 import RunsPanel from "../RunsPanel";
 import { RUNS_COPY } from "../runs.constants";
 
@@ -87,64 +86,14 @@ describe("RunsPanel start gating", () => {
   });
 });
 
-describe("RunsPanel run history", () => {
-  const passedRun = {
-    id: "ex1",
-    executionId: "ex1",
-    label: "Run 1",
-    status: "passed",
-    startedAt: "2026-01-13T16:40:00.000Z",
-    finishedAt: "2026-01-13T16:42:10.000Z",
-    total: 12,
-    passed: 9,
-    failed: 3,
-    agentVersion: "v2",
-  };
-
+describe("RunsPanel empty state", () => {
   it("shows the empty-history copy when there are no runs", () => {
     renderPanel({ runs: [] });
     expect(screen.getByText(RUNS_COPY.empty.title)).toBeInTheDocument();
     expect(screen.getByText(RUNS_COPY.empty.body)).toBeInTheDocument();
   });
-
-  it("renders a row with label, timestamp, pass % and status chip", () => {
-    renderPanel({ runs: [passedRun] });
-    expect(screen.getByText(passedRun.label)).toBeInTheDocument();
-    expect(
-      screen.getByText(new RegExp(fDateTime(passedRun.finishedAt))),
-    ).toBeInTheDocument();
-    expect(screen.getByText("75%")).toBeInTheDocument();
-    expect(screen.getByText("Passed")).toBeInTheDocument();
-  });
-
-  it("shows a progress bar and an em dash for a running row", () => {
-    const runningRun = {
-      ...passedRun,
-      status: "running",
-      passed: 0,
-      finishedAt: null,
-    };
-    renderPanel({ runs: [runningRun] });
-    expect(screen.getByRole("progressbar")).toBeInTheDocument();
-    expect(screen.getByText("—")).toBeInTheDocument();
-    expect(screen.getByText("Running")).toBeInTheDocument();
-  });
-
-  it("opens the run on click when it carries an executionId", () => {
-    const onOpenRun = vi.fn();
-    renderPanel({ runs: [passedRun], onOpenRun });
-    fireEvent.click(screen.getByRole("button", { name: new RegExp(passedRun.label) }));
-    expect(onOpenRun).toHaveBeenCalledWith(passedRun);
-  });
-
-  it("does not open a run that has no executionId", () => {
-    const onOpenRun = vi.fn();
-    const noExec = { ...passedRun, executionId: undefined };
-    renderPanel({ runs: [noExec], onOpenRun });
-    expect(
-      screen.queryByRole("button", { name: new RegExp(noExec.label) }),
-    ).toBeNull();
-    fireEvent.click(screen.getByText(noExec.label));
-    expect(onOpenRun).not.toHaveBeenCalled();
-  });
 });
+
+// The populated Runs tab (runs > 0) delegates to RunsSummary; that surface is
+// covered in summary/__tests__/RunsSummary.test.jsx, which mounts the chart +
+// query client it needs.

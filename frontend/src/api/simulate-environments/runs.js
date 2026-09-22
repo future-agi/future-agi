@@ -52,6 +52,9 @@ export function executionToRun(raw) {
     passed,
     failed,
     agentVersion: raw?.agent_version ?? null,
+    // Run-level wall-clock (SECONDS) the summary table's "Avg duration" reads —
+    // the same `duration` field the product's TestRunsGrid formats; null absent.
+    durationS: raw?.duration ?? null,
   };
 }
 
