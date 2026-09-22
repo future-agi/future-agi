@@ -580,9 +580,10 @@ class UsersListManager:
                     # script test here, unlike the builder's walk gate: this
                     # lane narrows a FINITE candidate batch by id with
                     # ``lowerUTF8(...) IN``, which agrees with Python's
-                    # ``lower()`` (verified on ClickHouse 25.3 across every
-                    # case-changing code point), so it stays exact for any
-                    # script; the walk's slices must read through the deployed
+                    # ``lower()`` on every case-changing code point (verified
+                    # on ClickHouse 25.3.14; that is the minimum version this
+                    # exactness rests on), so it stays exact for any script;
+                    # the walk's slices must read through the deployed
                     # value bloom, which is ``lower()`` (ASCII only), so only
                     # an ASCII value has an index witness there.
                     or any(
