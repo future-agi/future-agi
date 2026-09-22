@@ -42,6 +42,7 @@ MAX_COMMANDS = 150
 MAX_PROPOSAL_BYTES = 2 * 1024 * 1024
 MAX_RECONCILIATION_MEMBERS = 16
 MECHANISM_KEYS = {"mechanism", "fix_hypothesis", "falsifier"}
+TITLE_KEYS = MECHANISM_KEYS | {"title"}
 COMMAND_FIELDS = {
     "create": {
         "type",
@@ -130,13 +131,17 @@ def _ids(value: object, *, limit: int, label: str) -> list[str]:
 
 
 def _mechanism(value: object) -> dict:
-    if not isinstance(value, dict) or set(value) != MECHANISM_KEYS:
+    if not isinstance(value, dict) or set(value) not in (MECHANISM_KEYS, TITLE_KEYS):
         raise GroupingControlError("mechanism must have exact F6 fields")
     if any(
         not isinstance(item, str) or not item.strip() or len(item) > 3000
         for item in value.values()
     ):
         raise GroupingControlError("mechanism fields must be bounded nonempty text")
+    if "title" in value and (
+        len(value["title"]) > 120 or len(value["title"].split()) > 12
+    ):
+        raise GroupingControlError("issue title must be a concise headline")
     return value
 
 
@@ -338,21 +343,45 @@ def _admitted_group(
     if result.get("action") != expected_action:
         raise GroupingConflict("stored model action does not authorize command type")
     group = result["groups"][index]
-    if not isinstance(group, dict) or set(group) != {
-        "target_issue_id",
-        "member_ids",
-        "mechanism",
-        "fix_hypothesis",
-        "falsifier",
-        "predicted_observations",
-        "citations",
-        "contradictions",
-        "alternatives",
-        "missing_evidence",
-    }:
+    if not isinstance(group, dict) or set(group) not in (
+        {
+            "target_issue_id",
+            "member_ids",
+            "mechanism",
+            "fix_hypothesis",
+            "falsifier",
+            "predicted_observations",
+            "citations",
+            "contradictions",
+            "alternatives",
+            "missing_evidence",
+        },
+        {
+            "target_issue_id",
+            "member_ids",
+            "title",
+            "mechanism",
+            "fix_hypothesis",
+            "falsifier",
+            "predicted_observations",
+            "citations",
+            "contradictions",
+            "alternatives",
+            "missing_evidence",
+        },
+    ):
         raise GroupingConflict("stored admission group has invalid schema")
     if (
-        any(
+        (
+            "title" in group
+            and (
+                not isinstance(group["title"], str)
+                or not group["title"].strip()
+                or len(group["title"]) > 120
+                or len(group["title"].split()) > 12
+            )
+        )
+        or any(
             not isinstance(group[key], str)
             or not group[key].strip()
             or len(group[key]) > 3000
@@ -381,7 +410,7 @@ def _admitted_group(
         )
     if (
         mechanism is not None
-        and {key: group[key] for key in MECHANISM_KEYS} != mechanism
+        and {key: group[key] for key in set(mechanism)} != mechanism
     ):
         raise GroupingConflict("stored mechanism does not match worker command")
     combined = _model_citations(group["citations"])
@@ -603,7 +632,7 @@ def _new_issue(
         issue_group="Investigation findings",
         eval_target_type=None,
         error_type=mechanism["mechanism"][:200],
-        title=mechanism["mechanism"][:1000],
+        title=mechanism.get("title", mechanism["mechanism"])[:1000],
         combined_description=mechanism["mechanism"],
         error_count=0,
         severity_source="default",
