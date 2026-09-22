@@ -49,16 +49,25 @@ function collectCredentialValues(source) {
  * Exchange a raw `{ ALIAS: value }` map for opaque secret references the backend
  * can resolve. Returns a `{ ALIAS: reference }` map (empty when there is nothing
  * to exchange).
- *
- * NOTE: uploaded credential FILES (`source.secretFiles`) are intentionally not
- * folded here — the environments panels still mint those refs from the mock
- * upload hook, so they are not real vault references yet. They ride the draft
- * untouched until real secret-file upload is wired.
  */
 async function exchangeSecrets(values) {
   if (!Object.keys(values).length) return {};
   const { secret_refs } = await storeHarnessSecretValues(values);
   return secret_refs || {};
+}
+
+/**
+ * The `{ ALIAS: reference }` map for credential FILES already uploaded to the vault.
+ * Preflight reads `agent.secret_refs` and nothing else, so a file left out here is
+ * invisible to `credential_files` however many times it was uploaded.
+ */
+function fileSecretRefs(source) {
+  const refs = {};
+  for (const file of source?.secretFiles ?? []) {
+    const alias = String(file?.environment_name || "").trim();
+    if (alias && file?.secret_ref) refs[alias] = file.secret_ref;
+  }
+  return refs;
 }
 
 /**
@@ -74,7 +83,11 @@ async function exchangeSecrets(values) {
  */
 export async function prepareSourceForBuild(source) {
   const credentialValues = collectCredentialValues(source);
-  const secretRefs = await exchangeSecrets(credentialValues);
+  // File refs first so a typed value for the same alias wins, matching the create path.
+  const secretRefs = {
+    ...fileSecretRefs(source),
+    ...(await exchangeSecrets(credentialValues)),
+  };
   const withRefs = Object.keys(secretRefs).length
     ? { ...source, secret_refs: secretRefs }
     : source;
