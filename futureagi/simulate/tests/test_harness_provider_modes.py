@@ -2,6 +2,8 @@ from simulate.serializers.harness_job import (
     HarnessAgentSerializer,
     HarnessJobCreateSerializer,
 )
+from simulate.services.harness_provider import _validate_phone_connectivity
+from simulate.services.phone_telephony import platform_phone_telephony
 
 
 def test_vapi_connect_only_accepts_existing_assistant_id():
@@ -77,6 +79,21 @@ def test_phone_connect_only_needs_no_repository_or_customer_secret():
     )
     assert serializer.is_valid(), serializer.errors
     assert serializer.validated_data["source"]["kind"] == "provider"
+
+
+def test_phone_reuses_agent_definition_telephony(monkeypatch):
+    monkeypatch.setenv("LIVEKIT_URL", "wss://livekit.example.com")
+    monkeypatch.setenv("LIVEKIT_API_KEY", "test-key")
+    monkeypatch.setenv("LIVEKIT_API_SECRET", "test-secret")
+    monkeypatch.setenv("LIVEKIT_OUTBOUND_TRUNK_ID", "ST_existing-outbound")
+    monkeypatch.setenv("PSTN_CALLER_NUMBER", "+14155550123")
+    # The older generic SIP setting may refer to an inbound trunk. The agent
+    # definition's known-good outbound trunk must take precedence.
+    monkeypatch.setenv("SIP_OUTBOUND_TRUNK_ID", "ST_other-direction")
+    values = platform_phone_telephony()
+    assert values["SIP_OUTBOUND_TRUNK_ID"] == "ST_existing-outbound"
+    assert values["SIP_OUTBOUND_FROM_NUMBER"] == "+14155550123"
+    _validate_phone_connectivity({"agent": {"connector": "phone"}})
 
 
 def test_retell_environment_backed_accepts_repository_lifecycle():

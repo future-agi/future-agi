@@ -374,16 +374,14 @@ class E2BSandboxRuntimeProvider(SandboxRuntimeProvider):
     def create_preview_url(
         self, sandbox: E2BSandbox, port: int, *, expires_in_seconds: int
     ) -> SandboxPreview:
-        del expires_in_seconds
-        host = str(_call(sandbox._sandbox.get_host, port) or "").strip()
-        if not host or not sandbox.traffic_access_token:
-            raise SandboxProviderError(
-                "E2B sandbox did not return a traffic access token for its public host",
-                status_code=502,
-            )
+        from simulate.services.hosted_sandbox.ingress_relay import mint_ingress_url
+
         return SandboxPreview(
-            url=f"https://{host}",
-            headers={"E2B-Traffic-Access-Token": sandbox.traffic_access_token},
+            url=mint_ingress_url(
+                sandbox_id=sandbox._sandbox.sandbox_id,
+                port=port,
+                expires_in_seconds=expires_in_seconds,
+            )
         )
 
 

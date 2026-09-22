@@ -36,10 +36,6 @@ from simulate.services.hosted_harness_ingestion import (
     ingest_manifest,
     ingest_result_receipt,
 )
-from simulate.services.hosted_harness_ingress import (
-    create_ingress_proxy_url,
-    proxy_ingress_request,
-)
 from tfc.utils.api_contracts import validated_request
 
 logger = logging.getLogger(__name__)
@@ -140,17 +136,7 @@ class HostedHarnessAttemptViewSet(viewsets.ViewSet):
                 request.validated_data["port"],
                 expires_in_seconds=expires_in_seconds,
             )
-            relay_headers = getattr(preview, "headers", {}) or {}
-            preview_url = (
-                create_ingress_proxy_url(
-                    request,
-                    attempt,
-                    request.validated_data["port"],
-                    expires_in_seconds=expires_in_seconds,
-                )
-                if relay_headers
-                else preview.url
-            )
+            preview_url = preview.url
             if not preview_url.startswith("https://"):
                 raise ValueError("signed preview URL is missing or not HTTPS")
         except Exception as exc:
@@ -225,26 +211,3 @@ class HostedHarnessAttemptViewSet(viewsets.ViewSet):
             status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         )
 
-
-class HostedHarnessIngressProxyView(APIView):
-    """Relay a signed callback URL to the active sandbox without exposing provider headers."""
-
-    authentication_classes = []
-    permission_classes = [AllowAny]
-    http_method_names = ["get", "post", "put", "patch", "delete", "head", "options"]
-
-    def handle_exception(self, exc):
-        if isinstance(exc, HostedHarnessError):
-            return Response(exc.as_dict(), status=exc.status_code)
-        return super().handle_exception(exc)
-
-    def _proxy(self, request, token, target_path=""):
-        return proxy_ingress_request(request, token, target_path)
-
-    get = _proxy
-    post = _proxy
-    put = _proxy
-    patch = _proxy
-    delete = _proxy
-    head = _proxy
-    options = _proxy

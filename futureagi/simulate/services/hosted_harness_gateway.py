@@ -253,12 +253,10 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         values["ALK_CLAUDE_GATEWAY_API_KEY"] = agentcc_key
         values["AGENTCC_BASE_URL"] = agentcc_url.rstrip("/")
         values["AGENTCC_API_KEY"] = agentcc_key
+    from simulate.services.phone_telephony import platform_phone_telephony
+
+    values.update({name: value for name, value in platform_phone_telephony().items() if value})
     for name in (
-        "LIVEKIT_URL",
-        "LIVEKIT_API_KEY",
-        "LIVEKIT_API_SECRET",
-        "SIP_OUTBOUND_TRUNK_ID",
-        "SIP_OUTBOUND_FROM_NUMBER",
         "CARTESIA_API_KEY",
         "DEEPGRAM_API_KEY",
         "GEMINI_API_KEY",
@@ -3278,7 +3276,10 @@ class HostedHarnessGateway:
                     "/run/futureagi/cancel.json",
                 )
                 sandbox.process.exec(
-                    "pkill -TERM -f 'fi.alk.harness.hosted_entrypoint' || true",
+                    # The bracketed first character still matches the guest entrypoint, but not
+                    # this shell's own command line. An unbracketed `pkill -f` terminates its
+                    # invoking shell and E2B reports exit -1, stranding cancellation.
+                    "pkill -TERM -f '[f]i.alk.harness.hosted_entrypoint' || true",
                     timeout=30,
                 )
             except Exception:
