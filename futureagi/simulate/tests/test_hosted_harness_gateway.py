@@ -127,6 +127,8 @@ def test_platform_authoring_backend_is_independent_from_simulated_caller(
     tmp_path, monkeypatch
 ):
     monkeypatch.delenv("AGENTCC_HARNESS_API_KEY", raising=False)
+    monkeypatch.setenv("AGENTCC_INTERNAL_API_KEY", "platform-internal-key")
+    monkeypatch.setenv("AGENTCC_BASE_URL", "https://gateway.example.test")
     credentials = tmp_path / "vertex.json"
     credentials.write_text('{"project_id":"platform-project"}', encoding="utf-8")
     monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", str(credentials))
@@ -145,19 +147,17 @@ def test_platform_authoring_backend_is_independent_from_simulated_caller(
     assert values["SIMULATOR_LLM_MODEL"] == "gemini-3.1-flash-lite"
 
 
-def test_claude_authoring_uses_platform_gateway_only(monkeypatch):
-    monkeypatch.delenv("AGENTCC_HARNESS_API_KEY", raising=False)
+def test_claude_authoring_prefers_platform_owned_harness_key(monkeypatch):
     monkeypatch.setenv("ALK_HARNESS", "claude")
     monkeypatch.setenv("ALK_HARNESS_MODEL", "vertex_ai/gemini-3.7-flash")
-    monkeypatch.setenv("AGENTCC_INTERNAL_API_KEY", "platform-gateway-key")
+    monkeypatch.setenv("AGENTCC_INTERNAL_API_KEY", "internal-service-key")
+    monkeypatch.setenv("AGENTCC_HARNESS_API_KEY", "harness-virtual-key")
     monkeypatch.setenv("AGENTCC_BASE_URL", "https://gateway.example.test")
 
     values, _ = _platform_simulator_material()
 
-    assert values["AGENTCC_API_KEY"] == "platform-gateway-key"
+    assert values["AGENTCC_API_KEY"] == "harness-virtual-key"
     assert values["AGENTCC_BASE_URL"] == "https://gateway.example.test"
-    assert values["ALK_HARNESS"] == "claude"
-    assert values["ALK_HARNESS_MODEL"] == "vertex_ai/gemini-3.7-flash"
     assert "gateway.example.test" in _resolved_egress_domains(
         {"agent": {"connector": "auto"}, "security": {"allowed_egress_domains": []}},
         {},
@@ -177,6 +177,17 @@ def test_claude_authoring_uses_separate_remote_gateway_key(monkeypatch):
 
     assert values["AGENTCC_API_KEY"] == "remote-virtual-key"
     assert values["AGENTCC_BASE_URL"] == "https://gateway.futureagi.com"
+
+
+def test_claude_authoring_requires_sandbox_reachable_gateway(monkeypatch):
+    monkeypatch.setenv("ALK_HARNESS", "claude")
+    monkeypatch.setenv("AGENTCC_HARNESS_API_KEY", "harness-virtual-key")
+    monkeypatch.delenv("AGENTCC_BASE_URL", raising=False)
+
+    with pytest.raises(HostedHarnessError) as exc:
+        _platform_simulator_material()
+
+    assert exc.value.code == "authoring_gateway_not_configured"
 
 
 def test_provider_egress_includes_vertex_auth_and_both_model_regions():
@@ -683,7 +694,9 @@ def test_fresh_authoring_archive_rejects_missing_scenarios(tmp_path):
 
 
 @pytest.mark.django_db
-def test_unified_progress_freezes_authoring_for_saved_reruns(organization):
+def test_unified_progress_freezes_authoring_for_saved_reruns(
+    organization, monkeypatch
+):
     job, _ = create_hosted_job(
         organization, _payload(), idempotency_key="freeze-unified-authoring"
     )
@@ -702,6 +715,10 @@ def test_unified_progress_freezes_authoring_for_saved_reruns(organization):
         ),
     )
 
+    monkeypatch.setattr(
+        "simulate.services.harness_usage.record_sandbox_runtime",
+        lambda *args, **kwargs: None,
+    )
     with patch(
         "simulate.services.hosted_harness_gateway.store_authoring_archive"
     ) as store:

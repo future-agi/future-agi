@@ -178,9 +178,8 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         "SIMULATOR_LLM_MODEL": model,
     }
     if backend == "claude":
-        # The internal gateway key authenticates the platform's own gateway. A
-        # hosted authoring run may instead use a production AgentCC virtual key;
-        # do not change the internal key just to point ALK at a remote gateway.
+        # Authoring may need a virtual key with model aliases that the platform's internal
+        # service key does not have. The key is platform-owned, never taken from the job.
         gateway_key = str(
             os.environ.get("AGENTCC_HARNESS_API_KEY")
             or os.environ.get("AGENTCC_INTERNAL_API_KEY")
@@ -1140,6 +1139,8 @@ def _resolved_egress_domains(
     gateway_host = _hostname_from_url(simulator_env.get("AGENTCC_BASE_URL"))
     if gateway_host:
         values.append(gateway_host)
+    # Observe, when the guest is given credentials for it. Derived rather than requested, because a
+    # customer cannot be expected to know the collector is a dependency of their own run.
     simulator_values = {str(k).upper(): v for k, v in simulator_env.items()}
     observability_off = str(
         simulator_values.get("HARNESS_OBSERVABILITY") or ""
@@ -1734,6 +1735,9 @@ class HostedHarnessGateway:
             attempt.provider_ref = sandbox.id
             attempt.state = HostedHarnessAttempt.State.PROVISIONING
             attempt.save(update_fields=["provider_ref", "state", "updated_at"])
+            from simulate.services.harness_usage import record_sandbox_runtime
+
+            record_sandbox_runtime(attempt, started=True)
             sandbox.fs.upload_file(source_archive, "/work/source.tar.gz")
             sandbox.fs.upload_file(
                 json.dumps(
@@ -1759,6 +1763,7 @@ class HostedHarnessGateway:
                     ).encode(),
                     authoring_secrets_path,
                 )
+            simulator_env["ALK_SIMULATOR_FUNDING"] = "platform"
             sandbox.fs.upload_file(
                 json.dumps(
                     simulator_env, sort_keys=True, separators=(",", ":")
@@ -1838,6 +1843,7 @@ class HostedHarnessGateway:
                 if name
                 in {
                     "ALK_HARNESS",
+                    "ALK_SIMULATOR_FUNDING",
                     "ALK_HARNESS_MODEL",
                     "ALK_VERTEX_LOCATION",
                     # Authoring writes the scenarios, so the switch is exported here too.
@@ -2311,8 +2317,27 @@ class HostedHarnessGateway:
         bundle = _json("/work/bundle/manifest.json")
         # Read on every poll, so a sandbox deleted later still leaves its last known total.
         spend = _json("/work/authoring/cost.json")
+        _read_harness_usage(attempt, sandbox)
         job = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id)
         _record_harness_spend(job, spend, attempt.attempt_number)
+        authoring_complete = (
+            isinstance(bundle, dict)
+            and isinstance(scenarios, list)
+            and len(scenarios) == job.scenario_count
+        )
+        if authoring_complete and isinstance(spend, dict):
+            from simulate.services.harness_usage import (
+                record_harness_authoring_usage,
+            )
+
+            try:
+                record_harness_authoring_usage(attempt, spend)
+            except Exception:  # noqa: BLE001 - poll must continue to terminal cleanup
+                logger.exception(
+                    "could not price hosted authoring usage job=%s attempt=%s",
+                    job.id,
+                    attempt.id,
+                )
 
         # Unified hosted execution authors the contract/world/scenarios in the same
         # sandbox that later runs the calls.  Freeze those inputs as soon as Bundle V2
@@ -2323,14 +2348,8 @@ class HostedHarnessGateway:
         # re-freeze even though a key already exists — gated on its one-shot marker.
         # store_authoring_archive clears that marker in the same save.
         metadata = (job.payload or {}).get("metadata") or {}
-        if (
-            isinstance(bundle, dict)
-            and isinstance(scenarios, list)
-            and len(scenarios) == job.scenario_count
-            and (
-                not metadata.get("authoring_object_key")
-                or metadata.get("scenario_extend")
-            )
+        if authoring_complete and (
+            not metadata.get("authoring_object_key") or metadata.get("scenario_extend")
         ):
             try:
                 packed = sandbox.process.exec(
@@ -2899,6 +2918,7 @@ class HostedHarnessGateway:
                 self._capture_diagnostics(attempt, sandbox, final=True)
             # The last moment the ledger exists: after the delete there is nothing to ask.
             _read_harness_spend(attempt, sandbox)
+            _read_harness_usage(attempt, sandbox)
             absent = self.client.delete(sandbox, timeout=120, wait=True)
             if not absent:
                 try:
@@ -3349,6 +3369,32 @@ def _secret_safe(value: Any, *, key: str = "") -> Any:
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     return str(value)
+
+
+def _read_harness_usage(attempt: HostedHarnessAttempt, sandbox) -> None:
+    """Recover the structured ALK journal during polling and before teardown."""
+    from simulate.serializers.harness_usage import HarnessUsageRequestSerializer
+    from simulate.services.harness_usage import (
+        record_harness_usage,
+        record_sandbox_runtime,
+    )
+
+    record_sandbox_runtime(attempt)
+
+    try:
+        body = sandbox.fs.download_file(
+            "/work/usage.json", _PROGRESS_FILE_TIMEOUT_SECONDS
+        )
+    except Exception:
+        # Early failures and older snapshots have no usage journal.
+        logger.debug("usage journal unavailable attempt=%s", attempt.id, exc_info=True)
+        return
+    try:
+        serializer = HarnessUsageRequestSerializer(data=json.loads(body))
+        serializer.is_valid(raise_exception=True)
+        record_harness_usage(attempt, serializer.validated_data)
+    except Exception:
+        logger.exception("could not recover usage journal attempt=%s", attempt.id)
 
 
 def _read_harness_spend(attempt: HostedHarnessAttempt, sandbox) -> None:

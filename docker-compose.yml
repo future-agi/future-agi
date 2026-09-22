@@ -97,7 +97,7 @@ x-backend-env: &backend-env
   AGENTCC_GATEWAY_INTERNAL_URL: ${AGENTCC_GATEWAY_INTERNAL_URL:-http://agentcc-gateway:8080}
   AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:-local-dev-only-shared-secret-replace-me}
   AGENTCC_WEBHOOK_SECRET: ${AGENTCC_WEBHOOK_SECRET:-}
-  # Optional separate virtual key for ALK authoring through a remote AgentCC gateway.
+  # Platform-owned virtual key for hosted ALK authoring (not a customer secret).
   AGENTCC_HARNESS_API_KEY: ${AGENTCC_HARNESS_API_KEY:-}
   AGENTCC_BASE_URL: ${AGENTCC_BASE_URL:-}
   AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:-local-dev-only-admin-token-replace-me}

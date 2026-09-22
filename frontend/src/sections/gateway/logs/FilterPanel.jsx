@@ -12,9 +12,13 @@ import {
   FormControlLabel,
   InputAdornment,
   Autocomplete,
+  Checkbox,
+  Chip,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useAvailableModels } from "../hooks/useAvailableModels";
+import { CUSTOM_TAG_SEPARATOR } from "../constants/requestTags";
+import useMetadataValues from "./hooks/useMetadataValues";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -27,6 +31,9 @@ const EMPTY_STATE = {
   startedBefore: "",
   model: "",
   provider: "",
+  application: [],
+  service: [],
+  tags: [],
   statusCodeMin: "",
   statusCodeMax: "",
   minLatency: "",
@@ -40,12 +47,78 @@ const EMPTY_STATE = {
   guardrailTriggered: false,
 };
 
+const splitList = (value) => (value ? value.split(",").filter(Boolean) : []);
+
+const isCustomTag = (tag) => tag.indexOf(CUSTOM_TAG_SEPARATOR) > 0;
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
+const MultiValuePicker = ({
+  label,
+  options,
+  value,
+  onChange,
+  placeholder,
+  helperText,
+}) => (
+  <Box>
+    <Typography variant="subtitle2" gutterBottom>
+      {label}
+    </Typography>
+    <Autocomplete
+      multiple
+      freeSolo
+      autoSelect
+      disableCloseOnSelect
+      size="small"
+      options={options}
+      value={value}
+      onChange={(event, val, reason) => {
+        // autoSelect re-picks the highlighted option on blur, which would untick it
+        if (reason === "removeOption" && event?.type === "blur") return;
+        onChange(val);
+      }}
+      renderOption={(props, option, { selected }) => (
+        <li {...props} key={option}>
+          <Checkbox size="small" checked={selected} sx={{ mr: 1 }} />
+          {option}
+        </li>
+      )}
+      renderTags={(tags, getTagProps) =>
+        tags.map((option, index) => (
+          <Chip
+            label={option}
+            size="small"
+            {...getTagProps({ index })}
+            key={option}
+          />
+        ))
+      }
+      renderInput={(params) => (
+        <TextField
+          {...params}
+          placeholder={value.length ? "" : placeholder}
+          helperText={helperText}
+        />
+      )}
+    />
+  </Box>
+);
+
+MultiValuePicker.propTypes = {
+  label: PropTypes.string.isRequired,
+  options: PropTypes.arrayOf(PropTypes.string).isRequired,
+  value: PropTypes.arrayOf(PropTypes.string).isRequired,
+  onChange: PropTypes.func.isRequired,
+  placeholder: PropTypes.string,
+  helperText: PropTypes.string,
+};
+
 const FilterPanel = ({ open, onClose, filters, onApply }) => {
   const availableModels = useAvailableModels();
+  const { data: metadataValues } = useMetadataValues({ enabled: open });
   const [local, setLocal] = useState({ ...EMPTY_STATE });
 
   // Sync props -> local state when the panel opens
@@ -56,6 +129,9 @@ const FilterPanel = ({ open, onClose, filters, onApply }) => {
         startedBefore: filters.startedBefore || "",
         model: filters.model || "",
         provider: filters.provider || "",
+        application: splitList(filters.application),
+        service: splitList(filters.service),
+        tags: splitList(filters.tags),
         statusCodeMin: filters.statusCodeMin || "",
         statusCodeMax: filters.statusCodeMax || "",
         minLatency: filters.minLatency || "",
@@ -75,6 +151,13 @@ const FilterPanel = ({ open, onClose, filters, onApply }) => {
   const handleText = useCallback(
     (key) => (event) => {
       setLocal((prev) => ({ ...prev, [key]: event.target.value }));
+    },
+    [],
+  );
+
+  const handleList = useCallback(
+    (key) => (values) => {
+      setLocal((prev) => ({ ...prev, [key]: values }));
     },
     [],
   );
@@ -99,6 +182,9 @@ const FilterPanel = ({ open, onClose, filters, onApply }) => {
     if (local.startedBefore) out.startedBefore = local.startedBefore;
     if (local.model) out.model = local.model;
     if (local.provider) out.provider = local.provider;
+    if (local.application.length) out.application = local.application.join(",");
+    if (local.service.length) out.service = local.service.join(",");
+    if (local.tags.length) out.tags = local.tags.join(",");
     if (local.statusCodeMin) out.statusCodeMin = local.statusCodeMin;
     if (local.statusCodeMax) out.statusCodeMax = local.statusCodeMax;
     if (local.minLatency) out.minLatency = local.minLatency;
@@ -215,6 +301,33 @@ const FilterPanel = ({ open, onClose, filters, onApply }) => {
               onChange={handleText("provider")}
             />
           </Box>
+
+          <MultiValuePicker
+            label="Application"
+            options={metadataValues?.application ?? []}
+            value={local.application}
+            onChange={handleList("application")}
+            placeholder="Select applications..."
+          />
+
+          <MultiValuePicker
+            label="Service"
+            options={metadataValues?.service ?? []}
+            value={local.service}
+            onChange={handleList("service")}
+            placeholder="Select services..."
+          />
+
+          <MultiValuePicker
+            label="Custom Tags"
+            options={metadataValues?.tags ?? []}
+            value={local.tags}
+            onChange={(values) =>
+              handleList("tags")(values.filter(isCustomTag))
+            }
+            placeholder="Select or type key:value..."
+            helperText="Any value of a key matches; every key must match"
+          />
 
           {/* Status code range */}
           <Box>
