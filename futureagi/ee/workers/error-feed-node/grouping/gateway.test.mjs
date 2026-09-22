@@ -39,12 +39,21 @@ test('token counting holds the serial-call guard and releases it after completio
 });
 test('severity uses its own request namespace and the shared receipt transport',async()=>{
   const f=fixture();
-  const gateway=await createGroupingInvestigator({claim,config,reserveUsd:1,...f,purpose:'severity'});
+  const gateway=await createGroupingInvestigator({claim:{...claim,policy_version:'feed-severity/v1'},config,reserveUsd:1,...f,purpose:'severity'});
   await gateway.investigate({task:'assess severity'},{type:'object'});
   assert.equal(f.events[0].path,`/grouping/severity/attempts/${claim.attempt_id}/reserve/`);
   assert.ok(f.events[0].payload.request_key.startsWith(`severity:${claim.attempt_id}:`));
   assert.equal(f.events[1].payload.request_key,f.events[0].payload.request_key);
   assert.match(f.body().messages[0].content,/user impact/);
+  assert.match(f.body().messages[0].content,/impact only/);
+});
+test('unknown severity policy fails before provider or accounting work',async()=>{
+  const f=fixture();
+  await assert.rejects(createGroupingInvestigator({
+    claim:{...claim,policy_version:'feed-severity/v99'},config,reserveUsd:1,...f,purpose:'severity',
+  }),/Unsupported severity policy/);
+  assert.equal(f.events.length,0);
+  assert.equal(f.calls.length,0);
 });
 test('Vertex wire schema preserves nullable targets without array-valued types',async()=>{
   const f=fixture();
@@ -54,6 +63,15 @@ test('Vertex wire schema preserves nullable targets without array-valued types',
   const target=f.body().response_format.json_schema.schema.properties.groups.items.properties.target_issue_id;
   assert.deepEqual(target,{type:'string',nullable:true});
   assert.deepEqual(schema.properties.groups.items.properties.target_issue_id,{type:['string','null']});
+});
+test('v2 assessment authorizes the corrective layer in the same gateway call',async()=>{
+  const f=fixture();
+  const gateway=await createGroupingInvestigator({
+    claim:{...claim,policy_version:'feed-severity/v2'},config,reserveUsd:1,...f,purpose:'severity',
+  });
+  await gateway.investigate({task:'assess severity and fix layer'},{type:'object'});
+  assert.match(f.body().messages[0].content,/primary corrective layer/);
+  assert.equal(f.calls.length,1);
 });
 function fixture({prior=false,unknown=false,invalid=false,unverifiedModel=false,badUsage=false}={}) {
   const events=[],calls=[];let body;

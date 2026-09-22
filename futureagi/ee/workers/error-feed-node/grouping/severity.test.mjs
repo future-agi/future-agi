@@ -18,9 +18,32 @@ test('invalid or oversized evidence fails before inference',()=>{
   assert.throws(()=>severityPrompt({...snapshot,members:[]}),/Invalid/);
   assert.throws(()=>severityPrompt({...snapshot,extra:'x'.repeat(200000)}),/Invalid/);
 });
+test('v2 independently classifies the corrective layer without guessing from tool presence',()=>{
+  const prompt=severityPrompt(snapshot);
+  assert.equal(Object.keys(prompt.fix_layer_rubric).length,7);
+  assert.match(prompt.rules.join(' '),/own evidence citations/);
+  assert.match(prompt.rules.join(' '),/incomplete tool output/);
+  assert.deepEqual(prompt.evidence,snapshot);
+});
+test('legacy assessment retains its original prompt and schema',async()=>{
+  const legacy={...snapshot,policy_version:'feed-severity/v1'};
+  assert.equal(severityPrompt(legacy).fix_layer_rubric,undefined);
+  let schema;
+  const result={severity:'high'};
+  const investigate=async(_prompt,value)=>{schema=value;return result;};
+  investigate.receiptFor=()=> 'receipt';
+  await assessSeverity({attempt_id:'old',policy_version:'feed-severity/v1',snapshot:legacy},{
+    gateway:{investigate},control:async()=>{},
+  });
+  assert.deepEqual(schema.required,['severity','reason','citations']);
+});
 test('publishes only a durable receipt, not an unchecked worker assessment',async()=>{
   const result={severity:'high'};
-  const investigate=async()=>result;
+  const investigate=async(_prompt,schema)=>{
+    assert.ok(schema.required.includes('fix_layer'));
+    assert.ok(schema.properties.fix_layer.properties.layer.enum.includes('insufficient_evidence'));
+    return result;
+  };
   investigate.receiptFor=value=>value===result?'receipt-id':null;
   const calls=[];
   await assessSeverity({attempt_id:'job',lease_token:'token',policy_version:SEVERITY_POLICY_VERSION,snapshot},{
