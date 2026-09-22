@@ -40,6 +40,11 @@ const selectableCheckboxSx = {
   "&.MuiCheckbox-indeterminate": { color: "text.primary" },
 };
 
+// The design greys these controls out and says "Fork this environment to edit." We have no fork,
+// so the reason has to be the one that is actually true here: a suite read outside a run has no
+// job to amend against. Saying it in the tooltip beats a control that silently disappears.
+const lockedReason = "Open this suite from its run to edit it";
+
 const COLUMNS = [
   "select",
   "#",
@@ -493,8 +498,8 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
                         position: "sticky",
                         right: 0,
                         zIndex: 2,
-                        width: 64,
-                        minWidth: 64,
+                        width: 96,
+                        minWidth: 96,
                         boxShadow: (theme) =>
                           `-8px 0 12px -6px ${alpha(
                             theme.palette.common.black,
@@ -662,32 +667,42 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
                             },
                           }}
                         >
-                          {editable && (
-                            <>
-                              <Tooltip arrow title="Edit scenario">
-                                <IconButton size="small" onClick={() => setEditing(scenario)}>
-                                  <Iconify
-                                    icon="solar:pen-new-square-linear"
-                                    width={15}
-                                    sx={{ color: "text.subtitle" }}
-                                  />
-                                </IconButton>
-                              </Tooltip>
-                              <Tooltip arrow title="Remove from this suite">
-                                <IconButton
-                                  size="small"
-                                  disabled={busy}
-                                  onClick={() => dropOne(scenario.name)}
-                                >
-                                  <Iconify
-                                    icon="solar:trash-bin-trash-linear"
-                                    width={15}
-                                    sx={{ color: "text.subtitle" }}
-                                  />
-                                </IconButton>
-                              </Tooltip>
-                            </>
-                          )}
+                          <Tooltip
+                            arrow
+                            title={editable ? "Edit scenario" : lockedReason}
+                          >
+                            <span>
+                              <IconButton
+                                size="small"
+                                disabled={!editable}
+                                onClick={() => setEditing(scenario)}
+                              >
+                                <Iconify
+                                  icon="solar:pen-new-square-linear"
+                                  width={15}
+                                  sx={{ color: "text.subtitle" }}
+                                />
+                              </IconButton>
+                            </span>
+                          </Tooltip>
+                          <Tooltip
+                            arrow
+                            title={editable ? "Remove from this suite" : lockedReason}
+                          >
+                            <span>
+                              <IconButton
+                                size="small"
+                                disabled={!editable || busy}
+                                onClick={() => dropOne(scenario.name)}
+                              >
+                                <Iconify
+                                  icon="solar:trash-bin-trash-linear"
+                                  width={15}
+                                  sx={{ color: "text.subtitle" }}
+                                />
+                              </IconButton>
+                            </span>
+                          </Tooltip>
                         </TableCell>
                       </TableRow>
                     );
