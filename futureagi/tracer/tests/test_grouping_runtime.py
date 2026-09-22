@@ -303,6 +303,7 @@ def test_raw_receipt_group_binds_create_and_junction(observe_project, monkeypatc
     assert result["assigned"] == 1
     finding.refresh_from_db()
     assert finding.cluster_id == uuid.UUID(result["created_issue_ids"]["new-f6-issue"])
+    assert finding.cluster.cluster_id.startswith("S-")
     membership = ErrorClusterTraces.no_workspace_objects.get(
         finding=finding, deleted=False
     )

@@ -590,7 +590,7 @@ def _new_issue(
     cluster = TraceErrorGroup.no_workspace_objects.create(
         id=cluster_id,
         project_id=scope.project_id,
-        cluster_id=f"F6-{cluster_id.hex[:16]}",
+        cluster_id=f"S-{cluster_id.hex[:16].upper()}",
         source="scanner",
         issue_group="Investigation findings",
         eval_target_type=None,

@@ -401,7 +401,7 @@ def test_legacy_scanner_writers_cannot_retitle_or_join_f6_issue(omega_issue):
         scan_clustering._refresh_severity(cluster)
     embed.assert_not_called()
     severity.assert_not_called()
-    with pytest.raises(ValueError, match="F6-owned"):
+    with pytest.raises(ValueError, match="Omega-owned"):
         scan_clustering.assign_to_cluster(
             cluster.cluster_id, str(cluster.project_id), None, []
         )
