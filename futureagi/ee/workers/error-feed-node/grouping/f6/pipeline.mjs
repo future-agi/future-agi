@@ -71,6 +71,10 @@ export function reconciliationCandidates(registry, index, scorePair, policy) {
   return balanced.slice(0, policy.max_reconcile_candidates);
 }
 
+export function reconciliationFitsBudget(prompt, policy) {
+  return Buffer.byteLength(JSON.stringify({prompt,schema:reconciliationSchema})) <= policy.max_input_bytes;
+}
+
 export async function runPipeline({rows, features, cannotLinks = [], policy, pairRelease = null, investigate, store, initialRegistry = null, pendingIds = null, inputBinding = null}) {
   const {byId, constraints} = validateInput(rows, cannotLinks);
   const index = new ViewIndex(rows, features, policy);
@@ -252,6 +256,12 @@ export async function runPipeline({rows, features, cannotLinks = [], policy, pai
             candidate, issues: sources, findings: ids.map(id => visible(byId.get(id))),
             cannot_links: [...constraints].map(s => JSON.parse(s)).filter(([a, b]) => ids.includes(a) && ids.includes(b)), output_schema: reconciliationSchema};
           if(policy.companion_context)prompt.instructions+='\n'+companionInstructions;
+          // Reconciliation requires every member and its full evidence. If it
+          // cannot fit, hold this topology review explicitly; never truncate
+          // members or let the gateway reject the entire grouping attempt.
+          if (!reconciliationFitsBudget(prompt, policy)) {
+            audit.reason = 'Complete reconciliation evidence exceeds context budget; topology held without model review';
+          } else {
           const result = await investigate(prompt, reconciliationSchema, ids.map(id => byId.get(id)));
           const primaryReceiptId=investigate.receiptFor?.(result)??null;
           audit.proposal = result;audit.primary_receipt_id=primaryReceiptId;
@@ -280,6 +290,7 @@ export async function runPipeline({rows, features, cannotLinks = [], policy, pai
             }
             audit.status = result.action === 'hold' ? 'held' : 'applied'; audit.reason = result.reason;
           } catch (error) { audit.status = 'incomplete'; audit.reason = error.message; }
+          }
         }
         state.receipts.push(audit); state.reconciled.push(candidateKey); await save();
       }
