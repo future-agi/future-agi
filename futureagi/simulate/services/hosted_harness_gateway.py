@@ -733,6 +733,33 @@ def resolve_platform_simulator_secrets() -> dict[str, str]:
     return resolved
 
 
+SIMULATOR_DIALER_ALIASES = (
+    "SIMULATOR_LIVEKIT_URL",
+    "SIMULATOR_LIVEKIT_API_KEY",
+    "SIMULATOR_LIVEKIT_API_SECRET",
+)
+
+
+def platform_dialer_status() -> dict[str, Any]:
+    """Whether the platform can place an outbound PSTN call, and what is absent if not.
+
+    A phone target is reached by dialling it over the platform's own LiveKit SIP trunk, so
+    every input here is platform configuration the customer cannot supply or observe. Resolved
+    through the same settings map the launch reads, so readiness cannot claim a dialer the run
+    will not find. The simulator resolver itself is not called: its Google credential branch can
+    raise over a file that has nothing to do with dialling.
+    """
+    configured = getattr(settings, "ALK_HOSTED_SIMULATOR_SECRET_ENV", {}) or {}
+    missing = [
+        alias
+        for alias in SIMULATOR_DIALER_ALIASES
+        if not str(os.getenv(str(configured.get(alias) or ""), "") or "").strip()
+    ]
+    if not str(getattr(settings, "ALK_HOSTED_SIP_OUTBOUND_TRUNK_ID", "") or "").strip():
+        missing.append("ALK_HOSTED_SIP_OUTBOUND_TRUNK_ID")
+    return {"available": not missing, "missing": missing}
+
+
 def attach_platform_simulator_secret_refs(
     payload: dict[str, Any], simulator_secrets: dict[str, str]
 ) -> dict[str, Any]:
@@ -3074,7 +3101,7 @@ def prepare_dispatch_payload(
         else (simulator_secrets or {}).get("LIVEKIT_URL")
     )
     if (
-        connector in {"livekit", "vapi", "retell"}
+        connector in {"livekit", "vapi", "retell", "phone"}
         and not config.get("livekit_url")
         and livekit_url
     ):

@@ -338,7 +338,8 @@ def _connector_credential_readiness(
             set() if remote or complete_provider_families(agent) else set(detected)
         )
     else:
-        families = {connector: CONNECTOR_ALIASES[connector]}
+        # ``get`` -- a phone target has no credential family, so it asks for nothing.
+        families = {connector: CONNECTOR_ALIASES.get(connector, ())}
         required = set() if remote else {connector}
 
     def _status(name, alias):
@@ -527,8 +528,51 @@ def _probe_check(check_id, label, results, skipped_detail, fix_template):
     )
 
 
+def _dialer_check(connector):
+    """Whether the platform can dial a phone target, which only it can supply.
+
+    The customer provides no LiveKit or SIP credential for this lane, so an absent dialer is a
+    deployment fault rather than something they can fix by filling the form in. Naming it here
+    keeps a run that could only ever fail to dial out of the queue.
+    """
+    from simulate.services.hosted_harness_gateway import platform_dialer_status
+
+    if connector != "phone":
+        return _check(
+            "platform_dialer",
+            "Outbound dialer",
+            "skipped",
+            "only a phone target is dialled by the platform",
+        )
+    status = platform_dialer_status()
+    if status["available"]:
+        return _check(
+            "platform_dialer",
+            "Outbound dialer",
+            "passed",
+            "the platform outbound dialer is configured",
+        )
+    return _check(
+        "platform_dialer",
+        "Outbound dialer",
+        "failed",
+        "the platform outbound dialer is not configured on this deployment",
+        missing=status["missing"],
+        fix=(
+            "Contact your Future AGI administrator: phone targets need the "
+            "platform SIP trunk and simulator LiveKit credentials configured"
+        ),
+    )
+
+
 def _preflight_checks(
-    source_kind, source_error, scanned_files, missing, required_files, probe
+    source_kind,
+    source_error,
+    scanned_files,
+    missing,
+    required_files,
+    probe,
+    connector="",
 ):
     checks = []
     if source_kind in {"remote", "provider"}:
@@ -645,6 +689,7 @@ def _preflight_checks(
             "Check the agent ID belongs to the account behind {aliases}",
         )
     )
+    checks.append(_dialer_check(connector))
     return checks
 
 
@@ -685,6 +730,7 @@ def _sandbox_preflight_body(payload, report):
         missing,
         required_files,
         [],
+        str((payload.get("agent") or {}).get("connector") or ""),
     )
     packaging = report.get("packaging") or {}
     checks.append(_packaging_check(packaging))
@@ -848,6 +894,7 @@ class DaytonaHarnessProvider:
             credentials["missing"],
             required_files,
             probe,
+            str(payload["agent"].get("connector") or ""),
         )
         failed = any(check["status"] == "failed" for check in checks)
         body = {

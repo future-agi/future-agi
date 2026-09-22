@@ -942,6 +942,10 @@ ALK_HOSTED_SIMULATOR_SECRET_ENV = {
     "SIMULATOR_TTS_PROVIDER": "SIMULATOR_TTS_PROVIDER",
     "SIMULATOR_TTS_MODEL": "SIMULATOR_TTS_MODEL",
 }
+# The platform's own outbound dialer: the LiveKit SIP trunk that places the PSTN call for a
+# phone target. Platform configuration, never customer input, so an empty value means no phone
+# run can be started and preflight says so rather than the run failing after authoring is paid for.
+ALK_HOSTED_SIP_OUTBOUND_TRUNK_ID = os.getenv("ALK_HOSTED_SIP_OUTBOUND_TRUNK_ID", "")
 ALK_HOSTED_AUTHORING_CLAUDE_REGION = os.getenv("CLOUD_ML_REGION", "us-east5")
 ALK_HOSTED_AUTHORING_GEMINI_LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
 ALK_HOSTED_WEBRTC_EGRESS_CIDRS = [
