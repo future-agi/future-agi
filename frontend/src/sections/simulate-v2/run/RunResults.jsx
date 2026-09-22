@@ -727,7 +727,7 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
             </SectionCard>
           )}
 
-          {tab === "analytics" && <RunAnalytics tasks={tasks} evals={shownEvals} env={env} stats={stats} />}
+          {tab === "analytics" && <RunAnalytics tasks={tasks} evals={shownEvals} env={env} stats={stats} runHistory={summaries} currentRunId={runId} />}
 
 
           <ReplayDrawer task={replaying} seed={seed} onClose={() => setReplaying(null)} />

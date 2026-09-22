@@ -18,7 +18,7 @@ import Iconify from "src/components/iconify";
   two orthogonal concepts.
 */
 const TRIAL_PRESETS = [1, 3, 5, 8];
-const DEFAULT_TRIALS_LABEL = 3;
+const DEFAULT_TRIALS_LABEL = 1;
 
 /**
  * Bulk-action bar for the scenario table.
@@ -45,7 +45,7 @@ export default function SelectionBar({
 }) {
   const [trialsAnchor, setTrialsAnchor] = useState(null);
   const [customOpen, setCustomOpen] = useState(false);
-  const [customValue, setCustomValue] = useState(String(trials || 3));
+  const [customValue, setCustomValue] = useState(String(trials || 1));
 
   const k = Math.max(1, Math.min(20, Number(trials) || 1));
   const totalRuns = count * k;
@@ -53,9 +53,11 @@ export default function SelectionBar({
   const timeHint = estSeconds < 60
     ? `~${estSeconds}s`
     : `~${Math.max(1, Math.round(estSeconds / 60))} min`;
-  const runLabel = k > 1
-    ? `Run ${count} × ${k}`
-    : `Run ${count} selected`;
+  /* Button always reads "Run simulation (N)" where N is the number of
+     selected scenarios. Trials multiplier lives on its own Trials pill
+     and in the Run tooltip — keeping the button label consistent with
+     the header's "Run simulation" so users see the same verb everywhere. */
+  const runLabel = `Run simulation (${count})`;
 
   const applyPreset = (v) => {
     onTrialsChange?.(v);
@@ -83,8 +85,20 @@ export default function SelectionBar({
         bgcolor: (t) => alpha(t.palette.primary.main, t.palette.mode === "dark" ? 0.08 : 0.05),
       }}
     >
-      {/* CONTEXT — how many are selected */}
-      <Stack direction="row" alignItems="center" spacing={0.875} sx={{ flexShrink: 0 }}>
+      {/* CONTEXT — count + clear all in one pill.
+          The × is the primary clear-all — it's on the same object
+          as the count so users don't have to hunt for it. Tooltip
+          + aria-label make the action explicit. */}
+      <Stack
+        direction="row" alignItems="center" spacing={0.75}
+        sx={{
+          flexShrink: 0,
+          pl: 0.375, pr: 0.375, py: 0.375, borderRadius: 999,
+          border: "1px solid",
+          borderColor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.16 : 0.12),
+          bgcolor: "transparent",
+        }}
+      >
         <Box sx={{
           width: 22, height: 22, borderRadius: "50%",
           display: "flex", alignItems: "center", justifyContent: "center",
@@ -96,26 +110,32 @@ export default function SelectionBar({
         </Box>
         <Typography sx={{
           typography: "s2", fontWeight: 600, fontSize: 13,
-          color: "text.primary", whiteSpace: "nowrap",
+          color: "text.primary", whiteSpace: "nowrap", pl: 0.25,
         }}>
           {count === 1 ? "scenario selected" : "scenarios selected"}
         </Typography>
+        <Tooltip arrow title="Clear selection">
+          <Box
+            component="button"
+            type="button"
+            onClick={onClear}
+            aria-label="Clear selection"
+            sx={{
+              display: "inline-flex", alignItems: "center", justifyContent: "center",
+              width: 22, height: 22, borderRadius: 999,
+              bgcolor: "transparent", border: "none", cursor: "pointer",
+              color: "text.subtitle",
+              transition: "background-color 120ms, color 120ms",
+              "&:hover": {
+                bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.14 : 0.08),
+                color: "text.primary",
+              },
+            }}
+          >
+            <Iconify icon="eva:close-fill" width={14} />
+          </Box>
+        </Tooltip>
       </Stack>
-
-      {/* Clear — utility */}
-      <Tooltip arrow title="Deselect all">
-        <Button
-          size="small"
-          onClick={onClear}
-          sx={{
-            typography: "s2", fontWeight: 600, fontSize: 12,
-            color: "text.subtitle", minWidth: 0, px: 1, py: 0.375,
-            "&:hover": { color: "text.primary", bgcolor: "action.hover" },
-          }}
-        >
-          Clear
-        </Button>
-      </Tooltip>
 
       <Box sx={{ flex: 1 }} />
 
@@ -188,7 +208,7 @@ export default function SelectionBar({
               },
             }}
           >
-            Trials: {k}
+            Repeats: {k}
           </Button>
         </Tooltip>
       )}
@@ -198,8 +218,8 @@ export default function SelectionBar({
         <Tooltip
           arrow
           title={k > 1
-            ? `${count} ${count === 1 ? "scenario" : "scenarios"} × ${k} trials = ${totalRuns} runs · ${timeHint}`
-            : `${count} ${count === 1 ? "scenario" : "scenarios"} × 1 trial · ${timeHint}`}
+            ? `${count} ${count === 1 ? "scenario" : "scenarios"} × ${k} repeats = ${totalRuns} runs · ${timeHint}`
+            : `${count} ${count === 1 ? "scenario" : "scenarios"} × 1 repeat · ${timeHint}`}
         >
           <Button
             size="small"
@@ -221,7 +241,7 @@ export default function SelectionBar({
         </Tooltip>
       )}
 
-      {/* Trials popover — presets + custom */}
+      {/* Repeats popover — presets + custom */}
       <Popover
         open={!!trialsAnchor}
         anchorEl={trialsAnchor}
@@ -232,10 +252,10 @@ export default function SelectionBar({
       >
         <Box sx={{ px: 1.5, py: 1, borderBottom: "1px solid", borderColor: "divider" }}>
           <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.primary" }}>
-            Trials per scenario
+            Repeats per scenario
           </Typography>
           <Typography sx={{ typography: "s3", color: "text.subtitle", fontSize: 11.5, mt: 0.25 }}>
-            {count} {count === 1 ? "scenario" : "scenarios"} × {k} trials = {totalRuns} runs
+            {count} {count === 1 ? "scenario" : "scenarios"} × {k} {k === 1 ? "repeat" : "repeats"} = {totalRuns} runs
           </Typography>
         </Box>
         {TRIAL_PRESETS.map((v) => {
@@ -297,7 +317,7 @@ export default function SelectionBar({
                 sx={{ "& .MuiOutlinedInput-root": { fontVariantNumeric: "tabular-nums" } }}
               />
               <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1 }}>
-                1 – 20 trials
+                1 – 20 repeats
               </Typography>
               <Button
                 size="small" variant="contained"

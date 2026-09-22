@@ -13,6 +13,8 @@ import { getEnvironment } from "../_mock/environments";
 import { getSurface } from "../_mock/surfaces";
 import { BOOT_STEPS } from "../_mock/runStream";
 import { useSimStore, useEnvState } from "../store";
+import TrialsPicker from "./scenarios/TrialsPicker";
+import RunConfigDialog from "./scenarios/RunConfigDialog";
 import { setupGaps } from "../_mock/setupGaps";
 import { subscribeBuilderPrompt } from "../_mock/builderPromptBus";
 import { subscribeScenarioSelection, clearScenarioSelection, getScenarioSelection } from "../_mock/scenarioSelectionBus";
@@ -164,6 +166,14 @@ export default function EnvironmentWorkspace() {
     getScenarioSelection,
     getScenarioSelection,
   );
+  /* Header trials picker — how many times each scenario runs when the
+     user clicks the top-of-page "Run simulation" button (no selection).
+     Same PRD AC-10.7 dial as the SelectionBar's picker, but scoped to
+     "run all". Default 3 mirrors LiveRunView's historical default.
+     `runConfigOpen` opens the mandatory confirmation dialog so the
+     trials choice is unmissable — the header pill is the shortcut. */
+  const [headerTrials, setHeaderTrials] = useState(1);
+  const [runConfigOpen, setRunConfigOpen] = useState(false);
   /*
     Builder mode — Auto (default) or Guided. In Guided, the builder
     pauses at decisions and asks Claude-style AskUserQuestion cards
@@ -310,7 +320,7 @@ export default function EnvironmentWorkspace() {
       down; keeps existing links unchanged.
     */
     const k = Number(trials);
-    if (Number.isFinite(k) && k >= 1 && k !== 3) {
+    if (Number.isFinite(k) && k >= 1 && k !== 1) {
       params.set("trials", String(Math.min(20, Math.floor(k))));
     }
     const qs = params.toString();
@@ -736,22 +746,44 @@ export default function EnvironmentWorkspace() {
         {/* Hidden while the Scenarios SelectionBar owns the primary
             run action ("Run N selected"). One primary at a time. */}
         {(scenarioSelection?.ids?.length || 0) === 0 && (
-          <Tooltip title={canRun ? "" : runBlockedReason} arrow>
-            <span>
-              <Button
-                variant="contained"
-                color="primary"
-                size="small"
-                disabled={!canRun}
-                onClick={() => startRun()}
-                startIcon={<Iconify icon="solar:play-bold" width={15} />}
-                sx={{ typography: "s2", fontWeight: 700 }}
-              >
-                Run simulation
-              </Button>
-            </span>
-          </Tooltip>
+          <Stack direction="row" alignItems="center" spacing={1}>
+            {/* Trials picker — shortcut for power users who already
+                know they want to change k. First-time users don't need
+                to notice this pill — clicking Run simulation opens the
+                RunConfigDialog which surfaces the same choice. */}
+            <TrialsPicker
+              trials={headerTrials}
+              onChange={setHeaderTrials}
+              scenarioCount={envState?.scenarios?.length || 0}
+            />
+            <Tooltip title={canRun ? "Configure and start the run" : runBlockedReason} arrow>
+              <span>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  size="small"
+                  disabled={!canRun}
+                  onClick={() => setRunConfigOpen(true)}
+                  startIcon={<Iconify icon="solar:play-bold" width={15} />}
+                  sx={{ typography: "s2", fontWeight: 700 }}
+                >
+                  Run simulation
+                </Button>
+              </span>
+            </Tooltip>
+          </Stack>
         )}
+
+        {/* Mandatory config step for the "run all" flow — makes the
+            trials choice unmissable, previews cost/duration before
+            anything actually starts. */}
+        <RunConfigDialog
+          open={runConfigOpen}
+          onClose={() => setRunConfigOpen(false)}
+          scenarioCount={envState?.scenarios?.length || 0}
+          defaultTrials={headerTrials}
+          onConfirm={(k) => { setHeaderTrials(k); startRun(undefined, k); }}
+        />
 
         {/*
           Template-seeded envs surface Fork inside the Test-subject card on

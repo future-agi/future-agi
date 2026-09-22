@@ -70,7 +70,7 @@ export default function LiveRunView() {
   */
   const repeats = (() => {
     const raw = Number(params.get("trials"));
-    if (!Number.isFinite(raw) || raw < 1) return 3;
+    if (!Number.isFinite(raw) || raw < 1) return 1;
     return Math.min(20, Math.floor(raw));
   })();
 

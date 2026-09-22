@@ -11,6 +11,8 @@ import { formatFileSize } from "src/utils/utils";
 import { paths } from "src/routes/paths";
 import { pipelineStatus, pipelineSummary } from "../_mock/buildPipeline";
 import { subscribeScenarioSelection, getScenarioSelection } from "../_mock/scenarioSelectionBus";
+import TrialsPicker from "../workspace/scenarios/TrialsPicker";
+import RunConfigDialog from "../workspace/scenarios/RunConfigDialog";
 import { setupGaps, gapCounts } from "../_mock/setupGaps";
 import { useSimStore, useEnvState } from "../store";
 import { SectionCard } from "../components/primitives";
@@ -387,7 +389,7 @@ export default function BuildFromAgent() {
       /* PRD §10.2 AC-10.7: only append when the user has changed
          it from the default 3, so plain links stay clean. */
       const k = Number(trials);
-      if (Number.isFinite(k) && k >= 1 && k !== 3) {
+      if (Number.isFinite(k) && k >= 1 && k !== 1) {
         params.set("trials", String(Math.min(20, Math.floor(k))));
       }
       const qs = params.toString();
@@ -780,6 +782,12 @@ function Header({
      duplicates the affordance in two places. */
   const scenarioSelection = useSyncExternalStore(subscribeScenarioSelection, getScenarioSelection, getScenarioSelection);
   const selectionCount = scenarioSelection?.ids?.length || 0;
+  /* Repeats picker + config dialog — same PRD AC-10.7 dial as the
+     workspace header. Clicking Run simulation opens the config
+     dialog first so the choice is unmissable; the pill next to
+     the button is the shortcut for power users. */
+  const [headerTrials, setHeaderTrials] = useState(1);
+  const [runConfigOpen, setRunConfigOpen] = useState(false);
   /*
     The environment stage builds three things — tool handlers, a seeded world
     and coded checks — none of which are "sub-goals" as this product uses the
@@ -985,18 +993,27 @@ function Header({
       )}
 
       {source && setupDone && selectionCount === 0 && (
-        /*
-          Only once the environment is actually built. Before that — connecting,
-          the read-audit, the derivation still streaming — there is nothing to
-          run yet, so the button is absent rather than present-but-disabled.
-          The path out of setup is running the simulation; the environment gets
-          filed under My environments the moment the first run lands.
-
-          Also hidden when the Scenarios SelectionBar owns the primary
-          run action ("Run N selected"). One primary at a time.
-        */
-        <RunButton onRun={onRun} canGo={canGo} blockedReason={blockedReason} />
+        <Stack direction="row" alignItems="center" spacing={1}>
+          <TrialsPicker
+            trials={headerTrials}
+            onChange={setHeaderTrials}
+            scenarioCount={scenarioCount || envState?.scenarios?.length || 0}
+          />
+          <RunButton
+            onRun={() => setRunConfigOpen(true)}
+            canGo={canGo}
+            blockedReason={blockedReason}
+          />
+        </Stack>
       )}
+
+      <RunConfigDialog
+        open={runConfigOpen}
+        onClose={() => setRunConfigOpen(false)}
+        scenarioCount={scenarioCount || envState?.scenarios?.length || 0}
+        defaultTrials={headerTrials}
+        onConfirm={(k) => { setHeaderTrials(k); onRun(undefined, k); }}
+      />
     </Stack>
   );
 }

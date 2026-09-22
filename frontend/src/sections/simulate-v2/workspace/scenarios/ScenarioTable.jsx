@@ -74,8 +74,19 @@ export default function ScenarioTable({ rows, groups, env, onEdit, onRemove, onH
     }
   };
 
-  /* Drop selection ids for rows that no longer exist in the table. */
+  /*
+    Drop selection ids for rows that no longer exist. Only runs in
+    the UNCONTROLLED case — when the parent owns the selection
+    state (batches rendered per-timeline-node, all sharing the
+    same selectedIds bag), each ScenarioTable only knows its own
+    batch's ids. Running cleanup here would wipe out selections
+    made in sibling batches (any id not in THIS batch would be
+    stripped), which broke cross-batch selection.
+    In controlled mode, the parent (ScenariosStep) is responsible
+    for pruning stale ids across the full scenario set.
+  */
   useEffect(() => {
+    if (isControlled) return;
     const cleaned = Array.from(selected).filter((id) => allIds.includes(id));
     if (cleaned.length !== selected.size) commit(new Set(cleaned));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -86,12 +97,26 @@ export default function ScenarioTable({ rows, groups, env, onEdit, onRemove, onH
     if (next.has(id)) next.delete(id); else next.add(id);
     commit(next);
   };
+  /*
+    Select-all in a batch header only affects THIS batch's rows —
+    other batches' selections stay intact. `thisBatchSelectedCount`
+    is the count of currently-selected rows that belong to this
+    table (not the total across every batch), so the header
+    checkbox tri-state reflects only this batch.
+  */
+  const thisBatchSelectedCount = allIds.filter((id) => selected.has(id)).length;
   const toggleAll = () => {
-    const next = selected.size === allIds.length ? new Set() : new Set(allIds);
+    const allSelectedHere = thisBatchSelectedCount === allIds.length && allIds.length > 0;
+    const next = new Set(selected);
+    if (allSelectedHere) {
+      allIds.forEach((id) => next.delete(id));
+    } else {
+      allIds.forEach((id) => next.add(id));
+    }
     commit(next);
   };
-  const allChecked = allIds.length > 0 && selected.size === allIds.length;
-  const someChecked = selected.size > 0 && selected.size < allIds.length;
+  const allChecked = allIds.length > 0 && thisBatchSelectedCount === allIds.length;
+  const someChecked = thisBatchSelectedCount > 0 && thisBatchSelectedCount < allIds.length;
 
   /*
     Column order (final): checkbox, scenario, persona, situation, sub-tasks,

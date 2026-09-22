@@ -257,15 +257,16 @@ export default function ScenariosStep({ env, envState, patch, buildMode, onBuild
   */
   const [selectedIds, setSelectedIds] = useState([]);
   /*
-    Trials-per-scenario (reliability dial, PRD §10.2 AC-10.7).
+    Repeats-per-scenario (Reliability dial, PRD §10.2 AC-10.7 —
+    "Re-run a scenario k times to measure consistency").
     Lives on this component because the SelectionBar owns the Run
-    action for a selection, and the number of trials is a property
+    action for a selection, and the number of repeats is a property
     of *this run about to be started* — not of the environment.
-    3 is the smallest n where "passed twice, failed once" is
-    sayable, and matches the historical hardcoded default in
-    LiveRunView.
+    Default 1 (single-shot). Users dial up to 3/5/8 for reliability
+    sampling; 3 is the smallest n where "passed twice, failed once"
+    is sayable.
   */
-  const [trials, setTrials] = useState(3);
+  const [trials, setTrials] = useState(1);
   const selectedRows = useMemo(
     () => (selected || []).filter((s) => selectedIds.includes(s.id)),
     [selected, selectedIds],
