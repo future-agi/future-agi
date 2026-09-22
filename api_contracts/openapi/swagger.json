@@ -50651,6 +50651,36 @@
                 }
             ]
         },
+        "/simulate/api/harness-jobs/{id}/scenarios/coverage/": {
+            "get": {
+                "operationId": "simulate_api_harness-jobs_scenarios_scenario_coverage",
+                "summary": "Provider-neutral control plane for hosted ALK harness jobs.",
+                "description": "Validates the v1.6 request contract and delegates execution to the public backend selected by\n``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently\nselects its managed sandbox runtime.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": ""
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness/attempts/{id}/artifacts/manifest/": {
             "post": {
                 "operationId": "simulate_api_harness_attempts_artifacts_artifact_manifest",
@@ -120393,14 +120423,18 @@
                 "value": {
                     "title": "Value",
                     "type": "object",
-                    "x-nullable": true
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
                 },
                 "persona": {
                     "title": "Persona",
                     "type": "object",
                     "additionalProperties": {
-                        "type": "string",
-                        "x-nullable": true
+                        "type": "object",
+                        "x-nullable": true,
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
                     }
                 }
             }

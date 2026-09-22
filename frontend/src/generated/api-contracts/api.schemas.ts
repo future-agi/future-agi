@@ -17482,15 +17482,21 @@ export const HarnessScenarioChangeApiOp = {
   set_persona: "set_persona",
 } as const;
 
+/**
+ * Any valid JSON value.
+ */
 export type HarnessScenarioChangeApiValue = { [key: string]: unknown };
 
-export type HarnessScenarioChangeApiPersona = { [key: string]: string };
+export type HarnessScenarioChangeApiPersona = {
+  [key: string]: { [key: string]: unknown };
+};
 
 export interface HarnessScenarioChangeApi {
   op: HarnessScenarioChangeApiOp;
   scenario?: string;
   scenarios?: string[];
   field?: string;
+  /** Any valid JSON value. */
   value?: HarnessScenarioChangeApiValue;
   persona?: HarnessScenarioChangeApiPersona;
 }

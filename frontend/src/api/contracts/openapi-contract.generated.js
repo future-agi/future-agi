@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1017,
+  endpointCount: 1018,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -27947,6 +27947,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
           201: {
             $ref: "#/definitions/HarnessScenarioAmend",
           },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-jobs/{id}/scenarios/coverage/": {
+      get: {
+        operationId: "simulate_api_harness-jobs_scenarios_scenario_coverage",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -87740,13 +87754,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Value",
           type: "object",
           "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
         },
         persona: {
           title: "Persona",
           type: "object",
           additionalProperties: {
-            type: "string",
+            type: "object",
             "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
       },

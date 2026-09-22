@@ -36331,14 +36331,35 @@ export const SimulateApiHarnessJobsScenariosAmendScenariosBody = zod.object({
       scenario: zod.string().optional(),
       scenarios: zod.array(zod.string().min(1)).optional(),
       field: zod.string().optional(),
-      value: zod.object({}).passthrough().optional(),
-      persona: zod.record(zod.string(), zod.string()).optional(),
+      value: zod
+        .object({})
+        .passthrough()
+        .optional()
+        .describe("Any valid JSON value."),
+      persona: zod
+        .record(
+          zod.string(),
+          zod.object({}).passthrough().describe("Any valid JSON value."),
+        )
+        .optional(),
     }),
   ),
   rework: zod
     .boolean()
     .default(simulateApiHarnessJobsScenariosAmendScenariosBodyReworkDefault),
 });
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const SimulateApiHarnessJobsScenariosScenarioCoverageParams = zod.object(
+  {
+    id: zod.string(),
+  },
+);
 
 export const SimulateApiHarnessAttemptsArtifactsArtifactManifestParams =
   zod.object({
