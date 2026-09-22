@@ -188,8 +188,8 @@ describe("MyEnvironmentsTable", () => {
     expect(row.getByText("Handles inbound billing calls")).toBeInTheDocument();
     expect(row.getByText("Logistics")).toBeInTheDocument();
     expect(row.getByText("12")).toBeInTheDocument();
-    // runs_count 1 → has-run state.
-    expect(row.getByText("Ran")).toBeInTheDocument();
+    // runs_count 1 → the Runs column shows the number.
+    expect(row.getByText("1")).toBeInTheDocument();
   });
 
   it("renders dashes and the never-run state when the §1 additions are absent", async () => {

@@ -2,7 +2,6 @@ import { Typography, IconButton } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { relativeTime } from "src/utils/format-time";
 import StatusPill from "./StatusPill";
-import RunsPill from "./RunsPill";
 import { NumberCell, AgentTypeCell } from "./environmentTableCells";
 
 // Rows arrive pre-flattened (see harnessJobToRow), so column accessors stay
@@ -92,7 +91,9 @@ export function buildEnvironmentColumns({ onRowActions }) {
       accessorKey: "runsTotal",
       header: "Runs",
       size: 128,
-      cell: ({ row }) => <RunsPill total={row?.original?.runsTotal} />,
+      // §1 `runs_count` as a number (0/1 today; a null — still building or an
+      // older row — renders as a dash, like the other count columns).
+      cell: NumberCell,
     },
     {
       id: "updated",
