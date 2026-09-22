@@ -177,12 +177,18 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         "SIMULATOR_LLM_MODEL": model,
     }
     if backend == "claude":
-        gateway_key = str(os.environ.get("AGENTCC_INTERNAL_API_KEY") or "").strip()
+        # Authoring may need a virtual key with model aliases that the platform's internal
+        # service key does not have. The key is platform-owned, never taken from the job.
+        gateway_key = str(
+            os.environ.get("AGENTCC_HARNESS_API_KEY")
+            or os.environ.get("AGENTCC_INTERNAL_API_KEY")
+            or ""
+        ).strip()
         gateway_url = str(os.environ.get("AGENTCC_BASE_URL") or "").strip()
         if not gateway_key or not gateway_url:
             raise HostedHarnessError(
                 "authoring_gateway_not_configured",
-                "Claude authoring requires AGENTCC_INTERNAL_API_KEY and a sandbox-reachable AGENTCC_BASE_URL",
+                "Claude authoring requires AGENTCC_HARNESS_API_KEY (or the local internal key) and a sandbox-reachable AGENTCC_BASE_URL",
                 status_code=503,
             )
         values["AGENTCC_API_KEY"] = gateway_key
@@ -1132,6 +1138,8 @@ def _resolved_egress_domains(
     gateway_host = _hostname_from_url(simulator_env.get("AGENTCC_BASE_URL"))
     if gateway_host:
         values.append(gateway_host)
+    # Observe, when the guest is given credentials for it. Derived rather than requested, because a
+    # customer cannot be expected to know the collector is a dependency of their own run.
     simulator_values = {str(k).upper(): v for k, v in simulator_env.items()}
     observability_off = str(
         simulator_values.get("HARNESS_OBSERVABILITY") or ""
