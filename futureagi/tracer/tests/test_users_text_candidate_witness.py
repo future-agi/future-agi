@@ -83,7 +83,7 @@ def builder(items, days=7):
         "picked-json-looking",
     ],
 )
-def test_plain_text_witness_prunes_groups_not_latest_activity(value, op):
+def test_plain_or_picked_text_witness_prunes_groups_not_latest_activity(value, op):
     sql, params = builder([leaf(value, op)]).build_dimension_candidate_query(limit=65)
     assert "scalar_witness_identities AS" in sql
     witness = cte(sql, "scalar_witness_identities")
@@ -114,7 +114,9 @@ def test_plain_text_witness_prunes_groups_not_latest_activity(value, op):
         (["gôld"], "typed_in"),
     ],
 )
-def test_unproven_text_shapes_keep_existing_complete_path(value, op):
+def test_text_shapes_without_an_exhaustive_raw_witness_keep_the_complete_path(
+    value, op
+):
     sql, _ = builder([leaf(value, op)]).build_dimension_candidate_query(limit=65)
     assert "scalar_witness_identities AS" not in sql
 

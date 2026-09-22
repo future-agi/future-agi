@@ -283,3 +283,65 @@ def test_two_raw_variants_of_one_json_are_both_collected(stored):
     assert manager._row_matches_filters(row) is True
     kept = manager._attribute_values_by_user[UID]["picker"]
     assert sorted(kept) == sorted(value for _kind, value in stored)
+
+
+@pytest.mark.parametrize(
+    "picked,stored,expected",
+    [
+        # A padded boolean word in string storage beside a real boolean:
+        # neither is the picked string, and pooling their storage types
+        # must not make one.
+        ("true", [("string", " true "), ("boolean", True)], False),
+        ("true", [("boolean", True), ("string", " true ")], False),
+        ("true", [("string", "true"), ("boolean", True)], True),
+        # A whitespace JSON variant in string storage beside the same JSON in
+        # json storage: neither is the picked string.
+        (
+            PICKED_JSON,
+            [("string", '{"a": 1, "b": 2}'), ("json", {"a": 1, "b": 2})],
+            False,
+        ),
+        (
+            PICKED_JSON,
+            [("json", {"a": 1, "b": 2}), ("string", '{"a": 1, "b": 2}')],
+            False,
+        ),
+        (PICKED_JSON, [("string", PICKED_JSON), ("json", {"a": 1, "b": 2})], True),
+    ],
+    ids=[
+        "padded-word-and-boolean",
+        "boolean-and-padded-word",
+        "exact-word-and-boolean",
+        "whitespace-json-and-json-storage",
+        "json-storage-and-whitespace-json",
+        "exact-json-and-json-storage",
+    ],
+)
+def test_a_picked_string_never_matches_through_another_storages_value(
+    picked, stored, expected
+):
+    """Storage types are read back only against the value they were recorded for.
+
+    The value map and the storage-type map are keyed by one identity (the raw
+    string for a string, the canonical form otherwise); keyed by canonical
+    form alone, a value of another storage lent its type to a string that
+    does not match raw, and the union of two non-members was a member.
+    """
+    item = leaf("picker", [picked], op="in", types=["string"])
+    manager, row = collected([item], {"picker": stored})
+    assert manager._row_matches_filters(row) is expected
+
+
+@pytest.mark.parametrize(
+    "typed,stored",
+    [
+        ("true", [("string", " true "), ("boolean", True)]),
+        (PICKED_JSON, [("string", '{"a": 1, "b": 2}'), ("json", {"a": 1, "b": 2})]),
+    ],
+    ids=["padded-word", "whitespace-json"],
+)
+def test_typed_text_still_matches_the_string_variant_canonically(typed, stored):
+    """The same populations under typed text: the string variant matches canonically."""
+    item = leaf("picker", typed)
+    manager, row = collected([item], {"picker": stored})
+    assert manager._row_matches_filters(row) is True

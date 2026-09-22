@@ -576,7 +576,15 @@ class UsersListManager:
                     # raw value comparison cannot witness: such values keep
                     # the complete path. A PICKED string is the stored string
                     # and compares raw (``_picked_value_matches``), so the raw
-                    # witness is exact for it whatever it looks like.
+                    # witness is exact for it whatever it looks like. No
+                    # script test here, unlike the builder's walk gate: this
+                    # lane narrows a FINITE candidate batch by id with
+                    # ``lowerUTF8(...) IN``, which agrees with Python's
+                    # ``lower()`` (verified on ClickHouse 25.3 across every
+                    # case-changing code point), so it stays exact for any
+                    # script; the walk's slices must read through the deployed
+                    # value bloom, which is ``lower()`` (ASCII only), so only
+                    # an ASCII value has an index witness there.
                     or any(
                         value_type != "string"
                         and (
@@ -866,19 +874,14 @@ class UsersListManager:
                         value = str(value).lower()
                     if not storage_type:
                         storage_type = self._inferred_attribute_storage_type(value)
-                    canonical = self._canonical_filter_value(value)
                     # Two stored strings that only parse to the same JSON are
                     # two values: a picked string matches one of them raw
                     # (``_picked_value_matches``), so collapsing them on their
                     # canonical form could keep the one that does not match.
-                    # Every other storage type is decided canonically and
-                    # keeps its canonical identity.
-                    distinct = (
-                        value
-                        if storage_type == "string" and isinstance(value, str)
-                        else canonical
-                    )
-                    values[(storage_type, distinct)] = (value, storage_type)
+                    # ``_attribute_value_identity`` is the one rule for this
+                    # map and for the storage-type map below.
+                    identity = self._attribute_value_identity(value)
+                    values[(storage_type, identity)] = (value, storage_type)
 
         def _read_key_bucket(
             keys: tuple[str, ...],
@@ -1001,10 +1004,16 @@ class UsersListManager:
                 user_attrs.setdefault(uid, {})[key] = (
                     ordered_values[0] if len(ordered_values) == 1 else ordered_values
                 )
+                # Keyed by the SAME identity as the value map: a storage type
+                # recorded against a value must be the storage that value was
+                # read from. Keyed by canonical form, a string " true " and a
+                # boolean true (or a whitespace JSON variant beside the same
+                # JSON in json storage) pooled their types, and a picked
+                # string matched through a value of another storage.
                 types_by_value: dict[str, set[str]] = {}
                 for value, storage_type in ordered_records:
                     types_by_value.setdefault(
-                        self._canonical_filter_value(value), set()
+                        self._attribute_value_identity(value), set()
                     ).add(storage_type)
                 self._attribute_value_types_by_user.setdefault(uid, {})[key] = {
                     value: frozenset(storage_types)
@@ -1681,7 +1690,7 @@ class UsersListManager:
         ).get(key, {})
 
         def storage_types(value: Any) -> frozenset[str]:
-            recorded = type_map.get(self._canonical_filter_value(value))
+            recorded = type_map.get(self._attribute_value_identity(value))
             if recorded:
                 return recorded
             return frozenset({self._inferred_attribute_storage_type(value)})
@@ -1839,6 +1848,24 @@ class UsersListManager:
             expected,
             case_insensitive=default_storage_type == "string",
         )
+
+    @staticmethod
+    def _attribute_value_identity(value: Any) -> str:
+        """The key a collected value is recorded under, in both per-user maps.
+
+        A string is its own identity: a picked string matches it raw, so two
+        strings that only parse to the same JSON (or a boolean word with and
+        without padding) must stay two values with their own storage types.
+        Every other value (a number, the ``'true'``/``'false'`` a boolean is
+        collected as, the canonical dump a json value is collected as) keeps
+        its canonical identity, which for the strings among them is the
+        string itself. The value map and the storage-type map use this one
+        rule, and ``storage_types`` looks a value up by it, so a storage type
+        is only ever read back against the value it was recorded for.
+        """
+        if isinstance(value, str):
+            return value
+        return UsersListManager._canonical_filter_value(value)
 
     @staticmethod
     def _picked_value_matches(value: Any, expected: Any, selected_type: str) -> bool:

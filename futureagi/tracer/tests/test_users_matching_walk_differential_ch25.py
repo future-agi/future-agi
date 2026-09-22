@@ -63,8 +63,8 @@ USER_Q1, USER_Q2, USER_Q3, USER_Q4 = (
     str(uuid.UUID(int=n)) for n in (111, 112, 113, 114)
 )
 # Picked JSON-looking strings: R* carry a JSON object as a STRING value.
-USER_R1, USER_R2, USER_R3, USER_R4, USER_R5 = (
-    str(uuid.UUID(int=n)) for n in (121, 122, 123, 124, 125)
+USER_R1, USER_R2, USER_R3, USER_R4, USER_R5, USER_R6 = (
+    str(uuid.UUID(int=n)) for n in (121, 122, 123, 124, 125, 126)
 )
 PICKED_JSON = '{"plan":"gold","seat":2}'
 WINDOW_START = datetime(2026, 8, 1, tzinfo=UTC)
@@ -305,6 +305,22 @@ def seeded_tables(ch_client):
                 extra='{"tag": ' + PICKED_JSON + "}",
             )
         ],
+        # R6: a whitespace variant in string storage on one span AND the same
+        # JSON in json storage on another: neither is the picked string, and
+        # the union of the two must not make a member (a storage type is read
+        # back only against the value it was recorded for).
+        [span("t-r6a", "r6a", USER_R6, '{"plan": "gold", "seat": 2}', 1, hours=21)],
+        [
+            span(
+                "t-r6b",
+                "r6b",
+                USER_R6,
+                None,
+                1,
+                hours=22,
+                extra='{"tag": ' + PICKED_JSON + "}",
+            )
+        ],
     ]
     for batch in batches:
         ch_client.execute(f"INSERT INTO {spans} ({columns}) VALUES", batch)
@@ -352,6 +368,7 @@ def seeded_tables(ch_client):
                 (USER_R3, "romeo-3"),
                 (USER_R4, "romeo-4"),
                 (USER_R5, "romeo-5"),
+                (USER_R6, "romeo-6"),
             )
         ],
     )
@@ -692,8 +709,9 @@ def test_a_picked_json_looking_string_walks_and_matches_the_seeded_page(
     """Picker provenance: the stored string, raw and case-insensitive, on both paths.
 
     R1 (key hour 14: the hour-58 copy is stale) and R2 (the case variant) are
-    members; R3 and R4 only parse to the same JSON and R5 holds it in json
-    storage: none is the picked string. The walk discovers through the value
+    members; R3 and R4 only parse to the same JSON, R5 holds it in json
+    storage and R6 holds a whitespace variant in string storage beside the
+    JSON in json storage: none is the picked string, on either path. The walk discovers through the value
     bloom witness on ``attrs_string`` and certifies on the picked values; the
     seeded page prunes its candidates on the same values. Same set, same
     totals.
@@ -730,4 +748,4 @@ def test_typed_json_looking_text_keeps_the_seeded_page_and_canonical_matching(
     assert not any("AS raw_end_user_id" in s for s in executor.statements)
     assert not any("scalar_witness_identities" in s for s in executor.statements)
     members = {row["user_id"] for row in read.payload["table"]}
-    assert members == {"romeo-1", "romeo-2", "romeo-3", "romeo-4"}
+    assert members == {"romeo-1", "romeo-2", "romeo-3", "romeo-4", "romeo-6"}
