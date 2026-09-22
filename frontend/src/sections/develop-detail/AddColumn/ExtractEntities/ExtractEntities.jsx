@@ -20,6 +20,7 @@ import { useDevelopDetailContext } from "../../Context/DevelopDetailContext";
 import { useDatasetColumnConfig } from "src/api/develop/develop-detail";
 import DynamicColumnSkeleton from "../DynamicColumnSkeleton";
 import { ShowComponent } from "../../../../components/show";
+import useRerunDependentColumns from "../../DataTab/useRerunDependentColumns";
 
 const getDefaultValue = () => {
   return {
@@ -49,6 +50,7 @@ export const ExtractEntitiesChild = ({
 
   const { dataset } = useParams();
   const allColumns = useDatasetColumnConfig(dataset);
+  const promptToRerunDependents = useRerunDependentColumns(dataset);
   useEffect(() => {
     if (initialData) {
       reset(initialData);
@@ -98,6 +100,7 @@ export const ExtractEntitiesChild = ({
       enqueueSnackbar("API Call column updated successfully", {
         variant: "success",
       });
+      promptToRerunDependents(editId);
       refreshGrid();
       onClose();
     },
