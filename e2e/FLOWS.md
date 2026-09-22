@@ -181,3 +181,124 @@
 - first create returns 200 and persists the view
 - second create with the same (project, user, name) returns 400, not a silent upsert
 - renaming another view onto the taken name returns 400
+
+### OBS-E2E-021 — filtering the Observe project list narrows to the chosen project
+
+**Goal:** A user narrows the Observe project list to the project they want and trusts the result set  
+**Spec:** `flows/observe/project-list-filter.spec.ts:33`  
+**Tags:** —
+
+**User steps:**
+
+1. seed two projects with a shared prefix and distinct names
+2. open the Observe project list
+3. type one project name in the search box
+4. read the filtered list
+5. search a value that matches nothing
+
+**Backend state verified:**
+
+- both seeded projects present in PG tracer_project, scoped to the actor org
+- the search box narrows the UI to exactly the matched project (other seeded project gone)
+- the list API returns exactly the matched project for the name query, and both for the shared-prefix contains filter
+- a value that matches nothing renders the empty-state message and the API returns zero rows
+
+### OBS-E2E-022 — selecting projects and confirming bulk-delete removes them
+
+**Goal:** A user selects projects from the Observe list and deletes them in bulk  
+**Spec:** `flows/observe/project-list-bulk-delete.spec.ts:19`  
+**Tags:** —
+
+**User steps:**
+
+1. seed two projects with a shared prefix
+2. open the list and filter to that prefix
+3. select all rows on the page
+4. open the delete dialog and cancel it
+5. open it again and confirm the delete
+
+**Backend state verified:**
+
+- both seeded projects present in PG tracer_project before delete, org-scoped
+- select-all selects exactly the rows on the current page (both seeded)
+- cancelling the confirm dialog leaves both projects present
+- confirming sends DELETE /tracer/project/ with both ids and project_type=observe, and both rows are soft-deleted (gone from the list API)
+
+### OBS-E2E-023 — sorting the project list by name holds in the UI and the API
+
+**Goal:** A user sorts the Observe list by project name and the order holds end-to-end  
+**Spec:** `flows/observe/project-list-sort.spec.ts:19`  
+**Tags:** —
+
+**User steps:**
+
+1. seed three projects whose names sort a < b < c
+2. open the list and filter to their shared prefix
+3. sort ascending by the Project column
+4. sort descending
+5. read the order in the UI and from the list API
+
+**Backend state verified:**
+
+- all three seeded projects present in PG, org-scoped
+- ascending: the three rows render top-to-bottom a, b, c; the list API returns the same order
+- descending reverses the order and drops no rows
+
+### OBS-E2E-024 — tagging a project persists the tag and makes it filterable
+
+**Goal:** A user tags an Observe project and the tag persists and is filterable  
+**Spec:** `flows/observe/project-list-tags.spec.ts:25`  
+**Tags:** —
+
+**User steps:**
+
+1. seed one project
+2. open the list and filter to it
+3. open the project's tag editor and add a new tag
+4. reload and reopen the tag editor
+5. filter the list by the new tag
+
+**Backend state verified:**
+
+- the tag editor PATCHes /tracer/project/{id}/tags/ and PG tracer_project.tags holds the new tag
+- the tag chip survives a page reload (persisted, not just local state)
+- the list API filtered by the tag returns the project
+
+### OBS-E2E-025 — paging through the project list walks a deterministic two-page set
+
+**Goal:** A user pages through the Observe project list and the controls and window are correct  
+**Spec:** `flows/observe/project-list-pagination.spec.ts:20`  
+**Tags:** —
+
+**User steps:**
+
+1. seed eleven projects with a shared prefix
+2. open the list, filter to the prefix, set rows-per-page to 10
+3. read page one and step to page two
+4. read both pages from the list API
+
+**Backend state verified:**
+
+- all eleven seeded projects present in PG, org-scoped
+- page one shows 10 of 11 with prev disabled; next moves to page two showing the 11th with next disabled
+- the list API returns 10 rows for page_number 0 and the remaining 1 for page_number 1 — disjoint, union of 11
+
+### OBS-E2E-026 — Add Project shows onboarding and an instrumented project appears once
+
+**Goal:** A user opens Add Project, follows the instrumentation, and their newly-instrumented project appears in the list  
+**Spec:** `flows/observe/project-list-add.spec.ts:21`  
+**Tags:** —
+
+**User steps:**
+
+1. instrument a project by sending a trace for a new name
+2. open the Observe project list and find it
+3. click Add Project and read the instrumentation drawer
+4. send a second trace with the same name
+
+**Backend state verified:**
+
+- after ingestion exactly one PG tracer_project row exists for the name, org-scoped, and it shows in the list
+- Add Project fetches SDK snippets from /tracer/project/project_sdk_code/ and the drawer shows Setup Instrumentation onboarding
+- the Observe docs link points at the Observe docs
+- a second trace with the same name creates no duplicate (get-or-create), so the count stays one
