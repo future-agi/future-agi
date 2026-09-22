@@ -312,5 +312,9 @@ CoverageMatrix.propTypes = {
   coverage: PropTypes.shape({
     axes: PropTypes.object,
     pairs: PropTypes.object,
+    labels: PropTypes.shape({
+      axes: PropTypes.object,
+      levels: PropTypes.object,
+    }),
   }),
 };

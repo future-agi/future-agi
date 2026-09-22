@@ -1,6 +1,9 @@
 import PropTypes from "prop-types";
 import { useCallback, useEffect, useRef, useState } from "react";
-import axiosInstance from "src/utils/axios";
+import {
+  getHarnessJob,
+  sendHarnessConversationMessage,
+} from "src/api/harness/harness";
 
 import { SectionCard } from "../components/primitives";
 import StudioConsole from "./AssistantConsole";
@@ -15,6 +18,27 @@ const CHIPS = [
   "Which stage did the run reach?",
   "What is in the world right now?",
 ];
+
+// The durable conversation keeps the transcript and the tool trail apart. The console reads one
+// ordered list, so both are folded into the shape `stepFor` already understands.
+function conversationEvents(conversation) {
+  const messages = (conversation.messages || []).map((one) => ({
+    kind: one.role === "user" ? "said" : "text",
+    text: one.content || "",
+    detail: { stage: one.stage || "" },
+    at: one.created_at || "",
+    order: one.sequence || 0,
+  }));
+  const trail = (conversation.events || []).map((one) => ({
+    kind: one.kind === "tool_result" ? "result" : "tool",
+    text: (one.payload || {}).text || "",
+    tool: (one.payload || {}).tool || "",
+    detail: { stage: one.stage || "", target: (one.payload || {}).text || "" },
+    at: one.emitted_at || "",
+    order: one.sequence || 0,
+  }));
+  return [...messages, ...trail].sort((a, b) => a.order - b.order);
+}
 
 function stepFor(event, answer) {
   const detail = event.detail || {};
@@ -76,25 +100,26 @@ export default function HarnessConversation({ jobId }) {
 
   const read = useCallback(async () => {
     try {
-      const { data } = await axiosInstance.get(`/simulate/api/harness-jobs/${jobId}/chat/`, {
-        params: { after: cursor.current },
-      });
-      const fresh = data?.events || [];
-      cursor.current = data?.cursor ?? cursor.current;
-      if (fresh.length) {
-        // What the person typed is shown at once so the box does not feel dead, and the harness
-        // records the same line in its own transcript a turn later. Both were being rendered, so
-        // every message appeared twice. The local copy is dropped as soon as its own line arrives.
-        const arrived = fresh.filter((one) => one.kind === "said").map((one) => (one.text || "").trim());
-        setEvents((prev) => [
-          ...prev.filter((one) => !(one.pending && arrived.includes((one.text || "").trim()))),
-          ...fresh,
-        ]);
-        setRunning(false);
+      const job = await getHarnessJob(jobId);
+      const conversation = job?.conversation;
+      if (!conversation) {
+        setProblem("this run is not up, so there is nobody to talk to");
+        return;
       }
+      const fresh = conversationEvents(conversation);
+      cursor.current = conversation.event_watermark ?? cursor.current;
+      // What the person typed is shown at once so the box does not feel dead, and the harness
+      // records the same line in its own transcript a turn later. Both were being rendered, so
+      // every message appeared twice. The local copy is dropped as soon as its own line arrives.
+      const arrived = fresh.filter((one) => one.kind === "said").map((one) => (one.text || "").trim());
+      setEvents((prev) => [
+        ...prev.filter((one) => one.pending && !arrived.includes((one.text || "").trim())),
+        ...fresh,
+      ]);
+      setRunning(Boolean(conversation.active_invocation_id));
       setProblem("");
     } catch (error) {
-      setProblem(error?.response?.data?.message || "this run is not up, so there is nobody to talk to");
+      setProblem(error?.detail || error?.message || "this run is not up, so there is nobody to talk to");
     }
   }, [jobId]);
 
@@ -105,12 +130,21 @@ export default function HarnessConversation({ jobId }) {
   }, [read]);
 
   const post = useCallback(
-    async (body) => {
+    async ({ text, replyTo = null }) => {
       try {
-        await axiosInstance.post(`/simulate/api/harness-jobs/${jobId}/chat/`, body);
+        const randomUUID = window.crypto?.randomUUID;
+        await sendHarnessConversationMessage(jobId, {
+          content: text,
+          client_request_id:
+            typeof randomUUID === "function"
+              ? randomUUID.call(window.crypto)
+              : `message-${Date.now().toString(36)}`,
+          kind: "user_message",
+          ...(replyTo ? { reply_to: replyTo } : {}),
+        });
       } catch (error) {
         setRunning(false);
-        setProblem(error?.response?.data?.message || "the message could not be delivered");
+        setProblem(error?.detail || error?.message || "the message could not be delivered");
       }
     },
     [jobId]
@@ -136,7 +170,7 @@ export default function HarnessConversation({ jobId }) {
         { kind: "said", text: said || "(answered)", detail: {}, pending: true },
       ]);
       setRunning(true);
-      post({ answer_to: askId, ...picked, text: said });
+      post({ text: said || "(answered)", replyTo: askId });
     },
     [post]
   );

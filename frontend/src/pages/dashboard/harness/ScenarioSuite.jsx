@@ -297,14 +297,6 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
     send(changes, { rework: true });
   };
 
-  if (!scenarios.length) {
-    return (
-      <Typography variant="body2" color="text.secondary">
-        No scenarios yet.
-      </Typography>
-    );
-  }
-
   // The number belongs to the scenario, not to the row it happens to be drawn on. Numbering the
   // rendered rows renumbered the suite from 1 every time a filter narrowed it, so the same
   // scenario answered to a different number depending on what else was on screen.
@@ -312,6 +304,14 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
     () => new Map(scenarios.map((one, index) => [one.name, index + 1])),
     [scenarios],
   );
+
+  if (!scenarios.length) {
+    return (
+      <Typography variant="body2" color="text.secondary">
+        No scenarios yet.
+      </Typography>
+    );
+  }
 
   return (
     <Stack spacing={1.5} sx={{ minWidth: 0 }}>
