@@ -10,7 +10,8 @@ from django.test import override_settings
 from rest_framework.response import Response
 from rest_framework.test import APIClient
 
-from simulate.models import RunTest, TestExecution
+from simulate.models.run_test import RunTest
+from simulate.models.test_execution import TestExecution
 from simulate.serializers.harness_job import (
     HarnessJobCreateSerializer,
     HarnessPreflightSerializer,

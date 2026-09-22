@@ -5,8 +5,6 @@ const jobsPath = () => apiPath("/simulate/api/harness-jobs/");
 const jobPath = (id) => apiPath("/simulate/api/harness-jobs/{id}/", { id });
 const cancelPath = (id) =>
   apiPath("/simulate/api/harness-jobs/{id}/cancel/", { id });
-const adjustPath = (id) =>
-  apiPath("/simulate/api/harness-jobs/{id}/adjust/", { id });
 const preflightPath = () => apiPath("/simulate/api/harness-jobs/preflight/");
 const sourcesPath = () => apiPath("/simulate/api/harness-jobs/sources/");
 const secretFilesPath = () =>
@@ -15,6 +13,8 @@ const secretValuesPath = () =>
   apiPath("/simulate/api/harness-jobs/secret-values/");
 const extendPath = (id) =>
   apiPath("/simulate/api/harness-jobs/{id}/extend/", { id });
+const conversationMessagesPath = (id) =>
+  apiPath("/simulate/api/harness-jobs/{id}/conversation/messages/", { id });
 
 export const listHarnessJobs = async () => (await axios.get(jobsPath())).data;
 
@@ -74,10 +74,10 @@ export const cancelHarnessJob = async (id, reason) => {
   if (trimmed) body.reason = trimmed.slice(0, 500);
   return (await axios.post(cancelPath(id), body)).data;
 };
-export const adjustHarnessJob = async (id, payload) =>
-  (await axios.post(adjustPath(id), payload)).data;
 // The RL-environment chat, once terminal, drives follow-ups: "add 5 scenarios with more
 // neutral happy flows" adds scenarios against the saved world; a message with no count
 // just reruns the saved suite.
 export const extendHarnessJob = async (id, payload) =>
   (await axios.post(extendPath(id), payload)).data;
+export const sendHarnessConversationMessage = async (id, payload) =>
+  (await axios.post(conversationMessagesPath(id), payload)).data;

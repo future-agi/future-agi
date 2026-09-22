@@ -182,6 +182,13 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 
 	// Fast path: provider natively speaks Anthropic.
 	if ap, ok := provider.(providers.AnthropicNativeProvider); ok {
+		if rc.Metadata["model_alias"] != "" {
+			body, err = rewriteAnthropicRequestModel(body, rc.Model)
+			if err != nil {
+				anthropicfmt.WriteError(w, http.StatusBadRequest, "invalid_request_error", "Invalid JSON: "+err.Error())
+				return
+			}
+		}
 		// rc.Request is deliberately left nil, as it is on the genai path.
 		// A carrier with empty Messages would hash to the same cache key for
 		// every prompt (BuildCacheKey marshals Messages), and the response
@@ -313,6 +320,13 @@ func (h *Handlers) AnthropicCountTokens(w http.ResponseWriter, r *http.Request) 
 
 	// Fast path: native Anthropic provider supports count_tokens.
 	if ap, ok := provider.(providers.AnthropicNativeProvider); ok {
+		if rc.Metadata["model_alias"] != "" {
+			body, err = rewriteAnthropicRequestModel(body, rc.Model)
+			if err != nil {
+				anthropicfmt.WriteError(w, http.StatusBadRequest, "invalid_request_error", "Invalid JSON: "+err.Error())
+				return
+			}
+		}
 		anthropicHeaders := make(map[string]string)
 		for _, key := range []string{"anthropic-version", "anthropic-beta", "anthropic-dangerous-direct-browser-access"} {
 			if v := r.Header.Get(key); v != "" {
@@ -337,6 +351,21 @@ func (h *Handlers) AnthropicCountTokens(w http.ResponseWriter, r *http.Request) 
 	anthropicfmt.WriteError(w, http.StatusNotImplemented, "not_supported_error",
 		fmt.Sprintf("count_tokens is not supported for provider %q (api_format is not anthropic). "+
 			"Use /v1/messages — token counts are in the response usage block.", rc.Provider))
+}
+
+// rewriteAnthropicRequestModel changes only the routed model while preserving
+// all other native Anthropic request fields for upstream pass-through.
+func rewriteAnthropicRequestModel(body []byte, model string) ([]byte, error) {
+	var request map[string]json.RawMessage
+	if err := json.Unmarshal(body, &request); err != nil {
+		return nil, err
+	}
+	encodedModel, err := json.Marshal(model)
+	if err != nil {
+		return nil, err
+	}
+	request["model"] = encodedModel
+	return json.Marshal(request)
 }
 
 // ─── Native pass-through helpers (unchanged from original) ───────────────────
@@ -827,7 +856,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 			if !ok {
 				// Event channel closed — translator is done.
 				eventCh = nil
-				continue
+				break
 			}
 			if _, writeErr := w.Write(event); writeErr != nil {
 				slog.Warn("error writing translated anthropic stream", "request_id", rc.RequestID, "error", writeErr)
@@ -852,7 +881,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 				// without this guard the handler would exit before draining
 				// them).
 				translatorErrCh = nil
-				continue
+				break
 			}
 			if err != nil {
 				slog.Warn("translator stream error", "request_id", rc.RequestID, "error", err)
@@ -864,7 +893,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 		case err, ok := <-errCh:
 			if !ok {
 				errCh = nil
-				continue
+				break
 			}
 			if err != nil {
 				slog.Warn("provider stream error", "request_id", rc.RequestID, "error", err)

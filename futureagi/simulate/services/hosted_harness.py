@@ -16,6 +16,7 @@ from simulate.models import (
     CallExecution,
     HostedHarnessAttempt,
     HostedHarnessCleanupReceipt,
+    HostedHarnessConversation,
     HostedHarnessJob,
     HostedHarnessReceipt,
     HostedHarnessScenario,
@@ -195,6 +196,12 @@ def create_hosted_job(
         normalized["job_id"] = str(job.id)
         job.payload = normalized
         job.save(update_fields=["payload", "updated_at"])
+        HostedHarnessConversation.no_workspace_objects.create(
+            job=job,
+            organization=organization,
+            workspace=workspace,
+            current_stage="reception",
+        )
         return job, True
 
 

@@ -53,9 +53,12 @@ class HostedHarnessGatewayWorkflow:
                         retry_policy=RetryPolicy(maximum_attempts=3),
                         result_type=HostedHarnessPollOutput,
                     )
-                    return HostedHarnessGatewayOutput(
-                        job_id=input.job_id, state=outcome.state
-                    )
+                    if outcome.done:
+                        return HostedHarnessGatewayOutput(
+                            job_id=input.job_id, state=outcome.state
+                        )
+                    await workflow.sleep(timedelta(seconds=15))
+                    continue
                 try:
                     outcome = await workflow.execute_activity(
                         "poll_hosted_harness_attempt",

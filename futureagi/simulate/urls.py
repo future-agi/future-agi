@@ -105,6 +105,7 @@ from .views.hosted_harness import (
     HostedHarnessAttemptViewSet,
     HostedHarnessIngressProxyView,
 )
+from .views.hosted_harness_conversation import HostedHarnessConversationViewSet
 from .views.livekit_api import (
     CallConfigView,
     CallExecutionUpdateView,
@@ -137,6 +138,11 @@ router.register(
     r"harness/attempts",
     HostedHarnessAttemptViewSet,
     basename="hosted-harness-attempt",
+)
+router.register(
+    r"harness/conversations",
+    HostedHarnessConversationViewSet,
+    basename="hosted-harness-conversation",
 )
 
 urlpatterns = [
