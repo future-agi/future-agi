@@ -386,6 +386,7 @@ class TraceInvestigationAttribution(BaseModel):
     role = models.CharField(max_length=16)
     status = models.CharField(max_length=16)
     span_id = models.CharField(max_length=64, null=True, blank=True)
+    explanation = models.CharField(max_length=600, blank=True, default="")
 
     class Meta:
         db_table = "tracer_trace_investigation_attribution"

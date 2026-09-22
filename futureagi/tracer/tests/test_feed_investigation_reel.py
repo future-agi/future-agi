@@ -43,12 +43,13 @@ def test_omega_reel_uses_finding_and_supported_attribution_only():
     finding = SimpleNamespace(
         statement="The assistant failed to deliver the requested item",
         attributions=_RelatedRows([
-            SimpleNamespace(deleted=False, role="decisive", status="supported", span_id="span-1"),
-            SimpleNamespace(deleted=False, role="symptom", status="supported", span_id="span-1"),
+            SimpleNamespace(deleted=False, role="decisive", status="supported", span_id="span-1", explanation="The model ignored the requested item"),
+            SimpleNamespace(deleted=False, role="symptom", status="supported", span_id="span-1", explanation="The final reply omitted the item"),
             SimpleNamespace(deleted=False, role="origin", status="unknown", span_id="span-2"),
         ]),
     )
     report = SimpleNamespace(
+        trace_id="trace-1",
         key_moments=_RelatedRows([SimpleNamespace(
             deleted=False, kevinified="Unrelated", verbatim="Unrelated",
             role="origin", span_id="other", status="ok", is_failure=False,
@@ -60,16 +61,18 @@ def test_omega_reel_uses_finding_and_supported_attribution_only():
 
     reel = _investigation_reel(
         report, selected_findings=[(finding, {"decisive": [receipt]})],
-        span_context={"span-1": {
+        span_context={("trace-1", "span-1"): {
             "name": "Recorded operation", "attrs_string": {
                 "input.value": "false", "output.value": "0"
             },
         }},
     )
 
-    assert [step["label"] for step in reel] == ["FINDING", "DECISIVE"]
+    assert [step["label"] for step in reel] == ["FINDING", "DECISIVE", "SYMPTOM"]
     assert reel[0]["text"] == finding.statement
-    assert reel[1]["text"] == "Recorded operation"
+    assert reel[1]["text"] == "The model ignored the requested item"
+    assert reel[2]["text"] == "The final reply omitted the item"
+    assert reel[1]["operation"] == "Recorded operation"
     assert reel[1]["raw"] == excerpt
     assert reel[1]["evidence_id"] == "ev-1"
     assert reel[1]["status"] == "neutral"
