@@ -14,6 +14,7 @@ Supports four metric types:
 """
 
 import logging
+import math
 import re
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -36,6 +37,10 @@ from tracer.services.clickhouse.eval_logger_table import (
 )
 from tracer.services.clickhouse.query_builders.expressions import (
     annotation_numeric_value_expr,
+)
+from tracer.services.clickhouse.query_builders.filters import (
+    resolve_annotation_label_output_type,
+    resolve_eval_filter_metadata,
 )
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     compile_span_attribute_row_predicate,
@@ -3433,6 +3438,7 @@ class DashboardQueryBuilder:
             op_symbol = _get_operator_symbol(op)
             if not op_symbol:
                 continue
+            leaf_column, leaf_operator = _filter_leaf_identity(f)
 
             val_key = f"{prefix}{idx}_val"
 
@@ -3444,7 +3450,22 @@ class DashboardQueryBuilder:
                     f, eval_template_id
                 )
 
-                output_type = (f.get("output_type") or "SCORE").upper()
+                # The eval template's configured output is the only
+                # authoritative statement of what ``eval_score`` /
+                # ``eval_output_str`` hold. Defaulting to SCORE compiled a
+                # Float64 comparison for every choice/pass-fail filter whose
+                # payload omitted the optional hint.
+                output_type = (
+                    f.get("output_type")
+                    or (
+                        resolve_eval_filter_metadata(
+                            eval_template_id, self.project_ids
+                        ).output_type
+                        if _leaf_carries_canonical_filter(f)
+                        else None
+                    )
+                    or "SCORE"
+                ).upper()
                 scope_key = f"{prefix}scope_id_{idx}"
                 scan_alias = f"usage_{prefix}eval_filter_scan_{idx}"
                 latest_alias = f"usage_{prefix}eval_filter_latest_{idx}"
@@ -3484,7 +3505,9 @@ class DashboardQueryBuilder:
                     filter_value = _coerce_string_filter_value(val, op)
                 elif output_type == "SCORE":
                     eval_col = f"{latest_alias}.eval_score"
-                    filter_value = _coerce_filter_value(val, op)
+                    filter_value = _coerce_numeric_filter_operand(
+                        val, op, leaf_column, leaf_operator
+                    )
                 else:
                     raise InvalidMetricCombinationError(
                         f"Unsupported eval filter output type: {output_type}"
@@ -3519,12 +3542,29 @@ class DashboardQueryBuilder:
                 label_id = f.get("metric_name", "")
                 ann_org_key = f"{prefix}ann_org_id_{idx}"
                 annotation_alias = f"annotation_{prefix}filter_{idx}"
-                output_type = (f.get("output_type") or "numeric").lower()
+                # An annotation label's configured type is the only
+                # authoritative statement of what its Score payload holds.
+                # Defaulting to numeric compiled a Float64 predicate for every
+                # text/categorical/thumbs filter whose payload omitted the
+                # optional hint.
+                resolved_output_type = f.get("output_type")
+                if not resolved_output_type and _leaf_carries_canonical_filter(f):
+                    resolved_output_type = resolve_annotation_label_output_type(
+                        label_id, self.organization_id
+                    )
+                    if not resolved_output_type:
+                        raise InvalidMetricCombinationError(
+                            f"'{leaf_column}' is not a known annotation label, "
+                            "so it cannot be used as a dashboard filter."
+                        )
+                output_type = str(resolved_output_type or "numeric").lower()
                 if output_type in ("numeric", "number", "score", "star", "rating"):
                     filter_expr = annotation_numeric_value_expr(
                         alias=annotation_alias, nullable=True
                     )
-                    filter_value = _coerce_filter_value(val, op)
+                    filter_value = _coerce_numeric_filter_operand(
+                        val, op, leaf_column, leaf_operator
+                    )
                     filter_condition = (
                         f"{filter_expr} IS NOT NULL AND "
                         f"{filter_expr} {op_symbol} %({val_key})s"
@@ -3604,7 +3644,8 @@ class DashboardQueryBuilder:
                     )
                 else:
                     raise InvalidMetricCombinationError(
-                        f"Unsupported annotation filter output type: {output_type}"
+                        f"'{leaf_column}' annotations of type "
+                        f"'{output_type}' cannot be filtered on a dashboard."
                     )
                 # Keep FINAL for score-table latest/tombstone semantics and
                 # bound the candidate set before JSON extraction. Annotation
@@ -3864,6 +3905,79 @@ def _coerce_filter_value(val: Any, operator: str) -> Any:
         except ValueError:
             return val
     return val
+
+
+def _leaf_carries_canonical_filter(filter_item: dict) -> bool:
+    """True when this leaf reached the compiler through the canonical contract.
+
+    Every dashboard query, widget query and preview request is canonicalized
+    (``_canonicalize_persisted_dashboard_filter_for_read``), validated by the
+    strict serializer and then adapted by ``_dashboard_filter_to_internal``,
+    which attaches the validated object as ``canonical_filter``.  A leaf that
+    arrives without one was assembled in-process by an internal caller, never
+    by a client, so it keeps the builder's documented legacy defaults instead
+    of paying a PostgreSQL round-trip inside the query compiler.
+    """
+
+    return isinstance(filter_item.get("canonical_filter"), dict)
+
+
+def _filter_leaf_identity(filter_item: dict) -> tuple[str, str]:
+    """Return the client-facing (column, operator) identity of one filter leaf."""
+
+    canonical = filter_item.get("canonical_filter")
+    canonical = canonical if isinstance(canonical, dict) else {}
+    config = canonical.get("filter_config")
+    config = config if isinstance(config, dict) else {}
+    column = str(
+        canonical.get("display_name")
+        or filter_item.get("display_name")
+        or filter_item.get("metric_name")
+        or "filter"
+    )
+    operator = str(config.get("filter_op") or filter_item.get("operator") or "")
+    return column, operator
+
+
+def _coerce_numeric_filter_operand(
+    val: Any, operator: str, column: str, public_operator: str
+) -> Any:
+    """Coerce one operand for a Float64 column, or reject the combination.
+
+    ClickHouse compiles ``LIKE`` and string literals against Float64 into a
+    type error, not an empty result, so a numeric column must refuse a text
+    operator or a non-numeric operand while the query is still being built.
+    """
+
+    def number(value: Any) -> float:
+        if isinstance(value, bool):
+            raise InvalidMetricCombinationError(
+                f"'{column}' holds numbers, so '{public_operator}' needs a "
+                "numeric value."
+            )
+        try:
+            result = float(value)
+        except (TypeError, ValueError):
+            raise InvalidMetricCombinationError(
+                f"'{column}' holds numbers, so '{public_operator}' needs a "
+                "numeric value."
+            ) from None
+        if not math.isfinite(result):
+            raise InvalidMetricCombinationError(
+                f"'{column}' holds numbers, so '{public_operator}' needs a "
+                "finite numeric value."
+            )
+        return result
+
+    if operator in ("str_contains", "str_not_contains"):
+        raise InvalidMetricCombinationError(
+            f"'{column}' holds numbers, so '{public_operator}' cannot be "
+            "applied to it. Use a comparison or a range operator."
+        )
+    if operator in ("contains", "not_contains"):
+        values = val if isinstance(val, list) else [val]
+        return [number(value) for value in values]
+    return number(val)
 
 
 def _coerce_string_filter_value(val: Any, operator: str) -> Any:

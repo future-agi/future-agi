@@ -348,6 +348,28 @@ class DashboardExactReadError(RuntimeError):
         self.error_code = error_code
 
 
+def _invalid_metric_combination_cause(
+    exc: BaseException,
+) -> InvalidMetricCombinationError | None:
+    """Return the invalid metric/filter combination behind *exc*, if any.
+
+    The exact-read lane wraps a per-metric combination failure in a
+    ``DashboardExactReadError``, so the explicit ``raise ... from`` chain is
+    walked rather than the outermost type alone.  Only ``__cause__`` is
+    followed: an unrelated failure raised while one of these was being handled
+    is not this failure.
+    """
+
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        if isinstance(current, InvalidMetricCombinationError):
+            return current
+        seen.add(id(current))
+        current = current.__cause__
+    return None
+
+
 def _dashboard_api_read_unavailable(exc: Exception) -> bool:
     return (
         getattr(exc, "error_code", None) == "read_budget_exceeded"
@@ -2539,6 +2561,13 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "Dashboard data is temporarily unavailable. Please retry.",
                     code="service_unavailable",
                 )
+            invalid_combination = _invalid_metric_combination_cause(exc)
+            if invalid_combination is not None:
+                logger.warning(
+                    "dashboard_query_invalid_metric_combination",
+                    error_type=type(exc).__name__,
+                )
+                return self._gm.bad_request(str(invalid_combination))
             logger.exception(
                 "dashboard_query_execution_failed",
                 error_type=type(exc).__name__,
@@ -7267,6 +7296,13 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "Dashboard data is temporarily unavailable. Please retry.",
                     code="service_unavailable",
                 )
+            invalid_combination = _invalid_metric_combination_cause(exc)
+            if invalid_combination is not None:
+                logger.warning(
+                    "widget_query_invalid_metric_combination",
+                    error_type=type(exc).__name__,
+                )
+                return self._gm.bad_request(str(invalid_combination))
             logger.exception(
                 "widget_query_execution_failed",
                 error_type=type(exc).__name__,
@@ -7319,6 +7355,13 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "Dashboard data is temporarily unavailable. Please retry.",
                     code="service_unavailable",
                 )
+            invalid_combination = _invalid_metric_combination_cause(exc)
+            if invalid_combination is not None:
+                logger.warning(
+                    "query_preview_invalid_metric_combination",
+                    error_type=type(exc).__name__,
+                )
+                return self._gm.bad_request(str(invalid_combination))
             logger.exception(
                 "query_preview_failed",
                 error_type=type(exc).__name__,

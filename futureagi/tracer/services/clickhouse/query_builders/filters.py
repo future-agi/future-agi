@@ -92,6 +92,37 @@ def resolve_eval_filter_metadata(
     return EvalFilterMetadata(config_ids=config_ids, output_type=output_type)
 
 
+def resolve_annotation_label_output_type(
+    label_id: str,
+    organization_id: str | None = None,
+) -> str | None:
+    """Resolve one annotation label's authoritative value type from PostgreSQL.
+
+    The label's ``type`` is the only authoritative statement of what a Score
+    row's JSON payload holds, so a compiler must not infer it from the
+    operator or from an optional client hint.  Labels are org-scoped and may
+    be attached to a workspace rather than to one project, so the tenancy
+    fence here is the organization — the same fence the Score predicate
+    itself carries.  Returns ``None`` when the identifier names no live label
+    in scope; callers reject such a filter rather than compiling a predicate
+    against a guessed type.
+    """
+
+    from django.core.exceptions import ValidationError
+
+    from model_hub.models.develop_annotations import AnnotationsLabels
+
+    try:
+        labels = AnnotationsLabels.no_workspace_objects.filter(
+            id=label_id, deleted=False
+        )
+        if organization_id:
+            labels = labels.filter(organization_id=organization_id)
+        return labels.values_list("type", flat=True).first()
+    except (TypeError, ValueError, ValidationError):
+        return None
+
+
 def _voice_root_metric_expressions(
     expressions: dict[str, str], keys: tuple[str, ...]
 ) -> dict[str, str]:
