@@ -3,8 +3,12 @@
   Test-only ClickHouse overrides for the test sidecar (CH 25.3-alpine).
 
   The legacy CDC mirror schema (tracer/services/clickhouse/schema.py) uses
-  `ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/<table>', '{replica}', …)`.
-  In production these macros are provided by the Helm chart + ZK ensemble.
+  `ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/<table>', '{replica}', …)`.
+  The `{database}` macro is a built-in, automatically-substituted macro (no
+  config entry needed) that scopes each Replicated table's ZK replica path
+  by database, so the same table name can be created independently in more
+  than one database on this instance. In production the `{shard}`/`{replica}`
+  macros are provided by the Helm chart + ZK ensemble.
   For local testing we run a single-node embedded clickhouse-keeper and
   hardcode shard/replica macros so `CREATE TABLE` succeeds without an
   external ZK cluster.
