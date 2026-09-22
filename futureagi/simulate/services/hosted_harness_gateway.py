@@ -163,6 +163,18 @@ def _execution_ttl_seconds(
     )
 
 
+def _claude_code_use_vertex(gateway_ready: bool) -> str:
+    """Whether the Claude CLI talks to Vertex directly or through our gateway.
+
+    With the gateway in play this must be an explicit "0". An empty value is not the same thing:
+    the CLI reads the variable as set and routes to Vertex, which then rejects the gateway's
+    `vertex_ai/`-prefixed model id as a model that does not exist.
+    """
+    if gateway_ready:
+        return "0"
+    return str(os.environ.get("CLAUDE_CODE_USE_VERTEX") or "1")
+
+
 def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
     """Return control-process-only simulator config and optional Vertex ADC bytes.
 
@@ -238,7 +250,7 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
     values = {
         "ALK_HARNESS": backend,
         "ALK_HARNESS_MODEL": authoring_model,
-        "CLAUDE_CODE_USE_VERTEX": str(os.environ.get("CLAUDE_CODE_USE_VERTEX") or "1"),
+        "CLAUDE_CODE_USE_VERTEX": _claude_code_use_vertex(agentcc_ready),
         "CLOUD_ML_REGION": claude_region,
         "ALK_VERTEX_LOCATION": location,
         "GOOGLE_CLOUD_LOCATION": location,
@@ -1501,8 +1513,8 @@ class HostedHarnessGateway:
                 for name, value in simulator_env.items()
                 if name not in {"LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"}
             },
-            "CLAUDE_CODE_USE_VERTEX": (
-                "" if simulator_env.get("ALK_CLAUDE_GATEWAY_URL") else "1"
+            "CLAUDE_CODE_USE_VERTEX": _claude_code_use_vertex(
+                bool(simulator_env.get("ALK_CLAUDE_GATEWAY_URL"))
             ),
             "GOOGLE_GENAI_USE_VERTEXAI": "True",
             "CLOUD_ML_REGION": getattr(

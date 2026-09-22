@@ -2370,3 +2370,11 @@ def test_hosted_execution_cancel_signals_workflow_without_deleting_sandbox(
     job.refresh_from_db()
     assert job.state == HostedHarnessJob.State.CLEANING_UP
     assert job.cancel_reason == "user_canceled"
+
+def test_gateway_authoring_turns_vertex_routing_off_explicitly():
+    from simulate.services.hosted_harness_gateway import _claude_code_use_vertex
+
+    # "" is not "0": the CLI reads the variable as set, routes to Vertex, and Vertex rejects the
+    # gateway's `vertex_ai/`-prefixed model id as a model that does not exist.
+    assert _claude_code_use_vertex(True) == "0"
+    assert _claude_code_use_vertex(False) == "1"
