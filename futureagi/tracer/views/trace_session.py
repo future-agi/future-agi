@@ -104,6 +104,7 @@ from tracer.services.clickhouse.graph_dispatch import (
 from tracer.services.clickhouse.list_cursor import (
     ListCursor,
     ListCursorError,
+    bounded_chunk_complete,
     cursor_page_metadata,
     cursor_scope_for_request,
     decode_list_cursor,
@@ -3523,7 +3524,11 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             # The selector proves page membership and whether another page
             # exists, but it may stop once that ordered prefix is proved.  Its
             # count is therefore a lower bound, not an exact full-window count.
-            public_chunk_complete = bounded_page.complete or cursor_has_more
+            public_chunk_complete = bounded_chunk_complete(
+                read_complete=bounded_page.complete,
+                cursor_has_more=cursor_has_more,
+                published_rows=len(bounded_page.rows),
+            )
             metadata.update(
                 {
                     "total_rows_is_lower_bound": True,

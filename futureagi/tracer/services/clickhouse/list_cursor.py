@@ -503,6 +503,33 @@ def snapshot_cursor_supported(filters: list[dict[str, Any]], *, resource: str) -
     return True
 
 
+def bounded_chunk_complete(
+    *,
+    read_complete: bool,
+    cursor_has_more: bool,
+    published_rows: int,
+) -> bool:
+    """Whether a bounded page may be published as a complete public answer.
+
+    A bounded read that exhausted the requested window is complete by
+    construction.  An unfinished read is still a complete *chunk* when it
+    publishes latest-state classified rows in canonical order beside a signed
+    continuation token: the caller receives real results and resumes exactly
+    where the scan stopped, so reporting it as degraded would show a query
+    failure for a page that exposed no unproven row.
+
+    An unfinished read that proved no row at all is not an answer.  It is a
+    scan that ran out of its query or time budget over a prefix of the
+    requested window, and calling it complete presents a still-unsearched
+    population as an empty one.  Such a chunk keeps the selector's own status
+    and error code while still carrying its continuation token.
+    """
+
+    if read_complete:
+        return True
+    return cursor_has_more and published_rows > 0
+
+
 def cursor_page_metadata(
     *,
     enabled: bool,
@@ -548,6 +575,7 @@ def frozen_window_filter(cursor: ListCursor) -> dict[str, Any]:
 __all__ = [
     "ListCursor",
     "ListCursorError",
+    "bounded_chunk_complete",
     "cursor_page_metadata",
     "cursor_scope_for_request",
     "decode_list_cursor",

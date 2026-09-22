@@ -8653,9 +8653,10 @@ def test_observe_span_cursor_publishes_safe_checkpoint_after_failed_attempt() ->
     assert response[0] == "ok"
     payload = response[1]
     assert payload["table"] == []
-    assert payload["metadata"]["query_complete"] is True
-    assert payload["metadata"]["query_status"] == "complete"
-    assert payload["metadata"]["query_error_code"] is None
+    # A checkpoint that proved no row is an unfinished scan, not an answer.
+    assert payload["metadata"]["query_complete"] is False
+    assert payload["metadata"]["query_status"] == "degraded"
+    assert payload["metadata"]["query_error_code"] == "query_timeout"
     assert payload["metadata"]["has_more"] is True
     assert isinstance(payload["metadata"]["next_cursor"], str)
     bounded_reader.assert_called_once()
@@ -9014,9 +9015,10 @@ def test_observe_trace_cursor_publishes_safe_checkpoint_after_failed_attempt() -
     assert response[0] == "ok"
     payload = response[1]
     assert payload["table"] == []
-    assert payload["metadata"]["query_complete"] is True
-    assert payload["metadata"]["query_status"] == "complete"
-    assert payload["metadata"]["query_error_code"] is None
+    # A checkpoint that proved no row is an unfinished scan, not an answer.
+    assert payload["metadata"]["query_complete"] is False
+    assert payload["metadata"]["query_status"] == "degraded"
+    assert payload["metadata"]["query_error_code"] == "query_timeout"
     assert payload["metadata"]["has_more"] is True
     assert isinstance(payload["metadata"]["next_cursor"], str)
     bounded_reader.assert_called_once()
@@ -9733,9 +9735,10 @@ def test_voice_cursor_publishes_safe_checkpoint_after_failed_attempt() -> None:
 
     assert response.status_code == 200
     assert response.data["results"] == []
-    assert response.data["query_complete"] is True
-    assert response.data["query_status"] == "complete"
-    assert "query_error_code" not in response.data
+    # A checkpoint that proved no row is an unfinished scan, not an answer.
+    assert response.data["query_complete"] is False
+    assert response.data["query_status"] == "degraded"
+    assert response.data["query_error_code"] == "query_timeout"
     assert response.data["has_more"] is True
     assert isinstance(response.data["next_cursor"], str)
     bounded_reader.assert_called_once()

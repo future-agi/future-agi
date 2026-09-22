@@ -108,6 +108,7 @@ from tracer.services.clickhouse.graph_dispatch import (
 )
 from tracer.services.clickhouse.list_cursor import (
     ListCursorError,
+    bounded_chunk_complete,
     cursor_page_metadata,
     cursor_scope_for_request,
     decode_list_cursor,
@@ -5539,13 +5540,16 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             )
             # ``bounded_page.complete`` describes whether this one transport
             # read exhausted/proved the whole requested window.  A signed
-            # cursor checkpoint is a different, exact public contract: every
-            # returned row was latest-state classified in canonical order and
-            # the token resumes at the first unclassified position.  Reporting
-            # that safe chunk as ``degraded`` made the UI show a query failure
-            # even though no sampled or unproven row was exposed.  Totals stay
-            # explicitly lower-bound until the cursor chain is exhausted.
-            public_chunk_complete = bounded_page.complete or cursor_has_more
+            # cursor checkpoint that carries classified rows is a different,
+            # exact public contract, so it is published as a complete chunk;
+            # a checkpoint that proved no row keeps the selector's degraded
+            # status instead of presenting an unsearched window as empty.
+            # Totals stay explicitly lower-bound until the chain is exhausted.
+            public_chunk_complete = bounded_chunk_complete(
+                read_complete=bounded_page.complete,
+                cursor_has_more=cursor_has_more,
+                published_rows=len(bounded_page.rows),
+            )
             metadata.update(
                 {
                     "total_rows_is_lower_bound": total_rows_is_lower_bound,
@@ -6386,13 +6390,21 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 ),
             )
             cursor_has_more = True
-        # A nonterminal cursor chunk is still an exact public result: every
-        # row is latest-state classified and the signed token resumes at the
-        # first unclassified root. Keep totals lower-bound until exhaustion,
-        # but do not expose the selector's internal finite-scan stop as a data
-        # error. Numbered allow_sampled compatibility retains its degraded
-        # metadata below because it has no exact continuation contract.
-        public_chunk_complete = bounded_page.complete or cursor_has_more
+        # A nonterminal cursor chunk that published rows is still an exact
+        # public result: every row is latest-state classified and the signed
+        # token resumes at the first unclassified root. Keep totals
+        # lower-bound until exhaustion, but do not expose the selector's
+        # internal finite-scan stop as a data error. A checkpoint that proved
+        # no row is not an answer and keeps its degraded status. Numbered
+        # allow_sampled compatibility retains its degraded metadata below
+        # because it has no exact continuation contract. Simulator calls are
+        # dropped from ``results`` after classification, so the published list
+        # -- not the selector's own rows -- is what the caller actually sees.
+        public_chunk_complete = bounded_chunk_complete(
+            read_complete=bounded_page.complete,
+            cursor_has_more=cursor_has_more,
+            published_rows=len(results),
+        )
         response_data = {
             "count": total_count,
             "count_is_lower_bound": (
