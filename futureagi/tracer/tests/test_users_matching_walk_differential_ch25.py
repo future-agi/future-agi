@@ -294,7 +294,17 @@ def seeded_tables(ch_client):
         [span("t-r2", "r2", USER_R2, '{"PLAN":"Gold","seat":2}', 1, hours=9, cost=3.0)],
         [span("t-r3", "r3", USER_R3, '{"seat":2,"plan":"gold"}', 1, hours=16)],
         [span("t-r4", "r4", USER_R4, '{"plan": "gold", "seat": 2}', 1, hours=17)],
-        [span("t-r5", "r5", USER_R5, None, 1, hours=19, extra='{"tag": ' + PICKED_JSON + "}")],
+        [
+            span(
+                "t-r5",
+                "r5",
+                USER_R5,
+                None,
+                1,
+                hours=19,
+                extra='{"tag": ' + PICKED_JSON + "}",
+            )
+        ],
     ]
     for batch in batches:
         ch_client.execute(f"INSERT INTO {spans} ({columns}) VALUES", batch)
@@ -721,4 +731,3 @@ def test_typed_json_looking_text_keeps_the_seeded_page_and_canonical_matching(
     assert not any("scalar_witness_identities" in s for s in executor.statements)
     members = {row["user_id"] for row in read.payload["table"]}
     assert members == {"romeo-1", "romeo-2", "romeo-3", "romeo-4"}
-

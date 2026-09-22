@@ -867,7 +867,18 @@ class UsersListManager:
                     if not storage_type:
                         storage_type = self._inferred_attribute_storage_type(value)
                     canonical = self._canonical_filter_value(value)
-                    values[(storage_type, canonical)] = (value, storage_type)
+                    # Two stored strings that only parse to the same JSON are
+                    # two values: a picked string matches one of them raw
+                    # (``_picked_value_matches``), so collapsing them on their
+                    # canonical form could keep the one that does not match.
+                    # Every other storage type is decided canonically and
+                    # keeps its canonical identity.
+                    distinct = (
+                        value
+                        if storage_type == "string" and isinstance(value, str)
+                        else canonical
+                    )
+                    values[(storage_type, distinct)] = (value, storage_type)
 
         def _read_key_bucket(
             keys: tuple[str, ...],

@@ -261,3 +261,25 @@ def test_a_picked_number_keeps_the_canonical_comparison_of_its_domain():
     ]:
         manager, row = collected([item], {"picker": stored})
         assert manager._row_matches_filters(row) is expected
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        [("string", PICKED_JSON), ("string", '{"b":2,"a":1}')],
+        [("string", '{"b":2,"a":1}'), ("string", PICKED_JSON)],
+    ],
+    ids=["picked-first", "variant-first"],
+)
+def test_two_raw_variants_of_one_json_are_both_collected(stored):
+    """The collector keeps every stored string, not one per canonical form.
+
+    A user holding the picked string and a key-order variant of it is a
+    member by the raw rule; collapsing the two on their canonical form could
+    keep only the variant and reject the user on the complete path.
+    """
+    item = leaf("picker", [PICKED_JSON], op="in", types=["string"])
+    manager, row = collected([item], {"picker": stored})
+    assert manager._row_matches_filters(row) is True
+    kept = manager._attribute_values_by_user[UID]["picker"]
+    assert sorted(kept) == sorted(value for _kind, value in stored)
