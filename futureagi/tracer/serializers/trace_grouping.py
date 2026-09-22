@@ -1,6 +1,7 @@
 """Private grouping worker boundary; source evidence remains server-owned."""
 
 from rest_framework import serializers
+from tfc.utils.api_serializers import ManagementAPIErrorResponseSerializer
 
 from tracer.serializers.filters import StrictInputSerializer
 
@@ -115,7 +116,7 @@ class GroupingControlResponseSerializer(serializers.Serializer):
     receipt_id = serializers.UUIDField(required=False)
 
 
-class GroupingErrorSerializer(serializers.Serializer):
+class GroupingErrorSerializer(ManagementAPIErrorResponseSerializer):
     code = serializers.CharField()
     detail = serializers.CharField()
 

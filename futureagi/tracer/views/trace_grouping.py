@@ -7,6 +7,7 @@ from rest_framework.views import APIView
 
 from simulate.authentication import InternalServiceAuthentication
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_errors import build_error_envelope
 from tracer.serializers.trace_grouping import (
     ClaimGroupingRequestSerializer,
     CompleteGroupingFeatureSerializer,
@@ -44,7 +45,10 @@ def _respond(operation, **kwargs) -> Response:
         return Response(operation(**kwargs))
     except control.GroupingControlError as error:
         return Response(
-            {"code": error.code, "detail": str(error)}, status=error.http_status
+            build_error_envelope(
+                str(error), status_code=error.http_status, code=error.code
+            ),
+            status=error.http_status,
         )
 
 
