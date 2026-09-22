@@ -15,8 +15,8 @@ import AgentRefreshBanner from "./AgentRefreshBanner";
 import NextStepsChecklist from "./NextStepsChecklist";
 import SourceToSandboxMap from "./SourceToSandboxMap";
 import StateSummary from "./StateSummary";
-import { ToolsCard, HardRulesCard, UseCasesCard, AmendmentsCard } from "./OverviewCards";
-import { SeededDataCard, DependsOnCard } from "./WorldCards";
+import { UseCasesCard, AmendmentsCard } from "./OverviewCards";
+import { DependsOnCard } from "./WorldCards";
 
 // Display names for the real connector (§1/§6 `settings.agent.connector`,
 // surfaced here as `envState.agent.typeId` — the job poll's detected connector).
@@ -46,7 +46,17 @@ const CONNECTOR_LABEL = {
  * side drawer overlaid on this tab (the user never leaves Overview); a locked
  * template env keeps "Fork to edit" instead.
  */
-export default function OverviewPanel({ env, envState, patch, onGo, agentConnected, locked = false, buildMode, counts }) {
+// Map a real §6 contract.dependency ({name, kind, what, used_by}) to the shape
+// DependsOnCard renders ({name, kind, provides, usedBy}).
+const dependsFromContract = (dependencies) =>
+  (Array.isArray(dependencies) ? dependencies : []).map((d) => ({
+    name: d?.name,
+    kind: d?.kind,
+    provides: d?.what,
+    usedBy: d?.used_by || [],
+  }));
+
+export default function OverviewPanel({ env, envState, patch, onGo, agentConnected, locked = false, buildMode, counts, backedWorld }) {
   // Manage-versions drawer state — commented with the card + drawer below,
   // to be picked up later.
   // const [agentDrawerOpen, setAgentDrawerOpen] = useState(false);
@@ -117,15 +127,13 @@ export default function OverviewPanel({ env, envState, patch, onGo, agentConnect
       {/* The reviewability record: every derived fact with its origin and its
           sandbox target, side by side, with unresolved rows carrying an inline
           resolve control. */}
-      {showRichOverview && <SourceToSandboxMap env={env} envState={envState} patch={patch} />}
+      {showRichOverview && (
+        <SourceToSandboxMap env={env} envState={envState} patch={patch} stores={backedWorld?.stores} />
+      )}
 
+      {/* Tools and Hard rules cards were here — removed as duplicates of the
+          Contract tab, which owns the tool inventory and the hard-rule list. */}
       <Grid container spacing={2} alignItems="flex-start" sx={{ mb: 3 }}>
-        <Grid item xs={12} md={7}>
-          <ToolsCard env={env} agentConnected={agentConnected} />
-        </Grid>
-        <Grid item xs={12} md={5}>
-          <HardRulesCard env={env} />
-        </Grid>
         <Grid item xs={12} md={7}>
           {/* Prefer the real §6 fields (contract.real_use_cases / amendments)
               when the detail endpoint has authored them; fall back to the
@@ -134,18 +142,22 @@ export default function OverviewPanel({ env, envState, patch, onGo, agentConnect
         </Grid>
         <Grid item xs={12} md={5}>
           {!buildMode && (
-            <AmendmentsCard amendments={env.amendments ?? contract.amendments} />
+            <AmendmentsCard
+              amendments={backedWorld ? backedWorld.amendments : (env.amendments ?? contract.amendments)}
+            />
           )}
         </Grid>
       </Grid>
 
+      {/* The Seeded-data card was removed — the stores now live only in the
+          "How the world was built" map above (real §6 world.stores). "What it
+          depends on" stays, driven by real §6 contract.dependencies. */}
       <GroupHeading>{OVERVIEW_COPY.world}</GroupHeading>
       <Grid container spacing={2} alignItems="flex-start" sx={{ mb: 3 }}>
         <Grid item xs={12} md={7}>
-          <SeededDataCard env={env} />
-        </Grid>
-        <Grid item xs={12} md={5}>
-          <DependsOnCard dependsOn={contract.dependsOn} />
+          <DependsOnCard
+            dependsOn={backedWorld ? dependsFromContract(backedWorld.dependencies) : contract.dependsOn}
+          />
         </Grid>
       </Grid>
 
@@ -170,4 +182,11 @@ OverviewPanel.propTypes = {
   // Real §6 summary counts for a backed env (from EnvironmentWorkspace); the
   // client-store fallback in StateSummary covers non-backed envs.
   counts: PropTypes.object,
+  // Real §6 world content for a backed env: { stores, amendments, dependencies }.
+  // Undefined for a non-backed env (keeps the client/fixture source).
+  backedWorld: PropTypes.shape({
+    stores: PropTypes.array,
+    amendments: PropTypes.array,
+    dependencies: PropTypes.array,
+  }),
 };

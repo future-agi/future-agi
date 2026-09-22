@@ -38,6 +38,7 @@ export default function WorkspacePanels({
   gapsByTab,
   counts,
   overviewCounts,
+  overviewWorld,
   executionOutlet,
 }) {
   const navigate = useNavigate();
@@ -100,6 +101,7 @@ export default function WorkspacePanels({
             agentConnected={!!envState?.agent}
             locked={locked}
             counts={overviewCounts}
+            backedWorld={overviewWorld}
             onFork={onFork}
             buildMode={buildMode}
           />
@@ -174,5 +176,7 @@ WorkspacePanels.propTypes = {
   }),
   // Real §6 counts for the Overview summary tiles on a backed env.
   overviewCounts: PropTypes.object,
+  // Real §6 world content (stores/amendments/dependencies) for the Overview.
+  overviewWorld: PropTypes.object,
   executionOutlet: PropTypes.node,
 };

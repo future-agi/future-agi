@@ -256,6 +256,17 @@ export default function EnvironmentWorkspace() {
           hardRules: backedDetail.contract?.hard_constraints?.length,
         }
       : undefined;
+  // Real §6 world content for the Overview (stores/amendments/dependencies),
+  // so those cards render live data and an honest empty state instead of the
+  // fixture. Undefined for a non-backed env.
+  const overviewWorld =
+    backed && backedDetail
+      ? {
+          stores: backedDetail.world?.stores ?? [],
+          amendments: backedDetail.contract?.amendments ?? [],
+          dependencies: backedDetail.contract?.dependencies ?? [],
+        }
+      : undefined;
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
@@ -336,6 +347,7 @@ export default function EnvironmentWorkspace() {
             gapsByTab={gapsByTab(env, badgeEnvState)}
             counts={counts(badgeEnvState)}
             overviewCounts={overviewCounts}
+            overviewWorld={overviewWorld}
             executionOutlet={executionMatch ? <Outlet context={{ env, envState }} /> : undefined}
           />
         </Box>

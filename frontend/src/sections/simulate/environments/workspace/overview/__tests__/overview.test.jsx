@@ -42,27 +42,10 @@ describe("OverviewPanel", () => {
     expect(screen.getByText("LiveKit")).toBeInTheDocument();
   });
 
-  it("renders the tools list with monospace names and an arguments column", () => {
-    renderPanel();
-
-    // the tool name also appears in the capability graph; the description and
-    // the arguments column are unique to the Tools card.
-    expect(screen.getAllByText("verify_identity").length).toBeGreaterThan(0);
-    expect(screen.getByText("Match a caller to an account before touching it.")).toBeInTheDocument();
-    expect(screen.getByText("phone, postcode")).toBeInTheDocument();
-    expect(screen.getByText("no arguments")).toBeInTheDocument();
-  });
-
-  it("shows 'No tools yet' when the agent is not connected", () => {
-    renderPanel({ agentConnected: false });
-
-    expect(screen.getByText("No tools yet")).toBeInTheDocument();
-    // the tool inventory row (its description) is gone, even though the graph
-    // still names the tools.
-    expect(
-      screen.queryByText("Match a caller to an account before touching it.")
-    ).not.toBeInTheDocument();
-  });
+  // The Tools and Hard-rules cards were removed from the Overview panel as
+  // duplicates of the Contract tab, so their panel-level tests went with them.
+  // ToolsCard/HardRulesCard are still exercised where they render (the direct
+  // HardRulesCard test below; ToolsCard on the Contract tab).
 
   it("renders each hard rule with its provenance origin chip", () => {
     // Scoped to the card: SourceToSandboxMap re-lists the same rules on the
@@ -76,14 +59,30 @@ describe("OverviewPanel", () => {
     expect(screen.getByText("PROSE")).toBeInTheDocument();
   });
 
-  it("lists the seeded tables with their row counts", () => {
-    renderPanel();
+  it("renders real §6 world content for a backed env: empty states + real deps", () => {
+    renderPanel({
+      backedWorld: {
+        stores: [],
+        amendments: [],
+        dependencies: [
+          { name: "postgres", kind: "datastore", what: "Stores rider rows", used_by: ["book_ride"] },
+        ],
+      },
+    });
 
-    expect(screen.getByText("customers")).toBeInTheDocument();
-    expect(screen.getByText("240")).toBeInTheDocument();
-    expect(screen.getByText("orders")).toBeInTheDocument();
-    expect(screen.getByText("610")).toBeInTheDocument();
+    // Empty §6 arrays render honest empty states, not fixture rows.
+    expect(screen.getByText(/No amendments/)).toBeInTheDocument();
+    expect(screen.getByText(/No stores seeded/)).toBeInTheDocument();
+    // "What it depends on" populates from real contract.dependencies.
+    expect(screen.getByText("postgres")).toBeInTheDocument();
+    expect(screen.getByText("Stores rider rows")).toBeInTheDocument();
+    // Actors group is gone.
+    expect(screen.queryByText("Actors")).toBeNull();
   });
+
+  // The Seeded-data card was removed from Overview; stores now live only in the
+  // source→sandbox map (covered by the SourceToSandboxMap suite in
+  // overviewExtras). Its panel-level test went with it.
 
   // The "Manage versions" agent card + its version drawer are commented out
   // (picked up later), so their tests — attach-agent disabled, open the drawer,

@@ -29,9 +29,11 @@ export const OVERVIEW_COPY = {
   useCasesSubtitle: "What it is actually for",
   amendmentsTitle: "Amendments",
   amendmentsSubtitle: "Changed after reading, each with its reason",
+  amendmentsEmpty: "No amendments — nothing was changed after reading.",
   seededTitle: "Seeded data",
   dependsTitle: "What it depends on",
   dependsSubtitle: "Built and torn down with the environment",
+  dependsEmpty: "No dependencies recorded for this environment.",
   seedBlurb: (rows) =>
     `${rows.toLocaleString()} rows that fill this environment before your agent arrives — the world it actually works in. Rebuilt for every task, so nothing carries over.`,
   usedBy: (name) => `used by ${name}`,

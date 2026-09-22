@@ -1,4 +1,3 @@
-import { getSurface } from "src/api/simulate-environments/_fixtures/surfaces";
 import { ORIGIN_ID } from "../../buildEnvironment/provenance.constants";
 import { ruleRowsFor } from "./overview.constants";
 
@@ -20,9 +19,8 @@ export const MAP_COPY = {
   },
   toolsRight: (n, toAnswer) => `${n} mapped${toAnswer ? ` · ${toAnswer} to answer` : ""}`,
   rulesRight: (n) => `${n} mapped`,
-  storesRight: (n) => `${n} mapped · 1 derived`,
-  actorsRight: (mapped, derived) => `${mapped} mapped · ${derived} derived`,
-  derivedStore: "appointments (empty)",
+  storesRight: (n) => `${n} mapped`,
+  storesEmpty: "No stores seeded for this environment.",
   resolve: {
     question: (name) => `Does ${name} change data?`,
     why: "Called from the agent's code, unnamed in the prompt — we can't tell from static analysis alone.",
@@ -110,14 +108,19 @@ export const storeMapRows = (env) => {
   }));
 };
 
-// The actors the world stands up: some mapped from source, some derived.
-export const actorMapRows = (env) => {
-  const tools = env?.tools || [];
-  const surface = getSurface(env?.surface);
-  return [
-    { key: "transfer", name: "transfer target", origin: ORIGIN_ID.PROMPT, target: "Supervisor persona", mapped: true },
-    { key: "external", name: tools[0]?.name || "external_service", origin: ORIGIN_ID.CALL_GRAPH, target: `${env?.domain || "Backend"} service`, mapped: true },
-    { key: "caller", name: null, origin: null, target: `Caller — ${surface?.blurb?.split(" ")[0] || "the user"}`, mapped: false },
-    { key: "clock", name: null, origin: null, target: "Clock", mapped: false },
-  ];
-};
+// Real §6 world.stores → the same map-row shape, flattened per table. Empty
+// stores yield no rows (the caller renders an empty state). The Actors group and
+// its hardcoded stub were removed — nothing backed them (world.personas wasn't
+// even read).
+export const storeRowsFromStores = (stores = []) =>
+  (Array.isArray(stores) ? stores : []).flatMap((store) =>
+    (store?.tables || []).map((t) => {
+      const rows = Number(t?.rows) || 0;
+      return {
+        key: `${store?.capability || store?.engine || "store"}:${t?.name}`,
+        name: `${t?.name} · ${rows.toLocaleString()}`,
+        origin: ORIGIN_ID.FIXTURE,
+        target: `${t?.name} (${rows.toLocaleString()})`,
+      };
+    }),
+  );
