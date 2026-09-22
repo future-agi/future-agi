@@ -367,7 +367,7 @@ def test_infrastructure_receipt_does_not_bill_measured_call(
 
 @pytest.mark.django_db
 @pytest.mark.requires_ee
-def test_completed_record_is_not_reclassified_by_final_receipt(
+def test_infrastructure_receipt_does_not_bill_completed_record(
     metered_attempt, django_capture_on_commit_callbacks
 ):
     capability, events = metered_attempt
@@ -379,6 +379,37 @@ def test_completed_record_is_not_reclassified_by_final_receipt(
             _report([_record("voice_call", amount=0.25, outcome="completed")]),
         )
     _receipt(attempt, failure_domain="infrastructure")
+
+    harness_usage.replay_harness_usage(attempt)
+
+    assert events == []
+    attempt.job.refresh_from_db()
+    assert harness_usage.harness_consumption(attempt.job)["voice_sim_minutes"] == 0
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+def test_simulator_failure_remains_billable_as_measured_usage(
+    metered_attempt, django_capture_on_commit_callbacks
+):
+    capability, events = metered_attempt
+    attempt = capability.attempt
+    _provision(attempt)
+    with django_capture_on_commit_callbacks(execute=True):
+        harness_usage.record_harness_usage(
+            attempt,
+            _report(
+                [
+                    _record(
+                        "voice_call",
+                        amount=0.25,
+                        outcome="failed",
+                        failure_domain="simulator",
+                    )
+                ]
+            ),
+        )
+    _receipt(attempt, failure_domain="simulator")
 
     harness_usage.replay_harness_usage(attempt)
 

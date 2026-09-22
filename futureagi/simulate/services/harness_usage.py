@@ -175,9 +175,11 @@ def _billable_records(
             receipt_body = historical["body"]
         if receipt_status == "skipped" or not receipt_body.get("call"):
             continue
+        record_failure_domain = item.get("failure_domain")
+        receipt_failure_domain = (receipt_body.get("failure") or {}).get("domain")
         if (
-            item.get("outcome", "completed") == "failed"
-            and item.get("failure_domain") in _NON_BILLABLE_FAILURE_DOMAINS
+            record_failure_domain in _NON_BILLABLE_FAILURE_DOMAINS
+            or receipt_failure_domain in _NON_BILLABLE_FAILURE_DOMAINS
         ):
             continue
         # Hosted simulator usage is always platform-funded.  Keep the guest field in properties
