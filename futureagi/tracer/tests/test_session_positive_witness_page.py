@@ -545,7 +545,8 @@ def test_string_page_policy_and_finite_single_replay(cls, org, filters, preferre
     assert not preferred or subject.supports_candidate_cursor_page()  # Policy is not capability.
     assert subject.recommended_filter_cursor_seed_batch_size() is None
     assert subject.recommended_filter_classify_batch_size() == 50
-    assert subject.recommended_filter_max_slice_width() is None
+    # An exhausted slice may double until it covers the whole request window.
+    assert subject.recommended_filter_max_slice_width() == timedelta(days=7)
     sql, params = subject.build_filter_match_query_from_seed_rows([{"session_id": USER}])
     combined = preferred and not org
     assert ("candidate_root_identities AS" not in sql) is combined
@@ -571,7 +572,9 @@ def test_string_page_policy_and_finite_single_replay(cls, org, filters, preferre
 def test_string_page_initial_width_preserves_minimum_and_maximum(minutes, expected):
     subject = builder(leaf("company", "alpha", "text"), days=minutes / 1440)
     assert subject.recommended_filter_initial_slice_width() == (timedelta(minutes=expected) if expected else None)
-    assert subject.recommended_filter_max_slice_width() is None
+    assert subject.recommended_filter_max_slice_width() == (
+        timedelta(minutes=minutes) if minutes >= 5 else None
+    )
 
 @pytest.mark.parametrize('old_parent,new_parent', [(None, 'root'), ('root', None), ('root', '')],
                          ids=['root-to-child', 'child-to-null-root', 'child-to-empty-root'])

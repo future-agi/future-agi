@@ -284,6 +284,11 @@ def _read_session_filter_page(
         if cursor_state is not None
         else None,
         bounded_continuation=cursor_enabled,
+        # A resumed cursor otherwise restarts the widening schedule at the
+        # shared five-minute default and re-climbs it on every request, which
+        # is what makes the depth of a filtered walk move between runs.
+        carry_continuation_slice_width=cursor_enabled,
+        retry_wide_read_budget=builder.should_retry_filter_wide_read_budget(),
     )
 
 
