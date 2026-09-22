@@ -229,10 +229,9 @@ class TestReseedEvalClusteringHook:
 
     def test_dispatches_on_template_mapped_choice_score(self):
         template = EvalTemplate(
-            config={
-                "output": "choices",
-                "choice_scores": {"Good": 1.0, "Bad": 0.0},
-            }
+            config={"output": "choices"},
+            choice_scores={"Good": 1.0, "Bad": 0.0},
+            pass_threshold=0.5,
         )
         config = CustomEvalConfig(eval_template=template)
         entry = EvalLogger(
