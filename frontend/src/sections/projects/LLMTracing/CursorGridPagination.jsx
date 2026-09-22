@@ -3,7 +3,6 @@ import {
   Box,
   CircularProgress,
   MenuItem,
-  Pagination,
   PaginationItem,
   Select,
   Stack,
@@ -11,16 +10,64 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { OBSERVE_LIST_PAGE_SIZE_OPTIONS } from "src/config/runtime_limits";
+import { windowedPageNumbers } from "./listPagerState";
+
+// Rendered inside the Back/Next buttons. Defined at module scope, not inline in
+// `slots`, so React sees a stable component type and reuses the DOM node. An
+// inline arrow here is a new type on every render, which remounts this element
+// and — while an ancestor re-renders in a loop — destroys the click target
+// between pointerdown and pointerup, so no click event is ever produced.
+// `pointerEvents: "none"` keeps the button itself the event target, matching
+// how MUI treats the ripple span.
+const BackLabel = () => (
+  <Box
+    display="flex"
+    alignItems="center"
+    gap={0.5}
+    sx={{ pointerEvents: "none" }}
+  >
+    <Iconify icon="octicon:chevron-left-24" width={18} />
+    Back
+  </Box>
+);
+
+const NextLabel = () => (
+  <Box
+    display="flex"
+    alignItems="center"
+    gap={0.5}
+    sx={{ pointerEvents: "none" }}
+  >
+    Next
+    <Iconify icon="octicon:chevron-right-24" width={18} />
+  </Box>
+);
 
 export default function CursorGridPagination({
   disabled = false,
+  // "Is the end of the list still unknown?" — distinct from `hasMore`, which
+  // answers "can you move forward from here". Consumers holding a pagination
+  // frontier pass this; those that do not omit it and keep the old behaviour.
+  endUnknown,
+  // The deepest page this pagination generation has ever reached (the
+  // monotone "frontier"), pre-gated by the caller on `canReachPage` so it is
+  // 0 (no boundary) whenever the route back to that page no longer exists.
+  // Drawn as a right-hand boundary mirroring page 1's left-hand one.
+  furthestPage = 0,
+  hasMore = false,
   loading = false,
   onPageChange,
   onPageSizeChange,
   page,
-  pageCount,
   pageSize,
+  provenNext = false,
 }) {
+  const showTrailingEllipsis = endUnknown === undefined ? hasMore : endUnknown;
+  const { pages: pageNumbers, boundaryPage } = windowedPageNumbers({
+    page,
+    provenNext,
+    furthestPage,
+  });
   return (
     <Stack
       direction="row"
@@ -74,45 +121,111 @@ export default function CursorGridPagination({
         ) : null}
       </Box>
 
-      <Pagination
-        count={pageCount}
-        variant="outlined"
-        shape="rounded"
-        page={Math.min(page, pageCount)}
-        color="primary"
-        disabled={disabled || loading}
-        onChange={(_event, value) => onPageChange(value)}
-        renderItem={(item) => (
-          <PaginationItem
-            {...item}
-            sx={{ borderRadius: "4px", bgcolor: "background.paper" }}
-            slots={{
-              previous: () => (
-                <Box display="flex" alignItems="center" gap={0.5}>
-                  <Iconify icon="octicon:chevron-left-24" width={18} />
-                  Back
-                </Box>
-              ),
-              next: () => (
-                <Box display="flex" alignItems="center" gap={0.5}>
-                  Next
-                  <Iconify icon="octicon:chevron-right-24" width={18} />
-                </Box>
-              ),
-            }}
-          />
-        )}
-      />
+      {/* Rendered from PaginationItem rather than plain buttons so the control
+          keeps the metrics it had when it was a MUI <Pagination>: 32px items,
+          3px gutters, 4px radius, and the Back/Next text labels. Only the item
+          *set* is ours — a window plus ellipses, capped at five numbers once
+          the furthest-visited-page boundary is drawn — because a cursor list
+          has no total to enumerate. */}
+      <Stack direction="row" alignItems="center" sx={{ userSelect: "none" }}>
+        <PaginationItem
+          type="previous"
+          aria-label="Previous page"
+          variant="outlined"
+          shape="rounded"
+          color="primary"
+          disabled={disabled || loading || page <= 1}
+          onClick={() => onPageChange(page - 1)}
+          sx={{ borderRadius: "4px", bgcolor: "background.paper" }}
+          slots={{ previous: BackLabel }}
+        />
+
+        {pageNumbers.map((pageNumber, index, all) => (
+          <Box key={pageNumber} display="contents">
+            {index > 0 && pageNumber > all[index - 1] + 1 ? (
+              <Box
+                component="span"
+                data-testid={
+                  pageNumber === boundaryPage
+                    ? "pager-boundary-ellipsis"
+                    : "pager-leading-ellipsis"
+                }
+                display="contents"
+              >
+                <PaginationItem
+                  type="start-ellipsis"
+                  disabled
+                  variant="outlined"
+                  shape="rounded"
+                  sx={{
+                    borderRadius: "4px",
+                    bgcolor: "background.paper",
+                    userSelect: "none",
+                  }}
+                />
+              </Box>
+            ) : null}
+            <PaginationItem
+              type="page"
+              page={pageNumber}
+              aria-label={`Go to page ${pageNumber}`}
+              aria-current={pageNumber === page ? "page" : undefined}
+              selected={pageNumber === page}
+              variant="outlined"
+              shape="rounded"
+              color="primary"
+              disabled={disabled || loading}
+              onClick={() => onPageChange(pageNumber)}
+              sx={{ borderRadius: "4px", bgcolor: "background.paper" }}
+            />
+          </Box>
+        ))}
+
+        {showTrailingEllipsis ? (
+          <Box
+            component="span"
+            data-testid="pager-trailing-ellipsis"
+            display="contents"
+          >
+            <PaginationItem
+              type="end-ellipsis"
+              disabled
+              variant="outlined"
+              shape="rounded"
+              sx={{
+                borderRadius: "4px",
+                bgcolor: "background.paper",
+                userSelect: "none",
+              }}
+            />
+          </Box>
+        ) : null}
+
+        <PaginationItem
+          type="next"
+          aria-label="Next page"
+          variant="outlined"
+          shape="rounded"
+          color="primary"
+          disabled={disabled || loading || !hasMore}
+          onClick={() => onPageChange(page + 1)}
+          sx={{ borderRadius: "4px", bgcolor: "background.paper" }}
+          slots={{ next: NextLabel }}
+        />
+      </Stack>
     </Stack>
   );
 }
 
 CursorGridPagination.propTypes = {
   disabled: PropTypes.bool,
+  endUnknown: PropTypes.bool,
+  furthestPage: PropTypes.number,
+  hasMore: PropTypes.bool,
   loading: PropTypes.bool,
   onPageChange: PropTypes.func.isRequired,
   onPageSizeChange: PropTypes.func.isRequired,
   page: PropTypes.number.isRequired,
-  pageCount: PropTypes.number.isRequired,
   pageSize: PropTypes.number.isRequired,
+  provenNext: PropTypes.bool,
 };

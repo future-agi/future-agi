@@ -6,6 +6,12 @@ import {
 } from "src/config/runtime_limits";
 import { withLiveGridApi } from "src/utils/gridApi";
 import { dispatchObservePageChanged } from "../observeEvents";
+import {
+  EMPTY_PAGER_FRONTIER,
+  getListPagerState,
+  hasBufferedOverflowPage,
+  pagerFlagsForPage,
+} from "./listPagerState";
 
 const requestRenderFrame = (callback) => {
   if (
@@ -88,6 +94,13 @@ export default function useCursorGridPagination(gridRef, gridElementRef) {
   const [pageSize, setPageSize] = useState(OBSERVE_LIST_DEFAULT_PAGE_SIZE);
   const [pageCount, setPageCount] = useState(1);
   const [isPageLoading, setIsPageLoading] = useState(false);
+  // The deepest page published in this pagination generation and the flags the
+  // datasource reported there. Pager state has to be a function of the page
+  // being *shown*, not of whichever page happened to load last: returning to
+  // an already-cached page never re-invokes the datasource, so a
+  // last-write-wins flag from the terminal page would stay false and kill
+  // forward navigation until the next full refresh.
+  const [frontier, setFrontier] = useState(EMPTY_PAGER_FRONTIER);
   const discoveredRowCountRef = useRef(0);
   const pageLoadRequestRef = useRef(0);
   const activePageLoadRequestRef = useRef(null);
@@ -225,6 +238,7 @@ export default function useCursorGridPagination(gridRef, gridElementRef) {
       discoveredRowCountRef.current = 0;
       setPage(1);
       setPageCount(1);
+      setFrontier(EMPTY_PAGER_FRONTIER);
       if (moveGrid) {
         withLiveGridApi(gridRef?.current?.api, (api) =>
           api.paginationGoToFirstPage?.(),
@@ -234,7 +248,7 @@ export default function useCursorGridPagination(gridRef, gridElementRef) {
     [gridRef, stopRenderCheck],
   );
 
-  const publishPage = useCallback(({ request, rows, isLastPage }) => {
+  const publishPage = useCallback(({ request, rows, isLastPage, metadata }) => {
     const requestPageSize = request.endRow - request.startRow;
     const terminalRowCount = request.startRow + rows.length;
     const nextPageSentinelRowCount = request.endRow + 1;
@@ -250,8 +264,51 @@ export default function useCursorGridPagination(gridRef, gridElementRef) {
     }
 
     const discoveredRowCount = discoveredRowCountRef.current;
-    setPage(publishedPage);
+    // pageCount stays the navigation bound for goToPage. It is no longer
+    // rendered; CursorGridPagination draws the window instead.
     setPageCount(Math.max(1, Math.ceil(discoveredRowCount / requestPageSize)));
+
+    // AG Grid can load a server-side block in the background while an explicit
+    // navigation is still in flight. Skip only when a transition is active
+    // and targets a different page. This is *not* the same guard as
+    // beginPageLoad(), which also rejects when no transition is active at
+    // all — a background block published while nothing is navigating still
+    // runs setPage() and advances the frontier here. That matches the
+    // pre-fix behavior, so it is intentional: without an active transition
+    // there is no "another page" for this one to lose to.
+    const transition = pageTransitionRef.current;
+    if (transition && transition.page !== publishedPage) {
+      return discoveredRowCount;
+    }
+
+    setPage(publishedPage);
+
+    const pagerState = getListPagerState({
+      metadata,
+      startRow: request.startRow,
+      rowCount: rows.length,
+    });
+    const bufferedOverflowPage = hasBufferedOverflowPage(isLastPage, metadata);
+    // The frontier is monotone against *non-terminal* publishes: returning to
+    // a cached page never re-invokes the datasource, so an older page's flags
+    // must not clobber the deepest known state. A terminal publish is the one
+    // exception — it is fresh proof the list ends at this page, so any deeper
+    // page is disproven and the frontier must come down with pageCount, or
+    // Next and the boundary button keep pointing at pages goToPage refuses.
+    setFrontier((previous) =>
+      publishedPage < previous.page && !isLastPage
+        ? previous
+        : {
+            page: publishedPage,
+            hasMore: isLastPage
+              ? false
+              : pagerState.hasMore || bufferedOverflowPage,
+            provenNext: isLastPage
+              ? false
+              : pagerState.provenNext || bufferedOverflowPage,
+          },
+    );
+
     return discoveredRowCount;
   }, []);
 
@@ -260,7 +317,11 @@ export default function useCursorGridPagination(gridRef, gridElementRef) {
       if (
         !Number.isSafeInteger(nextPage) ||
         nextPage < 1 ||
-        nextPage > pageCount
+        nextPage > pageCount ||
+        // Clicking the page already on screen starts a transition whose render
+        // check can never see the rows change, leaving "Loading page…" up
+        // until the transition times out.
+        nextPage === page
       ) {
         return;
       }
@@ -295,7 +356,7 @@ export default function useCursorGridPagination(gridRef, gridElementRef) {
         setIsPageLoading(false);
       }
     },
-    [gridElementRef, gridRef, pageCount, scheduleRenderCheck],
+    [gridElementRef, gridRef, page, pageCount, scheduleRenderCheck],
   );
 
   useEffect(
@@ -322,30 +383,44 @@ export default function useCursorGridPagination(gridRef, gridElementRef) {
     [pageSize, resetPagination],
   );
 
-  return useMemo(
-    () => ({
+  return useMemo(() => {
+    const { hasMore, provenNext } = pagerFlagsForPage(page, frontier);
+    // `hasMore` answers "can you move forward from here", which is what Next
+    // needs. The trailing ellipsis asks a different question — "is the end of
+    // the list still unknown" — and only the frontier can answer it. Deriving
+    // the ellipsis from `hasMore` makes it reappear on page 1 after the user
+    // has already walked to the last page, which reads as new pages arriving.
+    const endUnknown = frontier.page > 0 && frontier.hasMore === true;
+    return {
       beginPageLoad,
+      endUnknown,
+      // The deepest page this generation has ever published — callers gate
+      // this on `listCursorPagination`'s `canReachPage` before drawing it as
+      // the pager's right-hand boundary; this hook only tracks it.
+      frontierPage: frontier.page,
+      hasMore,
       page,
       pageCount,
       pageSize,
+      provenNext,
       changePageSize,
       finishPageLoad,
       goToPage,
       isPageLoading,
       publishPage,
       resetPagination,
-    }),
-    [
-      beginPageLoad,
-      changePageSize,
-      finishPageLoad,
-      goToPage,
-      isPageLoading,
-      page,
-      pageCount,
-      pageSize,
-      publishPage,
-      resetPagination,
-    ],
-  );
+    };
+  }, [
+    beginPageLoad,
+    changePageSize,
+    finishPageLoad,
+    frontier,
+    goToPage,
+    isPageLoading,
+    page,
+    pageCount,
+    pageSize,
+    publishPage,
+    resetPagination,
+  ]);
 }
