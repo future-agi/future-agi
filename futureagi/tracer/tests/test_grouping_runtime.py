@@ -33,8 +33,9 @@ from tracer.queries.grouping import (
 from tracer.services.grouping import context
 from tracer.services.grouping.accounting import reserve_call, settle_call
 from tracer.services.grouping.control import (
-    GroupingConflict,
+    MAX_CHECKPOINT_BYTES,
     GroupingControlError,
+    GroupingConflict,
     checkpoint_attempt,
     claim_feature_jobs,
     claim_grouping_work,
@@ -196,6 +197,32 @@ def test_reclaim_does_not_reopen_completed_cohort_peer(observe_project, monkeypa
     ] == [str(first_report.id)]
     completed.refresh_from_db()
     assert completed.state == "completed"
+
+
+@override_settings(
+    ERROR_FEED_GROUPING_ENABLED=True,
+    ERROR_FEED_GROUPING_ALL_PROJECTS=True,
+    ERROR_FEED_GROUPING_DEBOUNCE_SECONDS=0,
+    ERROR_FEED_GROUPING_PROJECT_BUDGET_USD="10",
+    ERROR_FEED_GROUPING_WORK_BUDGET_USD="10",
+    ERROR_FEED_GROUPING_TENANT_BUDGET_USD="10",
+)
+def test_checkpoint_bound_matches_grouping_transport(observe_project, monkeypatch):
+    _, claim = _claimed_runtime(observe_project, monkeypatch)
+    common = {
+        "attempt_id": uuid.UUID(claim["attempt_id"]),
+        "lease_token": claim["lease_token"],
+        "expected_revision": 0,
+    }
+    accepted = checkpoint_attempt(
+        **common, checkpoint={"files": {"checkpoint.json": "x" * (6 * 1024 * 1024)}}
+    )
+    assert accepted["checkpoint_revision"] == 1
+    with pytest.raises(GroupingControlError, match="bounded object"):
+        checkpoint_attempt(
+            **{**common, "expected_revision": 1},
+            checkpoint={"files": {"checkpoint.json": "x" * MAX_CHECKPOINT_BYTES}},
+        )
 
 
 @override_settings(

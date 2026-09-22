@@ -33,7 +33,10 @@ from tracer.queries.grouping import (
 FEATURE_LEASE_SECONDS = 120
 GROUPING_LEASE_SECONDS = 180
 MAX_ATTEMPTS = 5
-MAX_CHECKPOINT_BYTES = 2 * 1024 * 1024
+# The grouping control client permits 8 MiB payloads. Keep 1 MiB for the
+# request envelope while allowing lossless multi-cohort receipts and Registry
+# history to remain durable across worker restarts.
+MAX_CHECKPOINT_BYTES = 7 * 1024 * 1024
 
 
 class GroupingControlError(ValueError):
