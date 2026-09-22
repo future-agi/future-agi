@@ -1,7 +1,8 @@
 import { useOutletContext, useParams } from "react-router-dom";
 import RunDetail from "./detail/RunDetail";
 
-// The run/execution detail mounted inside the workspace Runs tab. The
+// The run/execution detail. On the execution route the workspace early-returns
+// its Outlet, so this renders as its own full page (no workspace tab rail). The
 // environment (and its client-side state) are resolved once by
 // EnvironmentWorkspace and handed down through the Outlet context, so this
 // route element only reads the run identity from the URL and renders the

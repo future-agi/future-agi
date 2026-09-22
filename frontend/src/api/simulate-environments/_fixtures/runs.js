@@ -1,10 +1,12 @@
 // MOCK_RUNS — a QA-only fixture for the Runs tab, surfaced behind the
-// `?mockRuns=1` switch so the populated run-history state can be exercised
-// without a real completed harness job. Real runs come from the executions API
-// (useEnvironmentRuns / executionToRun); this matches that same run shape
-// (id, label, status, startedAt, finishedAt, total, passed, failed,
-// agentVersion) so RunHistoryRow renders it identically. `executionId` is the
-// id a row click routes into the reused product execution detail.
+// `?mockRuns=1` switch so the populated run-history + summary states can be
+// exercised without a real completed harness job. Real runs come from the
+// executions API (useEnvironmentRuns / executionToRun); this matches that same
+// run shape (id, label, status, startedAt, finishedAt, total, passed, failed,
+// agentVersion, durationS) so the summary renders it identically to a real run.
+// `executionId` is the id a row click routes into the reused product execution
+// detail. `scores` is the per-eval {key: 0–100} map the summary graph + eval
+// columns read — inline here (a real run derives it from its kpis instead).
 //
 // Fixed ISO timestamps on purpose — nothing else in these fixtures is
 // clock-dependent, so a snapshot stays stable.
@@ -13,6 +15,7 @@ export const MOCK_RUNS = [
     id: "run-mock-3",
     executionId: "run-mock-3",
     label: "Run 3",
+    ordinal: 3,
     status: "running",
     startedAt: "2026-01-14T09:12:00.000Z",
     finishedAt: null,
@@ -20,11 +23,14 @@ export const MOCK_RUNS = [
     passed: 4,
     failed: 0,
     agentVersion: "v2",
+    durationS: 9.4,
+    scores: { task_success: 61, policy_adherence: 44 },
   },
   {
     id: "run-mock-2",
     executionId: "run-mock-2",
     label: "Run 2",
+    ordinal: 2,
     status: "passed",
     startedAt: "2026-01-13T16:40:00.000Z",
     finishedAt: "2026-01-13T16:42:10.000Z",
@@ -32,11 +38,14 @@ export const MOCK_RUNS = [
     passed: 11,
     failed: 1,
     agentVersion: "v2",
+    durationS: 11.9,
+    scores: { task_success: 58, policy_adherence: 39 },
   },
   {
     id: "run-mock-1",
     executionId: "run-mock-1",
     label: "Run 1",
+    ordinal: 1,
     status: "failed",
     startedAt: "2026-01-12T11:05:00.000Z",
     finishedAt: "2026-01-12T11:07:30.000Z",
@@ -44,5 +53,7 @@ export const MOCK_RUNS = [
     passed: 7,
     failed: 5,
     agentVersion: "v1",
+    durationS: 13.2,
+    scores: { task_success: 49, policy_adherence: 28 },
   },
 ];

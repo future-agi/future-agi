@@ -218,17 +218,36 @@ describe("EnvironmentWorkspace route shell", () => {
     const runButton = await screen.findByRole("button", { name: /Run simulation/ });
     await waitFor(() => expect(runButton).toBeEnabled());
 
-    // The run history comes from the mocked executions API.
-    const row = await screen.findByRole("button", { name: /Run 1/ });
+    // The populated Runs tab is the summary; its table row for Run 1 opens the
+    // run detail on click.
+    const row = await screen.findByText(/Run 1 · agent v1/);
     await user.click(row);
 
-    // The row opens the designer-style RunDetail in place of the Runs body:
-    // its identity header names the ordinal + agent version and the run status.
+    // The row opens the designer-style RunDetail as its own full page: its
+    // identity header names the ordinal + agent version and the run status.
     expect(await screen.findByText(/Run 1 · agent v1/)).toBeInTheDocument();
     expect(screen.getByText("Passed")).toBeInTheDocument();
     expect(screen.getByTestId("location")).toHaveTextContent(
       "/dashboard/simulate/environments/job-done/runs/rt1/ex1",
     );
+  });
+
+  it("renders the run detail as its own full page, without the workspace chrome", async () => {
+    getHarnessJob.mockResolvedValue(COMPLETED_JOB);
+
+    // Deep-link straight to a run: the run detail is the whole page, not a body
+    // swapped inside the environment workspace.
+    renderWorkspace("/dashboard/simulate/environments/job-done/runs/rt1/ex1");
+
+    // The run detail is shown (its identity header names the ordinal + agent).
+    expect(await screen.findByText(/Run 1 · agent v1/)).toBeInTheDocument();
+
+    // ...and the environment-workspace chrome around it is gone: no tab rail and
+    // no header "Run simulation" button. The run page owns the viewport.
+    expect(screen.queryByRole("tab", { name: /Contract/ })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Run simulation/ }),
+    ).not.toBeInTheDocument();
   });
 
   it("hosts the build experience in place for a still-building job", async () => {

@@ -116,6 +116,16 @@ describe("executionToRun", () => {
     const run = executionToRun({ id: "ex-5", status: "Completed", calls_attempted: 8, success_rate: 100 });
     expect(run.total).toBe(8);
   });
+
+  it("carries the run-level duration (seconds) the summary table shows", () => {
+    const run = executionToRun({ id: "ex-6", status: "Completed", total_chats: 4, success_rate: 100, duration: 11.9 });
+    expect(run.durationS).toBe(11.9);
+  });
+
+  it("leaves durationS null when the execution row has no duration", () => {
+    const run = executionToRun({ id: "ex-7", status: "Completed", total_chats: 4, success_rate: 100 });
+    expect(run.durationS).toBeNull();
+  });
 });
 
 describe("useEnvironmentRuns", () => {

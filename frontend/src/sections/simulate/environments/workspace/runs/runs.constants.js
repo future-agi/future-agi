@@ -43,9 +43,13 @@ export const RUN_COLORS = [
   BUILD_TONES.indigo, // #4F46E5
 ];
 
-// The identity colour for a run at a given 1-based ordinal.
-export const runColor = (ordinal) =>
-  RUN_COLORS[(Math.max(1, ordinal) - 1) % RUN_COLORS.length];
+// The identity colour for a run at a given 1-based ordinal. A missing or
+// non-finite ordinal falls back to the first colour, so a caller never gets
+// `undefined` (which would crash `alpha()` when fed to an sx colour).
+export const runColor = (ordinal) => {
+  const n = Number.isFinite(ordinal) ? ordinal : 1;
+  return RUN_COLORS[(Math.max(1, n) - 1) % RUN_COLORS.length];
+};
 
 // Pre-flight estimate model. Ported verbatim from the designer's RunsPanel:
 // duration grows with the scenario count (floored so a tiny suite still reads
