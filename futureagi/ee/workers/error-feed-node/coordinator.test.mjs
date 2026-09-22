@@ -76,6 +76,23 @@ test('coordinator never claims beyond available slots and drains on shutdown', a
   } finally { await rm(spool, {recursive: true, force: true}); }
 });
 
+test('high concurrency remains bounded by the backend claim batch contract', async () => {
+  const spool = await mkdtemp(join(tmpdir(), 'omega-spool-test-'));
+  const stop = new AbortController();
+  try {
+    await runCoordinator({spool, signal: stop.signal, workerId: 'test', engineVersion: 'test',
+      concurrency: 256, pollMs: 1, control: async (path, payload) => {
+        assert.equal(path, '/claims/');
+        assert.equal(payload.limit, 50);
+        stop.abort();
+        return {claims: []};
+      }, investigate: async () => {throw new Error('Unexpected investigation');}});
+    await assert.rejects(runCoordinator({spool, signal: AbortSignal.abort(), workerId: 'test',
+      engineVersion: 'test', concurrency: 513, control: async () => ({claims: []}),
+      investigate: async () => {throw new Error('Unexpected investigation');}}), /Invalid worker concurrency/);
+  } finally {await rm(spool, {recursive: true, force: true});}
+});
+
 test('terminally rejected saved report is quarantined without blocking later reports or claims', async () => {
   const spool = await mkdtemp(join(tmpdir(), 'omega-spool-test-'));
   const stop = new AbortController();

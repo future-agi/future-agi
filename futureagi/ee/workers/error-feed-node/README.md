@@ -76,7 +76,7 @@ Set these variables at runtime, never in the image:
 | `OMEGA_KAFKA_TLS` | `true` for TLS |
 | `OMEGA_KAFKA_USERNAME`, `OMEGA_KAFKA_PASSWORD_FILE` | Optional SCRAM-SHA-512 credentials |
 | `OMEGA_ENGINE_VERSION` | Must match the enabled project's `scan_version` |
-| `OMEGA_CONCURRENCY` | Active investigations per worker; default 4, maximum 50 |
+| `OMEGA_CONCURRENCY` | Active investigations per worker; default 4, maximum 512. Claims are fetched in batches of at most 50. |
 | `OMEGA_CLICKHOUSE_URL` | HTTP endpoint for the v2 spans table |
 | `OMEGA_CLICKHOUSE_DATABASE` | Database; default `default` |
 | `OMEGA_CLICKHOUSE_USERNAME`, `OMEGA_CLICKHOUSE_PASSWORD_FILE` | Dedicated SELECT-only account |

@@ -23,7 +23,7 @@ export async function runDaemon(env = process.env, signal) {
   const brokers = (env.OMEGA_KAFKA_BROKERS ?? '').split(',').map(item => item.trim());
   if (brokers.some(item => !item) || !env.OMEGA_ENGINE_VERSION || !env.OMEGA_REPORT_SPOOL) throw new Error('Kafka, engine version and mounted report spool are required');
   const concurrency = Number(env.OMEGA_CONCURRENCY ?? '4');
-  if (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 50) throw new Error('Invalid concurrency');
+  if (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 512) throw new Error('Invalid concurrency');
   const config = await gatewayConfig(env);
   const control = createControlClient({baseUrl: env.OMEGA_DJANGO_URL, token: await secret(env, 'OMEGA_INTERNAL_API_SECRET')});
   const clickhouse = {baseUrl: env.OMEGA_CLICKHOUSE_URL, database: env.OMEGA_CLICKHOUSE_DATABASE || 'default',
