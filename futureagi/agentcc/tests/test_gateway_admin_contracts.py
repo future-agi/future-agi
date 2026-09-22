@@ -3,6 +3,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+
 from agentcc.contracts.gateway_admin import (
     CreateKeyRequest,
     UpdateKeyRequest,
@@ -16,10 +20,59 @@ from agentcc.services.config_push import (
     _build_payload,
     push_all_org_configs,
 )
+from agentcc.views.gateway import _prepare_vertex_provider_config
 
 ORG_CONFIG_FIXTURE = (
     Path(__file__).resolve().parent / "fixtures/gateway_org_config.full.json"
 )
+
+
+def test_vertex_provider_paste_builds_trusted_endpoint_and_contract():
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    private_key = key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode()
+    raw = json.dumps(
+        {
+            "type": "service_account",
+            "project_id": "demo-project",
+            "client_email": "agent@demo-project.iam.gserviceaccount.com",
+            "private_key": private_key,
+            "token_uri": "https://oauth2.googleapis.com/token",
+        }
+    )
+    prepared = _prepare_vertex_provider_config(
+        {
+            "gcp_project": "demo-project",
+            "gcp_location": "us-central1",
+            "service_account_json": raw,
+            "base_url": "https://attacker.example",
+            "api_key": "should-not-be-used",
+            "models": ["gemini-3.7-flash"],
+        }
+    )
+    assert prepared["base_url"] == (
+        "https://us-central1-aiplatform.googleapis.com/v1beta1/"
+        "projects/demo-project/locations/us-central1"
+    )
+    assert prepared["api_format"] == "gemini"
+    assert "api_key" not in prepared
+    assert GatewayOrgConfig.model_validate(
+        {"providers": {"vertex": prepared}}
+    ).providers["vertex"].service_account_json
+
+    with pytest.raises(ValueError, match="service-account"):
+        _prepare_vertex_provider_config(
+            {
+                "gcp_project": "demo-project",
+                "gcp_location": "us-central1",
+                "service_account_json": raw.replace(
+                    "https://oauth2.googleapis.com/token", "https://attacker.example/token"
+                ),
+            }
+        )
 
 
 def test_shared_org_config_fixture_validates_against_generated_python_contract():
@@ -190,6 +243,36 @@ def test_assemble_providers_maps_legacy_aws_credentials_to_gateway_contract(
     assert providers["bedrock"]["weight"] == 2
     assert "access_key" not in providers["bedrock"]
     assert "ignored" not in providers["bedrock"]
+
+
+@patch("integrations.services.credentials.CredentialManager.decrypt")
+@patch(
+    "agentcc.models.provider_credential.AgentccProviderCredential.no_workspace_objects"
+)
+def test_assemble_providers_passes_encrypted_vertex_key_to_gateway_contract(
+    mock_manager, mock_decrypt
+):
+    mock_decrypt.return_value = {"service_account_json": '{"type":"service_account"}'}
+    mock_manager.filter.return_value = [
+        SimpleNamespace(
+            provider_name="vertex",
+            encrypted_credentials=b"encrypted",
+            extra_config={},
+            base_url=(
+                "https://us-central1-aiplatform.googleapis.com/v1beta1/"
+                "projects/demo-project/locations/us-central1"
+            ),
+            api_format="gemini",
+            models_list=["gemini-3.7-flash"],
+            default_timeout_seconds=60,
+            max_concurrent=10,
+            conn_pool_size=20,
+        )
+    ]
+
+    providers = _assemble_providers("org-123")
+    assert providers["vertex"]["service_account_json"] == '{"type":"service_account"}'
+    assert providers["vertex"]["models"] == ["gemini-3.7-flash"]
 
 
 @patch("integrations.services.credentials.CredentialManager.decrypt")

@@ -504,7 +504,15 @@ def execute_sandboxed_python(code: str, input_data: dict, timeout: int = DEFAULT
             text=True,
             timeout=timeout,
             preexec_fn=_set_resource_limits,
-            env={"PYTHONDONTWRITEBYTECODE": "1"},  # Minimal env — no PATH, no HOME
+            # Numeric libraries may otherwise start one thread per host CPU and
+            # exhaust the sandbox's RLIMIT_NPROC before user code can execute.
+            env={
+                "PYTHONDONTWRITEBYTECODE": "1",
+                "OPENBLAS_NUM_THREADS": "1",
+                "OMP_NUM_THREADS": "1",
+                "MKL_NUM_THREADS": "1",
+                "NUMEXPR_NUM_THREADS": "1",
+            },
             cwd="/tmp",
         )
 

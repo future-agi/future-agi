@@ -7510,6 +7510,21 @@ export const AgentccRequestLogsExportResponse = zod.object({
 });
 
 /**
+ * Application, service and custom tag values seen in recent requests.
+ */
+
+export const AgentccRequestLogsMetadataValuesResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    application: zod.array(zod.string().min(1)),
+    service: zod.array(zod.string().min(1)),
+    tags: zod
+      .array(zod.string().min(1))
+      .describe("key:value pairs, for keys declared as custom properties."),
+  }),
+});
+
+/**
  * Full-text search across model, provider, error_message, request_id.
  */
 export const AgentccRequestLogsSearchQueryParams = zod.object({

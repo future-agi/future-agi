@@ -359,8 +359,9 @@ type ProviderConfig struct {
 	AWSRegion          string `yaml:"aws_region" json:"aws_region"`
 
 	// Google service account credentials file (for Vertex AI OAuth2 token generation).
-	CredentialsFile string `yaml:"credentials_file" json:"-"`
-	AWSSessionToken string `yaml:"aws_session_token" json:"-"`
+	CredentialsFile    string `yaml:"credentials_file" json:"-"`
+	ServiceAccountJSON string `yaml:"service_account_json" json:"-"`
+	AWSSessionToken    string `yaml:"aws_session_token" json:"-"`
 }
 
 type LoggingConfig struct {

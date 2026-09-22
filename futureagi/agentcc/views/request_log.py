@@ -1,3 +1,5 @@
+from collections import defaultdict
+
 import structlog
 from django.contrib.postgres.aggregates import ArrayAgg
 from django.db.models import (
@@ -18,13 +20,20 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ReadOnlyModelViewSet
 
-from agentcc.models import AgentccRequestLog
+from accounts.utils import get_request_organization
+from agentcc.models import AgentccCustomPropertySchema, AgentccRequestLog
+from agentcc.models.request_log import RequestLogTag
+from agentcc.serializers.contracts import AgentccErrorResponseSerializer
 from agentcc.serializers.request_log import (
     AgentccRequestLogDetailSerializer,
+    AgentccRequestLogMetadataValuesResponseSerializer,
+    AgentccRequestLogMetadataValuesSerializer,
     AgentccRequestLogSerializer,
     AgentccSessionSerializer,
 )
 from agentcc.services.export import MAX_EXPORT_ROWS, export_csv, export_json
+from agentcc.services.request_log_metadata import TAG_SEPARATOR, get_metadata_values
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.general_methods import GeneralMethods
 
@@ -46,6 +55,30 @@ def _parse_int(value, default=None):
         return int(value)
     except (ValueError, TypeError):
         return default
+
+
+def _parse_csv(value):
+    """Split a comma-separated query param into its non-empty parts."""
+    return [part.strip() for part in (value or "").split(",") if part.strip()]
+
+
+def _parse_tags(value):
+    """Parse ``key:value,key:value`` into pairs. A tag without a key is rejected."""
+    pairs = []
+    for tag in _parse_csv(value):
+        key, separator, tag_value = tag.partition(TAG_SEPARATOR)
+        if not separator or not key.strip():
+            raise ValueError(f"Invalid tag '{tag}', expected key:value")
+        pairs.append((key.strip(), tag_value.strip()))
+    return pairs
+
+
+def _metadata_matches_any(key, values):
+    """Rows whose metadata[key] is one of values, as containment the GIN index serves."""
+    match = Q()
+    for value in values:
+        match |= Q(metadata__contains={key: value})
+    return match
 
 
 def _apply_search(queryset, raw_query):
@@ -101,30 +134,35 @@ class AgentccRequestLogViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelVi
             queryset = queryset.filter(request_id=request_id)
 
         # Multi-value filters (comma-separated, OR within field)
-        model = params.get("model")
-        if model:
-            models = [m.strip() for m in model.split(",") if m.strip()]
-            if models:
-                queryset = queryset.filter(model__in=models)
+        models = _parse_csv(params.get("model"))
+        if models:
+            queryset = queryset.filter(model__in=models)
 
-        provider = params.get("provider")
-        if provider:
-            providers = [p.strip() for p in provider.split(",") if p.strip()]
-            if providers:
-                queryset = queryset.filter(provider__in=providers)
+        providers = _parse_csv(params.get("provider"))
+        if providers:
+            queryset = queryset.filter(provider__in=providers)
+
+        for tag in RequestLogTag:
+            values = _parse_csv(params.get(tag.value))
+            if values:
+                queryset = queryset.filter(_metadata_matches_any(tag.value, values))
+
+        # Custom tags: any listed value of a key matches, and every key must match
+        tag_values = defaultdict(list)
+        for key, value in _parse_tags(params.get("tags")):
+            tag_values[key].append(value)
+        for key, values in tag_values.items():
+            queryset = queryset.filter(_metadata_matches_any(key, values))
 
         # Status code filter (single or range)
-        status_code = params.get("status_code")
-        if status_code:
-            codes = [c.strip() for c in status_code.split(",") if c.strip()]
-            parsed = []
-            for c in codes:
-                try:
-                    parsed.append(int(c))
-                except (ValueError, TypeError):
-                    pass
-            if parsed:
-                queryset = queryset.filter(status_code__in=parsed)
+        parsed = []
+        for code in _parse_csv(params.get("status_code")):
+            try:
+                parsed.append(int(code))
+            except (ValueError, TypeError):
+                pass
+        if parsed:
+            queryset = queryset.filter(status_code__in=parsed)
 
         min_status_code = _parse_int(params.get("min_status_code"))
         if min_status_code is not None:
@@ -268,6 +306,37 @@ class AgentccRequestLogViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelVi
         except Exception as e:
             logger.exception("request_log_search_error", error=str(e))
             return self._gm.bad_request(str(e))
+
+    @validated_request(
+        responses={
+            200: AgentccRequestLogMetadataValuesResponseSerializer,
+            400: AgentccErrorResponseSerializer,
+        },
+    )
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="metadata-values",
+        pagination_class=None,
+    )
+    def metadata_values(self, request):
+        """Application, service and custom tag values seen in recent requests."""
+        try:
+            tag_keys = (
+                AgentccCustomPropertySchema.no_workspace_objects.filter(
+                    organization=get_request_organization(request)
+                )
+                .exclude(name__in=[tag.value for tag in RequestLogTag])
+                .order_by("name")
+                .values_list("name", flat=True)
+            )
+            values = get_metadata_values(super().get_queryset(), tag_keys)
+            return self._gm.success_response(
+                AgentccRequestLogMetadataValuesSerializer(values).data
+            )
+        except Exception as e:
+            logger.exception("request_log_metadata_values_error", error=str(e))
+            return self._gm.bad_request("Could not load filter options")
 
     @action(detail=False, methods=["get"])
     def sessions(self, request):

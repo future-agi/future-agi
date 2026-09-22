@@ -300,6 +300,29 @@ func TestTranslateRequest_ToolsSkipNonFunction(t *testing.T) {
 	}
 }
 
+func TestTranslateRequest_ToolsRemoveUnsupportedVertexSchemaKeywords(t *testing.T) {
+	params := json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"count":{"type":"integer","exclusiveMinimum":0},"labels":{"type":"object","propertyNames":{"type":"string"}}}}`)
+	req := &models.ChatCompletionRequest{
+		Model:    "gemini-3.7-flash",
+		Messages: []models.Message{{Role: "user", Content: mustJSON("Use a tool")}},
+		Tools: []models.Tool{{
+			Type:     "function",
+			Function: models.ToolFunction{Name: "claude_builtin", Parameters: params},
+		}},
+	}
+
+	gr, _ := translateRequest(req)
+	got := string(gr.Tools[0].FunctionDeclarations[0].Parameters)
+	for _, unsupported := range []string{"$schema", "exclusiveMinimum", "propertyNames"} {
+		if strings.Contains(got, unsupported) {
+			t.Errorf("Parameters still contain unsupported keyword %q: %s", unsupported, got)
+		}
+	}
+	if !strings.Contains(got, `"count"`) || !strings.Contains(got, `"labels"`) {
+		t.Errorf("Parameters lost supported properties: %s", got)
+	}
+}
+
 func TestTranslateRequest_ResponseFormatJSON(t *testing.T) {
 	req := &models.ChatCompletionRequest{
 		Model:          "gemini-1.5-pro",

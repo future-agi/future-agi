@@ -3367,6 +3367,18 @@ export interface AgentccProviderCredentialApi {
   readonly updated_at?: string;
 }
 
+export interface AgentccRequestLogMetadataValuesApi {
+  application: string[];
+  service: string[];
+  /** key:value pairs, for keys declared as custom properties. */
+  tags: string[];
+}
+
+export interface AgentccRequestLogMetadataValuesResponseApi {
+  status: boolean;
+  result: AgentccRequestLogMetadataValuesApi;
+}
+
 export type AgentccRequestLogDetailApiMetadata = { [key: string]: unknown };
 
 export type AgentccRequestLogDetailApiRequestBody = { [key: string]: unknown };
