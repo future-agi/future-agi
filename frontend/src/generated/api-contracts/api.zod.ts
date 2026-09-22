@@ -45766,6 +45766,7 @@ export const TracerDashboardQueryBody = zod.object({
 });
 
 export const tracerDashboardQueryResponseStatusDefault = true;
+export const tracerDashboardQueryResponseResultMetricsItemSeriesTotalMin = 0;
 
 export const tracerDashboardQueryResponseResultQueryCountMin = 0;
 export const tracerDashboardQueryResponseResultQueryCountMax = 256;
@@ -45817,6 +45818,11 @@ export const TracerDashboardQueryResponse = zod.object({
             ),
           }),
         ),
+        series_total: zod
+          .number()
+          .min(tracerDashboardQueryResponseResultMetricsItemSeriesTotalMin)
+          .optional(),
+        series_truncated: zod.boolean().optional(),
         query_complete: zod.boolean().optional(),
         query_sampled: zod.boolean().optional(),
         query_status: zod.enum(["complete", "degraded"]).optional(),
@@ -46597,6 +46603,7 @@ export const TracerDashboardWidgetsPreviewQueryBody = zod.object({
 });
 
 export const tracerDashboardWidgetsPreviewQueryResponseStatusDefault = true;
+export const tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemSeriesTotalMin = 0;
 
 export const tracerDashboardWidgetsPreviewQueryResponseResultQueryCountMin = 0;
 export const tracerDashboardWidgetsPreviewQueryResponseResultQueryCountMax = 256;
@@ -46650,6 +46657,13 @@ export const TracerDashboardWidgetsPreviewQueryResponse = zod.object({
             ),
           }),
         ),
+        series_total: zod
+          .number()
+          .min(
+            tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemSeriesTotalMin,
+          )
+          .optional(),
+        series_truncated: zod.boolean().optional(),
         query_complete: zod.boolean().optional(),
         query_sampled: zod.boolean().optional(),
         query_status: zod.enum(["complete", "degraded"]).optional(),
@@ -47074,6 +47088,7 @@ export const TracerDashboardWidgetsExecuteQueryBody = zod.object({
 });
 
 export const tracerDashboardWidgetsExecuteQueryResponseStatusDefault = true;
+export const tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemSeriesTotalMin = 0;
 
 export const tracerDashboardWidgetsExecuteQueryResponseResultQueryCountMin = 0;
 export const tracerDashboardWidgetsExecuteQueryResponseResultQueryCountMax = 256;
@@ -47127,6 +47142,13 @@ export const TracerDashboardWidgetsExecuteQueryResponse = zod.object({
             ),
           }),
         ),
+        series_total: zod
+          .number()
+          .min(
+            tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemSeriesTotalMin,
+          )
+          .optional(),
+        series_truncated: zod.boolean().optional(),
         query_complete: zod.boolean().optional(),
         query_sampled: zod.boolean().optional(),
         query_status: zod.enum(["complete", "degraded"]).optional(),

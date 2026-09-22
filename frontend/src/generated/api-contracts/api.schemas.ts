@@ -21572,6 +21572,9 @@ export interface DashboardQueryMetricResultApi {
   aggregation: DashboardQueryMetricResultApiAggregation;
   unit: string;
   series: DashboardQuerySeriesApi[];
+  /** @minimum 0 */
+  series_total?: number;
+  series_truncated?: boolean;
   query_complete?: boolean;
   query_sampled?: boolean;
   query_status?: DashboardQueryMetricResultApiQueryStatus;

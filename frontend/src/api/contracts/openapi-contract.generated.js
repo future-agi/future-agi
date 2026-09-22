@@ -97231,6 +97231,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/DashboardQuerySeries",
           },
         },
+        series_total: {
+          title: "Series total",
+          type: "integer",
+          minimum: 0,
+        },
+        series_truncated: {
+          title: "Series truncated",
+          type: "boolean",
+        },
         query_complete: {
           title: "Query complete",
           type: "boolean",

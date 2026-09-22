@@ -8971,8 +8971,10 @@ class TestQueryBuilderEdgeCases:
         assert "breakdown_value" not in sql
         assert info["name"] == "latency"
 
-    def test_all_series_are_retained_above_former_cap(self, sample_query_config):
-        """UI visibility limits must never truncate exact backend results."""
+    def test_breakdown_series_are_capped_and_the_total_is_declared(
+        self, sample_query_config
+    ):
+        """A wide breakdown is cut at the ceiling and says how wide it was."""
         sample_query_config["time_range"] = {
             "custom_start": "2025-01-01T00:00:00",
             "custom_end": "2025-01-02T00:00:00",
@@ -8991,12 +8993,16 @@ class TestQueryBuilderEdgeCases:
         result = builder.format_results(
             [({"id": "latency", "name": "latency", "aggregation": "avg"}, rows)]
         )
-        series = result["metrics"][0]["series"]
-        assert len(series) == 150
+        metric = result["metrics"][0]
+        series = metric["series"]
+        ceiling = settings.DASHBOARD_BREAKDOWN_MAX_SERIES
+        assert len(series) == ceiling
         assert [item["name"] for item in series] == [
-            f"model-{i}" for i in reversed(range(150))
+            f"model-{i}" for i in range(149, 149 - ceiling, -1)
         ]
-        assert series[-1]["data"][0]["value"] == 0
+        assert metric["series_total"] == 150
+        assert metric["series_truncated"] is True
+        assert series[-1]["data"][0]["value"] == float(150 - ceiling)
 
     def test_zero_total_in_pie_data(self, sample_query_config):
         """Verify no division by zero when all values are zero."""
