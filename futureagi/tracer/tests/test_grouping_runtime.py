@@ -34,6 +34,7 @@ from tracer.services.grouping import context
 from tracer.services.grouping.accounting import reserve_call, settle_call
 from tracer.services.grouping.control import (
     GroupingConflict,
+    GroupingControlError,
     checkpoint_attempt,
     claim_feature_jobs,
     claim_grouping_work,
@@ -77,7 +78,7 @@ def test_concise_title_keeps_full_mechanism(observe_project):
 
 
 def test_long_model_title_is_rejected():
-    with pytest.raises(Exception, match="concise headline"):
+    with pytest.raises(GroupingControlError, match="concise headline"):
         _mechanism(
             {
                 "title": "word " * 13,
