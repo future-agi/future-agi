@@ -8,6 +8,7 @@ import DatasetImport from "./DatasetImport";
 import ScriptUpload from "./ScriptUpload";
 import ProductionImport from "./ProductionImport";
 import TwinScenarioPicker from "./TwinScenarioPicker";
+import GenerateScenarios from "./GenerateScenarios";
 import { DatasetThumb, ScriptThumb, ProductionThumb } from "./RouteThumbs";
 
 /**
@@ -43,7 +44,29 @@ function TwinThumb() {
   );
 }
 
+/* Neutral thumb for the AI-generate route — matches the plain
+   monochrome of the other RouteThumbs rather than the twin's purple. */
+function GenerateThumb() {
+  return (
+    <Box
+      sx={{
+        width: 96, height: 60, borderRadius: 1.25,
+        display: "grid", placeItems: "center",
+        bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.14 : 0.06),
+      }}
+    >
+      <Iconify icon="solar:magic-stick-3-bold" width={26} sx={{ color: "text.primary" }} />
+    </Box>
+  );
+}
+
 const ROUTES = [
+  {
+    id: "generate",
+    label: "AI generate",
+    blurb: "Six-axis pipeline (T · W · D · X · I · O) with a coverage dial and an optional red-team overlay.",
+    Thumb: GenerateThumb,
+  },
   {
     id: "twin",
     label: "From twin services",
@@ -149,6 +172,7 @@ export default function AddScenariosDrawer({ open, onClose, env, envState, selec
               frame reaches the bottom of the drawer instead of clipping
               right after the last row */}
           <Box sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+            {route === "generate" && <GenerateScenarios env={env} envState={envState} onAdd={add} selected={selected} />}
             {route === "twin" && <TwinScenarioPicker env={env} envState={envState} onAdd={add} selected={selected} />}
             {route === "production" && <ProductionImport env={env} onAdd={add} selected={selected} />}
             {route === "dataset" && <DatasetImport env={env} onAdd={add} selected={selected} />}

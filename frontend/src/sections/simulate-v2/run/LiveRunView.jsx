@@ -62,11 +62,17 @@ export default function LiveRunView() {
   }, [only, envState.scenarios]);
 
   /*
-    Every scenario, three times. The other side of the conversation is sampled,
-    so one shot per scenario reports a coin flip as a verdict — and three
-    samples is the smallest n where "passed twice, failed once" is sayable.
+    Trials per scenario (PRD §10.2 AC-10.7 — reliability across
+    repeated trials). The Scenarios SelectionBar sets it via the
+    `?trials=` param; when absent, we keep the historical 3, the
+    smallest n where "passed twice, failed once" is sayable.
+    Clamped 1–20 so a bad URL can't blow up the batch.
   */
-  const repeats = 3;
+  const repeats = (() => {
+    const raw = Number(params.get("trials"));
+    if (!Number.isFinite(raw) || raw < 1) return 3;
+    return Math.min(20, Math.floor(raw));
+  })();
 
   const player = useRunPlayer({
     seed: runId,

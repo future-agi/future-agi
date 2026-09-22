@@ -283,7 +283,7 @@ export default function BuildFromAgent() {
   */
   /* Stages advance from the chat, which is where the builder offers them.
      The header carries the one thing the chat cannot do: leave. */
-  const runNow = (scenarioIds) => adopt({ ...env, name: name.trim(), difficulty }, "run", scenarioIds);
+  const runNow = (scenarioIds, trials) => adopt({ ...env, name: name.trim(), difficulty }, "run", scenarioIds, trials);
 
   const onSend = (text) => {
     setTurns((prev) => [...prev, { id: `u-${Date.now()}`, role: "user", text }]);
@@ -375,14 +375,23 @@ export default function BuildFromAgent() {
     }
   };
 
-  const adopt = (confirmed, mode = "open", scenarioIds) => {
+  const adopt = (confirmed, mode = "open", scenarioIds, trials) => {
     prime(confirmed);
     let target;
     if (mode === "run") {
       target = paths.dashboard.simulate.simulationRun(confirmed.id, `run-${Date.now().toString(36)}`);
+      const params = new URLSearchParams();
       if (Array.isArray(scenarioIds) && scenarioIds.length > 0) {
-        target += `?only=${encodeURIComponent(scenarioIds.join(","))}`;
+        params.set("only", scenarioIds.join(","));
       }
+      /* PRD §10.2 AC-10.7: only append when the user has changed
+         it from the default 3, so plain links stay clean. */
+      const k = Number(trials);
+      if (Number.isFinite(k) && k >= 1 && k !== 3) {
+        params.set("trials", String(Math.min(20, Math.floor(k))));
+      }
+      const qs = params.toString();
+      if (qs) target += `?${qs}`;
     } else {
       target = paths.dashboard.simulate.environmentDetail(confirmed.id);
     }

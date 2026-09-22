@@ -296,12 +296,25 @@ export default function EnvironmentWorkspace() {
      tacked on as `?only=` (matching the existing subset convention
      LiveRunView already reads) so the run only exercises that
      subset — otherwise the run covers every scenario in the env. */
-  const startRun = (scenarioIds) => {
+  const startRun = (scenarioIds, trials) => {
     const runId = protoRunId(envId, Date.now().toString(36));
     let url = paths.dashboard.simulate.simulationRun(envId, runId);
+    const params = new URLSearchParams();
     if (Array.isArray(scenarioIds) && scenarioIds.length > 0) {
-      url += `?only=${encodeURIComponent(scenarioIds.join(","))}`;
+      params.set("only", scenarioIds.join(","));
     }
+    /*
+      PRD §10.2 AC-10.7 — k trials per scenario. Default 3 is
+      applied by LiveRunView when the param is absent, so we
+      only add it when the user has actually dialed it up or
+      down; keeps existing links unchanged.
+    */
+    const k = Number(trials);
+    if (Number.isFinite(k) && k >= 1 && k !== 3) {
+      params.set("trials", String(Math.min(20, Math.floor(k))));
+    }
+    const qs = params.toString();
+    if (qs) url += `?${qs}`;
     navigate(url);
   };
 

@@ -31,6 +31,7 @@ const SOURCE_MAP = {
   production: "production",
   dataset: "dataset-import",
   script: "manual",
+  generate: "builder-chat",
 };
 import { FilterPanel } from "src/components/filter-panel";
 
@@ -255,6 +256,16 @@ export default function ScenariosStep({ env, envState, patch, buildMode, onBuild
     to cross-reference the store.
   */
   const [selectedIds, setSelectedIds] = useState([]);
+  /*
+    Trials-per-scenario (reliability dial, PRD §10.2 AC-10.7).
+    Lives on this component because the SelectionBar owns the Run
+    action for a selection, and the number of trials is a property
+    of *this run about to be started* — not of the environment.
+    3 is the smallest n where "passed twice, failed once" is
+    sayable, and matches the historical hardcoded default in
+    LiveRunView.
+  */
+  const [trials, setTrials] = useState(3);
   const selectedRows = useMemo(
     () => (selected || []).filter((s) => selectedIds.includes(s.id)),
     [selected, selectedIds],
@@ -461,6 +472,18 @@ export default function ScenariosStep({ env, envState, patch, buildMode, onBuild
         </Stack>
       )}
 
+      {/* Coverage summary — collapsed by default so users see the
+          three numbers (Axes / Pairs / Forced) the moment they land
+          on the tab, without the panel pushing the list down. Click
+          to unfurl the full per-axis + pairwise + guardrails report.
+          Previously this sat at the bottom of the tab, which meant
+          users had to scroll past 80+ rows to know it existed. */}
+      {selected.length > 0 && (
+        <Box sx={{ mb: 2 }}>
+          <CoverageMatrix scenarios={selected} env={env} />
+        </Box>
+      )}
+
       {selected.length === 0 ? (
         <RoutePlaceholder env={genEnv} onAdd={() => setAdding(true)} />
       ) : (
@@ -488,7 +511,9 @@ export default function ScenariosStep({ env, envState, patch, buildMode, onBuild
           {!locked && selectedIds.length > 0 ? (
             <SelectionBar
               count={selectedIds.length}
-              onRun={onStartRun ? () => onStartRun(selectedIds) : undefined}
+              trials={trials}
+              onTrialsChange={setTrials}
+              onRun={onStartRun ? (k) => onStartRun(selectedIds, k || trials) : undefined}
               onEdit={onBuilderPrompt ? handleEditSelected : undefined}
               onDelete={bulkDelete}
               onClear={clearSelection}
@@ -650,12 +675,9 @@ export default function ScenariosStep({ env, envState, patch, buildMode, onBuild
         back behind a flag later.
       */}
 
-      {/*
-        Coverage after the list. It reads the rows above rather than
-        introducing them — what is missing is only a question once you have
-        seen what is there.
-      */}
-      {selected.length > 0 && <CoverageMatrix scenarios={selected} env={env} />}
+      {/* Coverage now lives at the top of the tab (collapsed by
+          default) so users see the three summary numbers on landing
+          instead of having to scroll past the whole list. */}
 
       <AddScenariosDrawer
         open={adding}

@@ -9,6 +9,7 @@ import Iconify from "src/components/iconify";
 import { subTasksFor } from "../../_mock/contract";
 import { ProvenanceGlyph } from "../ScenariosStep";
 import { sourceOf, relativeTime } from "../../_mock/scenarioProvenance";
+import { admissionOf } from "../../_mock/coverage";
 
 /* Neutral white-on-selected checkbox — no primary colour, keeps the
    table's monochrome treatment. */
@@ -260,6 +261,21 @@ export default function ScenarioTable({ rows, groups, env, onEdit, onRemove, onH
                         </Box>
                       </Tooltip>
                     )}
+                    {/* PRD §9 AC-9.13 — admission status. Amber icon only,
+                        matching the existing red-triangle "critical" idiom
+                        so the row doesn't grow a text chip on every case.
+                        Tooltip surfaces the compiler's specific reason. */}
+                    {(() => {
+                      const adm = admissionOf(row);
+                      if (adm.admitted) return null;
+                      return (
+                        <Tooltip arrow title={`Quarantined — ${adm.reason}`}>
+                          <Box sx={{ display: "flex" }}>
+                            <Iconify icon="solar:shield-cross-bold" width={13} sx={{ color: "#CA8A04" }} />
+                          </Box>
+                        </Tooltip>
+                      );
+                    })()}
                     {row.twinSeedPrompt && (
                       <Tooltip arrow title={`Twin seed override: "${row.twinSeedPrompt.slice(0, 140)}${row.twinSeedPrompt.length > 140 ? "…" : ""}"`}>
                         <Box sx={{ display: "flex" }}>
