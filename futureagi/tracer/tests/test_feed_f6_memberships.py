@@ -205,14 +205,16 @@ def test_f6_reel_uses_only_evidence_linked_to_selected_issue(omega_issue):
         cluster=other_cluster, trace_id=report.trace_id, finding=other_finding
     )
 
-    selected = feed._cluster_evidence_by_trace(
+    selected = feed._cluster_findings_by_trace(
         cluster.cluster_id, str(cluster.project_id), [str(report.trace_id)]
     )
-    reel = feed._investigation_reel(
-        report, selected_receipts=selected[str(report.trace_id)]
-    )
+    selected_findings = selected[str(report.trace_id)]
+    assert [item.id for item, _citations in selected_findings] == [finding.id]
+    reel = feed._omega_findings_to_reel(selected_findings, [])
 
-    assert [step["raw"] for step in reel] == ["requested=100; executed=10"]
+    assert [step["label"] for step in reel] == ["FINDING", "DECISIVE"]
+    assert [step["raw"] for step in reel] == ["requested=100; executed=10"] * 2
+    assert {step["evidence_id"] for step in reel} == {"evidence-1"}
     assert finding.id != other_finding.id
 
 
