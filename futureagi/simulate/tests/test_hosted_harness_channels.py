@@ -883,6 +883,8 @@ def test_new_attempt_atomically_replaces_prior_scenario_receipt(organization):
     assert replacement.attempt_id == second.attempt.id
     assert replacement.attempt_number == 2
     assert HostedHarnessReceipt.no_workspace_objects.filter(job=job).count() == 1
+    first.attempt.refresh_from_db()
+    assert first.attempt.receipt_history["same-scenario"]["attempt_number"] == 1
 
 
 @pytest.mark.django_db

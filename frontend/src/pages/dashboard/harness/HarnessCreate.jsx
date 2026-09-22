@@ -23,6 +23,7 @@ import { Helmet } from "react-helmet-async";
 import { useNavigate } from "react-router-dom";
 
 import Iconify from "src/components/iconify";
+import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import EnvironmentSwitcher from "src/components/harness/EnvironmentSwitcher";
 import StatusChip from "src/components/custom-status-chip/CustomStatusChip";
 import { STATUS_TYPES } from "src/utils/statusUtils";
@@ -35,6 +36,7 @@ import {
   uploadHarnessSource,
 } from "src/api/harness/harness";
 import { paths } from "src/routes/paths";
+import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
 
 import { parseDotEnv } from "./dotenv";
 import {
@@ -190,6 +192,12 @@ Section.propTypes = {
 export default function HarnessCreate() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const {
+    exhaustionError,
+    handleError: handleCreditError,
+    handleUpgradeClick,
+    handleDismiss: dismissCreditBanner,
+  } = useCreditExhaustion({ feature: "hosted_harness" });
 
   const { data: listData } = useQuery({
     queryKey: ["harness-jobs"],
@@ -483,7 +491,9 @@ export default function HarnessCreate() {
       queryClient.invalidateQueries({ queryKey: ["harness-jobs"] });
       navigate(paths.dashboard.simulate.harness.detail(value.job.job_id));
     } catch (requestError) {
-      setError(errorMessage(requestError));
+      if (!handleCreditError(requestError)) {
+        setError(errorMessage(requestError));
+      }
       setSubmitting(false);
     }
   };
@@ -1644,6 +1654,11 @@ export default function HarnessCreate() {
                 </Stack>
               </Section>
 
+              <CreditExhaustionBanner
+                error={exhaustionError}
+                onUpgrade={handleUpgradeClick}
+                onDismiss={dismissCreditBanner}
+              />
               {error && (
                 <Alert severity="error" variant="outlined">
                   {error}

@@ -159,6 +159,10 @@ class HostedHarnessAttempt(BaseModel):
     diagnostics_final = models.BooleanField(null=True, blank=True)
     diagnostics_error = models.CharField(max_length=500, null=True, blank=True)
     cleanup_verified_at = models.DateTimeField(null=True, blank=True)
+    usage_report = models.JSONField(null=True, blank=True)
+    authoring_usage_report = models.JSONField(null=True, blank=True)
+    sandbox_runtime = models.JSONField(default=dict, blank=True)
+    receipt_history = models.JSONField(default=dict, blank=True)
 
     class Meta:
         db_table = "simulate_hosted_harness_attempt"

@@ -152,6 +152,8 @@ def ingest_result_receipt(
     *,
     digest_body: dict[str, Any] | None = None,
 ) -> tuple[HostedHarnessReceipt, bool]:
+    from simulate.services.harness_usage import replay_harness_usage
+
     # The guest signs the JSON object it transmits. Verify that wire object, not
     # DRF's validated representation: serializers legitimately coerce UUIDs and
     # datetimes and trim strings, which must not turn a valid signed request into
@@ -204,6 +206,7 @@ def ingest_result_receipt(
                 # requiring another customer call.
                 _apply_receipt_to_call(registration, body)
                 update_execution_counts(attempt.job)
+                transaction.on_commit(lambda: replay_harness_usage(attempt))
                 return existing, False
             if existing.attempt_number >= attempt.attempt_number:
                 raise HostedHarnessError(
@@ -211,6 +214,27 @@ def ingest_result_receipt(
                     "a different receipt is already accepted for this scenario",
                     status_code=409,
                 )
+            # Keep the prior attempt's sealed receipt facts on that attempt before the
+            # latest projection is reassigned.  Usage reports are immutable per attempt,
+            # so dropping this snapshot would make an already-measured call disappear
+            # from billing after a retry.
+            previous_attempt = (
+                HostedHarnessAttempt.no_workspace_objects.select_for_update().get(
+                    id=existing.attempt_id
+                )
+            )
+            receipt_history = dict(previous_attempt.receipt_history or {})
+            receipt_history.setdefault(
+                registration.scenario_key,
+                {
+                    "status": existing.status,
+                    "body": existing.body,
+                    "attempt_number": existing.attempt_number,
+                    "digest": existing.digest,
+                },
+            )
+            previous_attempt.receipt_history = receipt_history
+            previous_attempt.save(update_fields=["receipt_history", "updated_at"])
             # BaseModel.delete() is a soft delete, so delete-then-create still violates the
             # one-latest-receipt-per-job/scenario database constraint. Replace the older attempt
             # atomically in place instead.
@@ -242,6 +266,7 @@ def ingest_result_receipt(
             )
         _apply_receipt_to_call(registration, body)
         update_execution_counts(attempt.job)
+        transaction.on_commit(lambda: replay_harness_usage(attempt))
         return receipt, True
 
 
