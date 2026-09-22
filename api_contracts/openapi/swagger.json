@@ -119591,13 +119591,28 @@
                 }
             }
         },
+        "HarnessEnvironmentCredentialFile": {
+            "required": [
+                "environment_name"
+            ],
+            "type": "object",
+            "properties": {
+                "environment_name": {
+                    "title": "Environment name",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
         "HarnessEnvironmentAgentSettings": {
             "required": [
                 "connector",
                 "mode",
                 "call_direction",
                 "config",
-                "secret_refs"
+                "secret_refs",
+                "secrets",
+                "credential_files"
             ],
             "type": "object",
             "properties": {
@@ -119632,6 +119647,19 @@
                     "items": {
                         "type": "string",
                         "minLength": 1
+                    }
+                },
+                "secrets": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "credential_files": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessEnvironmentCredentialFile"
                     }
                 }
             }

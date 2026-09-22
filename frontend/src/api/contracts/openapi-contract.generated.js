@@ -101725,6 +101725,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "call_direction",
         "config",
         "secret_refs",
+        "secrets",
+        "credential_files",
       ],
       type: "object",
       properties: {
@@ -101759,6 +101761,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             type: "string",
             minLength: 1,
+          },
+        },
+        secrets: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        credential_files: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentCredentialFile",
           },
         },
       },
@@ -106977,6 +106992,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
         status: {
           title: "Status",
           type: "string",
+        },
+      },
+    },
+    HarnessEnvironmentCredentialFile: {
+      required: ["environment_name"],
+      type: "object",
+      properties: {
+        environment_name: {
+          title: "Environment name",
+          type: "string",
+          minLength: 1,
         },
       },
     },

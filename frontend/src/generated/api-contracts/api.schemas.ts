@@ -17154,6 +17154,11 @@ export interface HarnessEnvironmentEvaluationsApi {
   results: HarnessEnvironmentResultApi[];
 }
 
+export interface HarnessEnvironmentCredentialFileApi {
+  /** @minLength 1 */
+  environment_name: string;
+}
+
 export type HarnessEnvironmentAgentSettingsApiConfig = {
   [key: string]: string;
 };
@@ -17167,6 +17172,8 @@ export interface HarnessEnvironmentAgentSettingsApi {
   call_direction: string;
   config: HarnessEnvironmentAgentSettingsApiConfig;
   secret_refs: string[];
+  secrets: string[];
+  credential_files: HarnessEnvironmentCredentialFileApi[];
 }
 
 export type HarnessEnvironmentSettingsApiSource = { [key: string]: string };

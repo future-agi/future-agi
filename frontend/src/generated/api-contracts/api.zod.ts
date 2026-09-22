@@ -35128,6 +35128,12 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
       call_direction: zod.string().min(1),
       config: zod.record(zod.string(), zod.string()),
       secret_refs: zod.array(zod.string().min(1)),
+      secrets: zod.array(zod.string().min(1)),
+      credential_files: zod.array(
+        zod.object({
+          environment_name: zod.string().min(1),
+        }),
+      ),
     }),
     runtime: zod.record(zod.string(), zod.string()),
     security: zod.record(zod.string(), zod.string()),
@@ -35308,6 +35314,12 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
       call_direction: zod.string().min(1),
       config: zod.record(zod.string(), zod.string()),
       secret_refs: zod.array(zod.string().min(1)),
+      secrets: zod.array(zod.string().min(1)),
+      credential_files: zod.array(
+        zod.object({
+          environment_name: zod.string().min(1),
+        }),
+      ),
     }),
     runtime: zod.record(zod.string(), zod.string()),
     security: zod.record(zod.string(), zod.string()),
