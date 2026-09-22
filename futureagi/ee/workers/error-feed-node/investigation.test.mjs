@@ -33,6 +33,50 @@ test('failure diagnostics classify host budget errors without exposing upstream 
   }
 });
 
+test('Omega compacts a long investigation transcript through the accounted gateway', async () => {
+  const scratch = await mkdtemp(join(tmpdir(), 'omega-compaction-test-'));
+  try {
+    const claim = makeClaim();
+    claim.limits.max_model_calls = 24;
+    const row = {id: 'span-context', project_id: claim.project_id, trace_id: claim.trace_id,
+      input: 'Investigate the recorded refund', output: 'Outcome unresolved'};
+    const raw = JSON.stringify(row);
+    const assessment = {outcome: 'unknown', findings: [], requirement_checks: []};
+    let controllerCalls = 0, summaryCalls = 0, sawCompactedSummary = false;
+    const result = await investigateTrace(claim, {scratchRoot: scratch, contextWindowTokens: 3000,
+      fetchEvidence: async (c, path) => storeEvidence([Buffer.from(raw + '\n')], path, c),
+      gatewayConfig: {baseUrl: 'http://fixture/v1', model: 'fixture', apiKey: 'fixture',
+        fetchImpl: async (_url, init) => {
+          const request = JSON.parse(init.body);
+          const system = request.messages.find(message => message.role === 'system').content;
+          sawCompactedSummary ||= request.messages.some(item =>
+            typeof item.content === 'string' && item.content.includes('The refund outcome remains unresolved'));
+          let message;
+          if (system.startsWith('Summarize earlier investigation dialogue')) {
+            summaryCalls++;
+            message = {role: 'assistant', content: 'The refund outcome remains unresolved; re-read the span.'};
+          } else if (system.includes('Independently check')) {
+            message = {role: 'assistant', content: JSON.stringify(assessment)};
+          } else if (++controllerCalls <= 6) {
+            message = {role: 'assistant', content: '', tool_calls: [{id: `read-${controllerCalls}`,
+              type: 'function', function: {name: 'read_span', arguments: JSON.stringify({
+                span_id: row.id, offset: 0, length: 8})}}]};
+          } else {
+            message = {role: 'assistant', content: JSON.stringify({action: 'finish', question: '',
+              child_instructions: '', assessment})};
+          }
+          return new Response(JSON.stringify({choices: [{message, finish_reason: 'stop'}],
+            usage: {prompt_tokens: 100, completion_tokens: 10}}),
+          {headers: {'content-type': 'application/json', 'x-agentcc-cost': '0.000100'}});
+        }}});
+    assert.equal(result.execution_status, 'completed');
+    assert.ok(summaryCalls > 0);
+    assert.equal(sawCompactedSummary, true);
+    assert.equal(result.usage.model_calls, controllerCalls + summaryCalls + 1);
+    assert.equal(Math.round(result.usage.cost_usd * 1e6), result.usage.model_calls * 100);
+  } finally { await rm(scratch, {recursive: true, force: true}); }
+});
+
 for (const scenario of ['controller_truncated', 'verifier_truncated', 'provider_overrun']) {
   test(`legacy token totals do not cap requests; truncated assessments remain safe: ${scenario}`, async () => {
     const scratch = await mkdtemp(join(tmpdir(), 'omega-budget-test-'));
