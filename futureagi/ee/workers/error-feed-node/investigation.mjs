@@ -24,7 +24,7 @@ const report = object({outcome: {type: 'string', enum: ['success', 'failure', 'u
 const decision = object({action: {type: 'string', enum: ['investigate', 'finish']},
   question: text, child_instructions: text, assessment: report});
 
-class StageOutputBudgetReached extends Error {}
+class EarlierStageOutputTruncated extends Error {}
 
 const evidenceRules = `You investigate the recorded agent, not execute the customer's original task.
 The original request and applicable recorded policies define its obligations. Read the root span and relevant children using the file tools before judging them. The inventory is navigation metadata, not a summary of the evidence. Read further ranges whenever more=true; do not infer absent content from a partial read.
@@ -124,26 +124,20 @@ export async function investigateTrace(claim, {gatewayConfig, clickhouse, scratc
   if (claim.limits.max_model_calls < 2) throw new Error('Controller and verifier need at least two model calls');
   await mkdir(scratchRoot, {recursive: true, mode: 0o700});
   const scratch = await mkdtemp(join(scratchRoot, 'omega-investigation-'));
-  // This deterministic guard measures the serialized gateway request body. Four
-  // bytes are not a tokenizer guarantee; provider prompt-token receipts remain
-  // the authoritative usage record after each completed call.
-  const gateway = createGatewayProvider({...gatewayConfig, signal, maxCalls: claim.limits.max_model_calls,
-    maxInputBytesTotal: claim.limits.max_input_tokens_total * 4});
+  // Legacy input/output totals remain in the claim contract, but no longer cap
+  // this investigation. Provider receipts remain the usage source of truth.
+  const gateway = createGatewayProvider({...gatewayConfig, signal, maxCalls: claim.limits.max_model_calls});
   let store, reader, audioInspection, phase = 'controller', outputTokens = 0;
-  // Reserve an actual token allowance, not just a call slot, for independent verification.
-  const verifierOutputReserve = Math.min(4096, Math.floor(claim.limits.max_output_tokens_total / 2));
   let assessment = {outcome: 'unknown', findings: [], requirement_checks: []};
   let executionStatus = 'failed';
   try {
     store = await fetchEvidence(claim, join(scratch, 'trace.jsonl'), {...clickhouse, signal});
     reader = createEvidenceReader(store, {signal,
       maxResultBytes: Math.min(claim.limits.max_tool_result_bytes, 8000),
-      maxTotalBytes: Math.min(claim.limits.max_input_tokens_total * 4, 4 * store.bytes)});
+      maxTotalBytes: 4 * store.bytes});
     audioInspection = resolveRecording ? createAudioInspectionTool({claim, store, gateway,
       resolveRecording, callsRemaining: () => claim.limits.max_model_calls - gateway.accounting().model_calls
         - (phase === 'verifier' ? 0 : phase === 'child' ? 2 : 1),
-      canSpendOutput: () => claim.limits.max_output_tokens_total - outputTokens
-        - (phase === 'verifier' ? 0 : verifierOutputReserve) >= 1200,
       onModelUsage: used => {outputTokens += used;},
       maxResultBytes: claim.limits.max_tool_result_bytes, signal}) : null;
     const tools = [
@@ -165,23 +159,13 @@ export async function investigateTrace(claim, {gatewayConfig, clickhouse, scratc
       if (calls >= claim.limits.max_model_calls - reserved) throw new Error('Final verifier call reserved');
       if (calls === claim.limits.max_model_calls - reserved - 1) request = {...request, tools: [],
         messages: [...request.messages, {role: 'user', content: 'Final available call for this stage. Do not call tools or delegate. Return the required JSON; preserve unresolved requirements as unknown.'}]};
-      const left = claim.limits.max_output_tokens_total - outputTokens;
-      if (left < 1) throw new Error('Output token budget exhausted');
-      const available = left - (phase === 'verifier' ? 0 : verifierOutputReserve);
-      // A near-empty controller/child call can return more usage than its tiny
-      // requested cap. Hand control to the reserved verifier before making it.
-      if (phase !== 'verifier' && available < Math.min(512, Math.floor(claim.limits.max_output_tokens_total / 20))) {
-        throw new StageOutputBudgetReached('Verifier output budget reserved');
-      }
-      if (available < 1) throw new Error('Output token budget exhausted');
-      const maxOutputTokens = Math.min(available, 4096);
-      const response = await gateway.provider.generate({...request, maxOutputTokens});
+      const response = await gateway.provider.generate(request,
+        {maxAttempts: claim.limits.max_model_calls - reserved});
       const used = response.raw?.usage?.completion_tokens ?? response.usage?.outputTokens
         ?? Math.ceil(Buffer.byteLength(JSON.stringify({content: response.content, toolCalls: response.toolCalls})) / 4);
       outputTokens += used;
-      if (used > maxOutputTokens) throw new Error('Provider exceeded output token limit');
       if (response.raw?.choices?.[0]?.finish_reason === 'length') {
-        if (phase !== 'verifier') throw new StageOutputBudgetReached('Earlier stage output truncated');
+        if (phase !== 'verifier') throw new EarlierStageOutputTruncated('Earlier stage output truncated');
         throw new Error('Model output truncated');
       }
       return response;
@@ -207,7 +191,7 @@ export async function investigateTrace(claim, {gatewayConfig, clickhouse, scratc
         output = (await omega.runJson('controller', JSON.stringify({...shared, coverage: currentCoverage(),
           children, force_finish: forceFinish}), {output: decision})).value;
       } catch (error) {
-        if (!(error instanceof StageOutputBudgetReached)) throw error;
+        if (!(error instanceof EarlierStageOutputTruncated)) throw error;
         // Keep only prior complete assessments. The verifier may still read the
         // trace and establish an outcome; truncated JSON is never evidence.
         break;
@@ -241,8 +225,7 @@ export async function investigateTrace(claim, {gatewayConfig, clickhouse, scratc
           observed_evidence_ids: reader.receipts().map(receipt => receipt.evidence_id)}), {output: report})).value;
         assessment = applyCoverageBoundary(modelAssessment, currentCoverage());
       } catch (error) {
-        if (verifierPass === 0 || !['Model-call budget exhausted', 'Input context budget exhausted',
-          'Output token budget exhausted', 'Verifier output budget reserved'].includes(error?.message)) throw error;
+        if (verifierPass === 0 || error?.message !== 'Model-call budget exhausted') throw error;
         assessment = {...assessment, outcome: 'unknown'};
         break;
       }

@@ -96,7 +96,7 @@ export function createGatewayProvider({baseUrl, model, apiKey, signal, maxCalls 
   // reasoning tokens without interpreting them as additional billable tokens.
   const provider = {
     id: transport.id, supports: transport.supports,
-    async generate(request) {
+    async generate(request, {maxAttempts = maxCalls} = {}) {
       const firstCall = calls.length + 1;
       let waitedMs = 0;
       // Retry only explicit rejections. An ambiguous timeout or 5xx may
@@ -117,7 +117,7 @@ export function createGatewayProvider({baseUrl, model, apiKey, signal, maxCalls 
           if (call && call.status === 'received') call.status = 'invalid_response';
           if (error instanceof GatewayHttpError && error.status === 429 && retry < 2 && !signal?.aborted) {
             const waitMs = Math.ceil(Math.max(error.retryAfterMs, 1000 * 2 ** retry) + retryRandom() * 1000);
-            if (calls.length < maxCalls && waitedMs + waitMs <= 30000
+            if (calls.length < maxAttempts && waitedMs + waitMs <= 30000
                 && (maxInputBytesTotal === undefined || requestBytes + call.request_bytes <= maxInputBytesTotal)) {
               call.retry_delay_ms = waitMs;
               waitedMs += waitMs;

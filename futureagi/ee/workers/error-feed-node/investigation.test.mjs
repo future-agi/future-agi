@@ -33,19 +33,20 @@ test('failure diagnostics classify host budget errors without exposing upstream 
   }
 });
 
-for (const scenario of ['controller_truncated', 'controller_exhausted', 'verifier_truncated', 'provider_overrun']) {
-  test(`output budget reserves verification and rejects partial assessments: ${scenario}`, async () => {
+for (const scenario of ['controller_truncated', 'verifier_truncated', 'provider_overrun']) {
+  test(`legacy token totals do not cap requests; truncated assessments remain safe: ${scenario}`, async () => {
     const scratch = await mkdtemp(join(tmpdir(), 'omega-budget-test-'));
     try {
       const claim = makeClaim();
-      claim.limits.max_output_tokens_total = 1000;
+      claim.limits.max_input_tokens_total = 1;
+      claim.limits.max_output_tokens_total = 1;
       const row = {id: 'span-budget', project_id: claim.project_id, trace_id: claim.trace_id,
         input: 'Refund 10', output: 'Refunded 10'};
       const raw = JSON.stringify(row);
       const evidenceId = `${row.id}:0:${Buffer.byteLength(raw)}`;
       const assessment = {outcome: 'success', findings: [], requirement_checks: [
         {requirement_id: 'refund', requirement: 'Refund 10', status: 'satisfied', evidence_ids: [evidenceId]}]};
-      const caps = [], phases = [];
+      const phases = [];
       const result = await investigateTrace(claim, {scratchRoot: scratch,
         fetchEvidence: async (c, path) => storeEvidence([Buffer.from(raw + '\n')], path, c),
         gatewayConfig: {baseUrl: 'http://fixture/v1', model: 'fixture', apiKey: 'fixture',
@@ -53,15 +54,15 @@ for (const scenario of ['controller_truncated', 'controller_exhausted', 'verifie
             const request = JSON.parse(init.body);
             const verifier = request.messages.find(m => m.role === 'system').content.includes('Independently check');
             phases.push(verifier ? 'verifier' : 'controller');
-            caps.push(request.max_tokens);
+            assert.equal(Object.hasOwn(request, 'max_tokens'), false);
             let message, used, finishReason = 'stop';
-            if (caps.length === 1) {
+            if (phases.length === 1) {
               used = 100;
               message = {role: 'assistant', content: '', tool_calls: [{id: 'read-budget', type: 'function',
                 function: {name: 'read_span', arguments: JSON.stringify({span_id: row.id, offset: 0, length: 4096})}}]};
             } else if (!verifier) {
               used = 400;
-              finishReason = scenario === 'controller_exhausted' ? 'stop' : 'length';
+              finishReason = 'length';
               message = {role: 'assistant', content: finishReason === 'length' ? '{"action":' : JSON.stringify({
                 action: 'investigate', question: 'Check refund', child_instructions: 'Compare amount', assessment})};
             } else {
@@ -73,11 +74,10 @@ for (const scenario of ['controller_truncated', 'controller_exhausted', 'verifie
               usage: {prompt_tokens: 100, completion_tokens: used}}),
             {headers: {'content-type': 'application/json', 'x-agentcc-cost': '0.000100'}});
           }}});
-      assert.deepEqual(caps, [500, 400, 500]);
       assert.deepEqual(phases, ['controller', 'controller', 'verifier']);
       assert.equal(result.usage.model_calls, 3);
       assert.equal(result.usage.cost_usd, 0.0003);
-      const failed = ['verifier_truncated', 'provider_overrun'].includes(scenario);
+      const failed = scenario === 'verifier_truncated';
       assert.equal(result.execution_status, failed ? 'failed' : 'completed');
       assert.equal(result.outcome, failed ? 'unknown' : 'success');
       if (!failed) assert.equal(result.coverage.read_complete, true);

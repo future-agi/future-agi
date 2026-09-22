@@ -54,3 +54,11 @@ test('retry delay honors Retry-After but stays within 30 seconds', async () => {
   await assert.rejects(capped.gateway.provider.generate(request), /HTTP 429/);
   assert.equal(capped.sent.length, 1);
 });
+
+test('429 retries cannot spend the reserved verifier call', async () => {
+  const {gateway, sent} = fixture([429, 200], {maxCalls: 2});
+  await assert.rejects(gateway.provider.generate(request, {maxAttempts: 1}), /HTTP 429/);
+  assert.equal(sent.length, 1);
+  assert.equal((await gateway.provider.generate(request)).content, 'ok');
+  assert.equal(gateway.accounting().model_calls, 2);
+});
