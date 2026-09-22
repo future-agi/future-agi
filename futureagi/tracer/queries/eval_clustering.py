@@ -109,19 +109,25 @@ def _eval_result_score(entry: EvalLogger) -> Optional[float]:
 
     raw = entry.output_str
     if raw:
+        # A scalar label is often serialized as plain text (including numeric
+        # labels such as ``"2"``). Resolve it before JSON/numeric coercion.
+        score = _mapped_choice_score(raw, choice_scores)
+        if score is not None:
+            return score
         try:
             raw = json.loads(raw)
         except (TypeError, ValueError):
             pass
         if isinstance(raw, dict):
-            choice = raw.get("choice", raw.get("choices"))
-            score = _mapped_choice_score(choice, choice_scores)
-            if score is not None:
-                return score
             score = _numeric_score(raw.get("score"))
             if score is not None:
                 return score
-            raw = choice
+            score = _mapped_choice_score(
+                raw.get("choice", raw.get("choices")), choice_scores
+            )
+            if score is not None:
+                return score
+            raw = raw.get("choice", raw.get("choices"))
         # A numeric-looking choice label must be mapped before treating it as
         # a literal score (e.g. choice "2" can intentionally map to 0.0).
         score = _mapped_choice_score(raw, choice_scores)
@@ -134,6 +140,16 @@ def _eval_result_score(entry: EvalLogger) -> Optional[float]:
     return _mapped_choice_score(entry.output_str_list, choice_scores)
 
 
+def _eval_score_threshold(entry: EvalLogger) -> float:
+    template = getattr(
+        getattr(entry, "custom_eval_config", None), "eval_template", None
+    )
+    threshold = getattr(template, "pass_threshold", None)
+    if isinstance(threshold, (int, float)) and not isinstance(threshold, bool):
+        return threshold
+    return 0.5
+
+
 def is_clusterable_eval_failure(entry: EvalLogger) -> bool:
     """Whether a completed eval result is a failing, explainable result."""
     if not entry.eval_explanation:
@@ -143,15 +159,7 @@ def is_clusterable_eval_failure(entry: EvalLogger) -> bool:
     score = _eval_result_score(entry)
     if score is None:
         return False
-    # Typed numeric scores retain the historical perfect-score failure gate.
-    # Structured and choice-mapped outputs use the template's pass threshold.
-    if entry.output_float is not None:
-        return score < 1.0
-    template = getattr(getattr(entry, "custom_eval_config", None), "eval_template", None)
-    if template is None:
-        return False
-    threshold = getattr(template, "pass_threshold", None)
-    return score < (threshold if isinstance(threshold, (int, float)) else 0.5)
+    return score < _eval_score_threshold(entry)
 
 
 # ---------------------------------------------------------------------------
@@ -167,7 +175,8 @@ def get_unclustered_eval_results(
     been assigned to a cluster yet.
 
     "Failed" = output_bool is False OR a score resolved from the typed output,
-    JSON output, or the template's ``choice_scores`` mapping is below 1.0.
+    JSON output, or the template's ``choice_scores`` mapping is below the
+    template's pass threshold.
     Skips rows with null eval_explanation (deterministic evals without reasoning).
     Only the last _CLUSTER_WINDOW_DAYS of results are considered.
 
@@ -175,14 +184,6 @@ def get_unclustered_eval_results(
     large backlog over successive bounded runs so a single clustering
     activity can never grow unbounded and time out.
     """
-    # Already-clustered eval_logger IDs
-    clustered_ids = set(
-        ErrorClusterTraces.objects.filter(
-            eval_logger__isnull=False,
-            cluster__project_id=project_id,
-        ).values_list("eval_logger_id", flat=True)
-    )
-
     since = timezone.now() - timedelta(days=_CLUSTER_WINDOW_DAYS)
 
     # Project scope is the eval's *config* project — never the trace/session's.
@@ -206,6 +207,25 @@ def get_unclustered_eval_results(
             created_at__gte=since,
         )
         .select_related("custom_eval_config", "custom_eval_config__eval_template")
+        .exclude(cluster_memberships__cluster__project_id=project_id)
+        .only(
+            "id",
+            "created_at",
+            "eval_explanation",
+            "output_bool",
+            "output_float",
+            "output_str",
+            "output_str_list",
+            "target_type",
+            "trace_id",
+            "trace_session_id",
+            "custom_eval_config_id",
+            "custom_eval_config__name",
+            "custom_eval_config__eval_template_id",
+            "custom_eval_config__eval_template__choice_scores",
+            "custom_eval_config__eval_template__pass_threshold",
+        )
+        .distinct()
         .order_by("created_at")
     )
 
@@ -213,7 +233,7 @@ def get_unclustered_eval_results(
     # .iterator() so a huge backlog isn't all loaded into memory just to
     # stop early once `limit` unclustered rows have been collected.
     for ev in evals.iterator(chunk_size=2000):
-        if ev.id in clustered_ids or not is_clusterable_eval_failure(ev):
+        if not is_clusterable_eval_failure(ev):
             continue
         results.append(
             ClusterableEvalResult(
