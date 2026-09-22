@@ -9,6 +9,7 @@ aiohappyeyeballs==2.6.1
 aiohttp==3.14.3
     # via
     #   aiohttp-retry
+    #   core-backend
     #   daytona
     #   daytona-analytics-api-client-async
     #   daytona-api-client-async
@@ -34,6 +35,7 @@ anthropic==0.76.0
 anyio==4.12.1
     # via
     #   anthropic
+    #   claude-agent-sdk
     #   google-genai
     #   httpx
     #   httpx-ws
@@ -63,6 +65,8 @@ attrs==25.4.0
     #   aiohttp
     #   jsonschema
     #   referencing
+audioop-lts==0.2.2 ; python_full_version >= '3.13'
+    # via core-backend
 backoff==2.2.1
     # via
     #   langfuse
@@ -115,6 +119,8 @@ charset-normalizer==3.4.4
     #   pdfminer-six
     #   requests
 chevron==0.14.0
+    # via core-backend
+claude-agent-sdk==0.2.139
     # via core-backend
 click==8.3.1
     # via
@@ -489,7 +495,9 @@ markupsafe==3.0.3
 marshmallow==3.26.2
     # via dataclasses-json
 mcp==1.26.0
-    # via core-backend
+    # via
+    #   claude-agent-sdk
+    #   core-backend
 minio==7.2.20
     # via core-backend
 mixpanel==5.0.0
@@ -946,6 +954,7 @@ slack-sdk==3.39.0
 sniffio==1.3.1
     # via
     #   anthropic
+    #   claude-agent-sdk
     #   google-genai
     #   openai
 soupsieve==2.8.3
@@ -1023,6 +1032,7 @@ typing-extensions==4.16.0
     #   anyio
     #   beautifulsoup4
     #   bidict
+    #   claude-agent-sdk
     #   cron-descriptor
     #   daytona
     #   daytona-analytics-api-client
