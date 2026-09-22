@@ -141,6 +141,7 @@ def ingest_result_receipt(
     body: dict[str, Any],
     *,
     digest_body: dict[str, Any] | None = None,
+    recovered_artifact_ids: list[str] | None = None,
 ) -> tuple[HostedHarnessReceipt, bool]:
     from simulate.services.harness_usage import replay_harness_usage
 
@@ -194,7 +195,9 @@ def ingest_result_receipt(
                 # contract modality) was synchronized.  Re-applying the same
                 # sealed receipt is safe and repairs that derived state without
                 # requiring another customer call.
-                _apply_receipt_to_call(registration, body)
+                _apply_receipt_to_call(
+                    registration, body, recovered_artifact_ids=recovered_artifact_ids
+                )
                 update_execution_counts(attempt.job)
                 transaction.on_commit(lambda: replay_harness_usage(attempt))
                 return existing, False
@@ -254,7 +257,9 @@ def ingest_result_receipt(
                 status=body["status"],
                 body=_json_ready(body),
             )
-        _apply_receipt_to_call(registration, body)
+        _apply_receipt_to_call(
+            registration, body, recovered_artifact_ids=recovered_artifact_ids
+        )
         update_execution_counts(attempt.job)
         transaction.on_commit(lambda: replay_harness_usage(attempt))
         return receipt, True
@@ -689,8 +694,29 @@ def _assert_receipt_artifacts(job: HostedHarnessJob, body: dict[str, Any]) -> No
         )
 
 
+def _merge_recovered_call_artifacts(artifacts, recovered):
+    """Fill missing media kinds only when the attempt spool is unambiguous."""
+    result = list(artifacts)
+    present = {artifact.kind for artifact in result}
+    allowed = {
+        "transcript",
+        "recording_combined",
+        "recording_stereo",
+        "recording_customer",
+        "recording_assistant",
+    }
+    for kind in sorted(allowed - present):
+        candidates = {item.sha256: item for item in recovered if item.kind == kind}
+        if len(candidates) == 1:
+            result.append(next(iter(candidates.values())))
+    return result
+
+
 def _apply_receipt_to_call(
-    registration: HostedHarnessScenario, body: dict[str, Any]
+    registration: HostedHarnessScenario,
+    body: dict[str, Any],
+    *,
+    recovered_artifact_ids: list[str] | None = None,
 ) -> None:
     call = registration.call_execution
     if call is None:
@@ -716,6 +742,13 @@ def _apply_receipt_to_call(
     elif body["status"] == "skipped":
         call.completed_at = timezone.now()
     metadata = dict(call.call_metadata or {})
+    previous_receipt = metadata.get("hosted_harness_receipt") or {}
+    if previous_receipt.get("digest") != body.get("digest"):
+        metadata.pop("hosted_harness_recovered_artifact_ids", None)
+    if recovered_artifact_ids is not None:
+        metadata["hosted_harness_recovered_artifact_ids"] = recovered_artifact_ids
+    else:
+        recovered_artifact_ids = metadata.get("hosted_harness_recovered_artifact_ids")
     metadata["hosted_harness_receipt"] = _json_ready(body)
     metadata["harness_evaluations"] = _receipt_evaluations(body)
     metadata["harness_outcome_status"] = body["status"]
@@ -754,6 +787,20 @@ def _apply_receipt_to_call(
                 sha256__in=[item.removeprefix("sha256:") for item in artifact_ids],
             )
         )
+        # Offline recovery can persist files whose original upload was never
+        # acknowledged. Enrich only the projection, never the signed receipt.
+        # Use the current attempt's spool IDs, not all historical scenario files.
+        if recovered_artifact_ids:
+            recovered = list(
+                HostedHarnessArtifact.no_workspace_objects.filter(
+                    job=registration.job,
+                    scenario_key=registration.scenario_key,
+                    sha256__in=[
+                        item.removeprefix("sha256:") for item in recovered_artifact_ids
+                    ],
+                )
+            )
+            artifacts = _merge_recovered_call_artifacts(artifacts, recovered)
         tool_trace = (
             HostedHarnessArtifact.no_workspace_objects.filter(
                 job=registration.job,
@@ -791,6 +838,7 @@ def _apply_receipt_to_call(
             )
             update_fields.append("stereo_recording_url")
         if combined is not None or stereo is not None:
+            call.simulation_call_type = CallExecution.SimulationCallType.VOICE
             call.recording_available = True
             update_fields.append("recording_available")
 

@@ -293,6 +293,33 @@ def test_errored_scenario_with_completed_call_keeps_completed_lifecycle():
     )
 
 
+def test_recovered_media_fills_only_missing_unambiguous_kinds():
+    from types import SimpleNamespace
+
+    from simulate.services.hosted_harness_ingestion import (
+        _merge_recovered_call_artifacts,
+    )
+
+    def artifact(kind, digest):
+        return SimpleNamespace(kind=kind, sha256=digest)
+
+    original = artifact("transcript", "original")
+    audio = artifact("recording_combined", "audio")
+    recovered = [
+        artifact("transcript", "other"),
+        audio,
+        artifact("recording_stereo", "a"),
+        artifact("recording_stereo", "b"),
+        artifact("result", "result"),
+    ]
+    assert _merge_recovered_call_artifacts([original], recovered) == [original, audio]
+    assert _merge_recovered_call_artifacts([], [original, audio]) == [audio, original]
+    assert _merge_recovered_call_artifacts([original, audio], recovered) == [
+        original,
+        audio,
+    ]
+
+
 def test_receipt_projects_actual_call_end_time_and_duration():
     registration = MagicMock()
     call = registration.call_execution

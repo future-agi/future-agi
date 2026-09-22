@@ -196,7 +196,9 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         values["AGENTCC_BASE_URL"] = gateway_url
     from simulate.services.phone_telephony import platform_phone_telephony
 
-    values.update({name: value for name, value in platform_phone_telephony().items() if value})
+    values.update(
+        {name: value for name, value in platform_phone_telephony().items() if value}
+    )
     for name in (
         "CARTESIA_API_KEY",
         "DEEPGRAM_API_KEY",
@@ -2513,6 +2515,7 @@ class HostedHarnessGateway:
             return value
 
         artifact_prefix = "outbound-spool/artifacts/"
+        recovered_by_scenario: dict[str, list[str]] = {}
         for name in sorted(files):
             if not name.startswith(artifact_prefix) or not name.endswith(".json"):
                 continue
@@ -2528,6 +2531,9 @@ class HostedHarnessGateway:
                 scenario_key=metadata.get("scenario_key"),
                 stream=io.BytesIO(artifact_body),
             )
+            recovered_by_scenario.setdefault(metadata.get("scenario_key"), []).append(
+                digest
+            )
 
         events_body = files.get("outbound-spool/events.spool.jsonl", b"")
         events = [
@@ -2542,7 +2548,14 @@ class HostedHarnessGateway:
         for name in sorted(files):
             if name.startswith(receipt_prefix) and name.endswith(".json"):
                 receipt = json_file(name)
-                ingest_result_receipt(attempt, receipt, digest_body=receipt)
+                ingest_result_receipt(
+                    attempt,
+                    receipt,
+                    digest_body=receipt,
+                    recovered_artifact_ids=recovered_by_scenario.get(
+                        receipt.get("scenario_key"), []
+                    ),
+                )
 
         manifest_name = "outbound-spool/manifest.json"
         if manifest_name not in files:
@@ -3272,6 +3285,9 @@ def prepare_dispatch_payload(
     )
     if (
         connector in {"livekit", "vapi", "retell"}
+        # Phone targets read the platform URL from simulator secrets. Mirroring
+        # it into target config would violate ALK's platform-owned dialer guard.
+        and not (connector in {"vapi", "retell"} and config.get("phone_number"))
         and not config.get("livekit_url")
         and livekit_url
     ):

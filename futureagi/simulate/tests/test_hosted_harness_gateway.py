@@ -694,9 +694,7 @@ def test_fresh_authoring_archive_rejects_missing_scenarios(tmp_path):
 
 
 @pytest.mark.django_db
-def test_unified_progress_freezes_authoring_for_saved_reruns(
-    organization, monkeypatch
-):
+def test_unified_progress_freezes_authoring_for_saved_reruns(organization, monkeypatch):
     job, _ = create_hosted_job(
         organization, _payload(), idempotency_key="freeze-unified-authoring"
     )
@@ -881,6 +879,18 @@ def test_dispatch_payload_declares_resolved_adc_names_without_values():
 
 
 @pytest.mark.parametrize("connector", ["vapi", "retell"])
+def test_dispatch_phone_keeps_platform_dialer_out_of_target_config(connector):
+    payload = {
+        "agent": {"connector": connector, "config": {"phone_number": "+12345162722"}}
+    }
+    dispatched = prepare_dispatch_payload(
+        payload, {}, simulator_secrets={"LIVEKIT_URL": "wss://platform.example"}
+    )
+    assert dispatched["agent"]["config"] == payload["agent"]["config"]
+    assert "livekit_url" not in dispatched["agent"]["config"]
+
+
+@pytest.mark.parametrize("connector", ["vapi", "retell"])
 def test_dispatch_payload_uses_platform_livekit_url_for_provider_voice(connector):
     payload = {"agent": {"connector": connector, "config": {}}}
 
@@ -1060,7 +1070,7 @@ def test_offline_delivery_replays_durable_guest_spool(monkeypatch):
         "outbound-spool/events.spool.jsonl": (
             b'{"sequence":1,"type":"terminal","stage":"completed"}\n'
         ),
-        "outbound-spool/receipts/receipt.json": b'{"digest":"receipt"}',
+        "outbound-spool/receipts/receipt.json": b'{"digest":"receipt","scenario_key":"one"}',
         "outbound-spool/manifest.json": b'{"digest":"manifest"}',
     }
     archive_body = io.BytesIO()
@@ -1080,6 +1090,12 @@ def test_offline_delivery_replays_durable_guest_spool(monkeypatch):
         job=SimpleNamespace(max_artifact_bytes=1024 * 1024),
     )
     replayed = []
+    recovered_receipt_options = []
+
+    def receipt_ingest(*args, **kwargs):
+        replayed.append(("receipt", args[1]))
+        recovered_receipt_options.append(kwargs)
+
     monkeypatch.setattr(
         "simulate.services.hosted_harness_ingestion.ingest_artifact",
         lambda *args, **kwargs: replayed.append(("artifact", kwargs)),
@@ -1090,7 +1106,7 @@ def test_offline_delivery_replays_durable_guest_spool(monkeypatch):
     )
     monkeypatch.setattr(
         "simulate.services.hosted_harness_ingestion.ingest_result_receipt",
-        lambda *args, **kwargs: replayed.append(("receipt", args[1])),
+        receipt_ingest,
     )
     monkeypatch.setattr(
         "simulate.services.hosted_harness_ingestion.ingest_manifest",
@@ -1098,6 +1114,11 @@ def test_offline_delivery_replays_durable_guest_spool(monkeypatch):
     )
 
     assert gateway._recover_offline_delivery(attempt) is True
+    assert recovered_receipt_options[0]["recovered_artifact_ids"] == [digest]
+    assert recovered_receipt_options[0]["digest_body"] == {
+        "digest": "receipt",
+        "scenario_key": "one",
+    }
     assert [kind for kind, _ in replayed] == [
         "artifact",
         "events",
