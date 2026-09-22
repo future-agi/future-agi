@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1010,
+  endpointCount: 1011,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -28000,6 +28000,29 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/HarnessJobRead",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-jobs/{id}/conversation/messages/": {
+      post: {
+        operationId:
+          "simulate_api_harness-jobs_conversation_conversation_message",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessConversationMessageCreate",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/HarnessConversationRead",
+          },
+          409: {
+            $ref: "#/definitions/ApiTextErrorResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -59314,6 +59337,116 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessConversationMessageCreate: {
+      required: ["content", "client_request_id"],
+      type: "object",
+      properties: {
+        content: {
+          title: "Content",
+          type: "string",
+          maxLength: 20000,
+          minLength: 1,
+        },
+        client_request_id: {
+          title: "Client request id",
+          type: "string",
+          pattern: "^[A-Za-z0-9_-]{1,128}$",
+          minLength: 1,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: [
+            "user_message",
+            "user_response",
+            "approval",
+            "interrupt",
+            "cancel_operation",
+          ],
+          default: "user_message",
+        },
+        reply_to: {
+          title: "Reply to",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        payload: {
+          title: "Payload",
+          type: "object",
+          default: {},
+        },
+      },
+    },
+    HarnessConversationRead: {
+      required: [
+        "conversation_id",
+        "job_id",
+        "state",
+        "stage",
+        "active_invocation_id",
+        "blocking_input",
+        "messages",
+        "events",
+        "event_watermark",
+        "runtime",
+      ],
+      type: "object",
+      properties: {
+        conversation_id: {
+          title: "Conversation id",
+          type: "string",
+          format: "uuid",
+        },
+        job_id: {
+          title: "Job id",
+          type: "string",
+          format: "uuid",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          minLength: 1,
+        },
+        stage: {
+          title: "Stage",
+          type: "string",
+          minLength: 1,
+        },
+        active_invocation_id: {
+          title: "Active invocation id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        blocking_input: {
+          title: "Blocking input",
+          type: "object",
+          "x-nullable": true,
+        },
+        messages: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessConversationMessage",
+          },
+        },
+        events: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessConversationEventRead",
+          },
+        },
+        event_watermark: {
+          title: "Event watermark",
+          type: "integer",
+          minimum: 0,
+        },
+        runtime: {
+          $ref: "#/definitions/HarnessConversationRuntime",
+        },
+      },
+      "x-nullable": true,
+    },
     HarnessEnvironmentAddEvaluation: {
       required: ["name"],
       type: "object",
@@ -86222,6 +86355,166 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Embedding status",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    HarnessConversationEventRead: {
+      required: [
+        "event_id",
+        "sequence",
+        "kind",
+        "stage",
+        "payload",
+        "emitted_at",
+      ],
+      type: "object",
+      properties: {
+        event_id: {
+          title: "Event id",
+          type: "string",
+          minLength: 1,
+        },
+        sequence: {
+          title: "Sequence",
+          type: "integer",
+          minimum: 1,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          minLength: 1,
+        },
+        message_id: {
+          title: "Message id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        stage: {
+          title: "Stage",
+          type: "string",
+        },
+        invocation_id: {
+          title: "Invocation id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        function_call_id: {
+          title: "Function call id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        payload: {
+          title: "Payload",
+          type: "object",
+        },
+        emitted_at: {
+          title: "Emitted at",
+          type: "string",
+          format: "date-time",
+        },
+      },
+    },
+    HarnessConversationMessage: {
+      required: [
+        "message_id",
+        "sequence",
+        "role",
+        "kind",
+        "state",
+        "stage",
+        "content",
+        "payload",
+        "created_at",
+      ],
+      type: "object",
+      properties: {
+        message_id: {
+          title: "Message id",
+          type: "string",
+          format: "uuid",
+        },
+        sequence: {
+          title: "Sequence",
+          type: "integer",
+          minimum: 1,
+        },
+        role: {
+          title: "Role",
+          type: "string",
+          enum: ["user", "assistant", "system"],
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["message", "question", "confirmation", "status"],
+        },
+        state: {
+          title: "State",
+          type: "string",
+          enum: ["queued", "delivered", "streaming", "completed", "failed"],
+        },
+        stage: {
+          title: "Stage",
+          type: "string",
+        },
+        content: {
+          title: "Content",
+          type: "string",
+        },
+        payload: {
+          title: "Payload",
+          type: "object",
+        },
+        invocation_id: {
+          title: "Invocation id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        function_call_id: {
+          title: "Function call id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        reply_to: {
+          title: "Reply to",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+      },
+    },
+    HarnessConversationRuntime: {
+      required: ["state", "warm_until", "degraded", "available"],
+      type: "object",
+      properties: {
+        state: {
+          title: "State",
+          type: "string",
+          minLength: 1,
+        },
+        warm_until: {
+          title: "Warm until",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        degraded: {
+          title: "Degraded",
+          type: "boolean",
+        },
+        available: {
+          title: "Available",
+          type: "boolean",
         },
       },
     },

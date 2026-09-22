@@ -25,7 +25,13 @@ import Iconify from "src/components/iconify";
  *
  * onSubmit(answers) — chosen labels (+ any "Other" text)
  */
-export default function AskUserQuestionCard({ question, onSubmit, onSkip }) {
+export default function AskUserQuestionCard({
+  question,
+  onSubmit,
+  onSkip,
+  resolved: resolvedProp = false,
+  answerText,
+}) {
   const [answer, setAnswer] = useState({ pick: null, picks: [], other: "" });
   const [resolved, setResolved] = useState(null);
 
@@ -71,9 +77,15 @@ export default function AskUserQuestionCard({ question, onSubmit, onSkip }) {
     onSkip?.();
   };
 
-  if (resolved) {
+  // Resolved either by this session's submit (internal state) or because the
+  // conversation came back already answered (props) — e.g. after a page refresh.
+  if (resolved || resolvedProp) {
     return (
-      <ResolvedSummary question={question} answer={resolved} />
+      <ResolvedSummary
+        question={question}
+        answer={resolved || { external: true }}
+        text={resolved ? undefined : answerText}
+      />
     );
   }
 
@@ -146,20 +158,22 @@ export default function AskUserQuestionCard({ question, onSubmit, onSkip }) {
       <Stack direction="row" alignItems="center" sx={{ px: 1.5, py: 1.25 }}>
         <Box flex={1} />
         <Stack direction="row" spacing={1}>
-          <Button
-            size="small" onClick={skip}
-            sx={{
-              typography: "s2", fontWeight: 600,
-              color: "text.primary",
-              bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.05),
-              px: 1.5, borderRadius: 1,
-              "&:hover": {
-                bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.12 : 0.08),
-              },
-            }}
-          >
-            Skip
-          </Button>
+          {onSkip && (
+            <Button
+              size="small" onClick={skip}
+              sx={{
+                typography: "s2", fontWeight: 600,
+                color: "text.primary",
+                bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.05),
+                px: 1.5, borderRadius: 1,
+                "&:hover": {
+                  bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.12 : 0.08),
+                },
+              }}
+            >
+              Skip
+            </Button>
+          )}
           <Button
             size="small" onClick={submit} disabled={!canSubmit}
             sx={{
@@ -183,6 +197,10 @@ AskUserQuestionCard.propTypes = {
   question: PropTypes.object.isRequired,
   onSubmit: PropTypes.func,
   onSkip: PropTypes.func,
+  // When the conversation returns an already-answered question, the card renders
+  // its resolved summary from these props instead of internal submit state.
+  resolved: PropTypes.bool,
+  answerText: PropTypes.string,
 };
 
 function AskOptionRow({ label, description, selected, multi, index, onSelect, bottomChildren }) {
@@ -260,13 +278,20 @@ AskOptionRow.propTypes = {
  * post-submit shape: prompt on top, chosen option(s) below with a
  * dimmed check icon, and a subtle divider.
  */
-function ResolvedSummary({ question, answer }) {
+function ResolvedSummary({ question, answer, text }) {
   const picks = answer.skipped
     ? []
     : (question.multiSelect
       ? (answer.picks || []).map((i) => question.options[i]?.label).filter(Boolean)
       : answer.pick != null ? [question.options[answer.pick]?.label].filter(Boolean) : []);
   const other = answer.other?.trim();
+  // An externally-resolved question (from a refreshed conversation) carries only
+  // the answer text — show it verbatim rather than reconstructing picks.
+  const summary = text != null
+    ? text
+    : answer.skipped
+      ? "Skipped"
+      : (other && picks.length === 0 ? other : [...picks, other].filter(Boolean).join(" · "));
 
   return (
     <Box
@@ -287,12 +312,10 @@ function ResolvedSummary({ question, answer }) {
           sx={{ color: answer.skipped ? "text.subtitle" : "primary.main", flexShrink: 0 }}
         />
         <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-          {answer.skipped
-            ? "Skipped"
-            : (other && picks.length === 0 ? other : [...picks, other].filter(Boolean).join(" · "))}
+          {summary}
         </Typography>
       </Stack>
     </Box>
   );
 }
-ResolvedSummary.propTypes = { question: PropTypes.object, answer: PropTypes.object };
+ResolvedSummary.propTypes = { question: PropTypes.object, answer: PropTypes.object, text: PropTypes.string };

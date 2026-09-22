@@ -1,145 +1,169 @@
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { REPLY_MS, mockGuidedQuestion, mockWorkspaceReply, useWorkspaceChat } from "../workspaceChat";
-import { setBuilderMode } from "src/sections/simulate/environments/buildEnvironment/console/builderModeBus";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+
+import { useWorkspaceChat } from "../workspaceChat";
+import { clearScenarioSelection, publishScenarioSelection } from "src/sections/simulate/environments/buildEnvironment/console/scenarioSelectionBus";
+
+vi.mock("src/api/harness/harness", () => ({
+  getHarnessJob: vi.fn(),
+  sendHarnessConversationMessage: vi.fn(),
+  harnessIdempotencyKey: () => "req-test",
+}));
+
 import {
-  publishScenarioSelection,
-  clearScenarioSelection,
-  getScenarioSelection,
-} from "src/sections/simulate/environments/buildEnvironment/console/scenarioSelectionBus";
+  getHarnessJob,
+  sendHarnessConversationMessage,
+} from "src/api/harness/harness";
 
-const ENV = { id: "env-1", name: "Support triage" };
+const ENV = { id: "job-1", name: "Support triage" };
 
-const advance = (ms) => act(() => vi.advanceTimersByTime(ms));
+const conversationWith = (over = {}) => ({
+  conversation_id: "c1",
+  state: "warm_idle",
+  runtime: { available: true },
+  messages: [],
+  events: [],
+  ...over,
+});
 
-describe("useWorkspaceChat", () => {
+const jobWith = (conversation) => ({
+  job: { job_id: "job-1" },
+  status: { stage: "completed" },
+  conversation,
+});
+
+function wrapper() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  // eslint-disable-next-line react/prop-types
+  const Wrapper = ({ children }) => (
+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  );
+  return { client, Wrapper };
+}
+
+const renderChat = (conversation, opts = {}) => {
+  getHarnessJob.mockResolvedValue(jobWith(conversation));
+  const { client, Wrapper } = wrapper();
+  client.setQueryData(["harness-job", "job-1"], jobWith(conversation));
+  const view = renderHook(() => useWorkspaceChat(ENV, { source: "harness" }), { wrapper: Wrapper });
+  return { ...view, client, ...opts };
+};
+
+describe("useWorkspaceChat (real)", () => {
   beforeEach(() => {
-    vi.useFakeTimers();
-    // Both are module-level state — reset so a leak from another test can't flip
-    // this suite's default-Auto / no-selection expectations.
-    setBuilderMode("auto");
     clearScenarioSelection();
+    sendHarnessConversationMessage.mockReset();
+    getHarnessJob.mockReset();
   });
+  afterEach(() => clearScenarioSelection());
 
-  afterEach(() => {
-    vi.useRealTimers();
-    setBuilderMode("auto");
-    clearScenarioSelection();
-  });
-
-  it("seeds a single greeting turn from the env", () => {
-    const { result } = renderHook(() => useWorkspaceChat(ENV));
-
-    expect(result.current.turns).toHaveLength(1);
-    const greeting = result.current.turns[0];
-    expect(greeting.role).toBe("builder");
-    expect(greeting.steps[0].kind).toBe("note");
-    expect(greeting.steps[0].text).toContain(ENV.name);
-    expect(result.current.running).toBe(false);
-  });
-
-  it("appends the user turn and starts running on send", () => {
-    const { result } = renderHook(() => useWorkspaceChat(ENV));
-
-    act(() => result.current.send("hi"));
-
+  it("projects turns from the polled conversation", () => {
+    const { result } = renderChat(
+      conversationWith({
+        messages: [
+          { message_id: "u1", role: "user", kind: "message", state: "completed", content: "hi", created_at: "2026-09-22T10:00:00Z", sequence: 1 },
+          { message_id: "a1", role: "assistant", kind: "message", state: "completed", content: "hello", created_at: "2026-09-22T10:00:01Z", sequence: 2 },
+        ],
+      }),
+    );
     expect(result.current.turns).toHaveLength(2);
-    const userTurn = result.current.turns[1];
-    expect(userTurn.role).toBe("user");
-    expect(userTurn.text).toBe("hi");
-    expect(result.current.running).toBe(true);
-  });
-
-  it("appends the mock reply and clears running after the delay", () => {
-    const { result } = renderHook(() => useWorkspaceChat(ENV));
-
-    act(() => result.current.send("drop that scenario"));
-    advance(REPLY_MS);
-
-    expect(result.current.turns).toHaveLength(3);
-    const reply = result.current.turns[2];
-    expect(reply.role).toBe("builder");
-    expect(reply.steps[0].kind).toBe("note");
-    expect(reply.steps[0].text).toBe(mockWorkspaceReply("drop that scenario"));
+    expect(result.current.turns[0]).toMatchObject({ role: "user", text: "hi" });
+    expect(result.current.turns[1].steps[0]).toMatchObject({ kind: "note", markdown: true });
     expect(result.current.running).toBe(false);
   });
 
-  it("ignores blank sends", () => {
-    const { result } = renderHook(() => useWorkspaceChat(ENV));
+  it("send posts a user_message and writes the returned conversation into the cache", async () => {
+    const next = conversationWith({
+      messages: [{ message_id: "u1", role: "user", kind: "message", state: "queued", content: "add a scenario", created_at: "2026-09-22T10:00:05Z", sequence: 1 }],
+    });
+    sendHarnessConversationMessage.mockResolvedValue(next);
+    const { result } = renderChat(conversationWith());
 
-    act(() => result.current.send("   "));
+    await act(async () => {
+      result.current.send("add a scenario");
+    });
 
-    expect(result.current.turns).toHaveLength(1);
-    expect(result.current.running).toBe(false);
+    expect(sendHarnessConversationMessage).toHaveBeenCalledWith(
+      "job-1",
+      expect.objectContaining({
+        content: "add a scenario",
+        client_request_id: "req-test",
+        kind: "user_message",
+      }),
+    );
+    // reply_to must be absent for a plain message
+    expect(sendHarnessConversationMessage.mock.calls[0][1].reply_to).toBeUndefined();
+    await waitFor(() =>
+      expect(result.current.turns.some((t) => t.role === "user" && t.text === "add a scenario")).toBe(true),
+    );
   });
 
-  it("asks a guided question instead of a plain note in Manual mode", () => {
-    setBuilderMode("guided");
-    const { result } = renderHook(() => useWorkspaceChat(ENV));
+  it("routes a reply to a blocking question as user_response with reply_to", async () => {
+    sendHarnessConversationMessage.mockResolvedValue(conversationWith());
+    const { result } = renderChat(
+      conversationWith({
+        state: "waiting_for_user",
+        blocking_input: { message_id: "q1", kind: "question_requested", prompt: "How strict?", options: ["Strict"] },
+        messages: [{ message_id: "q1", role: "assistant", kind: "question", state: "completed", content: "How strict?", payload: { options: ["Strict"] }, created_at: "2026-09-22T10:00:00Z", sequence: 1 }],
+      }),
+    );
 
-    act(() => result.current.send("tighten the refund rule"));
-    advance(REPLY_MS);
+    await act(async () => {
+      result.current.send("Strict");
+    });
 
-    const reply = result.current.turns[2];
-    expect(reply.role).toBe("builder");
-    expect(reply.steps[0]).toMatchObject({ kind: "note" });
-    const ask = reply.steps[1];
-    expect(ask.kind).toBe("ask");
-    expect(ask.question).toEqual(mockGuidedQuestion("tighten the refund rule"));
-    expect(typeof ask.onSubmit).toBe("function");
-    expect(typeof ask.onSkip).toBe("function");
-
-    // Submitting the card (our AskUserQuestionCard hands back an array of
-    // labels) appends a follow-up builder note naming the choice.
-    act(() => ask.onSubmit(["Auto-approve up to $500"]));
-    expect(result.current.turns).toHaveLength(4);
-    expect(result.current.turns[3].steps[0].text).toContain("Auto-approve up to $500");
+    expect(sendHarnessConversationMessage).toHaveBeenCalledWith(
+      "job-1",
+      expect.objectContaining({ kind: "user_response", reply_to: "q1", content: "Strict" }),
+    );
   });
 
-  it("accepts an attachments arg without dropping the send", () => {
-    const { result } = renderHook(() => useWorkspaceChat(ENV));
+  it("carries selected scenario ids and clears the selection on send", async () => {
+    sendHarnessConversationMessage.mockResolvedValue(conversationWith());
+    publishScenarioSelection({ ids: ["s1", "s2"], rows: [{ name: "a" }, { name: "b" }] });
+    const { result } = renderChat(conversationWith());
 
-    act(() => result.current.send("here is data", [{ name: "d.csv" }]));
+    await act(async () => {
+      result.current.send("make them impatient");
+    });
 
-    expect(result.current.turns).toHaveLength(2);
-    expect(result.current.turns[1].text).toBe("here is data");
+    expect(sendHarnessConversationMessage.mock.calls[0][1].payload.scenario_ids).toEqual(["s1", "s2"]);
   });
 
-  it("routes the guided question by verb heuristic", () => {
-    expect(mockGuidedQuestion("add an eval").multiSelect).toBe(true);
-    expect(mockGuidedQuestion("tighten the refund rule").multiSelect).toBe(false);
-    expect(mockGuidedQuestion("something else").prompt).toMatch(/applied/i);
+  it("freezes for a non-harness env and when the runtime is unavailable", () => {
+    const nonHarness = renderHook(() => useWorkspaceChat({ id: "x" }, { source: "template" }), { wrapper: wrapper().Wrapper });
+    expect(nonHarness.result.current.frozen).toBe(true);
+
+    const { result } = renderChat(conversationWith({ runtime: { available: false } }));
+    expect(result.current.frozen).toBe(true);
   });
 
-  it("treats a send with rows selected as a bulk edit: clears the selection, names the rows, skips guided", () => {
-    // Even in Manual mode, a selection-scoped send skips the guided question.
-    setBuilderMode("guided");
-    publishScenarioSelection({ ids: ["s1", "s2"], rows: [{ name: "refund-dispute" }, { name: "rushed-caller" }] });
-    const { result } = renderHook(() => useWorkspaceChat(ENV));
-
-    act(() => result.current.send("make them more impatient"));
-    // The chip's source clears immediately on send.
-    expect(getScenarioSelection().ids).toHaveLength(0);
-
-    advance(REPLY_MS);
-    const reply = result.current.turns.at(-1);
-    expect(reply.role).toBe("builder");
-    // A plain bulk-edit note, not an "ask" card.
-    expect(reply.steps[0].kind).toBe("note");
-    expect(reply.steps.some((s) => s.kind === "ask")).toBe(false);
-    expect(reply.steps[0].text).toContain("2 selected scenarios");
-    expect(reply.steps[0].text).toContain("refund-dispute");
+  it("ignores blank sends", async () => {
+    const { result } = renderChat(conversationWith());
+    await act(async () => result.current.send("   "));
+    expect(sendHarnessConversationMessage).not.toHaveBeenCalled();
   });
 
-  it("clears the pending timer on unmount", () => {
-    const { result, unmount } = renderHook(() => useWorkspaceChat(ENV));
+  it("keeps a stable turns reference across a re-render with unchanged cache", () => {
+    const { result, rerender } = renderChat(
+      conversationWith({
+        messages: [{ message_id: "a1", role: "assistant", kind: "message", state: "completed", content: "hi", created_at: "2026-09-22T10:00:00Z", sequence: 1 }],
+      }),
+    );
+    const first = result.current.turns;
+    rerender();
+    // Memoisation must survive a parent re-render, or BuilderConsole autoscroll
+    // yanks the reader to the bottom on every unrelated render.
+    expect(result.current.turns).toBe(first);
+  });
 
-    act(() => result.current.send("hi"));
-    expect(vi.getTimerCount()).toBe(1);
-
-    unmount();
-
-    expect(vi.getTimerCount()).toBe(0);
-    advance(REPLY_MS);
+  it("stop() sends a non-blank interrupt", async () => {
+    sendHarnessConversationMessage.mockResolvedValue(conversationWith());
+    const { result } = renderChat(conversationWith({ state: "responding" }));
+    await act(async () => result.current.stop());
+    const payload = sendHarnessConversationMessage.mock.calls[0][1];
+    expect(payload.kind).toBe("interrupt");
+    expect(payload.content.length).toBeGreaterThan(0);
   });
 });

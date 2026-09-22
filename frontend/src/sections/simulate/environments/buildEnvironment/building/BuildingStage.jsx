@@ -18,9 +18,15 @@ import BuildingPane from "./BuildingPane";
  *
  * `progress` is the `useBuildProgress` return; it may be null mid-init, so we
  * null-guard it and let the panes fall through to their own defaults.
+ *
+ * The right pane's pipeline animation is driven by `progress`; the left console
+ * is the REAL builder chat (`chat`, from useWorkspaceChat) so the user can talk
+ * to the active ALK run and watch its reading events while it authors. `chat`
+ * falls back to `progress` when absent (e.g. a mock-only build).
  */
-export default function BuildingStage({ progress, env, envState, patch, primed, source, world }) {
+export default function BuildingStage({ progress, chat, env, envState, patch, primed, source, world }) {
   const p = progress || {};
+  const console_ = chat || p;
   return (
     <Box
       sx={{
@@ -30,11 +36,15 @@ export default function BuildingStage({ progress, env, envState, patch, primed, 
     >
       <SectionCard sx={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <BuilderConsole
-          turns={p.turns}
-          running={p.running}
+          turns={console_.turns}
+          running={console_.running}
           chips={p.chips}
-          onSend={p.send}
-          onChip={p.onChip}
+          onSend={console_.send}
+          onChip={console_.send}
+          onStop={console_.stop}
+          canStop={console_.inFlight}
+          frozen={console_.frozen}
+          frozenReason={console_.frozenReason}
         />
       </SectionCard>
 
@@ -71,6 +81,15 @@ BuildingStage.propTypes = {
     chips: PropTypes.array,
     send: PropTypes.func,
     onChip: PropTypes.func,
+  }),
+  chat: PropTypes.shape({
+    turns: PropTypes.array,
+    running: PropTypes.bool,
+    send: PropTypes.func,
+    stop: PropTypes.func,
+    inFlight: PropTypes.bool,
+    frozen: PropTypes.bool,
+    frozenReason: PropTypes.string,
   }),
   env: ENV_SHAPE,
   envState: ENV_STATE_SHAPE,

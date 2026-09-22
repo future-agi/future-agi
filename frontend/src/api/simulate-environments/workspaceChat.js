@@ -1,236 +1,205 @@
-// TODO: real builder chat
-// Prototype console for the environment workspace: a seeded greeting plus mock
-// replies on a fixed delay, in the Phase-2 BuilderConsole turn shape (role
-// "builder"/"user", steps of { kind: "note", text }). To go live, replace the
-// timer + mockWorkspaceReply with the builder chat backend; the return shape
-// { turns, running, send } is what the console consumes, so keep it.
-import { useEffect, useRef, useState } from "react";
+// The live builder chat for the environment workspace.
+//
+// Reads the hosted conversation off the SAME ["harness-job", id] react-query poll
+// the workspace already runs (react-query dedupes to one network request), projects
+// its messages + events into the BuilderConsole turn/step model, and posts user
+// turns back through POST …/conversation/messages/. Poll parity, not streaming:
+// assistant_delta is ignored; a whole assistant_message renders on the next poll,
+// with a "working" cue in between (the projector's heartbeat step + the brief
+// mutation-pending pulse).
+//
+// The return shape { turns, running, send } is unchanged so BuilderConsole and
+// BuildingStage stay untouched; `frozen`, `frozenReason` and `stop` are additive.
+import { useCallback, useMemo, useRef, useState } from "react";
+import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 
+import {
+  sendHarnessConversationMessage,
+  harnessIdempotencyKey,
+} from "src/api/harness/harness";
 import { getBuilderMode } from "src/sections/simulate/environments/buildEnvironment/console/builderModeBus";
-import { getScenarioSelection, clearScenarioSelection } from "src/sections/simulate/environments/buildEnvironment/console/scenarioSelectionBus";
+import {
+  getScenarioSelection,
+  clearScenarioSelection,
+} from "src/sections/simulate/environments/buildEnvironment/console/scenarioSelectionBus";
+import { harnessJobQuery } from "./environment";
+import { projectConversation, conversationInFlight } from "./conversationProjection";
 
-export const REPLY_MS = 900;
+const RUNTIME_WARMING =
+  "The agent runtime is warming up — chat opens once it's ready.";
+const NOT_A_HARNESS_ENV = "Chat connects once this environment is built.";
 
-// When the user has scenario rows selected and sends a message, the builder
-// treats it as a bulk edit against exactly those rows and names them back.
-export function mockBulkEditReply(rows, userText) {
-  const names = (rows || []).map((r) => r?.name || r?.title || "scenario");
-  const shown = names.slice(0, 3).join(", ");
-  const rest = names.length > 3 ? ` +${names.length - 3} more` : "";
-  const n = names.length;
-  return `Applied "${(userText || "").trim()}" to the ${n} selected scenario${n === 1 ? "" : "s"} — ${shown}${rest}. The Scenarios tab reflects the change.`;
-}
+// A harness-origin env carries the job id as env.id (env.id === job.job_id). Only
+// those have a live ALK conversation; template/adopted client envs have none.
+const jobIdFor = (env, source) =>
+  source === "harness" || env?.origin === "harness" ? env?.id : null;
 
-// Guided-mode question generator, ported from the designer. Picks a decision
-// that plausibly matches the user's message so the demo feels responsive:
-// rule-adjacent → policy question, eval → grader question, scenario → coverage
-// question, otherwise a generic default. Returns the AskUserQuestionCard shape
-// { prompt, options, multiSelect, step, total }.
-export function mockGuidedQuestion(userText) {
-  const t = (userText || "").toLowerCase();
+export function useWorkspaceChat(env, { source } = {}) {
+  const jobId = jobIdFor(env, source);
+  const queryClient = useQueryClient();
 
-  if (/rule|refund|policy|escalat/.test(t)) {
-    return {
-      step: 1, total: 1,
-      prompt: "How strict should the refund rule be?",
-      multiSelect: false,
-      options: [
-        { label: "Require supervisor approval above $200",
-          description: "Matches the current policy. Escalations still allowed." },
-        { label: "Auto-approve up to $500",
-          description: "Faster resolution, higher exposure. Above $500 still escalates." },
-        { label: "Escalate every refund",
-          description: "Slowest, safest. Every refund goes through a supervisor." },
-      ],
-    };
-  }
+  const jobQuery = useQuery(harnessJobQuery(jobId, { enabled: Boolean(jobId) }));
+  const conversation = jobQuery.data?.conversation ?? null;
 
-  if (/eval|grader|grade|score/.test(t)) {
-    return {
-      step: 1, total: 1,
-      prompt: "Which graders should the new evaluation include?",
-      multiSelect: true,
-      options: [
-        { label: "task_success", description: "Was the caller's goal met?" },
-        { label: "policy_adherence", description: "Did the agent follow the hard rules?" },
-        { label: "tone", description: "LLM-graded against the tone rubric." },
-        { label: "latency", description: "Any turn slower than the budget fails." },
-      ],
-    };
-  }
+  // Keep the latest conversation/jobId in refs so `send` stays referentially
+  // stable — the projected turns are memoised, and an unstable `send` would defeat
+  // the memo (BuilderConsole autoscrolls on a new turns reference).
+  const conversationRef = useRef(conversation);
+  conversationRef.current = conversation;
+  const jobIdRef = useRef(jobId);
+  jobIdRef.current = jobId;
 
-  if (/scenario|persona|caller|customer/.test(t)) {
-    return {
-      step: 1, total: 1,
-      prompt: "What kind of scenarios should I generate?",
-      multiSelect: true,
-      options: [
-        { label: "Happy path", description: "Standard requests, no edge cases." },
-        { label: "Adversarial", description: "Rushed callers, off-topic tangents, skepticism." },
-        { label: "Tool-fault cases", description: "The tool returns unexpected results — does the agent handle it?" },
-      ],
-    };
-  }
+  // Optimistic user turns held only while their POST is in flight — BuilderConsole
+  // clears the draft before onSend, so without this the text vanishes until the
+  // 202 returns the persisted message.
+  const [pending, setPending] = useState([]);
 
-  return {
-    step: 1, total: 1,
-    prompt: "How would you like this applied?",
-    multiSelect: false,
-    options: [
-      { label: "Apply to this environment version only",
-        description: "The change lands on the current version; older versions keep their behavior." },
-      { label: "Fork a new version",
-        description: "Mint v(N+1) with the change and pin it active." },
-    ],
-  };
-}
-
-// Prototype builder replies keyed off the user's phrasing.
-export function mockWorkspaceReply(userText) {
-  const t = (userText || "").toLowerCase();
-  if (/drop|remove|cut/.test(t) && /scenario/.test(t)) {
-    return "Dropped the matching scenarios — the Scenarios tab on the right is updated.";
-  }
-  if (/add/.test(t) && /scenario/.test(t)) {
-    return "Added a scenario. You'll see it in the Scenarios tab on the right.";
-  }
-  if (/rule|refund|escalat/.test(t)) {
-    return "Updated the rule. The grader will enforce the new wording on the next run.";
-  }
-  if (/eval|grader|grade/.test(t)) {
-    return "Added that grader on the Evaluations tab — it'll score every scenario on the next run.";
-  }
-  if (/run|fail|last/.test(t)) {
-    return "Pulled that from the latest run — open the Runs tab on the right for the full breakdown.";
-  }
-  return "Applied that to the environment — the panels on the right reflect the change.";
-}
-
-const greetingText = (env) =>
-  `${env.name} is live. Ask me to tweak scenarios, tighten a rule, or add an eval — or edit directly on the right.`;
-
-export function useWorkspaceChat(env) {
-  const [turns, setTurns] = useState([]);
-  const [running, setRunning] = useState(false);
-
-  const timers = useRef([]);
-  const idCounter = useRef(0);
-  const nextId = (prefix) => `${prefix}-${(idCounter.current += 1)}`;
-
-  const envRef = useRef(env);
-  envRef.current = env;
-
-  // Seed the greeting once the env resolves. Idempotent: the prev.length guard
-  // makes a StrictMode re-run or an env swap a no-op, so a deep link that
-  // hydrates the env late still gets exactly one greeting.
-  useEffect(() => {
-    const current = envRef.current;
-    if (!current) return;
-    setTurns((prev) =>
-      prev.length
-        ? prev
-        : [{ id: "ws-greet", role: "builder", steps: [{ kind: "note", text: greetingText(current) }] }],
-    );
-  }, [env?.id, env?.name]);
-
-  // Tear down any in-flight reply timer on unmount so a deferred append never
-  // fires after the console leaves the tree.
-  useEffect(
-    () => () => {
-      timers.current.forEach(clearTimeout);
-      timers.current = [];
+  const mutation = useMutation({
+    mutationFn: ({ id, payload }) => sendHarnessConversationMessage(id, payload),
+    onSuccess: async (value, { requestId }) => {
+      setPending((prev) => prev.filter((p) => p.id !== requestId));
+      if (!value) return;
+      const key = ["harness-job", jobIdRef.current];
+      await queryClient.cancelQueries({ queryKey: key });
+      queryClient.setQueryData(key, (prev) =>
+        prev ? { ...prev, conversation: value } : prev,
+      );
     },
-    [],
+    onError: (_err, { requestId }) => {
+      setPending((prev) =>
+        prev.map((p) => (p.id === requestId ? { ...p, failed: true } : p)),
+      );
+    },
+  });
+  // react-query's `mutate` is stable across renders (unlike the mutation object),
+  // so depending on it keeps `send`/`stop` stable and preserves the turns memo.
+  const { mutate } = mutation;
+
+  const send = useCallback(
+    (text) => {
+      const content = (text || "").trim();
+      const id = jobIdRef.current;
+      if (!content || !id) return;
+
+      // A blocking question turns the next message into a reply. A confirmation is
+      // answered with `approval`, a plain question with `user_response`.
+      const blocking = conversationRef.current?.blocking_input || null;
+      const kind = blocking
+        ? blocking.kind === "confirmation_requested"
+          ? "approval"
+          : "user_response"
+        : "user_message";
+      const replyTo = blocking ? blocking.message_id : null;
+
+      // A message sent with scenario rows selected is a bulk edit against exactly
+      // those rows; snapshot and clear so the "Editing N scenarios" chip drops.
+      const selection = getScenarioSelection();
+      const scenarioIds = selection?.ids?.length ? selection.ids : undefined;
+      if (scenarioIds) clearScenarioSelection();
+
+      const requestId = harnessIdempotencyKey();
+      setPending((prev) => [...prev, { id: requestId, text: content }]);
+      mutate({
+        id,
+        requestId,
+        payload: {
+          content,
+          client_request_id: requestId,
+          kind,
+          ...(replyTo ? { reply_to: replyTo } : {}),
+          payload: {
+            mode: getBuilderMode(),
+            ...(scenarioIds ? { scenario_ids: scenarioIds } : {}),
+          },
+        },
+      });
+    },
+    [mutate],
   );
 
-  // `attachments` is accepted for parity with the console's onSend(text,
-  // attachments) contract; the prototype drops them (nothing here uploads).
-  const send = (text, _attachments) => {
-    const trimmed = (text || "").trim();
-    if (!trimmed) return;
-    setTurns((prev) => [...prev, { id: nextId("u"), role: "user", text: trimmed }]);
-    setRunning(true);
+  const stop = useCallback(() => {
+    const id = jobIdRef.current;
+    if (!id) return;
+    const requestId = harnessIdempotencyKey();
+    // Soft interrupt of the current turn — distinct from cancelling the job.
+    // `content` must be non-blank (the serializer rejects an empty string); the
+    // interrupt kind is what the backend acts on, not the text.
+    mutate({
+      id,
+      requestId,
+      payload: {
+        content: "Stop",
+        client_request_id: requestId,
+        kind: "interrupt",
+        payload: {},
+      },
+    });
+  }, [mutate]);
 
-    // A message sent while scenario rows are selected is a bulk edit against
-    // exactly those rows. Snapshot + clear the selection so the "Editing N
-    // scenarios" chip drops on send, name the rows back, and skip guided mode
-    // for this turn (the scope is already settled by the selection).
-    const selection = getScenarioSelection();
-    if (selection?.ids?.length > 0) {
-      const rows = selection.rows;
-      clearScenarioSelection();
-      timers.current.push(
-        setTimeout(() => {
-          setRunning(false);
-          setTurns((prev) => [
-            ...prev,
-            { id: nextId("a"), role: "builder", steps: [{ kind: "note", text: mockBulkEditReply(rows, trimmed) }] },
-          ]);
-        }, REPLY_MS),
-      );
-      return;
-    }
+  const turns = useMemo(() => {
+    const projected = projectConversation(conversation);
+    // Attach the reply callback to open `ask` steps (the projector stays pure).
+    // A resolved question renders its summary from props, so it needs no handler.
+    return projected.map((turn) => {
+      if (
+        turn.role !== "builder" ||
+        !turn.steps?.some((s) => s.kind === "ask" && !s.resolved)
+      ) {
+        return turn;
+      }
+      return {
+        ...turn,
+        steps: turn.steps.map((step) =>
+          step.kind === "ask" && !step.resolved
+            ? { ...step, onSubmit: (answers) => send((answers || []).join(", ")) }
+            : step,
+        ),
+      };
+    });
+  }, [conversation, send]);
 
-    // Manual (guided) mode: the builder pauses at a real decision and asks the
-    // user to settle it before applying, rendered as a Claude-style
-    // AskUserQuestion card inline in the chat. In Auto (the default), it just
-    // applies its own guess and moves on.
-    if (getBuilderMode() !== "auto") {
-      timers.current.push(
-        setTimeout(() => {
-          setRunning(false);
-          const question = mockGuidedQuestion(trimmed);
-          const qid = nextId("q");
-          setTurns((prev) => [
-            ...prev,
+  // Optimistic user turns (+ any failed-send markers) tack onto the end.
+  const withPending = useMemo(() => {
+    if (!pending.length) return turns;
+    const extra = pending.flatMap((p) =>
+      p.failed
+        ? [
+            { id: `${p.id}-u`, role: "user", text: p.text },
             {
-              id: qid,
+              id: `${p.id}-e`,
               role: "builder",
               steps: [
-                { kind: "note", text: "Before I apply that, one decision:" },
-                {
-                  kind: "ask",
-                  question,
-                  onSubmit: (answers) => {
-                    const chosen = (answers || []).join(", ");
-                    setTurns((cur) => [
-                      ...cur,
-                      {
-                        id: `${qid}-r`,
-                        role: "builder",
-                        steps: [{ kind: "note", text: `Applied — went with "${chosen}". The panels on the right reflect the change.` }],
-                      },
-                    ]);
-                  },
-                  onSkip: () => {
-                    setTurns((cur) => [
-                      ...cur,
-                      {
-                        id: `${qid}-s`,
-                        role: "builder",
-                        steps: [{ kind: "note", text: "Skipped — I used the default and moved on." }],
-                      },
-                    ]);
-                  },
-                },
+                { id: `${p.id}-es`, kind: "error", text: "Couldn't send — try again." },
               ],
             },
-          ]);
-        }, REPLY_MS),
-      );
-      return;
-    }
-
-    timers.current.push(
-      setTimeout(() => {
-        setRunning(false);
-        setTurns((prev) => [
-          ...prev,
-          { id: nextId("a"), role: "builder", steps: [{ kind: "note", text: mockWorkspaceReply(trimmed) }] },
-        ]);
-      }, REPLY_MS),
+          ]
+        : [{ id: `${p.id}-u`, role: "user", text: p.text }],
     );
-  };
+    return [...turns, ...extra];
+  }, [turns, pending]);
 
-  return { turns, running, send };
+  // `running` blocks the composer only for the brief POST round-trip, so the user
+  // can still interject while the agent works autonomously (the heartbeat step is
+  // the persistent cue).
+  const running = mutation.isPending;
+
+  const runtimeUnavailable = conversation
+    ? conversation.runtime?.available === false
+    : false;
+  const frozen = !jobId || runtimeUnavailable;
+  const frozenReason = !jobId
+    ? NOT_A_HARNESS_ENV
+    : runtimeUnavailable
+      ? RUNTIME_WARMING
+      : undefined;
+
+  return {
+    turns: withPending,
+    running,
+    send,
+    stop,
+    frozen,
+    frozenReason,
+    inFlight: conversationInFlight(conversation),
+  };
 }

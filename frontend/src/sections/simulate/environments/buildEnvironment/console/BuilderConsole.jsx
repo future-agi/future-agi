@@ -60,6 +60,8 @@ export default function BuilderConsole({
   chips,
   onSend,
   onChip,
+  onStop,
+  canStop = false,
   preComposer,
   frozen = false,
   frozenReason,
@@ -291,6 +293,22 @@ export default function BuilderConsole({
 
             <Box flex={1} />
 
+            {onStop && canStop && !frozen && (
+              <IconButton
+                aria-label="Stop"
+                title={CONSOLE_COPY.stop}
+                onClick={onStop}
+                sx={{
+                  width: 30, height: 30, borderRadius: 1, mr: 0.5,
+                  color: "text.subtitle",
+                  border: "1px solid", borderColor: "divider",
+                  "&:hover": { bgcolor: "action.hover", color: "text.primary" },
+                }}
+              >
+                <Iconify icon="solar:stop-bold" width={13} />
+              </IconButton>
+            )}
+
             <IconButton
               aria-label="Send"
               disabled={!hasContent || blocked}
@@ -321,6 +339,8 @@ BuilderConsole.propTypes = {
   chips: PropTypes.array,
   onSend: PropTypes.func,
   onChip: PropTypes.func,
+  onStop: PropTypes.func,
+  canStop: PropTypes.bool,
   preComposer: PropTypes.node,
   frozen: PropTypes.bool,
   frozenReason: PropTypes.string,

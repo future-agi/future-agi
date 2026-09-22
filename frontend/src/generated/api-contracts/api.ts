@@ -555,6 +555,8 @@ import type {
   GroundTruthUploadResponseApi,
   HarnessAcceptedResponseApi,
   HarnessArtifactUploadResponseApi,
+  HarnessConversationMessageCreateApi,
+  HarnessConversationReadApi,
   HarnessEnvironmentAddEvaluationApi,
   HarnessEnvironmentAvailableEvalsApi,
   HarnessEnvironmentDetailApi,
@@ -1494,6 +1496,66 @@ export type HTTPStatusCodes =
   | HTTPStatusCode3xx
   | HTTPStatusCode4xx
   | HTTPStatusCode5xx;
+
+export type simulateApiHarnessJobsConversationConversationMessageResponse202 = {
+  data: HarnessConversationReadApi;
+  status: 202;
+};
+
+export type simulateApiHarnessJobsConversationConversationMessageResponse409 = {
+  data: ApiTextErrorResponseApi;
+  status: 409;
+};
+
+export type simulateApiHarnessJobsConversationConversationMessageResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 202 | 409>;
+  };
+
+export type simulateApiHarnessJobsConversationConversationMessageResponseSuccess =
+  simulateApiHarnessJobsConversationConversationMessageResponse202 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessJobsConversationConversationMessageResponseError =
+  (
+    | simulateApiHarnessJobsConversationConversationMessageResponse409
+    | simulateApiHarnessJobsConversationConversationMessageResponseDefault
+  ) & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessJobsConversationConversationMessageResponse =
+  | simulateApiHarnessJobsConversationConversationMessageResponseSuccess
+  | simulateApiHarnessJobsConversationConversationMessageResponseError;
+
+export const getSimulateApiHarnessJobsConversationConversationMessageUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-jobs/${id}/conversation/messages/`;
+};
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const simulateApiHarnessJobsConversationConversationMessage = async (
+  id: string,
+  harnessConversationMessageCreateApi: HarnessConversationMessageCreateApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessJobsConversationConversationMessageResponse> => {
+  return apiMutator<simulateApiHarnessJobsConversationConversationMessageResponse>(
+    getSimulateApiHarnessJobsConversationConversationMessageUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessConversationMessageCreateApi),
+    },
+  );
+};
 
 export type accounts2faRecoveryCodesListResponse200 = {
   data: RecoveryCodesRemainingResponseApi;
