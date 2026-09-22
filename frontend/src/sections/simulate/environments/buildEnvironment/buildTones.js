@@ -26,6 +26,7 @@ export const BUILD_TONES = {
   zinc: "#71717A",
   amberBright: "#D97706",
   ash: "#9AA0A6",
+  indigo: "#4F46E5",
 };
 
 // DerivingAnimation file-header traffic dots (red / amber / green).

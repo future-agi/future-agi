@@ -27,6 +27,26 @@ export const STATUS_META = {
   cancelled: { color: BUILD_TONES.zinc, label: "Cancelled" },
 };
 
+// Run identity colours, indexed by a run's place in the sequence (its ordinal
+// minus one, wrapped). Keyed off the ordinal — not the list position — so a run
+// keeps the same letter and colour on the history list, the detail header and a
+// comparison. Ported from the designer's `RUN_COLORS`, mapped onto BUILD_TONES
+// so this module holds no raw hex.
+export const RUN_COLORS = [
+  BUILD_TONES.accent, // #7857FC
+  BUILD_TONES.blue, // #2563EB
+  BUILD_TONES.green, // #16A34A
+  BUILD_TONES.amber, // #CA8A04
+  BUILD_TONES.orange, // #EA580C
+  BUILD_TONES.pink, // #DB2777
+  BUILD_TONES.tealDeep, // #0D9488
+  BUILD_TONES.indigo, // #4F46E5
+];
+
+// The identity colour for a run at a given 1-based ordinal.
+export const runColor = (ordinal) =>
+  RUN_COLORS[(Math.max(1, ordinal) - 1) % RUN_COLORS.length];
+
 // Pre-flight estimate model. Ported verbatim from the designer's RunsPanel:
 // duration grows with the scenario count (floored so a tiny suite still reads
 // as a couple of minutes), concurrency is fixed, cost is a flat per-scenario

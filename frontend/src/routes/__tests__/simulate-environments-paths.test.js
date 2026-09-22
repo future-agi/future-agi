@@ -16,8 +16,8 @@ describe("simulate.environments path constants", () => {
     expect(env.detail("abc")).toBe("/dashboard/simulate/environments/abc");
   });
 
-  it("declares the build path", () => {
-    expect(env.build).toBe("/dashboard/simulate/environments/build");
+  it("no longer declares a standalone build path (build routes to the workspace)", () => {
+    expect(env.build).toBeUndefined();
   });
 
   it("builds a workspace-tab path with the ?tab= query", () => {

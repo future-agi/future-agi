@@ -77,12 +77,16 @@ export default function MyEnvironmentsTab() {
           }}
         >
           <Stack spacing={1.75} alignItems="center">
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              {EMPTY_MESSAGE}
-            </Typography>
-            <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-              Bring your agent in to create your first environment.
-            </Typography>
+            {/* The two lines read as one block, so keep them tight; the 1.75
+                gap to the button below stays as the outer Stack spacing. */}
+            <Stack spacing={0.5} alignItems="center">
+              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+                {EMPTY_MESSAGE}
+              </Typography>
+              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                Bring your agent in to create your first environment.
+              </Typography>
+            </Stack>
             <Button
               variant="contained"
               size="small"

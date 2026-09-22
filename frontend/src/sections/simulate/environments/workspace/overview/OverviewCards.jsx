@@ -6,6 +6,7 @@ import CustomTooltip from "src/components/tooltip";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 import SectionCard from "../../components/SectionCard";
 import OriginChip from "../../components/OriginChip";
+import MockBadge from "../../components/MockBadge";
 import { ENV_SHAPE, OVERVIEW_COPY, ruleRowsFor } from "./overview.constants";
 
 const MONO = "ui-monospace, Menlo, monospace";
@@ -64,12 +65,16 @@ ToolsCard.propTypes = { env: ENV_SHAPE.isRequired, agentConnected: PropTypes.boo
 
 // The hard rules told to the agent and graded afterwards, each carrying an
 // origin chip for where it was read. The designer's "N held" review action
-// routed to SourceToSandboxMap; the map lists the same held provenance below,
-// and the PROSE chip already surfaces it here, so the action stays omitted.
+// routed to a non-ported review deep-link (onGo("build")); the PROSE origin chip
+// already surfaces the held state here, so the action stays omitted.
 export function HardRulesCard({ env }) {
   const rules = ruleRowsFor(env);
   return (
-    <SectionCard title={OVERVIEW_COPY.hardRulesTitle} subtitle={OVERVIEW_COPY.hardRulesSubtitle}>
+    <SectionCard
+      title={OVERVIEW_COPY.hardRulesTitle}
+      subtitle={OVERVIEW_COPY.hardRulesSubtitle}
+      action={env.provenance?.rules === "mock" ? <MockBadge /> : null}
+    >
       <Stack sx={{ p: 2.5 }} spacing={1.25}>
         {rules.length === 0 && (
           <Stack direction="row" alignItems="center" spacing={1.25}>

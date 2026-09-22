@@ -1,10 +1,6 @@
-// Build-stage copy and the client build stage enum. Strings ported verbatim
-// from the designer's BuildFromAgent.jsx (header + pipeline popover),
-// DerivedPanels.jsx (deriving labels + tab rail) and AssistantConsole.jsx.
-
-// BUILD_STAGE lives in the store (single source shared with the build slice);
-// re-exported here so the build modules keep importing it from this file.
-export { BUILD_STAGE } from "../store/useEnvironmentsStore";
+// Build-stage copy for the deriving hero, the building tab rail and the builder
+// console. Strings ported verbatim from the designer's DerivedPanels.jsx
+// (deriving labels + tab rail) and AssistantConsole.jsx.
 
 // The DerivingAnimation copy, one line per milestone the builder is working on,
 // plus the loading branch once all three are done. Verbatim from DerivedPanels.
@@ -16,27 +12,14 @@ export const DERIVING_LABEL = {
   idle: "Reading your agent…",
   // Preflight already passed inline; this stage is the create call landing.
   creating: "Creating your environment…",
+  // Fallback for the source-panel header before a source label is known.
+  readingSource: "reading source…",
 };
 
 // The tab rail on the building pane. It re-exports the workspace tabs so the
 // muted loading rail and the live workspace rail always show the same five
 // labels (including Runs); the building pane just renders them pointer-dead.
 export { WORKSPACE_TABS as BUILDING_TABS } from "../workspace/workspace.constants";
-
-export const BUILD_HEADER_COPY = {
-  back: "Change source",
-  rename: "Rename",
-  setupBuilding: "Setup being built",
-  ready: "Ready to run",
-  failedAt: (label) => `Failed at ${label.toLowerCase()}`,
-  run: "Run simulation",
-  runBlocked: "Finish the three stages on the left first",
-  popoverTitle: "Build pipeline",
-  halted: "halted",
-  running: "running",
-  readyShort: "ready",
-  paused: "paused",
-};
 
 export const CONSOLE_COPY = {
   working: "Working on your last message…",
@@ -46,6 +29,8 @@ export const CONSOLE_COPY = {
   attach: "Attach a dataset, CSV or file",
   attachAccept: ".csv,.tsv,.json,.jsonl,.xlsx,.txt,.md,.pdf",
   workingDot: "Working…",
+  frozen: "Environment is still being built",
+  mode: "Builder mode — Auto or Manual",
 };
 
 export const PIPELINE_CHECKS_COPY = {

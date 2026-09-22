@@ -19,6 +19,10 @@ export const emptyEnvState = () => ({
   seededFromTemplate: false,
   gapsResolved: {},
   baselineRunId: null,
+  // Per-tool read/write override keyed by tool name, set from the Contract
+  // tab's effect picker. Wins over the job's real classification (and over the
+  // verb-heuristic fallback) when present.
+  toolResolutions: {},
 });
 
 // One environment's slice plus the actions bound to its id. `bootstrap` is the

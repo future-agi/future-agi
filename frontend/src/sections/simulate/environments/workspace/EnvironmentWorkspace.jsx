@@ -1,4 +1,7 @@
-import { Box, Button } from "@mui/material";
+import PropTypes from "prop-types";
+import { useEffect, useState } from "react";
+import { alpha } from "@mui/material/styles";
+import { Box, Button, Stack, Typography, IconButton } from "@mui/material";
 import {
   useNavigate,
   useParams,
@@ -6,11 +9,15 @@ import {
   Outlet,
 } from "react-router-dom";
 
+import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import { paths } from "src/routes/paths";
 import {
   useEnvironment,
   canRunHeader,
+  stageOutputsToWorld,
 } from "src/api/simulate-environments/environment";
+import { useBuildProgress } from "src/api/simulate-environments/buildProgress";
 import { useWorkspaceChat } from "src/api/simulate-environments/workspaceChat";
 
 import { useEnvironmentsStore } from "../store/useEnvironmentsStore";
@@ -18,9 +25,16 @@ import { useEnvState } from "../store/envState";
 import SectionCard from "../components/SectionCard";
 import EmptyState from "../components/EmptyState";
 import BuilderConsole from "../buildEnvironment/console/BuilderConsole";
+import { CONSOLE_COPY } from "../buildEnvironment/build.constants";
+import {
+  subscribeScenarioSelection,
+  clearScenarioSelection,
+} from "../buildEnvironment/console/scenarioSelectionBus";
+import BuildingStage from "../buildEnvironment/building/BuildingStage";
 import WorkspaceHeader from "./WorkspaceHeader";
 import SystemBanners from "./SystemBanners";
 import VersionBar from "./VersionBar";
+import TemplateLockBanner from "./TemplateLockBanner";
 import WorkspacePanels from "./WorkspacePanels";
 import useWorkspaceTab from "./helpers/useWorkspaceTab";
 import { gapsByTab, counts } from "./helpers/workspaceGaps";
@@ -55,11 +69,36 @@ const blockedReason = (envState) => {
 export default function EnvironmentWorkspace() {
   const navigate = useNavigate();
   const { envId } = useParams();
-  const { env, source, bootstrapState, notFound } = useEnvironment(envId);
-  const { envState, patch, canRun } = useEnvState(envId, bootstrapState);
+  const { env, source, bootstrapState, notFound, error, refetch } = useEnvironment(envId);
+  // While the job is still deriving, the harness bootstrap is only a placeholder
+  // (generated-pool scenarios, a v1 stub) — and useEnvState seeds byEnv once, so
+  // seeding it now would lock that placeholder in even after the real world lands.
+  // Seed only once the env is ready; the build view below never reads envState.
+  const building = !!env && env.buildStatus === "building";
+  const { envState, patch, canRun } = useEnvState(
+    envId,
+    building ? undefined : bootstrapState,
+  );
   const { tab, setTab } = useWorkspaceTab();
   const chat = useWorkspaceChat(env);
   const registerFork = useEnvironmentsStore((s) => s.forkEnvironment);
+  const selection = useScenarioSelection();
+
+  // While the job is still deriving, this page IS the build experience: the same
+  // milestone poll the /build page used, now keyed off the resolved env id. The
+  // env, the pipeline and the hero all read one shared ["harness-job", envId]
+  // query, so a stage landing flips buildStatus building→ready and swaps the body
+  // in place — no adopt hand-off, and a refresh mid-build resumes here.
+  const progress = useBuildProgress({
+    envId,
+    agentRef: env?.name,
+    enabled: building,
+    mockMode: false,
+  });
+  // Real derived world from the running job's stage outputs (never the MOCK_WORLD
+  // overlay) — the sandbox hero shows real tools/rules/tables as they land, a
+  // neutral skeleton before.
+  const derivedWorld = stageOutputsToWorld(progress.job?.stage_outputs || []).world;
 
   const executionMatch = useMatch(EXECUTION_PATTERN);
 
@@ -85,9 +124,67 @@ export default function EnvironmentWorkspace() {
     );
   }
 
+  // Resolve failed for a reason other than a clean 404 (server/network error):
+  // a recoverable error state with a retry, never a silent blank.
+  if (error) {
+    return (
+      <Box sx={{ p: 2 }}>
+        <EmptyState
+          icon="solar:danger-triangle-linear"
+          title={WORKSPACE_COPY.loadError.title}
+          body={WORKSPACE_COPY.loadError.body}
+          action={
+            <Stack direction="row" spacing={1}>
+              <Button variant="outlined" size="small" onClick={() => refetch?.()}>
+                {WORKSPACE_COPY.loadError.retry}
+              </Button>
+              <Button
+                variant="contained"
+                color="primary"
+                size="small"
+                onClick={() => navigate(paths.dashboard.simulate.environments.root)}
+              >
+                {WORKSPACE_COPY.notFound.action}
+              </Button>
+            </Stack>
+          }
+        />
+      </Box>
+    );
+  }
+
   // Still resolving the id — a blank centred box, never a flash of "not found".
   if (!env) {
     return <Box sx={{ height: "100%", minHeight: 420, display: "grid", placeItems: "center" }} />;
+  }
+
+  // Still deriving: the workspace header over the two-pane build stage (console +
+  // hero/pipeline). Run is gated off and Fork is hidden (locked) until it goes
+  // Live — at which point buildStatus flips and the branch below takes over.
+  if (building) {
+    return (
+      <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+        <WorkspaceHeader
+          env={env}
+          envState={envState}
+          patch={patch}
+          canRun={false}
+          runBlockedReason={WORKSPACE_COPY.buildingTooltip}
+          locked
+        />
+        <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden", p: 2 }}>
+          <BuildingStage
+            progress={progress}
+            env={env}
+            envState={envState}
+            patch={patch}
+            primed={false}
+            source={env.name}
+            world={derivedWorld}
+          />
+        </Box>
+      </Box>
+    );
   }
 
   // A template-seeded env stays locked until forked: the version pin is
@@ -110,6 +207,10 @@ export default function EnvironmentWorkspace() {
 
   const runnable = canRunHeader(source, env, canRun);
 
+  // While the environment is still deriving, the builder can't accept edits —
+  // the console freezes until it goes Live. SystemBanners reads the same value.
+  const envLive = env.buildStatus !== "building";
+
   return (
     <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       <WorkspaceHeader
@@ -119,11 +220,16 @@ export default function EnvironmentWorkspace() {
         canRun={runnable}
         runBlockedReason={blockedReason(envState)}
         locked={locked}
+        backed={source === "harness"}
         onFork={onFork}
       />
 
       <SystemBanners env={env} envState={envState} patch={patch} />
       <VersionBar env={env} envState={envState} />
+
+      {/* A template-seeded env is read-only until forked — the banner states the
+          lock and offers the fork. */}
+      {locked && <TemplateLockBanner onFork={onFork} />}
 
       <Box
         sx={{
@@ -141,9 +247,21 @@ export default function EnvironmentWorkspace() {
           <BuilderConsole
             turns={chat.turns}
             running={chat.running}
-            chips={CHIPS_BY_TAB[activeTab]}
+            chips={CHIPS_BY_TAB[activeTab] || CHIPS_BY_TAB.overview}
             onSend={chat.send}
             onChip={chat.send}
+            frozen={!envLive}
+            frozenReason={CONSOLE_COPY.frozen}
+            preComposer={
+              (selection.count ?? selection.ids.length) > 0 ? (
+                <SelectionContextChip
+                  count={selection.count ?? selection.ids.length}
+                  rows={selection.rows}
+                  all={selection.all}
+                  onClear={clearScenarioSelection}
+                />
+              ) : null
+            }
           />
         </SectionCard>
 
@@ -167,13 +285,60 @@ export default function EnvironmentWorkspace() {
             tab={activeTab}
             onTabChange={onTabChange}
             locked={locked}
+            backed={source === "harness"}
             onFork={onFork}
             gapsByTab={gapsByTab(env, envState)}
             counts={counts(envState)}
-            executionOutlet={executionMatch ? <Outlet /> : undefined}
+            executionOutlet={executionMatch ? <Outlet context={{ env, envState }} /> : undefined}
           />
         </Box>
       </Box>
     </Box>
   );
 }
+
+// Mirror the module-level scenario selection into component state so the
+// console's pre-composer chip re-renders when rows are checked or cleared on
+// the Scenarios tab. The bus fires the current value on subscribe.
+function useScenarioSelection() {
+  const [selection, setSelection] = useState({ ids: [], rows: [] });
+  useEffect(() => subscribeScenarioSelection(setSelection), []);
+  return selection;
+}
+
+// Shown above the console composer when the user has scenarios checked on the
+// Scenarios tab. Turns an implicit selection into an explicit "you are editing
+// N rows" status so the next send doesn't feel like it came from nowhere.
+function SelectionContextChip({ count, rows, all = false, onClear }) {
+  const preview = (rows || []).slice(0, 2).map((r) => r.name || r.title || "scenario").join(", ");
+  const rest = count > 2 ? ` +${count - 2}` : "";
+  return (
+    <Stack
+      direction="row" alignItems="center" spacing={1}
+      sx={{
+        px: 1.5, py: 1,
+        borderBottom: "1px solid", borderColor: "divider",
+        bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.06 : 0.03),
+      }}
+    >
+      <Iconify icon="solar:layers-minimalistic-linear" width={14} sx={{ color: "text.subtitle", flexShrink: 0 }} />
+      <Typography sx={{ typography: "s3", color: "text.secondary", flex: 1, minWidth: 0 }} noWrap>
+        {/* all-mode (select-all-matching) can't name the rows — the match may run
+            to thousands and none may be on the current page — so it states the
+            count alone. */}
+        Editing <b>{count}</b> scenario{count === 1 ? "" : "s"}{all ? " matching" : ` — ${preview}${rest}`}
+      </Typography>
+      <CustomTooltip show title="Clear selection" size="small" arrow>
+        <IconButton size="small" aria-label="Clear selection" onClick={onClear} sx={{ p: 0.25 }}>
+          <Iconify icon="solar:close-circle-linear" width={14} sx={{ color: "text.subtitle" }} />
+        </IconButton>
+      </CustomTooltip>
+    </Stack>
+  );
+}
+SelectionContextChip.propTypes = {
+  count: PropTypes.number,
+  rows: PropTypes.array,
+  all: PropTypes.bool,
+  onClear: PropTypes.func,
+};

@@ -10,6 +10,7 @@ import RlContractPanel from "./contract/RlContractPanel";
 import ScenariosStep from "./scenarios/ScenariosStep";
 import EvalsStep from "./evals/EvalsStep";
 import RunsPanel from "./runs/RunsPanel";
+import SettingsPanel from "./settings/SettingsPanel";
 import WorkspaceTabLabel from "./WorkspaceTabLabel";
 import { WORKSPACE_TABS } from "./workspace.constants";
 
@@ -31,6 +32,7 @@ export default function WorkspacePanels({
   tab,
   onTabChange,
   locked = false,
+  backed = false,
   onFork,
   buildMode = false,
   gapsByTab,
@@ -40,11 +42,10 @@ export default function WorkspacePanels({
   const navigate = useNavigate();
   const { runs } = useEnvironmentRuns(env, envState);
 
-  // Default landing is the summary, not the first tab in the rail — the rail
-  // order is Contract-first but the env opens on its summary.
+  // Default landing is the Overview, which is also the first tab in the rail.
   const current =
     WORKSPACE_TABS.find((t) => t.id === tab) ||
-    WORKSPACE_TABS.find((t) => t.id === "summary");
+    WORKSPACE_TABS.find((t) => t.id === "overview");
 
   const go = (tabId) => {
     if (!WORKSPACE_TABS.some((t) => t.id === tabId)) return;
@@ -70,11 +71,11 @@ export default function WorkspacePanels({
     if (executionOutlet && current.id === "runs") return executionOutlet;
     switch (current.id) {
       case "contract":
-        return <RlContractPanel env={env} envState={envState} onGo={go} buildMode={buildMode} />;
+        return <RlContractPanel env={env} envState={envState} patch={patch} onGo={go} locked={locked} onFork={onFork} />;
       case "scenarios":
-        return <ScenariosStep env={env} envState={envState} patch={patch} />;
+        return <ScenariosStep env={env} envState={envState} patch={patch} locked={locked} onFork={onFork} />;
       case "evals":
-        return <EvalsStep env={env} envState={envState} patch={patch} onGo={go} />;
+        return <EvalsStep env={env} envState={envState} patch={patch} onGo={go} locked={locked} backed={backed} onFork={onFork} />;
       case "runs":
         return (
           <RunsPanel
@@ -86,6 +87,8 @@ export default function WorkspacePanels({
             onGo={go}
           />
         );
+      case "settings":
+        return <SettingsPanel env={env} envState={envState} patch={patch} locked={locked} />;
       default:
         return (
           <OverviewPanel
@@ -159,6 +162,7 @@ WorkspacePanels.propTypes = {
   tab: PropTypes.string,
   onTabChange: PropTypes.func.isRequired,
   locked: PropTypes.bool,
+  backed: PropTypes.bool,
   onFork: PropTypes.func,
   buildMode: PropTypes.bool,
   gapsByTab: PropTypes.objectOf(GAP_SHAPE),

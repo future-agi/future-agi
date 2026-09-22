@@ -1,12 +1,21 @@
-import { describe, it, expect, vi, beforeAll } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterEach } from "vitest";
+import { act } from "@testing-library/react";
 import { render, screen, fireEvent } from "src/utils/test-utils";
 
 import BuilderConsole from "../console/BuilderConsole";
 import { CONSOLE_COPY } from "../build.constants";
+import { injectComposerScaffold } from "../console/composerScaffoldBus";
+import { getBuilderMode, setBuilderMode } from "../console/builderModeBus";
 
 beforeAll(() => {
   // jsdom has no layout; the console auto-scrolls to the latest turn.
   window.HTMLElement.prototype.scrollIntoView = vi.fn();
+});
+
+afterEach(() => {
+  // The builder mode is module-level; reset so a mode-picker test can't leak
+  // "guided" into the default-Auto expectations of another test.
+  setBuilderMode("auto");
 });
 
 const builderTurn = {
@@ -100,6 +109,88 @@ describe("BuilderConsole", () => {
   it("disables the send button on an empty draft", () => {
     render(<BuilderConsole turns={[]} running={false} onSend={vi.fn()} />);
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  });
+
+  it("freezes the composer while building: reason shown, input and send disabled", () => {
+    const onSend = vi.fn();
+    render(
+      <BuilderConsole turns={[]} running={false} onSend={onSend} frozen frozenReason="Still building" />,
+    );
+
+    // The reason replaces the idle header and the placeholder.
+    expect(screen.getAllByText("Still building").length).toBeGreaterThanOrEqual(1);
+    const field = screen.getByPlaceholderText("Still building");
+    expect(field).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+
+    // A blocked send never reaches the caller.
+    fireEvent.keyDown(field, { key: "Enter" });
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("hides suggestion chips while frozen", () => {
+    render(
+      <BuilderConsole turns={[]} running={false} chips={["Show tools"]} frozen frozenReason="x" />,
+    );
+    expect(screen.queryByRole("button", { name: "Show tools" })).toBeNull();
+  });
+
+  it("pins an injected scaffold as a removable chip and prepends it on send", () => {
+    const onSend = vi.fn();
+    render(<BuilderConsole turns={[]} running={false} onSend={onSend} />);
+
+    act(() => injectComposerScaffold("Rework the rushed-caller persona"));
+    expect(screen.getByText("Rework the rushed-caller persona")).toBeInTheDocument();
+
+    // The scaffold alone enables send; its text leads the outgoing message.
+    const field = screen.getByPlaceholderText(CONSOLE_COPY.placeholder);
+    fireEvent.change(field, { target: { value: "make it harder" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    expect(onSend).toHaveBeenCalledWith("Rework the rushed-caller persona. make it harder", []);
+
+    // The pins clear after send.
+    expect(screen.queryByText("Rework the rushed-caller persona")).toBeNull();
+  });
+
+  it("removes a pinned scaffold with its × button", () => {
+    render(<BuilderConsole turns={[]} running={false} onSend={vi.fn()} />);
+    act(() => injectComposerScaffold("Add a dispute case"));
+    fireEvent.click(screen.getByRole("button", { name: "Remove Add a dispute case" }));
+    expect(screen.queryByText("Add a dispute case")).toBeNull();
+  });
+
+  it("switches the builder mode from the composer picker", () => {
+    render(<BuilderConsole turns={[]} running={false} onSend={vi.fn()} />);
+
+    // Defaults to Auto.
+    expect(screen.getByRole("button", { name: /Auto/ })).toBeInTheDocument();
+    expect(getBuilderMode()).toBe("auto");
+
+    fireEvent.click(screen.getByRole("button", { name: /Auto/ }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /Manual/ }));
+    expect(getBuilderMode()).toBe("guided");
+  });
+
+  it("renders an ask step inline as the AskUserQuestion card", () => {
+    const askTurn = {
+      id: "q1",
+      role: "builder",
+      steps: [
+        { kind: "note", text: "Before I apply that, one decision:" },
+        {
+          kind: "ask",
+          question: {
+            step: 1, total: 1, prompt: "How strict should the refund rule be?",
+            multiSelect: false, options: [{ label: "Escalate every refund" }],
+          },
+          onSubmit: vi.fn(),
+          onSkip: vi.fn(),
+        },
+      ],
+    };
+    render(<BuilderConsole turns={[askTurn]} running={false} />);
+    expect(screen.getByText("How strict should the refund rule be?")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Submit" })).toBeInTheDocument();
   });
 
   it("attaches a file via the hidden input and can remove it", () => {

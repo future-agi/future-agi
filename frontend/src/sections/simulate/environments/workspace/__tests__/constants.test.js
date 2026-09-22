@@ -8,13 +8,14 @@ import {
 } from "../workspace.constants";
 
 describe("workspace tab constants", () => {
-  it("declares the five tabs in order with runs last", () => {
+  it("declares the tabs in rail order with Overview first and Settings last", () => {
     expect(WORKSPACE_TABS.map((t) => t.id)).toEqual([
+      "overview",
       "contract",
       "scenarios",
       "evals",
-      "summary",
       "runs",
+      "settings",
     ]);
   });
 

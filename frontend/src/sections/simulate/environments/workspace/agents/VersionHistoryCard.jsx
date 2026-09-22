@@ -1,11 +1,15 @@
 import PropTypes from "prop-types";
 import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, Button } from "@mui/material";
+import { Box, Stack, Typography, Button, Tooltip } from "@mui/material";
 
 import Iconify from "src/components/iconify";
 
 import { AGENT_SHAPE } from "./agents.shapes";
 import { ACTIVE_ACCENT, AGENT_CARD_COPY } from "./agentCards.constants";
+
+// A seeded-from-template env is read-only until forked; the set-active /
+// roll-back control carries this on its tooltip while locked.
+const LOCK_TOOLTIP = "Fork this environment to edit.";
 
 const TIMESTAMP_FORMAT = {
   month: "short", day: "numeric", year: "numeric",
@@ -17,7 +21,7 @@ const TIMESTAMP_FORMAT = {
 // action — "Roll back to this" for older versions, "Set active" for newer ones,
 // both firing the same handler. A vertical rail with connected dots makes the
 // timeline read as a sequence, latest at the top where the eye first lands.
-export default function VersionHistoryCard({ agent, onSetActiveVersion }) {
+export default function VersionHistoryCard({ agent, onSetActiveVersion, locked = false }) {
   const versions = agent.versions || [];
   const activeId = agent.activeVersionId || versions[versions.length - 1]?.id;
   const activeIdx = versions.findIndex((v) => v.id === activeId);
@@ -101,17 +105,22 @@ export default function VersionHistoryCard({ agent, onSetActiveVersion }) {
                     )}
                     <Box flex={1} />
                     {!isActive && (
-                      <Button
-                        size="small"
-                        onClick={() => onSetActiveVersion?.(v.id)}
-                        startIcon={<Iconify icon={isOlderThanActive ? "solar:rewind-back-linear" : "solar:arrow-up-linear"} width={13} />}
-                        sx={{
-                          typography: "s3", fontWeight: "fontWeightBold", color: "text.secondary",
-                          "&:hover": { color: "text.primary" },
-                        }}
-                      >
-                        {isOlderThanActive ? AGENT_CARD_COPY.rollBack : AGENT_CARD_COPY.setActive}
-                      </Button>
+                      <Tooltip arrow title={locked ? LOCK_TOOLTIP : ""}>
+                        <Box component="span" sx={{ display: "inline-flex" }}>
+                          <Button
+                            size="small"
+                            disabled={locked}
+                            onClick={() => onSetActiveVersion?.(v.id)}
+                            startIcon={<Iconify icon={isOlderThanActive ? "solar:rewind-back-linear" : "solar:arrow-up-linear"} width={13} />}
+                            sx={{
+                              typography: "s3", fontWeight: "fontWeightBold", color: "text.secondary",
+                              "&:hover": { color: "text.primary" },
+                            }}
+                          >
+                            {isOlderThanActive ? AGENT_CARD_COPY.rollBack : AGENT_CARD_COPY.setActive}
+                          </Button>
+                        </Box>
+                      </Tooltip>
                     )}
                   </Stack>
                   {v.note && v.note !== "Environment source" && (
@@ -131,4 +140,5 @@ export default function VersionHistoryCard({ agent, onSetActiveVersion }) {
 VersionHistoryCard.propTypes = {
   agent: AGENT_SHAPE.isRequired,
   onSetActiveVersion: PropTypes.func.isRequired,
+  locked: PropTypes.bool,
 };

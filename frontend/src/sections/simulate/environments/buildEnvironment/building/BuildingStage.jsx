@@ -19,7 +19,7 @@ import BuildingPane from "./BuildingPane";
  * `progress` is the `useBuildProgress` return; it may be null mid-init, so we
  * null-guard it and let the panes fall through to their own defaults.
  */
-export default function BuildingStage({ progress, env, envState, patch, primed }) {
+export default function BuildingStage({ progress, env, envState, patch, primed, source, world }) {
   const p = progress || {};
   return (
     <Box
@@ -48,6 +48,8 @@ export default function BuildingStage({ progress, env, envState, patch, primed }
             envState={envState}
             patch={patch}
             primed={primed}
+            source={source}
+            world={world}
           />
         </PanelBoundary>
       </SectionCard>
@@ -74,4 +76,6 @@ BuildingStage.propTypes = {
   envState: ENV_STATE_SHAPE,
   patch: PropTypes.func,
   primed: PropTypes.bool,
+  source: PropTypes.string,
+  world: PropTypes.object,
 };

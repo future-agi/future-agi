@@ -127,6 +127,7 @@ export default function PanelCodeUpload() {
 
   const buildSource = () => ({
     kind: "upload",
+    folderName,
     entry: entry.trim(),
     files: fileNames.map((name) => ({ name })),
     archive_artifact_id: archiveArtifactId,
@@ -179,7 +180,9 @@ export default function PanelCodeUpload() {
       if (seq !== uploadSeq.current) return;
       // A 400 here is almost always the runner's per-request field-count limit
       // (each file sends two fields), so name that cause instead of a generic error.
-      const message = e?.response?.status === 400 ? CODE_UPLOAD_COPY.tooManyFiles : errorMessage(e);
+      // The axios interceptor exposes the status as `statusCode` (not response.status).
+      const status = e?.statusCode ?? e?.response?.status;
+      const message = status === 400 ? CODE_UPLOAD_COPY.tooManyFiles : errorMessage(e);
       dispatch({ type: "uploadFail", message });
     }
   };
@@ -289,6 +292,7 @@ export default function PanelCodeUpload() {
       />
       <ContinueRow
         disabled={!build.readyToSubmit}
+        busy={build.committing}
         hint={build.status === "done" ? "Resolve the checks above" : "Run preflight to continue"}
         onClick={build.commitBuild}
       />

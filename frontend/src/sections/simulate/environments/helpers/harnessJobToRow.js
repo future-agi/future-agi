@@ -72,14 +72,16 @@ export function harnessEnvToRow(item) {
     agentType: ENV_AGENT_TYPE[item?.agent_type],
     updatedAt: item?.last_updated ?? item?.created_at ?? null,
     description: item?.description ?? null,
+    domain: item?.domain ?? null,
     tools: item?.tools_count ?? null,
     scenarios: item?.scenario_count ?? null,
-    // Sub-goals and total runs have no field in the list yet; the table keeps a
-    // "coming soon" header over them and their cells render a dash. buildProgress
-    // feeds the status pill's inline "n/m steps" and the list carries no live
-    // progress, so it is absent too.
-    subgoals: null,
-    runsTotal: null,
+    // §1 (updated contract) adds sub_goals_count / runs_count. They are read
+    // defensively: null until the backend actually serves them, at which point
+    // the real values flow through and the "coming soon" column headers can be
+    // dropped (Phase B). buildProgress feeds the status pill's inline "n/m
+    // steps" and the list carries no live progress, so it stays absent.
+    subgoals: item?.sub_goals_count ?? null,
+    runsTotal: item?.runs_count ?? null,
     buildProgress: null,
   };
 }

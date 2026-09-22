@@ -1,5 +1,6 @@
 import { Helmet } from "react-helmet-async";
 import EnvironmentWorkspace from "src/sections/simulate/environments/workspace/EnvironmentWorkspace";
+import WorkspaceErrorBoundary from "src/sections/simulate/environments/workspace/WorkspaceErrorBoundary";
 
 export default function EnvironmentWorkspacePage() {
   return (
@@ -7,7 +8,9 @@ export default function EnvironmentWorkspacePage() {
       <Helmet>
         <title>Environment | Future AGI</title>
       </Helmet>
-      <EnvironmentWorkspace />
+      <WorkspaceErrorBoundary>
+        <EnvironmentWorkspace />
+      </WorkspaceErrorBoundary>
     </>
   );
 }

@@ -1,13 +1,25 @@
 import PropTypes from "prop-types";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Box, Stack, Typography, Button } from "@mui/material";
+import { enqueueSnackbar } from "notistack";
+import { Box, Stack, Typography, Button, IconButton } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
+import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import { paths } from "src/routes/paths";
 import { runSimulationTarget } from "src/api/simulate-environments/runs";
+import { HARNESS_DETAIL_ENABLED } from "src/api/simulate-environments/environment";
+import { useDeleteEnvironment } from "src/api/simulate-environments/environments";
+import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
+import { ENTRY_TAB } from "../environmentOptions";
+import { DELETE_DIALOG_COPY, DELETE_TONE } from "../myEnvironments.constants";
 import SurfaceIcon from "../components/SurfaceIcon";
 import LivePill from "./LivePill";
-import EnvVersionPin from "./EnvVersionPin";
+import RenameEnvironmentDialog from "./RenameEnvironmentDialog";
+// EnvVersionPin renders a mock "env v3" version from a fixture fallback
+// (_fixtures/versions.js) — there is no real version field in the environments
+// contract yet. Hidden in the header until the contract exposes one.
+// import EnvVersionPin from "./EnvVersionPin";
 import ForkMenu from "./ForkMenu";
 import { WORKSPACE_COPY } from "./workspace.constants";
 
@@ -19,14 +31,31 @@ import { WORKSPACE_COPY } from "./workspace.constants";
 // read-only and the overflow is hidden (Fork lives on the Overview card there).
 export default function WorkspaceHeader({
   env,
-  envState,
-  patch,
+  // envState / patch are still passed by the parent for the version pin; re-add
+  // them here when the commented-out <EnvVersionPin> below is restored.
   canRun,
   runBlockedReason,
   locked = false,
+  backed = false,
   onFork,
 }) {
   const navigate = useNavigate();
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const deleteEnv = useDeleteEnvironment();
+  // Rename (§8) lands with the §6 detail path — its response is the §6 body and
+  // the header only reflects the new name once the detail cache drives `env`.
+  // Gate the affordance on that path so it never shows a control that 405s.
+  const canRename = HARNESS_DETAIL_ENABLED && !locked;
+  // Delete (§2) is live today, but only a real backend-backed env has a row to
+  // remove — a forked/template env has none, so it is offered only when backed.
+  const canDelete = backed && !locked;
+  const onDelete = () =>
+    deleteEnv.mutate(env.id, {
+      onSuccess: () =>
+        navigate(`${paths.dashboard.simulate.environments.root}?tab=${ENTRY_TAB.MY}`),
+      onError: (error) => enqueueSnackbar(errorMessage(error), { variant: "error" }),
+    });
 
   return (
     <Stack
@@ -38,7 +67,9 @@ export default function WorkspaceHeader({
       <CustomTooltip show title={WORKSPACE_COPY.back} size="small" arrow>
         <Button
           aria-label={WORKSPACE_COPY.back}
-          onClick={() => navigate(paths.dashboard.simulate.environments.root)}
+          // Back to the environment list on its My Environments tab — the root
+          // alone defaults to Build, which dropped you on an empty builder.
+          onClick={() => navigate(`${paths.dashboard.simulate.environments.root}?tab=${ENTRY_TAB.MY}`)}
           sx={{ minWidth: 32, width: 32, height: 32, p: 0, color: "text.subtitle" }}
         >
           <Iconify icon="solar:alt-arrow-left-linear" width={18} />
@@ -52,8 +83,21 @@ export default function WorkspaceHeader({
           <Typography noWrap sx={{ typography: "s1_2", fontWeight: "fontWeightBold" }}>
             {env.name}
           </Typography>
-          <LivePill />
-          <EnvVersionPin env={env} envState={envState} patch={patch} readOnly={locked} />
+          <LivePill env={env} />
+          {canRename && (
+            <CustomTooltip show title="Rename environment" size="small" arrow>
+              <IconButton
+                aria-label="Rename environment"
+                size="small"
+                onClick={() => setRenameOpen(true)}
+                sx={{ color: "text.subtitle" }}
+              >
+                <Iconify icon="solar:pen-linear" width={15} />
+              </IconButton>
+            </CustomTooltip>
+          )}
+          {/* Mock version pin hidden until the contract exposes a real version:
+              <EnvVersionPin env={env} envState={envState} patch={patch} readOnly={locked} /> */}
         </Stack>
         <Typography noWrap sx={{ typography: "s2", color: "text.subtitle" }}>
           {env.tagline}
@@ -76,7 +120,51 @@ export default function WorkspaceHeader({
         </span>
       </CustomTooltip>
 
-      {!locked && <ForkMenu onFork={onFork} />}
+      {!locked && (
+        <ForkMenu
+          onFork={onFork}
+          onDelete={canDelete ? () => setConfirmDelete(true) : undefined}
+        />
+      )}
+
+      {canRename && (
+        <RenameEnvironmentDialog
+          open={renameOpen}
+          env={env}
+          onClose={() => setRenameOpen(false)}
+        />
+      )}
+
+      {canDelete && (
+        <ConfirmDialog
+          open={confirmDelete}
+          onClose={() => setConfirmDelete(false)}
+          title={DELETE_DIALOG_COPY.title}
+          content={
+            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+              <b>{env.name}</b> {DELETE_DIALOG_COPY.body}
+            </Typography>
+          }
+          action={
+            <Button
+              variant="contained"
+              disabled={deleteEnv.isPending}
+              onClick={() => {
+                setConfirmDelete(false);
+                onDelete();
+              }}
+              sx={{
+                bgcolor: DELETE_TONE.main,
+                "&:hover": { bgcolor: DELETE_TONE.hover },
+                typography: "s2",
+                fontWeight: "fontWeightBold",
+              }}
+            >
+              {DELETE_DIALOG_COPY.confirm}
+            </Button>
+          }
+        />
+      )}
     </Stack>
   );
 }
@@ -87,6 +175,7 @@ WorkspaceHeader.propTypes = {
     name: PropTypes.string,
     tagline: PropTypes.string,
     surface: PropTypes.string,
+    buildStatus: PropTypes.string,
     platform: PropTypes.shape({
       runTestId: PropTypes.string,
       testExecutionId: PropTypes.string,
@@ -101,5 +190,6 @@ WorkspaceHeader.propTypes = {
   canRun: PropTypes.bool,
   runBlockedReason: PropTypes.string,
   locked: PropTypes.bool,
+  backed: PropTypes.bool,
   onFork: PropTypes.func,
 };

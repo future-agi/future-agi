@@ -148,19 +148,23 @@ describe("NextStepsChecklist", () => {
     expect(screen.getByText(/Kick off a run/)).toBeInTheDocument();
   });
 
-  it("routes each step's CTA through onGo", async () => {
+  it("routes the live step CTAs through onGo; the deferred connect-agent step is disabled", async () => {
     const user = userEvent.setup();
     const onGo = vi.fn();
     renderChecklist({ onGo });
 
-    await user.click(screen.getByRole("button", { name: /connect agent/i }));
-    expect(onGo).toHaveBeenCalledWith("agent");
+    // Connecting an agent is deferred (no Agents tab) — the CTA is disabled
+    // behind the coming-soon tooltip rather than a button that no-ops.
+    expect(screen.getByRole("button", { name: /connect agent/i })).toBeDisabled();
 
     await user.click(screen.getByRole("button", { name: /add scenarios/i }));
     expect(onGo).toHaveBeenCalledWith("scenarios");
 
     await user.click(screen.getByRole("button", { name: /add evaluations/i }));
     expect(onGo).toHaveBeenCalledWith("evals");
+
+    // The disabled connect-agent CTA never fires onGo.
+    expect(onGo).not.toHaveBeenCalledWith("agent");
   });
 
   it("counts completed steps and retires their CTAs as progress is made", () => {
@@ -174,8 +178,7 @@ describe("NextStepsChecklist", () => {
 });
 
 describe("SourceToSandboxMap", () => {
-  const renderMap = (props = {}) =>
-    render(<SourceToSandboxMap env={MOCK_WORLD} envState={{}} patch={vi.fn()} {...props} />);
+  const renderMap = (props = {}) => render(<SourceToSandboxMap env={MOCK_WORLD} {...props} />);
 
   it("renders the source and sandbox columns for the env", () => {
     renderMap();
@@ -188,27 +191,20 @@ describe("SourceToSandboxMap", () => {
     expect(screen.getByText("customers · 240")).toBeInTheDocument();
   });
 
-  it("holds the last unclassifiable tool open for the reader to resolve", () => {
+  it("is a read-only ledger — no resolve homework (that moved to the Contract tab)", () => {
     renderMap();
-    expect(screen.getByText("Needs your answer")).toBeInTheDocument();
-    expect(screen.getByText(/Does/)).toBeInTheDocument();
+    // Every tool row states a sandbox target rather than holding one open with a
+    // "Needs your answer" prompt; the read/write override lives on Contract now.
+    expect(screen.queryByText("Needs your answer")).toBeNull();
+    expect(screen.queryByRole("button", { name: /confirm read-only/i })).toBeNull();
   });
 
-  it("records the reader's resolution via patch", async () => {
-    const user = userEvent.setup();
-    const patch = vi.fn();
-    renderMap({ patch });
-
-    // the inline resolver defaults to read-only
-    await user.click(screen.getByRole("button", { name: /confirm read-only/i }));
-    expect(patch).toHaveBeenCalledTimes(1);
-    expect(patch.mock.calls[0][0]).toEqual({
-      toolResolutions: { escalate_to_human: "reads" },
-    });
-  });
-
-  it("shows a confirmed chip once a tool has been resolved", () => {
-    renderMap({ envState: { toolResolutions: { escalate_to_human: "writes" } } });
+  it("reflects a tool-effect override set on the Contract tab (you-confirmed + overridden target)", () => {
+    // issue_refund heuristically classifies as a write ("writes to the sandbox").
+    // A human override to read-only on Contract stores the singular "read"; the
+    // map normalizes it and shows the overridden target + a "you confirmed" mark.
+    renderMap({ envState: { toolResolutions: { issue_refund: "read" } } });
     expect(screen.getByText("you confirmed")).toBeInTheDocument();
+    expect(screen.getAllByText("reads from fixture state").length).toBeGreaterThan(0);
   });
 });

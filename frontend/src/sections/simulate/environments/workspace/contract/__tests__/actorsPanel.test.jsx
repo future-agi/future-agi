@@ -6,6 +6,7 @@ import RlContractPanel from "../RlContractPanel";
 // A voice environment. castFor(voice) seeds the first three voice-capable
 // actors: the competing colleague, the supervisor and the fraud desk.
 const voiceEnv = {
+  name: "Refund Copilot",
   surface: "voice",
   tools: [{ name: "lookup_account", desc: "Reads the caller's account." }],
   rules: ["Only refund verified callers."],
@@ -68,8 +69,43 @@ describe("ActorsPanel", () => {
 
 describe("RlContractPanel actors slot", () => {
   it("mounts the actors panel, not the deferred empty state", () => {
-    render(<RlContractPanel env={voiceEnv} envState={{ evals: [] }} onGo={vi.fn()} />);
-    expect(screen.getByText("Colleague with a different plan")).toBeInTheDocument();
+    render(<RlContractPanel env={voiceEnv} envState={{ evals: [] }} patch={vi.fn()} onGo={vi.fn()} />);
+    expect(screen.getAllByText("Colleague with a different plan").length).toBeGreaterThan(0);
     expect(screen.queryByText("Actors land with the next phase")).toBeNull();
+  });
+});
+
+describe("ActorsPanel create / edit / remove flow", () => {
+  it("hides create/edit/remove when no patch is provided (read-only)", () => {
+    render(<ActorsPanel env={voiceEnv} envState={{}} onGo={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: /create actor/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /remove from this environment/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /edit — saving creates a new version/i })).toBeNull();
+  });
+
+  it("shows the Create actor button and opens the editor drawer when patch is provided", () => {
+    render(<ActorsPanel env={voiceEnv} envState={{}} patch={vi.fn()} onGo={vi.fn()} />);
+    const create = screen.getByRole("button", { name: /create actor/i });
+    expect(create).toBeEnabled();
+    fireEvent.click(create);
+    // The editor drawer opens with its fields.
+    expect(screen.getByRole("textbox", { name: "Name" })).toBeInTheDocument();
+    expect(screen.getByText(/must not be the task's goal/i)).toBeInTheDocument();
+  });
+
+  it("removes an actor from the environment via patch", () => {
+    const patch = vi.fn();
+    render(<ActorsPanel env={voiceEnv} envState={{ actors: ["act-competing-colleague", "act-supervisor"] }} patch={patch} onGo={vi.fn()} />);
+    fireEvent.click(screen.getAllByRole("button", { name: /remove from this environment/i })[0]);
+    expect(patch).toHaveBeenCalledTimes(1);
+    expect(patch.mock.calls[0][0].actors).not.toContain("act-competing-colleague");
+    expect(patch.mock.calls[0][0].actors).toContain("act-supervisor");
+  });
+
+  it("disables Create and drops row edit/remove when locked", () => {
+    render(<ActorsPanel env={voiceEnv} envState={{ actors: ["act-competing-colleague"] }} patch={vi.fn()} onGo={vi.fn()} locked />);
+    expect(screen.getByRole("button", { name: /create actor/i })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /remove from this environment/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /edit — saving creates a new version/i })).toBeNull();
   });
 });

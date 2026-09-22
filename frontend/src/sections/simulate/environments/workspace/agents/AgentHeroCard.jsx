@@ -1,12 +1,16 @@
 import PropTypes from "prop-types";
 import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, Button } from "@mui/material";
+import { Box, Stack, Typography, Button, Tooltip } from "@mui/material";
 
 import Iconify from "src/components/iconify";
 
 import { MODALITY } from "../../agentTypes";
 import { AGENT_SHAPE } from "./agents.shapes";
 import { ACTIVE_ACCENT, AGENT_CARD_COPY } from "./agentCards.constants";
+
+// A seeded-from-template env is read-only until forked; the "Add new version"
+// CTA carries this on its tooltip while locked.
+const LOCK_TOOLTIP = "Fork this environment to edit.";
 import { DetailBlock } from "./agentPrimitives";
 import {
   deriveAgentName, deriveTypeLine, connectionRowsFor, sourceRowsFor,
@@ -18,7 +22,7 @@ import {
 // loud so the user's eye lands on it. A connection/source detail strip sits
 // underneath as a compact key/value grid; with one agent there is nothing to
 // expand away from, so there is no expand/collapse chrome.
-export default function AgentHeroCard({ agent, onAddVersion }) {
+export default function AgentHeroCard({ agent, onAddVersion, locked = false }) {
   const type = MODALITY[agent.typeId];
   const name = deriveAgentName(agent, type);
   const typeLine = deriveTypeLine(agent, type);
@@ -82,14 +86,19 @@ export default function AgentHeroCard({ agent, onAddVersion }) {
           </Typography>
         </Box>
 
-        <Button
-          variant="contained" color="primary"
-          onClick={onAddVersion}
-          startIcon={<Iconify icon="solar:add-circle-linear" width={17} />}
-          sx={{ typography: "s2", fontWeight: "fontWeightBold", flexShrink: 0 }}
-        >
-          {AGENT_CARD_COPY.addVersion}
-        </Button>
+        <Tooltip arrow title={locked ? LOCK_TOOLTIP : ""}>
+          <Box component="span" sx={{ display: "inline-flex", flexShrink: 0 }}>
+            <Button
+              variant="contained" color="primary"
+              disabled={locked}
+              onClick={onAddVersion}
+              startIcon={<Iconify icon="solar:add-circle-linear" width={17} />}
+              sx={{ typography: "s2", fontWeight: "fontWeightBold", flexShrink: 0 }}
+            >
+              {AGENT_CARD_COPY.addVersion}
+            </Button>
+          </Box>
+        </Tooltip>
       </Stack>
 
       <Box sx={{
@@ -106,4 +115,5 @@ export default function AgentHeroCard({ agent, onAddVersion }) {
 AgentHeroCard.propTypes = {
   agent: AGENT_SHAPE.isRequired,
   onAddVersion: PropTypes.func.isRequired,
+  locked: PropTypes.bool,
 };

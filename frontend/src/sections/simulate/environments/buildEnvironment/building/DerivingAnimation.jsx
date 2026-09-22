@@ -1,12 +1,11 @@
 import PropTypes from "prop-types";
-import { useEffect, useState } from "react";
 import { alpha, useTheme, keyframes } from "@mui/material/styles";
 import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 
 import { SURFACE_INK, TRAFFIC_LIGHTS } from "../buildTones";
 import { DERIVING_LABEL } from "../build.constants";
-import { LandedChip, MiniCount, TOKENS, KIND_COLOR } from "./LandedChip";
+import { LandedChip, MiniCount, KIND_COLOR } from "./LandedChip";
 
 /**
  * Hero illustration for the derivation panel.
@@ -19,31 +18,14 @@ import { LandedChip, MiniCount, TOKENS, KIND_COLOR } from "./LandedChip";
  * on the other — and drawing it directly is worth more than any amount of
  * incremental text.
  *
- * Every element here has a job. The scanning beam moves through the source
- * file at a real read pace. Particles emit from wherever the beam is, arc
- * toward the container, and land as a tool/rule/data icon that stays. Counts
- * next to the container tick up as each icon arrives — the discovery is
- * literal, not decorative.
+ * This used to animate a canned token list (the same tools/rules/tables every
+ * build). Now it's driven by the real job: the source panel names the actual
+ * repo/source being read, and the sandbox fills with the REAL derived tools /
+ * rules / tables from the harness job's stage outputs. Those only exist once
+ * the "Generating environment" stage lands, and only the genuinely-derived
+ * world reaches this component (never the MOCK_WORLD overlay), so before then
+ * the container shows neutral skeleton pills rather than invented names.
  */
-
-/** Emit a new token every `everyMs`, cap at TOKENS.length; caller receives the array so far. */
-function useEmit(everyMs = 850, cap = TOKENS.length) {
-  const [items, setItems] = useState([]);
-  useEffect(() => {
-    setItems([]);
-    let i = 0;
-    const t = setInterval(() => {
-      i += 1;
-      setItems((prev) => {
-        if (prev.length >= cap) return prev;
-        const next = TOKENS[(i - 1) % TOKENS.length];
-        return [...prev, { ...next, id: `${i}-${next.label}` }];
-      });
-    }, everyMs);
-    return () => clearInterval(t);
-  }, [everyMs, cap]);
-  return items;
-}
 
 const beamMove = keyframes`
   0%   { transform: translateY(6px); opacity: 0.4; }
@@ -74,14 +56,46 @@ const shimmerBg = keyframes`
   100% { background-position: 200% 50%; }
 `;
 
-export default function DerivingAnimation({ label }) {
+const truncate = (s, n) => {
+  const str = String(s || "");
+  return str.length > n ? `${str.slice(0, n - 1)}…` : str;
+};
+
+// A hard_constraint is a full sentence; trim the trailing period and clip it so
+// it reads as a chip rather than a paragraph.
+const shortRule = (r) => truncate(String(r || "").replace(/\.\s*$/, ""), 22);
+
+// Real derived artifacts → the chips that land in the sandbox. Tools and tables
+// carry natural short labels; rules are clipped sentences. Capped so a large
+// world can't overflow the container.
+function chipsFromWorld(world) {
+  const tools = world?.tools || [];
+  const rules = world?.rules || [];
+  const tables = world?.seed?.tables || [];
+  const chips = [
+    ...tools.map((t, i) => ({ id: `tool-${i}`, kind: "tool", label: t.name })),
+    ...tables.map((t, i) => ({
+      id: `data-${i}`,
+      kind: "data",
+      label: t.rows != null ? `${t.name} × ${t.rows}` : t.name,
+    })),
+    ...rules.map((r, i) => ({ id: `rule-${i}`, kind: "rule", label: shortRule(r) })),
+  ].filter((c) => c.label);
+  return {
+    chips: chips.slice(0, 14),
+    counts: { tool: tools.length, rule: rules.length, data: tables.length },
+  };
+}
+
+const SKELETON_WIDTHS = [64, 92, 48, 76, 58, 84];
+
+export default function DerivingAnimation({ label, source, world = null }) {
   const theme = useTheme();
   const dark = theme.palette.mode === "dark";
-  const items = useEmit(850);
 
-  const toolCount = items.filter((i) => i.kind === "tool").length;
-  const ruleCount = items.filter((i) => i.kind === "rule").length;
-  const dataCount = items.filter((i) => i.kind === "data").length;
+  const { chips, counts } = chipsFromWorld(world);
+  const hasReal = chips.length > 0;
+  const fileLabel = source ? truncate(source, 26) : DERIVING_LABEL.readingSource;
 
   return (
     <Box sx={{ px: 2.5, pt: 1 }}>
@@ -106,9 +120,6 @@ export default function DerivingAnimation({ label }) {
         sx={{
           position: "relative", height: 260, borderRadius: 2, overflow: "hidden",
           border: "1px solid", borderColor: "divider",
-          /* Neutral near-black (SURFACE_INK.dark) instead of the old
-             higher-blue near-black, which read as cool/purple against the
-             chip colors. */
           bgcolor: dark ? SURFACE_INK.dark : SURFACE_INK.light,
         }}
       >
@@ -133,7 +144,7 @@ export default function DerivingAnimation({ label }) {
             boxShadow: dark ? "0 8px 32px rgba(0,0,0,0.45)" : "0 8px 32px rgba(16,24,40,0.08)",
           }}
         >
-          {/* file header */}
+          {/* file header — the real source being read */}
           <Stack
             direction="row" alignItems="center" spacing={0.5}
             sx={{
@@ -145,12 +156,15 @@ export default function DerivingAnimation({ label }) {
             <Box sx={{ width: 6, height: 6, borderRadius: "50%", bgcolor: TRAFFIC_LIGHTS[1] }} />
             <Box sx={{ width: 6, height: 6, borderRadius: "50%", bgcolor: TRAFFIC_LIGHTS[2] }} />
             <Box sx={{ flex: 1 }} />
-            <Typography sx={{ typography: "s3", color: "text.disabled", fontFamily: "ui-monospace, Menlo, monospace", fontSize: 9 }}>
-              handlers/refunds.py
+            <Typography
+              title={source || undefined}
+              sx={{ typography: "s3", color: "text.disabled", fontFamily: "ui-monospace, Menlo, monospace", fontSize: 9, whiteSpace: "nowrap" }}
+            >
+              {fileLabel}
             </Typography>
           </Stack>
 
-          {/* code lines */}
+          {/* code lines — an abstract "reading source" shimmer, not a real file */}
           <Box sx={{ position: "relative", height: 172, py: 1, px: 1.25 }}>
             {[92, 60, 78, 40, 84, 66, 52, 74, 46, 88, 62, 70].map((w, i) => (
               <Box
@@ -259,32 +273,53 @@ export default function DerivingAnimation({ label }) {
             </Typography>
             <Box flex={1} />
             <Typography sx={{ typography: "s3", color: "text.disabled", fontVariantNumeric: "tabular-nums", fontSize: 10 }}>
-              {items.length}
+              {counts.tool + counts.rule + counts.data}
             </Typography>
           </Stack>
 
-          {/* landed chips */}
+          {/* landed chips — real derived world, or neutral skeleton pills until
+              the environment stage lands */}
           <Box sx={{ p: 1, height: 172, overflow: "hidden" }}>
             <Stack direction="row" flexWrap="wrap" gap={0.5}>
-              {items.map((item) => (
-                <LandedChip key={item.id} item={item} dark={dark} />
-              ))}
+              {hasReal
+                ? chips.map((item) => <LandedChip key={item.id} item={item} dark={dark} />)
+                : SKELETON_WIDTHS.map((w, i) => (
+                    <Box
+                      key={i}
+                      sx={{
+                        height: 20, width: w, borderRadius: 999,
+                        background: `linear-gradient(90deg,
+                          ${alpha(theme.palette.text.primary, dark ? 0.06 : 0.05)} 0%,
+                          ${alpha(theme.palette.text.primary, dark ? 0.12 : 0.09)} 50%,
+                          ${alpha(theme.palette.text.primary, dark ? 0.06 : 0.05)} 100%)`,
+                        backgroundSize: "200% 100%",
+                        animation: `${shimmerBg} 1.8s linear infinite`,
+                      }}
+                    />
+                  ))}
             </Stack>
           </Box>
         </Box>
 
-        {/* ─── legend under the sandbox ─── */}
+        {/* ─── legend under the sandbox — real tallies ─── */}
         <Stack
           direction="row" spacing={1.5}
           sx={{ position: "absolute", bottom: 10, right: 24 }}
         >
-          <MiniCount color={KIND_COLOR.tool} label={`${toolCount} tools`} />
-          <MiniCount color={KIND_COLOR.rule} label={`${ruleCount} rules`} />
-          <MiniCount color={KIND_COLOR.data} label={`${dataCount} tables`} />
+          <MiniCount color={KIND_COLOR.tool} label={`${counts.tool} tools`} />
+          <MiniCount color={KIND_COLOR.rule} label={`${counts.rule} rules`} />
+          <MiniCount color={KIND_COLOR.data} label={`${counts.data} tables`} />
         </Stack>
       </Box>
     </Box>
   );
 }
 
-DerivingAnimation.propTypes = { label: PropTypes.string };
+DerivingAnimation.propTypes = {
+  label: PropTypes.string,
+  // The real source being read (repo/spec) — shown in the file header.
+  source: PropTypes.string,
+  // The real derived world from stage outputs: { tools:[{name}], rules:[str],
+  // seed:{ tables:[{name, rows?}] } }. Null/empty until the stage lands.
+  world: PropTypes.object,
+};

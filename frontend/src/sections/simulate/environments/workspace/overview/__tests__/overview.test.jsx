@@ -103,17 +103,15 @@ describe("OverviewPanel", () => {
     expect(await screen.findByText("Version history")).toBeInTheDocument();
   });
 
-  it("shows the seeded-baseline copy and 'Fork to edit' when locked", async () => {
-    const user = userEvent.setup();
-    const onFork = vi.fn();
-    renderPanel({ locked: true, onFork });
+  it("shows the seeded-baseline copy when locked, with no competing fork button (the banner owns it)", () => {
+    renderPanel({ locked: true });
 
     expect(
       screen.getByText(/Seeded baseline shipped with this template/)
     ).toBeInTheDocument();
 
-    const fork = screen.getByRole("button", { name: /fork to edit/i });
-    await user.click(fork);
-    expect(onFork).toHaveBeenCalledTimes(1);
+    // The single "Fork to edit" affordance lives in the workspace-level
+    // TemplateLockBanner, not on the agent card — so the panel has none.
+    expect(screen.queryByRole("button", { name: /fork to edit/i })).toBeNull();
   });
 });

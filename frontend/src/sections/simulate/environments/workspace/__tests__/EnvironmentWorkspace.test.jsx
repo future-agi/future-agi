@@ -1,27 +1,17 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import {
+  publishScenarioSelection,
+  clearScenarioSelection,
+} from "../../buildEnvironment/console/scenarioSelectionBus";
 import {
   MemoryRouter,
   Routes,
   Route,
-  Navigate,
-  Outlet,
   useLocation,
 } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-
-// The heavy product run detail is mocked to a marker that still renders its
-// Outlet, so the nested index → call-details redirect mounts and the URL
-// settles on /call-details the way the real tree does.
-vi.mock("src/sections/test-detail/TestRunDetailView", () => ({
-  default: () => (
-    <div>
-      test-run-detail
-      <Outlet />
-    </div>
-  ),
-}));
 
 // getHarnessJob resolves the harness-backed environment; listHarnessJobs is
 // exported for parity with the other consumers of this module.
@@ -48,6 +38,7 @@ const { useEnvironmentsStore, resetEnvironmentsStore } = await import(
 );
 const { emptyEnvState } = await import("../../store/envState");
 const { seedFromTemplate } = await import("../helpers/seedEnvState");
+const { PIPELINE_CHECKS_COPY } = await import("../../buildEnvironment/build.constants");
 
 const NOW = "2026-09-15T09:00:00Z";
 
@@ -78,8 +69,7 @@ const COMPLETED_JOB = {
 };
 
 // A still-building job: no platform bridge yet, a non-terminal stage. The
-// workspace's building banner counts its progress, so buildProgress must be an
-// object the banner can read.
+// workspace hosts the build experience (pipeline + hero) for it in place.
 const BUILDING_JOB = {
   job: {
     job_id: "job-build",
@@ -113,7 +103,9 @@ function LocationProbe() {
 
 function renderWorkspace(entry) {
   const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
+    // harnessJobQuery sets its own `retry` fn (no-retry on 404), which overrides
+    // the client default; retryDelay:0 keeps the non-404 retry path instant here.
+    defaultOptions: { queries: { retry: false, retryDelay: 0 } },
   });
   return render(
     <QueryClientProvider client={client}>
@@ -127,10 +119,7 @@ function renderWorkspace(entry) {
             <Route
               path="runs/:testId/:executionId"
               element={<WorkspaceExecutionDetail />}
-            >
-              <Route index element={<Navigate to="call-details" replace />} />
-              <Route path="call-details" element={<div>call-details-body</div>} />
-            </Route>
+            />
           </Route>
           <Route
             path="/dashboard/simulate/environments"
@@ -153,6 +142,9 @@ describe("EnvironmentWorkspace route shell", () => {
     // jsdom has no layout, so the console's scroll-to-bottom is a no-op here.
     Element.prototype.scrollIntoView = vi.fn();
     resetEnvironmentsStore();
+    // The scenario selection is module-level; clear it so a leaked selection
+    // can't render the context chip into an unrelated test.
+    clearScenarioSelection();
     getHarnessJob.mockReset();
     axios.get.mockReset();
     axios.get.mockResolvedValue({ data: EXECUTIONS });
@@ -172,7 +164,7 @@ describe("EnvironmentWorkspace route shell", () => {
     expect(await screen.findByText("Refund Copilot", { selector: "p" }))
       .toBeInTheDocument();
     expect(screen.getByText("Live")).toBeInTheDocument();
-    ["Summary", "Contract", "Scenarios", "Evaluations", "Runs"].forEach((label) =>
+    ["Overview", "Contract", "Scenarios", "Evaluations", "Runs", "Settings"].forEach((label) =>
       expect(screen.getByRole("tab", { name: new RegExp(label) })).toBeInTheDocument(),
     );
   });
@@ -194,13 +186,26 @@ describe("EnvironmentWorkspace route shell", () => {
   });
 
   it("shows the not-found state for an unknown id", async () => {
-    const err = new Error("Not found");
-    err.response = { status: 404 };
+    // The axios interceptor rejects with statusCode (not response.status).
+    const err = Object.assign(new Error("job not found"), { statusCode: 404 });
     getHarnessJob.mockRejectedValue(err);
 
     renderWorkspace("/dashboard/simulate/environments/nope");
 
     expect(await screen.findByText("Environment not found")).toBeInTheDocument();
+  });
+
+  it("shows a recoverable error state (not a blank page) when the fetch fails non-404", async () => {
+    const err = Object.assign(new Error("Server error"), { statusCode: 500 });
+    getHarnessJob.mockRejectedValue(err);
+
+    renderWorkspace("/dashboard/simulate/environments/boom");
+
+    // The error state renders with a Retry — never the silent blank placeholder,
+    // and not the 404 "not found" copy.
+    expect(await screen.findByText(/Couldn.t load this environment/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(screen.queryByText("Environment not found")).toBeNull();
   });
 
   it("resolves a harness job: Run enabled, runs listed, row opens the detail", async () => {
@@ -217,22 +222,86 @@ describe("EnvironmentWorkspace route shell", () => {
     const row = await screen.findByRole("button", { name: /Run 1/ });
     await user.click(row);
 
-    expect(await screen.findByText("test-run-detail")).toBeInTheDocument();
-    expect(screen.getByText("call-details-body")).toBeInTheDocument();
+    // The row opens the designer-style RunDetail in place of the Runs body:
+    // its identity header names the ordinal + agent version and the run status.
+    expect(await screen.findByText(/Run 1 · agent v1/)).toBeInTheDocument();
+    expect(screen.getByText("Passed")).toBeInTheDocument();
     expect(screen.getByTestId("location")).toHaveTextContent(
-      "/dashboard/simulate/environments/job-done/runs/rt1/ex1/call-details",
+      "/dashboard/simulate/environments/job-done/runs/rt1/ex1",
     );
   });
 
-  it("shows the building banner with step progress for a still-building job", async () => {
+  it("hosts the build experience in place for a still-building job", async () => {
     getHarnessJob.mockResolvedValue(BUILDING_JOB);
 
     renderWorkspace("/dashboard/simulate/environments/job-build");
 
-    expect(
-      await screen.findByText("Environment is still being built"),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/steps done\./)).toBeInTheDocument();
+    // The build pipeline + deriving hero render where the workspace tabs will be,
+    // reading the same ["harness-job", id] poll the env resolves from.
+    expect(await screen.findByText(PIPELINE_CHECKS_COPY.heading)).toBeInTheDocument();
+    // The hero shows a neutral skeleton (no derived world yet).
+    expect(screen.getByText("0 tools")).toBeInTheDocument();
+    // Run stays disabled until the job goes Live.
+    expect(screen.getByRole("button", { name: /Run simulation/ })).toBeDisabled();
+  });
+
+  it("swaps the build experience for the workspace in place when the job completes", async () => {
+    // First poll is still building; the 2s harness-job refetch then lands
+    // completed. There is no adopt hand-off — buildStatus flips building→ready
+    // off the shared poll and the same url renders the workspace tabs.
+    const COMPLETED_BUILD_JOB = {
+      ...BUILDING_JOB,
+      status: { stage: "completed", created_at: NOW },
+      platform: { run_test_id: "rt2", test_execution_id: "ex2" },
+    };
+    // A mutable stage the shared job poll reads, so the build state is stable
+    // until we flip it — then the 2s refetch lands "completed".
+    let currentJob = BUILDING_JOB;
+    getHarnessJob.mockImplementation(() => Promise.resolve(currentJob));
+
+    renderWorkspace("/dashboard/simulate/environments/job-build");
+
+    // It starts on the build pipeline...
+    expect(await screen.findByText(PIPELINE_CHECKS_COPY.heading)).toBeInTheDocument();
+    // ...and the placeholder env state is NOT seeded while building, so the real
+    // derived world (not the building-time generated pool) wins once it lands.
+    expect(useEnvironmentsStore.getState().byEnv["job-build"]).toBeUndefined();
+
+    // ...then the job completes: Run enables (the harness bridge is live) and the
+    // build pipeline is gone — the workspace took over in place, same url.
+    currentJob = COMPLETED_BUILD_JOB;
+    await waitFor(
+      () => expect(screen.getByRole("button", { name: /Run simulation/ })).toBeEnabled(),
+      { timeout: 6000 },
+    );
+    expect(screen.queryByText(PIPELINE_CHECKS_COPY.heading)).toBeNull();
+    // Env state is seeded now (from the completed job), not before.
+    expect(useEnvironmentsStore.getState().byEnv["job-build"]).toBeDefined();
+    expect(screen.getByTestId("location")).toHaveTextContent(
+      "/dashboard/simulate/environments/job-build",
+    );
+  }, 12000);
+
+  it("surfaces the selection-context chip and clears it", async () => {
+    seedClientEnv(TEMPLATE, {
+      ...emptyEnvState(),
+      agent: { name: "Support agent" },
+      scenarios: [{ id: "s1" }],
+    });
+    const user = userEvent.setup();
+
+    renderWorkspace("/dashboard/simulate/environments/env-1");
+    await screen.findByText("Refund Copilot", { selector: "p" });
+
+    act(() =>
+      publishScenarioSelection({ ids: ["s1"], rows: [{ name: "Late refund" }] }),
+    );
+
+    expect(await screen.findByText(/Editing/)).toBeInTheDocument();
+    expect(screen.getByText(/Late refund/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Clear selection" }));
+    expect(screen.queryByText(/Editing/)).toBeNull();
   });
 
   it("locks a template-seeded env: no overflow, Fork to edit on Overview", async () => {

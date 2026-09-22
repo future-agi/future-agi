@@ -228,7 +228,12 @@ describe("environmentNameFor", () => {
     );
   });
 
-  it("names an upload draft by entry then first file", () => {
+  it("names an upload draft by its folder, then entry, then first file", () => {
+    // The uploaded folder wins over anything inside it.
+    expect(
+      environmentNameFor({ kind: "upload", folderName: "ride-voice-agent", entry: "agent.py", files: [{ name: "requirements.txt" }] }),
+    ).toBe("ride-voice-agent");
+    // Fallbacks when there's no folder name.
     expect(environmentNameFor({ kind: "upload", entry: "agent.py", files: [] })).toBe("agent.py");
     expect(environmentNameFor({ kind: "upload", entry: "", files: [{ name: "main.py" }] })).toBe(
       "main.py",

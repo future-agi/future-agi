@@ -118,7 +118,7 @@ describe("EnvironmentsHome", () => {
     renderHome("/dashboard/simulate/environments");
 
     await user.click(screen.getByRole("tab", { name: "My Environments" }));
-    expect(lastSearch).toContain("tab=my");
+    expect(lastSearch).toContain("tab=my-environments");
     expect(await screen.findByText("Billing Chat Agent")).toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: "Build environment" }));

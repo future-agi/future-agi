@@ -3,7 +3,6 @@ import { renderHook, act } from "@testing-library/react";
 import {
   useEnvironmentsStore,
   resetEnvironmentsStore,
-  BUILD_STAGE,
 } from "../useEnvironmentsStore";
 import { emptyEnvState, useEnvState } from "../envState";
 
@@ -52,88 +51,6 @@ describe("useEnvironmentsStore", () => {
     useEnvironmentsStore.getState().setChoice("upload");
     resetEnvironmentsStore();
     expect(useEnvironmentsStore.getState().choice).toBeNull();
-  });
-
-  describe("build slice", () => {
-    it("starts with the initial build slice values", () => {
-      const s = useEnvironmentsStore.getState();
-      expect(s.buildStage).toBeNull();
-      expect(s.envId).toBeNull();
-      expect(s.readerAnswers).toBeNull();
-      expect(s.buildProgress).toEqual({
-        done: [],
-        running: false,
-        failure: null,
-      });
-    });
-
-    it("startPreflight() enters the preflight stage", () => {
-      useEnvironmentsStore.getState().startPreflight();
-      expect(useEnvironmentsStore.getState().buildStage).toBe(
-        BUILD_STAGE.PREFLIGHT,
-      );
-      expect(BUILD_STAGE.PREFLIGHT).toBe("preflight");
-    });
-
-    it("acceptAudit() enters building with the env id and answers", () => {
-      const answers = { q: { pick: 0 } };
-      useEnvironmentsStore.getState().acceptAudit({ envId: "env-1", answers });
-      const s = useEnvironmentsStore.getState();
-      expect(s.buildStage).toBe(BUILD_STAGE.BUILDING);
-      expect(s.buildStage).toBe("building");
-      expect(s.envId).toBe("env-1");
-      expect(s.readerAnswers).toBe(answers);
-    });
-
-    it("startPreflight() again resets the building state but leaves the draft", () => {
-      useEnvironmentsStore.getState().setDraft({ kind: "repo" });
-      useEnvironmentsStore
-        .getState()
-        .acceptAudit({ envId: "env-1", answers: { q: { pick: 0 } } });
-      useEnvironmentsStore
-        .getState()
-        .setBuildProgress({ done: ["understand"], running: true });
-
-      useEnvironmentsStore.getState().startPreflight();
-
-      const s = useEnvironmentsStore.getState();
-      expect(s.envId).toBeNull();
-      expect(s.readerAnswers).toBeNull();
-      expect(s.buildProgress.done).toEqual([]);
-      expect(s.buildProgress.running).toBe(false);
-      expect(s.draft).toEqual({ kind: "repo" });
-    });
-
-    it("setBuildProgress() merges the patch", () => {
-      useEnvironmentsStore
-        .getState()
-        .setBuildProgress({ done: ["understand"], running: true });
-      expect(useEnvironmentsStore.getState().buildProgress).toEqual({
-        done: ["understand"],
-        running: true,
-        failure: null,
-      });
-    });
-
-    it("reset() clears the build slice and the draft", () => {
-      useEnvironmentsStore.getState().setDraft({ kind: "repo" });
-      useEnvironmentsStore
-        .getState()
-        .acceptAudit({ envId: "env-1", answers: { q: {} } });
-
-      useEnvironmentsStore.getState().reset();
-
-      const s = useEnvironmentsStore.getState();
-      expect(s.draft).toBeNull();
-      expect(s.buildStage).toBeNull();
-      expect(s.envId).toBeNull();
-      expect(s.readerAnswers).toBeNull();
-      expect(s.buildProgress).toEqual({
-        done: [],
-        running: false,
-        failure: null,
-      });
-    });
   });
 
   describe("env slices", () => {
@@ -239,12 +156,9 @@ describe("useEnvironmentsStore", () => {
   });
 
   describe("scoped reset", () => {
-    it("resetEntryState() clears the entry + build slice but keeps env slices", () => {
+    it("resetEntryState() clears the entry slice but keeps env slices", () => {
       useEnvironmentsStore.getState().setChoice("source");
       useEnvironmentsStore.getState().setDraft({ kind: "repo" });
-      useEnvironmentsStore
-        .getState()
-        .acceptAudit({ envId: "env-1", answers: { q: {} } });
       useEnvironmentsStore
         .getState()
         .adoptEnvironment({ id: "env-a", name: "A" }, "t0");
@@ -255,14 +169,6 @@ describe("useEnvironmentsStore", () => {
       const s = useEnvironmentsStore.getState();
       expect(s.choice).toBeNull();
       expect(s.draft).toBeNull();
-      expect(s.buildStage).toBeNull();
-      expect(s.envId).toBeNull();
-      expect(s.readerAnswers).toBeNull();
-      expect(s.buildProgress).toEqual({
-        done: [],
-        running: false,
-        failure: null,
-      });
       // The env slices survive — a visit to Home must not wipe workspaces.
       expect(s.workspaceEnvs["env-a"]).toBeDefined();
       expect(s.byEnv["env-a"].evals).toEqual(["e1"]);
@@ -285,9 +191,6 @@ describe("useEnvironmentsStore", () => {
       useEnvironmentsStore
         .getState()
         .adoptEnvironment({ id: "env-a", name: "A" }, "t0");
-      useEnvironmentsStore
-        .getState()
-        .acceptAudit({ envId: "env-1", answers: { q: {} } });
 
       const persisted = JSON.parse(
         sessionStorage.getItem("simulate-environments-draft"),
@@ -299,49 +202,6 @@ describe("useEnvironmentsStore", () => {
       ]);
       expect(persisted.state.draft).toEqual({ kind: "repo" });
       expect(persisted.state.workspaceEnvs["env-a"].name).toBe("A");
-    });
-
-    it("never persists the one-shot build ticket", () => {
-      useEnvironmentsStore
-        .getState()
-        .beginBuild({ draft: { kind: "repo" }, preflight: { ready_to_submit: true } });
-
-      const persisted = JSON.parse(
-        sessionStorage.getItem("simulate-environments-draft"),
-      );
-      expect("pendingBuild" in persisted.state).toBe(false);
-    });
-  });
-
-  describe("build ticket (beginBuild / consumePendingBuild)", () => {
-    it("stages the ticket and mirrors the draft into the persisted slot", () => {
-      const draft = { kind: "repo", value: "acme/bot" };
-      const preflight = { ready_to_submit: true, state: "connected" };
-      useEnvironmentsStore.getState().beginBuild({ draft, preflight });
-
-      const s = useEnvironmentsStore.getState();
-      expect(s.pendingBuild).toEqual({ draft, preflight });
-      expect(s.draft).toBe(draft);
-    });
-
-    it("consumePendingBuild returns the ticket once, then null", () => {
-      const ticket = { draft: { kind: "repo" }, preflight: {} };
-      useEnvironmentsStore.getState().beginBuild(ticket);
-
-      expect(useEnvironmentsStore.getState().consumePendingBuild()).toMatchObject({
-        draft: { kind: "repo" },
-      });
-      // Cleared — a second read (a refresh/remount) finds nothing to build.
-      expect(useEnvironmentsStore.getState().pendingBuild).toBeNull();
-      expect(useEnvironmentsStore.getState().consumePendingBuild()).toBeNull();
-    });
-
-    it("resetEntryState clears a staged ticket", () => {
-      useEnvironmentsStore
-        .getState()
-        .beginBuild({ draft: { kind: "repo" }, preflight: {} });
-      useEnvironmentsStore.getState().resetEntryState();
-      expect(useEnvironmentsStore.getState().pendingBuild).toBeNull();
     });
   });
 

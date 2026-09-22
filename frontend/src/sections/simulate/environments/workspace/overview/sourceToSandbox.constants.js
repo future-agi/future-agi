@@ -7,7 +7,7 @@ import { ruleRowsFor } from "./overview.constants";
 export const MAP_COPY = {
   title: "How the world was built",
   subtitle:
-    "Every derived fact carries where it was read from and what it became in the sandbox. Rows the reader could not classify carry a resolve control right on the row.",
+    "Every derived fact carries where it was read from and what it became in the sandbox. A tool whose effect you set on the Contract tab shows here as confirmed.",
   readHead: "Read from source",
   sandboxHead: "In the sandbox world",
   needsAnswer: "Needs your answer",
@@ -51,33 +51,28 @@ export const effectTarget = (effect) => {
   return "stubbed · returns fixture";
 };
 
-// Single out the last tool the reader can't classify. If every tool is
-// classifiable, the last one still carries the resolve affordance so the review
-// path is always exercised.
-export const unresolvedToolIndex = (tools = []) => {
-  for (let i = tools.length - 1; i >= 0; i -= 1) {
-    if (classifyTool(tools[i]) === "unknown") return i;
-  }
-  return tools.length ? tools.length - 1 : -1;
-};
+// The Contract tab's effect picker stores a singular override (`read`/`write`);
+// this ledger's targets speak the plural (`reads`/`writes`), so normalize.
+const NORMALIZE_EFFECT = { read: "reads", write: "writes", reads: "reads", writes: "writes" };
 
-// The tool rows for the map: name, origin chip, sandbox target, and whether the
-// row is still held open for the reader to resolve.
+// The tool rows for the map: name, origin chip, and sandbox target. The
+// read/write classification is a verb-heuristic guess; resolving/overriding it
+// lives on the Contract tab (WorldInternalsSection's effect picker). This ledger
+// is read-only, but it REFLECTS a Contract override — a resolved tool shows the
+// overridden target and a "you confirmed" mark, so the reader can see which
+// decisions a human made vs. which the reader made itself.
 export const toolMapRows = (env, envState) => {
   const tools = env?.tools || [];
   const resolutions = envState?.toolResolutions || {};
-  const unresolved = unresolvedToolIndex(tools);
-  return tools.map((t, i) => {
-    const effect = classifyTool(t);
+  return tools.map((t) => {
     const stored = resolutions[t.name];
-    const isUnresolved = i === unresolved && !stored;
+    const effect = stored ? (NORMALIZE_EFFECT[stored] || stored) : classifyTool(t);
     return {
       key: t.name,
       name: t.name,
-      origin: effect === "unknown" || isUnresolved ? ORIGIN_ID.CALL_GRAPH : ORIGIN_ID.CONFIG,
-      target: stored ? effectTarget(stored) : isUnresolved ? null : effectTarget(effect),
+      origin: effect === "unknown" ? ORIGIN_ID.CALL_GRAPH : ORIGIN_ID.CONFIG,
+      target: effectTarget(effect),
       confirmed: !!stored,
-      isUnresolved,
     };
   });
 };

@@ -134,6 +134,8 @@ describe("AddEvalsDrawer — multi-select batch", () => {
       )
     );
     expect(onAdd).not.toHaveBeenCalled();
+    // Mid-walk the drawer must stay open — the queue owns the close.
+    expect(onClose).not.toHaveBeenCalled();
 
     // Save eval #2 → the whole batch is handed over at once; the wrapper calls
     // onClose (EvalsStep owns `open`) and resets back to the list step.
@@ -150,7 +152,7 @@ describe("AddEvalsDrawer — multi-select batch", () => {
     );
   });
 
-  it("a single row Add maps just that eval and keeps the drawer open", async () => {
+  it("a single row Add maps just that eval and closes the drawer", async () => {
     const onAdd = vi.fn();
     const onClose = vi.fn();
     renderDrawer({ onAdd, onClose });
@@ -163,7 +165,7 @@ describe("AddEvalsDrawer — multi-select batch", () => {
     expect(onAdd).toHaveBeenCalledWith([
       expect.objectContaining({ id: "eval-1", custom: true }),
     ]);
-    // Single add is not a queue — the drawer stays open for more.
-    expect(onClose).not.toHaveBeenCalled();
+    // A single, non-queued add maps the eval and closes the drawer.
+    expect(onClose).toHaveBeenCalled();
   });
 });

@@ -1,17 +1,20 @@
 import PropTypes from "prop-types";
-import { useEffect, useReducer, useRef } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, Button, TextField, IconButton } from "@mui/material";
+import { Box, Stack, Typography, Button, TextField, IconButton, Menu, MenuItem } from "@mui/material";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 
 import { BUILD_TONES } from "../buildTones";
 import { CONSOLE_COPY } from "../build.constants";
 import { Turn, Working } from "./ConsoleTurn";
 import VoiceInput from "./VoiceInput";
+import { BUILDER_MODES, getBuilderMode, subscribeBuilderMode, setBuilderMode } from "./builderModeBus";
+import { subscribeComposerScaffold } from "./composerScaffoldBus";
 
 const MONO = "ui-monospace, Menlo, monospace";
 
-const INITIAL = { draft: "", attachments: [] };
+const INITIAL = { draft: "", attachments: [], scaffolds: [] };
 
 function composerReducer(state, action) {
   switch (action.type) {
@@ -21,6 +24,12 @@ function composerReducer(state, action) {
       return { ...state, attachments: [...state.attachments, ...action.files] };
     case "remove":
       return { ...state, attachments: state.attachments.filter((_, i) => i !== action.index) };
+    case "scaffold":
+      return state.scaffolds.includes(action.text)
+        ? state
+        : { ...state, scaffolds: [...state.scaffolds, action.text] };
+    case "unscaffold":
+      return { ...state, scaffolds: state.scaffolds.filter((_, i) => i !== action.index) };
     case "clear":
       return INITIAL;
     default:
@@ -39,24 +48,49 @@ function composerReducer(state, action) {
  * Attachments are held in component state only and handed to `onSend(text,
  * attachments)` as-is — nothing here uploads them; the caller decides.
  * `preComposer` is kept for parity with the designer (an intake questionnaire
- * pins there); Phase-2 never passes it.
+ * or a selection-context chip pins there).
+ *
+ * `frozen` locks the composer until the environment is Live: it blocks input
+ * the same way `running` does, but stays blocked until the env finishes
+ * building rather than until the last message returns.
  */
-export default function BuilderConsole({ turns, running, chips, onSend, onChip, preComposer }) {
+export default function BuilderConsole({
+  turns,
+  running,
+  chips,
+  onSend,
+  onChip,
+  preComposer,
+  frozen = false,
+  frozenReason,
+}) {
   const [state, dispatch] = useReducer(composerReducer, INITIAL);
-  const { draft, attachments } = state;
+  const { draft, attachments, scaffolds } = state;
   const endRef = useRef(null);
+
+  useEffect(
+    () => subscribeComposerScaffold((text) => dispatch({ type: "scaffold", text })),
+    [],
+  );
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [turns, running]);
 
-  const hasContent = draft.trim() || attachments.length > 0;
+  // Frozen === the env is not Live yet, so the builder can't accept edits. It
+  // blocks the composer exactly like `running`, but persists across turns.
+  const blocked = running || frozen;
+  const reason = frozenReason || CONSOLE_COPY.frozen;
+
+  const hasContent = draft.trim() || attachments.length > 0 || scaffolds.length > 0;
 
   const send = () => {
     const text = draft.trim();
-    if ((!text && attachments.length === 0) || running) return;
+    const scaffoldText = scaffolds.join(". ");
+    const combined = [scaffoldText, text].filter(Boolean).join(scaffoldText && text ? ". " : "");
+    if ((!combined && attachments.length === 0) || blocked) return;
     dispatch({ type: "clear" });
-    onSend?.(text, attachments);
+    onSend?.(combined, attachments);
   };
 
   return (
@@ -76,7 +110,7 @@ export default function BuilderConsole({ turns, running, chips, onSend, onChip, 
         </Box>
         <Box flex={1} minWidth={0}>
           <Typography sx={{ typography: "s3", color: "text.subtitle", lineHeight: 1.2 }}>
-            {running ? CONSOLE_COPY.working : CONSOLE_COPY.idle}
+            {frozen ? reason : running ? CONSOLE_COPY.working : CONSOLE_COPY.idle}
           </Typography>
         </Box>
       </Stack>
@@ -108,7 +142,7 @@ export default function BuilderConsole({ turns, running, chips, onSend, onChip, 
         </Stack>
       </Box>
 
-      {(chips || []).length > 0 && !running && (
+      {(chips || []).length > 0 && !blocked && (
         <Stack direction="row" spacing={1} sx={{ px: 2.5, pb: 1.5, flexWrap: "wrap", rowGap: 1 }}>
           {(chips || []).map((c) => (
             <Button
@@ -128,7 +162,7 @@ export default function BuilderConsole({ turns, running, chips, onSend, onChip, 
       )}
 
       {/* Slot for anything a caller wants to pin above the composer (the intake
-          questionnaire drops in here). Phase-2 never passes it. */}
+          questionnaire or the selection-context chip drops in here). */}
       {preComposer && <Box sx={{ px: 2.5, pb: 1 }}>{preComposer}</Box>}
 
       <Box sx={{ px: 2.5, pb: 2.5, pt: 1 }}>
@@ -147,6 +181,42 @@ export default function BuilderConsole({ turns, running, chips, onSend, onChip, 
             },
           }}
         >
+          {scaffolds.length > 0 && (
+            <Stack direction="row" spacing={0.75} sx={{ flexWrap: "wrap", rowGap: 0.75, mb: 1 }}>
+              {scaffolds.map((s, i) => (
+                <Stack
+                  key={`${s}-${i}`}
+                  direction="row" alignItems="center" spacing={0.5}
+                  sx={{
+                    pl: 1, pr: 0.5, py: 0.375, borderRadius: 999,
+                    bgcolor: (t) => alpha(BUILD_TONES.accent, t.palette.mode === "dark" ? 0.14 : 0.08),
+                    border: "1px solid",
+                    borderColor: (t) => alpha(BUILD_TONES.accent, t.palette.mode === "dark" ? 0.35 : 0.24),
+                    maxWidth: "100%",
+                  }}
+                >
+                  <Iconify icon="solar:magic-stick-3-linear" width={12} sx={{ color: BUILD_TONES.accent, flexShrink: 0 }} />
+                  <Typography
+                    sx={{
+                      typography: "s3", fontWeight: "fontWeightSemiBold", color: BUILD_TONES.accent,
+                      maxWidth: 260, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                    }}
+                  >
+                    {s}
+                  </Typography>
+                  <IconButton
+                    size="small"
+                    aria-label={`Remove ${s}`}
+                    onClick={() => dispatch({ type: "unscaffold", index: i })}
+                    sx={{ p: 0, ml: 0.25 }}
+                  >
+                    <Iconify icon="solar:close-circle-linear" width={13} sx={{ color: alpha(BUILD_TONES.accent, 0.6) }} />
+                  </IconButton>
+                </Stack>
+              ))}
+            </Stack>
+          )}
+
           {attachments.length > 0 && (
             <Stack direction="row" spacing={0.75} sx={{ flexWrap: "wrap", rowGap: 0.75, mb: 1 }}>
               {attachments.map((f, i) => (
@@ -180,56 +250,63 @@ export default function BuilderConsole({ turns, running, chips, onSend, onChip, 
             </Stack>
           )}
 
-          <Stack direction="row" alignItems="flex-end" spacing={1}>
-            <TextField
-              fullWidth
-              multiline
-              maxRows={8}
-              variant="standard"
-              placeholder={CONSOLE_COPY.placeholder}
-              value={draft}
-              disabled={running}
-              onChange={(e) => dispatch({ type: "draft", value: e.target.value })}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
-              }}
-              InputProps={{ disableUnderline: true, sx: { typography: "s2", lineHeight: 1.55, px: 1, py: 0.5 } }}
-            />
+          {/* Row 1: the text field on its own line so long drafts get the full width. */}
+          <TextField
+            fullWidth
+            multiline
+            maxRows={8}
+            variant="standard"
+            placeholder={frozen ? reason : CONSOLE_COPY.placeholder}
+            value={draft}
+            disabled={blocked}
+            onChange={(e) => dispatch({ type: "draft", value: e.target.value })}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+            }}
+            InputProps={{ disableUnderline: true, sx: { typography: "s2", lineHeight: 1.55, px: 0.75, py: 0.5 } }}
+          />
+
+          {/* Row 2: toolbar — attach · voice · mode picker · flex-spacer · send. */}
+          <Stack direction="row" alignItems="center" spacing={0.25} sx={{ mt: 0.5, pl: 0.25 }}>
             <IconButton
               component="label"
               aria-label="Attach a file"
               title={CONSOLE_COPY.attach}
-              disabled={running}
+              disabled={blocked}
               sx={{
-                width: 34, height: 34, borderRadius: 1.25,
+                width: 30, height: 30, borderRadius: 1,
                 color: "text.subtitle",
                 "&:hover": { bgcolor: "action.hover", color: "text.primary" },
               }}
             >
-              <Iconify icon="solar:paperclip-linear" width={17} />
+              <Iconify icon="solar:paperclip-linear" width={15} />
               <input
                 hidden multiple type="file"
                 accept={CONSOLE_COPY.attachAccept}
                 onChange={(e) => dispatch({ type: "attach", files: Array.from(e.target.files || []) })}
               />
             </IconButton>
-            <VoiceInput onTranscript={(text) => dispatch({ type: "draft", value: text })} disabled={running} />
+            <VoiceInput onTranscript={(text) => dispatch({ type: "draft", value: text })} disabled={blocked} />
+            <ModePicker disabled={blocked} />
+
+            <Box flex={1} />
+
             <IconButton
               aria-label="Send"
-              disabled={!hasContent || running}
+              disabled={!hasContent || blocked}
               onClick={send}
               sx={{
-                width: 34, height: 34, borderRadius: 1.25,
-                bgcolor: hasContent && !running ? BUILD_TONES.accent : undefined,
-                color: hasContent && !running ? "common.white" : undefined,
-                "&:hover": { bgcolor: hasContent && !running ? BUILD_TONES.accentHover : undefined },
+                width: 30, height: 30, borderRadius: 1,
+                bgcolor: hasContent && !blocked ? BUILD_TONES.accent : undefined,
+                color: hasContent && !blocked ? "common.white" : undefined,
+                "&:hover": { bgcolor: hasContent && !blocked ? BUILD_TONES.accentHover : undefined },
                 "&.Mui-disabled": {
                   bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.06),
                   color: "text.disabled",
                 },
               }}
             >
-              <Iconify icon="solar:arrow-up-bold" width={17} />
+              <Iconify icon="solar:arrow-up-bold" width={15} />
             </IconButton>
           </Stack>
         </Box>
@@ -245,4 +322,77 @@ BuilderConsole.propTypes = {
   onSend: PropTypes.func,
   onChip: PropTypes.func,
   preComposer: PropTypes.node,
+  frozen: PropTypes.bool,
+  frozenReason: PropTypes.string,
 };
+
+/**
+ * Mode picker — Auto vs Manual.
+ *
+ * A compact icon+label chip in the composer toolbar that opens a two-item menu.
+ * Selection stores in a module-level bus so the derivation stream on the other
+ * side of the tree can read it without prop-threading; the bus fires on
+ * subscribe, so the local mirror stays in sync.
+ */
+function ModePicker({ disabled }) {
+  const [mode, setMode] = useState(getBuilderMode);
+  const [anchor, setAnchor] = useState(null);
+  useEffect(() => subscribeBuilderMode(setMode), []);
+  const current = BUILDER_MODES.find((m) => m.id === mode) || BUILDER_MODES[0];
+
+  return (
+    <>
+      <CustomTooltip show={!disabled} title={CONSOLE_COPY.mode} size="small" arrow>
+        <Button
+          size="small"
+          disabled={disabled}
+          onClick={(e) => setAnchor(e.currentTarget)}
+          startIcon={<Iconify icon={current.icon} width={12} />}
+          endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={10} />}
+          sx={{
+            height: 30, borderRadius: 1, px: 0.75, minWidth: 0,
+            typography: "s3", fontWeight: "fontWeightSemiBold",
+            color: "text.subtitle",
+            "& .MuiButton-startIcon": { mr: 0.5 },
+            "& .MuiButton-endIcon": { ml: 0.25 },
+            "&:hover": { bgcolor: "action.hover", color: "text.primary" },
+          }}
+        >
+          {current.label}
+        </Button>
+      </CustomTooltip>
+      <Menu
+        anchorEl={anchor}
+        open={!!anchor}
+        onClose={() => setAnchor(null)}
+        anchorOrigin={{ vertical: "top", horizontal: "right" }}
+        transformOrigin={{ vertical: "bottom", horizontal: "right" }}
+        slotProps={{ paper: { sx: { minWidth: 280, mb: 0.5 } } }}
+      >
+        {BUILDER_MODES.map((m) => {
+          const active = m.id === mode;
+          return (
+            <MenuItem
+              key={m.id}
+              onClick={() => { setBuilderMode(m.id); setAnchor(null); }}
+              sx={{ alignItems: "flex-start", gap: 1.25, py: 1 }}
+            >
+              <Iconify
+                icon={active ? "solar:check-circle-bold" : m.icon}
+                width={16}
+                sx={{ color: active ? "primary.main" : "text.subtitle", mt: "2px", flexShrink: 0 }}
+              />
+              <Box minWidth={0}>
+                <Typography sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}>{m.label}</Typography>
+                <Typography sx={{ typography: "s3", color: "text.subtitle", whiteSpace: "normal" }}>
+                  {m.hint}
+                </Typography>
+              </Box>
+            </MenuItem>
+          );
+        })}
+      </Menu>
+    </>
+  );
+}
+ModePicker.propTypes = { disabled: PropTypes.bool };

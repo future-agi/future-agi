@@ -7,12 +7,16 @@ import {
 import {
   createHarnessJob,
   harnessIdempotencyKey,
+  uploadHarnessSecretFile,
 } from "src/api/harness/harness";
 import { draftToPreflightPayload } from "src/api/simulate-environments/preflightPayload";
 import {
   listHarnessEnvironments,
   deleteHarnessEnvironment,
+  renameHarnessEnvironment,
+  deleteAppliedEvaluation,
 } from "src/api/simulate-environments/harnessEnvironments";
+import { harnessEnvironmentKey } from "src/api/simulate-environments/environment";
 import { harnessEnvToRow } from "src/sections/simulate/environments/helpers/harnessJobToRow";
 
 export const SIMULATE_ENVIRONMENTS_KEY = ["simulate-environments"];
@@ -57,6 +61,40 @@ export function useDeleteEnvironment() {
   });
 }
 
+// §8 rename. The only editable field is the name; the response is the full §6
+// detail body with `overview.name` updated, so seed the detail cache from it
+// (no refetch) and invalidate the list so the row's name changes there too.
+// Blank/too-long/unknown-field bodies come back 400 — the caller surfaces it.
+export function useRenameEnvironment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    meta: { errorHandled: true },
+    mutationFn: ({ id, name }) => renameHarnessEnvironment(id, name),
+    onSuccess: (detail, { id }) => {
+      if (detail) queryClient.setQueryData(harnessEnvironmentKey(id), detail);
+      queryClient.invalidateQueries({ queryKey: myEnvironmentsListKey() });
+    },
+  });
+}
+
+// §9 remove an applied evaluation (soft delete → 204). The contract says to
+// re-fetch §6 and read `evaluations.selected` rather than dropping the row
+// locally, so this invalidates the detail query. The caller must surface the
+// error: 409 while still building, 404 if already removed (safe to retry).
+export function useRemoveAppliedEvaluation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    // Let the failure surface (409 while building, 404 already-removed): the
+    // caller keeps the row on error, so a silent global-toast opt-out would hide
+    // that the removal did not take.
+    mutationFn: ({ id, evalConfigId }) =>
+      deleteAppliedEvaluation(id, evalConfigId),
+    onSuccess: (_data, { id }) => {
+      queryClient.invalidateQueries({ queryKey: harnessEnvironmentKey(id) });
+    },
+  });
+}
+
 // Create the real harness job for a build. The draft is mapped to the same
 // schema-valid body the preflight used (`draftToPreflightPayload`) — per the
 // contract, a create body equals its validated preflight body. Only the
@@ -90,15 +128,27 @@ export function useBuildEnvironment() {
   });
 }
 
-// TODO: POST to /secret-files (uploadHarnessSecretFile) — never inline
-// file contents. The UI holds only the returned reference, not the bytes.
+// Upload a credential FILE to the vault (POST /secret-files/) and keep only the
+// returned reference — the file bytes never enter the draft, store or cache. The
+// panel default alias is the Google ADC JSON the credential_files check names.
+// NOTE: the returned ref is a `harness_environment_file` ref, which the create
+// schema does not yet accept, so this makes the ref real (vault-backed) but does
+// not by itself let credential_files pass — that stays a backend follow-up.
 export function useUploadSecretFile() {
   return useMutation({
-    mutationFn: async ({ file }) => ({
-      secret_ref: `sref-${Math.random().toString(36).slice(2)}`,
-      name: file.name,
-      size: file.size,
-    }),
+    meta: { errorHandled: true },
+    mutationFn: async ({ file, environmentName = "GOOGLE_APPLICATION_CREDENTIALS_JSON" }) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("environment_name", environmentName);
+      const res = await uploadHarnessSecretFile(formData);
+      return {
+        secret_ref: res.secret_ref,
+        environment_name: res.environment_name || environmentName,
+        name: file.name,
+        size: res.size ?? file.size,
+      };
+    },
   });
 }
 

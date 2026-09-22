@@ -6,13 +6,16 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 vi.mock("src/api/harness/harness", () => ({
   createHarnessJob: vi.fn(),
   harnessIdempotencyKey: () => "idem-test",
+  uploadHarnessSecretFile: vi.fn(),
 }));
 vi.mock("src/api/simulate-environments/harnessEnvironments", () => ({
   listHarnessEnvironments: vi.fn(),
   deleteHarnessEnvironment: vi.fn(),
 }));
 
-const { createHarnessJob } = await import("src/api/harness/harness");
+const { createHarnessJob, uploadHarnessSecretFile } = await import(
+  "src/api/harness/harness"
+);
 const { listHarnessEnvironments, deleteHarnessEnvironment } = await import(
   "src/api/simulate-environments/harnessEnvironments"
 );
@@ -222,7 +225,12 @@ describe("useBuildEnvironment", () => {
 });
 
 describe("useUploadSecretFile", () => {
-  it("returns a secret reference and file metadata, never the contents", async () => {
+  it("posts the file as multipart and returns the real ref, never the contents", async () => {
+    uploadHarnessSecretFile.mockResolvedValue({
+      secret_ref: "harness_environment_file://ref-9",
+      environment_name: "GOOGLE_APPLICATION_CREDENTIALS_JSON",
+      size: 42,
+    });
     const { Wrapper } = makeWrapper();
     const { result } = renderHook(() => useUploadSecretFile(), {
       wrapper: Wrapper,
@@ -231,9 +239,16 @@ describe("useUploadSecretFile", () => {
       type: "application/json",
     });
     const out = await result.current.mutateAsync({ file });
-    expect(out.secret_ref).toMatch(/^sref-/);
+
+    // The request is FormData carrying the file + the alias, never inline bytes.
+    const form = uploadHarnessSecretFile.mock.calls[0][0];
+    expect(form).toBeInstanceOf(FormData);
+    expect(form.get("file")).toBe(file);
+    expect(form.get("environment_name")).toBe("GOOGLE_APPLICATION_CREDENTIALS_JSON");
+
+    expect(out.secret_ref).toBe("harness_environment_file://ref-9");
     expect(out.name).toBe("creds.json");
-    expect(out.size).toBe(file.size);
+    expect(out.size).toBe(42);
     expect(out).not.toHaveProperty("contents");
   });
 });

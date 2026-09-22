@@ -3,7 +3,18 @@ import { useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "src/utils/test-utils";
-import EnvironmentValues from "../panels/EnvironmentValues";
+
+// The credential-file upload now posts to the real /secret-files/ endpoint; mock
+// it so the panel's confirmation flow can be exercised without a network call.
+vi.mock("src/api/harness/harness", () => ({
+  uploadHarnessSecretFile: vi.fn(async () => ({
+    secret_ref: "harness_environment_file://ref-1",
+    environment_name: "GOOGLE_APPLICATION_CREDENTIALS_JSON",
+    size: 8,
+  })),
+}));
+
+const { default: EnvironmentValues } = await import("../panels/EnvironmentValues");
 
 const renderWithQuery = (ui) => {
   const client = new QueryClient({

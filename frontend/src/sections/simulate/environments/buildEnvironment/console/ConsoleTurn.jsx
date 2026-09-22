@@ -5,19 +5,23 @@ import { Box, Stack, Typography, Collapse } from "@mui/material";
 import Iconify from "src/components/iconify";
 
 import { BUILD_TONES } from "../buildTones";
+import AskUserQuestionCard from "./AskUserQuestionCard";
 
 const MONO = "ui-monospace, Menlo, monospace";
 
 // Module-local (not exported) so it can be shared by Step and Turn without
 // tripping react-refresh/only-export-components.
 const STEP_SHAPE = PropTypes.shape({
-  kind: PropTypes.oneOf(["think", "note", "tool", "file", "json"]),
+  kind: PropTypes.oneOf(["think", "note", "tool", "file", "json", "ask"]),
   text: PropTypes.string,
   label: PropTypes.string,
   result: PropTypes.string,
   path: PropTypes.string,
   note: PropTypes.string,
   value: PropTypes.string,
+  question: PropTypes.object,
+  onSubmit: PropTypes.func,
+  onSkip: PropTypes.func,
 });
 
 /* ── one turn ────────────────────────────────────────────────────────────── */
@@ -92,6 +96,16 @@ export function Step({ step }) {
       >
         {step.text}
       </Typography>
+    );
+  }
+
+  if (step.kind === "ask") {
+    return (
+      <AskUserQuestionCard
+        question={step.question}
+        onSubmit={step.onSubmit}
+        onSkip={step.onSkip}
+      />
     );
   }
 

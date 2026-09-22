@@ -25,7 +25,7 @@ vi.mock("src/api/harness/harness", () => ({
   listHarnessJobs: vi.fn(),
 }));
 
-const { uploadHarnessSource, preflightHarnessJob } = await import(
+const { uploadHarnessSource, preflightHarnessJob, createHarnessJob } = await import(
   "src/api/harness/harness"
 );
 const { default: PanelCodeUpload } = await import("../PanelCodeUpload");
@@ -149,13 +149,17 @@ describe("PanelCodeUpload", () => {
       }),
     );
 
+    createHarnessJob.mockResolvedValue({ job: { job_id: "job-up" } });
     fireEvent.click(buildBtn());
-    expect(useEnvironmentsStore.getState().pendingBuild.draft).toMatchObject({
+    await waitFor(() =>
+      expect(navigate).toHaveBeenCalledWith("/dashboard/simulate/environments/job-up"),
+    );
+    // The passing draft is kept in the persisted slot for form rehydrate.
+    expect(useEnvironmentsStore.getState().draft).toMatchObject({
       kind: "upload",
       entry: "agent.py",
       archive_artifact_id: "src-uuid-1",
     });
-    expect(navigate).toHaveBeenCalledWith("/dashboard/simulate/environments/build");
   });
 
   it("renders an error and keeps Run preflight gated when the upload fails", async () => {
