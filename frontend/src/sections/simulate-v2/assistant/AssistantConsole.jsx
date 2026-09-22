@@ -34,8 +34,8 @@ export default function StudioConsole({ turns, running, chips, onSend, onChip, p
   const endRef = useRef(null);
 
   useEffect(
-    () => subscribeComposerScaffold((text) => {
-      setScaffolds((prev) => (prev.includes(text) ? prev : [...prev, text]));
+    () => subscribeComposerScaffold((s) => {
+      setScaffolds((prev) => (prev.some((x) => x.label === s.label) ? prev : [...prev, s]));
     }),
     [],
   );
@@ -52,7 +52,7 @@ export default function StudioConsole({ turns, running, chips, onSend, onChip, p
 
   const send = () => {
     const text = draft.trim();
-    const scaffoldText = scaffolds.join(". ");
+    const scaffoldText = scaffolds.map((s) => s.prompt).join(". ");
     const combined = [scaffoldText, text].filter(Boolean).join(scaffoldText && text ? ". " : "");
     if ((!combined && attachments.length === 0) || blocked) return;
     setDraft("");
@@ -197,25 +197,25 @@ export default function StudioConsole({ turns, running, chips, onSend, onChip, p
             <Stack direction="row" spacing={0.75} sx={{ flexWrap: "wrap", rowGap: 0.75, mb: 1 }}>
               {scaffolds.map((s, i) => (
                 <Stack
-                  key={`${s}-${i}`}
+                  key={`${s.label}-${i}`}
                   direction="row" alignItems="center" spacing={0.5}
                   sx={{
-                    pl: 1, pr: 0.5, py: 0.375, borderRadius: 999,
+                    pl: 0.875, pr: 0.375, py: 0.375, borderRadius: 999,
                     bgcolor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.14 : 0.08),
                     border: "1px solid", borderColor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.35 : 0.24),
                     maxWidth: "100%",
                   }}
                 >
-                  <Iconify icon="solar:magic-stick-3-linear" width={12} sx={{ color: "#7857FC", flexShrink: 0 }} />
+                  <Iconify icon={s.icon || "solar:magic-stick-3-linear"} width={12} sx={{ color: "#7857FC", flexShrink: 0 }} />
                   <Typography
                     sx={{
                       typography: "s3", fontWeight: 600, color: "#7857FC",
                       maxWidth: 260, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
                     }}
                   >
-                    {s}
+                    {s.label}
                   </Typography>
-                  <IconButton size="small" onClick={() => removeScaffold(i)} sx={{ p: 0, ml: 0.25 }}>
+                  <IconButton size="small" onClick={() => removeScaffold(i)} sx={{ p: 0, ml: 0.25 }} aria-label={`Remove ${s.label}`}>
                     <Iconify icon="solar:close-circle-linear" width={13} sx={{ color: (t) => alpha("#7857FC", 0.6) }} />
                   </IconButton>
                 </Stack>

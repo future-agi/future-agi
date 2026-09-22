@@ -992,27 +992,37 @@ function Header({
         </>
       )}
 
-      {source && setupDone && selectionCount === 0 && (
-        <Stack direction="row" alignItems="center" spacing={1}>
-          <TrialsPicker
-            trials={headerTrials}
-            onChange={setHeaderTrials}
-            scenarioCount={scenarioCount || envState?.scenarios?.length || 0}
-          />
-          <RunButton
-            onRun={() => setRunConfigOpen(true)}
-            canGo={canGo}
-            blockedReason={blockedReason}
-          />
-        </Stack>
-      )}
+      {source && setupDone && (() => {
+        const totalCount = scenarioCount || envState?.scenarios?.length || 0;
+        const runCount = selectionCount > 0 ? selectionCount : totalCount;
+        const runLabel = selectionCount > 0 ? `Run simulation (${selectionCount})` : "Run simulation";
+        return (
+          <Stack direction="row" alignItems="center" spacing={1}>
+            <TrialsPicker
+              trials={headerTrials}
+              onChange={setHeaderTrials}
+              scenarioCount={runCount}
+            />
+            <RunButton
+              label={runLabel}
+              onRun={() => setRunConfigOpen(true)}
+              canGo={canGo}
+              blockedReason={blockedReason}
+            />
+          </Stack>
+        );
+      })()}
 
       <RunConfigDialog
         open={runConfigOpen}
         onClose={() => setRunConfigOpen(false)}
-        scenarioCount={scenarioCount || envState?.scenarios?.length || 0}
+        scenarioCount={selectionCount > 0 ? selectionCount : (scenarioCount || envState?.scenarios?.length || 0)}
         defaultTrials={headerTrials}
-        onConfirm={(k) => { setHeaderTrials(k); onRun(undefined, k); }}
+        onConfirm={(k) => {
+          setHeaderTrials(k);
+          const sel = scenarioSelection?.ids || [];
+          onRun(sel.length > 0 ? sel : undefined, k);
+        }}
       />
     </Stack>
   );
@@ -1022,7 +1032,7 @@ function Header({
    PRD §6.1.2: "hand-curation and chat-curation must not share a
    control". Selection-scoped actions live in the SelectionBar; the
    env header stays context-free. */
-function RunButton({ onRun, canGo, blockedReason }) {
+function RunButton({ onRun, canGo, blockedReason, label = "Run simulation" }) {
   return (
     <Tooltip arrow title={canGo ? "" : (blockedReason || "")}>
       <span>
@@ -1031,9 +1041,9 @@ function RunButton({ onRun, canGo, blockedReason }) {
           disabled={!canGo}
           onClick={() => onRun()}
           startIcon={<Iconify icon="solar:play-bold" width={14} />}
-          sx={{ flexShrink: 0, typography: "s2", fontWeight: 700 }}
+          sx={{ flexShrink: 0, typography: "s2", fontWeight: 700, whiteSpace: "nowrap" }}
         >
-          Run simulation
+          {label}
         </Button>
       </span>
     </Tooltip>
@@ -1043,6 +1053,7 @@ RunButton.propTypes = {
   onRun: PropTypes.func.isRequired,
   canGo: PropTypes.bool,
   blockedReason: PropTypes.string,
+  label: PropTypes.string,
 };
 
 Header.propTypes = {

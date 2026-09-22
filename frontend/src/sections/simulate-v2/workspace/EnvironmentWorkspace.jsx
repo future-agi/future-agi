@@ -743,46 +743,57 @@ export default function EnvironmentWorkspace() {
           envState={envState}
           onGo={() => go("agent")}
         />
-        {/* Hidden while the Scenarios SelectionBar owns the primary
-            run action ("Run N selected"). One primary at a time. */}
-        {(scenarioSelection?.ids?.length || 0) === 0 && (
-          <Stack direction="row" alignItems="center" spacing={1}>
-            {/* Trials picker — shortcut for power users who already
-                know they want to change k. First-time users don't need
-                to notice this pill — clicking Run simulation opens the
-                RunConfigDialog which surfaces the same choice. */}
-            <TrialsPicker
-              trials={headerTrials}
-              onChange={setHeaderTrials}
-              scenarioCount={envState?.scenarios?.length || 0}
-            />
-            <Tooltip title={canRun ? "Configure and start the run" : runBlockedReason} arrow>
-              <span>
-                <Button
-                  variant="contained"
-                  color="primary"
-                  size="small"
-                  disabled={!canRun}
-                  onClick={() => setRunConfigOpen(true)}
-                  startIcon={<Iconify icon="solar:play-bold" width={15} />}
-                  sx={{ typography: "s2", fontWeight: 700 }}
-                >
-                  Run simulation
-                </Button>
-              </span>
-            </Tooltip>
-          </Stack>
-        )}
+        {/* Header-anchored primary actions. Stay in the top-right in
+            BOTH the empty-selection state (runs every scenario) and
+            the active-selection state (runs the selected subset) so
+            the button never jumps as the user checks boxes. Label +
+            RunConfigDialog scope switch automatically. */}
+        {(() => {
+          const selectedCount = scenarioSelection?.ids?.length || 0;
+          const runCount = selectedCount > 0 ? selectedCount : (envState?.scenarios?.length || 0);
+          const runLabel = selectedCount > 0
+            ? `Run simulation (${selectedCount})`
+            : "Run simulation";
+          return (
+            <Stack direction="row" alignItems="center" spacing={1}>
+              <TrialsPicker
+                trials={headerTrials}
+                onChange={setHeaderTrials}
+                scenarioCount={runCount}
+              />
+              <Tooltip title={canRun ? "Configure and start the run" : runBlockedReason} arrow>
+                <span>
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    size="small"
+                    disabled={!canRun}
+                    onClick={() => setRunConfigOpen(true)}
+                    startIcon={<Iconify icon="solar:play-bold" width={15} />}
+                    sx={{ typography: "s2", fontWeight: 700, whiteSpace: "nowrap" }}
+                  >
+                    {runLabel}
+                  </Button>
+                </span>
+              </Tooltip>
+            </Stack>
+          );
+        })()}
 
-        {/* Mandatory config step for the "run all" flow — makes the
-            trials choice unmissable, previews cost/duration before
-            anything actually starts. */}
+        {/* Mandatory config step. Scopes to the current selection when
+            one exists, otherwise runs everything. */}
         <RunConfigDialog
           open={runConfigOpen}
           onClose={() => setRunConfigOpen(false)}
-          scenarioCount={envState?.scenarios?.length || 0}
+          scenarioCount={(scenarioSelection?.ids?.length || 0) > 0
+            ? scenarioSelection.ids.length
+            : (envState?.scenarios?.length || 0)}
           defaultTrials={headerTrials}
-          onConfirm={(k) => { setHeaderTrials(k); startRun(undefined, k); }}
+          onConfirm={(k) => {
+            setHeaderTrials(k);
+            const sel = scenarioSelection?.ids || [];
+            startRun(sel.length > 0 ? sel : undefined, k);
+          }}
         />
 
         {/*

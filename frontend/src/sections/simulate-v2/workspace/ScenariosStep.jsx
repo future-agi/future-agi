@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useSnackbar } from "notistack";
 import {
   Box, Stack, Typography, Button, Tooltip, IconButton, Tab,
@@ -21,7 +21,13 @@ import SelectionBar from "./scenarios/SelectionBar";
 import RecentAdditionsStrip from "./scenarios/RecentAdditionsStrip";
 import GateRejects from "./scenarios/GateRejects";
 import { PickRouteIllustration } from "./scenarios/RouteThumbs";
-import { publishScenarioSelection, clearScenarioSelection } from "../_mock/scenarioSelectionBus";
+import {
+  publishScenarioSelection,
+  clearScenarioSelection,
+  subscribeScenarioSelection,
+  getScenarioSelection,
+} from "../_mock/scenarioSelectionBus";
+import { injectComposerScaffold } from "../_mock/composerScaffoldBus";
 import { stampProvenance, defaultBatchId, ensureProvenance, provenanceLabel, sourceOf, groupByBatch, relativeTime } from "../_mock/scenarioProvenance";
 
 /* AddScenariosDrawer emits `route` ids (twin | production | dataset |
@@ -49,7 +55,7 @@ import { FilterPanel } from "src/components/filter-panel";
  * by side on the derived axes, which is the view you want when the question is
  * what is in here rather than what is this.
  */
-export default function ScenariosStep({ env, envState, patch, buildMode, onBuilderPrompt, onStartRun, locked = false, onFork }) {
+export default function ScenariosStep({ env, envState, patch, buildMode, onBuilderPrompt, locked = false, onFork }) {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState(null);
   const { enqueueSnackbar, closeSnackbar } = useSnackbar();
@@ -250,50 +256,48 @@ export default function ScenariosStep({ env, envState, patch, buildMode, onBuild
 
   /*
     Bulk-action selection — checkboxes on the table are for acting on
-    a group of rows, not for gating what runs. The full row objects
-    (not just ids) are cached so the workspace chat, listening on
-    scenarioSelectionBus, can name them in its reply without having
-    to cross-reference the store.
+    a group of rows. Source of truth is scenarioSelectionBus so the
+    selection survives tab changes: a user can pick scenarios on
+    the Scenarios tab, hop over to Evaluations to add an evaluator,
+    and come back with the same rows still checked. This tab hydrates
+    from the bus on mount instead of resetting to [].
   */
-  const [selectedIds, setSelectedIds] = useState([]);
-  /*
-    Repeats-per-scenario (Reliability dial, PRD §10.2 AC-10.7 —
-    "Re-run a scenario k times to measure consistency").
-    Lives on this component because the SelectionBar owns the Run
-    action for a selection, and the number of repeats is a property
-    of *this run about to be started* — not of the environment.
-    Default 1 (single-shot). Users dial up to 3/5/8 for reliability
-    sampling; 3 is the smallest n where "passed twice, failed once"
-    is sayable.
-  */
-  const [trials, setTrials] = useState(1);
+  const busSelection = useSyncExternalStore(
+    subscribeScenarioSelection, getScenarioSelection, getScenarioSelection,
+  );
+  const selectedIds = useMemo(() => {
+    const validIds = new Set((selected || []).map((s) => s.id));
+    return (busSelection?.ids || []).filter((id) => validIds.has(id));
+  }, [busSelection, selected]);
   const selectedRows = useMemo(
     () => (selected || []).filter((s) => selectedIds.includes(s.id)),
     [selected, selectedIds],
   );
   const handleSelectionChange = (ids) => {
-    setSelectedIds(ids);
     const rows = (selected || []).filter((s) => ids.includes(s.id));
     publishScenarioSelection({ ids, rows });
   };
   const clearSelection = () => {
-    setSelectedIds([]);
     clearScenarioSelection();
   };
-  /* Clear the bus subscription on unmount so navigating off the tab
-     doesn't leave stale "N selected" state hanging in the chat. */
-  useEffect(() => () => clearScenarioSelection(), []);
 
-  /* Edit with builder — sends the selection to the workspace's chat
-     composer as a scaffold, so the builder-chat reply can carry the
-     keep/undo strip on affected rows (Phase 5 follow-up). Pre-fills
-     with a soft-nudge so the input is not blank when the composer
-     focuses. */
+  /* Edit with builder — pins a Claude-style skill chip inside the
+     composer instead of stuffing text into the draft. The chip's
+     visible label stays compact ("Edit 2 scenarios"), while the
+     full context (scenario names) rides along invisibly as the
+     scaffold's prompt so the AI still knows what to act on. User
+     types their instruction, the two get concatenated on send. */
   const handleEditSelected = () => {
-    if (!onBuilderPrompt || selectedRows.length === 0) return;
-    const names = selectedRows.slice(0, 3).map((r) => r.name).join(", ");
-    const more = selectedRows.length > 3 ? `, +${selectedRows.length - 3} more` : "";
-    onBuilderPrompt(`Edit these ${selectedRows.length} scenarios (${names}${more}): `);
+    if (selectedRows.length === 0) return;
+    const count = selectedRows.length;
+    const names = selectedRows.map((r) => r.name).filter(Boolean);
+    const preview = names.slice(0, 3).join(", ");
+    const more = names.length > 3 ? `, +${names.length - 3} more` : "";
+    injectComposerScaffold({
+      label: `Edit ${count} scenario${count === 1 ? "" : "s"}`,
+      prompt: `Edit these ${count} scenarios (${preview}${more}):`,
+      icon: "solar:pen-2-linear",
+    });
   };
 
   const bulkDelete = () => {
@@ -512,10 +516,7 @@ export default function ScenariosStep({ env, envState, patch, buildMode, onBuild
           {!locked && selectedIds.length > 0 ? (
             <SelectionBar
               count={selectedIds.length}
-              trials={trials}
-              onTrialsChange={setTrials}
-              onRun={onStartRun ? (k) => onStartRun(selectedIds, k || trials) : undefined}
-              onEdit={onBuilderPrompt ? handleEditSelected : undefined}
+              onEdit={handleEditSelected}
               onDelete={bulkDelete}
               onClear={clearSelection}
             />
@@ -707,7 +708,6 @@ ScenariosStep.propTypes = {
   patch: PropTypes.func.isRequired,
   buildMode: PropTypes.bool,
   onBuilderPrompt: PropTypes.func,
-  onStartRun: PropTypes.func,
   locked: PropTypes.bool,
   onFork: PropTypes.func,
 };

@@ -1,7 +1,7 @@
 import PropTypes from "prop-types";
-import { memo, useMemo, useState } from "react";
+import { createContext, memo, useContext, useMemo, useState } from "react";
 import { useTheme, alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, Table, TableHead, TableRow, TableCell, TableBody, Tooltip, Popover } from "@mui/material";
+import { Box, Stack, Typography, Table, TableHead, TableRow, TableCell, TableBody, Tooltip, Popover, Dialog, IconButton } from "@mui/material";
 import Iconify from "src/components/iconify";
 import ReactApexChart from "react-apexcharts";
 import { attribute, isMeasured, DOMAINS } from "../_mock/failures";
@@ -27,6 +27,38 @@ const CHART_GREEN = "#34D399";
 const CHART_RED   = "#F87171";
 
 const numFmt = new Intl.NumberFormat();
+
+/**
+ * Tiny CSV emitter — no dep, no server round-trip. Takes an array
+ * of homogenous objects, unions the keys (row 0 wins ties), quotes
+ * anything with a comma / quote / newline, prompts the browser to
+ * save it. Used by every Panel's export button.
+ */
+function downloadCsv(filename, rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return;
+  const cols = Array.from(rows.reduce((set, r) => {
+    Object.keys(r || {}).forEach((k) => set.add(k));
+    return set;
+  }, new Set()));
+  const escape = (v) => {
+    if (v == null) return "";
+    const s = String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const body = [
+    cols.join(","),
+    ...rows.map((r) => cols.map((c) => escape(r[c])).join(",")),
+  ].join("\n");
+  const blob = new Blob([body], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 
 /* Some mock tasks carry `latencyMs`, others only `durationMs`. Read one,
    fall back to the other so the latency KPI / histogram / task-latency
@@ -596,6 +628,38 @@ function FilterChip({ label, tone, onRemove }) {
 }
 FilterChip.propTypes = { label: PropTypes.node, tone: PropTypes.string, onRemove: PropTypes.func };
 
+/**
+ * Small toolbar button — used for Export PDF / other tab-level
+ * actions. Rendered as a real <button> for accessibility.
+ */
+function ToolbarButton({ icon, label, onClick }) {
+  return (
+    <Box
+      component="button"
+      type="button"
+      onClick={onClick}
+      sx={{
+        display: "inline-flex", alignItems: "center", gap: 0.75,
+        px: 1.5, py: 0.75, borderRadius: 1,
+        border: "1px solid", borderColor: "divider",
+        bgcolor: "background.paper", color: "text.primary",
+        cursor: "pointer", font: "inherit",
+        transition: "border-color 120ms, background-color 120ms",
+        "&:hover": {
+          borderColor: (t) => alpha(t.palette.text.primary, 0.4),
+          bgcolor: "action.hover",
+        },
+      }}
+    >
+      <Iconify icon={icon} width={14} sx={{ color: "text.subtitle" }} />
+      <Typography component="span" sx={{ fontSize: 12.5, fontWeight: 600 }}>
+        {label}
+      </Typography>
+    </Box>
+  );
+}
+ToolbarButton.propTypes = { icon: PropTypes.string, label: PropTypes.node, onClick: PropTypes.func };
+
 function HeaderPill({ icon, label, primary, onClick }) {
   /* Rendered as an actual <button> — Stack-on-a-div sometimes swallows
      clicks under nested pointer-events rules; a real button always
@@ -930,22 +994,30 @@ DualLineOverTime.propTypes = { tasks: PropTypes.array };
    with a legend on the right showing counts + share %. Cekura and
    Bland both surface this shape front-and-centre. */
 const OutcomeDonutChart = memo(function OutcomeDonutChart({ tasks, biz }) {
+  const drill = useDrilldown();
   const measured = tasks.filter(isMeasured);
-  const passed = measured.filter((t) => t.status === "passed").length;
-  const failed = measured.filter((t) => t.status !== "passed").length;
-  const errored = tasks.filter((t) => t.status === "error").length;
-  const escalated = biz.escalated;
+  const passed = measured.filter((t) => t.status === "passed");
+  const failed = measured.filter((t) => t.status !== "passed" && t.status !== "error");
+  const errored = tasks.filter((t) => t.status === "error");
+  const escalatedTasks = tasks.filter((t) => t.escalated);
+  const bucketSets = [passed, failed, errored, escalatedTasks];
+  const labels = ["Passed", "Failed", "Errored", "Escalated"];
+  const onSliceClick = (i) => {
+    const list = bucketSets[i] || [];
+    drill({ title: `Outcome — ${labels[i]}`, subtitle: `${list.length} tasks`, tasks: list });
+  };
   return (
     <DonutBreakdown
       title="Outcome breakdown"
       subtitle={`${tasks.length} tasks classified`}
       buckets={[
-        { label: "Passed",    value: passed },
-        { label: "Failed",    value: failed },
-        { label: "Errored",   value: errored },
-        { label: "Escalated", value: escalated },
+        { label: "Passed",    value: passed.length },
+        { label: "Failed",    value: failed.length },
+        { label: "Errored",   value: errored.length },
+        { label: "Escalated", value: biz.escalated },
       ]}
       colors={[CHART_GREEN, CHART_RED, "#F59E0B", "#7857FC"]}
+      onSliceClick={onSliceClick}
     />
   );
 });
@@ -963,7 +1035,9 @@ OutcomeDonutChart.propTypes = { tasks: PropTypes.array, biz: PropTypes.object };
  * shares without hovering. Thicker ring than the earlier iteration
  * so the color slices dominate.
  */
-const DonutBreakdown = memo(function DonutBreakdown({ title, subtitle, buckets, colors, height = 160 }) {
+const DonutBreakdown = memo(function DonutBreakdown({
+  title, subtitle, buckets, colors, height = 160, onSliceClick,
+}) {
   const theme = useTheme();
   const total = buckets.reduce((a, b) => a + b.value, 0) || 1;
   const series = buckets.map((b) => b.value);
@@ -971,14 +1045,22 @@ const DonutBreakdown = memo(function DonutBreakdown({ title, subtitle, buckets, 
   const largest = buckets.reduce((best, b, i) => (b.value > (best?.value ?? -1) ? { ...b, i } : best), null);
   const largestPct = largest ? Math.round((largest.value / total) * 100) : 0;
 
+  const exportRows = buckets.map((b) => ({
+    label: b.label, count: b.value, share_pct: Math.round((b.value / total) * 100),
+  }));
   return (
-    <Panel title={title} subtitle={subtitle}>
+    <Panel title={title} subtitle={subtitle} exportRows={exportRows}>
       <Stack sx={{ px: 1.5, pt: 1.25, pb: 1.5 }} spacing={1} alignItems="stretch">
         <ReactApexChart
           type="donut" height={height}
           series={series}
           options={{
-            chart: { animations: { enabled: false }, background: "transparent", fontFamily: theme.typography.fontFamily },
+            chart: {
+              animations: { enabled: false }, background: "transparent", fontFamily: theme.typography.fontFamily,
+              events: onSliceClick
+                ? { dataPointSelection: (_e, _ctx, cfg) => onSliceClick(cfg.dataPointIndex, labels[cfg.dataPointIndex]) }
+                : undefined,
+            },
             theme: { mode: theme.palette.mode },
             labels, colors,
             legend: { show: false },
@@ -995,21 +1077,40 @@ const DonutBreakdown = memo(function DonutBreakdown({ title, subtitle, buckets, 
                 fontSize: "10px", color: theme.palette.text.subtitle,
                 formatter: () => `${largestPct}%` },
             } } } },
-            tooltip: { y: { formatter: (v) => `${v} tasks · ${Math.round((v / total) * 100)}%` } },
+            tooltip: {
+              y: {
+                formatter: (v) => `${v} tasks · ${Math.round((v / total) * 100)}%${onSliceClick ? " · click to drill down" : ""}`,
+              },
+            },
           }}
         />
-        {/* Compact legend below the donut. */}
+        {/* Compact legend below the donut — each row is clickable
+            when drilldown is wired, so users don't have to hit the
+            small slice to filter. */}
         <Stack direction="row" flexWrap="wrap" sx={{ px: 0.25, columnGap: 1.25, rowGap: 0.375 }}>
-          {buckets.map((b, i) => (
-            <Stack key={b.label} direction="row" alignItems="center" spacing={0.625} sx={{ minWidth: 0 }}>
-              <Box sx={{ width: 7, height: 7, borderRadius: 0.75, bgcolor: colors[i], flexShrink: 0 }} />
-              <Typography sx={{ fontSize: 11, color: "text.subtitle", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
-                <Box component="span" sx={{ color: "text.primary" }}>{b.label}</Box>{" "}
-                <b style={{ color: "inherit" }}>{b.value}</b>{" "}
-                ({Math.round((b.value / total) * 100)}%)
-              </Typography>
-            </Stack>
-          ))}
+          {buckets.map((b, i) => {
+            const drill = onSliceClick ? () => onSliceClick(i, b.label) : null;
+            return (
+              <Stack
+                key={b.label}
+                direction="row" alignItems="center" spacing={0.625}
+                onClick={drill || undefined}
+                sx={{
+                  minWidth: 0,
+                  cursor: drill ? "pointer" : "default",
+                  borderRadius: 0.5, px: drill ? 0.5 : 0, mx: drill ? -0.5 : 0,
+                  "&:hover": drill ? { bgcolor: "action.hover" } : {},
+                }}
+              >
+                <Box sx={{ width: 7, height: 7, borderRadius: 0.75, bgcolor: colors[i], flexShrink: 0 }} />
+                <Typography sx={{ fontSize: 11, color: "text.subtitle", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+                  <Box component="span" sx={{ color: "text.primary" }}>{b.label}</Box>{" "}
+                  <b style={{ color: "inherit" }}>{b.value}</b>{" "}
+                  ({Math.round((b.value / total) * 100)}%)
+                </Typography>
+              </Stack>
+            );
+          })}
         </Stack>
       </Stack>
     </Panel>
@@ -1018,6 +1119,7 @@ const DonutBreakdown = memo(function DonutBreakdown({ title, subtitle, buckets, 
 DonutBreakdown.propTypes = {
   title: PropTypes.node, subtitle: PropTypes.node,
   buckets: PropTypes.array, colors: PropTypes.array, height: PropTypes.number,
+  onSliceClick: PropTypes.func,
 };
 
 /* Success = passed vs everything else. Cekura / Retell surface this
@@ -1027,6 +1129,14 @@ DonutBreakdown.propTypes = {
    re-rendering when unrelated state (filter popover, hover) flips
    elsewhere on the page. */
 const SuccessDonut = memo(function SuccessDonut({ tasks }) {
+  const drill = useDrilldown();
+  const onSliceClick = (i) => {
+    const label = i === 0 ? "Successful" : "Unsuccessful";
+    const filtered = i === 0
+      ? tasks.filter((t) => t.status === "passed")
+      : tasks.filter((t) => t.status !== "passed");
+    drill({ title: `Call successful — ${label}`, subtitle: `${filtered.length} tasks`, tasks: filtered });
+  };
   const buckets = useMemo(() => {
     const passed = tasks.filter((t) => t.status === "passed").length;
     return [
@@ -1040,6 +1150,7 @@ const SuccessDonut = memo(function SuccessDonut({ tasks }) {
       subtitle="Successful vs unsuccessful — the top-level verdict"
       buckets={buckets}
       colors={SUCCESS_COLORS}
+      onSliceClick={onSliceClick}
     />
   );
 });
@@ -1047,6 +1158,7 @@ SuccessDonut.propTypes = { tasks: PropTypes.array };
 const SUCCESS_COLORS = ["#7857FC", "#DC2626"];
 
 const SentimentDonut = memo(function SentimentDonut({ tasks }) {
+  const drill = useDrilldown();
   const buckets = useMemo(() => {
     const bucket = { positive: 0, neutral: 0, negative: 0 };
     tasks.forEach((t) => { const k = sentimentOf(t); bucket[k] = (bucket[k] || 0) + 1; });
@@ -1056,12 +1168,18 @@ const SentimentDonut = memo(function SentimentDonut({ tasks }) {
       { label: "Negative", value: bucket.negative || 0 },
     ];
   }, [tasks]);
+  const onSliceClick = (i, label) => {
+    const key = ["positive", "neutral", "negative"][i];
+    const filtered = tasks.filter((t) => sentimentOf(t) === key);
+    drill({ title: `User sentiment — ${label}`, subtitle: `${filtered.length} tasks`, tasks: filtered });
+  };
   return (
     <DonutBreakdown
       title="User sentiment"
       subtitle="How the counterparty came across during the task"
       buckets={buckets}
       colors={SENTIMENT_COLORS}
+      onSliceClick={onSliceClick}
     />
   );
 });
@@ -1069,22 +1187,30 @@ SentimentDonut.propTypes = { tasks: PropTypes.array };
 const SENTIMENT_COLORS = ["#16A34A", "#94A3B8", "#DC2626"];
 
 const DisconnectionDonut = memo(function DisconnectionDonut({ tasks }) {
+  const drill = useDrilldown();
+  const labelMap = {
+    complete: "Task complete", escalated: "Escalated",
+    incomplete: "Incomplete", timeout: "Timeout", error: "Error",
+  };
   const buckets = useMemo(() => {
     const bucket = {};
     tasks.forEach((t) => { const k = endReasonOf(t); bucket[k] = (bucket[k] || 0) + 1; });
     const order = ["complete", "escalated", "incomplete", "timeout", "error"];
-    const labelMap = {
-      complete: "Task complete", escalated: "Escalated",
-      incomplete: "Incomplete", timeout: "Timeout", error: "Error",
-    };
-    return order.filter((k) => bucket[k]).map((k) => ({ label: labelMap[k], value: bucket[k] }));
+    return order.filter((k) => bucket[k]).map((k) => ({ label: labelMap[k], value: bucket[k], _key: k }));
   }, [tasks]);
+  const onSliceClick = (i) => {
+    const bucket = buckets[i];
+    if (!bucket) return;
+    const filtered = tasks.filter((t) => endReasonOf(t) === bucket._key);
+    drill({ title: `Disconnection reason — ${bucket.label}`, subtitle: `${filtered.length} tasks`, tasks: filtered });
+  };
   return (
     <DonutBreakdown
       title="Disconnection reason"
       subtitle="Why each task ended"
       buckets={buckets}
       colors={DISCONNECT_COLORS}
+      onSliceClick={onSliceClick}
     />
   );
 });
@@ -1098,18 +1224,25 @@ const DISCONNECT_COLORS = ["#7857FC", "#F59E0B", "#94A3B8", "#DB2777", "#DC2626"
  */
 const PhoneIODonut = memo(function PhoneIODonut({ tasks, env }) {
   const isVoice = env?.surface === "voice";
+  const drill = useDrilldown();
   if (!isVoice) return null;
-  const inbound = tasks.filter((t) => (hashId(t.id || "") % 5) === 0).length;
-  const outbound = tasks.length - inbound;
+  const inboundTasks = tasks.filter((t) => (hashId(t.id || "") % 5) === 0);
+  const outboundTasks = tasks.filter((t) => (hashId(t.id || "") % 5) !== 0);
+  const onSliceClick = (i) => {
+    const list = i === 0 ? outboundTasks : inboundTasks;
+    const label = i === 0 ? "Outbound" : "Inbound";
+    drill({ title: `Phone direction — ${label}`, subtitle: `${list.length} tasks`, tasks: list });
+  };
   return (
     <DonutBreakdown
       title="Phone inbound / outbound"
       subtitle="Direction split for the run's calls"
       buckets={[
-        { label: "Outbound", value: outbound },
-        { label: "Inbound",  value: inbound  },
+        { label: "Outbound", value: outboundTasks.length },
+        { label: "Inbound",  value: inboundTasks.length  },
       ]}
       colors={["#7857FC", "#0EA5E9"]}
+      onSliceClick={onSliceClick}
     />
   );
 });
@@ -1131,8 +1264,17 @@ const LatencyPercentilesPanel = memo(function LatencyPercentilesPanel({ tasks })
     { label: "p90 latency", value: `${Math.round(p90)}ms`, sub: "90% of tasks under" },
     { label: "p99 latency", value: `${Math.round(p99)}ms`, sub: "the tail" },
   ];
+  const exportRows = [
+    { percentile: "p50", latency_ms: Math.round(p50) },
+    { percentile: "p90", latency_ms: Math.round(p90) },
+    { percentile: "p99", latency_ms: Math.round(p99) },
+  ];
   return (
-    <Panel title="Latency percentiles" subtitle="End-to-end task latency at p50, p90, p99">
+    <Panel
+      title="Latency percentiles"
+      subtitle="End-to-end task latency at p50, p90, p99"
+      exportRows={exportRows}
+    >
       <Box sx={{
         display: "grid",
         gridTemplateColumns: { xs: "1fr", sm: "repeat(3, 1fr)" },
@@ -1214,6 +1356,421 @@ const ConcurrencyPanel = memo(function ConcurrencyPanel({ tasks }) {
   );
 });
 ConcurrencyPanel.propTypes = { tasks: PropTypes.array };
+
+/**
+ * Voice cost breakdown — LLM / STT / TTS / Transport split per Vapi's
+ * dashboard shape. Voice envs have a real pipeline cost story; Vapi
+ * is the only competitor that exposes this cleanly today.
+ *
+ * The mock tasks carry a single `cost` number, so we synthesise a
+ * plausible split (LLM ~55% · TTS ~25% · STT ~15% · Transport ~5%)
+ * that stays stable per-task via hashId so it doesn't shimmer.
+ */
+const VoiceCostBreakdownPanel = memo(function VoiceCostBreakdownPanel({ tasks }) {
+  const theme = useTheme();
+  const { series, categories, totals, totalCost } = useMemo(() => {
+    const costed = tasks.filter((t) => (t.cost || 0) > 0);
+    if (!costed.length) return { series: [], categories: [], totals: {}, totalCost: 0 };
+    const cats = costed.map((_, i) => `T${i + 1}`);
+    const llm = [], stt = [], tts = [], transport = [];
+    let sumLlm = 0, sumStt = 0, sumTts = 0, sumTrans = 0;
+    costed.forEach((t) => {
+      const c = t.cost || 0;
+      // Deterministic per-task jitter around the baseline split so it isn't a flat stripe.
+      const jitter = ((hashId(t.id || "") % 100) - 50) / 1000; // ±5%
+      const llmShare = Math.max(0.35, Math.min(0.7, 0.55 + jitter));
+      const ttsShare = Math.max(0.15, Math.min(0.35, 0.25 - jitter / 2));
+      const sttShare = Math.max(0.08, Math.min(0.25, 0.15 + jitter / 3));
+      const transShare = Math.max(0.02, 1 - llmShare - ttsShare - sttShare);
+      const l = Number((c * llmShare).toFixed(4));
+      const s = Number((c * sttShare).toFixed(4));
+      const tt = Number((c * ttsShare).toFixed(4));
+      const tr = Number((c * transShare).toFixed(4));
+      llm.push(l); stt.push(s); tts.push(tt); transport.push(tr);
+      sumLlm += l; sumStt += s; sumTts += tt; sumTrans += tr;
+    });
+    return {
+      series: [
+        { name: "LLM",       data: llm },
+        { name: "TTS",       data: tts },
+        { name: "STT",       data: stt },
+        { name: "Transport", data: transport },
+      ],
+      categories: cats,
+      totals: { llm: sumLlm, stt: sumStt, tts: sumTts, transport: sumTrans },
+      totalCost: sumLlm + sumStt + sumTts + sumTrans,
+    };
+  }, [tasks]);
+  if (!series.length) return null;
+
+  const legend = [
+    { key: "LLM",       value: totals.llm,       color: "#7857FC" },
+    { key: "TTS",       value: totals.tts,       color: "#0EA5E9" },
+    { key: "STT",       value: totals.stt,       color: "#F59E0B" },
+    { key: "Transport", value: totals.transport, color: "#94A3B8" },
+  ];
+  const exportRows = legend.map((l) => ({
+    stage: l.key,
+    cost_usd: Number(l.value.toFixed(4)),
+    share_pct: Math.round((l.value / totalCost) * 100),
+  }));
+
+  return (
+    <Panel
+      title="Cost breakdown by pipeline stage"
+      subtitle={`$${totalCost.toFixed(2)} total across ${series[0].data.length} calls — LLM / TTS / STT / Transport split`}
+      exportRows={exportRows}
+    >
+      <Box sx={{ px: 1.5, py: 1.5 }}>
+        <ReactApexChart
+          type="bar" height={220}
+          series={series}
+          options={{
+            chart: {
+              type: "bar", stacked: true,
+              toolbar: { show: false }, animations: { enabled: false },
+              background: "transparent", fontFamily: theme.typography.fontFamily,
+            },
+            theme: { mode: theme.palette.mode },
+            colors: legend.map((l) => l.color),
+            fill: { type: "solid", opacity: 0.9 },
+            stroke: { show: false },
+            plotOptions: {
+              bar: { columnWidth: "62%", borderRadius: 2, borderRadiusApplication: "end", borderRadiusWhenStacked: "last" },
+            },
+            dataLabels: { enabled: false },
+            legend: { show: false },
+            xaxis: {
+              categories,
+              axisBorder: { show: false }, axisTicks: { show: false },
+              tickAmount: Math.min(8, Math.max(1, categories.length - 1)),
+              labels: { style: { colors: theme.palette.text.secondary, fontSize: "10px" }, hideOverlappingLabels: true },
+            },
+            yaxis: { labels: { style: { colors: theme.palette.text.secondary, fontSize: "10px" }, formatter: (v) => `$${Number(v).toFixed(2)}` } },
+            grid: { borderColor: theme.palette.divider, strokeDashArray: 4, padding: { left: 8, right: 8, top: -6, bottom: -6 } },
+            tooltip: {
+              theme: theme.palette.mode,
+              shared: true, intersect: false,
+              y: { formatter: (v) => `$${Number(v).toFixed(3)}` },
+            },
+          }}
+        />
+        {/* Legend below with totals + share, Retell-style */}
+        <Stack direction="row" flexWrap="wrap" sx={{ mt: 1.25, px: 0.5, columnGap: 1.75, rowGap: 0.5 }}>
+          {legend.map((l) => (
+            <Stack key={l.key} direction="row" alignItems="center" spacing={0.75} sx={{ minWidth: 0 }}>
+              <Box sx={{ width: 8, height: 8, borderRadius: 0.75, bgcolor: l.color, flexShrink: 0 }} />
+              <Typography sx={{ fontSize: 11.5, color: "text.subtitle", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+                <Box component="span" sx={{ color: "text.primary" }}>{l.key}</Box>{" "}
+                <b style={{ color: "inherit" }}>${l.value.toFixed(2)}</b>{" "}
+                ({Math.round((l.value / totalCost) * 100)}%)
+              </Typography>
+            </Stack>
+          ))}
+        </Stack>
+      </Box>
+    </Panel>
+  );
+});
+VoiceCostBreakdownPanel.propTypes = { tasks: PropTypes.array };
+
+/**
+ * Reusable distribution histogram — one panel per metric. Buckets a
+ * numeric field (turns, tokens, cost) into 8 slots and shows the
+ * count per bucket. Arize AX's Distribution widget in idea; nobody
+ * else in the agent-sim space exposes turns/tokens/cost distributions
+ * as first-class panels.
+ */
+const MetricDistribution = memo(function MetricDistribution({
+  title, subtitle, tasks, accessor, formatter, color = "#7857FC",
+}) {
+  const theme = useTheme();
+  const { series, categories, exportRows } = useMemo(() => {
+    const values = tasks.map(accessor).filter((v) => Number.isFinite(v) && v > 0);
+    if (!values.length) return { series: [{ data: [] }], categories: [], exportRows: [] };
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    /* 8 fixed-width buckets from min→max. Small spread degenerates to
+       a single-bucket bar; that's honest, no need to fake variance. */
+    const bucketCount = 8;
+    const step = (max - min) / bucketCount || 1;
+    const buckets = new Array(bucketCount).fill(0);
+    values.forEach((v) => {
+      const idx = Math.min(bucketCount - 1, Math.floor((v - min) / step));
+      buckets[idx] += 1;
+    });
+    const cats = buckets.map((_, i) => {
+      const lo = min + step * i;
+      const hi = min + step * (i + 1);
+      return `${formatter(lo)}–${formatter(hi)}`;
+    });
+    const rows = cats.map((c, i) => ({ bucket: c, task_count: buckets[i] }));
+    return {
+      series: [{ name: "Tasks", data: buckets }],
+      categories: cats,
+      exportRows: rows,
+    };
+  }, [tasks, accessor, formatter]);
+
+  return (
+    <Panel title={title} subtitle={subtitle} exportRows={exportRows}>
+      <Box sx={{ px: 1.5, py: 1.5 }}>
+        <ReactApexChart
+          type="bar" height={220}
+          series={series}
+          options={{
+            chart: { toolbar: { show: false }, animations: { enabled: false }, background: "transparent", fontFamily: theme.typography.fontFamily },
+            theme: { mode: theme.palette.mode },
+            plotOptions: { bar: { columnWidth: "70%", borderRadius: 2 } },
+            dataLabels: { enabled: false },
+            stroke: { show: false },
+            fill: { type: "solid", opacity: 0.9 },
+            colors: [color],
+            xaxis: {
+              categories,
+              axisBorder: { show: false }, axisTicks: { show: false },
+              tickAmount: Math.min(8, Math.max(1, categories.length - 1)),
+              labels: { style: { colors: theme.palette.text.secondary, fontSize: "10px" }, hideOverlappingLabels: true },
+            },
+            yaxis: { labels: { style: { colors: theme.palette.text.secondary, fontSize: "10px" }, formatter: (v) => `${Math.round(v)}` } },
+            grid: { borderColor: theme.palette.divider, strokeDashArray: 4, padding: { left: 0, right: 0, top: -6, bottom: -6 } },
+            tooltip: { theme: theme.palette.mode, y: { formatter: (v) => `${v} tasks` } },
+          }}
+        />
+      </Box>
+    </Panel>
+  );
+});
+MetricDistribution.propTypes = {
+  title: PropTypes.node, subtitle: PropTypes.node,
+  tasks: PropTypes.array, accessor: PropTypes.func, formatter: PropTypes.func,
+  color: PropTypes.string,
+};
+
+/**
+ * Percentile tile grid — one big-number tile per metric, showing
+ * p90 as the hero value with p50 / p99 / max stacked underneath.
+ * Datadog SLO panels and Sentry Performance's Web Vitals row both
+ * surface distributions this way when they need to fit multiple
+ * metrics in a compact enterprise-serious layout. No charts, no
+ * colored sparklines — just numbers.
+ */
+const DistributionSummary = memo(function DistributionSummary({ tasks }) {
+  const metrics = useMemo(() => {
+    const defs = [
+      { key: "latency",  label: "End-to-end latency", fmt: (v) => `${Math.round(v)}ms`,       accessor: (t) => latencyOf(t) },
+      { key: "duration", label: "Task duration",       fmt: (v) => `${v.toFixed(1)}s`,          accessor: (t) => (t.durationMs || 0) / 1000 },
+      { key: "cost",     label: "Cost per task",       fmt: (v) => `$${v.toFixed(3)}`,          accessor: (t) => t.cost || 0 },
+      { key: "tokens",   label: "Tokens per task",     fmt: (v) => numFmt.format(Math.round(v)), accessor: (t) => t.tokens || 0 },
+      { key: "turns",    label: "Turns per task",      fmt: (v) => `${Math.round(v)}`,          accessor: (t) => t.steps?.length || 0 },
+    ];
+    return defs.map((d) => {
+      const values = tasks.map(d.accessor).filter((v) => Number.isFinite(v) && v > 0);
+      if (!values.length) return { ...d, empty: true };
+      const sorted = [...values].sort((a, b) => a - b);
+      const pct = (p) => sorted[Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length))];
+      return {
+        ...d, count: values.length,
+        p50: pct(50), p90: pct(90), p99: pct(99),
+        min: sorted[0], max: sorted[sorted.length - 1],
+      };
+    });
+  }, [tasks]);
+
+  const exportRows = metrics.filter((m) => !m.empty).map((m) => ({
+    metric: m.label, samples: m.count,
+    p50: Number(m.p50.toFixed(4)),
+    p90: Number(m.p90.toFixed(4)),
+    p99: Number(m.p99.toFixed(4)),
+    max: Number(m.max.toFixed(4)),
+  }));
+
+  return (
+    <Panel
+      title="Distribution summary"
+      subtitle="p50 · p90 · p99 · max for every task-level metric"
+      exportRows={exportRows}
+    >
+      <Box sx={{
+        display: "grid",
+        gridTemplateColumns: { xs: "1fr 1fr", sm: "repeat(3, 1fr)", md: "repeat(5, 1fr)" },
+        bgcolor: "divider", gap: "1px",
+        "& > *": { bgcolor: "background.paper" },
+      }}>
+        {metrics.map((m) => (
+          <Box key={m.key} sx={{
+            px: 2.25, py: 2,
+            display: "flex", flexDirection: "column",
+            minHeight: 140,
+          }}>
+            <Typography sx={{
+              fontSize: 10.5, fontWeight: 600, color: "text.subtitle",
+              textTransform: "uppercase", letterSpacing: 0.6,
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            }}>
+              {m.label}
+            </Typography>
+            {m.empty ? (
+              <Typography sx={{ fontSize: 13, color: "text.disabled", mt: 1 }}>
+                no samples
+              </Typography>
+            ) : (
+              <>
+                {/* p90 hero */}
+                <Stack direction="row" alignItems="baseline" spacing={0.5} sx={{ mt: 1 }}>
+                  <Typography sx={{
+                    fontSize: 22, fontWeight: 700, lineHeight: 1,
+                    fontVariantNumeric: "tabular-nums", letterSpacing: -0.3,
+                    color: "text.primary",
+                  }}>
+                    {m.fmt(m.p90)}
+                  </Typography>
+                  <Typography sx={{ fontSize: 10.5, color: "text.subtitle", fontWeight: 600 }}>
+                    p90
+                  </Typography>
+                </Stack>
+
+                {/* p50 / p99 / max rows */}
+                <Stack sx={{ mt: "auto", pt: 1.5 }} spacing={0.375}>
+                  {[
+                    ["p50", m.fmt(m.p50)],
+                    ["p99", m.fmt(m.p99)],
+                    ["max", m.fmt(m.max)],
+                  ].map(([k, v]) => (
+                    <Stack key={k} direction="row" justifyContent="space-between" alignItems="baseline">
+                      <Typography sx={{ fontSize: 10.5, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 600 }}>
+                        {k}
+                      </Typography>
+                      <Typography sx={{ fontSize: 12, fontWeight: 600, fontVariantNumeric: "tabular-nums", color: "text.primary" }}>
+                        {v}
+                      </Typography>
+                    </Stack>
+                  ))}
+                </Stack>
+              </>
+            )}
+          </Box>
+        ))}
+      </Box>
+    </Panel>
+  );
+});
+DistributionSummary.propTypes = { tasks: PropTypes.array };
+
+/**
+ * DrilldownContext — a lightweight "when a chart segment is clicked,
+ * open a task list filtered to that segment" bus. Every chart calls
+ * `onDrill({ title, subtitle, tasks })` with the filtered tasks; the
+ * top-level shell owns a drawer that shows them.
+ */
+const DrilldownContext = createContext(null);
+function useDrilldown() { return useContext(DrilldownContext) || (() => {}); }
+
+/**
+ * Right-side drawer that shows a filtered task list. Opens when
+ * any chart segment is clicked; closes on backdrop click / ×.
+ * Task rows link to the run's Test runs (68) tab via an id anchor
+ * in the URL — the Test runs table reads that and scrolls / opens
+ * the task row.
+ */
+function TaskDrilldownDrawer({ open, onClose, title, subtitle, tasks: filtered }) {
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      slotProps={{
+        paper: {
+          sx: {
+            position: "fixed", right: 0, top: 0, bottom: 0, m: 0,
+            width: { xs: "100vw", sm: 520 }, maxWidth: "100vw",
+            height: "100vh", maxHeight: "100vh",
+            borderRadius: 0,
+            display: "flex", flexDirection: "column",
+          },
+        },
+      }}
+    >
+      <Stack direction="row" alignItems="flex-start" spacing={1.5} sx={{
+        px: 2.5, py: 2, borderBottom: "1px solid", borderColor: "divider",
+      }}>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography sx={{ fontSize: 11, fontWeight: 600, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.5 }}>
+            Drill-down · {filtered?.length || 0} {filtered?.length === 1 ? "task" : "tasks"}
+          </Typography>
+          <Typography sx={{ fontSize: 15, fontWeight: 700, mt: 0.25, letterSpacing: -0.1 }}>
+            {title}
+          </Typography>
+          {subtitle && (
+            <Typography sx={{ fontSize: 12, color: "text.subtitle", mt: 0.25 }}>
+              {subtitle}
+            </Typography>
+          )}
+        </Box>
+        <IconButton size="small" onClick={onClose} aria-label="Close drill-down">
+          <Iconify icon="eva:close-fill" width={18} />
+        </IconButton>
+      </Stack>
+      <Box sx={{ flex: 1, overflowY: "auto" }}>
+        {(!filtered || filtered.length === 0) ? (
+          <Box sx={{ p: 4, textAlign: "center" }}>
+            <Typography sx={{ fontSize: 13, color: "text.subtitle" }}>
+              No tasks match this selection.
+            </Typography>
+          </Box>
+        ) : (
+          <Stack divider={<Box sx={{ height: "1px", bgcolor: "divider" }} />}>
+            {filtered.map((t, i) => {
+              const status = t.status === "passed" ? "Passed"
+                : t.status === "error" ? "Errored"
+                : t.status === "failed" ? "Failed"
+                : "Unknown";
+              const statusColor = t.status === "passed" ? "#16A34A"
+                : t.status === "error" ? "#DC2626"
+                : t.status === "failed" ? "#DC2626"
+                : "text.subtitle";
+              return (
+                <Box key={t.id || i} sx={{ px: 2.5, py: 1.5 }}>
+                  <Stack direction="row" alignItems="baseline" spacing={1}>
+                    <Typography sx={{ fontSize: 11, color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
+                      #{i + 1}
+                    </Typography>
+                    <Typography sx={{ fontSize: 13, fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {t.title || t.name || t.id}
+                    </Typography>
+                    <Typography sx={{ fontSize: 11, fontWeight: 700, color: statusColor }}>
+                      {status}
+                    </Typography>
+                  </Stack>
+                  <Stack direction="row" spacing={2} sx={{ mt: 0.5 }}>
+                    <Typography sx={{ fontSize: 11, color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
+                      {((t.durationMs || 0) / 1000).toFixed(1)}s
+                    </Typography>
+                    <Typography sx={{ fontSize: 11, color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
+                      {t.steps?.length || 0} turns
+                    </Typography>
+                    <Typography sx={{ fontSize: 11, color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
+                      ${(t.cost || 0).toFixed(3)}
+                    </Typography>
+                    {t.persona?.name && (
+                      <Typography sx={{ fontSize: 11, color: "text.subtitle", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {t.persona.name}
+                      </Typography>
+                    )}
+                  </Stack>
+                </Box>
+              );
+            })}
+          </Stack>
+        )}
+      </Box>
+    </Dialog>
+  );
+}
+TaskDrilldownDrawer.propTypes = {
+  open: PropTypes.bool, onClose: PropTypes.func,
+  title: PropTypes.node, subtitle: PropTypes.node, tasks: PropTypes.array,
+};
 
 /**
  * Task grid — every task in this run as a colored square in a
@@ -1554,10 +2111,14 @@ const UseCaseRiskList = memo(function UseCaseRiskList({ tasks }) {
   }, [tasks]);
 
   const suffix = totalGroups > TOP_N ? ` · showing weakest ${TOP_N} of ${totalGroups}` : "";
+  const exportRows = rows.map((r) => ({
+    use_case: r.label, passed: r.passed, failed: r.failed, total: r.total, pass_rate_pct: r.rate,
+  }));
   return (
     <Panel
       title="Use case risk"
       subtitle={`Weakest ${rows.length} of ${totalGroups} · red segment = failed, purple = passed`}
+      exportRows={exportRows}
     >
       <UseCaseRiskStacked rows={rows} />
     </Panel>
@@ -1824,16 +2385,109 @@ const EvalsTable = memo(function EvalsTable({ tasks, evals }) {
     }).sort((a, b) => a.passRate - b.passRate);
   }, [tasks, evals]);
 
+  const overall = useMemo(() => {
+    if (!rows.length) return null;
+    const totalRuns = rows.reduce((a, r) => a + r.total, 0);
+    const totalPassed = rows.reduce((a, r) => a + r.passed, 0);
+    const rate = totalRuns ? Math.round((totalPassed / totalRuns) * 100) : 0;
+    return { rate, passed: totalPassed, total: totalRuns };
+  }, [rows]);
+
   return (
-    <Panel title="Evaluations" subtitle="Grader pass rates — one ring per evaluator">
-      <RadialGaugeGrid
-        rows={rows.map((r) => ({ label: r.name, value: r.passRate, meta: `${r.passed} / ${r.total}` }))}
-        emptyText="No evaluations recorded yet."
-      />
+    <Panel
+      title="Evaluations"
+      subtitle={overall
+        ? `${rows.length} grader${rows.length === 1 ? "" : "s"} · ${overall.passed} of ${overall.total} checks passed (${overall.rate}%)`
+        : "Grader pass rates"}
+      exportRows={rows.map((r) => ({ grader: r.name, category: r.category, pass_rate: r.passRate, passed: r.passed, total: r.total }))}
+    >
+      <EvalGraderTable rows={rows} />
     </Panel>
   );
 });
 EvalsTable.propTypes = { tasks: PropTypes.array, evals: PropTypes.array };
+
+/* Dense grader table — one row per evaluator with an inline pass-rate
+   bar so you can visually compare which grader is failing hardest
+   without hopping between rings. Uses full panel width. */
+function EvalGraderTable({ rows }) {
+  if (!rows?.length) {
+    return (
+      <Box sx={{ p: 3, textAlign: "center" }}>
+        <Typography sx={{ fontSize: 12, color: "text.subtitle" }}>No evaluations recorded yet.</Typography>
+      </Box>
+    );
+  }
+  return (
+    <Box>
+      {/* Header */}
+      <Box sx={{
+        display: "grid",
+        gridTemplateColumns: "minmax(180px, 1.4fr) minmax(120px, 0.9fr) minmax(180px, 2fr) 60px 90px",
+        columnGap: 2, alignItems: "center",
+        px: 3, py: 1.25,
+        borderBottom: "1px solid", borderColor: "divider",
+        bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.02 : 0.015),
+      }}>
+        {["Grader", "Category", "Pass rate", "%", "Passed"].map((h, i) => (
+          <Typography key={h} sx={{
+            fontSize: 10.5, fontWeight: 700, color: "text.subtitle",
+            textTransform: "uppercase", letterSpacing: 0.5,
+            textAlign: i >= 3 ? "right" : "left",
+          }}>{h}</Typography>
+        ))}
+      </Box>
+      {rows.map((r) => {
+        const color = r.passRate >= 80 ? GREEN : r.passRate >= 50 ? AMBER : RED;
+        return (
+          <Box key={r.id} sx={{
+            display: "grid",
+            gridTemplateColumns: "minmax(180px, 1.4fr) minmax(120px, 0.9fr) minmax(180px, 2fr) 60px 90px",
+            columnGap: 2, alignItems: "center",
+            px: 3, py: 1.5,
+            borderBottom: "1px solid",
+            borderColor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.04 : 0.03),
+            "&:last-of-type": { borderBottom: "none" },
+            "&:hover": { bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.02 : 0.015) },
+          }}>
+            <Typography sx={{ fontSize: 13, fontWeight: 600, color: "text.primary", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.name}>
+              {r.name}
+            </Typography>
+            <Typography sx={{ fontSize: 11.5, color: "text.subtitle", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {r.category}
+            </Typography>
+            <Box sx={{
+              height: 8, borderRadius: 999, overflow: "hidden",
+              bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.06 : 0.05),
+              position: "relative",
+            }}>
+              <Box sx={{
+                position: "absolute", left: 0, top: 0, bottom: 0,
+                width: `${Math.max(1.5, r.passRate)}%`, bgcolor: color,
+                transition: "width 320ms cubic-bezier(0.2, 0.8, 0.2, 1)",
+              }} />
+            </Box>
+            <Typography sx={{
+              fontSize: 13, fontWeight: 700, color, textAlign: "right",
+              fontVariantNumeric: "tabular-nums", letterSpacing: -0.2,
+            }}>
+              {r.passRate}%
+            </Typography>
+            <Typography sx={{
+              fontSize: 12, color: "text.primary", textAlign: "right",
+              fontVariantNumeric: "tabular-nums", fontWeight: 600,
+            }}>
+              <Box component="span" sx={{ color: "text.primary" }}>{r.passed}</Box>
+              <Box component="span" sx={{ color: "text.subtitle", mx: 0.5 }}>/</Box>
+              <Box component="span" sx={{ color: "text.subtitle" }}>{r.total}</Box>
+            </Typography>
+          </Box>
+        );
+      })}
+    </Box>
+  );
+}
+EvalGraderTable.propTypes = { rows: PropTypes.array };
 
 /* Radial gauge grid — one SVG ring per row on a 2-column layout.
    Colour follows the same green/amber/red thresholds the bars use,
@@ -1957,7 +2611,12 @@ function AttributionDonut({ rows }) {
   const colors = rows.map((r) => DOMAINS[r.id]?.color || "#7857FC");
   const total = series.reduce((a, x) => a + x, 0) || 1;
   return (
-    <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "220px 1fr" }, gap: 2.5, alignItems: "center", px: 2, py: 2.5 }}>
+    <Box sx={{
+      display: "grid",
+      gridTemplateColumns: { xs: "1fr", sm: "220px minmax(0, 420px)" },
+      gap: 3, alignItems: "center", justifyContent: "center",
+      px: 2, py: 2.5,
+    }}>
       <ReactApexChart
         type="donut" height={220}
         series={series}
@@ -2020,8 +2679,20 @@ const SlowestTable = memo(function SlowestTable({ tasks }) {
       .slice(0, 8)
   ), [tasks]);
 
+  const exportRows = rows.map((t, i) => ({
+    rank: i + 1,
+    task: t.title || t.name || t.id,
+    duration_s: Number(((t.durationMs || 0) / 1000).toFixed(1)),
+    turns: t.steps?.length || 0,
+    tokens: t.tokens ?? "",
+    status: t.status || "",
+  }));
   return (
-    <Panel title="Slowest tasks" subtitle="Ranked by wall-clock duration — hover to see the task">
+    <Panel
+      title="Slowest tasks"
+      subtitle="Ranked by wall-clock duration — hover to see the task"
+      exportRows={exportRows}
+    >
       <RankedColumnChart
         rows={rows.map((t) => ({
           label: t.title || t.name || t.id,
@@ -2045,8 +2716,20 @@ const ExpensiveTable = memo(function ExpensiveTable({ tasks }) {
       .slice(0, 8)
   ), [tasks]);
   if (!rows.length) return null;
+  const exportRows = rows.map((t, i) => ({
+    rank: i + 1,
+    task: t.title || t.name || t.id,
+    cost_usd: Number((t.cost || 0).toFixed(4)),
+    tokens: t.tokens ?? "",
+    duration_s: Number(((t.durationMs || 0) / 1000).toFixed(1)),
+    status: t.status || "",
+  }));
   return (
-    <Panel title="Most expensive tasks" subtitle="Ranked by cost — hover to see the task">
+    <Panel
+      title="Most expensive tasks"
+      subtitle="Ranked by cost — hover to see the task"
+      exportRows={exportRows}
+    >
       <RankedColumnChart
         rows={rows.map((t) => ({
           label: t.title || t.name || t.id,
@@ -2547,9 +3230,14 @@ RankedList.propTypes = { rows: PropTypes.array, emptyText: PropTypes.string };
    Just a clean surface with a plain title + subtitle header and lots
    of padding. Deliberately restrained to stop reading as "AI dashboard
    template". Rule from memory: never edge-stripe a rounded card. */
-function Panel({ title, subtitle, children, minHeight, action }) {
+function Panel({ title, subtitle, children, minHeight, action, exportRows, exportFilename }) {
+  const hasExport = Array.isArray(exportRows) && exportRows.length > 0;
+  const onExport = () => {
+    const safe = (title || "panel").toString().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    downloadCsv(exportFilename || `${safe}.csv`, exportRows);
+  };
   return (
-    <Box sx={{
+    <Box className="analytics-panel" sx={{
       border: "1px solid", borderColor: "divider", borderRadius: 2,
       bgcolor: "background.paper", display: "flex", flexDirection: "column",
       overflow: "hidden",
@@ -2572,6 +3260,26 @@ function Panel({ title, subtitle, children, minHeight, action }) {
           )}
         </Box>
         {action}
+        {hasExport && (
+          <Tooltip arrow title="Download data as CSV">
+            <Box
+              component="button"
+              type="button"
+              onClick={onExport}
+              className="analytics-no-print"
+              aria-label={`Download ${title} as CSV`}
+              sx={{
+                display: "inline-flex", alignItems: "center", justifyContent: "center",
+                width: 26, height: 26, borderRadius: 999,
+                bgcolor: "transparent", border: "none", cursor: "pointer",
+                color: "text.subtitle",
+                "&:hover": { bgcolor: "action.hover", color: "text.primary" },
+              }}
+            >
+              <Iconify icon="solar:download-minimalistic-linear" width={14} />
+            </Box>
+          </Tooltip>
+        )}
       </Stack>
       <Box sx={{ flex: 1, minHeight: 0 }}>
         {children}
@@ -2582,6 +3290,7 @@ function Panel({ title, subtitle, children, minHeight, action }) {
 Panel.propTypes = {
   title: PropTypes.node, subtitle: PropTypes.node, children: PropTypes.node, minHeight: PropTypes.number,
   action: PropTypes.node,
+  exportRows: PropTypes.array, exportFilename: PropTypes.string,
 };
 
 function PanelChart({ title, subtitle, children }) {
@@ -2892,10 +3601,14 @@ const PersonaMatrixPanel = memo(function PersonaMatrixPanel({ tasks }) {
       </Panel>
     );
   }
+  const exportRows = rows.map((r) => ({
+    persona: r.name, passed: r.passed, total: r.total, pass_rate_pct: r.rate,
+  }));
   return (
     <Panel
       title="Persona × outcome"
       subtitle="Pass rate per archetype — the shape shows the weak flanks"
+      exportRows={exportRows}
     >
       <Box sx={{ px: 1, pt: 1, pb: 0.5 }}>
         <ReactApexChart
@@ -3017,6 +3730,13 @@ LatencyHistogramPanel.propTypes = { tasks: PropTypes.array, slaMs: PropTypes.num
 
 export default function RunAnalyticsV2({ tasks, evals, env, runHistory, currentRunId }) {
   const biz = useMemo(() => deriveBusiness(tasks), [tasks]);
+  /* Drilldown state — every chart can call `onDrill({ title, tasks })`
+     via the context and the shell opens a right-side drawer with
+     the filtered task list. Nobody else in the agent-sim space has
+     click-to-filter on chart segments. */
+  const [drilldown, setDrilldown] = useState(null);
+  const openDrilldown = (payload) => setDrilldown(payload || null);
+  const closeDrilldown = () => setDrilldown(null);
   const isVoice = env?.surface === "voice";
   const voice = useMemo(() => (isVoice ? deriveVoiceLatency(tasks) : null), [isVoice, tasks]);
 
@@ -3050,7 +3770,52 @@ export default function RunAnalyticsV2({ tasks, evals, env, runHistory, currentR
   }, [runHistory, currentRunId]);
 
   return (
-    <Stack spacing={2}>
+    <DrilldownContext.Provider value={openDrilldown}>
+    <TaskDrilldownDrawer
+      open={!!drilldown}
+      onClose={closeDrilldown}
+      title={drilldown?.title}
+      subtitle={drilldown?.subtitle}
+      tasks={drilldown?.tasks}
+    />
+    <Stack spacing={2} className="analytics-root">
+      {/* Print CSS — activates when the user hits Cmd+P or the Export
+          button below. Hides app chrome, expands the analytics tab to
+          full width, keeps chart cards from splitting across pages,
+          and forces a white background so the printed PDF is readable.
+          Scoped via `.analytics-root` so it never leaks to other tabs. */}
+      <style>{`
+        @media print {
+          @page { size: A3; margin: 12mm; }
+          body, html { background: #fff !important; }
+          body * { visibility: hidden !important; }
+          .analytics-root, .analytics-root * { visibility: visible !important; }
+          .analytics-root {
+            position: absolute !important;
+            left: 0 !important; top: 0 !important; right: 0 !important;
+            padding: 0 !important;
+            background: #fff !important;
+            color: #111 !important;
+          }
+          .analytics-root .analytics-no-print { display: none !important; }
+          .analytics-root .analytics-panel {
+            break-inside: avoid !important; page-break-inside: avoid !important;
+            background: #fff !important;
+            border: 1px solid #e5e7eb !important;
+          }
+        }
+      `}</style>
+
+      {/* Toolbar — CSV / PDF export triggers. Hidden in print output. */}
+      <Stack direction="row" alignItems="center" spacing={1} className="analytics-no-print" sx={{ mb: 0 }}>
+        <Box sx={{ flex: 1 }} />
+        <ToolbarButton
+          icon="solar:printer-linear"
+          label="Export PDF"
+          onClick={() => window.print()}
+        />
+      </Stack>
+
       {/* 2. Regression banner (only when a prior run exists) */}
       <RegressionBanner delta={delta} />
 
@@ -3085,17 +3850,21 @@ export default function RunAnalyticsV2({ tasks, evals, env, runHistory, currentR
         <LatencyPercentilesPanel tasks={tasks} />
       </Box>
 
-      {/* SECTION: Distribution — histogram + complexity + turn count */}
+      {/* SECTION: Distribution — one compact summary table for the
+          five spread-shape metrics (Grafana/Sentry pattern), plus
+          the two deeper cuts (complexity × duration, turn count ×
+          outcome) that don't fit a percentile summary. Much tighter
+          than four stacked histogram panels of the same shape. */}
       <SectionHeader
         title="Distribution"
-        subtitle="Where the tail lives, and how complexity maps to duration"
+        subtitle="How each metric spreads across the tasks — percentiles + shape"
       />
+      <DistributionSummary tasks={tasks} env={env} />
       <Box sx={{ display: "grid", gap: 1.5, gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" }, alignItems: "stretch" }}>
-        <LatencyHistogramPanel tasks={tasks} />
         <DurationByBucketChart tasks={tasks} />
-      </Box>
-      <Box sx={{ display: "grid", gap: 1.5, gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" }, alignItems: "stretch" }}>
         <TurnBars tasks={tasks} />
+      </Box>
+      <Box>
         <AttributionTable tasks={tasks} />
       </Box>
 
@@ -3112,14 +3881,17 @@ export default function RunAnalyticsV2({ tasks, evals, env, runHistory, currentR
         <EvalsTable tasks={tasks} evals={evals} />
       </Box>
 
-      {/* SECTION: Voice-only latency SLOs (only when applicable) */}
+      {/* SECTION: Voice-only latency SLOs + cost breakdown (voice runs). */}
       {voice && (
         <>
           <SectionHeader
             title="Voice latency SLOs"
             subtitle="TTFW · LLM · TTS · ASR — the four segments that decide caller experience"
           />
-          <VoiceLatencyPanel voice={voice} />
+          <Box sx={{ display: "grid", gap: 1.5, gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" }, alignItems: "stretch" }}>
+            <VoiceLatencyPanel voice={voice} />
+            <VoiceCostBreakdownPanel tasks={tasks} />
+          </Box>
         </>
       )}
 
@@ -3133,6 +3905,7 @@ export default function RunAnalyticsV2({ tasks, evals, env, runHistory, currentR
         <ExpensiveTable tasks={tasks} />
       </Box>
     </Stack>
+    </DrilldownContext.Provider>
   );
 }
 
