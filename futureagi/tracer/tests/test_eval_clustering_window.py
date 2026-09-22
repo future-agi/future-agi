@@ -199,6 +199,32 @@ def test_structured_score_uses_template_pass_threshold(
 
 
 @pytest.mark.django_db
+def test_structured_score_takes_precedence_over_choice_mapping(
+    project, trace, observation_span, custom_eval_config
+):
+    """An explicit structured score wins over the accompanying choice label."""
+    custom_eval_config.eval_template.choice_scores = {"2": 0.9}
+    custom_eval_config.eval_template.pass_threshold = 0.5
+    custom_eval_config.eval_template.save(
+        update_fields=["choice_scores", "pass_threshold"]
+    )
+    ev = EvalLogger.objects.create(
+        trace=trace,
+        observation_span=observation_span,
+        custom_eval_config=custom_eval_config,
+        target_type="span",
+        output_str='{"score": 0.25, "choice": "2"}',
+        eval_explanation="the explicit score indicates failure",
+        eval_task_id="et-explicit-score",
+    )
+
+    results = get_unclustered_eval_results(str(project.id))
+
+    assert [result.eval_logger_id for result in results] == [str(ev.id)]
+    assert results[0].score == 0.25
+
+
+@pytest.mark.django_db
 def test_clustering_excludes_non_eval_task_failures(
     project, trace, observation_span, custom_eval_config
 ):
